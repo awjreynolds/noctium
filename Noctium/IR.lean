@@ -1917,9 +1917,11 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let some declaration := decls.find? (·.name == state)
             | throw s!"unknown root composite Cell '{state}'"
           let .tree (.composite compositeEnv foundType) := declaration.kind
-            | throw "root composite write must target a checked shielded coin Cell"
+            | throw "root composite write must target a checked record Cell"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.shieldedCoinRecordFields compositeEnv type
+          match LedgerValueType.recordFields compositeEnv type with
+          | .ok fields => pure fields
+          | .error _ => LedgerValueType.shieldedCoinRecordFields compositeEnv type
         else do
           if !caps.stateMaps then throw "target lacks state maps"
           let .composite compositeEnv foundType ← resolveTreeState decls state keys

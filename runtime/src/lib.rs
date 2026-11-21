@@ -2737,6 +2737,27 @@ fn validate_shielded_coin_cell(plan: &Plan, slot: u32) -> Result<()> {
     Ok(())
 }
 
+fn validate_record_cell(plan: &Plan, slot: u32, operation_schema: &Json) -> Result<()> {
+    ensure!(slot < 16, "record Cell slot exceeds native state limit");
+    let schema = tree_schema_at_path(plan, slot, 0)?;
+    let record = schema
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .and_then(|object| object.get("composite"))
+        .ok_or_else(|| anyhow!("record write requires a root composite Cell"))?;
+    if plan.state[slot as usize].sealed {
+        if is_shielded_coin_record_schema(record) {
+            bail!("shielded coin Cell is sealed");
+        }
+        bail!("record Cell is sealed");
+    }
+    ensure!(
+        record == operation_schema,
+        "record Cell write differs from state schema"
+    );
+    Ok(())
+}
+
 fn validate_shielded_coin_list(
     plan: &Plan,
     slot: u32,
@@ -3536,11 +3557,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         alignment == "field" && value == &slot.to_string(),
                         "record Cell slot must be a canonical field"
                     );
-                    validate_shielded_coin_cell(plan, slot)?;
-                    ensure!(
-                        tree_schema_at_path(plan, slot, 0)?.get("composite") == Some(schema),
-                        "record Cell write differs from state schema"
-                    );
+                    validate_record_cell(plan, slot, schema)?;
                     continue;
                 }
                 let path_operation = index

@@ -3822,9 +3822,11 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
             elaborateNamedRecord contractName record recordFields state
-          match LedgerValueType.shieldedCoinRecordFields environment compositeType with
+          match LedgerValueType.recordFields environment compositeType with
           | .ok _ => pure ()
-          | .error message => throwErrorAt state message
+          | .error _ => match LedgerValueType.shieldedCoinRecordFields environment compositeType with
+            | .ok _ => pure ()
+            | .error message => throwErrorAt state message
           let valueSchema := LedgerValueType.composite environment compositeType
           let valueTerm ← `(Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
