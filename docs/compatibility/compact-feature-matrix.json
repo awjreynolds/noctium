@@ -2655,8 +2655,8 @@
       "id": "C-ADT-MAP-REMOVE",
       "layer": "language-ledger",
       "surface": "Map.remove",
-      "noctiumStatus": "subset",
-      "notes": "Typed leaf removal matches Compact for nested Bytes32-keyed records. Funded Ledger 9.1.0.1 finalized removal and repeat removal with exact state, preserving sibling records. Missing parents reject and inactive guards skip access. Native checker evidence includes foreign keys. Subtree removal and broader layout equivalence remain open.",
+      "noctiumStatus": "equivalent",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows.",
       "source": [
         "adt"
       ],
@@ -2675,7 +2675,7 @@
         "tests/ForeignKeys.lean",
         "runtime/tests/foreign_keys.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-MAP-RESETTODEFAULT",

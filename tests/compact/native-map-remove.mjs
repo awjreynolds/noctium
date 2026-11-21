@@ -47,6 +47,17 @@ try {
     const result = await contract.circuits.remove(context, owner, spender, enabled);
     return result.context.callContext.currentQueryContext.state;
   };
+  const invokeOwner = async (state, owner, enabled) => {
+    const context = createCircuitContext({
+      circuitId: 'removeOwner',
+      contractAddress: dummyContractAddress(),
+      coinPublicKeyOrZswapState: walletKey,
+      contractState: state,
+      privateState: null,
+    });
+    const result = await contract.circuits.removeOwner(context, owner, enabled);
+    return result.context.callContext.currentQueryContext.state;
+  };
   const seed = async (state, owner, spender, x, y) => {
     const context = createCircuitContext({
       circuitId: 'seed',
@@ -97,7 +108,27 @@ try {
   assert.equal(escrow.lookup(ownerA).member(sibling), true);
   assert.equal(escrow.lookup(ownerB).member(target), true);
 
-  console.log('Compact 0.36.1 matched nested Map.remove: child removal, repeat no-op, sibling preservation, active missing-parent rejection, and inactive no-op');
+  state = await invokeOwner(state, ownerA, true);
+  escrow = ledger(state).escrow;
+  assert.equal(escrow.member(ownerA), false, 'removeOwner deletes the selected parent entry');
+  assert.equal(escrow.member(ownerB), true, 'removeOwner preserves the other parent entry');
+  assert.deepEqual(escrow.lookup(ownerB).lookup(target), { x: 30n, y: 31n },
+    'removeOwner preserves the other parent record');
+
+  const afterOwnerRemove = state;
+  state = await invokeOwner(state, ownerA, true);
+  assert.equal(ledger(state).escrow.member(ownerA), false,
+    'removing an absent parent is a no-op');
+  assert.deepEqual([...ledger(state).escrow.lookup(ownerB)], [...ledger(afterOwnerRemove).escrow.lookup(ownerB)]);
+
+  const inactiveOwnerState = await invokeOwner(state, ownerB, false);
+  const inactiveOwnerEscrow = ledger(inactiveOwnerState).escrow;
+  assert.equal(inactiveOwnerEscrow.member(ownerB), true, 'inactive removal preserves an existing parent');
+  assert.deepEqual(inactiveOwnerEscrow.lookup(ownerB).lookup(target), { x: 30n, y: 31n });
+  assert.equal(inactiveOwnerEscrow.member(missingOwner), false,
+    'inactive removal does not create or remove a missing parent');
+
+  console.log('Compact 0.36.1 matched nested Map.remove: child and parent removal, repeat no-op, sibling and other-parent preservation, active missing-parent rejection, and inactive no-op');
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

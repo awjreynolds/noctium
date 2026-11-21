@@ -1,31 +1,50 @@
 {
   "bundleManifestSha256": {
-    "remove": "af8e46c5cfbd321d1229686a8fa245ee80f3945a2f1e3f886322f76cda82fe75",
-    "seed": "c8d3a9b4a430b173255bff14aa26c19793b61e92ae0b2b5e8667e093805ec785"
+    "remove": "a8b75c47199d757cfbab2aee6dfb4e3c949904ab83393bf38577d98345676ac6",
+    "removeOwner": "164430d2fbcc7e1ec946dbbb70cd158bf12609c426f3240209d07d2bf4f7c8e3",
+    "seed": "ee0a4ed7252be1fac26950f3d7003055743c22f07bc7a87d7f9bb9fc7df80507"
   },
   "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
-  "contractAddress": "a7839bd6e757c9383ad318fdf87ce384bbafd91bfb8d27fb6f9b2c0d37ddcb07",
-  "deploymentHeight": 49005,
+  "contractAddress": "47ea32354b82d87e0856c87646463660925c362b16256f7d6d2769e799ff43be",
+  "deploymentHeight": 49202,
   "exactPredictedStateAccepted": true,
+  "inactiveOwnerHeight": 49220,
   "k": {
     "remove": 8,
+    "removeOwner": 8,
     "seed": 9
   },
   "ledger": "9.1.0.1",
   "missingParentRejectedBeforeSubmission": true,
+  "operations": [
+    "seed",
+    "remove",
+    "remove",
+    "removeOwner",
+    "removeOwner",
+    "removeOwner"
+  ],
   "relationRows": {
     "remove": 239,
+    "removeOwner": 156,
     "seed": 432
   },
-  "removeHeight": 49011,
-  "repeatHeight": 49014,
+  "removeHeight": 49208,
+  "removeOwnerHeight": 49214,
+  "repeatAndInactiveSubtreeStateUnchanged": true,
+  "repeatHeight": 49211,
+  "repeatOwnerHeight": 49217,
   "repeatStateUnchanged": true,
-  "seedHeight": 49008,
+  "seedHeight": 49205,
   "siblingRecordsPreserved": true,
+  "subtreeRemovedAndOtherOwnerPreserved": true,
   "target": "midnight-ledger-9-zkir-3.2.1",
   "transactionIds": [
-    "aa7e69b77ecc5f9353939e89bb6332972b46d116b9b99f73f300550be116fb1a",
-    "3d55d858df2b10a43f5ad20892c2331b6366ab7e9d2d71af3827dfc6871e856d",
-    "3ad1d25452b615a48789da40840ad56c9a27a1fca8454ccc9bb42ea914799f3b"
+    "5836620334b34efe0e4eb487694f78ac0da2701f3afd9ed17e133cd3baaa5f6b",
+    "11ad5842cf001417176874258f13789f9d500d767f9ad9c3262efc6082b084ef",
+    "05c9671363a0c27d5bf496c4431597569bd3986ca918edfe0479131d8530d96e",
+    "d7e2daae2d40f2fed3a609075a35ed510269874e79660dfe135d91a9bef43c3d",
+    "6b4ba76ea1e4943646a3d9e2efe266a4195db088aab2ad186cd731c009d23bb2",
+    "7f5519bbd8589c23fcf257b5db5cf7874a0541871933b7600902e4ddb67a47bd"
   ]
 }
