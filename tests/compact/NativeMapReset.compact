@@ -2,6 +2,7 @@ pragma language_version 0.28;
 import CompactStandardLibrary;
 
 export ledger values: Map<Field, Field>;
+export ledger nestedValues: Map<Field, Map<Field, Field>>;
 
 export circuit seed(key: Field, value: Field): [Boolean, Uint<64>, Field] {
   const exposedKey = disclose(key);
@@ -13,4 +14,29 @@ export circuit clearMap(key: Field): [Boolean, Uint<64>] {
   const exposedKey = disclose(key);
   values.resetToDefault();
   return [values.member(exposedKey), values.size()];
+}
+
+export circuit seedNested(
+  owner: Field,
+  targetA: Field,
+  amountA: Field,
+  targetB: Field,
+  amountB: Field,
+  siblingOwner: Field,
+  siblingKey: Field,
+  siblingAmount: Field,
+): [] {
+  const ownerKey = disclose(owner);
+  const siblingOwnerKey = disclose(siblingOwner);
+  if (!nestedValues.member(ownerKey)) { nestedValues.insertDefault(ownerKey); }
+  nestedValues.lookup(ownerKey).insert(disclose(targetA), disclose(amountA));
+  nestedValues.lookup(ownerKey).insert(disclose(targetB), disclose(amountB));
+  if (!nestedValues.member(siblingOwnerKey)) { nestedValues.insertDefault(siblingOwnerKey); }
+  nestedValues.lookup(siblingOwnerKey).insert(disclose(siblingKey), disclose(siblingAmount));
+}
+
+export circuit clearInner(owner: Field, active: Boolean): [] {
+  if (disclose(active)) {
+    nestedValues.lookup(disclose(owner)).resetToDefault();
+  }
 }
