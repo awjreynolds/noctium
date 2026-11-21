@@ -3503,6 +3503,87 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the authenticated checkTime bundle and funded development node"]
+    fn block_time_uses_an_authenticated_current_state_and_explicit_context() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::{Error, LocalProver, WitnessContractTarget},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::{executor::block_on, future::pending};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let bundle_path = setting("NOCTIUM_BLOCK_TIME_CURRENT_BUNDLE")?;
+            let pin = setting("NOCTIUM_BLOCK_TIME_CURRENT_MANIFEST_SHA256")?;
+            let bundle = artifacts::verify(Path::new(&bundle_path), Some(&pin))?;
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_BLOCK_TIME_CURRENT_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_BLOCK_TIME_CURRENT_NODE")?,
+                &cache,
+            ).await?;
+            let parameters = cache.parameters(circuit.k()).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation("checkTime", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "checkTime").await?;
+            let mut current = Some(deployed);
+            let inputs = || BTreeMap::from([
+                ("enabled".into(), json!(true)),
+                ("cutoff".into(), json!(u64::MAX.to_string())),
+            ]);
+            ensure!(
+                matches!(
+                    operation.prepare_call(&mut current, &parameters, inputs(), &mut rng),
+                    Err(Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "missing active block context must reject without taking the current-state token"
+            );
+
+            let block = funded.node.sync()?.block;
+            let prepared = operation.prepare_call_in_block(
+                &mut current, &parameters, inputs(), &block, &mut rng,
+            )?;
+            ensure!(current.is_none(), "successful preparation must consume the token");
+            let proved = prepared
+                .prove(&LocalProver::new(StdRng::from_entropy()), &parameters, 1_048_576, pending())
+                .await?;
+            let (bound, receipt) = funded.finalize(proved.native()).await?;
+            proved.contract_binding().context("missing current-state binding")?
+                .admit_committed_state(
+                    &receipt.contract_state, bound.expected_state(), &receipt.finalized_hash, false,
+                )?;
+            ensure!(receipt.contract_state == deployment.contract_state, "block-time read changed state");
+            println!("{}", json!({
+                "bundleManifestSha256": pin,
+                "contractAddress": target.contract_address(),
+                "deploymentHeight": deployment.height,
+                "callHeight": receipt.height,
+                "callTransactionId": receipt.transaction_id,
+                "sourceBlockTimeUnixSeconds": block.tblock.to_secs().to_string(),
+                "missingContextRetainedToken": true,
+                "contextBoundCallPreservedState": true,
+            }));
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated CounterAmounts bundles and the funded development node"]
     fn counter_amounts_finalize_dynamic_updates_on_ledger() -> anyhow::Result<()> {
         use crate::{

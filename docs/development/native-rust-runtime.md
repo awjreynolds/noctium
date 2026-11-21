@@ -78,3 +78,14 @@ Compiler bundle hashes and ABI compatibility are not yet verified by the runtime
 Communication randomness and binding input are zero in this diagnostic checker context, matching the existing checker helper. Real transactions require fresh communication randomness and their actual binding input. No diagnostic proof or preimage is suitable for attachment to a transaction.
 
 The library takes all private inputs up front. Host callbacks, resumable execution, cancellation, bounded resources, allocator/secret-buffer contracts, stable C bindings, Kotlin/Swift packaging, optional WASM builds, in-process proving, and new Rust-constructed ledger transactions remain separate qualification work. Native values and host input strings also create copies beyond the upstream preimage's zeroization-on-drop protection.
+
+## Block time with authenticated current state
+
+`ContractOperationTarget::prepare_call_in_block` takes the existing
+authenticated current-state token and an explicit prospective Ledger
+`BlockContext`. The proof binds the checked predicate and the ledger
+rechecks the predicate on execution. An active call without a block context
+rejects during preparation and leaves the current-state token available.
+
+The `checkTime` fixture finalized at block 49886 with its exact state
+unchanged after deployment at 49883. [Finalized receipt](native-block-time-current-state-receipt.json)
