@@ -58,7 +58,7 @@ fn total(state: &ChargedState<Db>, expected: u64) {
     assert_eq!(**value, AlignedValue::from(expected));
 }
 
-fn epoch(state: &ChargedState<Db>, expected: u64) {
+fn epoch(state: &ChargedState<Db>, spender: u8, expected: u64) {
     let StateValue::Array(state) = state.get_ref() else {
         panic!("expected state array")
     };
@@ -66,7 +66,7 @@ fn epoch(state: &ChargedState<Db>, expected: u64) {
         panic!("expected owners map")
     };
     let owner: AlignedValue = [0u8; 32].into();
-    let spender: AlignedValue = [1u8; 32].into();
+    let spender: AlignedValue = [spender; 32].into();
     let StateValue::Map(spenders) = &*owners.get(&owner).unwrap() else {
         panic!("expected spender map")
     };
@@ -110,8 +110,25 @@ fn native_counter_codec_updates_reads_guards_and_checked_arithmetic() {
         check(&execution, &circuit).unwrap();
         state = execution.after.state;
         total(&state, expected_total);
-        epoch(&state, expected_epoch);
+        epoch(&state, 1, expected_epoch);
     }
+    let (reset, reset_circuit) = fixture("reset");
+    let mut missing_leaf = inputs(&reset, true);
+    missing_leaf.insert(
+        "spender".into(),
+        json!({"kind":"bytes", "values":vec![2u8; 32]}),
+    );
+    assert!(prepare(&reset, &missing_leaf, &initial, params, address).is_err());
+
+    let (seed, seed_circuit) = fixture("bump");
+    let seeded = prepare(&seed, &inputs(&seed, true), &initial, params, address).unwrap();
+    check(&seeded, &seed_circuit).unwrap();
+    let reset_absent =
+        prepare(&reset, &missing_leaf, &seeded.after.state, params, address).unwrap();
+    check(&reset_absent, &reset_circuit).unwrap();
+    total(&reset_absent.after.state, 0);
+    epoch(&reset_absent.after.state, 1, 1);
+    epoch(&reset_absent.after.state, 2, 0);
     let (decrement, _) = fixture("decrement");
     assert!(
         prepare(
