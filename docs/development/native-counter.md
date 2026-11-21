@@ -37,6 +37,37 @@ The pinned recipes are
 [Counter operations](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-runtime/vendored/program_fragments.rs#L158-L217).
 Counter uses eight-byte alignment in
 [FAB alignments](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/base-crypto/src/fab/alignments.rs#L73-L81).
+## Read and reset conformance
+
+The standalone and nested read and reset circuit methods match Compact
+0.36.1. The native checker reads nonzero counters 3 and 1 without changing
+state. It also checks reset to zero, creation of a missing child under an
+existing parent, preservation of its sibling, and rejection of a missing
+parent. [Lean source](../../tests/NativeCounter.lean) · [Compact oracle](../../tests/compact/native-counter.mjs) · [Native checker](../../runtime/tests/native_counter.rs)
+
+Ledger 9.1.0.1 finalized the standalone read at block 49164, the two reset
+operations at 49176 and 49179, and the nested read at 49182. Both reads
+preserved the exact finalized state. The nested read bound both zero values.
+An active reset with a missing parent and a read of a missing leaf each
+rejected during preparation and retained the admitted state token.
+Generated host ledger getters have separate qualification.
+[Funded receipt](native-counter-read-reset-localnet-receipt.json)
+
+Compile the fixture with `--emit ledger` and the ZKIR 3.2.1 target. Assemble
+one authenticated bundle per exported operation under a single directory.
+Pass the manifest digests as a JSON object keyed by operation name.
+[Bundle assembly](portable-artifacts.md)
+
+```sh
+NOCTIUM_COUNTER_TRANSITIONS_BUNDLES=PATH_TO_BUNDLES \
+NOCTIUM_COUNTER_TRANSITIONS_MANIFESTS=JSON_OF_MANIFEST_DIGESTS \
+NOCTIUM_COUNTER_TRANSITIONS_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_COUNTER_TRANSITIONS_NODE=http://127.0.0.1:19944 \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  counter_reads_and_resets_finalize_on_ledger -- --ignored --nocapture
+```
+
 ## Strict comparison conformance
 
 The comparison uses the pinned `Counter_less_than` opcode sequence and sees updates earlier in the entrypoint. Compact 0.36.1 and the native checker agree for thresholds 299, 300, 301 and UInt64 maximum on standalone and nested counters. The native checker also tests equality against an actual UInt64-maximum counter and rejects malformed storage alignment. [Lean source](../../tests/CounterCompare.lean) · [Compact oracle](../../tests/compact/counter-compare.mjs) · [Native checker](../../runtime/tests/counter_compare.rs)

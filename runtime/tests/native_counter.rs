@@ -20,6 +20,10 @@ fn fixture(operation: &str) -> (Plan, IrSource) {
             include_str!("fixtures/native-counter/321/NativeCounter.resetCounters.impact.json"),
             include_bytes!("fixtures/native-counter/321/NativeCounter.resetCounters.zkir"),
         ),
+        "read" => (
+            include_str!("fixtures/native-counter/321/NativeCounter.readCounters.impact.json"),
+            include_bytes!("fixtures/native-counter/321/NativeCounter.readCounters.zkir"),
+        ),
         "guarded" => (
             include_str!("fixtures/native-counter/321/NativeCounter.guarded.impact.json"),
             include_bytes!("fixtures/native-counter/321/NativeCounter.guarded.zkir"),
@@ -123,6 +127,24 @@ fn native_counter_codec_updates_reads_guards_and_checked_arithmetic() {
     let (seed, seed_circuit) = fixture("bump");
     let seeded = prepare(&seed, &inputs(&seed, true), &initial, params, address).unwrap();
     check(&seeded, &seed_circuit).unwrap();
+    let (read, read_circuit) = fixture("read");
+    let observed = prepare(
+        &read,
+        &inputs(&read, true),
+        &seeded.after.state,
+        params,
+        address,
+    )
+    .unwrap();
+    check(&observed, &read_circuit).unwrap();
+    assert_eq!(
+        observed.returns_json(),
+        BTreeMap::from([
+            ("totalValue".into(), json!("3")),
+            ("epochValue".into(), json!("1")),
+        ])
+    );
+    assert_eq!(observed.after.state, seeded.after.state);
     let reset_absent =
         prepare(&reset, &missing_leaf, &seeded.after.state, params, address).unwrap();
     check(&reset_absent, &reset_circuit).unwrap();
