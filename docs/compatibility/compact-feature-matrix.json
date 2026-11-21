@@ -2763,7 +2763,7 @@
       "layer": "host-ledger-view",
       "surface": "Map.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages Maps with scalar keys and values at the root or through a typed Map path. The pinned Compact fixture compares exact entries at both locations. Compound values and SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. Compound keys and wider SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -2964,7 +2964,7 @@
       "layer": "host-ledger-view",
       "surface": "List.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI validates the linked FAB shape and pages scalar Lists in head-to-tail order. The pinned Compact fixture checks root and nested contents. Compound elements and SDK adapters remain open.",
+      "notes": "The native snapshot ABI validates the linked FAB shape and pages scalar or checked composite record elements in head-to-tail order. The pinned Compact fixture matches scalar and checked four-field record contents. Wider SDK adapters remain open.",
       "source": [
         "adt"
       ],

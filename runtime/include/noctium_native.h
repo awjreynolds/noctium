@@ -160,15 +160,18 @@ int32_t noctium_native_composition_owner_free(uint64_t owner);
    with scalar values, entries are objects with typed key and value members:
      {"abiVersion":1,"kind":"map","entries":[{"key":"1","value":true}],
       "nextOffset":1}
+   Map values with checked composite schemas use canonical record JSON. Aggregate
+   records use their schema value shape. Mixed records use named fields.
    For a Set, entries are typed member values:
      {"abiVersion":1,"kind":"set","entries":["1"],"nextOffset":1}
    For a scalar List, entries are typed values in head-to-tail order:
      {"abiVersion":1,"kind":"list","entries":["1"],"nextOffset":1}
-   Map and Set pages use the declared scalar types and stable ascending key order:
+   List elements with checked composite schemas use the same canonical record JSON.
+   Map keys and Set members use declared scalar types and stable ascending order:
    numeric values sort numerically, Bool sorts false before true, byte values sort
    lexicographically by bytes, and foreign keys sort by canonical bytes. Use an
    empty keys array for a root collection. To read a nested collection, provide
-   one typed key per enclosing Map. The path must resolve to a scalar Map, Set,
+   one typed key per enclosing Map. The path must resolve to a supported Map, Set,
    or List. List pages validate each linked node's count and empty sentinel.
    Merkle result JSON has abiVersion, kind, entries, and nextOffset (integer or null).
    Merkle pages also have root and firstFree as decimal strings. The merkleTree kind has

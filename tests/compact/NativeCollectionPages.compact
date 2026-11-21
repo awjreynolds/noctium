@@ -8,6 +8,21 @@ export ledger nestedFlags: Map<Bytes<32>, Map<Field, Boolean>>;
 export ledger nestedMembers: Map<Bytes<32>, Set<Bytes<32>>>;
 export ledger nestedValues: Map<Bytes<32>, List<Field>>;
 
+struct Ciphertext4 {
+  c1x: Field;
+  c1y: Field;
+  c2x: Field;
+  c2y: Field;
+}
+
+export ledger records: Map<Bytes<32>, Ciphertext4>;
+export ledger recordList: List<Ciphertext4>;
+
+export circuit seedRecords(key: Bytes<32>, mapped: Ciphertext4, listed: Ciphertext4): [] {
+  records.insert(disclose(key), disclose(mapped));
+  recordList.pushFront(disclose(listed));
+}
+
 export circuit put(key: Field, value: Boolean): [] {
   flags.insert(disclose(key), disclose(value));
 }

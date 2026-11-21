@@ -14,6 +14,7 @@ use onchain_runtime::state::{ContractState, StateValue};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 use serialize::{tagged_deserialize, tagged_serialize};
+use storage::arena::Sp;
 use transient_crypto::merkle_tree::{MerklePathEntry, leaf_hash};
 
 const MAX_REQUEST_BYTES: usize = 65_536;
@@ -341,20 +342,23 @@ fn merkle_page(tree: &MerkleTreeSnapshot, offset: usize, limit: usize) -> Result
     }))
 }
 
+enum CollectionValueSchema {
+    Scalar { ty: ScalarType, name: String },
+    Record(crate::CheckedRecordSchema),
+}
+
 enum CollectionSchema {
     Map {
         key_type: ScalarType,
         key_name: String,
-        value_type: ScalarType,
-        value_name: String,
+        value: CollectionValueSchema,
     },
     Set {
         key_type: ScalarType,
         key_name: String,
     },
     List {
-        element_type: ScalarType,
-        element_name: String,
+        element: CollectionValueSchema,
     },
 }
 
@@ -371,33 +375,115 @@ fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
             .filter(|fields| fields.len() == 2)
             .ok_or(INVALID_ARGUMENT)?;
         let key_name = fields[0].as_str().ok_or(INVALID_ARGUMENT)?.to_owned();
-        let value_name = fields[1].as_str().ok_or(INVALID_ARGUMENT)?.to_owned();
         let key_type = crate::ledger_key_type(&Json::String(key_name.clone()))
             .map_err(|_| INVALID_ARGUMENT)?;
-        let value_type = ScalarType::parse(&value_name).map_err(|_| INVALID_ARGUMENT)?;
+        let value = if let Some(name) = fields[1].as_str() {
+            CollectionValueSchema::Scalar {
+                ty: ScalarType::parse(name).map_err(|_| INVALID_ARGUMENT)?,
+                name: name.to_owned(),
+            }
+        } else {
+            let record = fields[1]
+                .as_object()
+                .filter(|fields| fields.len() == 1)
+                .and_then(|fields| fields.get("composite"))
+                .ok_or(INVALID_ARGUMENT)?;
+            CollectionValueSchema::Record(
+                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
+            )
+        };
         return Ok(Some(CollectionSchema::Map {
             key_type,
             key_name,
-            value_type,
-            value_name,
+            value,
         }));
     }
     if let Some(list) = schema.get("list") {
-        let element_name = list
+        let element = list
             .as_object()
             .filter(|fields| fields.len() == 1)
-            .and_then(|fields| fields.get("scalar"))
-            .and_then(Json::as_str)
-            .ok_or(INVALID_ARGUMENT)?
-            .to_owned();
-        let element_type =
-            crate::validate_tree_scalar_type(&element_name).map_err(|_| INVALID_ARGUMENT)?;
-        return Ok(Some(CollectionSchema::List {
-            element_type,
-            element_name,
-        }));
+            .ok_or(INVALID_ARGUMENT)?;
+        let element = if let Some(name) = element.get("scalar").and_then(Json::as_str) {
+            CollectionValueSchema::Scalar {
+                ty: crate::validate_tree_scalar_type(name).map_err(|_| INVALID_ARGUMENT)?,
+                name: name.to_owned(),
+            }
+        } else {
+            let record = element.get("composite").ok_or(INVALID_ARGUMENT)?;
+            CollectionValueSchema::Record(
+                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
+            )
+        };
+        return Ok(Some(CollectionSchema::List { element }));
     }
     Ok(None)
+}
+
+fn validate_collection_value(
+    value: &AlignedValue,
+    schema: &CollectionValueSchema,
+) -> Result<(), i32> {
+    match schema {
+        CollectionValueSchema::Scalar { ty, name } => {
+            crate::decode_state_cell(value, name, &crate::list_scalar_storage_alignment(ty))
+                .map(|_| ())
+                .map_err(|_| INVALID_ARGUMENT)
+        }
+        CollectionValueSchema::Record(schema) => {
+            let values = crate::decode_record_value(schema, value).map_err(|_| INVALID_ARGUMENT)?;
+            if schema.aggregate.is_some() {
+                record_values_json(schema, &values)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn collection_value_json(
+    value: &AlignedValue,
+    schema: &CollectionValueSchema,
+) -> Result<Json, i32> {
+    match schema {
+        CollectionValueSchema::Scalar { ty, name } => {
+            crate::decode_state_cell(value, name, &crate::list_scalar_storage_alignment(ty))
+                .map(|value| value.public_json())
+                .map_err(|_| INVALID_ARGUMENT)
+        }
+        CollectionValueSchema::Record(record_schema) => {
+            let values =
+                crate::decode_record_value(record_schema, value).map_err(|_| INVALID_ARGUMENT)?;
+            record_values_json(record_schema, &values)
+        }
+    }
+}
+
+fn record_values_json(schema: &crate::CheckedRecordSchema, values: &[Value]) -> Result<Json, i32> {
+    if let Some(aggregate) = &schema.aggregate {
+        let leaves = values
+            .iter()
+            .map(|value| match value {
+                Value::Native(field) => Ok(Json::String(crate::field_decimal(*field))),
+                _ => Err(INVALID_ARGUMENT),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let rendered = aggregate
+            .from_native_leaves_json(&leaves)
+            .map_err(|_| INVALID_ARGUMENT)?;
+        return serde_json::from_slice(&rendered).map_err(|_| INVALID_ARGUMENT);
+    }
+
+    let fields = schema
+        .fields
+        .iter()
+        .zip(values)
+        .map(|(field, value)| {
+            Ok((
+                field.name.clone().ok_or(INVALID_ARGUMENT)?,
+                value.public_json(),
+            ))
+        })
+        .collect::<Result<serde_json::Map<_, _>, i32>>()?;
+    Ok(Json::Object(fields))
 }
 
 fn key_order(value: &Value) -> Result<Vec<u8>, i32> {
@@ -430,7 +516,7 @@ fn key_order(value: &Value) -> Result<Vec<u8>, i32> {
 struct OrderedEntry {
     order: Vec<u8>,
     key: Json,
-    value: Option<Json>,
+    value: Option<Sp<AlignedValue>>,
 }
 
 fn collection_page(
@@ -459,23 +545,11 @@ fn collection_page(
             .map_err(|_| INVALID_ARGUMENT)?;
         let order = key_order(&key)?;
         let value = match schema {
-            CollectionSchema::Map {
-                value_type,
-                value_name,
-                ..
-            } => {
+            CollectionSchema::Map { .. } => {
                 let StateValue::Cell(value) = &**value else {
                     return Err(INVALID_ARGUMENT);
                 };
-                Some(
-                    crate::decode_state_cell(
-                        value,
-                        value_name,
-                        &crate::list_scalar_storage_alignment(value_type),
-                    )
-                    .map_err(|_| INVALID_ARGUMENT)?
-                    .public_json(),
-                )
+                Some((*value).clone())
             }
             CollectionSchema::Set { .. } => {
                 if !matches!(&**value, StateValue::Null) {
@@ -494,15 +568,29 @@ fn collection_page(
     entries.sort_by(|left, right| left.order.cmp(&right.order));
 
     let end = offset.saturating_add(limit).min(entries.len());
-    let page = entries
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|entry| match entry.value {
-            Some(value) => json!({"key": entry.key, "value": value}),
-            None => entry.key,
-        })
-        .collect::<Vec<_>>();
+    let mut page = Vec::with_capacity(end.saturating_sub(offset));
+    for (index, entry) in entries.into_iter().enumerate() {
+        let OrderedEntry { key, value, .. } = entry;
+        let rendered = match (value, schema) {
+            (
+                Some(value),
+                CollectionSchema::Map {
+                    value: value_schema,
+                    ..
+                },
+            ) => {
+                json!({
+                    "key": key,
+                    "value": collection_value_json(&value, value_schema)?
+                })
+            }
+            (None, CollectionSchema::Set { .. }) => key,
+            _ => return Err(INVALID_ARGUMENT),
+        };
+        if index >= offset && index < end {
+            page.push(rendered);
+        }
+    }
     let kind = match schema {
         CollectionSchema::Map { .. } => "map",
         CollectionSchema::Set { .. } => "set",
@@ -518,8 +606,7 @@ fn collection_page(
 
 fn list_page(
     state: &StateValue<Db>,
-    element_type: &ScalarType,
-    element_name: &str,
+    element_schema: &CollectionValueSchema,
     offset: usize,
     limit: usize,
 ) -> Result<Json, i32> {
@@ -563,14 +650,10 @@ fn list_page(
         let StateValue::Cell(head) = node.get(0).ok_or(INVALID_ARGUMENT)? else {
             return Err(INVALID_ARGUMENT);
         };
-        let value = crate::decode_state_cell(
-            head,
-            element_name,
-            &crate::list_scalar_storage_alignment(element_type),
-        )
-        .map_err(|_| INVALID_ARGUMENT)?;
         if length >= offset && length < end {
-            entries.push(value.public_json());
+            entries.push(collection_value_json(head, element_schema)?);
+        } else {
+            validate_collection_value(head, element_schema)?;
         }
         length = length.checked_add(1).ok_or(INVALID_ARGUMENT)?;
 
@@ -653,11 +736,9 @@ pub unsafe extern "C" fn noctium_ledger_collection_page(
                     let offset = request.offset.ok_or(INVALID_ARGUMENT)?;
                     let limit = request.limit.ok_or(INVALID_ARGUMENT)?;
                     match &schema {
-                        CollectionSchema::List {
-                            element_type,
-                            element_name,
-                            ..
-                        } => list_page(&selected, element_type, element_name, offset, limit)?,
+                        CollectionSchema::List { element } => {
+                            list_page(&selected, element, offset, limit)?
+                        }
                         _ => collection_page(&selected, &schema, offset, limit)?,
                     }
                 }
