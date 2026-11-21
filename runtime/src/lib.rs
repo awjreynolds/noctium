@@ -1318,6 +1318,14 @@ pub enum Instruction {
         amount: Expr,
         commitment: Expr,
     },
+    #[serde(rename = "insertShieldedCoinSet", rename_all = "camelCase")]
+    InsertShieldedCoinSet {
+        slot: u32,
+        nonce: Expr,
+        color: Expr,
+        amount: Expr,
+        commitment: Expr,
+    },
     #[serde(rename = "spendShieldedFromMap", rename_all = "camelCase")]
     SpendShieldedFromMap {
         nonce: Expr,
@@ -1595,6 +1603,10 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
         }
         Instruction::ReceiveShieldedToMap { .. } => RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS.to_vec(),
         Instruction::WriteShieldedCoinCell { .. } => WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS.to_vec(),
+        Instruction::InsertShieldedCoinSet { slot, .. } => {
+            validate_shielded_coin_set(plan, *slot)?;
+            INSERT_SHIELDED_COIN_SET_FIELD_COUNTS.to_vec()
+        }
         Instruction::SpendShieldedFromMap { .. } => SPEND_SHIELDED_FROM_MAP_FIELD_COUNTS.to_vec(),
         Instruction::SendShieldedFromMap { .. } => SEND_SHIELDED_FROM_MAP_FIELD_COUNTS.to_vec(),
         Instruction::RelayShieldedImmediate { .. } => {
@@ -1788,6 +1800,9 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         Instruction::WriteShieldedCoinCell { .. } => {
             bail!("shielded coin Cell write must be unguarded")
         }
+        Instruction::InsertShieldedCoinSet { .. } => {
+            bail!("shielded coin Set insertion must be unguarded")
+        }
         Instruction::SpendShieldedFromMap { .. } => {
             bail!("shielded spend must be unguarded")
         }
@@ -1902,6 +1917,7 @@ const MINT_FIELD_COUNTS: [usize; 16] = [1, 4, 6, 1, 1, 1, 5, 1, 1, 2, 1, 1, 2, 1
 const RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS: [usize; 16] =
     [1, 4, 6, 2, 1, 1, 4, 6, 1, 6, 5, 11, 1, 2, 1, 1];
 const WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS: [usize; 8] = [5, 1, 6, 5, 11, 1, 2, 1];
+const INSERT_SHIELDED_COIN_SET_FIELD_COUNTS: [usize; 10] = [4, 1, 6, 5, 11, 1, 2, 2, 1, 1];
 const SPEND_SHIELDED_FROM_MAP_FIELD_COUNTS: [usize; 12] = [1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1];
 const SEND_SHIELDED_FROM_MAP_FIELD_COUNTS: [usize; 18] =
     [1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1];
@@ -2119,7 +2135,19 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         return Ok(());
     }
     if let Some(key) = fields.get("set") {
-        ledger_key_type(key)?;
+        if let Some(record) = key
+            .as_object()
+            .filter(|object| object.len() == 1)
+            .and_then(|object| object.get("composite"))
+        {
+            ensure!(
+                is_shielded_coin_record_schema(record),
+                "Set composite schema is unsupported"
+            );
+            checked_record_schema(record)?;
+        } else {
+            ledger_key_type(key)?;
+        }
         return Ok(());
     }
     let parts = fields
@@ -2214,6 +2242,34 @@ fn validate_shielded_coin_cell(plan: &Plan, slot: u32) -> Result<()> {
     ensure!(
         is_shielded_coin_record_schema(record),
         "shielded coin Cell must use the fixed qualified coin record schema"
+    );
+    Ok(())
+}
+
+fn validate_shielded_coin_set(plan: &Plan, slot: u32) -> Result<()> {
+    ensure!(
+        plan.state.len() <= 16 && slot < 16,
+        "shielded coin Set slot exceeds the native state limit"
+    );
+    let declaration = plan
+        .state
+        .get(slot as usize)
+        .ok_or_else(|| anyhow!("shielded coin Set slot out of range"))?;
+    ensure!(!declaration.sealed, "shielded coin Set is sealed");
+    let schema = tree_schema_at_path(plan, slot, 0)?;
+    let set = schema
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .and_then(|object| object.get("set"))
+        .ok_or_else(|| anyhow!("shielded coin insertion requires a root Set"))?;
+    let record = set
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .and_then(|object| object.get("composite"))
+        .ok_or_else(|| anyhow!("shielded coin Set must store qualified coin records"))?;
+    ensure!(
+        is_shielded_coin_record_schema(record),
+        "shielded coin Set must use the fixed qualified coin record schema"
     );
     Ok(())
 }
@@ -2523,6 +2579,7 @@ fn mutates_contract_state(operation: &Instruction) -> bool {
             | Instruction::MerkleTreeResetHistory { .. }
             | Instruction::ReceiveShieldedToMap { .. }
             | Instruction::WriteShieldedCoinCell { .. }
+            | Instruction::InsertShieldedCoinSet { .. }
     )
 }
 
@@ -5091,6 +5148,13 @@ fn probe_instruction(
             amount,
             commitment,
             ..
+        }
+        | Instruction::InsertShieldedCoinSet {
+            nonce,
+            color,
+            amount,
+            commitment,
+            ..
         } => probe_expressions(
             [nonce, color, amount, commitment],
             plan,
@@ -7360,6 +7424,97 @@ impl PreparationCursor {
                 has_written = true;
                 insert
             }
+            Instruction::InsertShieldedCoinSet {
+                slot,
+                nonce,
+                color,
+                amount,
+                commitment,
+            } => {
+                validate_shielded_coin_set(plan, *slot)?;
+                let coin = ShieldedCoinInfo {
+                    nonce: Nonce(claim_hash_output(
+                        evaluate(nonce, &env)?,
+                        "shielded Set coin nonce",
+                    )?),
+                    type_: ShieldedTokenType(claim_hash_output(
+                        evaluate(color, &env)?,
+                        "shielded Set coin color",
+                    )?),
+                    value: unshielded_amount(amount, &env)?,
+                };
+                let recipient = Recipient::Contract(context.address);
+                let expected_commitment = claim_hash_output(
+                    evaluate(commitment, &env)?,
+                    "shielded Set coin commitment",
+                )?;
+                let coin_commitment = coin.commitment(&recipient);
+                ensure!(
+                    coin_commitment.0 == expected_commitment,
+                    "shielded coin Set commitment mismatch"
+                );
+                let qualified = context.qualify(&coin).ok_or_else(|| {
+                    anyhow!(
+                        "shielded coin Set commitment is absent from the current transaction"
+                    )
+                })?;
+                let qualified_key = AlignedValue::from(qualified);
+                ensure!(
+                    qualified_key.alignment.fits(&qualified_key.value),
+                    "shielded coin Set record alignment mismatch"
+                );
+
+                if has_written {
+                    advance_native_state_prefix(
+                        prefix_context,
+                        &program,
+                        &mut materialized_prefix,
+                        mutation_boundary,
+                        cost,
+                    )?;
+                }
+                let current = if has_written {
+                    &prefix_context
+                } else {
+                    &context
+                };
+                let set_state = read_state_value(current, *slot, &[])?;
+                let StateValue::Map(members) = &set_state else {
+                    bail!("shielded coin Set state is not a Map")
+                };
+                if let Some(marker) = members.get(&qualified_key) {
+                    ensure!(
+                        matches!(*marker, StateValue::Null),
+                        "shielded coin Set member marker is invalid"
+                    );
+                }
+
+                let path = vec![Key::Value(
+                    AlignedValue::from(u8::try_from(*slot)?)
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid shielded coin Set slot"))?,
+                )];
+                let set_ops = onchain_runtime::program_fragments::Set_insert_coin!(
+                    path,
+                    false,
+                    QualifiedInfo,
+                    coin,
+                    recipient
+                );
+                program.extend([
+                    set_ops[0].clone(),
+                    set_ops[1].clone(),
+                    set_ops[2].clone(),
+                    set_ops[3].clone(),
+                    set_ops[5].clone(),
+                    set_ops[6].clone(),
+                    set_ops[4].clone(),
+                    set_ops[7].clone(),
+                    set_ops[8].clone(),
+                ]);
+                has_written = true;
+                set_ops[9].clone()
+            }
             Instruction::SpendShieldedFromMap {
                 nonce,
                 color,
@@ -7931,6 +8086,7 @@ impl PreparationCursor {
                 | Instruction::MapRemove { .. }
                 | Instruction::ReceiveShieldedToMap { .. }
                 | Instruction::WriteShieldedCoinCell { .. }
+                | Instruction::InsertShieldedCoinSet { .. }
         ) {
             mutation_boundary = program.len();
         }

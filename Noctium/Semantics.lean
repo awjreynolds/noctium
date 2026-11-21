@@ -1152,6 +1152,8 @@ def runEffectsWithEnv (ctx : EvalContext) (effects : List Effect) (env : EvalEnv
       throw "reference evaluator does not execute cross-contract claims"
     | .receiveShieldedToMap .. =>
       throw "reference evaluator cannot determine the native shielded receive index"
+    | .insertShieldedCoinSet .. =>
+      throw "reference evaluator cannot determine the booked shielded coin index"
     | .writeShieldedCoinCell .. =>
       throw "reference evaluator cannot determine the booked shielded coin index"
     | .spendShieldedFromMap .. =>
@@ -1471,6 +1473,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           throw "reference evaluator does not execute cross-contract claims"
         | .receiveShieldedToMap .. =>
           throw "reference evaluator cannot determine the native shielded receive index"
+        | .insertShieldedCoinSet .. =>
+          throw "reference evaluator cannot determine the booked shielded coin index"
         | .writeShieldedCoinCell .. =>
           throw "reference evaluator cannot determine the booked shielded coin index"
         | .spendShieldedFromMap .. =>

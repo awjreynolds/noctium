@@ -320,6 +320,7 @@ scoped syntax "counter" ident : nlstate
 declare_syntax_cat nlcompositefield
 scoped syntax ident ":" nltype : nlcompositefield
 scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmerklespec
 scoped syntax num ("of" nltype)? : nlmerklespec
 scoped syntax num "of" "struct" ident "{" nlcompositefield* "}" : nlmerklespec
@@ -361,6 +362,7 @@ scoped syntax "claimContractCall" "(" nlexpr "," nlexpr "," nlexpr ")" : nlupdat
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "mintShielded" "(" nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "receiveShieldedToMap" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
+scoped syntax "insertShieldedCoinSet" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "writeShieldedCoinCell" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "spendShieldedFromMap" "(" ident "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "sendShieldedFromMap" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
@@ -1478,6 +1480,7 @@ private partial def lowerTreePath (env : Bindings) (schema : LedgerValueType)
   | value, [] => pure ([], value)
   | .scalar _, _ :: _ => throwError "nested map path continues through a scalar value"
   | .set _, _ :: _ => throwError "set members have no readable value"
+  | .shieldedCoinSet .., _ :: _ => throwError "qualified shielded coin Set members have no readable value"
   | .counter, _ :: _ => throwError "nested map path continues through a Counter value"
   | .composite .., _ :: _ => throwError "nested map path continues through a composite value"
   | .«list» .., _ :: _ => throwError "nested map path continues through a list value"
@@ -1968,6 +1971,7 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
   | .composite .. => throwErrorAt destination "native composite ledger reads require a named structure"
   | .map .. => throwErrorAt destination "nested map read must select a scalar or composite value"
   | .set _ => throwErrorAt destination "Set members do not have readable values"
+  | .shieldedCoinSet .. => throwErrorAt destination "Set members do not have readable values"
   | .«list» .. => throwErrorAt destination "List reads require head or length"
   | .merkleTree .. => throwErrorAt destination "MerkleTree values are read through their operations"
   | .counter => do
@@ -2441,6 +2445,36 @@ private def elaborateEffect (schema : List (String × StateKind))
       let noGuard ← `(none)
       state := {state with
         terms := state.terms.push relayTerm
+        spans := state.spans.push span
+        guards := state.guards.push noGuard}
+    | `(nlupdate| insertShieldedCoinSet($storage:ident, $nonce:nlexpr,
+        $color:nlexpr, $amount:nlexpr)) => do
+      unless depth == 0 do
+        throwErrorAt update "insertShieldedCoinSet must be unguarded"
+      match guard with
+      | `(term| none) => pure ()
+      | _ => throwErrorAt update "insertShieldedCoinSet must be unguarded"
+      let treeSchema ← treeStateSchema schema storage
+      let .shieldedCoinSet environment recordType := treeSchema
+        | throwErrorAt storage "insertShieldedCoinSet requires a root QualifiedShieldedCoinInfo Set"
+      match LedgerValueType.shieldedCoinRecordFields environment recordType with
+      | .ok _ => pure ()
+      | .error message => throwErrorAt storage message
+      let nonce ← checkedExpression state.env nonce (.bytes 32)
+      let color ← checkedExpression state.env color (.bytes 32)
+      let amount ← checkedExpression state.env amount (.uint (2 ^ 128 - 1))
+      let addressName := s!"noctium_coin_set_address_{state.terms.size}"
+      unless state.env.all (fun binding => binding.1 != addressName) do
+        throwErrorAt update "reserved insertShieldedCoinSet binding collides with an existing read"
+      let addressTerm ← `(Noctium.Effect.readContractAddress $(stringTerm addressName))
+      state := {state with terms := state.terms.push addressTerm}
+      state ← bindReadName state addressName addressName (.bytes 32)
+      let selfAddress ← `(@Noctium.Expr.ref (Noctium.Ty.bytes 32) $(stringTerm addressName))
+      let insertTerm ← `(Noctium.Effect.insertShieldedCoinSet
+        $(stringTerm storage.getId.toString) $nonce $color $amount $selfAddress)
+      let noGuard ← `(none)
+      state := {state with
+        terms := state.terms.push insertTerm
         spans := state.spans.push span
         guards := state.guards.push noGuard}
     | `(nlupdate| writeShieldedCoinCell($storage:ident, $nonce:nlexpr,
@@ -3213,6 +3247,16 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
       if let some (id, _, _, ty) := merkle then
         merkleLeafTypes := (id.getId.toString, ty) :: merkleLeafTypes
       let (id, kind, term) ← if let some (id, kind, term, _) := merkle then pure (id, kind, term) else match state with
+        | `(nlstate| set $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            elaborateNamedRecord contractName record recordFields state
+          match LedgerValueType.shieldedCoinRecordFields environment compositeType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
+          let valueSchema := LedgerValueType.shieldedCoinSet environment compositeType
+          let valueTerm ← `(Noctium.LedgerValueType.shieldedCoinSet $environmentTerm $compositeTypeTerm)
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←

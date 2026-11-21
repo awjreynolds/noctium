@@ -130,6 +130,7 @@ jobs:
           lake env lean tests/ShieldedMapPartialSpend.lean
           lake env lean tests/ShieldedImmediateRelay.lean
           lake env lean tests/QualifiedCoinCell.lean
+          lake env lean tests/QualifiedCoinSet.lean
           lake env lean tests/NativeTaggedSettlement.lean
           lake env lean tests/NativeUnshieldedSend.lean
           lake env lean tests/NativeUnshieldedMintRecipient.lean

@@ -225,6 +225,9 @@ inductive LedgerValueType where
   | scalar (ty : Ty)
   | map (keyTy : Ty) (value : LedgerValueType)
   | set (keyTy : Ty)
+  /-- The fixed QualifiedShieldedCoinInfo Set key supported by the native
+  `insertShieldedCoinSet` operation. General record-keyed Sets stay unsupported. -/
+  | shieldedCoinSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
   | composite (environment : Types.CompositeEnv) (type : Types.CompositeType)
   | list (environment : Types.CompositeEnv) (type : Types.CompositeType)
   | counter
@@ -255,6 +258,7 @@ def LedgerValueType.resolvePath (schema : LedgerValueType) : List PathKey →
       unless keyTy == expected do throw "nested map key type mismatch"
       value.resolvePath rest
     | .set _ => throw "set members have no readable value"
+    | .shieldedCoinSet .. => throw "qualified shielded coin Set members have no readable value"
     | .composite .. => throw "nested map path continues through a composite value"
     | .list .. => throw "nested map path continues through a list value"
     | .merkleTree .. => throw "nested map path continues through a MerkleTree value"
@@ -586,6 +590,11 @@ inductive Effect where
   The backend computes its commitment from the disclosed coin data and the
   contract address read from ledger context. -/
   | receiveShieldedToMap (state : String) (nonce color : Expr (.bytes 32))
+      (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
+  /-- Insert a coin whose self-recipient commitment is already booked in the
+  current transaction into a qualified-record Set. The runtime gets its index
+  from the transaction context. -/
+  | insertShieldedCoinSet (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
   /-- Store a coin whose self-recipient commitment is already booked in the
   current transaction. The runtime obtains its Ledger index from context. -/
@@ -1023,6 +1032,10 @@ def LedgerValueType.validate (caps : Capabilities) : LedgerValueType → Except 
   | .set keyTy => do
     validateLedgerMapKeyType keyTy
     keyTy.validate caps
+  | .shieldedCoinSet environment type => do
+    let fields ← LedgerValueType.shieldedCoinRecordFields environment type
+    for (_, ty) in fields do
+      ty.validate caps
   | .composite environment type => do
     let fields ← match LedgerValueType.recordFields environment type with
       | .ok fields => pure fields
@@ -1113,7 +1126,8 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
 
 private def Effect.writeTarget : Effect → Option String
   | .writeCell state _ _ | .writeMap state .. | .insertPath state .. | .writePath state .. |
-    .receiveShieldedToMap state .. | .sendShieldedFromMap state .. |
+    .receiveShieldedToMap state .. | .insertShieldedCoinSet state .. |
+    .sendShieldedFromMap state .. |
     .writeShieldedCoinCell state .. |
     .writeCompositePath state .. | .counterAdjust state .. | .counterReset state .. |
     .listPushFront state .. | .listPopFront state .. | .listReset state .. |
@@ -1310,6 +1324,18 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"unknown qualified shielded coin Cell '{state}'"
         let .tree (.composite compositeEnv recordType) := declaration.kind
           | throw s!"qualified shielded coin write requires a root composite Cell '{state}'"
+        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+        nonce.validate caps env
+        color.validate caps env
+        amount.validate caps env
+        selfAddress.validate caps env
+        pure []
+      | .insertShieldedCoinSet state nonce color amount selfAddress => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let some declaration := decls.find? (·.name == state)
+          | throw s!"unknown qualified shielded coin Set '{state}'"
+        let .tree (.shieldedCoinSet compositeEnv recordType) := declaration.kind
+          | throw s!"qualified shielded coin insertion requires a root record Set '{state}'"
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
         color.validate caps env

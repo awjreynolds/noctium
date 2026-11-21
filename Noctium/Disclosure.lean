@@ -223,6 +223,11 @@ def describeEffect : Effect → LedgerEffectDescriptor
     .publicEffect "receiveShieldedToMap" .asset .publicActivity sink
       [.selector "nonce" sink nonce, .selector "color" sink color,
        .payload "amount" sink amount, .selector "contractAddress" sink selfAddress] []
+  | .insertShieldedCoinSet _ nonce color amount selfAddress =>
+    let sink := "public qualified shielded coin Set insertion"
+    .publicEffect "insertShieldedCoinSet" .stateWrite .publicActivity sink
+      [.selector "nonce" sink nonce, .selector "color" sink color,
+       .payload "amount" sink amount, .selector "contractAddress" sink selfAddress] []
   | .writeShieldedCoinCell _ nonce color amount selfAddress =>
     let sink := "public qualified shielded coin Cell write"
     .publicEffect "writeShieldedCoinCell" .stateWrite .publicActivity sink

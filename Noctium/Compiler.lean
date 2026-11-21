@@ -302,6 +302,11 @@ private def operationJsonBare : Backend.Impact.Op → Json
       ("nonce", nativeExpressionJson nonce), ("color", nativeExpressionJson color),
       ("amount", nativeExpressionJson amount),
       ("commitment", nativeExpressionJson commitment)]
+  | .insertShieldedCoinSet slot nonce color amount commitment => Json.mkObj [
+      ("op", toJson ("insertShieldedCoinSet" : String)), ("slot", toJson slot),
+      ("nonce", nativeExpressionJson nonce), ("color", nativeExpressionJson color),
+      ("amount", nativeExpressionJson amount),
+      ("commitment", nativeExpressionJson commitment)]
   | .writeShieldedCoinCell slot nonce color amount commitment => Json.mkObj [
       ("op", toJson ("writeShieldedCoinCell" : String)), ("slot", toJson slot),
       ("nonce", nativeExpressionJson nonce), ("color", nativeExpressionJson color),
@@ -403,6 +408,10 @@ private def effectJson : Effect → Json
       ("commitment", expressionJson commitment)]
   | .receiveShieldedToMap state nonce color amount selfAddress => Json.mkObj [
       ("op", toJson ("receiveShieldedToMap" : String)), ("state", toJson state),
+      ("nonce", expressionJson nonce), ("color", expressionJson color),
+      ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)]
+  | .insertShieldedCoinSet state nonce color amount selfAddress => Json.mkObj [
+      ("op", toJson ("insertShieldedCoinSet" : String)), ("state", toJson state),
       ("nonce", expressionJson nonce), ("color", expressionJson color),
       ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)]
   | .writeShieldedCoinCell state nonce color amount selfAddress => Json.mkObj [
@@ -625,6 +634,8 @@ private def stateJson (state : StateDecl) : Json :=
     | .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
     | .map keyTy value => Json.mkObj [("map", toJson [toJson (typeName keyTy), treeJson value])]
     | .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
+    | .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
+        ("composite", compositeSchema environment type)])]
     | .composite environment type => Json.mkObj [("composite", compositeSchema environment type)]
     | .list environment type => Json.mkObj [("list", match type with
         | .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]

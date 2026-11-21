@@ -2279,8 +2279,8 @@
       "id": "C-ADT-SET-INSERTCOIN",
       "layer": "language-ledger",
       "surface": "Set.insertCoin",
-      "noctiumStatus": "missing",
-      "notes": "Qualified shielded-coin insertion requires a coin index allocated in the current transaction. Noctium supports ordinary Set insertion and has no qualified-coin insertion route.",
+      "noctiumStatus": "subset",
+      "notes": "A root Set accepts an exact QualifiedInfo record with a coin index booked for the current contract. The native query-context fixture preserves existing members, checks idempotent insertion, and rejects missing or wrong-recipient bookings. Finalized ledger execution and broader recipient cases remain open.",
       "source": [
         "adt"
       ],
@@ -2289,7 +2289,10 @@
         "ZK",
         "LEDGER"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/QualifiedCoinSet.lean",
+        "runtime/tests/qualified_coin_set.rs"
+      ],
       "equivalence": "unverified"
     },
     {
