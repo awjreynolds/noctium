@@ -206,11 +206,11 @@ UInt64, Native/Field, Boolean and Bytes4 cells. Run the
 The scalar fixture covers both guard outcomes. Aggregate Cell defaults and
 other type combinations need separate equivalence evidence.
 
-The Rust SDK deployed the seeded cells on Ledger 9.1.0.1 localnet at
-height 104 and finalized the active reset at height 107. The finalized
-contract bytes matched the predicted bytes at both heights. Native sizing
-reported K8 and 192 rows for `clear`. The inactive case was checked in the
-pinned native VM and Compact runtime. [Localnet receipt](native-cell-reset-localnet-receipt.json)
+Ledger 9.1.0.1 finalized the seed at height 49664, the inactive reset at
+49667, and the active reset at 49670. The inactive call preserved the exact
+finalized bytes. The active call wrote the canonical UInt64, Field, Bool and
+Bytes4 defaults. The `clear` circuit uses K8 and 192 rows.
+[Finalized receipt](native-cell-reset-localnet-receipt.json)
 
 ## Record standalone token mints
 
