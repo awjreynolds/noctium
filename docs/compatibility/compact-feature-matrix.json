@@ -2212,8 +2212,8 @@
       "id": "C-ADT-COUNTER-LESSTHAN",
       "layer": "language-ledger",
       "surface": "Counter.lessThan",
-      "noctiumStatus": "subset",
-      "notes": "Native strict comparison with a UInt64 expression works on standalone and nested Bytes8 Counters. Reads observe earlier updates. Equality and inactive reads bind false. Active missing or malformed values reject.",
+      "noctiumStatus": "equivalent",
+      "notes": "Native strict UInt64 comparison matches Compact for standalone and nested Counters, including equality, ordered updates and missing-path guards. The native checker also reaches UInt64 maximum. Ledger 9.1.0.1 finalized the standalone and nested circuits with exact predicted state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2225,9 +2225,12 @@
       "observedEvidence": [
         "tests/CounterCompare.lean",
         "runtime/tests/counter_compare.rs",
+        "tests/compact/counter-compare.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-compare-localnet-receipt.json",
         "docs/development/native-counter.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-READ",

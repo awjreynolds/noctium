@@ -1,0 +1,33 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger total: Counter;
+export ledger epochs: Map<Bytes<32>, Map<Bytes<32>, Counter>>;
+
+export circuit inspect(threshold: Uint<64>): [Uint<64>, Boolean] {
+  total.increment(300);
+  return [total.read(), total.lessThan(disclose(threshold))];
+}
+
+export circuit seedNested(owner: Bytes<32>, spender: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  const spenderKey = disclose(spender);
+  if (!epochs.member(ownerKey)) { epochs.insertDefault(ownerKey); }
+  if (!epochs.lookup(ownerKey).member(spenderKey)) {
+    epochs.lookup(ownerKey).insertDefault(spenderKey);
+  }
+  epochs.lookup(ownerKey).lookup(spenderKey).increment(300);
+}
+
+export circuit inspectNested(
+  owner: Bytes<32>,
+  spender: Bytes<32>,
+  threshold: Uint<64>,
+  enabled: Boolean,
+): [Boolean] {
+  if (disclose(enabled)) {
+    return [epochs.lookup(disclose(owner)).lookup(disclose(spender)).lessThan(disclose(threshold))];
+  } else {
+    return [false];
+  }
+}
