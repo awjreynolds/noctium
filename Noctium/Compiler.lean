@@ -756,6 +756,16 @@ private def constructorMapInsertJson (insertion : ConstructorMapInsert) : Json :
   ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression),
   ("value", nativeExpressionJson insertion.value)]
 
+private def constructorCounterIncrementJson (action : ConstructorCounterIncrement) : Json :=
+  Json.mkObj [
+    ("state", toJson action.state),
+    ("amount", nativeExpressionJson action.amount)]
+
+private def constructorListPushJson (push : ConstructorListPush) : Json :=
+  Json.mkObj [
+    ("state", toJson push.state),
+    ("value", nativeExpressionJson push.value)]
+
 private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [
     ("name", toJson parameter.name), ("type", toJson (constructorTypeName parameter.type))])),
@@ -764,7 +774,11 @@ private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
     ("type", toJson (constructorTypeName initializer.type)),
     ("value", constructorValueJson initializer.value)]))] ++
   (if ctor.mapInserts.isEmpty then [] else [
-    ("mapInserts", toJson (ctor.mapInserts.map constructorMapInsertJson))]))
+    ("mapInserts", toJson (ctor.mapInserts.map constructorMapInsertJson))]) ++
+  (if ctor.counterIncrements.isEmpty then [] else [
+    ("counterIncrements", toJson (ctor.counterIncrements.map constructorCounterIncrementJson))]) ++
+  (if ctor.listPushes.isEmpty then [] else [
+    ("listPushes", toJson (ctor.listPushes.map constructorListPushJson))]))
 
 private def jsonLetParts (expression : Json) : Except String (Array Json × Json) := do
   let tag ← (← expression.getObjVal? "tag").getStr?
