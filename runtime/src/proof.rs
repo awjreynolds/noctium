@@ -854,6 +854,30 @@ impl ContractOperationTarget {
         inputs: BTreeMap<String, Json>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<PreparedProof> {
+        self.prepare_call_with_block(current_state, parameters, inputs, None, rng)
+    }
+
+    /// Prepare a call using the explicit prospective block context supplied by the host.
+    /// Ledger execution rechecks any clock predicate in the resulting transcript.
+    pub fn prepare_call_in_block(
+        &self,
+        current_state: &mut Option<CurrentStateContext>,
+        parameters: &TrustedParameters,
+        inputs: BTreeMap<String, Json>,
+        block: &BlockContext,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<PreparedProof> {
+        self.prepare_call_with_block(current_state, parameters, inputs, Some(block), rng)
+    }
+
+    fn prepare_call_with_block(
+        &self,
+        current_state: &mut Option<CurrentStateContext>,
+        parameters: &TrustedParameters,
+        inputs: BTreeMap<String, Json>,
+        block: Option<&BlockContext>,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<PreparedProof> {
         let mut inputs = SecretInputs(inputs);
         if parameters.k() != self.k || parameters.sha256() != self.proof_parameters_sha256 {
             return Err(Error::InvalidParameters);
@@ -862,10 +886,11 @@ impl ContractOperationTarget {
         if !self.context_matches(state) {
             return Err(Error::BindingMismatch);
         }
-        let prepared = PreparedProof::from_contract_witness_inputs(
+        let prepared = PreparedProof::from_contract_witness_inputs_with_block(
             self,
             state,
             std::mem::take(&mut inputs.0),
+            block,
             rng,
         )?;
         current_state.take().ok_or(Error::BindingMismatch)?;
@@ -1730,11 +1755,22 @@ impl PreparedProof {
         inputs: BTreeMap<String, Json>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<Self> {
-        Self::from_contract_witness_inputs_with_com_indices(
+        Self::from_contract_witness_inputs_with_block(target, current, inputs, None, rng)
+    }
+
+    pub(crate) fn from_contract_witness_inputs_with_block(
+        target: &ContractOperationTarget,
+        current: &CurrentStateContext,
+        inputs: BTreeMap<String, Json>,
+        block: Option<&BlockContext>,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<Self> {
+        Self::from_contract_witness_inputs_with_context(
             target,
             current,
             inputs,
             Map::new(),
+            block,
             rng,
         )
     }
@@ -1744,6 +1780,24 @@ impl PreparedProof {
         current: &CurrentStateContext,
         inputs: BTreeMap<String, Json>,
         com_indices: Map<Commitment, u64, Db>,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<Self> {
+        Self::from_contract_witness_inputs_with_context(
+            target,
+            current,
+            inputs,
+            com_indices,
+            None,
+            rng,
+        )
+    }
+
+    fn from_contract_witness_inputs_with_context(
+        target: &ContractOperationTarget,
+        current: &CurrentStateContext,
+        inputs: BTreeMap<String, Json>,
+        com_indices: Map<Commitment, u64, Db>,
+        block: Option<&BlockContext>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<Self> {
         let mut inputs = SecretInputs(inputs);
@@ -1779,6 +1833,7 @@ impl PreparedProof {
             &target.inner.ready_state,
             &current.state,
             &com_indices,
+            block,
             rng,
         )
         .map_err(|_| Error::InvalidPrivateInput)?;

@@ -888,6 +888,7 @@ pub(crate) fn prepare_call_for_current_state(
         &ready,
         current,
         &Map::new(),
+        None,
         rng,
     )
 }
@@ -907,6 +908,7 @@ pub(crate) fn prepare_call_for_ready_state(
     ready: &ContractState<Db>,
     current: &ContractState<Db>,
     com_indices: &BookedComIndices,
+    block: Option<&BlockContext>,
     rng: &mut (impl Rng + CryptoRng),
 ) -> Result<(NativeIntent, ContractState<Db>)> {
     let built = build_ready_state_call(
@@ -922,6 +924,7 @@ pub(crate) fn prepare_call_for_ready_state(
         ready,
         current,
         com_indices,
+        block,
         None,
         None,
         rng,
@@ -959,6 +962,7 @@ pub(crate) fn prepare_checked_call_for_ready_state(
         ready,
         current,
         com_indices,
+        None,
         caller,
         communication_commitment_rand,
         rng,
@@ -985,6 +989,7 @@ fn build_ready_state_call(
     ready: &ContractState<Db>,
     current: &ContractState<Db>,
     com_indices: &BookedComIndices,
+    block: Option<&BlockContext>,
     caller: Option<PublicAddress>,
     communication_commitment_rand: Option<Fr>,
     rng: &mut (impl Rng + CryptoRng),
@@ -1033,7 +1038,7 @@ fn build_ready_state_call(
         entry,
         (**deployment).clone(),
         Some(target.intent()),
-        None,
+        block,
         com_indices,
         caller,
         communication_commitment_rand,

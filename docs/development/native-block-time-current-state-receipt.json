@@ -1,0 +1,14 @@
+{
+  "bundleManifestSha256": "b27011ff68cfce5866d88d4a894a9e7fbbcc4924418068e344232c214e559f26",
+  "callHeight": 49886,
+  "callTransactionId": "c5a2f7392f6b69fa38d5c415a1d953409f68980c2c77016aeee3d17cf9876015",
+  "contextBoundCallPreservedState": true,
+  "contractAddress": "0987e8b4661d970b1e789485e99f2d96abf4ea08358a11ec97b8cfa7e997a1f2",
+  "deploymentHeight": 49883,
+  "entrypoint": "NativeBlockTime.checkTime",
+  "k": 8,
+  "ledger": "9.1.0.1",
+  "missingContextRetainedToken": true,
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "sourceBlockTimeUnixSeconds": "1795299120"
+}
