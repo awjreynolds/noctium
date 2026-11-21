@@ -124,6 +124,15 @@ count and private fixture value to 9. The test rejected a crossed callback
 reply and retried the same valid response after releasing a full result
 queue. [Finalized typed witness receipts and artifact pins](typed-multi-entry-cpp-receipts.json)
 
+## Read Counter snapshots
+
+`noctium_ledger_counter_get` reads a root or nested Counter from the tagged
+contract-state snapshot. Supply the trusted plan and snapshot SHA-256 digests.
+Use an empty `keys` array for a root Counter or pass the typed public Map keys
+in traversal order. The getter returns the UInt64 as a decimal string through
+the native result handle, preserving values above JavaScript’s safe integer
+range. It uses the supplied snapshot for the entire read. [C header](../../runtime/include/noctium_native.h) · [Native tests](../../runtime/tests/counter_snapshot_ffi.rs)
+
 ## Read Merkle snapshots
 
 `noctium_ledger_collection_page` reads ordinary and historic Merkle trees

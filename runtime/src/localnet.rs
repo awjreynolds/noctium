@@ -2309,6 +2309,126 @@ mod tests {
     }
 
     #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeMapReset bundles and the funded development node"]
+    fn native_map_reset_finalizes_an_exact_empty_state() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use storage::storage::HashMap;
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_MAP_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_MAP_RESET_MANIFESTS")?)?;
+            let bundle = |operation: &str| {
+                let pin = pins
+                    .get(operation)
+                    .with_context(|| format!("missing {operation} manifest pin"))?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(operation),
+                    Some(pin),
+                )?)
+            };
+            let seed_bundle = bundle("seed")?;
+            let clear_bundle = bundle("clearMap")?;
+            let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_degree = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MAP_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_MAP_RESET_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let clear_parameters = cache.parameters(clear_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"values":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let clear_map = target.operation("clearMap", &clear_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            let mut current = Some(deployed);
+            let seed_inputs = |key: u64, amount: u64| {
+                BTreeMap::from([
+                    ("key".into(), json!(key.to_string())),
+                    ("amount".into(), json!(amount.to_string())),
+                ])
+            };
+            let first = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs(1, 19))
+                .await?;
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs(2, 23))
+                .await?;
+            let seeded_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
+            let StateValue::Array(slots) = seeded_state.data.get_ref() else {
+                anyhow::bail!("expected native state slots")
+            };
+            let Some(StateValue::Map(values)) = slots.get(0) else {
+                anyhow::bail!("expected seeded Map")
+            };
+            ensure!(values.size() == 2, "expected two seeded Map entries");
+            for (key, expected) in [(1u64, 19u64), (2, 23)] {
+                let entry = values.get(&crate::field_value(Fr::from(key)));
+                let Some(StateValue::Cell(value)) = entry.as_deref() else {
+                    anyhow::bail!("expected seeded Map cell for key {key}")
+                };
+                ensure!(
+                    **value == crate::field_value(Fr::from(expected)),
+                    "seeded Map value differs for key {key}"
+                );
+            }
+
+            let cleared = funded
+                .call(
+                    &clear_map,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("key".into(), json!("1"))]),
+                )
+                .await?;
+            let final_state: ContractState<Db> = native_decode(&cleared.contract_state)?;
+            let expected_empty: StateValue<Db> =
+                StateValue::Array(vec![StateValue::Map(HashMap::new())].into());
+            ensure!(
+                *final_state.data.get_ref() == expected_empty,
+                "clearMap did not finalize the exact empty Map state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeights": [first.height, seeded.height],
+                    "clearMapHeight": cleared.height,
+                    "transactionIds": [first.transaction_id, seeded.transaction_id, cleared.transaction_id],
+                    "seededEntries": 2,
+                    "finalEntries": 0,
+                    "exactEmptyStateAccepted": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seed": seed_degree, "clearMap": clear_degree},
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
     struct FundedLedgerTest {
         node: Node,
         dust: crate::funding::DustMaterial,
@@ -2468,6 +2588,191 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires authenticated NativeMapDefault bundles and the funded development node"]
+    fn native_map_default_inserts_and_preserves_siblings() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_MAP_DEFAULT_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_MAP_DEFAULT_MANIFESTS")?)?;
+            let entries = [
+                "seed",
+                "defaultValue",
+                "clear",
+                "defaults",
+                "missingParent",
+                "defaultHistoric",
+                "appendHistoric",
+                "checkHistoricZero",
+                "resetHistoric",
+            ];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut degrees = BTreeMap::<String, u8>::new();
+            let mut plans = BTreeMap::<String, crate::Plan>::new();
+            for entry in entries {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                if matches!(entry, "seed" | "defaultValue") {
+                    degrees.insert(
+                        entry.to_owned(),
+                        IrSource::load(bundle.file(Role::Circuit)?)?.k(),
+                    );
+                    plans.insert(
+                        entry.to_owned(),
+                        serde_json::from_slice(bundle.file(Role::Plan)?)?,
+                    );
+                }
+                bundles.push(bundle);
+            }
+            let seed_degree = degrees["seed"];
+            let default_degree = degrees["defaultValue"];
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MAP_DEFAULT_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_MAP_DEFAULT_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let default_parameters = cache.parameters(default_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let empty_state_config = br#"{
+                "state": {
+                    "values": [],
+                    "nestedValues": [],
+                    "nestedMaps": [],
+                    "sets": [],
+                    "lists": [],
+                    "counters": [],
+                    "ordinary": [],
+                    "historic": [],
+                    "records": []
+                }
+            }"#;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                empty_state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let default = target.operation("defaultValue", &default_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            let mut current = Some(deployed);
+            let inputs = |plan: &crate::Plan, key: u64, amount: u64| {
+                plan.circuit
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        let value = match input.name.as_str() {
+                            "owner" => json!({"kind":"bytes","values":vec![7u8;32]}),
+                            "key" => json!(key.to_string()),
+                            "amount" => json!(amount.to_string()),
+                            "enabled" => json!(true),
+                            other => panic!("unexpected NativeMapDefault input {other}"),
+                        };
+                        (input.name.clone(), value)
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
+            let assert_values = |receipt: &FinalizedReceipt, expected: &[(u64, u64)]| {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots")
+                };
+                let Some(StateValue::Map(values)) = slots.get(0) else {
+                    anyhow::bail!("expected root values Map in slot zero")
+                };
+                ensure!(
+                    values.size() == expected.len(),
+                    "Map entry count differs from expected finalized state"
+                );
+                for &(key, amount) in expected {
+                    let entry = values.get(&crate::field_value(Fr::from(key)));
+                    let Some(StateValue::Cell(value)) = entry.as_deref() else {
+                        anyhow::bail!("expected Map cell at key {key}")
+                    };
+                    ensure!(
+                        **value == crate::field_value(Fr::from(amount)),
+                        "finalized Map value differs at key {key}"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+
+            let seeded_one = funded
+                .call(
+                    &seed,
+                    &mut current,
+                    &seed_parameters,
+                    inputs(&plans["seed"], 1, 19),
+                )
+                .await?;
+            let seeded = funded
+                .call(
+                    &seed,
+                    &mut current,
+                    &seed_parameters,
+                    inputs(&plans["seed"], 2, 23),
+                )
+                .await?;
+            assert_values(&seeded, &[(1, 19), (2, 23)])?;
+            let inserted_default = funded
+                .call(
+                    &default,
+                    &mut current,
+                    &default_parameters,
+                    inputs(&plans["defaultValue"], 3, 99),
+                )
+                .await?;
+            assert_values(&inserted_default, &[(1, 19), (2, 23), (3, 0)])?;
+            let replaced = funded
+                .call(
+                    &default,
+                    &mut current,
+                    &default_parameters,
+                    inputs(&plans["defaultValue"], 1, 99),
+                )
+                .await?;
+            assert_values(&replaced, &[(1, 0), (2, 23), (3, 0)])?;
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeights": [seeded_one.height, seeded.height],
+                    "missingDefaultHeight": inserted_default.height,
+                    "replacementHeight": replaced.height,
+                    "transactionIds": [seeded_one.transaction_id, seeded.transaction_id, inserted_default.transaction_id, replaced.transaction_id],
+                    "finalValues": [[1, 0], [2, 23], [3, 0]],
+                    "missingKeyInsertedAsZero": true,
+                    "nonzeroKeyReplacedWithZero": true,
+                    "siblingValuesPreserved": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seed": seed_degree, "defaultValue": default_degree},
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated CounterCompare bundles and the funded development node"]
     fn counter_comparison_finalizes_on_ledger() -> anyhow::Result<()> {
         use crate::zkir::IrSource;
@@ -2601,6 +2906,153 @@ mod tests {
                     "exactPredictedStateAccepted": true,
                     "bundleManifestSha256": manifest_pins,
                     "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated CounterAmounts bundles and the funded development node"]
+    fn counter_amounts_finalize_dynamic_updates_on_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::AlignedValue;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_COUNTER_AMOUNTS_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_COUNTER_AMOUNTS_MANIFESTS")?)?;
+            let entries = ["apply", "reduce", "guarded"];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut degrees = BTreeMap::new();
+            for entry in entries {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                degrees.insert(entry, IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_COUNTER_AMOUNTS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_COUNTER_AMOUNTS_NODE")?, &cache)
+                    .await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, degree) in &degrees {
+                parameters.insert(*entry, cache.parameters(*degree).await?);
+            }
+
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"total":"10","epochs":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let apply = target.operation("apply", &parameters["apply"], ttl)?;
+            let reduce = target.operation("reduce", &parameters["reduce"], ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "apply").await?;
+            let mut current = Some(deployed);
+
+            let inputs = |amount: u16| {
+                BTreeMap::from([
+                    ("owner".into(), json!({"kind":"bytes","values":vec![4; 32]})),
+                    (
+                        "spender".into(),
+                        json!({"kind":"bytes","values":vec![7; 32]}),
+                    ),
+                    ("amount".into(), json!(amount.to_string())),
+                    ("enabled".into(), json!(true)),
+                ])
+            };
+            ensure!(
+                matches!(
+                    reduce.prepare_call(&mut current, &parameters["reduce"], inputs(1), &mut rng),
+                    Err(crate::proof::Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "reducing an uninitialized nested Counter path must reject before submission and retain its state token"
+            );
+
+            let zero = funded
+                .call(&apply, &mut current, &parameters["apply"], inputs(0))
+                .await?;
+            let increased = funded
+                .call(&apply, &mut current, &parameters["apply"], inputs(3))
+                .await?;
+            let reduced = funded
+                .call(&reduce, &mut current, &parameters["reduce"], inputs(2))
+                .await?;
+
+            let assert_finalized = |receipt: &FinalizedReceipt, total: u64, epoch: Option<u64>| {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native CounterAmounts state slots")
+                };
+                let Some(StateValue::Cell(counter)) = slots.get(0) else {
+                    anyhow::bail!("expected standalone Counter")
+                };
+                ensure!(
+                    **counter == AlignedValue::from(total),
+                    "finalized standalone Counter differs from {total}"
+                );
+                let Some(StateValue::Map(owners)) = slots.get(1) else {
+                    anyhow::bail!("expected nested Counter map")
+                };
+                let owner = owners.get(&AlignedValue::from([4u8; 32]));
+                match (owner.as_deref(), epoch) {
+                    (None, None) => {}
+                    (Some(StateValue::Map(spenders)), Some(expected)) => {
+                        let spender = spenders.get(&AlignedValue::from([7u8; 32]));
+                        let Some(StateValue::Cell(counter)) = spender.as_deref() else {
+                            anyhow::bail!("expected nested spender Counter")
+                        };
+                        ensure!(
+                            **counter == AlignedValue::from(expected),
+                            "finalized nested Counter differs from {expected}"
+                        );
+                    }
+                    _ => anyhow::bail!("nested Counter presence differs from expectation"),
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            assert_finalized(&deployment, 10, None)?;
+            assert_finalized(&zero, 10, Some(0))?;
+            assert_finalized(&increased, 13, Some(3))?;
+            assert_finalized(&reduced, 11, Some(1))?;
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "callHeights": [zero.height, increased.height, reduced.height],
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                    "operations": ["apply(amount=0)", "apply(amount=3)", "reduce(amount=2)"],
+                    "uninitializedReduceRejectedBeforeSubmission": true,
+                    "finalizedStates": [
+                        {"total":10,"nested":null},
+                        {"total":10,"nested":0},
+                        {"total":13,"nested":3},
+                        {"total":11,"nested":1}
+                    ]
                 })
             );
             Ok(())

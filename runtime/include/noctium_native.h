@@ -201,6 +201,27 @@ int32_t noctium_ledger_collection_page(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Read one UInt64 Counter from a pinned, canonical contract-state snapshot.
+   Request UTF-8 JSON (unknown fields reject):
+     {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
+      "stateSha256":"<lowercase SHA-256>","name":"<state name>",
+      "keys":[{"type":"<Noctium scalar type>","value":<canonical JSON>}]}
+   Plan and snapshot use the exact byte encodings and caller-supplied digest
+   provenance described for noctium_ledger_collection_page. Use an empty keys
+   array for a root Counter. For a Counter nested under Maps, provide one typed
+   key for each enclosing Map. The resolved declaration and stored value must
+   both use the Counter schema and canonical UInt64 storage alignment.
+   On success, out_result owns a copied JSON result under the native result
+   handle API: {"abiVersion":1,"kind":"counter","value":"<UInt64>"}.
+   Request, plan and snapshot limits match noctium_ledger_collection_page.
+   This getter reads the supplied immutable snapshot and does not contact or
+   mutate the ledger. */
+int32_t noctium_ledger_counter_get(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 
 /* Typed source witness handoff, additive to phase A. Prepare a target before source
    providers run. The helper authenticates the selected bundle and SRS, reads only
