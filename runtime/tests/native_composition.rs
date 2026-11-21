@@ -707,6 +707,13 @@ fn composed_call_finalizes_with_a_ledger_authenticated_parent() {
 
 #[cfg(feature = "localnet")]
 #[test]
+#[ignore = "uses the isolated development wallet and typed caller composition bundles"]
+fn composed_call_claims_typed_caller_outputs_and_rejects_a_wrong_parent() {
+    run_local_composition(LocalCase::TypedCaller);
+}
+
+#[cfg(feature = "localnet")]
+#[test]
 #[ignore = "uses the isolated development wallet and aggregate result bundles"]
 fn composed_call_finalizes_with_named_aggregate_results() {
     run_local_composition(LocalCase::Aggregate);
@@ -725,6 +732,7 @@ enum LocalCase {
     Independent,
     Registry,
     Caller,
+    TypedCaller,
     Aggregate,
     Interface,
 }
@@ -827,6 +835,7 @@ fn run_local_composition(case: LocalCase) {
             | LocalCase::Interface => {}
             LocalCase::Registry => return qualify_registry(&node, deploy, submit).await,
             LocalCase::Caller => return qualify_caller(&node, deploy, submit).await,
+            LocalCase::TypedCaller => return qualify_typed_caller(&node, deploy, submit).await,
         }
         let independent = matches!(case, LocalCase::Independent);
         let aggregate = matches!(case, LocalCase::Aggregate);
@@ -1159,6 +1168,196 @@ async fn qualify_caller(
             "blockHash": receipt.block_hash, "transactionId": receipt.transaction_id, "extrinsicHash": receipt.extrinsic_hash,
             "caller": {"address":receipt.contract_address,"deploymentHeight":parent_deployed.height},
             "callee": {"address":address,"deploymentHeight":child_deployed.height,"balance":"13"},
+        })
+    );
+}
+
+#[cfg(feature = "localnet")]
+async fn qualify_typed_caller(
+    node: &noctium_runtime::localnet::Node,
+    deploy: impl AsyncFn(&ContractDeploy<Db>) -> noctium_runtime::client::FinalizedReceipt,
+    submit: impl AsyncFn(
+        &noctium_runtime::proof::ProvedNativeIntent,
+    ) -> noctium_runtime::client::FinalizedReceipt,
+) {
+    use coin_structure::coin::PublicAddress;
+    use futures::future::pending;
+    use noctium_runtime::prepare_with_context;
+
+    let reporter = Operation::load(
+        "caller",
+        "forward",
+        BTreeMap::from([(
+            "observedCaller".into(),
+            bytes32(HashOutput([0; 32])),
+        )]),
+    );
+    let reporter_address = reporter.deploy.address();
+    let lookup = Operation::load(
+        "callee",
+        "lookup",
+        BTreeMap::from([("recorded".into(), json!(false))]),
+    );
+    let lookup_address = lookup.deploy.address();
+    let reporter_deployment = deploy(&reporter.deploy).await;
+    let lookup_deployment = deploy(&lookup.deploy).await;
+    let live = node.sync().unwrap();
+    let ttl = live.block.tblock.to_secs() + 1800;
+    let reporter_data = live
+        .state
+        .contract
+        .get(&reporter_address)
+        .unwrap()
+        .data
+        .clone();
+    let lookup_data = live
+        .state
+        .contract
+        .get(&lookup_address)
+        .unwrap()
+        .data
+        .clone();
+    let reporter_inputs = |expected_parent: ContractAddress| {
+        BTreeMap::from([
+            ("target".into(), bytes32(lookup_address.0)),
+            ("opening".into(), json!("101")),
+            ("expectedParent".into(), bytes32(expected_parent.0)),
+        ])
+    };
+    let lookup_inputs = BTreeMap::from([("enabled".into(), json!(true))]);
+    let mut lookup_context = QueryContext::new(lookup_data.clone(), lookup_address);
+    lookup_context.call_context.caller = Some(PublicAddress::Contract(reporter_address));
+    let lookup_execution = prepare_with_context(
+        &lookup.plan,
+        &lookup_inputs,
+        lookup_context.clone(),
+        &live.state.parameters,
+    )
+    .unwrap();
+    assert_eq!(
+        check(&lookup_execution, &lookup.circuit).unwrap(),
+        lookup_execution.activity_schedule
+    );
+    assert_eq!(
+        lookup_execution.returns_json(),
+        BTreeMap::from([
+            ("hasCaller".into(), json!(true)),
+            ("contractCaller".into(), json!(true)),
+            ("callerContract".into(), bytes32(reporter_address.0)),
+            ("callerUser".into(), bytes32(HashOutput([0; 32]))),
+        ])
+    );
+    assert_eq!(
+        lookup_execution.after.state,
+        create_state(&lookup.plan, &BTreeMap::from([("recorded".into(), json!(true))])).unwrap()
+    );
+
+    let reporter_execution = prepare(
+        &reporter.plan,
+        &reporter_inputs(reporter_address),
+        &reporter_data,
+        &live.state.parameters,
+        reporter_address,
+    )
+    .unwrap();
+    assert_eq!(
+        check(&reporter_execution, &reporter.circuit).unwrap(),
+        reporter_execution.activity_schedule
+    );
+    assert_eq!(
+        reporter_execution.after.state,
+        create_state(
+            &reporter.plan,
+            &BTreeMap::from([("observedCaller".into(), bytes32(reporter_address.0))]),
+        )
+        .unwrap()
+    );
+    let lookup_call = || CheckedNativeCall {
+        execution: &lookup_execution,
+        circuit: &lookup.circuit,
+        initial_context: lookup_context.clone(),
+        entry_point: lookup.entry.clone(),
+        communication_commitment_rand: Fr::from(101u64),
+    };
+    let reporter_call = |execution| {
+        checked_call(
+            execution,
+            &reporter.circuit,
+            reporter_data.clone(),
+            reporter_address,
+            reporter.entry.clone(),
+            Fr::from(73u64),
+        )
+    };
+    let wrong_parent = ContractAddress(HashOutput([0xff; 32]));
+    assert_ne!(wrong_parent, reporter_address);
+    let wrong_execution = prepare(
+        &reporter.plan,
+        &reporter_inputs(wrong_parent),
+        &reporter_data,
+        &live.state.parameters,
+        reporter_address,
+    )
+    .unwrap();
+    check(&wrong_execution, &reporter.circuit).unwrap();
+    assert!(
+        assemble_checked_calls(
+            &[reporter_call(&wrong_execution), lookup_call()],
+            &live.state.parameters,
+            ttl,
+            &mut OsRng,
+        )
+        .is_err(),
+        "a reporter claiming a different expected parent must fail composition validation"
+    );
+
+    let intent = assemble_checked_calls(
+        &[reporter_call(&reporter_execution), lookup_call()],
+        &live.state.parameters,
+        ttl,
+        &mut OsRng,
+    )
+    .unwrap();
+    let selected = [reporter.proof_selection(), lookup.proof_selection()];
+    let prepared = PreparedComposition::from_intent(intent, &live.state, &selected).unwrap();
+    let proved = prepared.prove_locally(OsRng, pending()).await.unwrap();
+    let receipt = submit(proved.native()).await;
+
+    let expected_reporter = create_state(
+        &reporter.plan,
+        &BTreeMap::from([("observedCaller".into(), bytes32(reporter_address.0))]),
+    )
+    .unwrap();
+    let finalized_reporter = serialize::tagged_deserialize::<ContractState<Db>>(
+        &mut receipt.contract_state.as_slice(),
+    )
+    .unwrap();
+    assert_eq!(receipt.contract_address, hex::encode(reporter_address.0.0));
+    assert_eq!(finalized_reporter.data, expected_reporter);
+    assert_eq!(receipt.secondary_states.len(), 1);
+    let lookup_bytes = &receipt.secondary_states[&hex::encode(lookup_address.0.0)];
+    let finalized_lookup =
+        serialize::tagged_deserialize::<ContractState<Db>>(&mut lookup_bytes.as_slice()).unwrap();
+    let expected_lookup =
+        create_state(&lookup.plan, &BTreeMap::from([("recorded".into(), json!(true))])).unwrap();
+    assert_eq!(finalized_lookup.data, expected_lookup);
+    eprintln!(
+        "{}",
+        json!({
+            "genesis": receipt.chain.genesis,
+            "profile": receipt.chain.profile,
+            "height": receipt.height,
+            "blockHash": receipt.block_hash,
+            "transactionId": receipt.transaction_id,
+            "extrinsicHash": receipt.extrinsic_hash,
+            "deployments": [
+                {"role":"caller","address":hex::encode(reporter_address.0.0),"height":reporter_deployment.height,"transactionId":reporter_deployment.transaction_id},
+                {"role":"callee","address":hex::encode(lookup_address.0.0),"height":lookup_deployment.height,"transactionId":lookup_deployment.transaction_id},
+            ],
+            "reporterObservedCaller": hex::encode(reporter_address.0.0),
+            "calleeRecorded": true,
+            "typedCallerReturnsMatched": true,
+            "wrongExpectedParentRejectedBeforeSubmission": true,
         })
     );
 }
