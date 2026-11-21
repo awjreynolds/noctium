@@ -1276,7 +1276,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed cell initializers, and direct inserts into flat scalar Maps. Constructor metadata drives native genesis-state construction. The native checker and Compact 0.36.1 agree for one seeded Field-to-UInt64 Map and an adjacent default-empty Map. Funded Map execution, other layouts, helper initialization, and private constructor callbacks remain open.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed cell initializers, and direct inserts into flat scalar Maps. The native checker and Compact 0.36.1 agree for a seeded Field-to-UInt64 Map and an adjacent default-empty Map. Funded deployment at localnet height 50646 matched the exact native constructor state. A lookup finalized at 50649 with the same state digest. Other layouts, helper initialization, and private constructor callbacks remain open.",
       "source": [
         "reference"
       ],
@@ -1294,6 +1294,8 @@
         "tests/SealedMapConstructor.lean",
         "tests/compact/sealed-map-constructor.mjs",
         "runtime/tests/sealed_map_constructor.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/sealed-map-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"
@@ -1303,7 +1305,7 @@
       "layer": "language-ledger",
       "surface": "Sealed ledger fields",
       "noctiumStatus": "subset",
-      "notes": "Noctium supports sealed scalar and OpaqueString cells and flat scalar Maps. Maps permit default-empty state, typed constructor inserts, and entrypoint/helper reads. Source checks reject entrypoint and helper writes. The native and Compact 0.36.1 fixtures preserve seeded and empty Field-to-UInt64 Maps during an unrelated write. The native runtime rejects an attempted Map mutation. Funded Map execution and sealing other ledger types remain open.",
+      "notes": "Noctium supports sealed scalar and OpaqueString cells and flat scalar Maps. Maps permit default-empty state, typed constructor inserts, and entrypoint/helper reads. Source checks reject entrypoint and helper writes. The native and Compact 0.36.1 fixtures preserve seeded and empty Field-to-UInt64 Maps during an unrelated write. The native runtime rejects an attempted Map mutation. A funded lookup preserved both Maps exactly at localnet height 50649. Additional Map layouts and sealing other ledger types remain open.",
       "source": [
         "reference"
       ],
@@ -1321,6 +1323,8 @@
         "tests/SealedMapConstructor.lean",
         "tests/compact/sealed-map-constructor.mjs",
         "runtime/tests/sealed_map_constructor.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/sealed-map-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"
