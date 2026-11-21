@@ -213,6 +213,7 @@ jobs:
           lake env lean tests/OpaqueStringMap.lean
           lake env lean tests/OpaqueCells.lean
           lake env lean tests/ConstructorMetadata.lean
+          lake env lean tests/SealedMapConstructor.lean
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
           lake env lean tests/Issue43MapMembership.lean

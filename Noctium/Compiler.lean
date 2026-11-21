@@ -751,13 +751,20 @@ private def constructorValueJson : ConstructorValue → Json
       ("kind", toJson ("opaqueStringLiteral" : String)),
       ("value", toJson value)]
 
-private def constructorJson (ctor : Constructor) : Json := Json.mkObj [
+private def constructorMapInsertJson (insertion : ConstructorMapInsert) : Json := Json.mkObj [
+  ("state", toJson insertion.state),
+  ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression),
+  ("value", nativeExpressionJson insertion.value)]
+
+private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [
     ("name", toJson parameter.name), ("type", toJson (constructorTypeName parameter.type))])),
   ("initializers", toJson (ctor.initializers.map fun initializer => Json.mkObj [
     ("state", toJson initializer.state),
     ("type", toJson (constructorTypeName initializer.type)),
-    ("value", constructorValueJson initializer.value)]))]
+    ("value", constructorValueJson initializer.value)]))] ++
+  (if ctor.mapInserts.isEmpty then [] else [
+    ("mapInserts", toJson (ctor.mapInserts.map constructorMapInsertJson))]))
 
 private def jsonLetParts (expression : Json) : Except String (Array Json × Json) := do
   let tag ← (← expression.getObjVal? "tag").getStr?

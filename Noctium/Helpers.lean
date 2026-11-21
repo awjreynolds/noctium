@@ -1471,13 +1471,13 @@ private def inputNames (program : Program) (target : DeclarationId) : List Strin
       | .error _ => [input.name]
 
 private def checkedMap (program : Program) (span : SourceSpan) (name : String)
-    (keyTy valueTy : Ty) : Except Diagnostic Unit := do
+    (keyTy valueTy : Ty) (write : Bool := false) : Except Diagnostic Unit := do
   liftError span ((LedgerValueType.map keyTy (.scalar valueTy)).validate Capabilities.source)
   let some state := program.ledger.find? (·.name == name)
     | fail span s!"unknown helper ledger map '{name}'"
   unless state.kind == .map keyTy valueTy do
     fail span s!"ledger map '{name}' type mismatch"
-  if state.sealed then fail span "only cells can be sealed"
+  if write && state.sealed then fail span s!"sealed state '{name}' cannot be written"
 
 private def checkBody (limits : Limits) (program : Program) (declaration : Declaration)
     (fuel : Nat) (env : PartialEnvironment) (body : List Statement)
@@ -1555,7 +1555,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           locals := destination :: locals
           pure {info with ty := some .unit, effects := (.ledgerRead :: info.effects).eraseDups}
         | .writeMap state keyTy valueTy key value => do
-          checkedMap program span state keyTy valueTy
+          checkedMap program span state keyTy valueTy true
           let key ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key
           unless partialSubtype key.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           let value ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value

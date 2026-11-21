@@ -585,10 +585,18 @@ structure ConstructorInitializer where
   value : ConstructorValue
   deriving Repr
 
+structure ConstructorMapInsert where
+  state : String
+  key : PathKey
+  valueType : Ty
+  value : Expr valueType
+  deriving Repr
+
 /-- Fresh-deployment inputs and cell values. This metadata never enters a circuit. -/
 structure Constructor where
   parameters : List ConstructorParameter := []
   initializers : List ConstructorInitializer := []
+  mapInserts : List ConstructorMapInsert := []
   deriving Repr
 
 inductive EventFieldType where
@@ -1299,6 +1307,8 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
   let initializerNames := constructor.initializers.map (·.state)
   unless uniqueNames initializerNames do
     throw {span, message := "duplicate constructor state initializer"}
+  if constructor.mapInserts.length > 64 then
+    throw {span, message := "constructor Map insert limit exceeded"}
   for initializer in constructor.initializers do
     unless Types.validFieldName initializer.state do
       throw {span, message := s!"invalid constructor state name '{initializer.state}'"}
@@ -1320,8 +1330,27 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
         throw {span, message := s!"unknown OpaqueString constructor parameter '{parameterName}'"}
     | _, _, _ =>
       throw {span := state.span, message := s!"constructor initializer does not match cell '{initializer.state}'"}
+  for insertion in constructor.mapInserts do
+    unless Types.validFieldName insertion.state do
+      throw {span, message := s!"invalid constructor Map state name '{insertion.state}'"}
+    let some state := states.find? (·.name == insertion.state)
+      | throw {span, message := s!"constructor inserts into unknown Map '{insertion.state}'"}
+    let .map keyTy valueTy := state.kind
+      | throw {span := state.span, message := s!"constructor insert requires a Map '{insertion.state}'"}
+    let .mk insertedKeyTy key := insertion.key
+    unless insertedKeyTy == keyTy do
+      throw {span := state.span, message := s!"constructor Map key type mismatch for '{insertion.state}'"}
+    match key.validate caps scalarEnvironment with
+    | .error message => throw {span, message}
+    | .ok _ => pure ()
+    unless insertion.valueType == valueTy do
+      throw {span := state.span, message := s!"constructor Map value type mismatch for '{insertion.state}'"}
+    match insertion.value.validate caps scalarEnvironment with
+    | .error message => throw {span, message}
+    | .ok _ => pure ()
   for state in states do
-    if state.sealed && !(initializerNames.contains state.name) then
+    let sealedMap := match state.kind with | .map .. => true | _ => false
+    if state.sealed && !sealedMap && !(initializerNames.contains state.name) then
       throw {span := state.span, message := s!"sealed state '{state.name}' must be initialized by the constructor"}
 
 private def Effect.writeTarget : Effect → Option String
@@ -2021,8 +2050,8 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
   if !uniqueNames (c.entrypoints.map (·.name)) then
     throw {span := c.span, message := "duplicate contract entrypoint"}
   for decl in c.state do
-    if decl.sealed && !(match decl.kind with | .cell _ | .opaqueString => true | _ => false) then
-      throw {span := decl.span, message := "only cells can be sealed"}
+    if decl.sealed && !(match decl.kind with | .cell _ | .map .. | .opaqueString => true | _ => false) then
+      throw {span := decl.span, message := "only cells and maps can be sealed"}
     if decl.kind == .opaqueString && !decl.sealed then
       throw {span := decl.span, message := "OpaqueString state must be sealed"}
     if let .map keyTy _ := decl.kind then
@@ -2052,7 +2081,8 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
   match c.constructor with
   | some constructor => Constructor.validate caps c.state constructor c.span
   | none =>
-    if c.state.any (·.sealed) then
+    if c.state.any fun state =>
+        state.sealed && !(match state.kind with | .map .. => true | _ => false) then
       throw {span := c.span, message := "sealed states require a constructor"}
   for entry in c.entrypoints do entry.validate caps c.state
 

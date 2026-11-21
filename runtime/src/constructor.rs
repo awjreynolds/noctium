@@ -1,17 +1,22 @@
 //! Public constructor evaluation and immutable deployment cells.
-use crate::{Db, Expr, Plan, ScalarType, StateDecl, create_state, evaluate, input_value, scalars};
+use crate::{
+    Db, Expr, Plan, ScalarType, StateDecl, Value, create_state, evaluate, input_value, scalars,
+};
 use anyhow::{Result, anyhow, bail, ensure};
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue};
 use onchain_runtime::state::{ChargedState, StateValue};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 use std::collections::{BTreeMap, BTreeSet};
+use storage::{arena::Sp, storage::HashMap};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Constructor {
     pub parameters: Vec<Parameter>,
     pub initializers: Vec<Initializer>,
+    #[serde(default, rename = "mapInserts")]
+    pub map_inserts: Vec<MapInsert>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -29,6 +34,14 @@ pub struct Initializer {
     #[serde(rename = "type")]
     pub ty: String,
     pub value: InitialValue,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MapInsert {
+    pub state: String,
+    pub key: Expr,
+    pub value: Expr,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -120,6 +133,78 @@ fn default_value(decl: &StateDecl) -> Result<Json> {
     Ok(json!([]))
 }
 
+fn flat_map_types(decl: &StateDecl) -> Result<Option<(ScalarType, ScalarType)>> {
+    let Some(types) = decl.kind.get("map").and_then(Json::as_array) else {
+        if decl.kind.get("map").is_some() {
+            bail!("unsupported constructor Map schema")
+        }
+        return Ok(None);
+    };
+    ensure!(types.len() == 2, "unsupported constructor Map schema");
+    let key = crate::ledger_key_type(&types[0])?;
+    let value = ScalarType::parse(
+        types[1]
+            .as_str()
+            .ok_or_else(|| anyhow!("invalid constructor Map value schema"))?,
+    )?;
+    ensure!(
+        value != ScalarType::OpaqueString,
+        "OpaqueString is not supported in constructor Map values"
+    );
+    Ok(Some((key, value)))
+}
+
+type ConstructorMap = HashMap<AlignedValue, StateValue<Db>, Db>;
+
+fn apply_map_inserts(
+    plan: &Plan,
+    inserts: &[MapInsert],
+    environment: &BTreeMap<String, Value>,
+    state: ChargedState<Db>,
+) -> Result<ChargedState<Db>> {
+    if inserts.is_empty() {
+        return Ok(state);
+    }
+    let mut maps: BTreeMap<usize, ConstructorMap> = BTreeMap::new();
+    for insert in inserts {
+        let (slot, declaration) = plan
+            .state
+            .iter()
+            .enumerate()
+            .find(|(_, declaration)| declaration.name == insert.state)
+            .ok_or_else(|| anyhow!("unknown constructor Map state"))?;
+        let (key_type, value_type) = flat_map_types(declaration)?
+            .ok_or_else(|| anyhow!("constructor Map insert requires a flat scalar Map"))?;
+        let key_value = evaluate(&insert.key, environment)?;
+        ensure!(
+            key_value.scalar_type() == key_type,
+            "constructor Map key type mismatch"
+        );
+        crate::validate_ledger_key_value(&key_type, &key_value)?;
+        let value = evaluate(&insert.value, environment)?;
+        ensure!(
+            value.scalar_type() == value_type,
+            "constructor Map value type mismatch"
+        );
+        value.validate()?;
+        let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
+        let value = crate::aligned_storage_cell(&value)?;
+        let map = maps.entry(slot).or_insert_with(HashMap::new);
+        *map = map.insert(key, StateValue::Cell(Sp::new(value)));
+    }
+
+    let StateValue::Array(slots) = state.get_ref() else {
+        bail!("constructor Map state requires array storage")
+    };
+    let mut slots = slots.clone();
+    for (slot, map) in maps {
+        slots = slots
+            .insert(slot, StateValue::Map(map))
+            .ok_or_else(|| anyhow!("constructor Map slot is outside state"))?;
+    }
+    Ok(ChargedState::new(StateValue::Array(slots)))
+}
+
 /// Build fresh genesis from the artifact's public constructor arguments.
 /// This evaluates source initialization off chain; the ledger has no constructor proof.
 pub fn construct_state(
@@ -139,6 +224,18 @@ pub fn construct_state(
         constructor.initializers.len() <= plan.state.len(),
         "too many constructor initializers"
     );
+    ensure!(
+        constructor.map_inserts.len() <= 64,
+        "too many constructor Map inserts"
+    );
+    for declaration in &plan.state {
+        if declaration.kind.get("map").is_some() {
+            ensure!(
+                flat_map_types(declaration)?.is_some(),
+                "unsupported constructor Map schema"
+            );
+        }
+    }
     let mut expected = BTreeSet::new();
     let mut scalars = BTreeMap::new();
     let mut strings = BTreeMap::new();
@@ -232,7 +329,7 @@ pub fn construct_state(
         config.insert(initializer.state.clone(), value);
     }
     for declaration in &plan.state {
-        if declaration.sealed {
+        if declaration.sealed && declaration.kind.get("map").is_none() {
             cell_type(declaration)?;
             ensure!(
                 initialized.contains(declaration.name.as_str()),
@@ -240,7 +337,8 @@ pub fn construct_state(
             );
         }
     }
-    create_state(plan, &config)
+    let state = create_state(plan, &config)?;
+    apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)
 }
 
 pub(crate) fn deployment_state(
