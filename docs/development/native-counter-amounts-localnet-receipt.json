@@ -1,0 +1,49 @@
+{
+  "bundleManifestSha256": {
+    "apply": "42802ce5dd5659737975168889f8fb7206da63a6f3859e2b8963e96f09c8ed6d",
+    "guarded": "f6e699d53064dd24970d41393f4ee2992a0dd8548f2513a217e0d8882353001d",
+    "reduce": "b281408ed154cae879a0d67645d605ee8943bdbb760fa52cc2e847d5819b8341"
+  },
+  "callHeights": [
+    49353,
+    49356,
+    49359
+  ],
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "f0fae46c232373ef20c4f896f200d7a32bd351f8e6acd11bf6e5b6be0b1d2b6a",
+  "deploymentHeight": 49350,
+  "exactPredictedStateAccepted": true,
+  "finalizedStates": [
+    {
+      "nested": null,
+      "total": 10
+    },
+    {
+      "nested": 0,
+      "total": 10
+    },
+    {
+      "nested": 3,
+      "total": 13
+    },
+    {
+      "nested": 1,
+      "total": 11
+    }
+  ],
+  "k": {
+    "apply": 10,
+    "guarded": 9,
+    "reduce": 9
+  },
+  "ledger": "9.1.0.1",
+  "operations": [
+    "apply(amount=0)",
+    "apply(amount=3)",
+    "reduce(amount=2)"
+  ],
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "uninitializedReduceRejectedBeforeSubmission": true
+}

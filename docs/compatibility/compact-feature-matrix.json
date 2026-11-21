@@ -2162,8 +2162,8 @@
       "id": "C-ADT-COUNTER-DECREMENT",
       "layer": "language-ledger",
       "surface": "Counter.decrement",
-      "noctiumStatus": "subset",
-      "notes": "Standalone and nested Bytes8 Counters accept checked UInt16 expressions or existing u32 literals. The selected Compact and Noctium cases agree on a runtime decrement and underflow rejection. Noctium binds one Subi immediate per update. Full host and deployment equivalence remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Standalone and nested Bytes8 Counter decrements take a checked UInt16 amount. Compact and native cases agree on a runtime amount and rejected invalid states. One Subi immediate binds each amount. Ledger 9.1.0.1 finalized the decrease with exact state and rejected an uninitialized nested path during preparation. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2179,16 +2179,18 @@
         "runtime/tests/counter_amounts.rs",
         "tests/compact/CounterAmounts.compact",
         "tests/compact/counter-amounts.mjs",
-        "docs/development/native-counter.md"
+        "docs/development/native-counter.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-amounts-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-INCREMENT",
       "layer": "language-ledger",
       "surface": "Counter.increment",
-      "noctiumStatus": "subset",
-      "notes": "Standalone and nested Bytes8 Counters accept checked UInt16 expressions or existing u32 literals. The selected Compact and Noctium cases agree on zero, three and maximum UInt16 amounts, out-of-range input rejection, and inactive missing paths. Noctium binds one Addi immediate per update. Full host and deployment equivalence remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Standalone and nested Bytes8 Counter increments take a checked UInt16 amount. Compact and native cases agree on zero, three and maximum UInt16 amounts, out-of-range rejection, and skipped inactive missing paths. One Addi immediate binds each amount. Ledger 9.1.0.1 finalized zero and nonzero updates with exact state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2204,9 +2206,11 @@
         "runtime/tests/counter_amounts.rs",
         "tests/compact/CounterAmounts.compact",
         "tests/compact/counter-amounts.mjs",
-        "docs/development/native-counter.md"
+        "docs/development/native-counter.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-amounts-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-LESSTHAN",
@@ -2549,7 +2553,7 @@
       "layer": "language-ledger",
       "surface": "Map.insertDefault",
       "noctiumStatus": "subset",
-      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. A pinned Field fixture compares insertion, replacement, membership and size. The native case exercises nested scalar, checked record and collection layouts. The nested HistoricMerkle case matches Compact on empty history after default insertion or replacement, history after append, and root-zero membership after explicit reset. Full type, proof and ledger qualification remain open.",
+      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. Compact and the native checker agree on Field insertion and replacement. Ledger 9.1.0.1 finalized a missing Field insertion as zero and an existing nonzero Field replacement as zero with siblings preserved. Native checks cover nested scalar, record and collection layouts, including a matched HistoricMerkle default. Full funded layout equivalence remains unverified.",
       "source": [
         "adt"
       ],
@@ -2563,7 +2567,9 @@
         "tests/compact/NativeMapDefault.compact",
         "tests/compact/native-map-default.mjs",
         "tests/compact/typed-merkle-leaves.mjs",
-        "runtime/tests/native_map_default.rs"
+        "runtime/tests/native_map_default.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-map-default-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
@@ -2700,7 +2706,7 @@
       "layer": "language-ledger",
       "surface": "Map.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Reset lowers to native empty-map replacement for a standalone or nested Map. A matched in-memory Compact 0.36.1 and Noctium case clears a two-entry Map, returns size zero and absent membership, and checks the exact empty native Map after-state. Full equivalence remains unverified.",
+      "notes": "Reset lowers to native empty-map replacement. Compact 0.36.1 and the native checker agree on clearing a two-entry Field Map, returning size zero and absent membership. Funded Ledger 9.1.0.1 accepted the exact empty state after two inserts and reset. Funded nested Map reset remains unverified.",
       "source": [
         "adt"
       ],
@@ -2717,7 +2723,11 @@
         "tests/NativeMapDefault.lean",
         "tests/compact/NativeMapDefault.compact",
         "tests/compact/native-map-default.mjs",
-        "runtime/tests/native_map_default.rs"
+        "runtime/tests/native_map_default.rs",
+        "tests/NativeMapReset.lean",
+        "tests/compact/native-map-reset.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-map-reset-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
