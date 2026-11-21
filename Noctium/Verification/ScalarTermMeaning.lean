@@ -1,4 +1,5 @@
 import Noctium.Backend.NativeExpected
+import Noctium.ScalarPolicy
 import Noctium.Verification.NativeRelation
 
 namespace Noctium.Verification.ScalarTermMeaning
@@ -51,6 +52,87 @@ def Represents (hash : Hash) (inputs : Assignment) (normalized : Normalized)
 
 @[simp] theorem interpret_constant (hash : Hash) (inputs : Assignment) (value : Nat) :
     interpret? hash inputs (.constant value) = some (scalar value) := by simp [interpret?]
+
+private theorem scalar_add_mod (left right : Nat) :
+    scalar ((scalar left).val + (scalar right).val) = scalar (left + right) := by
+  apply Fin.ext
+  change ((left % Field.modulus + right % Field.modulus) % Field.modulus) =
+    ((left + right) % Field.modulus)
+  exact (Nat.add_mod left right Field.modulus).symm
+
+private theorem scalar_mul_mod (left right : Nat) :
+    scalar ((scalar left).val * (scalar right).val) = scalar (left * right) := by
+  apply Fin.ext
+  change ((left % Field.modulus * (right % Field.modulus)) % Field.modulus) =
+    ((left * right) % Field.modulus)
+  exact (Nat.mul_mod left right Field.modulus).symm
+
+/-- The recursive source packing term for constant bytes denotes the producer's
+little-endian integer modulo the native field. -/
+theorem interpret_packByteTerms_constants (hash : Hash) (inputs : Assignment)
+    (values : List Nat) :
+    interpret? hash inputs (Backend.Native.packByteTerms (values.map Term.constant)) =
+      some (scalar (Backend.Native.littleEndian values)) := by
+  induction values with
+  | nil => simp [Backend.Native.packByteTerms, Backend.Native.littleEndian]
+  | cons first rest ih =>
+    cases rest with
+    | nil => simp [Backend.Native.packByteTerms, Backend.Native.littleEndian]
+    | cons second rest =>
+      change interpret? hash inputs
+          (.binary "add" (.constant first)
+            (.binary "mul" (.constant 256)
+              (Backend.Native.packByteTerms (List.map Term.constant (second :: rest))))) =
+        some (scalar (first + 256 * Backend.Native.littleEndian (second :: rest)))
+      have ih' : interpret? hash inputs
+          (Backend.Native.packByteTerms (Term.constant second :: List.map Term.constant rest)) =
+          some (scalar (Backend.Native.littleEndian (second :: rest))) := by
+        simpa only [List.map_cons] using ih
+      simp [interpret?, ih', scalar_add_mod, scalar_mul_mod]
+
+theorem interpret_packedByteConstant_eq_terms (hash : Hash) (inputs : Assignment)
+    (values : List Nat) :
+    interpret? hash inputs (.constant (Backend.Native.littleEndian values)) =
+      interpret? hash inputs (Backend.Native.packByteTerms (values.map Term.constant)) := by
+  rw [interpret_constant, interpret_packByteTerms_constants]
+
+/-- Bytewise little-endian packing stays below the radix for its list width. -/
+theorem littleEndian_lt_pow_of_bytes (values : List Nat)
+    (byteBound : ∀ value ∈ values, value < 256) :
+    Backend.Native.littleEndian values < 256 ^ values.length := by
+  induction values with
+  | nil => simp [Backend.Native.littleEndian]
+  | cons first rest ih =>
+    have firstBound : first < 256 := byteBound first (by simp)
+    have restBound : ∀ value ∈ rest, value < 256 := by
+      intro value member
+      exact byteBound value (List.Mem.tail first member)
+    have restRange := ih restBound
+    simp only [Backend.Native.littleEndian, List.length_cons, Nat.pow_succ]
+    omega
+
+/-- A canonical 31-byte little-endian chunk always fits the native field. -/
+theorem littleEndian_31Byte_lt_modulus (values : List Nat)
+    (width : values.length = 31)
+    (byteBound : ∀ value ∈ values, value < 256) :
+    Backend.Native.littleEndian values < Field.modulus := by
+  have range := littleEndian_lt_pow_of_bytes values byteBound
+  have radix : 256 ^ 31 = ScalarPolicy.maxUint + 1 := by
+    decide
+  have within : Backend.Native.littleEndian values ≤ ScalarPolicy.maxUint := by
+    rw [width] at range
+    rw [radix] at range
+    omega
+  exact Nat.lt_of_le_of_lt within ScalarPolicy.maxUint_lt_native
+
+theorem littleEndian_bytes32Low31_lt_modulus (values : List Nat)
+    (width : values.length = 32)
+    (byteBound : ∀ value ∈ values, value < 256) :
+    Backend.Native.littleEndian (values.take 31) < Field.modulus := by
+  apply littleEndian_31Byte_lt_modulus
+  · simp [List.length_take, width]
+  · intro value member
+    exact byteBound value (List.mem_of_mem_take member)
 
 @[simp] theorem interpret_input (hash : Hash) (inputs : Assignment) (name : String) :
     interpret? hash inputs (.input name) = some (inputs name) := by simp [interpret?]

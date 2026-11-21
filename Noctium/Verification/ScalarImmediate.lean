@@ -1,5 +1,6 @@
 import Noctium.Backend.Zkir
 import Noctium.Verification.ScalarParserAgreement
+import Noctium.Verification.ScalarTermMeaning
 
 namespace Noctium.Verification.ScalarImmediate
 
@@ -148,6 +149,14 @@ theorem fieldImmediate_exact (number : Nat) (canonical : number < Field.modulus)
   · rw [bytes_value number (byteCount number) (byteCount_fits number)]
     exact canonical
   · exact bytes_value number (byteCount number) (byteCount_fits number)
+
+theorem bytes32Low31FieldImmediate_exact (values : List Nat)
+    (width : values.length = 32)
+    (byteBound : ∀ value ∈ values, value < 256) :
+    Native.immediate (Zkir.fieldImmediate (Native.littleEndian (values.take 31))) =
+      .ok (Native.littleEndian (values.take 31)) := by
+  apply fieldImmediate_exact
+  exact ScalarTermMeaning.littleEndian_bytes32Low31_lt_modulus values width byteBound
 
 theorem decode_fieldImmediate_exact (number : Nat) (canonical : number < Field.modulus) :
     NativeRelationJson.decodeImmediate (Zkir.fieldImmediate number) = .ok number :=
