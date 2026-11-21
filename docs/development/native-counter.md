@@ -33,6 +33,19 @@ expression amounts in both directions. The
 [Compact 0.36.1 oracle](../../tests/compact/counter-amounts.mjs) checks
 the same accepted amounts and state transitions with the pinned runtime.
 
+Ledger 9.1.0.1 finalized a funded deployment with total 10, then accepted
+increments of zero and three and a decrement of two. The final standalone
+Counter held 11 and the nested Counter held 1. Preparation rejected a
+reduction on an absent nested Counter and preserved the state token.
+[Finalized receipt](native-counter-amounts-localnet-receipt.json)
+
+Compile the fixture with the ZKIR 3.2.1 target. Assemble authenticated `apply`,
+`reduce` and `guarded` bundles and pass their manifest hashes keyed by entrypoint
+name. Point `NOCTIUM_COUNTER_AMOUNTS_NODE` at the funded development node and
+set `NOCTIUM_COUNTER_AMOUNTS_BUNDLES`, `NOCTIUM_COUNTER_AMOUNTS_MANIFESTS`, and
+`NOCTIUM_COUNTER_AMOUNTS_PARAMETER_CACHE`. Run the focused test with
+`--features zkir-321,localnet --lib counter_amounts_finalize_dynamic_updates_on_ledger -- --ignored --nocapture`.
+
 The pinned recipes are
 [Counter operations](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-runtime/vendored/program_fragments.rs#L158-L217).
 Counter uses eight-byte alignment in
