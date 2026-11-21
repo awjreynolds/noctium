@@ -73,9 +73,39 @@ the first 31 digest bytes interpreted little-endian, matching the pinned native
 `upgradeFromNative` uses the same 31-byte boundary in the other direction. It
 keeps the low bytes of a Native field and appends one zero byte. `toBytes32`
 preserves the full canonical field encoding.
-[Matched conversion fixture](../../tests/HashDomainConversions.lean)
-This slice generates no keys, proofs or deployment. It does not extend the
-claim-specific or generic scalar preservation theorems to curve operations.
+The claim-specific and generic scalar preservation theorems cover their
+selected source fragments. Curve operations still need separate preservation evidence.
+
+### Hash domain conversion evidence
+
+The generated Compact 0.36.1 pure circuits and native ZKIR 3.2.1 checker
+agree on both conversion boundaries. A short or overlong digest and a
+field value at the modulus fail input checks. Native arguments use canonical
+decimal fields and typed Bytes32 values, and the plan declares both
+conversion results as public. [Lean source](../../tests/HashDomainConversions.lean) · [Compact oracle](../../tests/compact/hash-domain-conversions.mjs) · [Native checker and proof](../../runtime/tests/hash_domain_conversions.rs)
+
+The native K9 proof verified against the two disclosed conversion results.
+Changing either result rejected the proof. Changing only the discarded
+digest byte preserved its public statement. The check uses the declared
+native proof statement and the same communication randomness in each case.
+
+Compile the source using the ZKIR 3.2.1 target and `--emit ledger`, then
+generate keys for `inspect` and assemble its public bundle. Compiler
+revision `e82c5d46f6a4e9052142fd8d39deda60450aace1` reproduced the plan
+and ZKIR bytes. The checked circuit used 391 rows. The authenticated bundle
+digest was `d973ae638da5de85b667a8b1c49d6de1c2795bb655145b6905ba73e7549ec1bd`.
+Its K9 parameters digest was `b9009f1098bcefffec3c461ab3a5e3a17f7e5599f0f08c70fcdc55a89227bcbd`.
+[Bundle assembly](portable-artifacts.md)
+
+```sh
+NOCTIUM_HASH_DOMAIN_CONVERSIONS_DIR=PATH_TO_COMPILER_OUTPUT \
+NOCTIUM_HASH_DOMAIN_CONVERSIONS_BUNDLE=PATH_TO_VERIFIED_BUNDLE \
+NOCTIUM_HASH_DOMAIN_CONVERSIONS_MANIFEST_SHA256=VERIFIED_MANIFEST_DIGEST \
+NOCTIUM_HASH_DOMAIN_CONVERSIONS_PROOF_PARAMETERS=PATH_TO_TRUSTED_K9_PARAMETERS \
+NOCTIUM_HASH_DOMAIN_CONVERSIONS_PROOF_PARAMETERS_SHA256=TRUSTED_K9_DIGEST \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test hash_domain_conversions -- --ignored
+```
 
 [`tests/Issue70DerivedCrypto.lean`](../../tests/Issue70DerivedCrypto.lean)
 combines account hashing, domain-separated key and randomness derivation,

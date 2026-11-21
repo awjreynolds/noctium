@@ -1,0 +1,10 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+export pure circuit degrade(digest: Bytes<32>): Field {
+  return degradeToTransient(digest);
+}
+
+export pure circuit upgrade(field: Field): Bytes<32> {
+  return upgradeFromTransient(field);
+}
