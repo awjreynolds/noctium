@@ -1,0 +1,44 @@
+{
+  "blockHash": "403ca99420eac5097b63e62b4717147975d73bab1756242ca5022b43895f116a",
+  "calleeRecorded": true,
+  "compilerRevision": "f3ae39f884c6272f03b34c3468caed390be31289",
+  "deployments": [
+    {
+      "address": "719286deb20bfb526646c84304846b5f1b87249da63bfd5a333a2d5e3f4e8279",
+      "height": 50462,
+      "role": "caller",
+      "transactionId": "1dffbb4d2d4dc0fef9683e2d7abb11e26755d7e4a5a00fb989e9a1c36e44decd"
+    },
+    {
+      "address": "77af7be2d1be94ebccd59041aedbc3e28aebd6c77b0095963a39267297b2a4dc",
+      "height": 50465,
+      "role": "callee",
+      "transactionId": "fd9e99631dd519b0b895e6aa477dfdf808a22736aaee9aaa7bd42cd5320a674d"
+    }
+  ],
+  "extrinsicHash": "c6eb7e033c2cde23624166157ac58294277734f703c95eb01d63f37244f0474d",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "height": 50468,
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "reporterObservedCaller": "719286deb20bfb526646c84304846b5f1b87249da63bfd5a333a2d5e3f4e8279",
+  "roleBundles": {
+    "callee": {
+      "k": 9,
+      "manifestSha256": "af4379dbac3bafb5ad6dbcec7a8c4620a15f5f3e6948c58cd803420b27d8a46d",
+      "operation": "ComposedCallerLookup.lookup",
+      "rows": 303
+    },
+    "caller": {
+      "k": 9,
+      "manifestSha256": "3aa80bc34940a1fa3cfdcc7fb38c9ea5219f2900502321b9d5d205f94409d877",
+      "operation": "CallerReporter.forward",
+      "rows": 469
+    }
+  },
+  "sourceSha256": "0d671f6a968bd636743cf12027c5ea1b58f6459915f9de6b5f8e38a5103054ec",
+  "transactionId": "72c072199be5add37a48181b2ee04a78bea3f9825652132f6df121d0c01db739",
+  "typedCallerReturnsMatched": true,
+  "wrongExpectedParentRejectedBeforeSubmission": true,
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

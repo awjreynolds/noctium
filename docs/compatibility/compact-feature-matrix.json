@@ -1773,7 +1773,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.caller",
       "noctiumStatus": "subset",
-      "notes": "Typed optional caller from the ledger context, with absent, contract and user cases and both guard outcomes. The Rust SDK ordinary call covers a top-level absent caller. User inference during unshielded funding and live composed caller qualification remain open.",
+      "notes": "Typed optional caller from the ledger context, with absent, contract and user cases and both guard outcomes. The funded Rust SDK ordinary call covers a top-level absent caller. A composed call at localnet height 50468 binds the typed caller returns into the parent's finalized address Cell and rejects a mismatched return before submission. Top-level user inference from signed unshielded spends remains open under issue 378.",
       "source": [
         "adt"
       ],
@@ -1787,7 +1787,10 @@
         "tests/compact/caller.mjs",
         "runtime/tests/native_caller.rs",
         "docs/development/native-contract.md",
-        "docs/development/native-caller-localnet-receipt.json"
+        "docs/development/native-caller-localnet-receipt.json",
+        "tests/NativeCallerComposition.lean",
+        "runtime/tests/native_composition.rs",
+        "docs/development/native-typed-caller-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },

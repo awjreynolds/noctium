@@ -190,6 +190,13 @@ changed from true to false. The relation measured K9 and 312 rows. The
 contract and user variants ran in the native VM and Compact runtime.
 [Localnet receipt](native-caller-localnet-receipt.json)
 
+A composed call on localnet finalized at block 50468. The parent bound the
+child's four typed caller results through the communication commitment and
+stored the child-reported contract address. The finalized value matched the
+parent's address. A mismatched expected address failed assembly before
+submission. [Lean fixture](../../tests/NativeCallerComposition.lean) ·
+[Composed caller receipt](native-typed-caller-localnet-receipt.json)
+
 ## Reset a ledger cell
 
 `reset cellName` writes the canonical default of the cell's declared scalar
