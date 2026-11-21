@@ -2190,7 +2190,6 @@ mod tests {
     #[cfg(feature = "zkir-321")]
     impl FundedLedgerTest {
         async fn connect(endpoint: &str, cache: &ProofCache) -> anyhow::Result<Self> {
-            use transient_crypto::proofs::Zkir;
             let policy = NetworkPolicy {
                 network_id: "undeployed".into(),
                 genesis: DEVELOPMENT_GENESIS.into(),
@@ -2766,6 +2765,222 @@ mod tests {
                     "exactPredictedStateAccepted": true,
                     "bundleManifestSha256": pins,
                     "k": {"seed":seed_degree,"remove":remove_degree},
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeCounter bundles and the funded development node"]
+    fn counter_reads_and_resets_finalize_on_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::AlignedValue;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_COUNTER_TRANSITIONS_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_COUNTER_TRANSITIONS_MANIFESTS")?)?;
+            let entries = [
+                "bump",
+                "reduce",
+                "resetCounters",
+                "guarded",
+                "readCounters",
+                "readTotal",
+            ];
+            let mut bundles = Vec::new();
+            let mut artifacts = BTreeMap::new();
+            for entry in entries {
+                let pin = pins.get(entry).context("missing operation manifest pin")?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                artifacts.insert(entry, (plan, IrSource::load(bundle.file(Role::Circuit)?)?));
+                bundles.push(bundle);
+            }
+            let cache = ProofCache::new(
+                setting("NOCTIUM_COUNTER_TRANSITIONS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_COUNTER_TRANSITIONS_NODE")?, &cache)
+                    .await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, (_, circuit)) in &artifacts {
+                parameters.insert(*entry, cache.parameters(circuit.k()).await?);
+            }
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"total":"0","epochs":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let (deployed, deployment) = funded.deploy(&target, "readTotal").await?;
+            let mut current = Some(deployed);
+            let inputs = |entry: &str, spender: u8| {
+                artifacts[entry]
+                    .0
+                    .circuit
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        let value = match input.name.as_str() {
+                            "owner" => json!({"kind":"bytes","values":vec![0u8;32]}),
+                            "spender" => json!({"kind":"bytes","values":vec![spender;32]}),
+                            "enabled" => json!(true),
+                            other => panic!("unexpected Counter fixture input {other}"),
+                        };
+                        (input.name.clone(), value)
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
+            let call =
+                async |entry: &str,
+                       spender,
+                       state: &mut Option<crate::proof::CurrentStateContext>| {
+                    let params = &parameters[entry];
+                    let operation = target.operation(entry, params, ttl)?;
+                    funded
+                        .call(&operation, state, params, inputs(entry, spender))
+                        .await
+                };
+            let rejects = |entry: &str,
+                           spender,
+                           state: &mut Option<crate::proof::CurrentStateContext>|
+             -> anyhow::Result<()> {
+                let params = &parameters[entry];
+                let operation = target.operation(entry, params, ttl)?;
+                let error = operation
+                    .prepare_call(
+                        state,
+                        params,
+                        inputs(entry, spender),
+                        &mut StdRng::from_entropy(),
+                    )
+                    .err();
+                ensure!(
+                    error == Some(crate::proof::Error::InvalidPrivateInput) && state.is_some(),
+                    "missing Counter path must reject preparation and retain the state token"
+                );
+                Ok(())
+            };
+            let values = |receipt: &FinalizedReceipt,
+                          total,
+                          expected_epochs: &[(u8, u64)]|
+             -> anyhow::Result<()> {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots");
+                };
+                let Some(StateValue::Cell(counter)) = slots.get(0) else {
+                    anyhow::bail!("expected standalone Counter");
+                };
+                ensure!(
+                    **counter == AlignedValue::from(total),
+                    "standalone Counter differs"
+                );
+                let Some(StateValue::Map(owners)) = slots.get(1) else {
+                    anyhow::bail!("expected owner map");
+                };
+                if expected_epochs.is_empty() {
+                    ensure!(owners.size() == 0, "initial owner map differs");
+                } else {
+                    let owner = owners.get(&AlignedValue::from([0u8; 32]));
+                    let Some(StateValue::Map(epochs)) = owner.as_deref() else {
+                        anyhow::bail!("expected epoch map");
+                    };
+                    ensure!(
+                        owners.size() == 1 && epochs.size() == expected_epochs.len(),
+                        "unexpected Counter keys"
+                    );
+                    for &(key, amount) in expected_epochs {
+                        let entry = epochs.get(&AlignedValue::from([key; 32]));
+                        let Some(StateValue::Cell(counter)) = entry.as_deref() else {
+                            anyhow::bail!("missing epoch Counter");
+                        };
+                        ensure!(
+                            **counter == AlignedValue::from(amount),
+                            "nested Counter differs"
+                        );
+                    }
+                }
+                Ok(())
+            };
+
+            rejects("resetCounters", 1, &mut current)?;
+            let initial = call("readTotal", 1, &mut current).await?;
+            ensure!(
+                initial.contract_state == deployment.contract_state,
+                "standalone read changed state"
+            );
+            values(&initial, 0u64, &[])?;
+            let bumped = call("bump", 1, &mut current).await?;
+            values(&bumped, 3u64, &[(1, 1)])?;
+            let bumped_twice = call("bump", 1, &mut current).await?;
+            values(&bumped_twice, 6u64, &[(1, 2)])?;
+            let reduced = call("reduce", 1, &mut current).await?;
+            values(&reduced, 4u64, &[(1, 1)])?;
+            rejects("readCounters", 2, &mut current)?;
+            let created = call("resetCounters", 2, &mut current).await?;
+            values(&created, 0u64, &[(1, 1), (2, 0)])?;
+            let reset = call("resetCounters", 1, &mut current).await?;
+            values(&reset, 0u64, &[(1, 0), (2, 0)])?;
+            let read = call("readCounters", 1, &mut current).await?;
+            ensure!(
+                read.contract_state == reset.contract_state,
+                "nested read changed state"
+            );
+
+            let state: ContractState<Db> = native_decode(&read.contract_state)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid fixture address"))?,
+            ));
+            let (plan, circuit) = &artifacts["readCounters"];
+            let execution = crate::prepare(
+                plan,
+                &inputs("readCounters", 1),
+                &state.data,
+                &funded.node.sync()?.state.parameters,
+                address,
+            )?;
+            crate::check(&execution, circuit)?;
+            ensure!(
+                execution.returns_json() == BTreeMap::from([
+                    ("epochValue".into(), json!("0")),
+                    ("totalValue".into(), json!("0")),
+                ]),
+                "committed read values differ from the finalized counters"
+            );
+            let receipts = [initial, bumped, bumped_twice, reduced, created, reset, read];
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "calls": receipts.iter().map(|receipt| json!([receipt.height,receipt.transaction_id])).collect::<Vec<_>>(),
+                    "exactPredictedStateAccepted": true,
+                    "readsUnchanged": true,
+                    "missingParentAndLeafRejectedBeforeSubmission": true,
+                    "resetCreatedAbsentLeaf": true,
+                    "resetPreservedSibling": true,
+                    "committedReadValues": execution.returns_json(),
+                    "bundleManifestSha256": pins,
                 })
             );
             Ok(())
