@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-21",
+  "scope": "One localnet deployment, one OpaqueBytes Map store of [0,1,255], and one read of the same key on the isolated Ledger 9 development chain. Finite POC execution evidence only.",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "network": {
+    "networkId": "undeployed",
+    "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "specVersion": 2001100,
+    "transactionVersion": 4
+  },
+  "compiler": {
+    "implementation": "Lean4",
+    "sourceRevision": "730122d4cc22cfb8856c99b5f9774b6e7dac27de",
+    "sourceSha256": "307ed498bbbcf61d964a471fa19e0092c223eaaffbb68a44e0486659cac6f4a7",
+    "leanSource": "tests/OpaqueByteMap.lean"
+  },
+  "nativeToolchain": {
+    "repository": "https://github.com/midnightntwrk/midnight-zkir",
+    "release": "zkir-3.2.1",
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "rust": "1.100.0",
+    "reportedCliVersion": "midnight-zkir 3.2.0",
+    "binarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "provenanceSha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b"
+  },
+  "artifacts": {
+    "storeCircuitSha256": "743039f4eb05d76eccde71fa5fe538eb1d08d19c5a3578969cd200cc9520522e",
+    "storePlanSha256": "ae3217a5ae13cacbe42dd930b16b17f66707afd5620579e6b47236596f874813",
+    "readCircuitSha256": "3b800df0cd6740f60b0348d5f9cb9d14a0786c79d7d496c7dea85668e3a7ab2f",
+    "readPlanSha256": "81fb8bbe73b98f9adf5e38fd9d77526b9fa49fd1e4215891fcbf7ed5df0d3223",
+    "metadataSha256": "0b7fc38a9b8ddb30712695bb5f730887c12bdfad41509f1cee2403deff478edd",
+    "targetProfileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "ledgerParametersSha256": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
+    "bundleManifestSha256": {
+      "store": "9b5712d4627551e1d89a7754df9ad67ca78b82097147085472e9ba35a65835fe",
+      "read": "079fac0c750d9845ca5073486f2ba5f4489123fa8ae4451339547318c9a0f056"
+    },
+    "readReturnAbi": {
+      "sourceType": "OpaqueBytes",
+      "visibility": "public",
+      "transcriptFields": 1,
+      "alignment": "Compress"
+    },
+    "bundleManifestDigestsCheckedByConsumer": true
+  },
+  "host": {
+    "source": "runtime/examples/opaque_byte_map_localnet.rs",
+    "sourceSha256": "af63a6ceec16e5eb862a89dcbb50f42ea2b27c1f6d5ea88f9ca87953bfcb9a7a"
+  },
+  "contract": {
+    "address": "173e73d182b71869fd302b35aafd54c93e3af5a1cae8370a1c74b0e08f37bfef",
+    "operationSequence": [
+      "deploy",
+      "store",
+      "read"
+    ],
+    "payload": {
+      "kind": "opaqueBytes",
+      "values": [
+        0,
+        1,
+        255
+      ]
+    },
+    "receipts": {
+      "deploy": {
+        "blockHash": "96a3c28ba8f9614a4d0f58387f49ad3fee285da499ac0794d8f53be3ae7d26af",
+        "contractAddress": "173e73d182b71869fd302b35aafd54c93e3af5a1cae8370a1c74b0e08f37bfef",
+        "contractStateBytes": 2885,
+        "contractStateSha256": "c1d19be477ce4ed34161addac5f8ab75034635745fc4bb44e5d51520d2f7d40f",
+        "event": "Deploy",
+        "extrinsicHash": "a72aa48b2730d882d7a486a818a85a0c9c14c83837c612725d9dd17656394aab",
+        "extrinsicIndex": 4,
+        "finalizedHash": "96a3c28ba8f9614a4d0f58387f49ad3fee285da499ac0794d8f53be3ae7d26af",
+        "finalizedHeight": "20",
+        "height": "20",
+        "intentId": "c50db53e6a0a0a51d1b6a793e8d650bbea5bb5d116b1b28a7f3dae2c1cc62d9c",
+        "transactionId": "1df22d9aaa5311be648a890bdd4bff9eb54a50bd3a4490177ce514816b1d8337"
+      },
+      "read": {
+        "blockHash": "404ef6e733163bf86fcdb117b32d2c3b363a28fe77a550f77076de15c135b732",
+        "contractAddress": "173e73d182b71869fd302b35aafd54c93e3af5a1cae8370a1c74b0e08f37bfef",
+        "contractStateBytes": 3078,
+        "contractStateSha256": "6add668dbc9d3c2d1dfefe24fb9e75ed48740cff74aadbc3f4065f7458f1f297",
+        "event": "Call",
+        "extrinsicHash": "70decd52624c75ebfe19d6effa46fc6e03d7f5af1f5e627ff82026f4a8c0b256",
+        "extrinsicIndex": 4,
+        "finalizedHash": "404ef6e733163bf86fcdb117b32d2c3b363a28fe77a550f77076de15c135b732",
+        "finalizedHeight": "26",
+        "height": "26",
+        "intentId": "2ccf598a836e8a7c7f2365517fbe803ab59f022308675c5a96d242141d72dee2",
+        "transactionId": "10d6bc7570dbb1d53c9d089f42c637cd9622c8efad1b15ff6f24c0ddfb602f46"
+      },
+      "store": {
+        "blockHash": "c30b104eebaa63b6b934f3f6ea4a6422b71c2ad124e9b4d25b34e066997c10ff",
+        "contractAddress": "173e73d182b71869fd302b35aafd54c93e3af5a1cae8370a1c74b0e08f37bfef",
+        "contractStateBytes": 3078,
+        "contractStateSha256": "6add668dbc9d3c2d1dfefe24fb9e75ed48740cff74aadbc3f4065f7458f1f297",
+        "event": "Call",
+        "extrinsicHash": "21d6b1d3a359dc1efc2289f509816f3f2f3d711ddc4fdc77d85c920f517fe890",
+        "extrinsicIndex": 4,
+        "finalizedHash": "c30b104eebaa63b6b934f3f6ea4a6422b71c2ad124e9b4d25b34e066997c10ff",
+        "finalizedHeight": "23",
+        "height": "23",
+        "intentId": "f1819929cd6ce7acde1e8fb702956d49b330960ae12dc270bd8d7be409ef8b09",
+        "transactionId": "eb4f40db70f7daa0490b5830778d9ba75dd2fb3ad4b97a36d4138b5c391c57cc"
+      }
+    },
+    "stateAfterStore": {
+      "bytes": 3078,
+      "sha256": "6add668dbc9d3c2d1dfefe24fb9e75ed48740cff74aadbc3f4065f7458f1f297"
+    },
+    "stateAfterRead": {
+      "bytes": 3078,
+      "sha256": "6add668dbc9d3c2d1dfefe24fb9e75ed48740cff74aadbc3f4065f7458f1f297"
+    },
+    "checks": {
+      "deploymentFinalized": true,
+      "rawCompressMapCellMatched": true,
+      "readFinalizedStateUnchanged": true,
+      "readProofReturnMatched": true,
+      "readTranscriptOutputMatched": true,
+      "storeProofAccepted": true
+    }
+  },
+  "limits": [
+    "One fixed public key and one byte payload were exercised.",
+    "The read entrypoint explicitly discloses the stored bytes as its public return.",
+    "This run does not establish general opaque-byte equivalence, broad compiler correctness, privacy guarantees or public-network deployment."
+  ]
+}
