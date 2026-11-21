@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct EscrowRecord {
+  x: Field;
+  y: Field;
+}
+
+export ledger escrow: Map<Bytes<32>, Map<Bytes<32>, EscrowRecord>>;
+
+export circuit seed(owner: Bytes<32>, spender: Bytes<32>, x: Field, y: Field): [] {
+  const ownerKey = disclose(owner);
+  const spenderKey = disclose(spender);
+  if (!escrow.member(ownerKey)) { escrow.insertDefault(ownerKey); }
+  escrow.lookup(ownerKey).insert(spenderKey, EscrowRecord{x: disclose(x), y: disclose(y)});
+}
+
+export circuit remove(owner: Bytes<32>, spender: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    escrow.lookup(disclose(owner)).remove(disclose(spender));
+  }
+}

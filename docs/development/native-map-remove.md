@@ -21,12 +21,31 @@ Each operation has a separate Impact activity group. A false source guard skips
 all four and avoids evaluating the removal path. No ZKIR instruction name is
 added. This extends native ledger-state lowering.
 
-`tests/NativeMapRemove.lean` is the source fixture.
-`runtime/tests/native_map_remove.rs` is the focused selected-3.2.1 native case.
-It checks deletion, repeat deletion, sibling preservation, missing-parent
-rejection and guarded inactivity. This slice generates no keys, proofs or
-transactions. The focused native case passes in 0.02 seconds.
-General state-preservation proofs remain separate work.
+The pinned Compact oracle and native checker agree on deleting a present
+child, repeating an absent-child deletion, preserving sibling records,
+rejecting an absent parent, and skipping an inactive path. [Lean source](../../tests/NativeMapRemove.lean) · [Compact oracle](../../tests/compact/native-map-remove.mjs) · [Native checker](../../runtime/tests/native_map_remove.rs)
+
+Ledger 9.1.0.1 finalized the nested deletion at block 49011 and its repeat at
+49014. The first call left both sibling records unchanged. The repeat
+preserved the exact finalized state bytes. An active call on a missing
+parent rejected during preparation and retained its admitted state token.
+This covers nested Bytes32 leaf removal with a structured value. Removing a
+whole map-valued entry still needs its own case. [Funded receipt](nested-map-remove-localnet-receipt.json)
+
+Compile the fixture with the ZKIR 3.2.1 target and `--emit ledger`. Assemble
+the authenticated `seed` and `remove` bundles in separate subdirectories of one
+folder. Supply their manifest digests as a JSON object keyed by entrypoint
+name and run the test on isolated funded localnet. [Bundle assembly](portable-artifacts.md)
+
+```sh
+NOCTIUM_MAP_REMOVE_BUNDLES=PATH_TO_BUNDLES \
+NOCTIUM_MAP_REMOVE_MANIFESTS=JSON_OF_TWO_MANIFEST_DIGESTS \
+NOCTIUM_MAP_REMOVE_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_MAP_REMOVE_NODE=http://127.0.0.1:19944 \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  nested_map_remove_finalizes_and_preserves_siblings -- --ignored --nocapture
+```
 
 The confidential-token port needs this primitive when refunding and replacing
 an owner's prior escrow approval.

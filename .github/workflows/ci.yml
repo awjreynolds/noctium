@@ -187,6 +187,7 @@ jobs:
           lake env lean tests/ScalarMaybeAuthoring.lean
           lake env lean tests/NativeScalarEitherReturns.lean
           lake env lean tests/NativeMapDefault.lean
+          lake env lean tests/NativeMapRemove.lean
           lake env lean tests/OptionalListHead.lean
           lake env lean tests/MixedLedgerRecord.lean
           lake env lean tests/MerkleTree.lean

@@ -2181,22 +2181,178 @@ mod tests {
     }
 
     #[cfg(feature = "zkir-321")]
+    struct FundedLedgerTest {
+        node: Node,
+        dust: crate::funding::DustMaterial,
+        dust_parameters: crate::proof::TrustedParameters,
+    }
+
+    #[cfg(feature = "zkir-321")]
+    impl FundedLedgerTest {
+        async fn connect(endpoint: &str, cache: &ProofCache) -> anyhow::Result<Self> {
+            use transient_crypto::proofs::Zkir;
+            let policy = NetworkPolicy {
+                network_id: "undeployed".into(),
+                genesis: DEVELOPMENT_GENESIS.into(),
+                spec_version: 2_001_100,
+                transaction_version: 4,
+                profile: crate::profile::NAME.into(),
+                max_dust: 10u128.pow(22),
+            };
+            let node = Node::connect(
+                endpoint,
+                policy.clone(),
+                Duration::from_secs(15),
+                64 * 1024 * 1024,
+                100_000,
+            )?;
+            let mut local_seed = [0; 32];
+            local_seed[31] = 1;
+            node.attach_dust_seed(&local_seed)?;
+            let dust = cache.dust().await?;
+            let dust_parameters = cache.parameters(dust.k()).await?;
+            Ok(Self {
+                node,
+                dust,
+                dust_parameters,
+            })
+        }
+
+        async fn finalize(
+            &self,
+            intent: &crate::proof::ProvedNativeIntent,
+        ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
+            use crate::client::{ChainAdapter, Submission};
+            use crate::funding::{FeePolicy, UnsealedTransaction};
+            use anyhow::ensure;
+            use rand::{SeedableRng, rngs::StdRng};
+            use std::time::Instant;
+
+            let policy = &self.node.policy;
+            let funding = DevelopmentFunding::new(
+                &self.node,
+                &self.dust,
+                &self.dust_parameters,
+                FeePolicy {
+                    max_dust: policy.max_dust,
+                    margin_blocks: 3,
+                    max_spends: 8,
+                },
+                StdRng::from_entropy(),
+            );
+            let approve = |_: &UnsealedTransaction, candidate: &NetworkPolicy| candidate == policy;
+            let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
+            let bound =
+                BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer)
+                    .await?;
+            ensure!(
+                self.node
+                    .submit(&bound)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("submit failed"))?
+                    != Submission::Rejected,
+                "localnet rejected intent"
+            );
+            let deadline = Instant::now() + Duration::from_secs(90);
+            loop {
+                if let Some(receipt) = self.node.finalized_receipt(&bound)? {
+                    bound.check_receipt(&receipt)?;
+                    return Ok((bound, receipt));
+                }
+                ensure!(Instant::now() < deadline, "receipt did not finalize");
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+
+        async fn deploy(
+            &self,
+            target: &crate::proof::WitnessContractTarget,
+            operation: &str,
+        ) -> anyhow::Result<(crate::proof::CurrentStateContext, FinalizedReceipt)> {
+            use crate::funding::CONTRACT_SEGMENT;
+            use rand::{SeedableRng, rngs::StdRng};
+
+            let (_, deployment) = target
+                .deployment_intent()
+                .prove(
+                    CONTRACT_SEGMENT,
+                    builtin_zkir::LocalProvingProvider {
+                        rng: StdRng::from_entropy(),
+                        resolver: &self.dust,
+                        params: &self.dust_parameters,
+                    },
+                    &self
+                        .node
+                        .sync()?
+                        .state
+                        .parameters
+                        .cost_model
+                        .runtime_cost_model,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("deployment proof: {error:?}"))?;
+            let (bound, receipt) = self.finalize(&deployment).await?;
+            let state = target
+                .deployment_binding(operation)?
+                .admit_committed_state(
+                    &receipt.contract_state,
+                    bound.expected_state(),
+                    &receipt.finalized_hash,
+                    true,
+                )?;
+            Ok((state, receipt))
+        }
+
+        async fn call(
+            &self,
+            operation: &crate::proof::ContractOperationTarget,
+            current: &mut Option<crate::proof::CurrentStateContext>,
+            parameters: &crate::proof::TrustedParameters,
+            inputs: BTreeMap<String, Json>,
+        ) -> anyhow::Result<FinalizedReceipt> {
+            use crate::proof::LocalProver;
+            use anyhow::Context;
+            use rand::{SeedableRng, rngs::StdRng};
+
+            let proved = operation
+                .prepare_call(current, parameters, inputs, &mut StdRng::from_entropy())?
+                .prove(
+                    &LocalProver::new(StdRng::from_entropy()),
+                    parameters,
+                    1_048_576,
+                    futures::future::pending(),
+                )
+                .await?;
+            let (bound, receipt) = self.finalize(proved.native()).await?;
+            *current = Some(
+                proved
+                    .contract_binding()
+                    .context("missing checked contract binding")?
+                    .admit_committed_state(
+                        &receipt.contract_state,
+                        bound.expected_state(),
+                        &receipt.finalized_hash,
+                        false,
+                    )?,
+            );
+            Ok(receipt)
+        }
+    }
+
+    #[cfg(feature = "zkir-321")]
     #[test]
     #[ignore = "requires authenticated CounterCompare bundles and the funded development node"]
     fn counter_comparison_finalizes_on_ledger() -> anyhow::Result<()> {
         use crate::zkir::IrSource;
         use crate::{
             artifacts::{self, ContractBundleSet, Role},
-            client::{BoundTransaction, ChainAdapter, NetworkPolicy, Submission},
-            funding::{CONTRACT_SEGMENT, FeePolicy, UnsealedTransaction},
-            proof::{LocalProver, WitnessContractTarget},
+            proof::WitnessContractTarget,
         };
         use anyhow::{Context, ensure};
         use base_crypto::fab::AlignedValue;
-        use futures::{executor::block_on, future::pending};
+        use futures::executor::block_on;
         use onchain_runtime::state::{ContractState, StateValue};
         use rand::{SeedableRng, rngs::StdRng};
-        use std::time::{Duration, Instant};
         use std::{collections::BTreeMap, env, path::Path};
         use transient_crypto::proofs::Zkir;
 
@@ -2220,31 +2376,14 @@ mod tests {
                 setting("NOCTIUM_COUNTER_COMPARE_PARAMETER_CACHE")?.into(),
                 "https://srs.midnight.network/".parse()?,
             )?;
-            let policy = NetworkPolicy {
-                network_id: "undeployed".into(),
-                genesis: DEVELOPMENT_GENESIS.into(),
-                spec_version: 2_001_100,
-                transaction_version: 4,
-                profile: crate::profile::NAME.into(),
-                max_dust: 10u128.pow(22),
-            };
-            let node = Node::connect(
-                &setting("NOCTIUM_COUNTER_COMPARE_NODE")?,
-                policy.clone(),
-                Duration::from_secs(15),
-                64 * 1024 * 1024,
-                100_000,
-            )?;
-            let mut local_seed = [0; 32];
-            local_seed[31] = 1;
-            node.attach_dust_seed(&local_seed)?;
-            let dust = cache.dust().await?;
-            let dust_parameters = cache.parameters(dust.k()).await?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_COUNTER_COMPARE_NODE")?, &cache)
+                    .await?;
             let mut parameters = BTreeMap::new();
             for (entry, degree) in &degrees {
                 parameters.insert(*entry, cache.parameters(*degree).await?);
             }
-            let ttl = node.sync()?.block.tblock.to_secs() + 1800;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
             let mut rng = StdRng::from_entropy();
             let target = WitnessContractTarget::from_state_config(
                 ContractBundleSet::new(bundles)?,
@@ -2252,65 +2391,8 @@ mod tests {
                 ttl,
                 &mut rng,
             )?;
-            let (_, deployment) = target
-                .deployment_intent()
-                .prove(
-                    CONTRACT_SEGMENT,
-                    builtin_zkir::LocalProvingProvider {
-                        rng: StdRng::from_entropy(),
-                        resolver: &dust,
-                        params: &dust_parameters,
-                    },
-                    &node.sync()?.state.parameters.cost_model.runtime_cost_model,
-                )
-                .await
-                .map_err(|error| anyhow::anyhow!("deployment proof: {error:?}"))?;
-            let finalize = async |intent: &crate::proof::ProvedNativeIntent| {
-                let funding = DevelopmentFunding::new(
-                    &node,
-                    &dust,
-                    &dust_parameters,
-                    FeePolicy {
-                        max_dust: policy.max_dust,
-                        margin_blocks: 3,
-                        max_spends: 8,
-                    },
-                    StdRng::from_entropy(),
-                );
-                let approve =
-                    |_: &UnsealedTransaction, candidate: &NetworkPolicy| *candidate == policy;
-                let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
-                let bound =
-                    BoundTransaction::prepare(intent, policy.clone(), &node, &funding, &signer)
-                        .await?;
-                ensure!(
-                    node.submit(&bound)
-                        .await
-                        .map_err(|_| anyhow::anyhow!("submit failed"))?
-                        != Submission::Rejected,
-                    "localnet rejected intent"
-                );
-                let deadline = Instant::now() + Duration::from_secs(90);
-                loop {
-                    if let Some(receipt) = node.finalized_receipt(&bound)? {
-                        bound.check_receipt(&receipt)?;
-                        return Ok::<_, anyhow::Error>((bound, receipt));
-                    }
-                    ensure!(Instant::now() < deadline, "receipt did not finalize");
-                    std::thread::sleep(Duration::from_millis(500));
-                }
-            };
-            let (deployed, deploy_receipt) = finalize(&deployment).await?;
-            let mut current = Some(
-                target
-                    .deployment_binding("inspect")?
-                    .admit_committed_state(
-                        &deploy_receipt.contract_state,
-                        deployed.expected_state(),
-                        &deploy_receipt.finalized_hash,
-                        true,
-                    )?,
-            );
+            let (deployed, deploy_receipt) = funded.deploy(&target, "inspect").await?;
+            let mut current = Some(deployed);
             let inputs = BTreeMap::from([
                 ("owner".into(), json!({"kind":"bytes","values":vec![1; 32]})),
                 (
@@ -2338,28 +2420,11 @@ mod tests {
             for entry in entries {
                 let params = &parameters[entry];
                 let operation = target.operation(entry, params, ttl)?;
-                let proved = operation
-                    .prepare_call(&mut current, params, inputs.clone(), &mut rng)?
-                    .prove(
-                        &LocalProver::new(StdRng::from_entropy()),
-                        params,
-                        1_048_576,
-                        pending(),
-                    )
-                    .await?;
-                let (bound, receipt) = finalize(proved.native()).await?;
-                current = Some(
-                    proved
-                        .contract_binding()
-                        .context("missing checked contract binding")?
-                        .admit_committed_state(
-                            &receipt.contract_state,
-                            bound.expected_state(),
-                            &receipt.finalized_hash,
-                            false,
-                        )?,
+                receipts.push(
+                    funded
+                        .call(&operation, &mut current, params, inputs.clone())
+                        .await?,
                 );
-                receipts.push(receipt);
             }
             let [standalone, seed, nested] = receipts.as_slice() else {
                 anyhow::bail!("expected three finalized operations");
@@ -2409,6 +2474,151 @@ mod tests {
                     "exactPredictedStateAccepted": true,
                     "bundleManifestSha256": manifest_pins,
                     "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeMapRemove bundles and the funded development node"]
+    fn nested_map_remove_finalizes_and_preserves_siblings() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::AlignedValue;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use storage::{arena::Sp, storage::HashMap};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_MAP_REMOVE_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_MAP_REMOVE_MANIFESTS")?)?;
+            let bundle = |operation: &str| {
+                let pin = pins
+                    .get(operation)
+                    .context("missing operation manifest pin")?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(operation),
+                    Some(pin),
+                )?)
+            };
+            let seed_bundle = bundle("seed")?;
+            let remove_bundle = bundle("remove")?;
+            let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let remove_degree = IrSource::load(remove_bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MAP_REMOVE_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_MAP_REMOVE_NODE")?, &cache).await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let remove_parameters = cache.parameters(remove_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, remove_bundle])?,
+                br#"{"state":{"escrow":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let remove = target.operation("remove", &remove_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            let mut current = Some(deployed);
+
+            let bytes = |byte: u8| json!({"kind":"bytes","values":vec![byte;32]});
+            let remove_inputs = |owner| {
+                BTreeMap::from([
+                    ("owner".into(), bytes(owner)),
+                    ("spender".into(), bytes(1)),
+                    ("enabled".into(), json!(true)),
+                ])
+            };
+            let seed_inputs = BTreeMap::from([
+                ("ownerA".into(), bytes(0)),
+                ("ownerB".into(), bytes(3)),
+                ("target".into(), bytes(1)),
+                ("sibling".into(), bytes(2)),
+            ]);
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs)
+                .await?;
+            ensure!(
+                matches!(
+                    remove.prepare_call(
+                        &mut current,
+                        &remove_parameters,
+                        remove_inputs(9),
+                        &mut rng
+                    ),
+                    Err(crate::proof::Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "a missing parent must fail preparation and retain the state token"
+            );
+            let removed = funded
+                .call(&remove, &mut current, &remove_parameters, remove_inputs(0))
+                .await?;
+            let repeated = funded
+                .call(&remove, &mut current, &remove_parameters, remove_inputs(0))
+                .await?;
+            ensure!(
+                removed.contract_state == repeated.contract_state,
+                "repeat removal changed state"
+            );
+
+            let expected = |keep_target| {
+                let record = |x: u64| {
+                    StateValue::Cell(Sp::new(AlignedValue::concat(&[
+                        crate::field_value(Fr::from(x)),
+                        crate::field_value(Fr::from(x + 1)),
+                    ])))
+                };
+                let mut owner_a = HashMap::new().insert([2u8; 32].into(), record(20));
+                if keep_target {
+                    owner_a = owner_a.insert([1u8; 32].into(), record(10));
+                }
+                let owner_b = HashMap::new().insert([1u8; 32].into(), record(30));
+                let owners = HashMap::new()
+                    .insert([0u8; 32].into(), StateValue::Map(owner_a))
+                    .insert([3u8; 32].into(), StateValue::Map(owner_b));
+                StateValue::Array(vec![StateValue::Map(owners)].into())
+            };
+            let seed_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
+            let final_state: ContractState<Db> = native_decode(&removed.contract_state)?;
+            ensure!(
+                *seed_state.data.get_ref() == expected(true),
+                "seeded records differ"
+            );
+            ensure!(
+                *final_state.data.get_ref() == expected(false),
+                "removed record or survivors differ"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeight": seeded.height,
+                    "removeHeight": removed.height,
+                    "repeatHeight": repeated.height,
+                    "transactionIds": [seeded.transaction_id, removed.transaction_id, repeated.transaction_id],
+                    "missingParentRejectedBeforeSubmission": true,
+                    "siblingRecordsPreserved": true,
+                    "repeatStateUnchanged": true,
+                    "exactPredictedStateAccepted": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seed":seed_degree,"remove":remove_degree},
                 })
             );
             Ok(())
