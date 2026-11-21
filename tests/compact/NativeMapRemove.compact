@@ -20,3 +20,9 @@ export circuit remove(owner: Bytes<32>, spender: Bytes<32>, enabled: Boolean): [
     escrow.lookup(disclose(owner)).remove(disclose(spender));
   }
 }
+
+export circuit removeOwner(owner: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    escrow.remove(disclose(owner));
+  }
+}

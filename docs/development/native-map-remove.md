@@ -25,21 +25,23 @@ The pinned Compact oracle and native checker agree on deleting a present
 child, repeating an absent-child deletion, preserving sibling records,
 rejecting an absent parent, and skipping an inactive path. [Lean source](../../tests/NativeMapRemove.lean) · [Compact oracle](../../tests/compact/native-map-remove.mjs) · [Native checker](../../runtime/tests/native_map_remove.rs)
 
-Ledger 9.1.0.1 finalized the nested deletion at block 49011 and its repeat at
-49014. The first call left both sibling records unchanged. The repeat
-preserved the exact finalized state bytes. An active call on a missing
-parent rejected during preparation and retained its admitted state token.
-This covers nested Bytes32 leaf removal with a structured value. Removing a
-whole map-valued entry still needs its own case. [Funded receipt](nested-map-remove-localnet-receipt.json)
+Ledger 9.1.0.1 finalized leaf removal at block 49208 and whole-map entry
+removal at 49214. The leaf removal preserved both sibling records. The
+whole-map removal deleted the first owner's nested map and retained the
+second owner's exact record. Repeated and inactive removals preserved the
+finalized state bytes. An active removal with a missing parent rejected
+during preparation and retained the admitted state token. This qualifies
+the circuit method on supported typed paths. [Funded receipt](nested-map-remove-localnet-receipt.json)
 
 Compile the fixture with the ZKIR 3.2.1 target and `--emit ledger`. Assemble
-the authenticated `seed` and `remove` bundles in separate subdirectories of one
-folder. Supply their manifest digests as a JSON object keyed by entrypoint
-name and run the test on isolated funded localnet. [Bundle assembly](portable-artifacts.md)
+authenticated bundles for `seed`, `remove`, and `removeOwner` in separate
+subdirectories of one folder. Supply their manifest digests as a JSON object
+keyed by entrypoint name and run the test on isolated funded localnet.
+[Bundle assembly](portable-artifacts.md)
 
 ```sh
 NOCTIUM_MAP_REMOVE_BUNDLES=PATH_TO_BUNDLES \
-NOCTIUM_MAP_REMOVE_MANIFESTS=JSON_OF_TWO_MANIFEST_DIGESTS \
+NOCTIUM_MAP_REMOVE_MANIFESTS=JSON_OF_MANIFEST_DIGESTS \
 NOCTIUM_MAP_REMOVE_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
 NOCTIUM_MAP_REMOVE_NODE=http://127.0.0.1:19944 \
   cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \

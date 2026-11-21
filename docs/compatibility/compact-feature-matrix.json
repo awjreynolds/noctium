@@ -2236,8 +2236,8 @@
       "id": "C-ADT-COUNTER-READ",
       "layer": "language-ledger",
       "surface": "Counter.read",
-      "noctiumStatus": "subset",
-      "notes": "Reads the UInt64 value of a standalone or nested Bytes8 Counter, including earlier updates in the same entrypoint. An inactive read binds zero. The host ledger getter remains unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "The circuit method reads the exact UInt64 value of standalone and nested Counters, matching pinned Compact. The native checker verifies nonzero outputs and finalized read calls preserve state. A missing active leaf rejects before submission. Host getters remain separately unqualified.",
       "source": [
         "adt"
       ],
@@ -2249,16 +2249,19 @@
       "observedEvidence": [
         "tests/NativeCounter.lean",
         "runtime/tests/native_counter.rs",
+        "tests/compact/native-counter.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-read-reset-localnet-receipt.json",
         "docs/development/native-counter.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-RESETTODEFAULT",
       "layer": "language-ledger",
       "surface": "Counter.resetToDefault",
-      "noctiumStatus": "subset",
-      "notes": "Reset writes the Bytes8 UInt64 zero value to a standalone Counter or a nested leaf. It also initializes an absent leaf under existing parents. Inactive reset skips mutation.",
+      "noctiumStatus": "equivalent",
+      "notes": "The circuit method writes the UInt64 zero value and matches pinned Compact for existing standalone and nested Counters. Funded Ledger 9.1.0.1 verifies resetting existing values and creating a missing leaf under an existing parent. The caller retains its state token when a missing parent rejects during preparation.",
       "source": [
         "adt"
       ],
@@ -2270,9 +2273,12 @@
       "observedEvidence": [
         "tests/NativeCounter.lean",
         "runtime/tests/native_counter.rs",
+        "tests/compact/native-counter.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-read-reset-localnet-receipt.json",
         "docs/development/native-counter.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-SET-INSERT",
@@ -2657,8 +2663,8 @@
       "id": "C-ADT-MAP-REMOVE",
       "layer": "language-ledger",
       "surface": "Map.remove",
-      "noctiumStatus": "subset",
-      "notes": "Typed leaf removal matches Compact for nested Bytes32-keyed records. Funded Ledger 9.1.0.1 finalized removal and repeat removal with exact state, preserving sibling records. Missing parents reject and inactive guards skip access. Native checker evidence includes foreign keys. Subtree removal and broader layout equivalence remain open.",
+      "noctiumStatus": "equivalent",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows.",
       "source": [
         "adt"
       ],
@@ -2677,7 +2683,7 @@
         "tests/ForeignKeys.lean",
         "runtime/tests/foreign_keys.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-MAP-RESETTODEFAULT",
