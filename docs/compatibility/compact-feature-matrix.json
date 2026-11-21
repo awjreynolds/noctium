@@ -1724,8 +1724,8 @@
       "id": "C-ADT-KERNEL-BLOCKTIMEGREATERTHAN",
       "layer": "language-ledger",
       "surface": "Kernel.blockTimeGreaterThan",
-      "noctiumStatus": "subset",
-      "notes": "Strict UInt64 Unix-second comparison through the native ledger context. Focused checks cover equal and unequal cutoffs, guard outcomes, replay across a changed result and explicit disclosure. The native Rust client passes a checked prospective block context. Hosted client and composition qualification remain separate.",
+      "noctiumStatus": "equivalent",
+      "notes": "The strict Unix-second after comparison matches Compact 0.36.1. The native checker covers equality, changed-result replay, omitted context and output substitution. Ledger 9.1.0.1 finalized inactive, minimum-cutoff and maximum-cutoff calls with unchanged state. This qualifies the circuit method with explicit block context. Current-state SDK and composed calls remain separate.",
       "source": [
         "adt"
       ],
@@ -1739,16 +1739,17 @@
         "tests/compact/block-time.mjs",
         "runtime/tests/native_block_time.rs",
         "docs/development/native-block-time-localnet-receipt.json",
-        "docs/development/native-contract.md"
+        "docs/development/native-contract.md",
+        "runtime/src/localnet.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-KERNEL-BLOCKTIMELESSTHAN",
       "layer": "language-ledger",
       "surface": "Kernel.blockTimeLessThan",
-      "noctiumStatus": "subset",
-      "notes": "Strict UInt64 Unix-second comparison through the native ledger context. Focused checks cover equal and unequal cutoffs, guard outcomes, replay across a changed result and explicit disclosure. The native Rust client passes a checked prospective block context. Hosted client and composition qualification remain separate.",
+      "noctiumStatus": "equivalent",
+      "notes": "The strict Unix-second before comparison matches Compact 0.36.1. The native checker covers equality, changed-result replay, omitted context and output substitution. Ledger 9.1.0.1 finalized inactive, minimum-cutoff and maximum-cutoff calls with unchanged state. This qualifies the circuit method with explicit block context. Current-state SDK and composed calls remain separate.",
       "source": [
         "adt"
       ],
@@ -1762,9 +1763,10 @@
         "tests/compact/block-time.mjs",
         "runtime/tests/native_block_time.rs",
         "docs/development/native-block-time-localnet-receipt.json",
-        "docs/development/native-contract.md"
+        "docs/development/native-contract.md",
+        "runtime/src/localnet.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-KERNEL-CALLER",
