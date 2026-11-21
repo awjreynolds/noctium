@@ -26,23 +26,22 @@ try {
   symlinkSync(runtimeDirectory, runtimeLink, 'dir');
   const { pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   const domain = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
-  const addresses = [
-    Uint8Array.from({ length: 32 }, (_, index) => index + 1),
-    new Uint8Array(32).fill(0xa5),
+  const cases = [
+    [domain, Uint8Array.from({ length: 32 }, (_, index) => index + 1)],
+    [domain, new Uint8Array(32).fill(0xa5)],
+    [new Uint8Array(32), new Uint8Array(32).fill(255)],
+    [new Uint8Array(32).fill(255), new Uint8Array(32)],
   ];
   assert.deepEqual(pureCircuits.nativeTokenValue(), new Uint8Array(32));
-  const colors = addresses.map((address) => Buffer.from(
-    pureCircuits.deriveTokenColor(domain, address),
-  ).toString('hex'));
-  assert.notEqual(colors[0], colors[1]);
+  const results = cases.map(([separator, address]) => ({
+    domain: Buffer.from(separator).toString('hex'),
+    contractAddress: Buffer.from(address).toString('hex'),
+    tokenColor: Buffer.from(pureCircuits.deriveTokenColor(separator, address)).toString('hex'),
+  }));
+  assert.equal(new Set(results.map(({ tokenColor }) => tokenColor)).size, cases.length);
   console.log(JSON.stringify({
     fixture: 'NativeTokenColors', compact: compilerVersion,
-    nativeToken: '00'.repeat(32),
-    cases: addresses.map((address, index) => ({
-      domain: Buffer.from(domain).toString('hex'),
-      contractAddress: Buffer.from(address).toString('hex'),
-      tokenColor: colors[index],
-    })),
+    nativeToken: '00'.repeat(32), cases: results,
   }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
