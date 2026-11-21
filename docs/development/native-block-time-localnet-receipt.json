@@ -1,42 +1,109 @@
 {
-  "profile": "midnight-ledger-9-zkir-3.2.1",
-  "nodeImage": "midnightntwrk/midnight-node@sha256:0c1ad548d523c1109aa1f16daab1bf72dcb78c7e17b8a8c6d97424ad0eba7b8a",
-  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
-  "entrypoint": "NativeBlockTime.checkTime",
-  "compilerRevision": "53661c384b5d337b107345f8e0b263c9d34e81c9",
-  "cutoffUnixSeconds": 4000000000,
-  "guard": true,
-  "artifactSha256": {
-    "source": "79532554c2ae406e0759e0b0c487fbdc6af58268905effd904c8c4aaac78a3d8",
-    "circuit": "06862136014f40ee9253453376c4fa5bffbaf1b7afa7348890e62d04bf1f9781",
-    "plan": "112a3e17b655e51369a3309f4e349439afa97e4314ece6a0ee1fca4f9abdc566",
-    "verifierKey": "22b38e22676f533218f63a5ff5c2cc4367ca7ab7636c8adfe57977f3b58ae02e",
-    "ledgerParameters": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
-    "bundleManifest": "6a93a5be5e53771cc8a524642e42c55a881f16ae57ca5136fa146e2e6c9a5497"
+  "bundleManifestSha256": {
+    "checkTime": "b27011ff68cfce5866d88d4a894a9e7fbbcc4924418068e344232c214e559f26"
   },
-  "exactPredictedStateAccepted": true,
-  "receipts": [
+  "circuitSha256": "06862136014f40ee9253453376c4fa5bffbaf1b7afa7348890e62d04bf1f9781",
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "finalizedTip": {
+    "blockHash": "802901929561283bc341d16344d8276e5dd109d087cf48330d3f49baeb3a6add",
+    "height": 49796,
+    "timestamp": "1795298598"
+  },
+  "k": 8,
+  "ledger": "9.1.0.1",
+  "operation": "checkTime",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "records": [
     {
-      "event": "Deploy",
-      "height": 67,
-      "blockHash": "3fa8b48eabe43986db169c51ad81f5d9482fdf7c4f36c3ca1cd5c0e2c3f79d3c",
-      "contractAddress": "7051d6ce1fb130180324e8d50a55258597348419760f1f37fe7fa7e8dd759fe4",
-      "transactionId": "bb94c63f6802f7e807ca081ac1d97ec4c1c5c6a84bce61c6f170826e00464f34",
-      "stateBytes": 1463,
-      "stateSha256": "bca13bbfd1e0cab8217f800f2a6496d09addd17afaaabfc69ce896ed45563340"
+      "call": {
+        "blockHash": "12fe6a2a90719bb3d7c687d6022b9a8cdfe1b47358db07ca93aeb04fa87bd7a6",
+        "finalizedHash": "12fe6a2a90719bb3d7c687d6022b9a8cdfe1b47358db07ca93aeb04fa87bd7a6",
+        "finalizedHeight": 49784,
+        "height": 49784,
+        "timestamp": "1795298526",
+        "transactionId": "1d1888a55e4f48e9933f2ff706564a26fe8dc1b7333d9ab8eb0578250782c6d4"
+      },
+      "case": "inactive",
+      "cutoff": "0",
+      "deployment": {
+        "blockHash": "c47c1ce38c85ce1f2da391d808dc7014f1643861e0e5d0bfcb8ade3fbd31aa72",
+        "finalizedHash": "c47c1ce38c85ce1f2da391d808dc7014f1643861e0e5d0bfcb8ade3fbd31aa72",
+        "finalizedHeight": 49781,
+        "height": 49781,
+        "timestamp": "1795298508",
+        "transactionId": "014b366f10d8763a53bcc5e7bc94d748f8dd308f67af1e126f95c83358719ef3"
+      },
+      "enabled": false,
+      "nativeStateUnchanged": true,
+      "oneOperationCheckTimeBundle": true,
+      "sourceOracle": {
+        "afterDeadline": false,
+        "beforeDeadline": false,
+        "finalizedContextTimestamp": "1795298442"
+      }
     },
     {
-      "event": "Call",
-      "height": 70,
-      "blockHash": "bc82a3e615394c5d9635d136e429ba11d8f3332ce2e0e4c598b25d88dddf89fa",
-      "contractAddress": "7051d6ce1fb130180324e8d50a55258597348419760f1f37fe7fa7e8dd759fe4",
-      "transactionId": "eb49c8194b4f4ad94d6f613e115971b38ba2dff5cd50fab9745b4beb82c44202",
-      "stateBytes": 1463,
-      "stateSha256": "bca13bbfd1e0cab8217f800f2a6496d09addd17afaaabfc69ce896ed45563340"
+      "call": {
+        "blockHash": "7f209a164751cc534d05a03148e6a8975819a3e8cd290ddf1ab2e600b16f908a",
+        "finalizedHash": "7f209a164751cc534d05a03148e6a8975819a3e8cd290ddf1ab2e600b16f908a",
+        "finalizedHeight": 49790,
+        "height": 49790,
+        "timestamp": "1795298562",
+        "transactionId": "732c6d6dc2e327df3147db9083efa41e2f5707ad5b9ef1191a0818eb5b7a7af9"
+      },
+      "case": "minimum",
+      "cutoff": "0",
+      "deployment": {
+        "blockHash": "2273dc8d55bb17fbf22e73ee568af2184499ca090ae501b2c8256ba8907bb83e",
+        "finalizedHash": "2273dc8d55bb17fbf22e73ee568af2184499ca090ae501b2c8256ba8907bb83e",
+        "finalizedHeight": 49787,
+        "height": 49787,
+        "timestamp": "1795298544",
+        "transactionId": "d6801f16e96656c98813801eb8508fe8fa08afb8fc89aafad40357e09c27e7cd"
+      },
+      "enabled": true,
+      "nativeStateUnchanged": true,
+      "oneOperationCheckTimeBundle": true,
+      "sourceOracle": {
+        "afterDeadline": true,
+        "beforeDeadline": false,
+        "finalizedContextTimestamp": "1795298526"
+      }
+    },
+    {
+      "call": {
+        "blockHash": "802901929561283bc341d16344d8276e5dd109d087cf48330d3f49baeb3a6add",
+        "finalizedHash": "802901929561283bc341d16344d8276e5dd109d087cf48330d3f49baeb3a6add",
+        "finalizedHeight": 49796,
+        "height": 49796,
+        "timestamp": "1795298598",
+        "transactionId": "687a55520509add819fa871b36c9377a98a96f14eb460935826ae18880671d09"
+      },
+      "case": "maximum",
+      "cutoff": "18446744073709551615",
+      "deployment": {
+        "blockHash": "9372adb750bcc0e8259be79e84c40166d88f4da179f8519fc22cf11a4791c339",
+        "finalizedHash": "9372adb750bcc0e8259be79e84c40166d88f4da179f8519fc22cf11a4791c339",
+        "finalizedHeight": 49793,
+        "height": 49793,
+        "timestamp": "1795298580",
+        "transactionId": "01adccc76d4788eb13a489ea76ab257a897b7cfdb5d36f5017e119758aea083d"
+      },
+      "enabled": true,
+      "nativeStateUnchanged": true,
+      "oneOperationCheckTimeBundle": true,
+      "sourceOracle": {
+        "afterDeadline": false,
+        "beforeDeadline": true,
+        "finalizedContextTimestamp": "1795298562"
+      }
     }
   ],
-  "circuit": {
-    "k": 8,
-    "rows": 126
+  "rows": 126,
+  "scope": {
+    "equalityAtRealChainTimeTested": false,
+    "witnessCurrentStateBindingTested": false
   }
 }

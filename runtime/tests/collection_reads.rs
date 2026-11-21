@@ -197,6 +197,58 @@ fn scalar_list(values: &[u64]) -> StateValue<Db> {
     list
 }
 
+fn composite_record_schema() -> Value {
+    let plan: Value = serde_json::from_str(include_str!(
+        "fixtures/generic-state/issue69-composite/321/Issue69CompositeMap.update.impact.json"
+    ))
+    .unwrap();
+    plan["state"][0]["kind"]["tree"]["map"][1]["composite"].clone()
+}
+
+fn composite_record(values: [u64; 4]) -> AlignedValue {
+    let cells = values.map(|value| field_value(Fr::from(value)));
+    AlignedValue::concat(cells.iter())
+}
+
+fn composite_list(values: &[[u64; 4]]) -> StateValue<Db> {
+    let mut list = StateValue::Array(
+        vec![
+            StateValue::Null,
+            StateValue::Null,
+            StateValue::Cell(Sp::new(AlignedValue::from(0u64))),
+        ]
+        .into(),
+    );
+    for (index, value) in values.iter().enumerate().rev() {
+        list = StateValue::Array(
+            vec![
+                StateValue::Cell(Sp::new(composite_record(*value))),
+                list,
+                StateValue::Cell(Sp::new(AlignedValue::from((values.len() - index) as u64))),
+            ]
+            .into(),
+        );
+    }
+    list
+}
+
+fn composite_collection_snapshot(map_value: AlignedValue, list_values: &[[u64; 4]]) -> Snapshot {
+    let record_schema = composite_record_schema();
+    let map = HashMap::new().insert(
+        AlignedValue::from([7u8; 32]),
+        StateValue::Cell(Sp::new(map_value)),
+    );
+    Snapshot::new(
+        plan(vec![
+            json!({"name":"records","kind":{"tree":{"map":["Bytes<32>",{"composite":record_schema.clone()}]}}}),
+            json!({"name":"recordList","kind":{"tree":{"list":{"composite":record_schema}}}}),
+        ]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Map(map), composite_list(list_values)].into(),
+        )),
+    )
+}
+
 fn list_snapshot(values: &[u64]) -> Snapshot {
     Snapshot::new(
         plan(vec![
@@ -374,6 +426,55 @@ fn scalar_list_pages_validate_count_and_empty_sentinel() {
     let malformed = malformed_list_snapshot();
     assert_eq!(
         malformed.status("values", 0, 2, &artifacts::digest(&malformed.state)),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn composite_record_map_and_list_pages_decode_checked_values() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = composite_collection_snapshot(composite_record([1, 2, 3, 4]), &[[5, 6, 7, 8]]);
+    let map_record = json!({
+        "kind":"struct",
+        "id":"Issue69CompositeMap.Ciphertext4",
+        "fields":[
+            {"name":"c1x","value":{"kind":"native","value":"1"}},
+            {"name":"c1y","value":{"kind":"native","value":"2"}},
+            {"name":"c2x","value":{"kind":"native","value":"3"}},
+            {"name":"c2y","value":{"kind":"native","value":"4"}}
+        ]
+    });
+    assert_eq!(
+        snapshot.page("records", 0, 2),
+        json!({
+            "abiVersion":1,
+            "kind":"map",
+            "entries":[{"key":{"kind":"bytes","values":vec![7u8;32]},"value":map_record}],
+            "nextOffset":null
+        })
+    );
+    assert_eq!(
+        snapshot.page("recordList", 0, 2),
+        json!({
+            "abiVersion":1,
+            "kind":"list",
+            "entries":[{
+                "kind":"struct",
+                "id":"Issue69CompositeMap.Ciphertext4",
+                "fields":[
+                    {"name":"c1x","value":{"kind":"native","value":"5"}},
+                    {"name":"c1y","value":{"kind":"native","value":"6"}},
+                    {"name":"c2x","value":{"kind":"native","value":"7"}},
+                    {"name":"c2y","value":{"kind":"native","value":"8"}}
+                ]
+            }],
+            "nextOffset":null
+        })
+    );
+
+    let malformed = composite_collection_snapshot(AlignedValue::from(1u64), &[]);
+    assert_eq!(
+        malformed.status("records", 0, 2, &artifacts::digest(&malformed.state)),
         INVALID_ARGUMENT
     );
 }

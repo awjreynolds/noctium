@@ -1659,6 +1659,238 @@ impl<F: Fn(&crate::funding::UnsealedTransaction, &NetworkPolicy) -> bool>
 mod tests {
     use super::*;
     use sha2::Digest;
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the pinned NativeBlockTime checkTime bundle and funded development node"]
+    fn native_block_time_strict_edges_finalize_without_state_changes() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, Role},
+            proof::{LocalProver, PreparedProof},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::hash::HashOutput;
+        use coin_structure::contract::ContractAddress;
+        use futures::{executor::block_on, future::pending};
+        use onchain_runtime::{context::QueryContext, state::EntryPointBuf};
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{collections::BTreeMap, env, path::Path};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_BLOCK_TIME_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_BLOCK_TIME_MANIFESTS")?)?;
+            ensure!(
+                pins.len() == 1 && pins.contains_key("checkTime"),
+                "expected the single checkTime bundle pin"
+            );
+            let bundle = artifacts::verify(
+                &Path::new(&directory).join("checkTime"),
+                Some(&pins["checkTime"]),
+            )?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "checkTime", "expected checkTime plan");
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_BLOCK_TIME_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_BLOCK_TIME_NODE")?, &cache)
+                .await?;
+
+            let inclusion_timestamp = |block_hash: &str| -> anyhow::Result<u64> {
+                let block = funded
+                    .node
+                    .rpc
+                    .call("chain_getBlock", json!([format!("0x{block_hash}")]))?;
+                let extrinsics = block["block"]["extrinsics"]
+                    .as_array()
+                    .context("finalized inclusion block has no extrinsics")?;
+                let (timestamp, _) = funded.node.transactions(extrinsics, None, false)?;
+                Ok(timestamp.to_secs())
+            };
+
+            let mut records = Vec::new();
+            for (name, enabled, cutoff) in [
+                ("inactive", false, 0u64),
+                ("minimum", true, 0u64),
+                ("maximum", true, u64::MAX),
+            ] {
+                let snapshot = funded.node.sync()?;
+                let source_time = snapshot.block.tblock.to_secs();
+                ensure!(source_time > 0, "expected a positive finalized block time");
+                let ttl = source_time
+                    .checked_add(1800)
+                    .context("proof TTL overflows UInt64")?;
+                let inputs = BTreeMap::from([
+                    ("cutoff".into(), json!(cutoff.to_string())),
+                    ("enabled".into(), json!(enabled)),
+                ]);
+                let private_config = serde_json::to_vec(&json!({
+                    "inputs": inputs,
+                    "state": {},
+                }))?;
+                let prepared = PreparedProof::from_config_in_block(
+                    &bundle,
+                    &private_config,
+                    ttl,
+                    &snapshot.block,
+                    &mut StdRng::from_entropy(),
+                )?;
+                let (address, operation) = prepared.call_target()?;
+                ensure!(operation == "checkTime", "proof targets another operation");
+
+                let native_address = ContractAddress(HashOutput(
+                    hex::decode(&address)?
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("invalid contract address"))?,
+                ));
+                let mut source_context = QueryContext::new(
+                    crate::create_state(&plan, &BTreeMap::new())?,
+                    native_address,
+                );
+                source_context.call_context.tblock = snapshot.block.tblock;
+                source_context.call_context.tblock_err = snapshot.block.tblock_err;
+                source_context.call_context.parent_block_hash = snapshot.block.parent_block_hash;
+                source_context.call_context.last_block_time = snapshot.block.last_block_time;
+                let oracle = crate::prepare_with_context(
+                    &plan,
+                    &inputs,
+                    source_context,
+                    &snapshot.state.parameters,
+                )?;
+                ensure!(
+                    crate::check(&oracle, &circuit)? == oracle.activity_schedule,
+                    "source oracle activity differs from the native circuit"
+                );
+                let outputs = oracle.returns_json();
+                let before = outputs["beforeDeadline"]
+                    .as_bool()
+                    .context("source oracle omitted beforeDeadline")?;
+                let after = outputs["afterDeadline"]
+                    .as_bool()
+                    .context("source oracle omitted afterDeadline")?;
+                let expected = if enabled {
+                    (source_time < cutoff, cutoff < source_time)
+                } else {
+                    (false, false)
+                };
+                ensure!((before, after) == expected, "source oracle edge result differs");
+
+                let call_parameters = cache.parameters(prepared.k()).await?;
+                let proved_call = prepared
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        &call_parameters,
+                        1_048_576,
+                        pending(),
+                    )
+                    .await?;
+                let (_, deployment) = prepared
+                    .deployment_intent()
+                    .context("missing deployment intent")?
+                    .prove(
+                        crate::funding::CONTRACT_SEGMENT,
+                        builtin_zkir::LocalProvingProvider {
+                            rng: StdRng::from_entropy(),
+                            resolver: &funded.dust,
+                            params: &funded.dust_parameters,
+                        },
+                        &snapshot.state.parameters.cost_model.runtime_cost_model,
+                    )
+                    .await
+                    .map_err(|error| anyhow::anyhow!("deployment proof: {error:?}"))?;
+                let (_, deployment_receipt) = funded.finalize(&deployment).await?;
+                let (_, call_receipt) = funded.finalize(proved_call.native()).await?;
+                ensure!(
+                    call_receipt.contract_address == address,
+                    "finalized checkTime call targets another contract"
+                );
+                ensure!(
+                    deployment_receipt.contract_state == call_receipt.contract_state,
+                    "checkTime changed native contract state"
+                );
+                let deployed_state: onchain_runtime::state::ContractState<Db> =
+                    native_decode(&deployment_receipt.contract_state)?;
+                ensure!(deployed_state.operations.size() == 1, "expected one native operation");
+                ensure!(
+                    deployed_state
+                        .operations
+                        .get(&EntryPointBuf(b"checkTime".to_vec()))
+                        .is_some(),
+                    "deployed native state omitted checkTime"
+                );
+                let deployment_time = inclusion_timestamp(&deployment_receipt.block_hash)?;
+                let call_time = inclusion_timestamp(&call_receipt.block_hash)?;
+                ensure!(
+                    deployment_time > 0 && call_time > 0,
+                    "finalized deployment or checkTime inclusion has no block timestamp"
+                );
+                let inclusion_result = if enabled {
+                    (call_time < cutoff, cutoff < call_time)
+                } else {
+                    (false, false)
+                };
+                ensure!(
+                    (before, after) == inclusion_result,
+                    "source oracle result did not stay on the same side through finalization"
+                );
+
+                records.push(json!({
+                    "case": name,
+                    "enabled": enabled,
+                    "cutoff": cutoff.to_string(),
+                    "sourceOracle": {
+                        "finalizedContextTimestamp": source_time.to_string(),
+                        "beforeDeadline": before,
+                        "afterDeadline": after,
+                    },
+                    "deployment": {
+                        "height": deployment_receipt.height,
+                        "blockHash": deployment_receipt.block_hash,
+                        "finalizedHeight": deployment_receipt.finalized_height,
+                        "finalizedHash": deployment_receipt.finalized_hash,
+                        "timestamp": deployment_time.to_string(),
+                        "transactionId": deployment_receipt.transaction_id,
+                    },
+                    "call": {
+                        "height": call_receipt.height,
+                        "blockHash": call_receipt.block_hash,
+                        "finalizedHeight": call_receipt.finalized_height,
+                        "finalizedHash": call_receipt.finalized_hash,
+                        "timestamp": call_time.to_string(),
+                        "transactionId": call_receipt.transaction_id,
+                    },
+                    "oneOperationCheckTimeBundle": true,
+                    "nativeStateUnchanged": true,
+                }));
+            }
+
+            let final_snapshot = funded.node.sync()?;
+            println!(
+                "{}",
+                json!({
+                    "operation": "checkTime",
+                    "bundleManifestSha256": pins,
+                    "records": records,
+                    "finalizedTip": {
+                        "height": final_snapshot.height,
+                        "blockHash": final_snapshot.finalized_hash,
+                        "timestamp": final_snapshot.block.tblock.to_secs().to_string(),
+                    },
+                    "scope": {
+                        "equalityAtRealChainTimeTested": false,
+                        "witnessCurrentStateBindingTested": false,
+                    },
+                })
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn pool_refusal_before_finality_keeps_submission_uncertain() {
         use crate::client::Submission;
@@ -1677,6 +1909,274 @@ mod tests {
         }
         assert_eq!(pool_submission(Some(1013), false), Submission::Broadcast);
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeSet bundles and the funded development node"]
+    fn native_sets_finalize_on_funded_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::{fab::AlignedValue, hash::HashOutput};
+        use coin_structure::contract::ContractAddress;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_NATIVE_SET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_NATIVE_SET_MANIFESTS")?)?;
+            let entries = ["inspect", "update"];
+            let mut bundles = Vec::new();
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            for entry in entries {
+                let pin = pins.get(entry).context("missing operation manifest pin")?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry, circuit.k());
+                plans.insert(entry, plan);
+                circuits.insert(entry, circuit);
+                bundles.push(bundle);
+            }
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NATIVE_SET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_NATIVE_SET_NODE")?, &cache)
+                .await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, degree) in &degrees {
+                parameters.insert(*entry, cache.parameters(*degree).await?);
+            }
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"registered":[],"groups":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let update = target.operation("update", &parameters["update"], ttl)?;
+            let inspect = target.operation("inspect", &parameters["inspect"], ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "update").await?;
+            let mut current = Some(deployed);
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid fixture address"))?,
+            ));
+            let update_inputs = |adding, removing, clearing| {
+                BTreeMap::from([
+                    ("bucket".into(), json!("7")),
+                    ("tag".into(), json!({"kind":"bytes", "values":vec![7u8; 32]})),
+                    ("adding".into(), json!(adding)),
+                    ("removing".into(), json!(removing)),
+                    ("clearing".into(), json!(clearing)),
+                ])
+            };
+            let inspect_inputs = |bucket: u64, enabled: bool| {
+                BTreeMap::from([
+                    ("bucket".into(), json!(bucket.to_string())),
+                    ("enabled".into(), json!(enabled)),
+                ])
+            };
+            let update_returns = |present, group_present, total: u64, group_size: u64| {
+                BTreeMap::from([
+                    ("containsTag".into(), json!(present)),
+                    ("groupContainsTag".into(), json!(group_present)),
+                    ("totalTags".into(), json!(total.to_string())),
+                    ("groupTags".into(), json!(group_size.to_string())),
+                    ("isEmpty".into(), json!(total == 0)),
+                ])
+            };
+            let check_state = |receipt: &FinalizedReceipt,
+                               expected_root: &[[u8; 32]],
+                               expected_groups: &[(u64, Vec<[u8; 32]>)]|
+             -> anyhow::Result<ContractState<Db>> {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots");
+                };
+                let Some(StateValue::Map(root)) = slots.get(0) else {
+                    anyhow::bail!("expected root Set in slot 0");
+                };
+                ensure!(root.size() == expected_root.len(), "root Set differs");
+                for member in expected_root {
+                    ensure!(
+                        matches!(root.get(&AlignedValue::from(*member)), Some(value) if matches!(&*value, StateValue::Null)),
+                        "root Set member differs"
+                    );
+                }
+                let Some(StateValue::Map(groups)) = slots.get(1) else {
+                    anyhow::bail!("expected nested Set map in slot 1");
+                };
+                ensure!(groups.size() == expected_groups.len(), "nested Set keys differ");
+                for (bucket, members) in expected_groups {
+                    let key = crate::field_value(Fr::from(*bucket));
+                    let Some(group) = groups.get(&key) else {
+                        anyhow::bail!("nested Set bucket is missing");
+                    };
+                    let StateValue::Map(group) = &*group else {
+                        anyhow::bail!("expected nested Set");
+                    };
+                    ensure!(group.size() == members.len(), "nested Set differs");
+                    for member in members {
+                        ensure!(
+                            matches!(group.get(&AlignedValue::from(*member)), Some(value) if matches!(&*value, StateValue::Null)),
+                            "nested Set member differs"
+                        );
+                    }
+                }
+                Ok(state)
+            };
+            let simulate = |entry: &str,
+                            state_bytes: &[u8],
+                            inputs: &BTreeMap<String, Json>,
+                            expected_returns: BTreeMap<String, Json>|
+             -> anyhow::Result<crate::Execution> {
+                let state: ContractState<Db> = native_decode(state_bytes)?;
+                let execution = crate::prepare(
+                    &plans[entry],
+                    inputs,
+                    &state.data,
+                    &funded.node.sync()?.state.parameters,
+                    address,
+                )?;
+                crate::check(&execution, &circuits[entry])?;
+                ensure!(
+                    execution.returns_json() == expected_returns,
+                    "{entry} return values differ from Compact oracle semantics"
+                );
+                Ok(execution)
+            };
+
+            check_state(&deployment, &[], &[])?;
+            ensure!(
+                matches!(
+                    inspect.prepare_call(
+                        &mut current,
+                        &parameters["inspect"],
+                        inspect_inputs(9, true),
+                        &mut rng
+                    ),
+                    Err(crate::proof::Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "active inspect of an absent bucket must reject preparation and retain the state token"
+            );
+
+            let tag = [7u8; 32];
+            let updates = [
+                (
+                    update_inputs(true, false, false),
+                    update_returns(true, true, 1, 1),
+                    vec![tag],
+                    vec![(7, vec![tag])],
+                ),
+                (
+                    update_inputs(true, false, false),
+                    update_returns(true, true, 1, 1),
+                    vec![tag],
+                    vec![(7, vec![tag])],
+                ),
+                (
+                    update_inputs(false, true, false),
+                    update_returns(false, false, 0, 0),
+                    vec![],
+                    vec![(7, vec![])],
+                ),
+                (
+                    update_inputs(true, false, true),
+                    update_returns(false, false, 0, 0),
+                    vec![],
+                    vec![(7, vec![])],
+                ),
+            ];
+            let mut receipts = Vec::new();
+            let mut before = deployment.contract_state.clone();
+            for (index, (inputs, expected, root, groups)) in updates.into_iter().enumerate() {
+                let execution = simulate("update", &before, &inputs, expected.clone())?;
+                let receipt = funded
+                    .call(&update, &mut current, &parameters["update"], inputs)
+                    .await?;
+                let observed = check_state(&receipt, &root, &groups)?;
+                ensure!(
+                    execution.after.state == observed.data,
+                    "finalized Set state differs from checked native preparation"
+                );
+                if index == 1 {
+                    ensure!(
+                        receipt.contract_state == before,
+                        "duplicate Set insertion changed finalized state"
+                    );
+                }
+                before = receipt.contract_state.clone();
+                receipts.push((expected, receipt));
+            }
+
+            let inspection_inputs = inspect_inputs(7, true);
+            let inspection = simulate(
+                "inspect",
+                &before,
+                &inspection_inputs,
+                BTreeMap::from([
+                    ("registeredEmpty".into(), json!(true)),
+                    ("groupsEmpty".into(), json!(false)),
+                    ("selectedEmpty".into(), json!(true)),
+                ]),
+            )?;
+            let read = funded
+                .call(
+                    &inspect,
+                    &mut current,
+                    &parameters["inspect"],
+                    inspection_inputs,
+                )
+                .await?;
+            let observed = check_state(&read, &[], &[(7, vec![])])?;
+            ensure!(
+                inspection.after.state == observed.data && read.contract_state == before,
+                "inspection changed or misread finalized Set state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deployment": [deployment.height, deployment.transaction_id],
+                    "calls": receipts.iter().map(|(returns, receipt)| json!({
+                        "height": receipt.height,
+                        "transactionId": receipt.transaction_id,
+                        "checkedSourceReturns": returns,
+                    })).chain(std::iter::once(json!({
+                        "height": read.height,
+                        "transactionId": read.transaction_id,
+                        "checkedSourceReturns": inspection.returns_json(),
+                    }))).collect::<Vec<_>>(),
+                    "environment": ["NOCTIUM_NATIVE_SET_NODE", "NOCTIUM_NATIVE_SET_BUNDLES",
+                        "NOCTIUM_NATIVE_SET_MANIFESTS", "NOCTIUM_NATIVE_SET_PARAMETER_CACHE"],
+                    "scope": "root and nested Bytes32 Set insertion, duplicate, membership, size, emptiness, removal, reset, and absent active path rejection",
+                    "absentActiveBucketRejectedBeforeSubmission": true,
+                    "duplicateInsertionUnchanged": true,
+                    "rootAndNestedSetsMatchedExactAfterState": true,
+                    "compactOracle": "tests/compact/NativeSet.compact",
+                    "compactComparison": "expected return values and state semantics; no Compact-generated bundle executed",
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn ancestry_and_funding_snapshot_mismatches_fail_closed() {
         assert!(validate_parent(Some("a"), "b").is_err());
@@ -1717,6 +2217,134 @@ mod tests {
         cache.state.network_id = "wrong".into();
         assert!(!cache_matches(&cache, &snapshot));
     }
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeCellReset bundles and the funded development node"]
+    fn cell_resets_finalize_canonical_defaults_on_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_CELL_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_CELL_RESET_MANIFESTS")?)?;
+            let bundle = |entry: &str| {
+                let pin = pins.get(entry).context("missing operation manifest pin")?;
+                Ok::<_, anyhow::Error>(
+                    artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?,
+                )
+            };
+            let seed_bundle = bundle("seed")?;
+            let clear_bundle = bundle("clear")?;
+            let seed_k = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_k = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let clear_plan: crate::Plan = serde_json::from_slice(clear_bundle.file(Role::Plan)?)?;
+            let values = |amount: &str, nonce: &str, active: bool, memo: [u8; 4]| {
+                BTreeMap::from([
+                    ("amount".into(), json!(amount)),
+                    ("nonce".into(), json!(nonce)),
+                    ("active".into(), json!(active)),
+                    ("memo".into(), json!({"kind":"bytes","values":memo})),
+                ])
+            };
+            let expected_seeded = crate::create_state(&clear_plan, &values("42", "17", true, *b"seed"))?;
+            let expected_cleared = crate::create_state(&clear_plan, &values("0", "0", false, [0; 4]))?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_CELL_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_CELL_RESET_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_k).await?;
+            let clear_parameters = cache.parameters(clear_k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"amount":"0","nonce":"0","active":false,"memo":{"kind":"bytes","values":[0,0,0,0]}}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let (deployed, deployment) = funded.deploy(&target, "clear").await?;
+            let mut current = Some(deployed);
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let clear = target.operation("clear", &clear_parameters, ttl)?;
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, BTreeMap::new())
+                .await?;
+            let seeded_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
+            ensure!(
+                seeded_state.data.get_ref() == expected_seeded.get_ref(),
+                "finalized seed does not match the fixture's typed cells"
+            );
+            let inactive = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(false))]),
+                )
+                .await?;
+            ensure!(
+                inactive.contract_state == seeded.contract_state,
+                "inactive clear changed finalized state"
+            );
+            let cleared = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(true))]),
+                )
+                .await?;
+
+            let cleared_state: ContractState<Db> = native_decode(&cleared.contract_state)?;
+            ensure!(
+                cleared_state.data.get_ref() == expected_cleared.get_ref(),
+                "finalized clear does not match the fixture's typed defaults"
+            );
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "receipts": [
+                        json!({"stage":"deployment","height":deployment.height,"transactionId":deployment.transaction_id}),
+                        json!({"stage":"seed","height":seeded.height,"transactionId":seeded.transaction_id}),
+                        json!({"stage":"inactiveClear","height":inactive.height,"transactionId":inactive.transaction_id}),
+                        json!({"stage":"activeClear","height":cleared.height,"transactionId":cleared.transaction_id}),
+                    ],
+                    "inactiveClearPreservedExactState": true,
+                    "seedCellsMatchedFixture": true,
+                    "resetCellsMatchedCanonicalFabDefaults": true,
+                    "finalState": {
+                        "contractStateSha256": hex::encode(sha2::Sha256::digest(&cleared.contract_state)),
+                        "finalizedHash": cleared.finalized_hash,
+                        "amount": "0",
+                        "nonce": "0",
+                        "active": false,
+                        "memo": [0, 0, 0, 0],
+                    },
+                    "bundleManifestSha256": pins,
+                    "k": {"seed":seed_k,"clear":clear_k},
+                })
+            );
+            Ok(())
+        })
+    }
+
     fn prepared_runtime(attempt: &str, address: &str) -> crate::host::Runtime {
         let context = serde_json::from_value(json!({"protocolVersion":1,"namespace":"qualification","baseRevision":"r0","attemptId":attempt,"capabilities":[{"id":"store","namespace":"qualification","keyPrefix":"claims/","operations":[crate::host::STAGE,crate::host::CAS]}],"operations":[],"providers":[],"commitCapability":"store"})).unwrap();
         let mut runtime = crate::host::Runtime::new(
@@ -2456,6 +3084,95 @@ mod tests {
             );
             Ok(receipt)
         }
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the pinned NativeContractAddress bundle and funded development node"]
+    fn kernel_self_uses_target_address_and_skips_state_when_inactive() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_KERNEL_SELF_BUNDLE")?;
+            let manifest = setting("NOCTIUM_KERNEL_SELF_MANIFEST_SHA256")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&manifest))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_KERNEL_SELF_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_KERNEL_SELF_NODE")?, &cache)
+                .await?;
+            let parameters = cache.parameters(circuit.k()).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let state_config = serde_json::to_vec(
+                &json!({"state":{"lastAddress":{"kind":"bytes","values":vec![0u8;32]}}}),
+            )?;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                &state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let identify = target.operation("identify", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "identify").await?;
+            let mut current = Some(deployed);
+            let inputs = |enabled| BTreeMap::from([("enabled".into(), json!(enabled))]);
+            let active = funded
+                .call(&identify, &mut current, &parameters, inputs(true))
+                .await?;
+
+            let address = hex::decode(target.contract_address())?;
+            ensure!(address.len() == 32, "target contract address is not 32 bytes");
+            let expected = crate::create_state(
+                &plan,
+                &BTreeMap::from([(
+                    "lastAddress".into(),
+                    json!({"kind":"bytes","values":address}),
+                )]),
+            )?;
+            let active_state: ContractState<Db> = native_decode(&active.contract_state)?;
+            ensure!(
+                *active_state.data.get_ref() == *expected.get_ref(),
+                "active identify call did not finalize lastAddress as its target address"
+            );
+
+            let inactive = funded
+                .call(&identify, &mut current, &parameters, inputs(false))
+                .await?;
+            ensure!(
+                inactive.contract_state == active.contract_state,
+                "inactive identify call changed the exact finalized contract state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "activeHeight": active.height,
+                    "inactiveHeight": inactive.height,
+                    "transactionIds": [deployment.transaction_id, active.transaction_id, inactive.transaction_id],
+                    "activeStateBindsTargetAddress": true,
+                    "inactiveStateUnchanged": true,
+                    "bundleManifestSha256": manifest,
+                    "k": circuit.k(),
+                })
+            );
+            Ok(())
+        })
     }
 
     #[cfg(feature = "zkir-321")]
@@ -3338,6 +4055,172 @@ mod tests {
                     "resetPreservedSibling": true,
                     "committedReadValues": execution.returns_json(),
                     "bundleManifestSha256": pins,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeNestedMapReset bundles and the funded development node"]
+    fn nested_map_reset_retains_initialized_empty_parent_and_sibling() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use storage::{arena::Sp, storage::HashMap};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_NESTED_MAP_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_NESTED_MAP_RESET_MANIFESTS")?)?;
+            let bundle = |operation: &str| {
+                let pin = pins
+                    .get(operation)
+                    .with_context(|| format!("missing {operation} manifest pin"))?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(operation),
+                    Some(pin),
+                )?)
+            };
+            let seed_bundle = bundle("seedNested")?;
+            let clear_bundle = bundle("clearInner")?;
+            let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_degree = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NESTED_MAP_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_NESTED_MAP_RESET_NODE")?,
+                &cache,
+            )
+            .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let clear_parameters = cache.parameters(clear_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"nestedValues":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seedNested", &seed_parameters, ttl)?;
+            let clear = target.operation("clearInner", &clear_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seedNested").await?;
+            let mut current = Some(deployed);
+            let seed_inputs = BTreeMap::from([
+                ("owner".into(), json!("10")),
+                ("targetA".into(), json!("1")),
+                ("amountA".into(), json!("19")),
+                ("targetB".into(), json!("2")),
+                ("amountB".into(), json!("23")),
+                ("siblingOwner".into(), json!("20")),
+                ("siblingKey".into(), json!("3")),
+                ("siblingAmount".into(), json!("31")),
+            ]);
+            let clear_inputs = |owner: u64, active: bool| {
+                BTreeMap::from([
+                    ("owner".into(), json!(owner.to_string())),
+                    ("active".into(), json!(active)),
+                ])
+            };
+            let key = |value| crate::field_value(Fr::from(value));
+            let cell = |value| StateValue::Cell(Sp::new(key(value)));
+            let expected = |reset_owner: bool, initialize_missing: bool| {
+                let mut owner = HashMap::new();
+                if !reset_owner {
+                    owner = owner
+                        .insert(key(1u64), cell(19u64))
+                        .insert(key(2u64), cell(23u64));
+                }
+                let sibling = HashMap::new().insert(key(3u64), cell(31u64));
+                let mut parents = HashMap::new()
+                    .insert(key(10u64), StateValue::Map(owner))
+                    .insert(key(20u64), StateValue::Map(sibling));
+                if initialize_missing {
+                    parents = parents.insert(key(30u64), StateValue::Map(HashMap::new()));
+                }
+                parents
+            };
+            let assert_state = |receipt: &FinalizedReceipt,
+                                reset_owner: bool,
+                                initialize_missing: bool|
+             -> anyhow::Result<()> {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots")
+                };
+                let Some(StateValue::Map(outer)) = slots.get(0) else {
+                    anyhow::bail!("expected outer Map in native slot zero")
+                };
+                ensure!(
+                    *outer == expected(reset_owner, initialize_missing),
+                    "nested Map state differs from exact expected parent and sibling entries"
+                );
+                Ok(())
+            };
+
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs)
+                .await?;
+            assert_state(&seeded, false, false)?;
+            let inactive = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(30, false),
+                )
+                .await?;
+            ensure!(
+                inactive.contract_state == seeded.contract_state,
+                "inactive reset of missing parent changed finalized state"
+            );
+            let initialized = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(30, true),
+                )
+                .await?;
+            assert_state(&initialized, false, true)?;
+            let cleared = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(10, true),
+                )
+                .await?;
+            assert_state(&cleared, true, true)?;
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeight": seeded.height,
+                    "inactiveMissingParentHeight": inactive.height,
+                    "activeMissingParentHeight": initialized.height,
+                    "resetHeight": cleared.height,
+                    "transactionIds": [seeded.transaction_id, inactive.transaction_id, initialized.transaction_id, cleared.transaction_id],
+                    "finalValues": {"owner10": {}, "owner20": {"3": 31}, "owner30": {}},
+                    "inactiveMissingParentWasNoOp": true,
+                    "activeMissingParentInitializedEmptyMap": true,
+                    "selectedInnerMapResetAndSiblingPreserved": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seedNested": seed_degree, "clearInner": clear_degree},
                 })
             );
             Ok(())

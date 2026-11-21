@@ -67,4 +67,10 @@ const nestedMembers = [...nested.nestedMembers.lookup(owner)].sort((a, b) => Buf
 assert.deepEqual(nestedFlags, [[1n, true], [2n, false], [10n, true]]);
 assert.deepEqual(nestedMembers, [1, 4, 9].map(value => new Uint8Array(32).fill(value)));
 assert.deepEqual([...nested.nestedValues.lookup(owner)], [11n, 22n, 33n]);
-console.log('Compact 0.36.1 nested Map, Set and List snapshots match native pagination contents');
+const mapped = { c1x: 1n, c1y: 2n, c2x: 3n, c2y: 4n };
+const listed = { c1x: 5n, c1y: 6n, c2x: 7n, c2y: 8n };
+const recordState = await call(currentContractState.data, 'seedRecords', owner, mapped, listed);
+const records = ledger(recordState);
+assert.deepEqual([...records.records], [[owner, mapped]]);
+assert.deepEqual([...records.recordList], [listed]);
+console.log('Compact 0.36.1 matched scalar and checked record collection contents');
