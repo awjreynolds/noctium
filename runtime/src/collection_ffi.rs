@@ -98,6 +98,24 @@ struct Key {
     value: Json,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CounterRequest {
+    abi_version: u32,
+    plan_sha256: String,
+    state_sha256: String,
+    name: String,
+    keys: Vec<CounterKey>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CounterKey {
+    #[serde(rename = "type")]
+    ty: String,
+    value: Json,
+}
+
 // A read needs only the state declarations, even if the plan uses newer execution opcodes.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +141,65 @@ fn decode_state(bytes: &[u8]) -> Result<ContractState<Db>, i32> {
         return Err(INVALID_ARGUMENT);
     }
     Ok(state)
+}
+
+struct AdmittedSnapshot {
+    plan: ReadPlan,
+    state: ContractState<Db>,
+    keys: Vec<Value>,
+}
+
+fn admit_snapshot<'a>(
+    plan_bytes: &[u8],
+    snapshot_bytes: &[u8],
+    plan_sha256: &str,
+    state_sha256: &str,
+    keys: impl Iterator<Item = (&'a str, &'a Json)>,
+) -> Result<AdmittedSnapshot, i32> {
+    if artifacts::digest(plan_bytes) != plan_sha256
+        || artifacts::digest(snapshot_bytes) != state_sha256
+    {
+        return Err(INVALID_ARGUMENT);
+    }
+
+    let plan: ReadPlan = serde_json::from_slice(plan_bytes).map_err(|_| INVALID_ARGUMENT)?;
+    if plan.schema_version != 1
+        || !crate::profile::validate_plan(plan.target.as_deref(), plan.target_profile.as_ref())
+    {
+        return Err(INVALID_ARGUMENT);
+    }
+    if plan.state.len() > MAX_ROOT_WIDTH {
+        return Err(LIMIT);
+    }
+
+    let keys = keys
+        .map(|(ty, value)| crate::input_value(ty, value).map_err(|_| INVALID_ARGUMENT))
+        .collect::<Result<Vec<_>, _>>()?;
+    let state = decode_state(snapshot_bytes)?;
+    let StateValue::Array(root) = state.data.get_ref() else {
+        return Err(INVALID_ARGUMENT);
+    };
+    if root.len() > MAX_ROOT_WIDTH {
+        return Err(LIMIT);
+    }
+    if root.len() != plan.state.len() {
+        return Err(INVALID_ARGUMENT);
+    }
+
+    Ok(AdmittedSnapshot { plan, state, keys })
+}
+
+fn counter_value(node: &StateValue<Db>) -> Result<u64, i32> {
+    let StateValue::Cell(value) = node else {
+        return Err(INVALID_ARGUMENT);
+    };
+    let Value::UInt { number, .. } =
+        crate::decode_state_cell(value, "UIntRange<18446744073709551616>", "u64")
+            .map_err(|_| INVALID_ARGUMENT)?
+    else {
+        return Err(INVALID_ARGUMENT);
+    };
+    u64::try_from(number).map_err(|_| INVALID_ARGUMENT)
 }
 
 fn canonical_index(value: &str) -> Result<u64, i32> {
@@ -559,37 +636,13 @@ pub unsafe extern "C" fn noctium_ledger_collection_page(
         let _work = Work::reserve()?;
         let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
         let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
-        if artifacts::digest(plan_bytes) != request.plan_sha256
-            || artifacts::digest(snapshot_bytes) != request.state_sha256
-        {
-            return Err(INVALID_ARGUMENT);
-        }
-
-        let plan: ReadPlan = serde_json::from_slice(plan_bytes).map_err(|_| INVALID_ARGUMENT)?;
-        if plan.schema_version != 1
-            || !crate::profile::validate_plan(plan.target.as_deref(), plan.target_profile.as_ref())
-        {
-            return Err(INVALID_ARGUMENT);
-        }
-        if plan.state.len() > MAX_ROOT_WIDTH {
-            return Err(LIMIT);
-        }
-
-        let keys = request
-            .keys
-            .iter()
-            .map(|key| crate::input_value(&key.ty, &key.value).map_err(|_| INVALID_ARGUMENT))
-            .collect::<Result<Vec<_>, _>>()?;
-        let state = decode_state(snapshot_bytes)?;
-        let StateValue::Array(root) = state.data.get_ref() else {
-            return Err(INVALID_ARGUMENT);
-        };
-        if root.len() > MAX_ROOT_WIDTH {
-            return Err(LIMIT);
-        }
-        if root.len() != plan.state.len() {
-            return Err(INVALID_ARGUMENT);
-        }
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
 
         let page = if request.merkle_path.is_none() {
             let (final_schema, selected) =
@@ -633,6 +686,67 @@ pub unsafe extern "C" fn noctium_ledger_collection_page(
         };
         let result =
             native_ffi::service_public_bytes(serde_json::to_vec(&page).map_err(|_| INTERNAL)?)?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}
+
+/// Read one UInt64 Counter from an authenticated, canonical state snapshot.
+/// The request, plan, and snapshot pointers follow the same safety contract as
+/// `noctium_ledger_collection_page`.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_counter_get(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: CounterRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if request.keys.len() > MAX_KEYS {
+            return Err(LIMIT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
+
+        let (schema, selected) = typed_state_path(&plan.state, &state.data, &request.name, &keys)
+            .map_err(|_| INVALID_ARGUMENT)?;
+        if schema != &json!({"counter": true}) {
+            return Err(INVALID_ARGUMENT);
+        }
+        let value = counter_value(&selected)?;
+        let result = native_ffi::service_public_bytes(
+            serde_json::to_vec(&json!({
+                "abiVersion": 1,
+                "kind": "counter",
+                "value": value.to_string(),
+            }))
+            .map_err(|_| INTERNAL)?,
+        )?;
         unsafe { out_result.write(result) };
         Ok(())
     })

@@ -239,7 +239,7 @@ jobs:
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
-              --test collection_reads --test merkle_reads
+              --test collection_reads --test merkle_reads --test counter_snapshot_ffi
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness
