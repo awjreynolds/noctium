@@ -2513,8 +2513,10 @@ mod tests {
             };
             let seed_bundle = bundle("seed")?;
             let remove_bundle = bundle("remove")?;
+            let subtree_bundle = bundle("removeOwner")?;
             let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
             let remove_degree = IrSource::load(remove_bundle.file(Role::Circuit)?)?.k();
+            let subtree_degree = IrSource::load(subtree_bundle.file(Role::Circuit)?)?.k();
             let cache = ProofCache::new(
                 setting("NOCTIUM_MAP_REMOVE_PARAMETER_CACHE")?.into(),
                 "https://srs.midnight.network/".parse()?,
@@ -2523,16 +2525,18 @@ mod tests {
                 FundedLedgerTest::connect(&setting("NOCTIUM_MAP_REMOVE_NODE")?, &cache).await?;
             let seed_parameters = cache.parameters(seed_degree).await?;
             let remove_parameters = cache.parameters(remove_degree).await?;
+            let subtree_parameters = cache.parameters(subtree_degree).await?;
             let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
             let mut rng = StdRng::from_entropy();
             let target = WitnessContractTarget::from_state_config(
-                ContractBundleSet::new(vec![seed_bundle, remove_bundle])?,
+                ContractBundleSet::new(vec![seed_bundle, remove_bundle, subtree_bundle])?,
                 br#"{"state":{"escrow":[]}}"#,
                 ttl,
                 &mut rng,
             )?;
             let seed = target.operation("seed", &seed_parameters, ttl)?;
             let remove = target.operation("remove", &remove_parameters, ttl)?;
+            let remove_owner = target.operation("removeOwner", &subtree_parameters, ttl)?;
             let (deployed, deployment) = funded.deploy(&target, "seed").await?;
             let mut current = Some(deployed);
 
@@ -2576,7 +2580,43 @@ mod tests {
                 "repeat removal changed state"
             );
 
-            let expected = |keep_target| {
+            let subtree_inputs = |owner, enabled| {
+                BTreeMap::from([
+                    ("owner".into(), bytes(owner)),
+                    ("enabled".into(), json!(enabled)),
+                ])
+            };
+            let subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(0, true),
+                )
+                .await?;
+            let repeated_subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(0, true),
+                )
+                .await?;
+            let inactive_subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(3, false),
+                )
+                .await?;
+            ensure!(
+                subtree.contract_state == repeated_subtree.contract_state
+                    && subtree.contract_state == inactive_subtree.contract_state,
+                "repeat or inactive subtree removal changed state"
+            );
+
+            let expected = |keep_owner, keep_target| {
                 let record = |x: u64| {
                     StateValue::Cell(Sp::new(AlignedValue::concat(&[
                         crate::field_value(Fr::from(x)),
@@ -2588,20 +2628,26 @@ mod tests {
                     owner_a = owner_a.insert([1u8; 32].into(), record(10));
                 }
                 let owner_b = HashMap::new().insert([1u8; 32].into(), record(30));
-                let owners = HashMap::new()
-                    .insert([0u8; 32].into(), StateValue::Map(owner_a))
-                    .insert([3u8; 32].into(), StateValue::Map(owner_b));
+                let mut owners = HashMap::new().insert([3u8; 32].into(), StateValue::Map(owner_b));
+                if keep_owner {
+                    owners = owners.insert([0u8; 32].into(), StateValue::Map(owner_a));
+                }
                 StateValue::Array(vec![StateValue::Map(owners)].into())
             };
             let seed_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
             let final_state: ContractState<Db> = native_decode(&removed.contract_state)?;
             ensure!(
-                *seed_state.data.get_ref() == expected(true),
+                *seed_state.data.get_ref() == expected(true, true),
                 "seeded records differ"
             );
             ensure!(
-                *final_state.data.get_ref() == expected(false),
+                *final_state.data.get_ref() == expected(true, false),
                 "removed record or survivors differ"
+            );
+            let subtree_state: ContractState<Db> = native_decode(&subtree.contract_state)?;
+            ensure!(
+                *subtree_state.data.get_ref() == expected(false, false),
+                "removed subtree or surviving owner differs"
             );
             println!(
                 "{}",
@@ -2611,13 +2657,19 @@ mod tests {
                     "seedHeight": seeded.height,
                     "removeHeight": removed.height,
                     "repeatHeight": repeated.height,
-                    "transactionIds": [seeded.transaction_id, removed.transaction_id, repeated.transaction_id],
+                    "removeOwnerHeight": subtree.height,
+                    "repeatOwnerHeight": repeated_subtree.height,
+                    "inactiveOwnerHeight": inactive_subtree.height,
+                    "transactionIds": [seeded.transaction_id, removed.transaction_id, repeated.transaction_id,
+                        subtree.transaction_id, repeated_subtree.transaction_id, inactive_subtree.transaction_id],
                     "missingParentRejectedBeforeSubmission": true,
                     "siblingRecordsPreserved": true,
                     "repeatStateUnchanged": true,
+                    "subtreeRemovedAndOtherOwnerPreserved": true,
+                    "repeatAndInactiveSubtreeStateUnchanged": true,
                     "exactPredictedStateAccepted": true,
                     "bundleManifestSha256": pins,
-                    "k": {"seed":seed_degree,"remove":remove_degree},
+                    "k": {"seed":seed_degree,"remove":remove_degree,"removeOwner":subtree_degree},
                 })
             );
             Ok(())
