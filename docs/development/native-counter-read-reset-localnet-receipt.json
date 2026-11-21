@@ -1,0 +1,69 @@
+{
+  "bundleManifestSha256": {
+    "bump": "11978e6eaa4c7ccf837275e24f2e79e20ab2c5535f5519b5ba58037eb45c62a7",
+    "guarded": "3b43419e5251836a01bf5389de2f8ef4e0b5e2e53b5a1a73d97e570411a17c0b",
+    "readCounters": "118b19e72450453f04eb1eec7cd52807ac0f01e06694000ad26574126035f062",
+    "readTotal": "2a4e6fde16aee4429537e3beb23efe68db1d352da7da36b10d9d5228bed610e3",
+    "reduce": "0ec6073038bdeae81b8b4d4de409205cd7656cdda9b01f6b0b04e03dc9825125",
+    "resetCounters": "48378289a740eb0ac679f2251e3c3bfd19810aa69f1346a80a62b0c0906e45e7"
+  },
+  "calls": [
+    {
+      "entrypoint": "readTotal",
+      "height": 49164,
+      "transactionId": "539245fe458833ea5a7946d0581fa6317794717cd4b0e5ddfa5df63e7077adec"
+    },
+    {
+      "entrypoint": "bump",
+      "height": 49167,
+      "transactionId": "abc10e23319b5b5666798927e80d3b87d267cf2255e44f3428910b4187afc4ba"
+    },
+    {
+      "entrypoint": "bump",
+      "height": 49170,
+      "transactionId": "ef90211dbe0301355f64719b44cfef586ff82e3878b5b154193d370d6cf3851d"
+    },
+    {
+      "entrypoint": "reduce",
+      "height": 49173,
+      "transactionId": "d74112cce1af93b2aa30649fcaf492690141e74da99f50017155b23240d42430"
+    },
+    {
+      "entrypoint": "resetCounters",
+      "height": 49176,
+      "transactionId": "02e7aa61112f9196d41256f632460879c010b91d1bf1f29797c5e5968cad407a"
+    },
+    {
+      "entrypoint": "resetCounters",
+      "height": 49179,
+      "transactionId": "bbf34e5391b8fe2a80498cfedf771d01413cde674eeee6d922bbd9e5d6023c4b"
+    },
+    {
+      "entrypoint": "readCounters",
+      "height": 49182,
+      "transactionId": "2818b6fccc57d877e7278c5302d19d624e2cb6154d7221187d8e47cce0a8fabd"
+    }
+  ],
+  "committedReadValues": {
+    "epochValue": "0",
+    "totalValue": "0"
+  },
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "7d43a30915c248535783767e9fb1286e472fa3c328b17f009276c01dde7ef4be",
+  "deploymentHeight": 49160,
+  "exactPredictedStateAccepted": true,
+  "k": {
+    "bump": 10,
+    "guarded": 9,
+    "readCounters": 9,
+    "readTotal": 6,
+    "reduce": 9,
+    "resetCounters": 9
+  },
+  "ledger": "9.1.0.1",
+  "missingParentAndLeafRejectedBeforeSubmission": true,
+  "readsUnchanged": true,
+  "resetCreatedAbsentLeaf": true,
+  "resetPreservedSibling": true,
+  "target": "midnight-ledger-9-zkir-3.2.1"
+}
