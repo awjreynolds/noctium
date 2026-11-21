@@ -5583,7 +5583,7 @@
       "layer": "standard-library",
       "surface": "shieldedBurnAddress",
       "noctiumStatus": "subset",
-      "notes": "Lean constructs the canonical wallet branch with a zero Bytes32 key. The source fixture matches the pinned Compact value and rejects using the burn key as a contract relay recipient. This covers constructing the address, with settlement and the general recipient union still open.",
+      "notes": "Lean and the native runtime expose the wallet branch and both nominal zero Bytes32 arms. Compact 0.36.1 returns the same logical value. The grouped Noctium ABI uses 65 Native fields for this helper, so packed FAB interoperability remains open. The address helper has no ledger effects. Shielded settlement is tracked separately.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5598,7 +5598,8 @@
       ],
       "observedEvidence": [
         "tests/ShieldedBurnAddress.lean",
-        "tests/compact/indexed-shielded-nonce.mjs"
+        "tests/compact/indexed-shielded-nonce.mjs",
+        "runtime/tests/shielded_burn_address.rs"
       ],
       "equivalence": "unverified"
     },
