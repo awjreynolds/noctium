@@ -353,11 +353,13 @@ scoped syntax (name := circuitCommand) "noctium_circuit" ident "where" nlcstmt* 
 declare_syntax_cat nlstate
 scoped syntax "cell" ident ":" nltype : nlstate
 scoped syntax "sealed" "cell" ident ":" nltype : nlstate
+scoped syntax "sealed" "map" ident ":" nltype "=>" nltype : nlstate
 declare_syntax_cat nlconstructorparam
 scoped syntax ident ":" nltype : nlconstructorparam
 declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
+scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
 scoped syntax "constructor" "(" nlconstructorparam,* ")" "where" nlconstructorinit* "end" : nlstate
 scoped syntax "map" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "counter" ident : nlstate
@@ -3683,48 +3685,66 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       scalarBindings := (name, ty, reference) :: scalarBindings
     parameterTerms := parameterTerms.push (← `(Noctium.ConstructorParameter.mk $(stringTerm name) $typeTerm))
   let mut initializerTerms : Array (TSyntax `term) := #[]
+  let mut mapInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
   for initializer in initializers do
-    let (destination, initializerType, initializerValue) ← match initializer with
-      | `(nlconstructorinit| initialize $stateName:ident := $value:nlexpr) => do
-        let destination := stateName.getId.toString
-        match schema.find? (·.1 == destination) with
-        | some (_, .opaqueString) =>
-          match value with
-          | `(nlexpr| $parameter:ident) =>
-            let parameterName := parameter.getId.toString
-            unless opaqueParameters.contains parameterName do
-              throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
+    match initializer with
+    | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
+      if mapInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor Map insert limit exceeded"
+      let destination := stateName.getId.toString
+      match schema.find? (·.1 == destination) with
+      | some (_, .map keyTy valueTy) => do
+        let keyExpression ← checkedExpression scalarBindings key keyTy
+        let valueExpression ← checkedExpression scalarBindings value valueTy
+        let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
+        let valueType ← tyTerm valueTy
+        mapInsertTerms := mapInsertTerms.push
+          (← `(Noctium.ConstructorMapInsert.mk $(stringTerm destination) $key $valueType $valueExpression))
+      | some _ => throwErrorAt stateName "constructor insert requires a Map"
+      | none => throwErrorAt stateName s!"constructor inserts into unknown Map '{destination}'"
+    | _ => do
+      let (destination, initializerType, initializerValue) ← match initializer with
+        | `(nlconstructorinit| initialize $stateName:ident := $value:nlexpr) => do
+          let destination := stateName.getId.toString
+          match schema.find? (·.1 == destination) with
+          | some (_, .opaqueString) =>
+            match value with
+            | `(nlexpr| $parameter:ident) =>
+              let parameterName := parameter.getId.toString
+              unless opaqueParameters.contains parameterName do
+                throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
+              let typeTerm ← `(Noctium.ConstructorType.opaqueString)
+              let valueTerm ← `(Noctium.ConstructorValue.opaqueStringParameter $(stringTerm parameterName))
+              pure (destination, ConstructorType.opaqueString, (typeTerm, valueTerm))
+            | _ => throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
+          | some (_, .cell ty) => do
+            let expression ← checkedExpression scalarBindings value ty
+            let typeTerm ← `(Noctium.ConstructorType.scalar $(← tyTerm ty))
+            let valueTerm ← `(Noctium.ConstructorValue.scalar $expression)
+            pure (destination, ConstructorType.scalar ty, (typeTerm, valueTerm))
+          | some _ => throwErrorAt stateName "constructor initializers must target cells"
+          | none => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
+        | `(nlconstructorinit| initialize $stateName:ident := $literal:str) => do
+          let destination := stateName.getId.toString
+          match schema.find? (·.1 == destination) with
+          | some (_, .opaqueString) => do
             let typeTerm ← `(Noctium.ConstructorType.opaqueString)
-            let valueTerm ← `(Noctium.ConstructorValue.opaqueStringParameter $(stringTerm parameterName))
+            let valueTerm ← `(Noctium.ConstructorValue.opaqueStringLiteral $(stringTerm literal.getString))
             pure (destination, ConstructorType.opaqueString, (typeTerm, valueTerm))
-          | _ => throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
-        | some (_, .cell ty) => do
-          let expression ← checkedExpression scalarBindings value ty
-          let typeTerm ← `(Noctium.ConstructorType.scalar $(← tyTerm ty))
-          let valueTerm ← `(Noctium.ConstructorValue.scalar $expression)
-          pure (destination, ConstructorType.scalar ty, (typeTerm, valueTerm))
-        | some _ => throwErrorAt stateName "constructor initializers must target cells"
-        | none => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
-      | `(nlconstructorinit| initialize $stateName:ident := $literal:str) => do
-        let destination := stateName.getId.toString
-        match schema.find? (·.1 == destination) with
-        | some (_, .opaqueString) => do
-          let typeTerm ← `(Noctium.ConstructorType.opaqueString)
-          let valueTerm ← `(Noctium.ConstructorValue.opaqueStringLiteral $(stringTerm literal.getString))
-          pure (destination, ConstructorType.opaqueString, (typeTerm, valueTerm))
-        | some _ => throwErrorAt literal "string literals initialize only OpaqueString cells"
-        | none => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
-      | _ => throwErrorAt initializer "unsupported constructor initializer"
-    if initializedNames.contains destination then
-      throwErrorAt initializer s!"duplicate constructor initializer for '{destination}'"
-    initializedNames := destination :: initializedNames
-    let (typeTerm, valueTerm) := initializerValue
-    initializerTerms := initializerTerms.push
-      (← `(Noctium.ConstructorInitializer.mk $(stringTerm destination) $typeTerm $valueTerm))
+          | some _ => throwErrorAt literal "string literals initialize only OpaqueString cells"
+          | none => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
+        | _ => throwErrorAt initializer "unsupported constructor initializer"
+      if initializedNames.contains destination then
+        throwErrorAt initializer s!"duplicate constructor initializer for '{destination}'"
+      initializedNames := destination :: initializedNames
+      let (typeTerm, valueTerm) := initializerValue
+      initializerTerms := initializerTerms.push
+        (← `(Noctium.ConstructorInitializer.mk $(stringTerm destination) $typeTerm $valueTerm))
   let parameters := parameterTerms
   let initializers := initializerTerms
-  `(some ({parameters := [$parameters,*], initializers := [$initializers,*] : Noctium.Constructor}))
+  let mapInserts := mapInsertTerms
+  `(some (Noctium.Constructor.mk [$parameters,*] [$initializers,*] [$mapInserts,*]))
 
 private def checkMerkleLeafWidth (source : Syntax) (fields : List Ty) : CommandElabM Unit := do
   let widths ← fields.mapM fun ty =>
@@ -3839,6 +3859,10 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
         | `(nlstate| cell $id:ident : $ty:nltype) => do
           let t ← readTy ty
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
+        | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype) => do
+          let k ← readTy key
+          let v ← readTy value
+          pure (id, StateKind.map k v, ← `(Noctium.StateKind.map $(← tyTerm k) $(← tyTerm v)))
         | `(nlstate| map $id:ident : $key:nltype => $value:nltype) => do
           let k ← readTy key
           let v ← readTy value
@@ -3986,7 +4010,8 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
       if schema.any (fun p => p.1 == id.getId.toString) then throwErrorAt id "duplicate Noctium state"
       schema := schema ++ [(id.getId.toString, kind)]
       let isSealed : _root_.Bool := match state with
-        | `(nlstate| sealed cell $_:ident : $_:nltype) => Bool.true
+        | `(nlstate| sealed cell $_:ident : $_:nltype)
+        | `(nlstate| sealed map $_:ident : $_:nltype => $_:nltype) => Bool.true
         | _ => Bool.false
       concreteSchema := concreteSchema ++ [{name := id.getId.toString, kind := kind, «sealed» := isSealed}]
       let sealedTerm ← if isSealed then `(Bool.true) else `(Bool.false)

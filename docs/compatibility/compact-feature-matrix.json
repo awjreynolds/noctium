@@ -1276,7 +1276,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments and typed cell initializers. Compiler metadata drives off-chain native genesis-state construction; other state uses typed defaults. Arbitrary initialization effects and private witness callbacks are not supported.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed cell initializers, and direct inserts into flat scalar Maps. Constructor metadata drives native genesis-state construction. The native checker and Compact 0.36.1 agree for one seeded Field-to-UInt64 Map and an adjacent default-empty Map. Funded Map execution, other layouts, helper initialization, and private constructor callbacks remain open.",
       "source": [
         "reference"
       ],
@@ -1291,6 +1291,9 @@
         "runtime/src/constructor.rs",
         "tests/ConstructorMetadata.lean",
         "runtime/tests/constructor_metadata.rs",
+        "tests/SealedMapConstructor.lean",
+        "tests/compact/sealed-map-constructor.mjs",
+        "runtime/tests/sealed_map_constructor.rs",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"
@@ -1300,7 +1303,7 @@
       "layer": "language-ledger",
       "surface": "Sealed ledger fields",
       "noctiumStatus": "subset",
-      "notes": "Compact permits sealing any ledger field and restricts writes by exported circuits. Noctium requires constructor initialization for sealed scalar and OpaqueString cells, rejects entrypoint and helper-body writes in source validation, and rejects prepared calls that change sealed state natively. Other sealed ledger types and Compact constructor/helper initialization semantics remain unsupported or unverified.",
+      "notes": "Noctium supports sealed scalar and OpaqueString cells and flat scalar Maps. Maps permit default-empty state, typed constructor inserts, and entrypoint/helper reads. Source checks reject entrypoint and helper writes. The native and Compact 0.36.1 fixtures preserve seeded and empty Field-to-UInt64 Maps during an unrelated write. The native runtime rejects an attempted Map mutation. Funded Map execution and sealing other ledger types remain open.",
       "source": [
         "reference"
       ],
@@ -1315,6 +1318,9 @@
         "runtime/src/constructor.rs",
         "tests/ConstructorMetadata.lean",
         "runtime/tests/constructor_metadata.rs",
+        "tests/SealedMapConstructor.lean",
+        "tests/compact/sealed-map-constructor.mjs",
+        "runtime/tests/sealed_map_constructor.rs",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"

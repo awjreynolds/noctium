@@ -1,0 +1,18 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export sealed ledger entries: Map<Field, Uint<64>>;
+export sealed ledger emptyEntries: Map<Field, Uint<64>>;
+export ledger marker: Field;
+
+constructor(key: Field, value: Uint<64>) {
+  entries.insert(disclose(key), disclose(value));
+}
+
+export circuit get(key: Field): Uint<64> {
+  return entries.lookup(disclose(key));
+}
+
+export circuit touch(): [] {
+  marker = 37 as Field;
+}

@@ -22,6 +22,29 @@ constructor. Its deployment `state` argument then contains constructor arguments
 Without a constructor, existing explicit state configuration remains supported.
 `create_state` remains the low-level explicit state constructor/hydrator.
 
+## Seed a flat Map
+
+```lean
+sealed map entries : Native => UInt 64
+constructor(key : Native, value : UInt 64) where
+  insert entries[disclose(key)] := disclose(value)
+end
+```
+
+Flat Maps begin empty. A constructor applies typed inserts in source order.
+Entry points and helpers read a sealed Map. Source validation rejects writes
+to it, and the native checker rejects a prepared call that changes it.
+
+The fixture compares a seeded Native/Field-to-UInt64 Map and an empty sealed
+Map against Compact 0.36.1. Both preserve the Maps during a write to a
+neighboring Cell. The native checker rejects a constructor insert aimed at
+a scalar Cell and an entrypoint write aimed at the sealed Map. Point
+`NOCTIUM_SEALED_MAP_CONSTRUCTOR_DIR` at fresh ZKIR 3.2.1 compiler output to
+run the Rust case. Funded execution and other Map layouts remain open.
+[Lean fixture](../../tests/SealedMapConstructor.lean) ·
+[Compact oracle](../../tests/compact/sealed-map-constructor.mjs) ·
+[Native checker](../../runtime/tests/sealed_map_constructor.rs)
+
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one
 raw UTF-8 FAB atom with Compress alignment. The codec preserves embedded U+0000
 and rejects trailing U+0000 before constructing state. Ledger serialization
@@ -52,9 +75,8 @@ metadata. The ledger VM has no separate sealed-cell permission type.
 
 Constructors execute off chain. This feature does not prove constructor
 execution on the ledger. Deployment assurance must bind the source artifact,
-constructor arguments and actual genesis state. This first constructor surface
-supports public arguments and cell initializers, not private witness callbacks
-or arbitrary initialization effects.
+constructor arguments and actual genesis state. Private witness callbacks and
+arbitrary initialization effects remain open.
 
 `tests/ConstructorMetadata.lean` and `runtime/tests/constructor_metadata.rs`
 cover initialized metadata, UTF-8 with a trailing zero byte, immutable metadata,
