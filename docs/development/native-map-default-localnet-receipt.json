@@ -1,0 +1,53 @@
+{
+  "bundleManifestSha256": {
+    "appendHistoric": "9618d9649bd8a63cf9e4bf0cc5dedd618f0422d627c2a3803efae5c28a8539c8",
+    "checkHistoricZero": "3dc617f885ad7cf172110982017b6ca26e81796d574afa738887d8eae0ab7b2c",
+    "clear": "d51def5271c3296e290f4ee2d9341b8295d41447e0f4f1d1ebf2002606714721",
+    "defaultHistoric": "7dfd5274cec0ab080578b5264d9a78c9b50758732ee11edbd90f26c2e2748071",
+    "defaultValue": "f380c3d023435bebc639b7a60cf58f5915e87550ff2acf58625bc2fb500a75f2",
+    "defaults": "d0cd739006f34b5f974606d9cdb6bf47d84f6447515c05f470c802bcc4ed525c",
+    "missingParent": "0df40555ba31c8b709c0c73732d870ea88c209c71c5b8023c2159af512ea9cb5",
+    "resetHistoric": "bff927ea9ccd5d071cb0aeaac404e3a1e75521b5b294ea80ebd88ed0c4a1f666",
+    "seed": "1e2fbd9b623320a4b376dc054d44b1c496186ac86faf7dffdb2483a6a2962732"
+  },
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "958fabacece81794a81b131276044df3b00ff12e4dbc01d2a5083659f6d1edab",
+  "deploymentHeight": 49442,
+  "finalValues": [
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      23
+    ],
+    [
+      3,
+      0
+    ]
+  ],
+  "k": {
+    "defaultValue": 8,
+    "seed": 8
+  },
+  "ledger": "9.1.0.1",
+  "missingDefaultHeight": 49451,
+  "missingKeyInsertedAsZero": true,
+  "nonzeroKeyReplacedWithZero": true,
+  "replacementHeight": 49454,
+  "seedHeights": [
+    49445,
+    49448
+  ],
+  "siblingValuesPreserved": true,
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "transactionIds": [
+    "7505b6007ffee9ac0cfa6db9dfbc0e186755f90d6621837195d6604f49b37d35",
+    "38dde1bc5f09eb8f777b2c574ead3ae224150349f631cf19c23571375a4f627d",
+    "0e8376a4420449ba9b424f4d8c93f8266695d8d6322ac65c6c87f6bcbcb1e239",
+    "65de379b1f36d65c90bdbf1bd1c131ab97cc1b57bb384265487aca4077f64d77"
+  ]
+}
