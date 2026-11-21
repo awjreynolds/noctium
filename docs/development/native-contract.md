@@ -283,12 +283,11 @@ fails the equality check. [Lean fixture](../../tests/NativeContractAddress.lean)
 [Compact oracle](../../tests/compact/contract-address.mjs) ·
 [Native checker](../../runtime/tests/native_contract_address.rs)
 
-The Rust SDK deployed the fixture on Ledger 9.1.0.1 localnet at block 47
-and finalized the active call at block 50. The full state matched the SDK
-prediction, and a separate decoder matched the stored `lastAddress`
-cell to the actual deployment address. Native sizing reported K8 and
-146 rows. The guarded skip and wrong-address replay ran in the native
-VM. [Localnet receipt](native-contract-address-localnet-receipt.json)
+Ledger 9.1.0.1 finalized the active call at block 49730 and stored the
+target's deployment address in `lastAddress`. The inactive call finalized at
+49733 with the same contract state bytes. The native checker also rejects
+wrong-address replay and a changed address output. The `identify` circuit
+uses K8 and 146 rows. [Finalized receipt](native-contract-address-localnet-receipt.json)
 
 ## Derive token colors
 

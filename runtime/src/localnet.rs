@@ -2460,6 +2460,95 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the pinned NativeContractAddress bundle and funded development node"]
+    fn kernel_self_uses_target_address_and_skips_state_when_inactive() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_KERNEL_SELF_BUNDLE")?;
+            let manifest = setting("NOCTIUM_KERNEL_SELF_MANIFEST_SHA256")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&manifest))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_KERNEL_SELF_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_KERNEL_SELF_NODE")?, &cache)
+                .await?;
+            let parameters = cache.parameters(circuit.k()).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let state_config = serde_json::to_vec(
+                &json!({"state":{"lastAddress":{"kind":"bytes","values":vec![0u8;32]}}}),
+            )?;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                &state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let identify = target.operation("identify", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "identify").await?;
+            let mut current = Some(deployed);
+            let inputs = |enabled| BTreeMap::from([("enabled".into(), json!(enabled))]);
+            let active = funded
+                .call(&identify, &mut current, &parameters, inputs(true))
+                .await?;
+
+            let address = hex::decode(target.contract_address())?;
+            ensure!(address.len() == 32, "target contract address is not 32 bytes");
+            let expected = crate::create_state(
+                &plan,
+                &BTreeMap::from([(
+                    "lastAddress".into(),
+                    json!({"kind":"bytes","values":address}),
+                )]),
+            )?;
+            let active_state: ContractState<Db> = native_decode(&active.contract_state)?;
+            ensure!(
+                *active_state.data.get_ref() == *expected.get_ref(),
+                "active identify call did not finalize lastAddress as its target address"
+            );
+
+            let inactive = funded
+                .call(&identify, &mut current, &parameters, inputs(false))
+                .await?;
+            ensure!(
+                inactive.contract_state == active.contract_state,
+                "inactive identify call changed the exact finalized contract state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "activeHeight": active.height,
+                    "inactiveHeight": inactive.height,
+                    "transactionIds": [deployment.transaction_id, active.transaction_id, inactive.transaction_id],
+                    "activeStateBindsTargetAddress": true,
+                    "inactiveStateUnchanged": true,
+                    "bundleManifestSha256": manifest,
+                    "k": circuit.k(),
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated NativeMapDefault bundles and the funded development node"]
     fn native_map_default_inserts_and_preserves_siblings() -> anyhow::Result<()> {
         use crate::{
