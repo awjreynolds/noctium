@@ -2212,8 +2212,8 @@
       "id": "C-ADT-COUNTER-LESSTHAN",
       "layer": "language-ledger",
       "surface": "Counter.lessThan",
-      "noctiumStatus": "subset",
-      "notes": "Native strict comparison with a UInt64 expression works on standalone and nested Bytes8 Counters. Reads observe earlier updates. Equality and inactive reads bind false. Active missing or malformed values reject.",
+      "noctiumStatus": "equivalent",
+      "notes": "Native strict UInt64 comparison matches Compact for standalone and nested Counters, including equality, ordered updates and missing-path guards. The native checker also reaches UInt64 maximum. Ledger 9.1.0.1 finalized the standalone and nested circuits with exact predicted state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2225,9 +2225,12 @@
       "observedEvidence": [
         "tests/CounterCompare.lean",
         "runtime/tests/counter_compare.rs",
+        "tests/compact/counter-compare.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-compare-localnet-receipt.json",
         "docs/development/native-counter.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-READ",
@@ -5454,8 +5457,8 @@
       "id": "C-STDLIB-NATIVETOKEN",
       "layer": "standard-library",
       "surface": "nativeToken",
-      "noctiumStatus": "subset",
-      "notes": "Lean nativeToken returns the canonical all-zero Bytes32 color. The pinned Compact comparator and emitted native relation return the same bytes.",
+      "noctiumStatus": "equivalent",
+      "notes": "The standalone operation returns the same all-zero Bytes32 token color as pinned Compact. The emitted relation, typed result schema, and native proved call use the canonical bytes.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5471,16 +5474,17 @@
       "observedEvidence": [
         "tests/NativeTokenColors.lean",
         "runtime/tests/native_token_colors.rs",
-        "tests/compact/native-token-colors.mjs"
+        "tests/compact/native-token-colors.mjs",
+        "docs/development/native-contract.md#derive-token-colors"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-TOKENTYPE",
       "layer": "standard-library",
       "surface": "tokenType",
-      "noctiumStatus": "subset",
-      "notes": "Lean tokenType hashes the padded native domain, the supplied Bytes32 domain separator, and contract address bytes in order. Two changed-address cases match pinned Compact through the emitted native relation. The source helper accepts checked Bytes32 operands.",
+      "noctiumStatus": "equivalent",
+      "notes": "The standalone operation hashes the same padded domain, Bytes32 separator, and explicit address bytes as pinned Compact. Four matched vectors include both extreme byte values. The native proof rejects a changed separator or address, and the typed ABI rejects malformed Bytes32. Nominal address authoring is tracked separately.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5496,9 +5500,10 @@
       "observedEvidence": [
         "tests/NativeTokenColors.lean",
         "runtime/tests/native_token_colors.rs",
-        "tests/compact/native-token-colors.mjs"
+        "tests/compact/native-token-colors.mjs",
+        "docs/development/native-contract.md#derive-token-colors"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-MINTSHIELDEDTOKEN",

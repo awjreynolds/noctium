@@ -1,0 +1,43 @@
+{
+  "bundleManifestSha256": {
+    "inspect": "347d0df3a8f4b2c705e4f0d90c3bc13fee80e9d5cb19eaa13069d1a19fb1755a",
+    "inspectNested": "ae1836a60ceeee74712710313c6180a5124b0063efd7956abb14e991d4bcba32",
+    "seedNested": "704f6179f4cd13e658bb712920b9ab12707220bb07ed38eb0da5d80916519e7f"
+  },
+  "callHeights": [
+    48864,
+    48867,
+    48870
+  ],
+  "compilerRevision": "b60c97a635dc40dc576e10884ba895c390943d11",
+  "contractAddress": "733de632844eed73e9d81b62ba280047212614301d810ba5f399a21e33119804",
+  "deploymentHeight": 48860,
+  "exactPredictedStateAccepted": true,
+  "finalizedCounter": 300,
+  "finalizedNestedCounter": 300,
+  "k": {
+    "inspect": 9,
+    "inspectNested": 9,
+    "seedNested": 10
+  },
+  "ledger": "9.1.0.1",
+  "nestedReadStateUnchanged": true,
+  "operations": [
+    "inspect",
+    "seedNested",
+    "inspectNested"
+  ],
+  "relationRows": {
+    "inspect": 278,
+    "inspectNested": 439,
+    "seedNested": 511
+  },
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "threshold": 301,
+  "transactionIds": [
+    "4340bb344d2735d774de3153e9bf3e65fc9e088215534ea85ce53b3d8b4d783a",
+    "62d646722f2119c56dc808a06292723f92d88072a28859ca8aa5b5b73eb9e806",
+    "1da5151fd3e78163ea5b46ea53de67ec49eb054f3549a50a2f990fdec1fbf374"
+  ],
+  "unseededActiveRejectedBeforeSubmission": true
+}

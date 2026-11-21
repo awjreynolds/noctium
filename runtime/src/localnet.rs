@@ -2179,4 +2179,239 @@ mod tests {
             }
         });
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated CounterCompare bundles and the funded development node"]
+    fn counter_comparison_finalizes_on_ledger() -> anyhow::Result<()> {
+        use crate::zkir::IrSource;
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            client::{BoundTransaction, ChainAdapter, NetworkPolicy, Submission},
+            funding::{CONTRACT_SEGMENT, FeePolicy, UnsealedTransaction},
+            proof::{LocalProver, WitnessContractTarget},
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::AlignedValue;
+        use futures::{executor::block_on, future::pending};
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::time::{Duration, Instant};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_COUNTER_COMPARE_BUNDLES")?;
+            let manifest_pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_COUNTER_COMPARE_MANIFESTS")?)?;
+            let entries = ["inspect", "seedNested", "inspectNested"];
+            let mut bundles = Vec::new();
+            let mut degrees = BTreeMap::new();
+            for entry in entries {
+                let digest = manifest_pins
+                    .get(entry)
+                    .context("missing operation manifest pin")?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(digest))?;
+                degrees.insert(entry, IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                bundles.push(bundle);
+            }
+            let cache = ProofCache::new(
+                setting("NOCTIUM_COUNTER_COMPARE_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let policy = NetworkPolicy {
+                network_id: "undeployed".into(),
+                genesis: DEVELOPMENT_GENESIS.into(),
+                spec_version: 2_001_100,
+                transaction_version: 4,
+                profile: crate::profile::NAME.into(),
+                max_dust: 10u128.pow(22),
+            };
+            let node = Node::connect(
+                &setting("NOCTIUM_COUNTER_COMPARE_NODE")?,
+                policy.clone(),
+                Duration::from_secs(15),
+                64 * 1024 * 1024,
+                100_000,
+            )?;
+            let mut local_seed = [0; 32];
+            local_seed[31] = 1;
+            node.attach_dust_seed(&local_seed)?;
+            let dust = cache.dust().await?;
+            let dust_parameters = cache.parameters(dust.k()).await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, degree) in &degrees {
+                parameters.insert(*entry, cache.parameters(*degree).await?);
+            }
+            let ttl = node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"total":"0","epochs":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let (_, deployment) = target
+                .deployment_intent()
+                .prove(
+                    CONTRACT_SEGMENT,
+                    builtin_zkir::LocalProvingProvider {
+                        rng: StdRng::from_entropy(),
+                        resolver: &dust,
+                        params: &dust_parameters,
+                    },
+                    &node.sync()?.state.parameters.cost_model.runtime_cost_model,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("deployment proof: {error:?}"))?;
+            let finalize = async |intent: &crate::proof::ProvedNativeIntent| {
+                let funding = DevelopmentFunding::new(
+                    &node,
+                    &dust,
+                    &dust_parameters,
+                    FeePolicy {
+                        max_dust: policy.max_dust,
+                        margin_blocks: 3,
+                        max_spends: 8,
+                    },
+                    StdRng::from_entropy(),
+                );
+                let approve =
+                    |_: &UnsealedTransaction, candidate: &NetworkPolicy| *candidate == policy;
+                let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
+                let bound =
+                    BoundTransaction::prepare(intent, policy.clone(), &node, &funding, &signer)
+                        .await?;
+                ensure!(
+                    node.submit(&bound)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("submit failed"))?
+                        != Submission::Rejected,
+                    "localnet rejected intent"
+                );
+                let deadline = Instant::now() + Duration::from_secs(90);
+                loop {
+                    if let Some(receipt) = node.finalized_receipt(&bound)? {
+                        bound.check_receipt(&receipt)?;
+                        return Ok::<_, anyhow::Error>((bound, receipt));
+                    }
+                    ensure!(Instant::now() < deadline, "receipt did not finalize");
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            };
+            let (deployed, deploy_receipt) = finalize(&deployment).await?;
+            let mut current = Some(
+                target
+                    .deployment_binding("inspect")?
+                    .admit_committed_state(
+                        &deploy_receipt.contract_state,
+                        deployed.expected_state(),
+                        &deploy_receipt.finalized_hash,
+                        true,
+                    )?,
+            );
+            let inputs = BTreeMap::from([
+                ("owner".into(), json!({"kind":"bytes","values":vec![1; 32]})),
+                (
+                    "spender".into(),
+                    json!({"kind":"bytes","values":vec![2; 32]}),
+                ),
+                ("threshold".into(), json!("301")),
+                ("enabled".into(), json!(true)),
+            ]);
+            let nested = target.operation("inspectNested", &parameters["inspectNested"], ttl)?;
+            ensure!(
+                nested
+                    .prepare_call(
+                        &mut current,
+                        &parameters["inspectNested"],
+                        inputs.clone(),
+                        &mut rng
+                    )
+                    .is_err()
+                    && current.is_some(),
+                "a comparison on an unseeded path must reject and retain the state token"
+            );
+
+            let mut receipts = Vec::new();
+            for entry in entries {
+                let params = &parameters[entry];
+                let operation = target.operation(entry, params, ttl)?;
+                let proved = operation
+                    .prepare_call(&mut current, params, inputs.clone(), &mut rng)?
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        params,
+                        1_048_576,
+                        pending(),
+                    )
+                    .await?;
+                let (bound, receipt) = finalize(proved.native()).await?;
+                current = Some(
+                    proved
+                        .contract_binding()
+                        .context("missing checked contract binding")?
+                        .admit_committed_state(
+                            &receipt.contract_state,
+                            bound.expected_state(),
+                            &receipt.finalized_hash,
+                            false,
+                        )?,
+                );
+                receipts.push(receipt);
+            }
+            let [standalone, seed, nested] = receipts.as_slice() else {
+                anyhow::bail!("expected three finalized operations");
+            };
+            ensure!(
+                seed.contract_state == nested.contract_state,
+                "ordered read changed finalized state"
+            );
+            let state: ContractState<Db> = native_decode(&nested.contract_state)?;
+            let StateValue::Array(slots) = state.data.get_ref() else {
+                anyhow::bail!("expected native state slots");
+            };
+            let Some(StateValue::Cell(counter)) = slots.get(0) else {
+                anyhow::bail!("expected standalone counter");
+            };
+            ensure!(
+                **counter == AlignedValue::from(300u64),
+                "finalized counter did not reach 300"
+            );
+            let Some(StateValue::Map(owners)) = slots.get(1) else {
+                anyhow::bail!("expected nested Counter map");
+            };
+            let owner = owners.get(&AlignedValue::from([1u8; 32]));
+            let Some(StateValue::Map(spenders)) = owner.as_deref() else {
+                anyhow::bail!("expected seeded owner map");
+            };
+            let spender = spenders.get(&AlignedValue::from([2u8; 32]));
+            let Some(StateValue::Cell(nested_counter)) = spender.as_deref() else {
+                anyhow::bail!("expected seeded nested Counter");
+            };
+            ensure!(
+                **nested_counter == AlignedValue::from(300u64),
+                "nested Counter differs from 300"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deploy_receipt.height,
+                    "callHeights": [standalone.height, seed.height, nested.height],
+                    "transactionIds": [standalone.transaction_id, seed.transaction_id, nested.transaction_id],
+                    "threshold": 301,
+                    "finalizedCounter": 300,
+                    "finalizedNestedCounter": 300,
+                    "unseededActiveRejectedBeforeSubmission": true,
+                    "nestedReadStateUnchanged": true,
+                    "exactPredictedStateAccepted": true,
+                    "bundleManifestSha256": manifest_pins,
+                    "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
 }

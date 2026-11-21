@@ -93,6 +93,26 @@ fn counter_comparison_checks_bounds_nested_guards_and_read_after_write() {
         counter_at(&execution.after.state, 300);
     }
 
+    let max_seed = create_state(
+        &inspect,
+        &BTreeMap::from([
+            ("total".into(), json!((u64::MAX - 300).to_string())),
+            ("epochs".into(), json!([])),
+        ]),
+    )
+    .unwrap();
+    let at_max = prepare(
+        &inspect,
+        &inputs(true, u64::MAX),
+        &max_seed,
+        parameters,
+        address,
+    )
+    .unwrap();
+    check(&at_max, &inspect_circuit).unwrap();
+    assert_below(&at_max, false);
+    counter_at(&at_max.after.state, u64::MAX);
+
     let seeded = prepare(&seed, &inputs(true, 301), &initial, parameters, address).unwrap();
     check(&seeded, &seed_circuit).unwrap();
     let seeded_state = seeded.after.state;

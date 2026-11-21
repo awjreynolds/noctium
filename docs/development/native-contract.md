@@ -290,6 +290,24 @@ cell to the actual deployment address. Native sizing reported K8 and
 146 rows. The guarded skip and wrong-address replay ran in the native
 VM. [Localnet receipt](native-contract-address-localnet-receipt.json)
 
+## Derive token colors
+
+`nativeToken()` returns the canonical all-zero color. `tokenType(domain, address)` takes a Bytes32 separator and explicit contract-address bytes. Compact 0.36.1 and Noctium both hash the padded `midnight:derive_token` opening, the separator, and the address bytes in that order. This qualifies the standalone color operations and their native Bytes32 ABI. The matrix tracks nominal address authoring and token settlement separately. [Pinned Compact definitions](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L113-L119)
+
+The Compact oracle and fresh ZKIR 3.2.1 relations agree on four vectors, including zero and all-255 inputs. The native runtime rejects 31-byte and 33-byte addresses and byte values above 255. The verified native proof rejects substitution of the separator or address. [Lean source](../../tests/NativeTokenColors.lean) · [Compact oracle](../../tests/compact/native-token-colors.mjs) · [Native checker and proof](../../runtime/tests/native_token_colors.rs)
+
+Compile the fixture at compiler revision `b60c97a635dc40dc576e10884ba895c390943d11` with the ZKIR 3.2.1 target and `--emit ledger`. Generate the `deriveFor` keys and assemble the public bundle using the pinned Ledger 9.1.0.1 parameters. The checked relation used K13 and 4,059 rows. The retained bundle digest was `e49eb53b5aec69f551288f7cefb650440b9150612f7ed290ef0ba93a2ff1984e`. Its proof parameters digest was `d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803`. [Bundle assembly](portable-artifacts.md)
+
+```sh
+NOCTIUM_NATIVE_TOKEN_COLORS_DIR=PATH_TO_COMPILER_OUTPUT \
+NOCTIUM_NATIVE_TOKEN_COLORS_BUNDLE=PATH_TO_VERIFIED_BUNDLE \
+NOCTIUM_NATIVE_TOKEN_COLORS_MANIFEST_SHA256=VERIFIED_MANIFEST_DIGEST \
+NOCTIUM_NATIVE_TOKEN_COLORS_PROOF_PARAMETERS=PATH_TO_TRUSTED_K13_PARAMETERS \
+NOCTIUM_NATIVE_TOKEN_COLORS_PROOF_PARAMETERS_SHA256=TRUSTED_K13_DIGEST \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test native_token_colors -- --ignored
+```
+
 ## Read a token balance
 
 Use a 32-byte color and a Boolean tag. `true` selects the unshielded balance and

@@ -37,6 +37,22 @@ The pinned recipes are
 [Counter operations](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-runtime/vendored/program_fragments.rs#L158-L217).
 Counter uses eight-byte alignment in
 [FAB alignments](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/base-crypto/src/fab/alignments.rs#L73-L81).
-The comparison uses the pinned `Counter_less_than` opcode sequence. It compares the ordered ledger state, including updates earlier in the same entrypoint. [Source fixture](../../tests/CounterCompare.lean) · [Native checker case](../../runtime/tests/counter_compare.rs)
+## Strict comparison conformance
+
+The comparison uses the pinned `Counter_less_than` opcode sequence and sees updates earlier in the entrypoint. Compact 0.36.1 and the native checker agree for thresholds 299, 300, 301 and UInt64 maximum on standalone and nested counters. The native checker also tests equality against an actual UInt64-maximum counter and rejects malformed storage alignment. [Lean source](../../tests/CounterCompare.lean) · [Compact oracle](../../tests/compact/counter-compare.mjs) · [Native checker](../../runtime/tests/counter_compare.rs)
+
+Ledger 9.1.0.1 finalized the standalone comparison at block 48864 and the nested comparison at block 48870 after seeding its path. Both final counters held 300. The nested read left the finalized state bytes unchanged. An active call on the unseeded path rejected during preparation and preserved its admitted state token. [Funded receipt](native-counter-compare-localnet-receipt.json)
+
+Compile the fixture with `--emit ledger` and the ZKIR 3.2.1 target. Prepare the authenticated `inspect`, `seedNested` and `inspectNested` bundles under a single directory and pass their manifest digests as a JSON object keyed by entrypoint name. Run the test on the funded isolated development chain. [Bundle assembly](portable-artifacts.md)
+
+```sh
+NOCTIUM_COUNTER_COMPARE_BUNDLES=PATH_TO_BUNDLES \
+NOCTIUM_COUNTER_COMPARE_MANIFESTS=JSON_OF_THREE_MANIFEST_DIGESTS \
+NOCTIUM_COUNTER_COMPARE_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_COUNTER_COMPARE_NODE=http://127.0.0.1:19944 \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  counter_comparison_finalizes_on_ledger -- --ignored --nocapture
+```
+
 [Native-field memo Lists](native-lists.md) have a separate source/native example.
-No new keys, proofs or deployments were generated for this slice.
