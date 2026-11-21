@@ -4430,8 +4430,8 @@
       "id": "C-STDLIB-DEGRADETOTRANSIENT",
       "layer": "standard-library",
       "surface": "degradeToTransient",
-      "noctiumStatus": "subset",
-      "notes": "degradeToNative interprets the low 31 digest bytes as a little-endian Native field. The pinned Compact runtime and native ZKIR 3.2.1 checks agree for distinct high bytes over the same low 31 bytes. Full host ABI qualification remains open.",
+      "noctiumStatus": "equivalent",
+      "notes": "degradeToNative matches compiled Compact by interpreting the low 31 digest bytes as a little-endian Native field. The native proof binds the disclosed result, and changing only the discarded byte preserves the public statement. Malformed Bytes32 lengths reject.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4447,16 +4447,17 @@
       "observedEvidence": [
         "tests/HashDomainConversions.lean",
         "tests/compact/hash-domain-conversions.mjs",
-        "runtime/tests/hash_domain_conversions.rs"
+        "runtime/tests/hash_domain_conversions.rs",
+        "docs/development/openzeppelin-port.md#hash-domain-conversion-evidence"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UPGRADEFROMTRANSIENT",
       "layer": "standard-library",
       "surface": "upgradeFromTransient",
-      "noctiumStatus": "subset",
-      "notes": "upgradeFromNative serializes the low 31 bytes of a canonical Native field and appends a zero high byte. The pinned Compact runtime and native ZKIR 3.2.1 check zero and the highest canonical value, and reject the modulus as an input. Full host ABI qualification remains open.",
+      "noctiumStatus": "equivalent",
+      "notes": "upgradeFromNative matches compiled Compact by serializing the low 31 bytes of a canonical Native field and appending a zero byte. Zero and the highest canonical field agree. The verifier rejects a changed disclosed result, and the host rejects the modulus and noncanonical decimal encoding.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4472,9 +4473,10 @@
       "observedEvidence": [
         "tests/HashDomainConversions.lean",
         "tests/compact/hash-domain-conversions.mjs",
-        "runtime/tests/hash_domain_conversions.rs"
+        "runtime/tests/hash_domain_conversions.rs",
+        "docs/development/openzeppelin-port.md#hash-domain-conversion-evidence"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-KECCAK256",
