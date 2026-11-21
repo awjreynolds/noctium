@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger values: Map<Field, Field>;
+
+export circuit seed(key: Field, value: Field): [Boolean, Uint<64>, Field] {
+  const exposedKey = disclose(key);
+  values.insert(exposedKey, disclose(value));
+  return [values.member(exposedKey), values.size(), values.lookup(exposedKey)];
+}
+
+export circuit clearMap(key: Field): [Boolean, Uint<64>] {
+  const exposedKey = disclose(key);
+  values.resetToDefault();
+  return [values.member(exposedKey), values.size()];
+}

@@ -2181,6 +2181,126 @@ mod tests {
     }
 
     #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeMapReset bundles and the funded development node"]
+    fn native_map_reset_finalizes_an_exact_empty_state() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use storage::storage::HashMap;
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_MAP_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_MAP_RESET_MANIFESTS")?)?;
+            let bundle = |operation: &str| {
+                let pin = pins
+                    .get(operation)
+                    .with_context(|| format!("missing {operation} manifest pin"))?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(operation),
+                    Some(pin),
+                )?)
+            };
+            let seed_bundle = bundle("seed")?;
+            let clear_bundle = bundle("clearMap")?;
+            let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_degree = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MAP_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_MAP_RESET_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let clear_parameters = cache.parameters(clear_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"values":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let clear_map = target.operation("clearMap", &clear_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            let mut current = Some(deployed);
+            let seed_inputs = |key: u64, amount: u64| {
+                BTreeMap::from([
+                    ("key".into(), json!(key.to_string())),
+                    ("amount".into(), json!(amount.to_string())),
+                ])
+            };
+            let first = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs(1, 19))
+                .await?;
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs(2, 23))
+                .await?;
+            let seeded_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
+            let StateValue::Array(slots) = seeded_state.data.get_ref() else {
+                anyhow::bail!("expected native state slots")
+            };
+            let Some(StateValue::Map(values)) = slots.get(0) else {
+                anyhow::bail!("expected seeded Map")
+            };
+            ensure!(values.size() == 2, "expected two seeded Map entries");
+            for (key, expected) in [(1u64, 19u64), (2, 23)] {
+                let entry = values.get(&crate::field_value(Fr::from(key)));
+                let Some(StateValue::Cell(value)) = entry.as_deref() else {
+                    anyhow::bail!("expected seeded Map cell for key {key}")
+                };
+                ensure!(
+                    **value == crate::field_value(Fr::from(expected)),
+                    "seeded Map value differs for key {key}"
+                );
+            }
+
+            let cleared = funded
+                .call(
+                    &clear_map,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("key".into(), json!("1"))]),
+                )
+                .await?;
+            let final_state: ContractState<Db> = native_decode(&cleared.contract_state)?;
+            let expected_empty: StateValue<Db> =
+                StateValue::Array(vec![StateValue::Map(HashMap::new())].into());
+            ensure!(
+                *final_state.data.get_ref() == expected_empty,
+                "clearMap did not finalize the exact empty Map state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeights": [first.height, seeded.height],
+                    "clearMapHeight": cleared.height,
+                    "transactionIds": [first.transaction_id, seeded.transaction_id, cleared.transaction_id],
+                    "seededEntries": 2,
+                    "finalEntries": 0,
+                    "exactEmptyStateAccepted": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seed": seed_degree, "clearMap": clear_degree},
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
     struct FundedLedgerTest {
         node: Node,
         dust: crate::funding::DustMaterial,
