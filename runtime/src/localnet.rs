@@ -2345,6 +2345,121 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated QualifiedCoinCellReset bundles and the funded development node"]
+    fn qualified_coin_cell_reset_finalizes_exact_zero_coin_and_preserves_marker() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_QUALIFIED_COIN_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_QUALIFIED_COIN_RESET_MANIFESTS")?)?;
+            let bundle = |entry: &str| {
+                let pin = pins.get(entry).with_context(|| format!("missing {entry} manifest pin"))?;
+                Ok::<_, anyhow::Error>(
+                    artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?,
+                )
+            };
+            let clear_bundle = bundle("clear")?;
+            let guarded_clear_bundle = bundle("guardedClear")?;
+            let clear_k = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let guarded_clear_k = IrSource::load(guarded_clear_bundle.file(Role::Circuit)?)?.k();
+            let guarded_clear_plan: crate::Plan =
+                serde_json::from_slice(guarded_clear_bundle.file(Role::Plan)?)?;
+            let bytes = |byte: u8| json!({"kind":"bytes","values":vec![byte; 32]});
+            let values = |nonce: u8, color: u8, value: &str, index: &str| {
+                BTreeMap::from([
+                    ("marker".into(), json!("37")),
+                    (
+                        "coinSlot".into(),
+                        json!({"nonce":bytes(nonce),"color":bytes(color),"value":value,"mtIndex":index}),
+                    ),
+                ])
+            };
+            let initial_values = values(2, 1, "5", "42");
+            let expected_initial = crate::create_state(&guarded_clear_plan, &initial_values)?;
+            let expected_cleared = crate::create_state(
+                &guarded_clear_plan,
+                &values(0, 0, "0", "0"),
+            )?;
+            let state_config = serde_json::to_vec(&json!({"state":initial_values}))?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_QUALIFIED_COIN_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_QUALIFIED_COIN_RESET_NODE")?,
+                &cache,
+            )
+            .await?;
+            let guarded_clear_parameters = cache.parameters(guarded_clear_k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![clear_bundle, guarded_clear_bundle])?,
+                &state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let guarded_clear = target.operation("guardedClear", &guarded_clear_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "guardedClear").await?;
+            let deployed_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed_state.data.get_ref() == expected_initial.get_ref(),
+                "deployment did not preserve the marker and qualifying Coin constructor state"
+            );
+            let mut current = Some(deployed);
+            let cleared = funded
+                .call(
+                    &guarded_clear,
+                    &mut current,
+                    &guarded_clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(true))]),
+                )
+                .await?;
+            let cleared_state: ContractState<Db> = native_decode(&cleared.contract_state)?;
+            ensure!(
+                cleared_state.data.get_ref() == expected_cleared.get_ref(),
+                "active guardedClear did not finalize a typed zero Coin and preserve the adjacent marker"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "receipts": [
+                        json!({"stage":"deployment","height":deployment.height,"transactionId":deployment.transaction_id,"finalizedHash":deployment.finalized_hash}),
+                        json!({"stage":"activeGuardedClear","height":cleared.height,"transactionId":cleared.transaction_id,"finalizedHash":cleared.finalized_hash}),
+                    ],
+                    "constructorCoin": {"nonceByte":2,"colorByte":1,"value":"5","mtIndex":"42"},
+                    "finalState": {
+                        "contractStateSha256": hex::encode(sha2::Sha256::digest(&cleared.contract_state)),
+                        "finalizedHash": cleared.finalized_hash,
+                        "marker": "37",
+                        "coinSlot": {"nonce":vec![0u8; 32],"color":vec![0u8; 32],"value":"0","mtIndex":"0"},
+                    },
+                    "bundleManifestSha256": pins,
+                    "k": {"clear":clear_k,"guardedClear":guarded_clear_k},
+                    "environment": ["NOCTIUM_QUALIFIED_COIN_RESET_NODE","NOCTIUM_QUALIFIED_COIN_RESET_BUNDLES",
+                        "NOCTIUM_QUALIFIED_COIN_RESET_MANIFESTS","NOCTIUM_QUALIFIED_COIN_RESET_PARAMETER_CACHE"],
+                })
+            );
+            Ok(())
+        })
+    }
+
     fn prepared_runtime(attempt: &str, address: &str) -> crate::host::Runtime {
         let context = serde_json::from_value(json!({"protocolVersion":1,"namespace":"qualification","baseRevision":"r0","attemptId":attempt,"capabilities":[{"id":"store","namespace":"qualification","keyPrefix":"claims/","operations":[crate::host::STAGE,crate::host::CAS]}],"operations":[],"providers":[],"commitCapability":"store"})).unwrap();
         let mut runtime = crate::host::Runtime::new(

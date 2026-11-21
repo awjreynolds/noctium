@@ -1,0 +1,120 @@
+{
+  "bundleManifestSha256": {
+    "clear": "8d695262364cd73ea13dfe2a6aaaaf7826e278d25d53419bbe1089d6ffb2a2b6",
+    "guardedClear": "39ac18daf3e80eec845e333a3cef8b66d93131877ea776c931e70bb68a289dbe"
+  },
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "247ea6b7e09e14354e3ffc847573e5b496435bd7",
+  "constructorCoin": {
+    "colorByte": 1,
+    "mtIndex": "42",
+    "nonceByte": 2,
+    "value": "5"
+  },
+  "contractAddress": "e7d181e2c13f8c381efd9db2993d94e173275b1e6f98fadfdeaf5372eb4b8112",
+  "environment": [
+    "NOCTIUM_QUALIFIED_COIN_RESET_NODE",
+    "NOCTIUM_QUALIFIED_COIN_RESET_BUNDLES",
+    "NOCTIUM_QUALIFIED_COIN_RESET_MANIFESTS",
+    "NOCTIUM_QUALIFIED_COIN_RESET_PARAMETER_CACHE"
+  ],
+  "finalState": {
+    "coinSlot": {
+      "color": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "mtIndex": "0",
+      "nonce": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": "0"
+    },
+    "contractStateSha256": "d755e08774452ad20b5a14e0201655d770eb805d9f25a794396fb0d5dba68ac7",
+    "finalizedHash": "11ef5f809332b170ab98fdd18fb5adab71912734b73505ccb87ee7e9480ebdcc",
+    "marker": "37"
+  },
+  "k": {
+    "clear": 7,
+    "guardedClear": 7
+  },
+  "ledger": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "receipts": [
+    {
+      "finalizedHash": "ef7842c1734d4e812a3f109b942dfa135c614d8886e225c022faa2eff310a13a",
+      "height": 50099,
+      "stage": "deployment",
+      "transactionId": "f0edd1e764cf47a9b0e9ea7ad0470fe00992409d3701d3d86cf87bee9d624bc6"
+    },
+    {
+      "finalizedHash": "11ef5f809332b170ab98fdd18fb5adab71912734b73505ccb87ee7e9480ebdcc",
+      "height": 50102,
+      "stage": "activeGuardedClear",
+      "transactionId": "a496a64807668661b39f07a23aef0f7971469d4789ae54dcb67d78ad32d3694d"
+    }
+  ],
+  "zkirVersion": "3.2.1"
+}

@@ -2080,7 +2080,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The checked qualified Coin reset matches Compact and the native checker for both guard outcomes with the adjacent Cell preserved. Funded qualified Coin reset and other aggregate layouts remain unverified.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The checked qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. Funded Ledger execution confirms the active guarded reset of a Coin with nonce bytes 2, color bytes 1, value 5 and mtIndex 42, preserving marker 37 and finalizing exact typed zero fields at height 50102. The inactive funded path and other aggregate layouts remain unverified.",
       "source": [
         "adt"
       ],
@@ -2094,6 +2094,7 @@
         "tests/compact/cell-reset.mjs",
         "runtime/tests/native_cell_reset.rs",
         "docs/development/native-cell-reset-localnet-receipt.json",
+        "docs/development/qualified-coin-cell-reset-localnet-receipt.json",
         "runtime/src/localnet.rs",
         "docs/development/native-contract.md",
         "tests/QualifiedCoinCell.lean",
