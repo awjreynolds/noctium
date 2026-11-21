@@ -2351,6 +2351,12 @@ private def collectionResetTerm (path : TSyntax `nlpath) (storage : TSyntax `ide
     `(Noctium.Effect.merkleTreeResetAt $name $keys $(natTerm depth) $historyTerm $emptyHistory)
   | _ => throwErrorAt path "reset requires a Counter, List, Map, Set or MerkleTree value"
 
+private def zeroLedgerFieldValues (fields : List (String × Ty)) :
+    CommandElabM (Array (TSyntax `term)) := do
+  fields.toArray.mapM fun (_, ty) => do
+    let type ← tyTerm ty
+    `(Noctium.LedgerFieldExpr.mk $type (Noctium.GuardedExpression.zeroValue $type))
+
 private def elaborateReset (schema : List (String × StateKind)) (path : TSyntax `nlpath)
     (state : EntryEffects) : CommandElabM EntryEffects := do
   let (storage, sourceKeys) ← sourcePathParts path
@@ -2360,6 +2366,21 @@ private def elaborateReset (schema : List (String × StateKind)) (path : TSyntax
     unless 2 ≤ depth && depth ≤ 32 do
       throwErrorAt path "MerkleTree depth must be between 2 and 32"
     let term ← `(Noctium.Effect.merkleTreeReset $(stringTerm storage.getId.toString))
+    return {state with terms := state.terms.push term}
+  if let some (.tree (.composite environment type)) := schema.lookup storage.getId.toString then
+    unless sourceKeys.isEmpty do throwErrorAt path "cell reset does not accept a key path"
+    let fields ← match LedgerValueType.recordFields environment type with
+      | .ok fields => pure fields
+      | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt path message
+    let values ← zeroLedgerFieldValues fields
+    let typeTerm ← match type with
+      | .structure id => `(Noctium.Types.CompositeType.structure $(stringTerm id))
+      | _ => throwErrorAt path "reset requires a named ledger record"
+    let keys ← pathKeysTerm []
+    let term ← `(Noctium.Effect.writeCompositePath
+      $(stringTerm storage.getId.toString) $keys $typeTerm [$values,*])
     return {state with terms := state.terms.push term}
   if let some (.cell ty) := schema.lookup storage.getId.toString then
     unless sourceKeys.isEmpty do throwErrorAt path "cell reset does not accept a key path"
@@ -2395,9 +2416,7 @@ private def elaborateMapDefault (schema : List (String × StateKind)) (path : TS
       let fields ← match LedgerValueType.recordFields environment (.structure id) with
         | .ok fields => pure fields
         | .error message => throwErrorAt path message
-      let values ← fields.toArray.mapM fun (_, ty) => do
-        let type ← tyTerm ty
-        `(Noctium.LedgerFieldExpr.mk $type (Noctium.GuardedExpression.zeroValue $type))
+      let values ← zeroLedgerFieldValues fields
       `(Noctium.Effect.writeCompositePath $name $keys
         (Noctium.Types.CompositeType.structure $(stringTerm id)) [$values,*])
     | .composite .. => throwErrorAt path "insertDefault requires a named ledger record"

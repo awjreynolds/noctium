@@ -89,3 +89,50 @@ fn write_qualified_cell_uses_the_current_transaction_index() -> anyhow::Result<(
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_QUALIFIED_COIN_CELL_DIR"]
+fn reset_qualified_cell_preserves_the_adjacent_slot_and_inactive_state() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_QUALIFIED_COIN_CELL_DIR")
+            .expect("NOCTIUM_QUALIFIED_COIN_CELL_DIR"),
+    );
+    let plan: Plan = serde_json::from_reader(File::open(
+        directory.join("QualifiedCoinCellReset.guardedClear.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(File::open(
+        directory.join("QualifiedCoinCellReset.guardedClear.zkir"),
+    )?)?;
+    let bytes = |byte: u8| json!({"kind":"bytes","values":vec![byte; 32]});
+    let values = |nonce, color, amount: &str, index: &str| {
+        BTreeMap::from([
+            ("marker".into(), json!("37")),
+            (
+                "coinSlot".into(),
+                json!({"nonce":bytes(nonce),"color":bytes(color),"value":amount,"mtIndex":index}),
+            ),
+        ])
+    };
+    let original = create_state(&plan, &values(2, 1, "5", "42"))?;
+    let cleared = create_state(&plan, &values(0, 0, "0", "0"))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let inputs = |enabled| BTreeMap::from([("enabled".into(), json!(enabled))]);
+
+    for (enabled, expected) in [(false, &original), (true, &cleared)] {
+        let execution =
+            noctium_runtime::prepare(&plan, &inputs(enabled), &original, parameters, address)?;
+        let schedule = check(&execution, &circuit)
+            .map_err(|error| anyhow::anyhow!("checking reset with enabled={enabled}: {error}"))?;
+        assert_eq!(schedule, execution.activity_schedule);
+        assert_eq!(execution.after.state.get_ref(), expected.get_ref());
+    }
+
+    let mut sealed = plan.clone();
+    sealed.state[1].sealed = true;
+    let error = noctium_runtime::prepare(&sealed, &inputs(true), &original, parameters, address)
+        .err()
+        .expect("reset must reject a sealed record Cell");
+    assert!(error.to_string().contains("shielded coin Cell is sealed"));
+    Ok(())
+}

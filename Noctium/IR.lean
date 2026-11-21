@@ -1911,12 +1911,21 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         for (_, ty) in fields do ty.validate caps
         pure destinations
       | .writeCompositePath state keys type values => do
-        if !caps.stateMaps then throw "target lacks state maps"
         for key in keys do key.validate caps env
-        let .composite compositeEnv foundType ← resolveTreeState decls state keys
-          | throw "nested composite write must select a composite value"
-        unless foundType == type do throw "nested composite write type mismatch"
-        let fields ← LedgerValueType.recordFields compositeEnv type
+        let fields ← if keys.isEmpty then do
+          if !caps.stateCells then throw "target lacks state cells"
+          let some declaration := decls.find? (·.name == state)
+            | throw s!"unknown root composite Cell '{state}'"
+          let .tree (.composite compositeEnv foundType) := declaration.kind
+            | throw "root composite write must target a checked shielded coin Cell"
+          unless foundType == type do throw "nested composite write type mismatch"
+          LedgerValueType.shieldedCoinRecordFields compositeEnv type
+        else do
+          if !caps.stateMaps then throw "target lacks state maps"
+          let .composite compositeEnv foundType ← resolveTreeState decls state keys
+            | throw "nested composite write must select a composite value"
+          unless foundType == type do throw "nested composite write type mismatch"
+          LedgerValueType.recordFields compositeEnv type
         unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
           throw "nested composite write field type mismatch"
         for (_, ty) in fields do ty.validate caps
