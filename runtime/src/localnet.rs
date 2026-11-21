@@ -3343,4 +3343,170 @@ mod tests {
             Ok(())
         })
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeNestedMapReset bundles and the funded development node"]
+    fn nested_map_reset_retains_initialized_empty_parent_and_sibling() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use storage::{arena::Sp, storage::HashMap};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_NESTED_MAP_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_NESTED_MAP_RESET_MANIFESTS")?)?;
+            let bundle = |operation: &str| {
+                let pin = pins
+                    .get(operation)
+                    .with_context(|| format!("missing {operation} manifest pin"))?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(operation),
+                    Some(pin),
+                )?)
+            };
+            let seed_bundle = bundle("seedNested")?;
+            let clear_bundle = bundle("clearInner")?;
+            let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_degree = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NESTED_MAP_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_NESTED_MAP_RESET_NODE")?,
+                &cache,
+            )
+            .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let clear_parameters = cache.parameters(clear_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"nestedValues":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seedNested", &seed_parameters, ttl)?;
+            let clear = target.operation("clearInner", &clear_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seedNested").await?;
+            let mut current = Some(deployed);
+            let seed_inputs = BTreeMap::from([
+                ("owner".into(), json!("10")),
+                ("targetA".into(), json!("1")),
+                ("amountA".into(), json!("19")),
+                ("targetB".into(), json!("2")),
+                ("amountB".into(), json!("23")),
+                ("siblingOwner".into(), json!("20")),
+                ("siblingKey".into(), json!("3")),
+                ("siblingAmount".into(), json!("31")),
+            ]);
+            let clear_inputs = |owner: u64, active: bool| {
+                BTreeMap::from([
+                    ("owner".into(), json!(owner.to_string())),
+                    ("active".into(), json!(active)),
+                ])
+            };
+            let key = |value| crate::field_value(Fr::from(value));
+            let cell = |value| StateValue::Cell(Sp::new(key(value)));
+            let expected = |reset_owner: bool, initialize_missing: bool| {
+                let mut owner = HashMap::new();
+                if !reset_owner {
+                    owner = owner
+                        .insert(key(1u64), cell(19u64))
+                        .insert(key(2u64), cell(23u64));
+                }
+                let sibling = HashMap::new().insert(key(3u64), cell(31u64));
+                let mut parents = HashMap::new()
+                    .insert(key(10u64), StateValue::Map(owner))
+                    .insert(key(20u64), StateValue::Map(sibling));
+                if initialize_missing {
+                    parents = parents.insert(key(30u64), StateValue::Map(HashMap::new()));
+                }
+                parents
+            };
+            let assert_state = |receipt: &FinalizedReceipt,
+                                reset_owner: bool,
+                                initialize_missing: bool|
+             -> anyhow::Result<()> {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots")
+                };
+                let Some(StateValue::Map(outer)) = slots.get(0) else {
+                    anyhow::bail!("expected outer Map in native slot zero")
+                };
+                ensure!(
+                    *outer == expected(reset_owner, initialize_missing),
+                    "nested Map state differs from exact expected parent and sibling entries"
+                );
+                Ok(())
+            };
+
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, seed_inputs)
+                .await?;
+            assert_state(&seeded, false, false)?;
+            let inactive = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(30, false),
+                )
+                .await?;
+            ensure!(
+                inactive.contract_state == seeded.contract_state,
+                "inactive reset of missing parent changed finalized state"
+            );
+            let initialized = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(30, true),
+                )
+                .await?;
+            assert_state(&initialized, false, true)?;
+            let cleared = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    clear_inputs(10, true),
+                )
+                .await?;
+            assert_state(&cleared, true, true)?;
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeight": seeded.height,
+                    "inactiveMissingParentHeight": inactive.height,
+                    "activeMissingParentHeight": initialized.height,
+                    "resetHeight": cleared.height,
+                    "transactionIds": [seeded.transaction_id, inactive.transaction_id, initialized.transaction_id, cleared.transaction_id],
+                    "finalValues": {"owner10": {}, "owner20": {"3": 31}, "owner30": {}},
+                    "inactiveMissingParentWasNoOp": true,
+                    "activeMissingParentInitializedEmptyMap": true,
+                    "selectedInnerMapResetAndSiblingPreserved": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seedNested": seed_degree, "clearInner": clear_degree},
+                })
+            );
+            Ok(())
+        })
+    }
 }

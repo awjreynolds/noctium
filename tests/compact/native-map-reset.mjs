@@ -38,4 +38,45 @@ const clearedValues = ledger(state).values;
 assert.equal(clearedValues.size(), 0n);
 assert.equal(clearedValues.member(1n), false);
 assert.equal(clearedValues.member(2n), false);
-console.log('Compact 0.36.1 cleared a two-entry Map to an empty final state');
+
+const [, nestedState] = await invoke(
+  'seedNested', state, 10n, 1n, 19n, 2n, 23n, 20n, 3n, 31n,
+);
+let nestedValues = ledger(nestedState).nestedValues;
+assert.equal(nestedValues.size(), 2n);
+assert.equal(nestedValues.lookup(10n).size(), 2n);
+assert.equal(nestedValues.lookup(10n).lookup(1n), 19n);
+assert.equal(nestedValues.lookup(10n).lookup(2n), 23n);
+assert.equal(nestedValues.lookup(20n).size(), 1n);
+assert.equal(nestedValues.lookup(20n).lookup(3n), 31n);
+
+const [, inactiveMissingState] = await invoke('clearInner', nestedState, 30n, false);
+const assertNestedValues = (values, hasMissingParent = false) => {
+  assert.equal(values.size(), hasMissingParent ? 3n : 2n);
+  assert.equal(values.member(10n), true);
+  assert.equal(values.lookup(10n).size(), 2n);
+  assert.equal(values.lookup(10n).lookup(1n), 19n);
+  assert.equal(values.lookup(10n).lookup(2n), 23n);
+  assert.equal(values.member(20n), true);
+  assert.equal(values.lookup(20n).size(), 1n);
+  assert.equal(values.lookup(20n).lookup(3n), 31n);
+  assert.equal(values.member(30n), hasMissingParent);
+  if (hasMissingParent) assert.equal(values.lookup(30n).size(), 0n);
+};
+assertNestedValues(ledger(inactiveMissingState).nestedValues);
+const [, activeMissingState] = await invoke('clearInner', nestedState, 30n, true);
+assertNestedValues(ledger(activeMissingState).nestedValues, true);
+const [, inactiveExistingState] = await invoke('clearInner', activeMissingState, 10n, false);
+assertNestedValues(ledger(inactiveExistingState).nestedValues, true);
+
+const [, resetState] = await invoke('clearInner', inactiveExistingState, 10n, true);
+nestedValues = ledger(resetState).nestedValues;
+assert.equal(nestedValues.size(), 3n, 'reset retains all initialized parent entries');
+assert.equal(nestedValues.member(10n), true, 'reset retains the selected parent');
+assert.equal(nestedValues.lookup(10n).size(), 0n, 'reset empties the selected inner Map');
+assert.equal(nestedValues.member(20n), true, 'reset preserves the sibling parent');
+assert.equal(nestedValues.lookup(20n).size(), 1n);
+assert.equal(nestedValues.lookup(20n).lookup(3n), 31n);
+assert.equal(nestedValues.member(30n), true, 'active reset initializes a missing parent');
+assert.equal(nestedValues.lookup(30n).size(), 0n);
+console.log('Compact 0.36.1 matched root and nested Map reset, retaining initialized empty parents and sibling state');
