@@ -1659,6 +1659,238 @@ impl<F: Fn(&crate::funding::UnsealedTransaction, &NetworkPolicy) -> bool>
 mod tests {
     use super::*;
     use sha2::Digest;
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the pinned NativeBlockTime checkTime bundle and funded development node"]
+    fn native_block_time_strict_edges_finalize_without_state_changes() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, Role},
+            proof::{LocalProver, PreparedProof},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::hash::HashOutput;
+        use coin_structure::contract::ContractAddress;
+        use futures::{executor::block_on, future::pending};
+        use onchain_runtime::{context::QueryContext, state::EntryPointBuf};
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{collections::BTreeMap, env, path::Path};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_BLOCK_TIME_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_BLOCK_TIME_MANIFESTS")?)?;
+            ensure!(
+                pins.len() == 1 && pins.contains_key("checkTime"),
+                "expected the single checkTime bundle pin"
+            );
+            let bundle = artifacts::verify(
+                &Path::new(&directory).join("checkTime"),
+                Some(&pins["checkTime"]),
+            )?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "checkTime", "expected checkTime plan");
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_BLOCK_TIME_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_BLOCK_TIME_NODE")?, &cache)
+                .await?;
+
+            let inclusion_timestamp = |block_hash: &str| -> anyhow::Result<u64> {
+                let block = funded
+                    .node
+                    .rpc
+                    .call("chain_getBlock", json!([format!("0x{block_hash}")]))?;
+                let extrinsics = block["block"]["extrinsics"]
+                    .as_array()
+                    .context("finalized inclusion block has no extrinsics")?;
+                let (timestamp, _) = funded.node.transactions(extrinsics, None, false)?;
+                Ok(timestamp.to_secs())
+            };
+
+            let mut records = Vec::new();
+            for (name, enabled, cutoff) in [
+                ("inactive", false, 0u64),
+                ("minimum", true, 0u64),
+                ("maximum", true, u64::MAX),
+            ] {
+                let snapshot = funded.node.sync()?;
+                let source_time = snapshot.block.tblock.to_secs();
+                ensure!(source_time > 0, "expected a positive finalized block time");
+                let ttl = source_time
+                    .checked_add(1800)
+                    .context("proof TTL overflows UInt64")?;
+                let inputs = BTreeMap::from([
+                    ("cutoff".into(), json!(cutoff.to_string())),
+                    ("enabled".into(), json!(enabled)),
+                ]);
+                let private_config = serde_json::to_vec(&json!({
+                    "inputs": inputs,
+                    "state": {},
+                }))?;
+                let prepared = PreparedProof::from_config_in_block(
+                    &bundle,
+                    &private_config,
+                    ttl,
+                    &snapshot.block,
+                    &mut StdRng::from_entropy(),
+                )?;
+                let (address, operation) = prepared.call_target()?;
+                ensure!(operation == "checkTime", "proof targets another operation");
+
+                let native_address = ContractAddress(HashOutput(
+                    hex::decode(&address)?
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("invalid contract address"))?,
+                ));
+                let mut source_context = QueryContext::new(
+                    crate::create_state(&plan, &BTreeMap::new())?,
+                    native_address,
+                );
+                source_context.call_context.tblock = snapshot.block.tblock;
+                source_context.call_context.tblock_err = snapshot.block.tblock_err;
+                source_context.call_context.parent_block_hash = snapshot.block.parent_block_hash;
+                source_context.call_context.last_block_time = snapshot.block.last_block_time;
+                let oracle = crate::prepare_with_context(
+                    &plan,
+                    &inputs,
+                    source_context,
+                    &snapshot.state.parameters,
+                )?;
+                ensure!(
+                    crate::check(&oracle, &circuit)? == oracle.activity_schedule,
+                    "source oracle activity differs from the native circuit"
+                );
+                let outputs = oracle.returns_json();
+                let before = outputs["beforeDeadline"]
+                    .as_bool()
+                    .context("source oracle omitted beforeDeadline")?;
+                let after = outputs["afterDeadline"]
+                    .as_bool()
+                    .context("source oracle omitted afterDeadline")?;
+                let expected = if enabled {
+                    (source_time < cutoff, cutoff < source_time)
+                } else {
+                    (false, false)
+                };
+                ensure!((before, after) == expected, "source oracle edge result differs");
+
+                let call_parameters = cache.parameters(prepared.k()).await?;
+                let proved_call = prepared
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        &call_parameters,
+                        1_048_576,
+                        pending(),
+                    )
+                    .await?;
+                let (_, deployment) = prepared
+                    .deployment_intent()
+                    .context("missing deployment intent")?
+                    .prove(
+                        crate::funding::CONTRACT_SEGMENT,
+                        builtin_zkir::LocalProvingProvider {
+                            rng: StdRng::from_entropy(),
+                            resolver: &funded.dust,
+                            params: &funded.dust_parameters,
+                        },
+                        &snapshot.state.parameters.cost_model.runtime_cost_model,
+                    )
+                    .await
+                    .map_err(|error| anyhow::anyhow!("deployment proof: {error:?}"))?;
+                let (_, deployment_receipt) = funded.finalize(&deployment).await?;
+                let (_, call_receipt) = funded.finalize(proved_call.native()).await?;
+                ensure!(
+                    call_receipt.contract_address == address,
+                    "finalized checkTime call targets another contract"
+                );
+                ensure!(
+                    deployment_receipt.contract_state == call_receipt.contract_state,
+                    "checkTime changed native contract state"
+                );
+                let deployed_state: onchain_runtime::state::ContractState<Db> =
+                    native_decode(&deployment_receipt.contract_state)?;
+                ensure!(deployed_state.operations.size() == 1, "expected one native operation");
+                ensure!(
+                    deployed_state
+                        .operations
+                        .get(&EntryPointBuf(b"checkTime".to_vec()))
+                        .is_some(),
+                    "deployed native state omitted checkTime"
+                );
+                let deployment_time = inclusion_timestamp(&deployment_receipt.block_hash)?;
+                let call_time = inclusion_timestamp(&call_receipt.block_hash)?;
+                ensure!(
+                    deployment_time > 0 && call_time > 0,
+                    "finalized deployment or checkTime inclusion has no block timestamp"
+                );
+                let inclusion_result = if enabled {
+                    (call_time < cutoff, cutoff < call_time)
+                } else {
+                    (false, false)
+                };
+                ensure!(
+                    (before, after) == inclusion_result,
+                    "source oracle result did not stay on the same side through finalization"
+                );
+
+                records.push(json!({
+                    "case": name,
+                    "enabled": enabled,
+                    "cutoff": cutoff.to_string(),
+                    "sourceOracle": {
+                        "finalizedContextTimestamp": source_time.to_string(),
+                        "beforeDeadline": before,
+                        "afterDeadline": after,
+                    },
+                    "deployment": {
+                        "height": deployment_receipt.height,
+                        "blockHash": deployment_receipt.block_hash,
+                        "finalizedHeight": deployment_receipt.finalized_height,
+                        "finalizedHash": deployment_receipt.finalized_hash,
+                        "timestamp": deployment_time.to_string(),
+                        "transactionId": deployment_receipt.transaction_id,
+                    },
+                    "call": {
+                        "height": call_receipt.height,
+                        "blockHash": call_receipt.block_hash,
+                        "finalizedHeight": call_receipt.finalized_height,
+                        "finalizedHash": call_receipt.finalized_hash,
+                        "timestamp": call_time.to_string(),
+                        "transactionId": call_receipt.transaction_id,
+                    },
+                    "oneOperationCheckTimeBundle": true,
+                    "nativeStateUnchanged": true,
+                }));
+            }
+
+            let final_snapshot = funded.node.sync()?;
+            println!(
+                "{}",
+                json!({
+                    "operation": "checkTime",
+                    "bundleManifestSha256": pins,
+                    "records": records,
+                    "finalizedTip": {
+                        "height": final_snapshot.height,
+                        "blockHash": final_snapshot.finalized_hash,
+                        "timestamp": final_snapshot.block.tblock.to_secs().to_string(),
+                    },
+                    "scope": {
+                        "equalityAtRealChainTimeTested": false,
+                        "witnessCurrentStateBindingTested": false,
+                    },
+                })
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn pool_refusal_before_finality_keeps_submission_uncertain() {
         use crate::client::Submission;
