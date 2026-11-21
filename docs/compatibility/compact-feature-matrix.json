@@ -2656,7 +2656,7 @@
       "layer": "language-ledger",
       "surface": "Map.remove",
       "noctiumStatus": "subset",
-      "notes": "Removes a leaf on a typed direct or nested Map path. An absent final key leaves the map unchanged, an absent parent rejects, and a false guard skips access. Native evidence covers nested Bytes32-keyed records and direct or nested foreign-keyed scalar maps.",
+      "notes": "Typed leaf removal matches Compact for nested Bytes32-keyed records. Funded Ledger 9.1.0.1 finalized removal and repeat removal with exact state, preserving sibling records. Missing parents reject and inactive guards skip access. Native checker evidence includes foreign keys. Subtree removal and broader layout equivalence remain open.",
       "source": [
         "adt"
       ],
@@ -2668,6 +2668,9 @@
       "observedEvidence": [
         "tests/NativeMapRemove.lean",
         "runtime/tests/native_map_remove.rs",
+        "tests/compact/native-map-remove.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/nested-map-remove-localnet-receipt.json",
         "docs/development/native-map-remove.md",
         "tests/ForeignKeys.lean",
         "runtime/tests/foreign_keys.rs"
