@@ -2682,7 +2682,7 @@
       "layer": "language-ledger",
       "surface": "Map.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Reset lowers to native empty-map replacement for a standalone or nested Map. A matched in-memory Compact 0.36.1 and Noctium case clears a two-entry Map, returns size zero and absent membership, and checks the exact empty native Map after-state. Full equivalence remains unverified.",
+      "notes": "Reset lowers to native empty-map replacement. Compact 0.36.1 and the native checker agree on clearing a two-entry Field Map, returning size zero and absent membership. Funded Ledger 9.1.0.1 accepted the exact empty state after two inserts and reset. Funded nested Map reset remains unverified.",
       "source": [
         "adt"
       ],
@@ -2699,7 +2699,11 @@
         "tests/NativeMapDefault.lean",
         "tests/compact/NativeMapDefault.compact",
         "tests/compact/native-map-default.mjs",
-        "runtime/tests/native_map_default.rs"
+        "runtime/tests/native_map_default.rs",
+        "tests/NativeMapReset.lean",
+        "tests/compact/native-map-reset.mjs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-map-reset-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
