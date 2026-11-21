@@ -212,6 +212,14 @@ finalized bytes. The active call wrote the canonical UInt64, Field, Bool and
 Bytes4 defaults. The `clear` circuit uses K8 and 192 rows.
 [Finalized receipt](native-cell-reset-localnet-receipt.json)
 
+A checked qualified Coin Cell also accepts `reset coinSlot`. Its default
+uses the ledger's Bytes32, Bytes32, Bytes16 and Bytes8 FAB alignment. The
+native checker and pinned Compact fixture agree on both guard outcomes and
+preserve the adjacent marker Cell. The normal booked Coin writer retains its
+transaction-index test. [Lean source](../../tests/QualifiedCoinCell.lean) ·
+[Compact oracle](../../tests/compact/qualified-coin-cell-reset.mjs) ·
+[Native checker](../../runtime/tests/qualified_coin_cell.rs)
+
 ## Record standalone token mints
 
 ```lean

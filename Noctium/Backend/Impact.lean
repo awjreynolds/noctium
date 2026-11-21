@@ -75,6 +75,41 @@ private def ledgerFieldPayloads : LedgerFieldExpr → List Scalar
 private def shieldedCoinReadTypes : List Ty :=
   [.bytes 32, .bytes 32, .uint (2 ^ 128 - 1), .uint (2 ^ 64 - 1)]
 
+private def shieldedCoinRecordFieldNames : List String :=
+  ["nonce", "color", "value", "mtIndex"]
+
+private def asciiAlpha (character : Char) : Bool :=
+  let code := character.toNat
+  decide (65 ≤ code ∧ code ≤ 90) || decide (97 ≤ code ∧ code ≤ 122)
+
+private def asciiDigit (character : Char) : Bool :=
+  let code := character.toNat
+  decide (48 ≤ code ∧ code ≤ 57)
+
+private def qualifiedRecordIdentifierValid (identifier : String) : Bool :=
+  let validSegment (segment : String) : Bool :=
+    match segment.toList with
+    | [] => false
+    | first :: rest =>
+        (first == '_' || asciiAlpha first) &&
+          rest.all (fun character => character == '_' || asciiAlpha character || asciiDigit character)
+  (identifier.splitOn ".").all validSegment
+
+private def isShieldedCoinRecordSchema (schema : Lean.Json) : Bool :=
+  match (schema.getObjVal? "id" >>= Lean.Json.getStr?).toOption with
+  | none => false
+  | some identifier =>
+      qualifiedRecordIdentifierValid identifier &&
+        schema == Lean.Json.mkObj [
+          ("id", Lean.toJson identifier),
+          ("fields", Lean.toJson (shieldedCoinRecordFieldNames.zip
+            (shieldedCoinReadTypes.map Noctium.NativeExpression.typeName) |>.map fun (name, type) =>
+              Lean.Json.mkObj [("name", Lean.toJson name), ("type", Lean.toJson type)]))]
+
+private def shieldedCoinLedgerFieldSequence (values : List LedgerFieldExpr) : List Scalar :=
+  [.native 4, .native 32, .native 32, .native 16, .native 8] ++
+    values.flatMap ledgerFieldPayloads
+
 private def ledgerFieldSequence (values : List LedgerFieldExpr) : List Scalar :=
   if values.all (fun value => value.ty == .native) then
     nativeFieldSequence (values.flatMap ledgerFieldPayloads)
@@ -670,12 +705,14 @@ def Op.fields : Op → List Scalar
   | .push value storage => [.native (if storage then 0x11 else 0x10), .native 1] ++ value.fields
   | .newMap => [.native 0x05]
   | .popeq value => [.native 0x0c] ++ value.fields
-  | .pushFields _ values storage =>
-      [.native (if storage then 0x11 else 0x10), .native 1] ++ ledgerFieldSequence values
+  | .pushFields schema values storage =>
+      [.native (if storage then 0x11 else 0x10), .native 1] ++
+        (if isShieldedCoinRecordSchema schema && values.map (·.ty) == shieldedCoinReadTypes then
+          shieldedCoinLedgerFieldSequence values
+        else ledgerFieldSequence values)
   | .popeqFields _ values =>
       if values.map (·.ty) == shieldedCoinReadTypes then
-        [.native 0x0c, .native 4, .native 32, .native 32, .native 16, .native 8] ++
-          values.flatMap ledgerFieldPayloads
+        [.native 0x0c] ++ shieldedCoinLedgerFieldSequence values
       else [.native 0x0c] ++ ledgerFieldSequence values
   | .member => [.native 0x18]
   | .insert levels => [.native (0x90 + levels)]
@@ -1235,6 +1272,30 @@ private def resolveTreeState (state : List StateDecl) (name : String)
   let some declaration := state.find? (·.name == name) | throw s!"unknown tree state '{name}'"
   let .tree schema := declaration.kind | throw s!"state '{name}' is not a recursive tree"
   schema.resolvePath keys
+
+private def compositeWritePathOps (state : List StateDecl) (name : String)
+    (keys : List PathKey) (type : Types.CompositeType) (values : List LedgerFieldExpr) :
+    Except String (List Op) := do
+  let slot ← stateSlot state name
+  let (environment, fields) ← if keys.isEmpty then do
+    let some declaration := state.find? (·.name == name)
+      | throw s!"unknown root composite Cell '{name}'"
+    let .tree (.composite environment foundType) := declaration.kind
+      | throw "root composite write must target a checked shielded coin Cell"
+    unless foundType == type do throw "nested composite write type mismatch"
+    pure (environment, ← LedgerValueType.shieldedCoinRecordFields environment type)
+  else do
+    let .composite environment foundType ← resolveTreeState state name keys
+      | throw "nested composite write must select a composite value"
+    unless foundType == type do throw "nested composite write type mismatch"
+    pure (environment, ← LedgerValueType.recordFields environment type)
+  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+    throw "nested composite write field type mismatch"
+  let alignedKeys ← nativePathKeys keys
+  let schema ← recordSchema environment type
+  if keys.isEmpty then
+    pure [.push (.field (.native slot)), .pushFields schema values true, .insert 1]
+  else pathWriteCompositeOps slot alignedKeys schema values
 
 private def resolveCounterState (state : List StateDecl) (name : String)
     (keys : List PathKey) : Except String Unit := do
@@ -1840,16 +1901,7 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     let operations ← pathWriteOps slot keys [value]
     pure {plan with operations := plan.operations ++ operations}
   | .writeCompositePath name keys type values => do
-    let slot ← stateSlot state name
-    let .composite environment foundType ← resolveTreeState state name keys
-      | throw "nested composite write must select a composite value"
-    unless foundType == type do throw "nested composite write type mismatch"
-    let fields ← LedgerValueType.recordFields environment type
-    unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
-      throw "nested composite write field type mismatch"
-    let alignedKeys ← nativePathKeys keys
-    let schema ← recordSchema environment type
-    let operations ← pathWriteCompositeOps slot alignedKeys schema values
+    let operations ← compositeWritePathOps state name keys type values
     pure {plan with operations := plan.operations ++ operations}
   | .counterAdjust name keys subtract amount => do
     let slot ← stateSlot state name
@@ -2507,16 +2559,7 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
     let operations ← pathWriteOps slot keys [value]
     plan := {plan with operations := plan.operations ++ operations}
   | .writeCompositePath name keys type values => do
-    let slot ← stateSlot state name
-    let .composite environment foundType ← resolveTreeState state name keys
-      | throw "nested composite write must select a composite value"
-    unless foundType == type do throw "nested composite write type mismatch"
-    let fields ← LedgerValueType.recordFields environment type
-    unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
-      throw "nested composite write field type mismatch"
-    let alignedKeys ← nativePathKeys keys
-    let schema ← recordSchema environment type
-    let operations ← pathWriteCompositeOps slot alignedKeys schema values
+    let operations ← compositeWritePathOps state name keys type values
     plan := {plan with operations := plan.operations ++ operations}
   | .counterAdjust name keys subtract amount => do
     let slot ← stateSlot state name

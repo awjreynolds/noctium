@@ -3513,11 +3513,40 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     .checked_sub(1)
                     .and_then(|index| plan.operations.get(index))
                     .ok_or_else(|| anyhow!("record write has no final map key"))?;
+                let (key_operation, key_guard) = unguarded_operation(key_operation);
+                if let Some((Instruction::Insert { n: 1 }, insert_guard)) =
+                    plan.operations.get(index + 1).map(unguarded_operation)
+                {
+                    ensure!(
+                        key_guard == guard && insert_guard == guard,
+                        "record Cell write guards differ"
+                    );
+                    let Instruction::Push {
+                        storage: false,
+                        expression: Expr::Constant { value },
+                        alignment,
+                    } = key_operation
+                    else {
+                        bail!("record Cell write requires a constant root slot");
+                    };
+                    let slot = value
+                        .parse::<u32>()
+                        .map_err(|_| anyhow!("invalid record Cell slot"))?;
+                    ensure!(
+                        alignment == "field" && value == &slot.to_string(),
+                        "record Cell slot must be a canonical field"
+                    );
+                    validate_shielded_coin_cell(plan, slot)?;
+                    ensure!(
+                        tree_schema_at_path(plan, slot, 0)?.get("composite") == Some(schema),
+                        "record Cell write differs from state schema"
+                    );
+                    continue;
+                }
                 let path_operation = index
                     .checked_sub(2)
                     .and_then(|index| plan.operations.get(index))
                     .ok_or_else(|| anyhow!("record write has no indexed map path"))?;
-                let (key_operation, key_guard) = unguarded_operation(key_operation);
                 let (path_operation, path_guard) = unguarded_operation(path_operation);
                 ensure!(
                     key_guard == guard && path_guard == guard,

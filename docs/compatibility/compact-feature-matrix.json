@@ -2080,7 +2080,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Typed Lean scalar reset lowers to the existing cell write. Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. Aggregate cells and other type combinations remain unqualified.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The checked qualified Coin reset matches Compact and the native checker for both guard outcomes with the adjacent Cell preserved. Funded qualified Coin reset and other aggregate layouts remain unverified.",
       "source": [
         "adt"
       ],
@@ -2095,7 +2095,10 @@
         "runtime/tests/native_cell_reset.rs",
         "docs/development/native-cell-reset-localnet-receipt.json",
         "runtime/src/localnet.rs",
-        "docs/development/native-contract.md"
+        "docs/development/native-contract.md",
+        "tests/QualifiedCoinCell.lean",
+        "runtime/tests/qualified_coin_cell.rs",
+        "tests/compact/qualified-coin-cell-reset.mjs"
       ],
       "equivalence": "unverified"
     },

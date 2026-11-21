@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger marker: Field;
+export ledger coinSlot: QualifiedShieldedCoinInfo;
+
+export circuit seed(value: QualifiedShieldedCoinInfo): [] {
+  marker = 37 as Field;
+  coinSlot = disclose(value);
+}
+
+export circuit guardedClear(enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    coinSlot.resetToDefault();
+  }
+}
