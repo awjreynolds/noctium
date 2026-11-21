@@ -49,10 +49,6 @@ def hexBytes : List Char → Option (List Nat)
     pure ((high * 16 + low) :: (← hexBytes rest))
   | _ => none
 
-def littleEndian : List Nat → Nat
-  | [] => 0
-  | first :: rest => first + 256 * littleEndian rest
-
 /-- Exactly the canonical little-endian field syntax emitted by this producer. -/
 def immediate (text : String) : Except String Nat := do
   ensure (text.startsWith "0x") "native immediate must start with lowercase 0x"

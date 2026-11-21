@@ -928,8 +928,13 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
         pure digest
     encodeFixedBytes 32 digest
   | .persistentHash32 value => do
-    let values ← lowerBytes value
-    let (highByte, low31) ← alignedBytes32Fields values.values
+    let operands ← lowerBytes value
+    let (highByte, low31) ← match value with
+      | .bytes32Literal bytes =>
+        if bytes.length == 32 && bytes.all (· ≤ 255) then
+          pure (operands.values[31]!, fieldImmediate (Native.littleEndian (bytes.take 31)))
+        else alignedBytes32Fields operands.values
+      | _ => alignedBytes32Fields operands.values
     pure {values := ← lowerPersistentHash "bytes32" bytes32Alignment [highByte, low31], packed := true}
   | .persistentHashVector32 values => do
     let operands ← lowerBytes32VectorFields values

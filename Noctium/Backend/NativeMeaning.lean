@@ -117,6 +117,10 @@ private def requireSourceType (ty : Ty) (term : Term) (bounds : List (Term × Na
     | .uint maximum => bounds ++ [(term, maximum)]
     | .bytes _ | .opaqueBytes | .opaqueString | .jubjubScalar | .jubjubPoint | .foreign _ => bounds}
 
+def littleEndian : List Nat → Nat
+  | [] => 0
+  | first :: rest => first + 256 * littleEndian rest
+
 def packByteTerms : List Term → Term
   | [] => .constant 0
   | [byte] => byte
@@ -618,7 +622,12 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     pure {normalized with term := .unary "keccak256_secp256k1_point" normalized.term}
   | .persistentHash32 value => do
     let normalized ← normalize env value
-    let (highByte, low31) ← alignedBytes32Fields normalized
+    let (highByte, low31) ← match value with
+      | .bytes32Literal values =>
+        if values.length == 32 && values.all (· ≤ 255) then
+          pure (.constant values[31]!, .constant (littleEndian (values.take 31)))
+        else alignedBytes32Fields normalized
+      | _ => alignedBytes32Fields normalized
     let term := persistentHash32Term highByte low31
     pure {term, bounds := normalized.bounds, assertions := normalized.assertions}
   | .persistentHashVector32 values => do
