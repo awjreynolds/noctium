@@ -2014,8 +2014,8 @@
       "id": "C-ADT-KERNEL-SELF",
       "layer": "language-ledger",
       "surface": "Kernel.self",
-      "noctiumStatus": "subset",
-      "notes": "Lean readSelf binds the executing contract address as Bytes32 in a native call. The checked fixture covers two addresses, active and inactive guards, caller/address distinction, and exact public storage and return.",
+      "noctiumStatus": "equivalent",
+      "notes": "The circuit method binds the executing contract address as Bytes32. The pinned Compact oracle and native checker agree for two addresses and both guard outcomes. Native checks reject wrong-address replay and output substitution. Ledger 9.1.0.1 finalized the exact deployed address in active state and kept the finalized bytes unchanged when inactive.",
       "source": [
         "adt"
       ],
@@ -2029,9 +2029,10 @@
         "tests/compact/contract-address.mjs",
         "runtime/tests/native_contract_address.rs",
         "docs/development/native-contract.md",
-        "docs/development/native-contract-address-localnet-receipt.json"
+        "docs/development/native-contract-address-localnet-receipt.json",
+        "runtime/src/localnet.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-CELL-READ",
