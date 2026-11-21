@@ -15,6 +15,11 @@ noctium_circuit mapRemoveSeedInputs where
   public sibling : Bytes32
 end
 
+noctium_circuit mapRemoveOwnerInputs where
+  public owner : Bytes32
+  public enabled : Bool
+end
+
 noctium_contract NativeMapRemove where
   tree escrow : Bytes32 => Bytes32 => struct EscrowRecord {
     x : Native
@@ -29,5 +34,8 @@ noctium_contract NativeMapRemove where
   end
   entry «remove» uses mapRemoveInputs where
     when enabled remove escrow[owner][spender]
+  end
+  entry removeOwner uses mapRemoveOwnerInputs where
+    when enabled remove escrow[owner]
   end
 end

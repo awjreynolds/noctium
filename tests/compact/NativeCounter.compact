@@ -1,0 +1,52 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger total: Counter;
+export ledger epochs: Map<Bytes<32>, Map<Bytes<32>, Counter>>;
+
+export circuit ensureOwner(owner: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  if (!epochs.member(ownerKey)) { epochs.insertDefault(ownerKey); }
+}
+
+export circuit bump(owner: Bytes<32>, spender: Bytes<32>): [Uint<64>, Uint<64>] {
+  const ownerKey = disclose(owner);
+  const spenderKey = disclose(spender);
+  if (!epochs.member(ownerKey)) { epochs.insertDefault(ownerKey); }
+  if (!epochs.lookup(ownerKey).member(spenderKey)) {
+    epochs.lookup(ownerKey).insertDefault(spenderKey);
+  }
+  total.increment(3);
+  epochs.lookup(ownerKey).lookup(spenderKey).increment(1);
+  return [total.read(), epochs.lookup(ownerKey).lookup(spenderKey).read()];
+}
+
+export circuit reduce(owner: Bytes<32>, spender: Bytes<32>): [Uint<64>, Uint<64>] {
+  const ownerKey = disclose(owner);
+  const spenderKey = disclose(spender);
+  total.decrement(2);
+  epochs.lookup(ownerKey).lookup(spenderKey).decrement(1);
+  return [total.read(), epochs.lookup(ownerKey).lookup(spenderKey).read()];
+}
+
+export circuit resetCounters(owner: Bytes<32>, spender: Bytes<32>): [Uint<64>, Uint<64>] {
+  const ownerKey = disclose(owner);
+  const spenderKey = disclose(spender);
+  total.resetToDefault();
+  epochs.lookup(ownerKey).lookup(spenderKey).resetToDefault();
+  return [total.read(), epochs.lookup(ownerKey).lookup(spenderKey).read()];
+}
+
+export circuit guarded(owner: Bytes<32>, spender: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    epochs.lookup(disclose(owner)).lookup(disclose(spender)).increment(5);
+  }
+}
+
+export circuit readCounters(owner: Bytes<32>, spender: Bytes<32>): [Uint<64>, Uint<64>] {
+  return [total.read(), epochs.lookup(disclose(owner)).lookup(disclose(spender)).read()];
+}
+
+export circuit readTotal(): Uint<64> {
+  return total.read();
+}
