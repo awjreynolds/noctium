@@ -2601,6 +2601,153 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires authenticated CounterAmounts bundles and the funded development node"]
+    fn counter_amounts_finalize_dynamic_updates_on_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::AlignedValue;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_COUNTER_AMOUNTS_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_COUNTER_AMOUNTS_MANIFESTS")?)?;
+            let entries = ["apply", "reduce", "guarded"];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut degrees = BTreeMap::new();
+            for entry in entries {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                degrees.insert(entry, IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_COUNTER_AMOUNTS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_COUNTER_AMOUNTS_NODE")?, &cache)
+                    .await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, degree) in &degrees {
+                parameters.insert(*entry, cache.parameters(*degree).await?);
+            }
+
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"total":"10","epochs":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let apply = target.operation("apply", &parameters["apply"], ttl)?;
+            let reduce = target.operation("reduce", &parameters["reduce"], ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "apply").await?;
+            let mut current = Some(deployed);
+
+            let inputs = |amount: u16| {
+                BTreeMap::from([
+                    ("owner".into(), json!({"kind":"bytes","values":vec![4; 32]})),
+                    (
+                        "spender".into(),
+                        json!({"kind":"bytes","values":vec![7; 32]}),
+                    ),
+                    ("amount".into(), json!(amount.to_string())),
+                    ("enabled".into(), json!(true)),
+                ])
+            };
+            ensure!(
+                matches!(
+                    reduce.prepare_call(&mut current, &parameters["reduce"], inputs(1), &mut rng),
+                    Err(crate::proof::Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "reducing an uninitialized nested Counter path must reject before submission and retain its state token"
+            );
+
+            let zero = funded
+                .call(&apply, &mut current, &parameters["apply"], inputs(0))
+                .await?;
+            let increased = funded
+                .call(&apply, &mut current, &parameters["apply"], inputs(3))
+                .await?;
+            let reduced = funded
+                .call(&reduce, &mut current, &parameters["reduce"], inputs(2))
+                .await?;
+
+            let assert_finalized = |receipt: &FinalizedReceipt, total: u64, epoch: Option<u64>| {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native CounterAmounts state slots")
+                };
+                let Some(StateValue::Cell(counter)) = slots.get(0) else {
+                    anyhow::bail!("expected standalone Counter")
+                };
+                ensure!(
+                    **counter == AlignedValue::from(total),
+                    "finalized standalone Counter differs from {total}"
+                );
+                let Some(StateValue::Map(owners)) = slots.get(1) else {
+                    anyhow::bail!("expected nested Counter map")
+                };
+                let owner = owners.get(&AlignedValue::from([4u8; 32]));
+                match (owner.as_deref(), epoch) {
+                    (None, None) => {}
+                    (Some(StateValue::Map(spenders)), Some(expected)) => {
+                        let spender = spenders.get(&AlignedValue::from([7u8; 32]));
+                        let Some(StateValue::Cell(counter)) = spender.as_deref() else {
+                            anyhow::bail!("expected nested spender Counter")
+                        };
+                        ensure!(
+                            **counter == AlignedValue::from(expected),
+                            "finalized nested Counter differs from {expected}"
+                        );
+                    }
+                    _ => anyhow::bail!("nested Counter presence differs from expectation"),
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            assert_finalized(&deployment, 10, None)?;
+            assert_finalized(&zero, 10, Some(0))?;
+            assert_finalized(&increased, 13, Some(3))?;
+            assert_finalized(&reduced, 11, Some(1))?;
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "callHeights": [zero.height, increased.height, reduced.height],
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                    "operations": ["apply(amount=0)", "apply(amount=3)", "reduce(amount=2)"],
+                    "uninitializedReduceRejectedBeforeSubmission": true,
+                    "finalizedStates": [
+                        {"total":10,"nested":null},
+                        {"total":10,"nested":0},
+                        {"total":13,"nested":3},
+                        {"total":11,"nested":1}
+                    ]
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated NativeMapRemove bundles and the funded development node"]
     fn nested_map_remove_finalizes_and_preserves_siblings() -> anyhow::Result<()> {
         use crate::{
@@ -2633,8 +2780,10 @@ mod tests {
             };
             let seed_bundle = bundle("seed")?;
             let remove_bundle = bundle("remove")?;
+            let subtree_bundle = bundle("removeOwner")?;
             let seed_degree = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
             let remove_degree = IrSource::load(remove_bundle.file(Role::Circuit)?)?.k();
+            let subtree_degree = IrSource::load(subtree_bundle.file(Role::Circuit)?)?.k();
             let cache = ProofCache::new(
                 setting("NOCTIUM_MAP_REMOVE_PARAMETER_CACHE")?.into(),
                 "https://srs.midnight.network/".parse()?,
@@ -2643,16 +2792,18 @@ mod tests {
                 FundedLedgerTest::connect(&setting("NOCTIUM_MAP_REMOVE_NODE")?, &cache).await?;
             let seed_parameters = cache.parameters(seed_degree).await?;
             let remove_parameters = cache.parameters(remove_degree).await?;
+            let subtree_parameters = cache.parameters(subtree_degree).await?;
             let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
             let mut rng = StdRng::from_entropy();
             let target = WitnessContractTarget::from_state_config(
-                ContractBundleSet::new(vec![seed_bundle, remove_bundle])?,
+                ContractBundleSet::new(vec![seed_bundle, remove_bundle, subtree_bundle])?,
                 br#"{"state":{"escrow":[]}}"#,
                 ttl,
                 &mut rng,
             )?;
             let seed = target.operation("seed", &seed_parameters, ttl)?;
             let remove = target.operation("remove", &remove_parameters, ttl)?;
+            let remove_owner = target.operation("removeOwner", &subtree_parameters, ttl)?;
             let (deployed, deployment) = funded.deploy(&target, "seed").await?;
             let mut current = Some(deployed);
 
@@ -2696,7 +2847,43 @@ mod tests {
                 "repeat removal changed state"
             );
 
-            let expected = |keep_target| {
+            let subtree_inputs = |owner, enabled| {
+                BTreeMap::from([
+                    ("owner".into(), bytes(owner)),
+                    ("enabled".into(), json!(enabled)),
+                ])
+            };
+            let subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(0, true),
+                )
+                .await?;
+            let repeated_subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(0, true),
+                )
+                .await?;
+            let inactive_subtree = funded
+                .call(
+                    &remove_owner,
+                    &mut current,
+                    &subtree_parameters,
+                    subtree_inputs(3, false),
+                )
+                .await?;
+            ensure!(
+                subtree.contract_state == repeated_subtree.contract_state
+                    && subtree.contract_state == inactive_subtree.contract_state,
+                "repeat or inactive subtree removal changed state"
+            );
+
+            let expected = |keep_owner, keep_target| {
                 let record = |x: u64| {
                     StateValue::Cell(Sp::new(AlignedValue::concat(&[
                         crate::field_value(Fr::from(x)),
@@ -2708,20 +2895,26 @@ mod tests {
                     owner_a = owner_a.insert([1u8; 32].into(), record(10));
                 }
                 let owner_b = HashMap::new().insert([1u8; 32].into(), record(30));
-                let owners = HashMap::new()
-                    .insert([0u8; 32].into(), StateValue::Map(owner_a))
-                    .insert([3u8; 32].into(), StateValue::Map(owner_b));
+                let mut owners = HashMap::new().insert([3u8; 32].into(), StateValue::Map(owner_b));
+                if keep_owner {
+                    owners = owners.insert([0u8; 32].into(), StateValue::Map(owner_a));
+                }
                 StateValue::Array(vec![StateValue::Map(owners)].into())
             };
             let seed_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
             let final_state: ContractState<Db> = native_decode(&removed.contract_state)?;
             ensure!(
-                *seed_state.data.get_ref() == expected(true),
+                *seed_state.data.get_ref() == expected(true, true),
                 "seeded records differ"
             );
             ensure!(
-                *final_state.data.get_ref() == expected(false),
+                *final_state.data.get_ref() == expected(true, false),
                 "removed record or survivors differ"
+            );
+            let subtree_state: ContractState<Db> = native_decode(&subtree.contract_state)?;
+            ensure!(
+                *subtree_state.data.get_ref() == expected(false, false),
+                "removed subtree or surviving owner differs"
             );
             println!(
                 "{}",
@@ -2731,13 +2924,19 @@ mod tests {
                     "seedHeight": seeded.height,
                     "removeHeight": removed.height,
                     "repeatHeight": repeated.height,
-                    "transactionIds": [seeded.transaction_id, removed.transaction_id, repeated.transaction_id],
+                    "removeOwnerHeight": subtree.height,
+                    "repeatOwnerHeight": repeated_subtree.height,
+                    "inactiveOwnerHeight": inactive_subtree.height,
+                    "transactionIds": [seeded.transaction_id, removed.transaction_id, repeated.transaction_id,
+                        subtree.transaction_id, repeated_subtree.transaction_id, inactive_subtree.transaction_id],
                     "missingParentRejectedBeforeSubmission": true,
                     "siblingRecordsPreserved": true,
                     "repeatStateUnchanged": true,
+                    "subtreeRemovedAndOtherOwnerPreserved": true,
+                    "repeatAndInactiveSubtreeStateUnchanged": true,
                     "exactPredictedStateAccepted": true,
                     "bundleManifestSha256": pins,
-                    "k": {"seed":seed_degree,"remove":remove_degree},
+                    "k": {"seed":seed_degree,"remove":remove_degree,"removeOwner":subtree_degree},
                 })
             );
             Ok(())
