@@ -1,0 +1,37 @@
+{
+  "activeMissingParentHeight": 49577,
+  "activeMissingParentInitializedEmptyMap": true,
+  "bundleManifestSha256": {
+    "clearInner": "478b2e52a5eb9a4641d958380d28ea32ceaccf5667129869e161bd76913452e1",
+    "seedNested": "e7c47de91e4251abb08f5ec64b2b5bb698263816fa2fb9d8462ce0b54b76666b"
+  },
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "5871ad4819b89e6d0f25814b266aa209811819b68d76d45a2f734fa154eafa09",
+  "deploymentHeight": 49568,
+  "finalValues": {
+    "owner10": {},
+    "owner20": {
+      "3": 31
+    },
+    "owner30": {}
+  },
+  "inactiveMissingParentHeight": 49574,
+  "inactiveMissingParentWasNoOp": true,
+  "k": {
+    "clearInner": 6,
+    "seedNested": 7
+  },
+  "ledger": "9.1.0.1",
+  "resetHeight": 49580,
+  "seedHeight": 49571,
+  "selectedInnerMapResetAndSiblingPreserved": true,
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "transactionIds": [
+    "55abbb3f709c2206854395f016db229aeec8f327d6bb84e9f607900f85a6b5e4",
+    "6f412f83459d98f5f11bf089ab557319af0407f9f502dd18bccf330ed104cd61",
+    "eab3c027e38aa1c7b6439558276a0200d810a0d6c704046157f76c02bff56d12",
+    "2b3c693579efd5580a0f569452875b980f5db13451616ffde6b14ab0256c2977"
+  ]
+}

@@ -2687,8 +2687,8 @@
       "id": "C-ADT-MAP-RESETTODEFAULT",
       "layer": "language-ledger",
       "surface": "Map.resetToDefault",
-      "noctiumStatus": "subset",
-      "notes": "Reset lowers to native empty-map replacement. Compact 0.36.1 and the native checker agree on clearing a two-entry Field Map, returning size zero and absent membership. Funded Ledger 9.1.0.1 accepted the exact empty state after two inserts and reset. Funded nested Map reset remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Root and nested Map resets match Compact 0.36.1 and finalize on Ledger 9.1.0.1 with exact state. Root reset empties a populated Map. Nested reset retains the selected entry as an empty inner Map and preserves siblings. An active reset initializes an absent selected entry, while an inactive reset preserves state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2709,9 +2709,10 @@
         "tests/NativeMapReset.lean",
         "tests/compact/native-map-reset.mjs",
         "runtime/src/localnet.rs",
-        "docs/development/native-map-reset-localnet-receipt.json"
+        "docs/development/native-map-reset-localnet-receipt.json",
+        "docs/development/nested-map-reset-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-MAP-SIZE",
