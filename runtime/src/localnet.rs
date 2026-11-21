@@ -1677,6 +1677,274 @@ mod tests {
         }
         assert_eq!(pool_submission(Some(1013), false), Submission::Broadcast);
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeSet bundles and the funded development node"]
+    fn native_sets_finalize_on_funded_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::{fab::AlignedValue, hash::HashOutput};
+        use coin_structure::contract::ContractAddress;
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_NATIVE_SET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_NATIVE_SET_MANIFESTS")?)?;
+            let entries = ["inspect", "update"];
+            let mut bundles = Vec::new();
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            for entry in entries {
+                let pin = pins.get(entry).context("missing operation manifest pin")?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry, circuit.k());
+                plans.insert(entry, plan);
+                circuits.insert(entry, circuit);
+                bundles.push(bundle);
+            }
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NATIVE_SET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_NATIVE_SET_NODE")?, &cache)
+                .await?;
+            let mut parameters = BTreeMap::new();
+            for (entry, degree) in &degrees {
+                parameters.insert(*entry, cache.parameters(*degree).await?);
+            }
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"registered":[],"groups":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let update = target.operation("update", &parameters["update"], ttl)?;
+            let inspect = target.operation("inspect", &parameters["inspect"], ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "update").await?;
+            let mut current = Some(deployed);
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid fixture address"))?,
+            ));
+            let update_inputs = |adding, removing, clearing| {
+                BTreeMap::from([
+                    ("bucket".into(), json!("7")),
+                    ("tag".into(), json!({"kind":"bytes", "values":vec![7u8; 32]})),
+                    ("adding".into(), json!(adding)),
+                    ("removing".into(), json!(removing)),
+                    ("clearing".into(), json!(clearing)),
+                ])
+            };
+            let inspect_inputs = |bucket: u64, enabled: bool| {
+                BTreeMap::from([
+                    ("bucket".into(), json!(bucket.to_string())),
+                    ("enabled".into(), json!(enabled)),
+                ])
+            };
+            let update_returns = |present, group_present, total: u64, group_size: u64| {
+                BTreeMap::from([
+                    ("containsTag".into(), json!(present)),
+                    ("groupContainsTag".into(), json!(group_present)),
+                    ("totalTags".into(), json!(total.to_string())),
+                    ("groupTags".into(), json!(group_size.to_string())),
+                    ("isEmpty".into(), json!(total == 0)),
+                ])
+            };
+            let check_state = |receipt: &FinalizedReceipt,
+                               expected_root: &[[u8; 32]],
+                               expected_groups: &[(u64, Vec<[u8; 32]>)]|
+             -> anyhow::Result<ContractState<Db>> {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots");
+                };
+                let Some(StateValue::Map(root)) = slots.get(0) else {
+                    anyhow::bail!("expected root Set in slot 0");
+                };
+                ensure!(root.size() == expected_root.len(), "root Set differs");
+                for member in expected_root {
+                    ensure!(
+                        matches!(root.get(&AlignedValue::from(*member)), Some(value) if matches!(&*value, StateValue::Null)),
+                        "root Set member differs"
+                    );
+                }
+                let Some(StateValue::Map(groups)) = slots.get(1) else {
+                    anyhow::bail!("expected nested Set map in slot 1");
+                };
+                ensure!(groups.size() == expected_groups.len(), "nested Set keys differ");
+                for (bucket, members) in expected_groups {
+                    let key = crate::field_value(Fr::from(*bucket));
+                    let Some(group) = groups.get(&key) else {
+                        anyhow::bail!("nested Set bucket is missing");
+                    };
+                    let StateValue::Map(group) = &*group else {
+                        anyhow::bail!("expected nested Set");
+                    };
+                    ensure!(group.size() == members.len(), "nested Set differs");
+                    for member in members {
+                        ensure!(
+                            matches!(group.get(&AlignedValue::from(*member)), Some(value) if matches!(&*value, StateValue::Null)),
+                            "nested Set member differs"
+                        );
+                    }
+                }
+                Ok(state)
+            };
+            let simulate = |entry: &str,
+                            state_bytes: &[u8],
+                            inputs: &BTreeMap<String, Json>,
+                            expected_returns: BTreeMap<String, Json>|
+             -> anyhow::Result<crate::Execution> {
+                let state: ContractState<Db> = native_decode(state_bytes)?;
+                let execution = crate::prepare(
+                    &plans[entry],
+                    inputs,
+                    &state.data,
+                    &funded.node.sync()?.state.parameters,
+                    address,
+                )?;
+                crate::check(&execution, &circuits[entry])?;
+                ensure!(
+                    execution.returns_json() == expected_returns,
+                    "{entry} return values differ from Compact oracle semantics"
+                );
+                Ok(execution)
+            };
+
+            check_state(&deployment, &[], &[])?;
+            ensure!(
+                matches!(
+                    inspect.prepare_call(
+                        &mut current,
+                        &parameters["inspect"],
+                        inspect_inputs(9, true),
+                        &mut rng
+                    ),
+                    Err(crate::proof::Error::InvalidPrivateInput)
+                ) && current.is_some(),
+                "active inspect of an absent bucket must reject preparation and retain the state token"
+            );
+
+            let tag = [7u8; 32];
+            let updates = [
+                (
+                    update_inputs(true, false, false),
+                    update_returns(true, true, 1, 1),
+                    vec![tag],
+                    vec![(7, vec![tag])],
+                ),
+                (
+                    update_inputs(true, false, false),
+                    update_returns(true, true, 1, 1),
+                    vec![tag],
+                    vec![(7, vec![tag])],
+                ),
+                (
+                    update_inputs(false, true, false),
+                    update_returns(false, false, 0, 0),
+                    vec![],
+                    vec![(7, vec![])],
+                ),
+                (
+                    update_inputs(true, false, true),
+                    update_returns(false, false, 0, 0),
+                    vec![],
+                    vec![(7, vec![])],
+                ),
+            ];
+            let mut receipts = Vec::new();
+            let mut before = deployment.contract_state.clone();
+            for (index, (inputs, expected, root, groups)) in updates.into_iter().enumerate() {
+                let execution = simulate("update", &before, &inputs, expected.clone())?;
+                let receipt = funded
+                    .call(&update, &mut current, &parameters["update"], inputs)
+                    .await?;
+                let observed = check_state(&receipt, &root, &groups)?;
+                ensure!(
+                    execution.after.state == observed.data,
+                    "finalized Set state differs from checked native preparation"
+                );
+                if index == 1 {
+                    ensure!(
+                        receipt.contract_state == before,
+                        "duplicate Set insertion changed finalized state"
+                    );
+                }
+                before = receipt.contract_state.clone();
+                receipts.push((expected, receipt));
+            }
+
+            let inspection_inputs = inspect_inputs(7, true);
+            let inspection = simulate(
+                "inspect",
+                &before,
+                &inspection_inputs,
+                BTreeMap::from([
+                    ("registeredEmpty".into(), json!(true)),
+                    ("groupsEmpty".into(), json!(false)),
+                    ("selectedEmpty".into(), json!(true)),
+                ]),
+            )?;
+            let read = funded
+                .call(
+                    &inspect,
+                    &mut current,
+                    &parameters["inspect"],
+                    inspection_inputs,
+                )
+                .await?;
+            let observed = check_state(&read, &[], &[(7, vec![])])?;
+            ensure!(
+                inspection.after.state == observed.data && read.contract_state == before,
+                "inspection changed or misread finalized Set state"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deployment": [deployment.height, deployment.transaction_id],
+                    "calls": receipts.iter().map(|(returns, receipt)| json!({
+                        "height": receipt.height,
+                        "transactionId": receipt.transaction_id,
+                        "checkedSourceReturns": returns,
+                    })).chain(std::iter::once(json!({
+                        "height": read.height,
+                        "transactionId": read.transaction_id,
+                        "checkedSourceReturns": inspection.returns_json(),
+                    }))).collect::<Vec<_>>(),
+                    "environment": ["NOCTIUM_NATIVE_SET_NODE", "NOCTIUM_NATIVE_SET_BUNDLES",
+                        "NOCTIUM_NATIVE_SET_MANIFESTS", "NOCTIUM_NATIVE_SET_PARAMETER_CACHE"],
+                    "scope": "root and nested Bytes32 Set insertion, duplicate, membership, size, emptiness, removal, reset, and absent active path rejection",
+                    "absentActiveBucketRejectedBeforeSubmission": true,
+                    "duplicateInsertionUnchanged": true,
+                    "rootAndNestedSetsMatchedExactAfterState": true,
+                    "compactOracle": "tests/compact/NativeSet.compact",
+                    "compactComparison": "expected return values and state semantics; no Compact-generated bundle executed",
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn ancestry_and_funding_snapshot_mismatches_fail_closed() {
         assert!(validate_parent(Some("a"), "b").is_err());

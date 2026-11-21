@@ -1,0 +1,87 @@
+{
+  "absentActiveBucketRejectedBeforeSubmission": true,
+  "bundleManifestSha256": {
+    "inspect": "377f7cf05b1e3930061eabd4e77766d3c4e947962845db1dd7be4613a434395e",
+    "update": "bb2e2a22dab3beb2cf7644e23cc1f0b9b8ef71ca3468979235ed6c04ba13238a"
+  },
+  "calls": [
+    {
+      "checkedSourceReturns": {
+        "containsTag": true,
+        "groupContainsTag": true,
+        "groupTags": "1",
+        "isEmpty": false,
+        "totalTags": "1"
+      },
+      "height": 49600,
+      "transactionId": "b62cfd938f40006016524b5de97bf2c7fb6c132370a94af0bc027dec58d03fa9"
+    },
+    {
+      "checkedSourceReturns": {
+        "containsTag": true,
+        "groupContainsTag": true,
+        "groupTags": "1",
+        "isEmpty": false,
+        "totalTags": "1"
+      },
+      "height": 49603,
+      "transactionId": "c01a9ec3b29417bfd3f9994244557fd338734fbd2980e46373f5117690933fa7"
+    },
+    {
+      "checkedSourceReturns": {
+        "containsTag": false,
+        "groupContainsTag": false,
+        "groupTags": "0",
+        "isEmpty": true,
+        "totalTags": "0"
+      },
+      "height": 49606,
+      "transactionId": "28472e498be8fd85e25788de8f12a2d52c7e115c9f0f8e190c9cc4dc97baff6f"
+    },
+    {
+      "checkedSourceReturns": {
+        "containsTag": false,
+        "groupContainsTag": false,
+        "groupTags": "0",
+        "isEmpty": true,
+        "totalTags": "0"
+      },
+      "height": 49609,
+      "transactionId": "c9eafe820449d6fbd5862c7676e69c7e80bf906c58337d248e4ae0e90ed67f16"
+    },
+    {
+      "checkedSourceReturns": {
+        "groupsEmpty": false,
+        "registeredEmpty": true,
+        "selectedEmpty": true
+      },
+      "height": 49612,
+      "transactionId": "e42c962d95dbc16d9999cdbe441bf05bc11d709e3444bd6e6266f865e2d51bae"
+    }
+  ],
+  "compactComparison": "expected return values and state semantics; no Compact-generated bundle executed",
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactOracle": "tests/compact/NativeSet.compact",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "efe96320b9f6f8935ea3661b16795dfe9d7f05367b3df36385d77f84bde84ac0",
+  "deployment": [
+    49597,
+    "df11b5cc151208162ea7f39596509ff735504d86ee2abe295ee2c81b45985069"
+  ],
+  "duplicateInsertionUnchanged": true,
+  "environment": [
+    "NOCTIUM_NATIVE_SET_NODE",
+    "NOCTIUM_NATIVE_SET_BUNDLES",
+    "NOCTIUM_NATIVE_SET_MANIFESTS",
+    "NOCTIUM_NATIVE_SET_PARAMETER_CACHE"
+  ],
+  "k": {
+    "inspect": 8,
+    "update": 9
+  },
+  "ledger": "9.1.0.1",
+  "rootAndNestedSetsMatchedExactAfterState": true,
+  "scope": "root and nested Bytes32 Set insertion, duplicate, membership, size, emptiness, removal, reset, and absent active path rejection",
+  "target": "midnight-ledger-9-zkir-3.2.1"
+}
