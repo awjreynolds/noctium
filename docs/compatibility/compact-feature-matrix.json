@@ -2162,8 +2162,8 @@
       "id": "C-ADT-COUNTER-DECREMENT",
       "layer": "language-ledger",
       "surface": "Counter.decrement",
-      "noctiumStatus": "subset",
-      "notes": "Standalone and nested Bytes8 Counters accept checked UInt16 expressions or existing u32 literals. The selected Compact and Noctium cases agree on a runtime decrement and underflow rejection. Noctium binds one Subi immediate per update. Full host and deployment equivalence remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Standalone and nested Bytes8 Counter decrements take a checked UInt16 amount. Compact and native cases agree on a runtime amount and rejected invalid states. One Subi immediate binds each amount. Ledger 9.1.0.1 finalized the decrease with exact state and rejected an uninitialized nested path during preparation. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2179,16 +2179,18 @@
         "runtime/tests/counter_amounts.rs",
         "tests/compact/CounterAmounts.compact",
         "tests/compact/counter-amounts.mjs",
-        "docs/development/native-counter.md"
+        "docs/development/native-counter.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-amounts-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-INCREMENT",
       "layer": "language-ledger",
       "surface": "Counter.increment",
-      "noctiumStatus": "subset",
-      "notes": "Standalone and nested Bytes8 Counters accept checked UInt16 expressions or existing u32 literals. The selected Compact and Noctium cases agree on zero, three and maximum UInt16 amounts, out-of-range input rejection, and inactive missing paths. Noctium binds one Addi immediate per update. Full host and deployment equivalence remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Standalone and nested Bytes8 Counter increments take a checked UInt16 amount. Compact and native cases agree on zero, three and maximum UInt16 amounts, out-of-range rejection, and skipped inactive missing paths. One Addi immediate binds each amount. Ledger 9.1.0.1 finalized zero and nonzero updates with exact state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2204,9 +2206,11 @@
         "runtime/tests/counter_amounts.rs",
         "tests/compact/CounterAmounts.compact",
         "tests/compact/counter-amounts.mjs",
-        "docs/development/native-counter.md"
+        "docs/development/native-counter.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-counter-amounts-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-COUNTER-LESSTHAN",
