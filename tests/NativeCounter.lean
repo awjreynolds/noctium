@@ -10,6 +10,14 @@ noctium_circuit counterPaths where
   public enabled : Bool
 end
 
+noctium_circuit counterReadPaths where
+  private owner : Bytes32
+  private spender : Bytes32
+end
+
+noctium_circuit counterReadTotalInputs where
+end
+
 noctium_contract NativeCounter where
   counter total
   tree epochs : Bytes32 => Bytes32 => Counter
@@ -45,6 +53,16 @@ noctium_contract NativeCounter where
   end
   entry guarded uses counterPaths where
     when enabled increment epochs[disclose(owner)][disclose(spender)] by 5
+  end
+  entry readCounters uses counterReadPaths where
+    read total as currentTotal
+    read epochs[disclose(owner)][disclose(spender)] as currentEpoch
+    return totalValue : UInt 64 := currentTotal
+    return epochValue : UInt 64 := currentEpoch
+  end
+  entry readTotal uses counterReadTotalInputs where
+    read total as currentTotal
+    return totalValue : UInt 64 := currentTotal
   end
 end
 
