@@ -2077,7 +2077,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Typed Lean scalar reset lowers to the existing cell write. Focused Compact 0.36.1 and ZKIR 3.2.1 native cases use the same seeded Native/Field, UInt64, Bool and Bytes4 cells, checking both guard outcomes and reads after reset. Aggregate cells and other type combinations remain unqualified.",
+      "notes": "Typed Lean scalar reset lowers to the existing cell write. Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. Aggregate cells and other type combinations remain unqualified.",
       "source": [
         "adt"
       ],
@@ -2091,6 +2091,7 @@
         "tests/compact/cell-reset.mjs",
         "runtime/tests/native_cell_reset.rs",
         "docs/development/native-cell-reset-localnet-receipt.json",
+        "runtime/src/localnet.rs",
         "docs/development/native-contract.md"
       ],
       "equivalence": "unverified"
@@ -2289,7 +2290,7 @@
       "layer": "language-ledger",
       "surface": "Set.insert",
       "noctiumStatus": "subset",
-      "notes": "Ordered insertion into standalone or map-nested Sets. The matched Native-parent and Bytes32-member case covers duplicate insertion and a finalized localnet insertion. A separate native fixture covers Curve25519Point members. Qualified shielded-coin insertion uses a separate method.",
+      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native checker also covers Curve25519Point members. Full composite member coverage remains open.",
       "source": [
         "adt"
       ],
@@ -2305,7 +2306,9 @@
         "docs/development/native-contract.md",
         "docs/development/native-set-localnet-receipt.json",
         "tests/ForeignKeys.lean",
-        "runtime/tests/foreign_keys.rs"
+        "runtime/tests/foreign_keys.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
       "equivalence": "unverified"
     },
@@ -2337,8 +2340,8 @@
       "id": "C-ADT-SET-ISEMPTY",
       "layer": "language-ledger",
       "surface": "Set.isEmpty",
-      "noctiumStatus": "subset",
-      "notes": "Binds native Boolean emptiness for a standalone or map-nested Set. The matched case uses Bytes32 members and a Native parent. An inactive read binds false and skips path access. The host ledger method remains unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Circuit emptiness matches Compact for root and map-nested Sets. An inactive read binds false and skips path access. Ledger 9.1.0.1 finalized the checked root and nested empty reads with exact unchanged state.",
       "source": [
         "adt"
       ],
@@ -2351,16 +2354,18 @@
         "tests/NativeSet.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
-        "docs/development/native-contract.md"
+        "docs/development/native-contract.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-SET-MEMBER",
       "layer": "language-ledger",
       "surface": "Set.member",
       "noctiumStatus": "subset",
-      "notes": "Reads ordered member presence from standalone and nested Sets. The matched case uses Bytes32 members and Native parent keys. The native foreign-key case also covers Curve25519Point members. The host ledger method remains unqualified.",
+      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. The native checker also covers Curve25519Point members. Full composite member and host getter coverage remain open.",
       "source": [
         "adt"
       ],
@@ -2375,7 +2380,9 @@
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
         "tests/ForeignKeys.lean",
-        "runtime/tests/foreign_keys.rs"
+        "runtime/tests/foreign_keys.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
       "equivalence": "unverified"
     },
@@ -2384,7 +2391,7 @@
       "layer": "language-ledger",
       "surface": "Set.remove",
       "noctiumStatus": "subset",
-      "notes": "Removes Bytes32 members in the matched standalone and nested case. An absent member leaves the Set unchanged. A separate native fixture exercises removal of Curve25519Point members. General composite member keys remain open.",
+      "notes": "Removal matches Compact and funded Ledger 9.1.0.1 for root and map-nested Bytes32 Sets. An absent member leaves the Set unchanged. The native checker also covers Curve25519Point members. General composite member keys remain open.",
       "source": [
         "adt"
       ],
@@ -2399,7 +2406,9 @@
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
         "tests/ForeignKeys.lean",
-        "runtime/tests/foreign_keys.rs"
+        "runtime/tests/foreign_keys.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
       "equivalence": "unverified"
     },
@@ -2407,8 +2416,8 @@
       "id": "C-ADT-SET-RESETTODEFAULT",
       "layer": "language-ledger",
       "surface": "Set.resetToDefault",
-      "noctiumStatus": "subset",
-      "notes": "Clears an ordinary standalone or nested Set. The matched Bytes32 member case preserves sibling Sets. The Curve25519Point fixture also initializes a missing Set under an existing map.",
+      "noctiumStatus": "equivalent",
+      "notes": "Circuit reset clears root and nested ordinary Sets. The matched Compact and funded Ledger 9.1.0.1 case clears newly inserted Bytes32 members with exact state. The native checker covers sibling preservation and initialization of a previously absent nested Set.",
       "source": [
         "adt"
       ],
@@ -2423,16 +2432,18 @@
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
         "tests/ForeignKeys.lean",
-        "runtime/tests/foreign_keys.rs"
+        "runtime/tests/foreign_keys.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-SET-SIZE",
       "layer": "language-ledger",
       "surface": "Set.size",
-      "noctiumStatus": "subset",
-      "notes": "Binds the UInt64 count of distinct members after mutation. The matched case covers standalone and nested Sets with Bytes32 members and a Native parent key. The host ledger method remains unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets.",
       "source": [
         "adt"
       ],
@@ -2445,9 +2456,11 @@
         "tests/NativeSet.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
-        "docs/development/native-contract.md"
+        "docs/development/native-contract.md",
+        "runtime/src/localnet.rs",
+        "docs/development/native-set-funded-operations-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-SET-ITERATOR",
@@ -2693,8 +2706,8 @@
       "id": "C-ADT-MAP-RESETTODEFAULT",
       "layer": "language-ledger",
       "surface": "Map.resetToDefault",
-      "noctiumStatus": "subset",
-      "notes": "Reset lowers to native empty-map replacement. Compact 0.36.1 and the native checker agree on clearing a two-entry Field Map, returning size zero and absent membership. Funded Ledger 9.1.0.1 accepted the exact empty state after two inserts and reset. Funded nested Map reset remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Root and nested Map resets match Compact 0.36.1 and finalize on Ledger 9.1.0.1 with exact state. Root reset empties a populated Map. Nested reset retains the selected entry as an empty inner Map and preserves siblings. An active reset initializes an absent selected entry, while an inactive reset preserves state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2715,9 +2728,10 @@
         "tests/NativeMapReset.lean",
         "tests/compact/native-map-reset.mjs",
         "runtime/src/localnet.rs",
-        "docs/development/native-map-reset-localnet-receipt.json"
+        "docs/development/native-map-reset-localnet-receipt.json",
+        "docs/development/nested-map-reset-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-MAP-SIZE",
