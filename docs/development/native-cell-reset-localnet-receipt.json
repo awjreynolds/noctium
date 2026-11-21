@@ -1,41 +1,56 @@
 {
-  "profile": "midnight-ledger-9-zkir-3.2.1",
-  "nodeImage": "midnightntwrk/midnight-node@sha256:0c1ad548d523c1109aa1f16daab1bf72dcb78c7e17b8a8c6d97424ad0eba7b8a",
-  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
-  "compilerRevision": "198b194861dc4733865111c1e5973bc68df701b6",
-  "entrypoint": "NativeCellReset.clear",
-  "guard": true,
-  "circuit": {
-    "k": 8,
-    "rows": 192
+  "bundleManifestSha256": {
+    "clear": "cdda00b0f852a4f5ab2174c7776a6809eada8af9976e4364ee58eb9fd1be08df",
+    "seed": "9b6c0cbe46333158930093b71e8bcf154d9c5be575642a94a0380491a7d5229e"
   },
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "de10db1ae54d7753a8d3954d7c8689818f78b1d021e3de3a9848b77eeaf22c33",
+  "deploymentHeight": 49661,
   "exactPredictedStateAccepted": true,
-  "artifactSha256": {
-    "source": "219856c4255a4868be37d58cab9bced75f6491fd89d35a36cd9b5a3c7922fbf7",
-    "circuit": "b4f71ffed04b1f99af28ebf75bf2fa32935a760bd7e129a586896f0d0f85735e",
-    "plan": "7dc1d254436fb647661daa02957ffc0b12f341ae03583257752816c703ab48f9",
-    "ledgerParameters": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
-    "verifierKey": "f4d3c95d8834640019924daf6e7d07e647a58c0ba6950d34e435a2d128bcf2f5",
-    "bundleManifest": "75da737068d9ec5f4478f7a47bdd14504fd664d5c340966eff3bd6120a80751a"
+  "finalState": {
+    "active": false,
+    "amount": "0",
+    "contractStateSha256": "991cd11a9aa8c5538939339768d461f04830348d7a7b87f52f54f8b686f2904e",
+    "finalizedHash": "bed7b42cf4194d73dfd67cb05d08a2131553730a26526bf1b11c38d637e3d27a",
+    "memo": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "nonce": "0"
   },
+  "inactiveClearPreservedExactState": true,
+  "k": {
+    "clear": 8,
+    "seed": 7
+  },
+  "ledger": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
   "receipts": [
     {
-      "event": "Deploy",
-      "height": 104,
-      "blockHash": "75cd6574e8622ad1f8d86fcfae2fc459b6d7c3bcb28f15ea3093a825ae543e75",
-      "contractAddress": "ddf7d014eacab48ca6f9ee586971c1d54ffa2fcafe7fa44302f88a9db7be3b63",
-      "transactionId": "01a21ed25521b53b3504746e875c6000b55cc89614faf3fc41f716552819f0e9",
-      "stateBytes": 1653,
-      "stateSha256": "be02fa06b5f6965749e4d3d519031c3ea76da93f0fc449d6a404f931d8b2e13d"
+      "height": 49661,
+      "stage": "deployment",
+      "transactionId": "61c64afcbade14326f05c15c769ac826d07f832341aa3b3214a98e3c82f04ca5"
     },
     {
-      "event": "Call",
-      "height": 107,
-      "blockHash": "93b1ee6d737d5e846beb89184f8b8e4830892153c5c1f1ac7a625f5a1c95747d",
-      "contractAddress": "ddf7d014eacab48ca6f9ee586971c1d54ffa2fcafe7fa44302f88a9db7be3b63",
-      "transactionId": "1465f534b9430ed51903499f0ca588b8cab6c283c58d737789092e6636d7d26b",
-      "stateBytes": 1622,
-      "stateSha256": "0733f9a127df7d10950092aac4e81bfcac76ba2b985ac172f534ddf296a4a57f"
+      "height": 49664,
+      "stage": "seed",
+      "transactionId": "6d61c9add570ab7ba64edbc4dbcfc3f0e41345333ef51047d33f3c09712e6774"
+    },
+    {
+      "height": 49667,
+      "stage": "inactiveClear",
+      "transactionId": "2b033d27c01fdeb05c54aa5883090d85ec38eca2530d0bd6034baf355f535a4a"
+    },
+    {
+      "height": 49670,
+      "stage": "activeClear",
+      "transactionId": "b89483bbec8a567f59333990bbe9e3ce85235803eef13d2ab19979f10e68b394"
     }
-  ]
+  ],
+  "resetCellsMatchedCanonicalFabDefaults": true,
+  "seedCellsMatchedFixture": true
 }

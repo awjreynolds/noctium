@@ -1717,6 +1717,134 @@ mod tests {
         cache.state.network_id = "wrong".into();
         assert!(!cache_matches(&cache, &snapshot));
     }
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated NativeCellReset bundles and the funded development node"]
+    fn cell_resets_finalize_canonical_defaults_on_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_CELL_RESET_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_CELL_RESET_MANIFESTS")?)?;
+            let bundle = |entry: &str| {
+                let pin = pins.get(entry).context("missing operation manifest pin")?;
+                Ok::<_, anyhow::Error>(
+                    artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?,
+                )
+            };
+            let seed_bundle = bundle("seed")?;
+            let clear_bundle = bundle("clear")?;
+            let seed_k = IrSource::load(seed_bundle.file(Role::Circuit)?)?.k();
+            let clear_k = IrSource::load(clear_bundle.file(Role::Circuit)?)?.k();
+            let clear_plan: crate::Plan = serde_json::from_slice(clear_bundle.file(Role::Plan)?)?;
+            let values = |amount: &str, nonce: &str, active: bool, memo: [u8; 4]| {
+                BTreeMap::from([
+                    ("amount".into(), json!(amount)),
+                    ("nonce".into(), json!(nonce)),
+                    ("active".into(), json!(active)),
+                    ("memo".into(), json!({"kind":"bytes","values":memo})),
+                ])
+            };
+            let expected_seeded = crate::create_state(&clear_plan, &values("42", "17", true, *b"seed"))?;
+            let expected_cleared = crate::create_state(&clear_plan, &values("0", "0", false, [0; 4]))?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_CELL_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_CELL_RESET_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_k).await?;
+            let clear_parameters = cache.parameters(clear_k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![seed_bundle, clear_bundle])?,
+                br#"{"state":{"amount":"0","nonce":"0","active":false,"memo":{"kind":"bytes","values":[0,0,0,0]}}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let (deployed, deployment) = funded.deploy(&target, "clear").await?;
+            let mut current = Some(deployed);
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let clear = target.operation("clear", &clear_parameters, ttl)?;
+            let seeded = funded
+                .call(&seed, &mut current, &seed_parameters, BTreeMap::new())
+                .await?;
+            let seeded_state: ContractState<Db> = native_decode(&seeded.contract_state)?;
+            ensure!(
+                seeded_state.data.get_ref() == expected_seeded.get_ref(),
+                "finalized seed does not match the fixture's typed cells"
+            );
+            let inactive = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(false))]),
+                )
+                .await?;
+            ensure!(
+                inactive.contract_state == seeded.contract_state,
+                "inactive clear changed finalized state"
+            );
+            let cleared = funded
+                .call(
+                    &clear,
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(true))]),
+                )
+                .await?;
+
+            let cleared_state: ContractState<Db> = native_decode(&cleared.contract_state)?;
+            ensure!(
+                cleared_state.data.get_ref() == expected_cleared.get_ref(),
+                "finalized clear does not match the fixture's typed defaults"
+            );
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "receipts": [
+                        json!({"stage":"deployment","height":deployment.height,"transactionId":deployment.transaction_id}),
+                        json!({"stage":"seed","height":seeded.height,"transactionId":seeded.transaction_id}),
+                        json!({"stage":"inactiveClear","height":inactive.height,"transactionId":inactive.transaction_id}),
+                        json!({"stage":"activeClear","height":cleared.height,"transactionId":cleared.transaction_id}),
+                    ],
+                    "inactiveClearPreservedExactState": true,
+                    "seedCellsMatchedFixture": true,
+                    "resetCellsMatchedCanonicalFabDefaults": true,
+                    "finalState": {
+                        "contractStateSha256": hex::encode(sha2::Sha256::digest(&cleared.contract_state)),
+                        "finalizedHash": cleared.finalized_hash,
+                        "amount": "0",
+                        "nonce": "0",
+                        "active": false,
+                        "memo": [0, 0, 0, 0],
+                    },
+                    "bundleManifestSha256": pins,
+                    "k": {"seed":seed_k,"clear":clear_k},
+                })
+            );
+            Ok(())
+        })
+    }
+
     fn prepared_runtime(attempt: &str, address: &str) -> crate::host::Runtime {
         let context = serde_json::from_value(json!({"protocolVersion":1,"namespace":"qualification","baseRevision":"r0","attemptId":attempt,"capabilities":[{"id":"store","namespace":"qualification","keyPrefix":"claims/","operations":[crate::host::STAGE,crate::host::CAS]}],"operations":[],"providers":[],"commitCapability":"store"})).unwrap();
         let mut runtime = crate::host::Runtime::new(
