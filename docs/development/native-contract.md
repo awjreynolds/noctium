@@ -220,6 +220,26 @@ transaction-index test. [Lean source](../../tests/QualifiedCoinCell.lean) ·
 [Compact oracle](../../tests/compact/qualified-coin-cell-reset.mjs) ·
 [Native checker](../../runtime/tests/qualified_coin_cell.rs)
 
+An opt-in funded test initialized marker 37 and a Coin with nonce bytes 2,
+color bytes 1, value 5 and `mtIndex` 42. One active `guardedClear` call
+finalized at Ledger 9.1.0.1 height 50102. The decoded native state matched
+the plan-derived typed defaults, including zeroed Bytes32 fields, value and
+index, while preserving marker 37. The receipt records both pinned bundle
+hashes, deployment and call receipts, and the final state digest. It pins
+Compact 0.36.1, ZKIR 3.2.1 and source compiler revision
+`247ea6b7e09e14354e3ffc847573e5b496435bd7`.
+[Funded Rust test](../../runtime/src/localnet.rs) ·
+[Finalized receipt](qualified-coin-cell-reset-localnet-receipt.json)
+
+An ordinary checked record Cell with two Native fields resets both fields
+to zero. The native checker and Compact 0.36.1 agree on both guard outcomes
+and preserve the neighboring marker. The native checker rejects a sealed
+Cell and a mismatched declared schema. This fixture covers the flat Native
+layout in the VM. Funded execution and other record layouts remain open.
+[Lean fixture](../../tests/FlatRecordCellReset.lean) ·
+[Compact oracle](../../tests/compact/flat-record-cell-reset.mjs) ·
+[Native checker](../../runtime/tests/flat_record_cell.rs)
+
 ## Record standalone token mints
 
 ```lean

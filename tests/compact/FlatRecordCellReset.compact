@@ -1,0 +1,21 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Ledger {
+  issued: Field;
+  spent: Field;
+}
+
+export ledger marker: Field;
+export ledger counters: Ledger;
+
+export circuit seed(): [] {
+  marker = 37 as Field;
+  counters = Ledger { issued: 5 as Field, spent: 42 as Field };
+}
+
+export circuit guardedClear(enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    counters.resetToDefault();
+  }
+}

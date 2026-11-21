@@ -1281,9 +1281,9 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
     let some declaration := state.find? (·.name == name)
       | throw s!"unknown root composite Cell '{name}'"
     let .tree (.composite environment foundType) := declaration.kind
-      | throw "root composite write must target a checked shielded coin Cell"
+      | throw "root composite write must target a checked record Cell"
     unless foundType == type do throw "nested composite write type mismatch"
-    pure (environment, ← LedgerValueType.shieldedCoinRecordFields environment type)
+    pure (environment, ← checkedRecordFields environment type)
   else do
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite write must select a composite value"
