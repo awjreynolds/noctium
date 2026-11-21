@@ -2460,6 +2460,151 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated SealedMapConstructor bundles and the funded development node"]
+    fn sealed_map_constructor_finalizes_exact_seeded_map_and_read_only_get() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_SEALED_MAP_FUNDED_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_SEALED_MAP_FUNDED_MANIFESTS")?)?;
+            let bundle = |entry: &str| {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                Ok::<_, anyhow::Error>(artifacts::verify(
+                    &Path::new(&directory).join(entry),
+                    Some(pin),
+                )?)
+            };
+            let get_bundle = bundle("get")?;
+            let touch_bundle = bundle("touch")?;
+            let get_k = IrSource::load(get_bundle.file(Role::Circuit)?)?.k();
+            let touch_k = IrSource::load(touch_bundle.file(Role::Circuit)?)?.k();
+            let get_plan: crate::Plan = serde_json::from_slice(get_bundle.file(Role::Plan)?)?;
+            let constructor_arguments = BTreeMap::from([
+                ("key".into(), json!("5")),
+                ("value".into(), json!("42")),
+            ]);
+            let expected_state = crate::construct_state(&get_plan, &constructor_arguments)?;
+            let StateValue::Array(expected_slots) = expected_state.get_ref() else {
+                anyhow::bail!("native constructor did not produce state slots")
+            };
+            let Some(StateValue::Map(expected_entries)) = expected_slots.get(0) else {
+                anyhow::bail!("native constructor did not seed the sealed Map")
+            };
+            ensure!(
+                expected_entries.size() == 1,
+                "native constructor Map does not have exactly one entry"
+            );
+            let expected_key = crate::field_value(Fr::from(5u64));
+            let expected_entry = expected_entries.get(&expected_key);
+            let Some(StateValue::Cell(expected_value)) = expected_entry.as_deref() else {
+                anyhow::bail!("native constructor omitted the seeded Map value")
+            };
+            ensure!(
+                **expected_value == crate::field_value(Fr::from(42u64)),
+                "native constructor seeded the wrong Map value"
+            );
+            ensure!(
+                matches!(expected_slots.get(1), Some(StateValue::Map(map)) if map.size() == 0),
+                "native constructor did not leave the neighboring sealed Map empty"
+            );
+            let state_config = br#"{"state":{"key":"5","value":"42"}}"#;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_SEALED_MAP_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_SEALED_MAP_FUNDED_NODE")?,
+                &cache,
+            )
+            .await?;
+            let get_parameters = cache.parameters(get_k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![get_bundle, touch_bundle])?,
+                state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let get = target.operation("get", &get_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "get").await?;
+            let deployed_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed_state.data.get_ref() == expected_state.get_ref(),
+                "deployment state does not match the exact native constructor state"
+            );
+
+            let mut current = Some(deployed);
+            let read = funded
+                .call(
+                    &get,
+                    &mut current,
+                    &get_parameters,
+                    BTreeMap::from([("key".into(), json!("5"))]),
+                )
+                .await?;
+            let final_state: ContractState<Db> = native_decode(&read.contract_state)?;
+            ensure!(
+                final_state.data.get_ref() == expected_state.get_ref(),
+                "funded get changed the finalized constructor state"
+            );
+
+            let receipt = |stage: &str, item: &crate::client::FinalizedReceipt| {
+                json!({
+                    "stage": stage,
+                    "chain": &item.chain,
+                    "height": item.height,
+                    "blockHash": item.block_hash,
+                    "finalizedHeight": item.finalized_height,
+                    "finalizedHash": item.finalized_hash,
+                    "extrinsicHash": item.extrinsic_hash,
+                    "extrinsicIndex": item.extrinsic_index,
+                    "transactionId": item.transaction_id,
+                    "intentId": item.intent_id,
+                    "contractAddress": item.contract_address,
+                    "contractStateSha256": hex::encode(sha2::Sha256::digest(&item.contract_state)),
+                })
+            };
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "constructorArguments": {"key":"5","value":"42"},
+                    "deploymentMatchedExactConstructState": true,
+                    "getFinalizedStateMatchedExactConstructState": true,
+                    "neighboringEmptySealedMapPreserved": true,
+                    "receipts": [receipt("deployment", &deployment), receipt("get", &read)],
+                    "bundleManifestSha256": pins,
+                    "k": {"get":get_k,"touch":touch_k},
+                    "environment": [
+                        "NOCTIUM_SEALED_MAP_FUNDED_BUNDLES",
+                        "NOCTIUM_SEALED_MAP_FUNDED_MANIFESTS",
+                        "NOCTIUM_SEALED_MAP_FUNDED_PARAMETER_CACHE",
+                        "NOCTIUM_SEALED_MAP_FUNDED_NODE",
+                    ],
+                })
+            );
+            Ok(())
+        })
+    }
+
     fn prepared_runtime(attempt: &str, address: &str) -> crate::host::Runtime {
         let context = serde_json::from_value(json!({"protocolVersion":1,"namespace":"qualification","baseRevision":"r0","attemptId":attempt,"capabilities":[{"id":"store","namespace":"qualification","keyPrefix":"claims/","operations":[crate::host::STAGE,crate::host::CAS]}],"operations":[],"providers":[],"commitCapability":"store"})).unwrap();
         let mut runtime = crate::host::Runtime::new(

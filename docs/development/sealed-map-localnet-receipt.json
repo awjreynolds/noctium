@@ -1,0 +1,77 @@
+{
+  "bundleManifestSha256": {
+    "get": "4aaeac65097b67efd167e073c3bf9020820c76ed88c54f0a4cbb393da8af307a",
+    "touch": "5f2be04f011b244b1fac0d2b84d91d2ae565f976bf59d32598177b08a673a831"
+  },
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "45fcc892125a80862637347fa9764606b1902d22",
+  "constructorArguments": {
+    "key": "5",
+    "value": "42"
+  },
+  "contractAddress": "da58762aa0ad43a3e68509aee3b7425382351b18aa292e6c22df66742c20f035",
+  "deploymentMatchedExactConstructState": true,
+  "environment": [
+    "NOCTIUM_SEALED_MAP_FUNDED_BUNDLES",
+    "NOCTIUM_SEALED_MAP_FUNDED_MANIFESTS",
+    "NOCTIUM_SEALED_MAP_FUNDED_PARAMETER_CACHE",
+    "NOCTIUM_SEALED_MAP_FUNDED_NODE"
+  ],
+  "getFinalizedStateMatchedExactConstructState": true,
+  "k": {
+    "get": 7,
+    "touch": 6
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "neighboringEmptySealedMapPreserved": true,
+  "receipts": [
+    {
+      "blockHash": "35a6eee3479b40fdbf5eb522d60bc86079e48cf06e24139139c9c4547b179052",
+      "chain": {
+        "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+        "networkId": "undeployed",
+        "profile": "midnight-ledger-9-zkir-3.2.1",
+        "specVersion": 2001100,
+        "transactionVersion": 4
+      },
+      "contractAddress": "da58762aa0ad43a3e68509aee3b7425382351b18aa292e6c22df66742c20f035",
+      "contractStateSha256": "75a6ecf5738bdd6673884c4aa8bf0d20ea64a95abc7333b67a660cf2914e57d1",
+      "extrinsicHash": "e8572a825612f0f84dc805baef81252506ab91ee4243165025fef86ac0d31fc3",
+      "extrinsicIndex": 4,
+      "finalizedHash": "35a6eee3479b40fdbf5eb522d60bc86079e48cf06e24139139c9c4547b179052",
+      "finalizedHeight": 50646,
+      "height": 50646,
+      "intentId": "7faaad84fb963be0433332715ae88671f84b78553065faa1882313364bdb0f7b",
+      "stage": "deployment",
+      "transactionId": "ebdbe7f7b2b970dd6a117e64df08ca0820c4e8196c6873727f68517cb3cfe39d"
+    },
+    {
+      "blockHash": "eadb7ec1b83dd158b42fbcbeab4ea6548f1b54fa84f8aeb50ce1c094455f060d",
+      "chain": {
+        "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+        "networkId": "undeployed",
+        "profile": "midnight-ledger-9-zkir-3.2.1",
+        "specVersion": 2001100,
+        "transactionVersion": 4
+      },
+      "contractAddress": "da58762aa0ad43a3e68509aee3b7425382351b18aa292e6c22df66742c20f035",
+      "contractStateSha256": "75a6ecf5738bdd6673884c4aa8bf0d20ea64a95abc7333b67a660cf2914e57d1",
+      "extrinsicHash": "82f9f9224d82a63297d0a4dac2c3695f368ece0651adaac778181977c4d317cb",
+      "extrinsicIndex": 4,
+      "finalizedHash": "eadb7ec1b83dd158b42fbcbeab4ea6548f1b54fa84f8aeb50ce1c094455f060d",
+      "finalizedHeight": 50649,
+      "height": 50649,
+      "intentId": "572ca4baebd98c22a1b43fccbb9655d20fd723c8477ee63ff227a8fb59f5a405",
+      "stage": "get",
+      "transactionId": "2ef00632183fba15457587f28b4f4bebd7ad9374ec80b8341b9916be7cb18db1"
+    }
+  ],
+  "rows": {
+    "get": 84,
+    "touch": 35
+  },
+  "sourceSha256": "8bde4c9f0f0bb985d61a09d7ab8f4d5a1332d8f9ab7c883917167cfb7671d00f",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

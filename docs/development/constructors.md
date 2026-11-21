@@ -40,10 +40,16 @@ Map against Compact 0.36.1. Both preserve the Maps during a write to a
 neighboring Cell. The native checker rejects a constructor insert aimed at
 a scalar Cell and an entrypoint write aimed at the sealed Map. Point
 `NOCTIUM_SEALED_MAP_CONSTRUCTOR_DIR` at fresh ZKIR 3.2.1 compiler output to
-run the Rust case. Funded execution and other Map layouts remain open.
+run the Rust case. Other Map layouts remain open.
 [Lean fixture](../../tests/SealedMapConstructor.lean) ·
 [Compact oracle](../../tests/compact/sealed-map-constructor.mjs) ·
 [Native checker](../../runtime/tests/sealed_map_constructor.rs)
+
+Ledger 9.1.0.1 finalized deployment at localnet height 50646. Decoded state
+matched the exact native constructor output with key 5, value 42 and an empty
+neighboring sealed Map. The `get` call finalized at height 50649 with the
+same full contract state digest. The lookup relation used K7 and 84 rows.
+[Finalized receipt](sealed-map-localnet-receipt.json)
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one
 raw UTF-8 FAB atom with Compress alignment. The codec preserves embedded U+0000
