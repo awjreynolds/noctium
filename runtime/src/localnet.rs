@@ -2341,6 +2341,191 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires authenticated NativeMapDefault bundles and the funded development node"]
+    fn native_map_default_inserts_and_preserves_siblings() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_MAP_DEFAULT_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_MAP_DEFAULT_MANIFESTS")?)?;
+            let entries = [
+                "seed",
+                "defaultValue",
+                "clear",
+                "defaults",
+                "missingParent",
+                "defaultHistoric",
+                "appendHistoric",
+                "checkHistoricZero",
+                "resetHistoric",
+            ];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut degrees = BTreeMap::<String, u8>::new();
+            let mut plans = BTreeMap::<String, crate::Plan>::new();
+            for entry in entries {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                if matches!(entry, "seed" | "defaultValue") {
+                    degrees.insert(
+                        entry.to_owned(),
+                        IrSource::load(bundle.file(Role::Circuit)?)?.k(),
+                    );
+                    plans.insert(
+                        entry.to_owned(),
+                        serde_json::from_slice(bundle.file(Role::Plan)?)?,
+                    );
+                }
+                bundles.push(bundle);
+            }
+            let seed_degree = degrees["seed"];
+            let default_degree = degrees["defaultValue"];
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MAP_DEFAULT_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_MAP_DEFAULT_NODE")?, &cache)
+                .await?;
+            let seed_parameters = cache.parameters(seed_degree).await?;
+            let default_parameters = cache.parameters(default_degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let empty_state_config = br#"{
+                "state": {
+                    "values": [],
+                    "nestedValues": [],
+                    "nestedMaps": [],
+                    "sets": [],
+                    "lists": [],
+                    "counters": [],
+                    "ordinary": [],
+                    "historic": [],
+                    "records": []
+                }
+            }"#;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                empty_state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let default = target.operation("defaultValue", &default_parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            let mut current = Some(deployed);
+            let inputs = |plan: &crate::Plan, key: u64, amount: u64| {
+                plan.circuit
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        let value = match input.name.as_str() {
+                            "owner" => json!({"kind":"bytes","values":vec![7u8;32]}),
+                            "key" => json!(key.to_string()),
+                            "amount" => json!(amount.to_string()),
+                            "enabled" => json!(true),
+                            other => panic!("unexpected NativeMapDefault input {other}"),
+                        };
+                        (input.name.clone(), value)
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
+            let assert_values = |receipt: &FinalizedReceipt, expected: &[(u64, u64)]| {
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                let StateValue::Array(slots) = state.data.get_ref() else {
+                    anyhow::bail!("expected native state slots")
+                };
+                let Some(StateValue::Map(values)) = slots.get(0) else {
+                    anyhow::bail!("expected root values Map in slot zero")
+                };
+                ensure!(
+                    values.size() == expected.len(),
+                    "Map entry count differs from expected finalized state"
+                );
+                for &(key, amount) in expected {
+                    let entry = values.get(&crate::field_value(Fr::from(key)));
+                    let Some(StateValue::Cell(value)) = entry.as_deref() else {
+                        anyhow::bail!("expected Map cell at key {key}")
+                    };
+                    ensure!(
+                        **value == crate::field_value(Fr::from(amount)),
+                        "finalized Map value differs at key {key}"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+
+            let seeded_one = funded
+                .call(
+                    &seed,
+                    &mut current,
+                    &seed_parameters,
+                    inputs(&plans["seed"], 1, 19),
+                )
+                .await?;
+            let seeded = funded
+                .call(
+                    &seed,
+                    &mut current,
+                    &seed_parameters,
+                    inputs(&plans["seed"], 2, 23),
+                )
+                .await?;
+            assert_values(&seeded, &[(1, 19), (2, 23)])?;
+            let inserted_default = funded
+                .call(
+                    &default,
+                    &mut current,
+                    &default_parameters,
+                    inputs(&plans["defaultValue"], 3, 99),
+                )
+                .await?;
+            assert_values(&inserted_default, &[(1, 19), (2, 23), (3, 0)])?;
+            let replaced = funded
+                .call(
+                    &default,
+                    &mut current,
+                    &default_parameters,
+                    inputs(&plans["defaultValue"], 1, 99),
+                )
+                .await?;
+            assert_values(&replaced, &[(1, 0), (2, 23), (3, 0)])?;
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deploymentHeight": deployment.height,
+                    "seedHeights": [seeded_one.height, seeded.height],
+                    "missingDefaultHeight": inserted_default.height,
+                    "replacementHeight": replaced.height,
+                    "transactionIds": [seeded_one.transaction_id, seeded.transaction_id, inserted_default.transaction_id, replaced.transaction_id],
+                    "finalValues": [[1, 0], [2, 23], [3, 0]],
+                    "missingKeyInsertedAsZero": true,
+                    "nonzeroKeyReplacedWithZero": true,
+                    "siblingValuesPreserved": true,
+                    "bundleManifestSha256": pins,
+                    "k": {"seed": seed_degree, "defaultValue": default_degree},
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated CounterCompare bundles and the funded development node"]
     fn counter_comparison_finalizes_on_ledger() -> anyhow::Result<()> {
         use crate::zkir::IrSource;

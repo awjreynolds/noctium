@@ -2531,7 +2531,7 @@
       "layer": "language-ledger",
       "surface": "Map.insertDefault",
       "noctiumStatus": "subset",
-      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. A pinned Field fixture compares insertion, replacement, membership and size. The native case exercises nested scalar, checked record and collection layouts. The nested HistoricMerkle case matches Compact on empty history after default insertion or replacement, history after append, and root-zero membership after explicit reset. Full type, proof and ledger qualification remain open.",
+      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. Compact and the native checker agree on Field insertion and replacement. Ledger 9.1.0.1 finalized a missing Field insertion as zero and an existing nonzero Field replacement as zero with siblings preserved. Native checks cover nested scalar, record and collection layouts, including a matched HistoricMerkle default. Full funded layout equivalence remains unverified.",
       "source": [
         "adt"
       ],
@@ -2545,7 +2545,9 @@
         "tests/compact/NativeMapDefault.compact",
         "tests/compact/native-map-default.mjs",
         "tests/compact/typed-merkle-leaves.mjs",
-        "runtime/tests/native_map_default.rs"
+        "runtime/tests/native_map_default.rs",
+        "runtime/src/localnet.rs",
+        "docs/development/native-map-default-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
