@@ -25,7 +25,9 @@ try {
   mkdirSync(dirname(runtimeLink), { recursive: true });
   symlinkSync(runtimeDirectory, runtimeLink, 'dir');
   const { pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
-  assert.deepEqual(pureCircuits.burnRecipient(), [true, new Uint8Array(32)]);
+  assert.deepEqual(pureCircuits.burnRecipient(), [
+    true, new Uint8Array(32), new Uint8Array(32),
+  ]);
 
   const index = (1n << 128n) - 1n;
   const zeroIndex = 0n;

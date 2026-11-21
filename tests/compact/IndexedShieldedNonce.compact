@@ -5,7 +5,7 @@ export circuit indexedNonce(index: Uint<128>, nonce: Bytes<32>): Bytes<32> {
   return evolveNonce(index, nonce);
 }
 
-export pure circuit burnRecipient(): [Boolean, Bytes<32>] {
+export pure circuit burnRecipient(): [Boolean, Bytes<32>, Bytes<32>] {
   const recipient = shieldedBurnAddress();
-  return [recipient.is_left, recipient.left.bytes];
+  return [recipient.is_left, recipient.left.bytes, recipient.right.bytes];
 }
