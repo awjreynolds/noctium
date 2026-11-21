@@ -1,0 +1,31 @@
+{
+  "bundleManifestSha256": {
+    "remove": "af8e46c5cfbd321d1229686a8fa245ee80f3945a2f1e3f886322f76cda82fe75",
+    "seed": "c8d3a9b4a430b173255bff14aa26c19793b61e92ae0b2b5e8667e093805ec785"
+  },
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "a7839bd6e757c9383ad318fdf87ce384bbafd91bfb8d27fb6f9b2c0d37ddcb07",
+  "deploymentHeight": 49005,
+  "exactPredictedStateAccepted": true,
+  "k": {
+    "remove": 8,
+    "seed": 9
+  },
+  "ledger": "9.1.0.1",
+  "missingParentRejectedBeforeSubmission": true,
+  "relationRows": {
+    "remove": 239,
+    "seed": 432
+  },
+  "removeHeight": 49011,
+  "repeatHeight": 49014,
+  "repeatStateUnchanged": true,
+  "seedHeight": 49008,
+  "siblingRecordsPreserved": true,
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "transactionIds": [
+    "aa7e69b77ecc5f9353939e89bb6332972b46d116b9b99f73f300550be116fb1a",
+    "3d55d858df2b10a43f5ad20892c2331b6366ab7e9d2d71af3827dfc6871e856d",
+    "3ad1d25452b615a48789da40840ad56c9a27a1fca8454ccc9bb42ea914799f3b"
+  ]
+}
