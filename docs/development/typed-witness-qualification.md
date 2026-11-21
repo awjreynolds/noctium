@@ -21,6 +21,34 @@ Fresh native keys, authenticated nonzero-revision bundles, and runtime builds we
 
 Both receipts report applied deployment and CALL events. The recorded before/after library hashes also match the independently checked resolved C++ library files. The separate public Rust integration test is [`witness_execution_public.rs`](../../runtime/tests/witness_execution_public.rs). For setup and profile-specific build steps, use the existing [native contract workflow](native-contract.md) and [3.2.1 integration guide](zkir-3.2.1-integrated.md), with the exact source commit and profile manifests above.
 
+## Native Rust K7 localnet
+
+The Rust client deployed and called the scalar witness contract on Ledger
+9.1.0.1. Deployment finalized at block 49518 and the call at 49521. The Rust
+provider received `cache`, `cache`, `lookup`, `cache`, `lookup` in order. The
+client committed `cache/last = 14` after finality. [Rust receipt](rust-typed-witness-localnet-receipt.json)
+
+The circuit SHA-256 matches the Swift K7 qualification. The complete
+1,482-byte finalized state matches the browser and Swift receipts. The Rust
+run used a fresh authenticated artifact set with its own manifest digest.
+[Browser receipt](web-localnet-receipt.json) · [Swift receipts](swift-localnet-receipts.json)
+
+Compile `tests/WitnessSource.lean` for ZKIR 3.2.1 and assemble the scalar
+`TypedWitness.ScalarWitness.claim` bundle with its witness binding and
+control files. Use a trusted parameter cache and a journal directory with
+owner-only permissions. [Bundle workflow](portable-artifacts.md)
+
+```sh
+NOCTIUM_TYPED_WITNESS_BUNDLE=PATH_TO_BUNDLE \
+NOCTIUM_TYPED_WITNESS_MANIFEST_SHA256=TRUSTED_MANIFEST_DIGEST \
+NOCTIUM_TYPED_WITNESS_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_TYPED_WITNESS_NODE=http://127.0.0.1:19944 \
+NOCTIUM_TYPED_WITNESS_JOURNAL=PATH_TO_OWNER_ONLY_JOURNAL \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321,localnet --test typed_witness_localnet \
+  rust_typed_witness_k7_finalizes_and_commits -- --ignored --exact --nocapture
+```
+
 ## Limits and reproduction
 
 To reproduce the source suite, check out the exact commit, use its pinned Lean toolchain, and run:
