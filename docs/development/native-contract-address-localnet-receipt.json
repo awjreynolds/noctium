@@ -1,42 +1,23 @@
 {
-  "profile": "midnight-ledger-9-zkir-3.2.1",
-  "nodeImage": "midnightntwrk/midnight-node@sha256:0c1ad548d523c1109aa1f16daab1bf72dcb78c7e17b8a8c6d97424ad0eba7b8a",
-  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "activeHeight": 49730,
+  "activeStateBindsTargetAddress": true,
+  "bundleManifestSha256": "d8fab4780575d38729f657dd70126239defbd1a021ef2fb0124c8c95d48a598b",
+  "circuitSha256": "16707466d37595336d06246ad5b098a7aacaec75b579eea246e3a1d2ccc6985d",
+  "compactCompiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "compactRuntime": "0.21.0",
+  "compilerRevision": "e82c5d46f6a4e9052142fd8d39deda60450aace1",
+  "contractAddress": "2163e78cb5d0fe81c598ee26081342ef4f94cbe1c41d64998795b74ac3b18f11",
+  "deploymentHeight": 49727,
   "entrypoint": "NativeContractAddress.identify",
-  "guard": true,
-  "compilerRevision": "5a487be5bcb0f4b3b95133e87753ce103e6f3c36",
-  "artifactSha256": {
-    "source": "9a51e44907683b434e23c421cf39826f74152222b2c87c701c9ee9351fe31f7d",
-    "circuit": "16707466d37595336d06246ad5b098a7aacaec75b579eea246e3a1d2ccc6985d",
-    "plan": "49a6c279bd11e286055d25c386427f7e05ec1633fc518435931626f3c67b4297",
-    "verifierKey": "528d085001d5e93f2c37b3321f0e2b30e904997c13857276082ae271765f6f89",
-    "ledgerParameters": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
-    "bundleManifest": "c356efaec32cd91d84110e0ce5d52ff781486ed1195ed9850de1cb1d83ff76da"
-  },
-  "exactPredictedStateAccepted": true,
-  "lastAddress": "808897709d5b35c8f3650abff354315160110ce42c277893096dec696100bb0b",
-  "receipts": [
-    {
-      "event": "Deploy",
-      "height": 47,
-      "blockHash": "be8a0333acfee5f58c4ea431ba9b2b6eab174c8d39952f43d0ce4aab49114a20",
-      "contractAddress": "808897709d5b35c8f3650abff354315160110ce42c277893096dec696100bb0b",
-      "transactionId": "90fb1d8cd710f93310988fd0fc3c1c56eb76841463d91bb882727483903c889e",
-      "stateBytes": 1487,
-      "stateSha256": "8c29c3afb5b462e06d6ca77c25cb2d57a8315cba09ec15d414ff9263fbe1036e"
-    },
-    {
-      "event": "Call",
-      "height": 50,
-      "blockHash": "122b16b2010d0a323f0d651f4da9076a974fc2ec1a6feb84e3098944cb491585",
-      "contractAddress": "808897709d5b35c8f3650abff354315160110ce42c277893096dec696100bb0b",
-      "transactionId": "44d1b4cd56b6d234d85a81e774e92d52cda8795badcd548f0c283bbd1541a022",
-      "stateBytes": 1553,
-      "stateSha256": "48f7a47eadeb7dc2998295414169edb401133fe2e3882108d1d279a4850d2009"
-    }
-  ],
-  "circuit": {
-    "k": 8,
-    "rows": 146
-  }
+  "inactiveHeight": 49733,
+  "inactiveStateUnchanged": true,
+  "k": 8,
+  "ledger": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "rows": 146,
+  "transactionIds": [
+    "badc673d32e47d47eadbff143ad2075d49cf31c93d9a3cb508ef88f681e18906",
+    "29e3105ce8efb94f9fce308c258a8d59237629c41ff0d3157310da4d5e7f1fa7",
+    "9536b82e739e5efe320b200afc51693daed0c0662490d9f1f71dfa48bb777d3a"
+  ]
 }

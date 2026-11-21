@@ -206,11 +206,11 @@ UInt64, Native/Field, Boolean and Bytes4 cells. Run the
 The scalar fixture covers both guard outcomes. Aggregate Cell defaults and
 other type combinations need separate equivalence evidence.
 
-The Rust SDK deployed the seeded cells on Ledger 9.1.0.1 localnet at
-height 104 and finalized the active reset at height 107. The finalized
-contract bytes matched the predicted bytes at both heights. Native sizing
-reported K8 and 192 rows for `clear`. The inactive case was checked in the
-pinned native VM and Compact runtime. [Localnet receipt](native-cell-reset-localnet-receipt.json)
+Ledger 9.1.0.1 finalized the seed at height 49664, the inactive reset at
+49667, and the active reset at 49670. The inactive call preserved the exact
+finalized bytes. The active call wrote the canonical UInt64, Field, Bool and
+Bytes4 defaults. The `clear` circuit uses K8 and 192 rows.
+[Finalized receipt](native-cell-reset-localnet-receipt.json)
 
 ## Record standalone token mints
 
@@ -283,12 +283,11 @@ fails the equality check. [Lean fixture](../../tests/NativeContractAddress.lean)
 [Compact oracle](../../tests/compact/contract-address.mjs) ·
 [Native checker](../../runtime/tests/native_contract_address.rs)
 
-The Rust SDK deployed the fixture on Ledger 9.1.0.1 localnet at block 47
-and finalized the active call at block 50. The full state matched the SDK
-prediction, and a separate decoder matched the stored `lastAddress`
-cell to the actual deployment address. Native sizing reported K8 and
-146 rows. The guarded skip and wrong-address replay ran in the native
-VM. [Localnet receipt](native-contract-address-localnet-receipt.json)
+Ledger 9.1.0.1 finalized the active call at block 49730 and stored the
+target's deployment address in `lastAddress`. The inactive call finalized at
+49733 with the same contract state bytes. The native checker also rejects
+wrong-address replay and a changed address output. The `identify` circuit
+uses K8 and 146 rows. [Finalized receipt](native-contract-address-localnet-receipt.json)
 
 ## Derive token colors
 

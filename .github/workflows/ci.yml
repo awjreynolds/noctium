@@ -58,6 +58,7 @@ jobs:
       - name: Check the private claim source-proof report
         run: |
           python3 tests/check-public-audit-assertions.py
+          PYTHONDONTWRITEBYTECODE=1 python3 tests/test_private_claim_operation_coverage.py
           python3 scripts/proofs/check-private-claim-audit.py --report
       - name: Check source contract examples
         run: |
