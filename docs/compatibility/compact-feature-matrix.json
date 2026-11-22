@@ -1276,7 +1276,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed cell initializers, and direct inserts into flat scalar Maps. The native checker and Compact 0.36.1 agree for a seeded Field-to-UInt64 Map and an adjacent default-empty Map. Funded deployment at localnet height 50646 matched the exact native constructor state. A lookup finalized at 50649 with the same state digest. Other layouts, helper initialization, and private constructor callbacks remain open.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, and ordered root scalar List pushes. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. Other layouts, helper initialization, and private constructor callbacks remain open.",
       "source": [
         "reference"
       ],
@@ -1296,6 +1296,10 @@
         "runtime/tests/sealed_map_constructor.rs",
         "runtime/src/localnet.rs",
         "docs/development/sealed-map-localnet-receipt.json",
+        "tests/SealedRootCounterListConstructor.lean",
+        "tests/compact/sealed-counter-list-constructor.mjs",
+        "runtime/tests/sealed_counter_list_constructor.rs",
+        "docs/development/sealed-counter-list-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"
@@ -1305,7 +1309,7 @@
       "layer": "language-ledger",
       "surface": "Sealed ledger fields",
       "noctiumStatus": "subset",
-      "notes": "Noctium supports sealed scalar and OpaqueString cells and flat scalar Maps. Maps permit default-empty state, typed constructor inserts, and entrypoint/helper reads. Source checks reject entrypoint and helper writes. The native and Compact 0.36.1 fixtures preserve seeded and empty Field-to-UInt64 Maps during an unrelated write. The native runtime rejects an attempted Map mutation. A funded lookup preserved both Maps exactly at localnet height 50649. Additional Map layouts and sealing other ledger types remain open.",
+      "notes": "Noctium supports sealed scalar and OpaqueString Cells, flat scalar Maps, root Counters, and root scalar Lists. Source checks reject entrypoint writes and supported helper writes. A funded lookup preserved two sealed Maps at localnet height 50649. The Counter and Native List fixtures match Compact 0.36.1. A proof-bound read finalized at height 51065 and preserved the deployed state bytes. Additional ledger types and layouts remain open.",
       "source": [
         "reference"
       ],
@@ -1325,6 +1329,10 @@
         "runtime/tests/sealed_map_constructor.rs",
         "runtime/src/localnet.rs",
         "docs/development/sealed-map-localnet-receipt.json",
+        "tests/SealedRootCounterListConstructor.lean",
+        "tests/compact/sealed-counter-list-constructor.mjs",
+        "runtime/tests/sealed_counter_list_constructor.rs",
+        "docs/development/sealed-counter-list-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"

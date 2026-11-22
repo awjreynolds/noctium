@@ -51,6 +51,40 @@ neighboring sealed Map. The `get` call finalized at height 50649 with the
 same full contract state digest. The lookup relation used K7 and 84 rows.
 [Finalized receipt](sealed-map-localnet-receipt.json)
 
+## Seed a Counter and a scalar List
+
+```lean
+sealed counter total
+sealed list items : Native
+constructor(amount : UInt 16, first : Native) where
+  increment total by 70000
+  increment total by amount
+  pushFront items := first
+  pushFront items := 42
+end
+```
+
+Root Counters and scalar Lists start at zero and empty. Counter increments
+take the existing native UInt32 immediate or a UInt16 source expression.
+List pushes apply in source order. The constructor supports these actions on
+ordinary and sealed state. Sealed slots allow reads, and entrypoints reject
+writes to them.
+
+With `amount = 5` and `first = 17`, the pinned Compact oracle and the native
+checker agree on Counter 70005, List length 2 and head 42. The Compact
+fixture splits the constant 70000 into two UInt16 increments. Noctium's
+native `inspect` relation uses K7 and 116 rows.
+[Lean fixture](../../tests/SealedRootCounterListConstructor.lean) ·
+[Compact oracle](../../tests/compact/sealed-counter-list-constructor.mjs) ·
+[Native checker](../../runtime/tests/sealed_counter_list_constructor.rs)
+
+Ledger 9.1.0.1 finalized deployment at localnet height 51062. The state
+matched the native constructor output. The `inspect` call finalized at
+height 51065 and preserved the exact deployed state bytes.
+[Finalized receipt](sealed-counter-list-localnet-receipt.json)
+
+## Initialize an opaque string
+
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one
 raw UTF-8 FAB atom with Compress alignment. The codec preserves embedded U+0000
 and rejects trailing U+0000 before constructing state. Ledger serialization

@@ -4583,6 +4583,7 @@ mod tests {
         use rand::{SeedableRng, rngs::StdRng};
         use serde_json::json;
         use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
 
         block_on(async {
             let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
