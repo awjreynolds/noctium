@@ -1,0 +1,20 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Reading {
+  reading: Field;
+  count: Uint<8>;
+  active: Boolean;
+}
+
+witness observeActive(value: Field): Boolean;
+witness observeCount(value: Field): Uint<8>;
+witness observeReading(value: Field): Field;
+
+export circuit build(seed: Field): Reading {
+  return disclose(Reading {
+    active: observeActive(seed + 1),
+    count: observeCount(seed + 2),
+    reading: observeReading(seed + 3),
+  });
+}

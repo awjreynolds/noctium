@@ -411,7 +411,7 @@
       "layer": "language",
       "surface": "Struct",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits declare public and private record inputs using a named codec's checked Payload type. Projections preserve private origins. The payment case commits a private record in layout order, projects fields from both inputs and returns explicitly disclosed values. The host rejects malformed records, and the compiler rejects implicit release. Readable circuits support named aggregate outputs and fieldwise equality on flat records with the same nominal type. Native, Bool and bounded UInt field comparisons match pinned Compact for equal records and each changed field. Source checks reject mixed record identities and implicit disclosure. Full defaults, construction, destructuring, spread and generic struct equivalence remain open.",
+      "notes": "Readable witness circuits declare public and private record inputs using a named codec's checked Payload type. Projections preserve private origins. The payment case commits a private record in layout order, projects fields from both inputs and returns explicitly disclosed values. The host rejects malformed records, and the compiler rejects implicit release. Readable circuits support named aggregate outputs and fieldwise equality on flat records with the same nominal type. Native, Bool and bounded UInt field comparisons match pinned Compact for equal records and each changed field. Named constructors validate all fields and preserve codec identity. The selected native case matches Compact 0.36.1 in declaration-order callback execution even with reversed initializer syntax. Source checks reject mixed record identities, invalid fields and implicit disclosure. Destructuring, spread and broader generic struct equivalence remain open.",
       "source": [
         "reference"
       ],
@@ -426,7 +426,10 @@
         "tests/NominalRecordEquality.lean",
         "tests/WitnessSemantics.lean",
         "tests/compact/nominal-record-equality.mjs",
-        "runtime/tests/nominal_record_equality.rs"
+        "runtime/tests/nominal_record_equality.rs",
+        "tests/ReadableRecordConstruction.lean",
+        "tests/compact/readable-record-construction.mjs",
+        "runtime/tests/readable_record_construction.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
