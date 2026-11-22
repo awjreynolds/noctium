@@ -213,6 +213,13 @@ inductive LedgerEffectDescriptor where
       (guardSink : String) (operands : List LedgerOperand) (publicReads : List String)
   | proofConstraint (name : String) (predicate : Expr .bool)
 
+private def recordKeyOperands (sink state : String) (values : List LedgerFieldExpr) :
+    List LedgerOperand :=
+  values.zipIdx.map fun (value, index) => match value with
+    | .mk ty expression =>
+      LedgerOperand.selector (ty := ty) s!"field{index}"
+        s!"{sink} field {index} of '{state}'" expression
+
 /-- The compiler checks these operands before binding public ledger results. -/
 def describeEffect : Effect → LedgerEffectDescriptor
   | .readCell state destination _ =>
@@ -359,6 +366,10 @@ def describeEffect : Effect → LedgerEffectDescriptor
   | .memberPath state destination keys =>
     .publicEffect "memberPath" .stateRead .publicActivity s!"public nested map membership guard '{state}'"
       [.path s!"public nested map membership path '{state}'" keys] [destination]
+  | .memberRecordSet state destination values =>
+    let sink := s!"public record Set membership guard '{state}'"
+    .publicEffect "memberRecordSet" .stateRead .publicActivity sink
+      (recordKeyOperands sink state values) [destination]
   | .mapIsEmpty state destination keys =>
     .publicEffect "mapIsEmpty" .stateRead .publicActivity s!"public map or set emptiness guard '{state}'"
       [.path s!"public map or set emptiness path '{state}'" keys] [destination]
@@ -458,6 +469,14 @@ def describeEffect : Effect → LedgerEffectDescriptor
   | .setInsert state keys =>
     let sink := s!"public set insertion path '{state}'"
     .publicEffect "setInsert" .stateWrite .publicActivity sink [.path sink keys] []
+  | .setInsertRecord state values =>
+    let sink := s!"public record Set insertion key '{state}'"
+    .publicEffect "setInsertRecord" .stateWrite .publicActivity sink
+      (recordKeyOperands sink state values) []
+  | .removeRecordSet state values =>
+    let sink := s!"public record Set removal key '{state}'"
+    .publicEffect "removeRecordSet" .stateWrite .publicActivity sink
+      (recordKeyOperands sink state values) []
   | .removePath state keys =>
     let sink := s!"public nested map removal path '{state}'"
     .publicEffect "removePath" .stateWrite .publicActivity sink [.path sink keys] []

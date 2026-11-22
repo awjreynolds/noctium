@@ -2451,7 +2451,7 @@
       "layer": "language-ledger",
       "surface": "Set.insert",
       "noctiumStatus": "subset",
-      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native checker also covers Curve25519Point members. Full composite member coverage remains open.",
+      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native query-context test stores each flat Bool and UInt16 record as one root Set key. The native checker also covers Curve25519Point members. Nested record-key Sets remain open.",
       "source": [
         "adt"
       ],
@@ -2462,6 +2462,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/TypedSetKey.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2526,7 +2527,7 @@
       "layer": "language-ledger",
       "surface": "Set.member",
       "noctiumStatus": "subset",
-      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. The native checker also covers Curve25519Point members. Full composite member and host getter coverage remain open.",
+      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. The native query-context test distinguishes root record keys when either the Bool or the UInt16 field differs. The native checker also covers Curve25519Point members. Broader composite member and host getter coverage remain open.",
       "source": [
         "adt"
       ],
@@ -2537,6 +2538,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/TypedSetKey.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2552,7 +2554,7 @@
       "layer": "language-ledger",
       "surface": "Set.remove",
       "noctiumStatus": "subset",
-      "notes": "Removal matches Compact and funded Ledger 9.1.0.1 for root and map-nested Bytes32 Sets. An absent member leaves the Set unchanged. The native checker also covers Curve25519Point members. General composite member keys remain open.",
+      "notes": "Removal matches Compact and funded Ledger 9.1.0.1 for root and map-nested Bytes32 Sets. An absent member leaves the Set unchanged. The native query-context test removes one Bool and UInt16 record key and retains the other. The native checker also covers Curve25519Point members. General composite member keys remain open.",
       "source": [
         "adt"
       ],
@@ -2563,6 +2565,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/TypedSetKey.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",

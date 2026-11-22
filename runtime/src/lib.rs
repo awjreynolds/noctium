@@ -1741,6 +1741,12 @@ pub enum Instruction {
         slot: u32,
         keys: Vec<PathPart>,
     },
+    #[serde(rename = "mapRemoveRecord")]
+    MapRemoveRecord {
+        slot: u32,
+        schema: Json,
+        expressions: Vec<Expr>,
+    },
     #[serde(rename = "listReset")]
     ListReset {
         slot: u32,
@@ -2295,6 +2301,23 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             let parent = path_field_count(plan, *slot, parents)?;
             vec![parent, 2 + full - parent, 1, 1]
         }
+        Instruction::MapRemoveRecord {
+            slot,
+            schema,
+            expressions,
+        } => {
+            let record = checked_typed_record_schema(schema)?;
+            ensure!(
+                expressions.len() == record.fields.len(),
+                "record Set key expression count mismatch"
+            );
+            vec![
+                path_field_count(plan, *slot, &[])?,
+                record.push_impact_width(),
+                1,
+                1,
+            ]
+        }
         Instruction::ListReset { slot, keys } => {
             if let Some((_, parents)) = keys.split_last() {
                 let full = path_field_count(plan, *slot, keys)?;
@@ -2437,7 +2460,8 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         | Instruction::ListPushFront { .. }
         | Instruction::ListPopFront { .. }
         | Instruction::ListReset { .. }
-        | Instruction::MapRemove { .. } => {
+        | Instruction::MapRemove { .. }
+        | Instruction::MapRemoveRecord { .. } => {
             impact_field_counts(instruction, plan)?.into_iter().sum()
         }
         Instruction::Push { alignment, .. } => 4 + value_fields(alignment)?,
@@ -2445,7 +2469,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         Instruction::PushFields {
             expressions,
             schema,
-            storage,
+            ..
         } => {
             if let Some(name) = typed_scalar_schema_token(schema) {
                 let ty = ScalarType::parse(name)?;
@@ -2455,11 +2479,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 3 + 2 * expressions.len()
             } else {
-                let schema = if *storage {
-                    checked_typed_record_schema(schema)?
-                } else {
-                    checked_record_schema(schema)?
-                };
+                let schema = checked_typed_record_schema(schema)?;
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -2897,11 +2917,12 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             .filter(|object| object.len() == 1)
             .and_then(|object| object.get("composite"))
         {
-            ensure!(
-                is_shielded_coin_record_schema(record),
-                "Set composite schema is unsupported"
-            );
-            checked_record_schema(record)?;
+            if is_shielded_coin_record_schema(record) {
+                checked_record_schema(record)?;
+            } else {
+                ensure!(depth == 0, "record Sets must use a root state slot");
+                checked_typed_record_schema(record)?;
+            }
         } else {
             ledger_key_type(key)?;
         }
@@ -3393,6 +3414,7 @@ fn mutates_contract_state(operation: &Instruction) -> bool {
             | Instruction::PushFields { storage: true, .. }
             | Instruction::Insert { .. }
             | Instruction::MapRemove { .. }
+            | Instruction::MapRemoveRecord { .. }
             | Instruction::ListPushFront { .. }
             | Instruction::ListPushFrontCoin { .. }
             | Instruction::ListPushFrontCoinTo { .. }
@@ -3798,10 +3820,50 @@ fn is_record_schema(schema: &Json) -> bool {
             .is_some_and(|object| object.contains_key("id") && object.contains_key("fields"))
 }
 
+fn ordinary_record_set_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    let record = tree_schema_at_path(plan, slot, 0)
+        .ok()?
+        .get("set")?
+        .get("composite")?;
+    (!is_shielded_coin_record_schema(record)).then_some(record)
+}
+
 fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
     for (index, operation) in plan.operations.iter().enumerate() {
         let (operation, guard) = unguarded_operation(operation);
         match operation {
+            Instruction::PushFields {
+                storage: false,
+                schema,
+                ..
+            } if is_record_schema(schema) => {
+                let indexed_set = index.checked_sub(1).and_then(|previous| {
+                    let (operation, path_guard) = unguarded_operation(plan.operations.get(previous)?);
+                    let Instruction::IndexPath { slot, keys, .. } = operation else {
+                        return None;
+                    };
+                    if !keys.is_empty() {
+                        return None;
+                    }
+                    ordinary_record_set_schema(plan, *slot).map(|expected| (expected, path_guard))
+                });
+                if let Some((expected, path_guard)) = indexed_set {
+                    ensure!(
+                        expected == schema && path_guard == guard,
+                        "record Set key differs from its indexed schema or guard"
+                    );
+                    checked_typed_record_schema(schema)?;
+                } else {
+                    checked_record_schema(schema)?;
+                }
+            }
+            Instruction::MapRemoveRecord { slot, schema, .. } => {
+                ensure!(
+                    ordinary_record_set_schema(plan, *slot) == Some(schema),
+                    "record Set removal differs from state schema"
+                );
+                checked_typed_record_schema(schema)?;
+            }
             Instruction::PushFields {
                 storage: true,
                 schema,
@@ -6227,6 +6289,9 @@ fn probe_instruction(
         Instruction::PushFields { expressions, .. } => {
             probe_expressions(expressions, plan, env, deferred_outputs)
         }
+        Instruction::MapRemoveRecord { expressions, .. } => {
+            probe_expressions(expressions, plan, env, deferred_outputs)
+        }
         Instruction::ClaimContractCall {
             address,
             entry_point_hash,
@@ -6791,6 +6856,7 @@ fn validate_guarded_shape(operation: &Instruction) -> Result<()> {
                 | Instruction::ListPopFront { .. }
                 | Instruction::ListReset { .. }
                 | Instruction::MapRemove { .. }
+                | Instruction::MapRemoveRecord { .. }
                 | Instruction::MerkleTreeIsFull { .. }
                 | Instruction::MerkleTreeCheckRoot { .. }
                 | Instruction::MerkleTreeInsertHash { .. }
@@ -7608,11 +7674,7 @@ impl PreparationCursor {
                             .map_err(|_| anyhow!("invalid typed storage value"))?,
                     }
                 } else {
-                    let schema = if *storage {
-                        checked_typed_record_schema(schema)?
-                    } else {
-                        checked_record_schema(schema)?
-                    };
+                    let schema = checked_typed_record_schema(schema)?;
                     let fields = record_values_from_expressions(&schema, expressions, &env)?;
                     Op::Push {
                         storage: *storage,
@@ -8372,6 +8434,26 @@ impl PreparationCursor {
                 Op::Ins {
                     cached: false,
                     n: keys.len().try_into()?,
+                }
+            }
+            Instruction::MapRemoveRecord {
+                slot,
+                schema,
+                expressions,
+            } => {
+                let (index, _) = native_index(plan, *slot, &[], true, &env)?;
+                let record = checked_typed_record_schema(schema)?;
+                let fields = record_values_from_expressions(&record, expressions, &env)?;
+                let key = aligned_record_value(&record, &fields)?;
+                program.extend([
+                    index,
+                    push_native_state(StateValue::Cell(Sp::new(key)), false)?,
+                    Op::Rem { cached: false },
+                ]);
+                has_written = true;
+                Op::Ins {
+                    cached: false,
+                    n: 1,
                 }
             }
             Instruction::ListReset { slot, keys } => {
@@ -9692,6 +9774,7 @@ impl PreparationCursor {
                 | Instruction::ListPopFront { .. }
                 | Instruction::ListReset { .. }
                 | Instruction::MapRemove { .. }
+                | Instruction::MapRemoveRecord { .. }
                 | Instruction::ReceiveShieldedToMap { .. }
                 | Instruction::WriteShieldedCoinCell { .. }
                 | Instruction::WriteShieldedCoinCellTo { .. }
