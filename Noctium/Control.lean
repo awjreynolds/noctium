@@ -490,6 +490,12 @@ mutual
       unless (← get).typed do emitLift (fail span "Bytes32 operations require control schema version 2")
       pure (node span "byteAt" [("value", ← emitExpression checked scope env span value),
         ("index", toJson index)])
+    | .bytes (.fabDigest algorithm type _) arguments => do
+      unless (← get).typed do emitLift (fail span "FAB digests require control schema version 2")
+      pure (node span "fabDigest" [
+        ("operation", toJson algorithm.name),
+        ("type", toJson (← emitType checked span (.composite type))),
+        ("arguments", toJson (← arguments.mapM (emitExpression checked scope env span)))])
     | .bytes operation arguments => do
       unless (← get).typed do emitLift (fail span "Bytes32 operations require control schema version 2")
       pure (node span "bytes" [("operation", toJson operation.operationName),
