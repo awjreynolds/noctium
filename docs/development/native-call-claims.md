@@ -331,6 +331,22 @@ at block 30556, with the callee balance at 13 and count at 1. The checks rejecte
 an altered draft digest, a wrong owner slot and replay under a different intent
 commitment. [Cross-process receipt](composition-transport-receipt.json)
 
+The archived block 30432 also has a focused offline proof replay. Supply the
+pinned extrinsic as `extrinsic.scale`, the caller and callee tagged contract
+states at that block as `caller.state` and `callee.state`, and the public K9
+and K7 SRS as `bls_midnight_2p9` and `bls_midnight_2p7`. The replay checks their
+receipt digests, reconstructs both public statements from the sealed
+transaction, and verifies both V3 proofs with the installed keys. Changes to
+the statement, proof order or verifier key reject. SRS substitutions reject at
+the digest and degree check because the universal verifier powers are shared.
+
+```sh
+NOCTIUM_ARCHIVED_COMPOSITION_DIR=/path/to/block-30432 \
+  cargo test --manifest-path runtime/Cargo.toml --no-default-features \
+  --features zkir-321 --test archived_composition_proofs -- \
+  retained_composition_proofs_verify_against_their_installed_keys_and_historical_srs --ignored --exact
+```
+
 To run the funded case, compile and bundle `IndependentCaller.claim` at K9 and
 `IndependentCallee.advance` at K7 from the fixture. Name the public bundles
 `caller-bundle` and `callee-bundle`. Set the same manifest, SRS and node
