@@ -164,7 +164,7 @@ def Expr.foreignIdentity (curve : Foreign.Curve) : Expr (.foreign (.point curve)
 
 private def fabHashFieldMatches (layout : Types.Layout) (value : Sigma Expr) : Bool :=
   match layout, value with
-  | .bytes length .byteField, ⟨.bytes actualLength, _⟩ => length == actualLength && length > 0 && length ≤ 32
+  | .bytes length .byteField, ⟨.bytes actualLength, _⟩ => length == actualLength && length ≤ 32
   | .scalar .nativeField, ⟨.native, _⟩ => true
   | .scalar .booleanField, ⟨.bool, _⟩ => true
   | .scalar (.boundedUnsignedField maximum), ⟨.uint actualMaximum, _⟩ => maximum == actualMaximum
@@ -215,7 +215,8 @@ private def fabHashUnsignedByteWidth (maximum : Nat) : Nat := Id.run do
 expand to their canonical Encode atoms while remaining one typed source value. -/
 def fabHashLayoutAtoms : Types.Layout → Except String (List String)
   | .bytes length .byteField => do
-    unless 1 ≤ length && length ≤ 32 do throw "unsupported mixed FAB byte width"
+    unless length ≤ 32 do throw "unsupported mixed FAB byte width"
+    -- Bytes0 keeps its Compact alignment descriptor but encodes no bytes.
     pure [s!"bytes:{length}"]
   | .scalar .nativeField => pure ["field"]
   | .scalar .booleanField => pure ["bytes:1"]
