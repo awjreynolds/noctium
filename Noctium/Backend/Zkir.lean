@@ -517,20 +517,6 @@ private def lowerComputedBytes32ByteAt (values : List String) (index : Nat) : Lo
         pure output
     encodeByte byte
 
-private def lowerReverseBytes32 (values : List String) : LowerM (List String) := do
-  let (low31, highByte) ← bytes32Chunks values
-  let bytes ← lowerBytesFromChunks low31 highByte
-  let key : ExpressionKey := ("reverse", [bytes], none)
-  let reversed ← match (← get).expressions.lookup key with
-    | some existing => pure existing
-    | none => do
-      let output ← fresh
-      emit "reverse" [("bytes", toJson bytes), ("output", toJson output)]
-      modify fun state => {state with expressions := (key, output) :: state.expressions}
-      pure output
-  let (low, high) ← encodeBytes32 reversed
-  pure [low, high]
-
 private def byteChunks (length : Nat) (bytes : ByteOperands) : LowerM (List String) := do
   if bytes.packed then
     if bytes.values.length != Native.bytesChunkCount length then
@@ -1025,7 +1011,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
     let (low, high) ← lowerToBytes32 input
     pure {values := [low, high], packed := true}
   | .reverseBytes32 value => do
-    pure {values := ← lowerReverseBytes32 (← lowerBytes value).values, packed := true}
+    lowerFixedReverse 32 (← lowerBytes value)
   | .select condition yes no => do
     let condition ← lowerExpr condition
     let yes ← byteChunks length (← lowerBytes yes)

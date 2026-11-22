@@ -39,11 +39,19 @@ from a different curve, and a changed native return commitment. Returning a
 private input in the fixture requires explicit disclosure.
 [Lean fixture](../../tests/SignaturePayloads.lean) · [Compact reference](../../tests/compact/SignaturePayloads.compact) · [Native check](../../runtime/tests/signature_helpers.rs)
 
+Readable witness circuits also support the secp256k1 and P-256 verification
+helpers. Read one checked signature record from the provider, then pass its
+`r` and `s` fields to the same verification equations used by ordinary
+circuits. The paired vectors cover a valid signature and a changed digest for
+each curve. Releasing the verification result requires explicit disclosure
+when the signature comes from a private witness.
+[Readable source](../../tests/ReadableECDSA.lean) · [Compact comparison](../../tests/compact/readable-ecdsa.mjs) · [Native check](../../runtime/tests/signature_helpers.rs)
+
 ## Protocol and failure rules
 
 ECDSA interprets the supplied 32-byte digest as a big-endian integer and reduces it into the curve's scalar field. The equation checks the x-coordinate of `[digest/s]G + [r/s]key`, reduced modulo the scalar order, against r. Both high-s and low-s signatures are accepted. A low-s rule needs an additional application policy. The helper does not hash a message or establish a relationship between the digest and another contract value.
 
-Identity public keys and zero r or s abort. Coordinate extraction also aborts when the computed point is the identity. Other equation mismatches return false. The explicit zero-r rejection is a deliberate stricter boundary than the pinned Compact helper, which lacks this explicit guard. Do not treat this as exact invalid-input equivalence.
+Noctium aborts for identity public keys, zero r or s, or an identity point at coordinate extraction. Other equation mismatches return false. The pinned Compact 0.36.1 helpers return false for zero r or s on the two compared vectors.
 
 Jubjub Schnorr hashes exactly `[R.x, R.y, key.x, key.y] ++ messageFields`. It reduces both the resulting Native challenge and Native response modulo the Jubjub scalar order, then checks `[response]G = R + [challenge]key`. The total preimage is limited to 1024 Native fields, leaving 1020 message fields. Identity public keys abort. Identity announcements are permitted. A mismatched equation returns false. A pairwise hash chain or byte-message encoding defines a different protocol.
 
