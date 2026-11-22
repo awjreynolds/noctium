@@ -23,7 +23,7 @@ jobs:
   lean:
     name: Lean compiler and contract examples
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -55,12 +55,11 @@ jobs:
           PY
       - name: Build the POC compiler
         run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup
-      - name: Check offline source-proof reports
+      - name: Check the private claim source-proof report
         run: |
           python3 tests/check-public-audit-assertions.py
           PYTHONDONTWRITEBYTECODE=1 python3 tests/test_private_claim_operation_coverage.py
           python3 scripts/proofs/check-private-claim-audit.py --report
-          python3 scripts/proofs/check-private-claim-audit.py --report --operation BoundedScalars.apply
       - name: Check source contract examples
         run: |
           lake env lean examples/PrivateClaim.lean

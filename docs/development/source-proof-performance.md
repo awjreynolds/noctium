@@ -12,3 +12,5 @@ The first measurement on compiler base `932a6da3612b9407ffc9f7f03316dc6662fb810b
 The repeat on compiler base `2429ed8f449f911b01a23499be8a26009ebe5174` took 54.270 and 50.477 seconds for the reports and 28.967 seconds for data-only replay. The report, model and proof sizes and hashes matched the first measurement. Both measurements used the audit driver at SHA-256 `40714f5703e2e473710bc9f304b014d4813e35363416d41cfd5aac54be697d32` and the benchmark script at `13de14fe4233c8a8ac1e799c08abb23e032ed66e95df939eec3b8bc6f8848d76`.
 
 `benchmark.json` records input hashes and timings. The measured operation is `PrivateClaim.claim` with both registered functional and scoped privacy checks. Proposed warm-cache targets for this host are 60 seconds per report, 35 seconds per data-only replay, 8 KiB for report JSON, 32 MiB for the model export and 56 MiB for the proof export.
+
+In GitHub Actions, choose **Source assurance replay** to run the pinned PrivateClaim and BoundedScalars reports on demand. Use the local command above for measurements.
