@@ -198,10 +198,12 @@ parent's address. A mismatched expected address failed assembly before
 submission. [Lean fixture](../../tests/NativeCallerComposition.lean) ·
 [Composed caller receipt](native-typed-caller-localnet-receipt.json)
 
-A signed user call finalized at localnet block 51005 and stored the
+A signed user call finalized at localnet block 51112 and stored the
 expected user address. The transaction spent the selected guaranteed NIGHT
 outpoint and returned the same amount to the same owner. The ordinary
-funding route rejected this offer. The relation measured K8 and 231 rows.
+funding route rejected this offer. The focused test also rejected a wrong
+signing key, an altered principal return, and reuse of the spent outpoint.
+The relation measured K8 and 231 rows.
 [Lean fixture](../../tests/NativeUserCaller.lean) ·
 [Signed user caller receipt](native-user-caller-localnet-receipt.json)
 

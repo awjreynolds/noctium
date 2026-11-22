@@ -3301,7 +3301,9 @@ mod tests {
     fn signed_unshielded_spend_authenticates_the_finalized_user_caller() -> anyhow::Result<()> {
         use crate::{
             artifacts::{self, ContractBundleSet, Role},
+            funding::{CONTRACT_SEGMENT, one_intent},
             proof::{LocalProver, WitnessContractTarget},
+            unshielded_caller::{Error as CallerError, validate_guaranteed_caller_offer},
             zkir::IrSource,
         };
         use anyhow::{Context, ensure};
@@ -3376,6 +3378,26 @@ mod tests {
                 &LocalProver::new(StdRng::from_entropy()), &parameters, 1_048_576,
                 futures::future::pending(),
             ).await?;
+
+            let mut unsigned = one_intent(
+                &snapshot.chain.network_id, CONTRACT_SEGMENT, proved.native().clone(),
+            );
+            let wrong_key = SigningKey::Schnorr(base_crypto::schnorr::SigningKey::sample(&mut rng));
+            ensure!(
+                sign_guaranteed_caller_offer(&mut unsigned, &snapshot, &wrong_key, &mut rng).is_err(),
+                "caller offer accepted the wrong signing key"
+            );
+            let mut altered = proved.native().clone();
+            let mut altered_offer = altered.guaranteed_unshielded_offer.as_deref()
+                .context("proved caller is missing its exact offer")?.clone();
+            let mut outputs: Vec<ledger::structure::UtxoOutput> = (&altered_offer.outputs).into();
+            outputs[0].value += 1;
+            altered_offer.outputs = outputs.into();
+            altered.guaranteed_unshielded_offer = Some(storage::arena::Sp::new(altered_offer));
+            ensure!(
+                matches!(validate_guaranteed_caller_offer(&snapshot, &altered), Err(CallerError::InvalidOffer)),
+                "changed principal return passed caller offer validation"
+            );
             let return_intent = proved.native().erase_proofs().erase_signatures().intent_hash(0);
             let (_, receipt) = funded.finalize_with_unshielded_caller_key(proved.native(), Some(key)).await?;
             let finalized: ContractState<Db> = native_decode(&receipt.contract_state)?;
@@ -3385,6 +3407,11 @@ mod tests {
             )]))?;
             ensure!(finalized.data.get_ref() == expected.get_ref(), "ledger supplied a different caller");
             let after = funded.node.sync()?;
+
+            ensure!(
+                matches!(validate_guaranteed_caller_offer(&after, proved.native()), Err(CallerError::SpendNotInSnapshot)),
+                "spent caller input remained admissible after finalization"
+            );
             ensure!(!after.state.utxo.utxos.contains_key(&Utxo::from(spend.clone())), "selected outpoint remained live");
             ensure!(after.state.utxo.utxos.iter().any(|entry| {
                 let utxo = &entry.0;
@@ -3403,6 +3430,9 @@ mod tests {
                 "priorDustGeneration": prior_dust_generation,
                 "sameOwnerPrincipalReturned": true,
                 "ordinaryFundingRejectedCallerOffer": true,
+                "wrongSigningKeyRejected": true,
+                "alteredReturnOfferRejected": true,
+                "spentOutpointRejected": true,
                 "k": k,
             }));
             Ok(())

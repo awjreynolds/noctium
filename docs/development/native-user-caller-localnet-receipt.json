@@ -1,9 +1,10 @@
 {
+  "alteredReturnOfferRejected": true,
   "bundleManifestSha256": "11a12807d050fb29d468e7af3f3680236fb86fb4935284ac35a8be3e77c1d1a4",
-  "contractAddress": "044db4dcaffa4c57d9f5f5849e7b77861298178ebfa5a1106df2e41f6521574e",
-  "deploymentHeight": 51002,
-  "finalizedHash": "f47b713b1733818a75c58ccb033b5ed90e3e43ccdc1a25314edd1619b94bd9f5",
-  "finalizedHeight": 51005,
+  "contractAddress": "17f8c8266583f8c261dd51914dcd08f91b436d680a97654048f51c31dcd24cf9",
+  "deploymentHeight": 51109,
+  "finalizedHash": "6fe11773df5c5a53252af8d73ccb1e99771cc2eae36419faa403438bc95528d8",
+  "finalizedHeight": 51112,
   "k": 8,
   "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
   "ledgerVersion": "9.1.0.1",
@@ -16,6 +17,8 @@
   "sourceCompilerRevision": "cca5db51e889ad622de055b4913951052328314a",
   "sourceSha256": "579f7a03545187285a9b65a6db02f6aba1228a075c34a4c6af5e2d9f7f27e131",
   "spentNight": "50000000000000",
-  "transactionId": "83423e2af049926181a04305a2fb936899752f4baf1864b701d7dba96d19d2d3",
+  "spentOutpointRejected": true,
+  "transactionId": "b1c840f402a093634a25cc7ce15edec27720db3df39fb774ae2793f8620fdc2a",
+  "wrongSigningKeyRejected": true,
   "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
 }
