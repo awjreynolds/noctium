@@ -298,7 +298,7 @@ def pairReplay : Bool := Id.run do
 
 #guard pairReplay
 
-private def aggregateEqualityReplay (type : Types.CompositeType) (left right : List Term)
+private def aggregateEqualityReplay (leftType rightType : Types.CompositeType) (left right : List Term)
     (expected : Bool) : Bool := Id.run do
   let program : Program := {
     composites := pairProgram.composites
@@ -307,7 +307,7 @@ private def aggregateEqualityReplay (type : Types.CompositeType) (left right : L
       name := "equalPair"
       result := .scalar .bool
       body := [.return (some (.eq
-        (.composite type left) (.composite type right)))]
+        (.composite leftType left) (.composite rightType right)))]
     }]
     exports := [{name := "equal", target := ⟨0, 0⟩}]
   }
@@ -316,8 +316,8 @@ private def aggregateEqualityReplay (type : Types.CompositeType) (left right : L
   let .ok report ← replayInvocation {} 256 nativeContext source [] | return false
   return report.matchesRecordedSource && report.execution.result == .success (.scalar (.bool expected))
 
-#guard aggregateEqualityReplay pairType [.uint 255 7, .bool true] [.uint 255 7, .bool true] true
-#guard aggregateEqualityReplay pairType [.uint 255 7, .bool true] [.uint 255 8, .bool true] false
+#guard aggregateEqualityReplay pairType pairType [.uint 255 7, .bool true] [.uint 255 7, .bool true] true
+#guard aggregateEqualityReplay pairType pairType [.uint 255 7, .bool true] [.uint 255 8, .bool true] false
 
 private def nestedEqualityType : Types.CompositeType :=
   .tuple [pairType, .bytes 2, .vector 2 (.scalar .native)]
@@ -325,8 +325,16 @@ private def nestedEqualityType : Types.CompositeType :=
 private def nestedEqualityLeaves (byte : Nat) : List Term :=
   [.uint 255 7, .bool true, .native 0, .native byte, .native 11, .native 12]
 
-#guard aggregateEqualityReplay nestedEqualityType (nestedEqualityLeaves 2) (nestedEqualityLeaves 2) true
-#guard aggregateEqualityReplay nestedEqualityType (nestedEqualityLeaves 2) (nestedEqualityLeaves 3) false
+#guard aggregateEqualityReplay nestedEqualityType nestedEqualityType
+  (nestedEqualityLeaves 2) (nestedEqualityLeaves 2) true
+#guard aggregateEqualityReplay nestedEqualityType nestedEqualityType
+  (nestedEqualityLeaves 2) (nestedEqualityLeaves 3) false
+
+#guard aggregateEqualityReplay (.vector 2 (.scalar (.uint 255))) (.vector 2 (.scalar (.uint 65535)))
+  [.uint 255 1, .uint 255 2] [.uint 65535 1, .uint 65535 2] true
+#guard aggregateEqualityReplay (.tuple [.scalar (.uint 255), .scalar .native])
+  (.tuple [.scalar (.uint 65535), .scalar .native])
+  [.uint 255 1, .native 11] [.uint 65535 1, .native 12] false
 
 def unitWitnessProgram : Program := {
   witnesses := [{

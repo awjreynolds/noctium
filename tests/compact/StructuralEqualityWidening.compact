@@ -1,0 +1,16 @@
+pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+export pure circuit compareVectors(
+  left: Vector<2, Uint<8>>,
+  right: Vector<2, Uint<16>>
+): Boolean {
+  return left == right;
+}
+
+export pure circuit compareTuples(
+  left: [Uint<8>, Field],
+  right: [Uint<16>, Field]
+): Boolean {
+  return left == right;
+}

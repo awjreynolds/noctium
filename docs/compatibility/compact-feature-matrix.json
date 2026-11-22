@@ -344,7 +344,7 @@
       "layer": "language",
       "surface": "Vector<n,T>",
       "noctiumStatus": "subset",
-      "notes": "Checked fixed-size vectors support literal and runtime indexing in readable circuits. Runtime indexing accepts UInt and Native values, enforces the vector bound, and requires explicit authorization for private selector influence on public results. Compact 0.36.1 rejects direct runtime indexing. A three-case Compact reference agrees on the selected values and out-of-range failures. Full slicing and spread coverage remain open.",
+      "notes": "Checked fixed-size vectors support literal and runtime indexing in readable circuits. Runtime indexing accepts UInt and Native values, enforces the vector bound, and requires explicit authorization for private selector influence on public results. Compact 0.36.1 rejects direct runtime indexing. A three-case Compact reference agrees on the selected values and out-of-range failures. Full slicing and spread coverage remain open. Equal-length vectors with UInt8 and UInt16 elements compare through checked widening, with original input ranges retained.",
       "source": [
         "reference"
       ],
@@ -353,6 +353,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/StructuralEqualityWidening.lean",
+        "runtime/tests/structural_equality_widening.rs",
+        "tests/compact/structural-equality-widening.mjs",
         "docs/development/aggregate-serialization.md",
         "runtime/tests/aggregate_serialization.rs"
       ],
@@ -376,7 +379,7 @@
       "layer": "language",
       "surface": "Tuple and unit []",
       "noctiumStatus": "subset",
-      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Spread and broader constructor and unit-return equivalence remain open.",
+      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Spread and broader constructor and unit-return equivalence remain open. Matching tuple shapes with UInt8 and UInt16 leaves compare through checked widening, as in the pinned Compact reference.",
       "source": [
         "reference"
       ],
@@ -385,6 +388,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/StructuralEqualityWidening.lean",
+        "runtime/tests/structural_equality_widening.rs",
+        "tests/compact/structural-equality-widening.mjs",
         "SEM",
         "tests/ReadableBindPatterns.lean",
         "tests/compact/readable-bind-patterns.mjs",
