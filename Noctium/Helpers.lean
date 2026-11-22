@@ -115,15 +115,18 @@ def CurveOp.signature : CurveOp → List Ty × Ty
   | .foreignEncodedField kind _ => ([.foreign kind], .native)
 
 inductive FabDigest where
+  | persistentHash
   | sha512
   | keccak256
   deriving Repr, BEq, DecidableEq
 
 def FabDigest.name : FabDigest → String
+  | .persistentHash => "persistentHash"
   | .sha512 => "sha512"
   | .keccak256 => "keccak256"
 
 def FabDigest.resultType : FabDigest → Ty
+  | .persistentHash => .bytes 32
   | .sha512 => .bytes 64
   | .keccak256 => .bytes 32
 
@@ -2064,7 +2067,8 @@ private partial def expressionUsesName (name : String) : Expr ty → Bool
   | .persistentCommitFab _ _ opening values | .transientCommitFab _ _ opening values =>
     expressionUsesName name opening ||
       values.any (fun ⟨_, value⟩ => expressionUsesName name value)
-  | .sha512Fab _ _ values | .keccak256Fab _ _ values | .transientHashFab _ _ values =>
+  | .persistentHashFab _ _ values | .sha512Fab _ _ values
+  | .keccak256Fab _ _ values | .transientHashFab _ _ values =>
     values.any (fun ⟨_, value⟩ => expressionUsesName name value)
   | .concatBytes left right | .foreignBinary _ left right | .jubjubMul left right
   | .jubjubAdd left right | .add left right | .mul left right | .sub left right
@@ -2736,6 +2740,7 @@ mutual
             pure (Sigma.mk ty (← liftD (fabDigestInput span ty value)))
           discard (liftD (liftError span (validateFabHashLayout program.composites type operands)))
           match algorithm with
+          | .persistentHash => pure (scalarValue (Expr.persistentHashFab program.composites type operands))
           | .sha512 => pure (scalarValue (Expr.sha512Fab program.composites type operands))
           | .keccak256 => pure (scalarValue (Expr.keccak256Fab program.composites type operands))
         | .reverseBytes32, [value] => do
