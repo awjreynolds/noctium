@@ -149,6 +149,8 @@ jobs:
           lake env lean tests/NestedEscrow.lean
           lake env lean tests/NativeCounter.lean
           lake env lean tests/ByteAlignedUInt128Cell.lean
+          lake build Noctium.Verification.UInt128ReadBound
+          lake env lean tests/UInt128LedgerReadBound.lean
           lake env lean tests/CounterAmounts.lean
           lake env lean tests/CounterCompare.lean
           lake env lean tests/NativeSet.lean

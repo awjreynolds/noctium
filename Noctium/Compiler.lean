@@ -1,6 +1,7 @@
 import Noctium.NativeExpression
 import Noctium.Frontend
 import Noctium.Backend.Zkir
+import Noctium.Backend.LedgerReadOptimization
 import Noctium.EntryPointHash
 import Noctium.Target
 import Noctium.ArtifactRole
@@ -1196,8 +1197,14 @@ elab "#noctium_check_target" profileJson:str : command => do
 
 private def compileArtifacts (directory : String) (profile : TargetProfile)
     (displayDirectory : String := directory) (roles : List ArtifactRole := [])
-    (rustBindings dedupRangeChecks : _root_.Bool := Bool.false) : CommandElabM Unit := do
+    (rustBindings dedupRangeChecks : _root_.Bool := Bool.false)
+    (ledgerReadBound : String := "") : CommandElabM Unit := do
   checkRequiredTarget profile
+  if !ledgerReadBound.isEmpty then
+    unless profile == TargetProfile.selected321 do
+      throwError "--ledger-read-bound requires the pinned ZKIR 3.2.1 profile"
+    if dedupRangeChecks then
+      throwError "--ledger-read-bound and --dedup-range-checks require separate builds"
   let moduleOutputs ← unsafe rebuildModuleOutputs
   let (circuits, contracts, hosted) ← unsafe inspectWithModules moduleOutputs dedupRangeChecks
   let emit := fun role => roles.isEmpty || roles.contains role
@@ -1207,6 +1214,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
   -- Lower and validate the requested products before publishing files.
   let mut lowered : Array (ArtifactRole × String × String) := #[]
   let mut planDigests : Std.HashMap String String := {}
+  let mut ledgerReadAssumptions : Std.HashMap String Json := {}
   let sourceEnv ← getEnv
   let controls := if emit .control then
     (controlRegistry.getState sourceEnv).filter (!sourceEnv.isImportedConst ·) else #[]
@@ -1267,7 +1275,24 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       let ep := Passes.pruneEntrypoint ep
       if !(emit .witness) && witnesses.any (·.circuitName.toString == ep.circuit.name) then
         throwError "ledger entrypoint '{name}.{ep.name}' requires --emit witness"
-      let (plan, json) ← match Backend.Zkir.lowerPrunedEntrypoint contract.state ep dedupRangeChecks with
+      let (plan, json) ← if !ledgerReadBound.isEmpty && s!"{name}.{ep.name}" == ledgerReadBound then do
+        let reads := ep.effects.zipIdx.filterMap fun (effect, index) => match effect with
+          | .readCell stateName destination (.uint maximum) =>
+            if maximum == 2 ^ 128 - 1 && (ep.effectGuardAt index).isNone &&
+                contract.state.any (fun declaration => declaration.name == stateName &&
+                  declaration.cellAlignment? == some .u128) then some (stateName, destination) else none
+          | _ => none
+        let [(stateName, destination)] := reads
+          | throwError "--ledger-read-bound requires one unguarded byte-aligned UInt128 read in '{ledgerReadBound}'"
+        match Backend.LedgerReadOptimization.lower contract ep.name stateName destination with
+        | .error reason => throwError "ledger-bound lowering for '{ledgerReadBound}': {reason}"
+        | .ok optimized =>
+          ledgerReadAssumptions := ledgerReadAssumptions.insert (nativeCircuitFile name ep) (Json.mkObj [
+            ("input", toJson optimized.proofInput), ("stateCell", toJson stateName),
+            ("encoding", toJson ("Bytes(16)" : String))])
+          pure (optimized.plan, optimized.optimized)
+      else
+        match Backend.Zkir.lowerPrunedEntrypoint contract.state ep dedupRangeChecks with
         | .error d => failDiagnostic d
         | .ok artifacts => pure artifacts
       lowered := lowered.push (.ledger, nativeCircuitFile name ep, json.pretty)
@@ -1305,6 +1330,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       if bindPlanBytes then
         planDigests := planDigests.insert file (EntryPointHash.sha256Hex (content ++ "\n").toUTF8)
       lowered := lowered.push (.ledger, file, content)
+  if !ledgerReadBound.isEmpty && ledgerReadAssumptions.isEmpty then
+    throwError "no emitted ledger entrypoint matches '{ledgerReadBound}'"
   if lowered.isEmpty then throwError "source has no artifacts for the selected roles"
   if rustBindings && !(lowered.any (·.1 == .rustBinding)) then
     throwError "--bindings rust requires a ledger entrypoint with a host witness"
@@ -1330,7 +1357,9 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
         ("returnViews", returnViewsJson ep.returnViews)]
       let digestFields := (planDigests[nativePlanFile name ep]?).toList.map fun digest =>
         ("nativePlanSha256", toJson digest)
-      pure (Json.mkObj (baseFields ++ digestFields ++ callInputFields ++ returnFields ++ returnViewFields))
+      let boundFields := (ledgerReadAssumptions[nativeCircuitFile name ep]?).toList.map
+        fun assumption => ("ledgerReadBound", assumption)
+      pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++ returnFields ++ returnViewFields))
     let constructorFields := match contract.constructor with
       | none => []
       | some ctor => [("constructor", constructorJson ctor)]
@@ -1376,7 +1405,7 @@ elab "#noctium_compile" directory:str : command =>
   compileArtifacts directory.getString TargetProfile.sourceBaseline
 
 elab "#noctium_compile_target" directory:str profileJson:str displayDirectory:(str)? selection:(str)?
-    bindings:(str)? optimization:(str)? : command => do
+    bindings:(str)? optimization:(str)? ledgerReadBound:(str)? : command => do
   let profile ← parseTargetProfile profileJson.getString
   let selection ← match selection with
     | none => pure []
@@ -1393,6 +1422,7 @@ elab "#noctium_compile_target" directory:str profileJson:str displayDirectory:(s
   | .ok _ =>
     let display := (displayDirectory.map (·.getString)).getD directory.getString
     compileArtifacts directory.getString profile display selection rustBindings (mode == "dedup-range-checks")
+      ((ledgerReadBound.map (·.getString)).getD "")
   | .error message => throwError "{message}"
 
 end Noctium.Compiler

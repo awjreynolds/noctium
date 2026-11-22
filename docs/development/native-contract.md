@@ -216,7 +216,7 @@ cell totalSupply : UInt 128 alignedBytes
 This direct cell retains its UInt128 type and stores one 16-byte FAB atom.
 The compiler emits `cellAlignment: "u128"` in the state schema. Constructors,
 writes and transcript reads use the same alignment. Ordinary UInt128 cells
-keep their field encoding. Current circuits retain all range checks.
+keep their field encoding. Default builds retain all range checks.
 
 The native fixture reads and writes zero and the UInt128 maximum in both
 directions. An inactive write preserves state and its guarded read returns
@@ -224,6 +224,24 @@ zero. Plan admission rejects a field-aligned typed push to the cell.
 The pinned ledger parser rejects 2^128 for the 16-byte atom.
 The VM rejects a field-aligned cell even when it carries the same number.
 [Lean fixture](../../tests/ByteAlignedUInt128Cell.lean) · [Native fixture](../../runtime/tests/uint128_fab_read.rs)
+
+The opt-in `--ledger-read-bound Contract.entrypoint` build accepts one direct,
+unguarded read from a byte-aligned UInt128 cell on the pinned ZKIR 3.2.1 profile.
+Choose the operation by its fully qualified name and emit ledger artifacts.
+The selected operation must satisfy the checked scalar relation decoder.
+
+```sh
+lake exe noctium compile tests/UInt128BoundProbe.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json --emit ledger \
+  --ledger-read-bound UInt128BoundProbe.readSupply --output build/uint128-bound
+```
+
+The compiler removes the corresponding range instruction after matching the
+exact public input and Bytes(16) Popeq group. The metadata records the cell,
+input and encoding for the verifier premise. The Lean theorem compares both
+exact decoded relations under the premise supplied by the typed Ledger read.
+Key generation must use the optimized ZKIR for that operation.
+[Optimization fixture](../../tests/UInt128LedgerReadBound.lean) · [Ledger acceptance evidence](https://github.com/awjreynolds/noctium/issues/408)
 
 ## Reset a ledger cell
 
