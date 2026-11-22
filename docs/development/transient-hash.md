@@ -34,18 +34,25 @@ The pinned fixed-length Poseidon implementation returns zero for an empty vector
 
 Private origins propagate from every operand. Publishing the derived hash requires explicit disclosure. A cached hash result does not skip operand assertions.
 
-## Checked flat FAB payloads
+## Checked FAB payloads
 
-Ordinary circuits use `transientHashFab(environment, type, [fields...])` to hash
-a checked flat record or tuple. The payload supports one through 32 Native,
-Bool, bounded UInt, fixed Bytes of at most 32 bytes, or payload-free enum fields.
-Record fields follow declaration order. FAB encoding packs Bytes32 into a one-byte
-high field and a 31-byte low field. Every input contributes its disclosure origin.
+Ordinary circuits use `transientHashFab(environment, type, [fields...])` with
+typed leaf expressions listed in declaration and index order. The checked
+layout supports nested records, tuples and fixed vectors with Native, Bool,
+bounded UInt, fixed Bytes1 through Bytes32, or payload-free enum leaves.
+Empty tuples and vectors contribute zero fields. FAB encoding packs Bytes32
+into a one-byte high field and a 31-byte low field. The native preimage limit
+is 1024 fields. Every input contributes its disclosure origin.
 
 The mixed fixture checks a six-field preimage against Compact 0.36.1. Changing
 the UInt16 field changes the hash. Changing either commitment opening leaves the
 hash unchanged. [Lean fixture](../../tests/MixedFabCommitments.lean) · [Native
 test](../../runtime/tests/mixed_fab_commitments.rs) · [Compact oracle](../../tests/compact/mixed-fab-persistent-hash.mjs)
+
+The nested fixture compares an eight-field mixed preimage, its reversed
+vector order, and an empty preimage against the same Compact release.
+[Lean fixture](../../tests/NestedTransientHash.lean) · [Native
+test](../../runtime/tests/nested_transient_hash.rs) · [Compact oracle](../../tests/compact/nested-transient-hash.mjs)
 
 ## Schnorr reference boundary
 

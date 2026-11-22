@@ -1302,8 +1302,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "transientHashFab requires 1 to 32 values"
+    unless sourceValues.length ≤ Types.defaultLimits.maxVectorLength do
+      throwErrorAt stx "transientHashFab accepts at most 1024 logical leaf values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType

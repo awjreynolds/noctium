@@ -134,7 +134,7 @@ inductive Expr : Ty → Type where
   | poseidon2 (domain : Nat) (a b : Expr .native) : Expr .native
   /-- Hash the exact ordered Native operands with the pinned transient_hash. -/
   | transientHash (values : List (Expr .native)) : Expr .native
-  /-- Hash the canonical field sequence of a checked flat FAB payload. -/
+  /-- Hash the canonical field sequence of a checked FAB payload. -/
   | transientHashFab (environment : Types.CompositeEnv) (type : Types.CompositeType)
       (values : List (Sigma Expr)) : Expr .native
   /-- Hash a checked, flat Compact composite using its FAB field alignment.
@@ -183,6 +183,26 @@ def fabHashEncodedFieldCount (fields : List (String × Types.Layout)) : Nat :=
     | .bytes length .byteField => (length + 30) / 31
     | _ => 1) 0
 
+/-- Project leaves in declaration and index order. Fixed bytes remain a
+single logical field so native packing preserves their chunk boundaries. -/
+def transientFabHashLayoutFields (layout : Types.Layout) :
+    Except String (List (String × Types.Layout)) :=
+  visit (layout.nodeCount + 1) "payload" layout
+where
+  visit : Nat → String → Types.Layout → Except String (List (String × Types.Layout))
+    | 0, _, _ => throw "transient FAB layout traversal exhausted checked fuel"
+    | fuel + 1, path, layout => do
+      match layout with
+      | .unit => pure []
+      | .structure _ fields =>
+        pure (← fields.mapM fun (name, field) => visit fuel (path ++ "." ++ name) field).flatten
+      | .tuple items =>
+        pure (← items.zipIdx.mapM fun (item, index) => visit fuel s!"{path}.{index}" item).flatten
+      | .vector 0 _ => pure []
+      | .vector length element =>
+        pure (List.replicate length (← visit fuel (path ++ "[]") element)).flatten
+      | _ => pure [(path, layout)]
+
 theorem sizeOfSigmaExprHeadLt {ty : Ty} (value : Expr ty) (rest : List (Sigma Expr)) :
     sizeOf value < sizeOf (Sigma.mk ty value :: rest) := by
   change sizeOf value < 1 + (1 + sizeOf ty + sizeOf value) + sizeOf rest
@@ -215,16 +235,8 @@ theorem sizeOfSigmaExprMemberLt {ty : Ty} {value : Expr ty}
     omega
   omega
 
-/-- Check the deliberately bounded mixed-FAB subset supported by the current
-  mixed-FAB hash operations: one flat structure or tuple of Native, Bool,
-  fixed-width unsigned integers, fixed Bytes values up to 32 bytes, and
-  payload-free enums. Nested composites and payload enums fail closed. -/
-def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
-    (values : List (Sigma Expr)) : Except String Types.Layout := do
-  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
-  let fields ← fabHashLayoutFields checked.value
-  unless fields.length > 0 && fields.length ≤ 32 && values.length == fields.length do
-    throw "mixed FAB field count is outside the source limit or differs from its layout"
+private def validateFabHashFields (fields : List (String × Types.Layout))
+    (values : List (Sigma Expr)) : Except String Unit := do
   for (field, value) in fields.zip values do
     unless fabHashFieldMatches field.2 value do
       throw s!"unsupported or mismatched mixed FAB field '{field.1}'"
@@ -236,7 +248,27 @@ def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.Compo
       unless maximum < 256 do
         throw s!"mixed FAB enum field '{field.1}' exceeds the supported one-byte tag width"
     | _ => pure ()
+
+/-- Check the flat mixed-FAB subset for the other hash and commitment operations. -/
+def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (values : List (Sigma Expr)) : Except String Types.Layout := do
+  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+  let fields ← fabHashLayoutFields checked.value
+  unless fields.length > 0 && fields.length ≤ 32 && values.length == fields.length do
+    throw "mixed FAB field count is outside the source limit or differs from its layout"
+  validateFabHashFields fields values
   pure checked.value
+
+def validateTransientFabHashFields (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (values : List (Sigma Expr)) : Except String (List (String × Types.Layout)) := do
+  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+  let fields ← transientFabHashLayoutFields checked.value
+  unless values.length == fields.length do
+    throw "transient FAB value count differs from its layout"
+  unless fabHashEncodedFieldCount fields ≤ Types.defaultLimits.maxVectorLength do
+    throw s!"transient_hash input count exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
+  validateFabHashFields fields values
+  pure fields
 
 structure Input where
   name : String
@@ -1068,7 +1100,7 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     validateFabHashValues caps env values
   | .transientHashFab compositeEnv type values => do
     unless caps.poseidon2 do throw "target lacks qualified FAB transient-hash support"
-    discard (validateFabHashLayout compositeEnv type values)
+    discard (validateTransientFabHashFields compositeEnv type values)
     validateFabHashValues caps env values
   | .toBytes32 (source := source) value => do
     unless caps.bytes32Conversions do throw "target lacks qualified Bytes32 conversion support"

@@ -1,0 +1,24 @@
+pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+export struct InnerHashFields {
+  tag: Bytes<2>;
+  enabled: Boolean;
+  amount: Uint<16>;
+}
+
+export struct NestedHashFields {
+  head: Field;
+  inner: InnerHashFields;
+  pair: [Field, Vector<2, Field>];
+  empty: Vector<0, Field>;
+  tail: Field;
+}
+
+export pure circuit hashNested(value: NestedHashFields): Field {
+  return transientHash<NestedHashFields>(value);
+}
+
+export pure circuit hashEmpty(value: Vector<0, Field>): Field {
+  return transientHash<Vector<0, Field>>(value);
+}
