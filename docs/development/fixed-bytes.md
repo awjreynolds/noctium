@@ -73,3 +73,22 @@ The source and producer support lengths 1 through 1024. Source `Bytes 0` erases 
 The [source example](../../tests/NativeBytePacking.lean) returns reversed private byte strings at lengths 1, 31, 32, 62 and 63, plus an empty value. The [focused Rust case](../../runtime/tests/native_byte_packing.rs) checks the actual opcode and output counts, compares every returned byte and rejects a changed byte in the final chunk. The pinned 3.2.1 checker accepts the generated relation. One case passes in 0.01 seconds.
 
 Implementation revision: `4292fa13c494a8d27c40fd27f8f78b727ada3e1a`. The compiler, producer checks and source export pass. No new key generation, proofs, deployment or performance comparison accompanies this change. Upstream describes this instruction as a temporary bridge. The Lean byte representation stays independent of the instruction choice at future pins.
+
+## Concatenation on a chunk boundary
+
+A packed prefix ending on a 31-byte boundary joins the suffix's existing
+chunks in Encode order. The independent producer still checks the canonical
+chunk bounds and the FAB return order.
+
+In the `AlignedByteConcat.joinTail` fixture, a public Bytes31 prefix joins a
+one-byte slice of a public Bytes2 value. On the pinned ZKIR 3.2.1
+`mock-compile`, the relation changed from 16 to 12 instructions and from
+149 to 132 rows. Both builds used K9. The Impact plans matched byte for byte.
+Both native runs accepted the same 32-byte result and rejected a changed
+public transcript output.
+[Lean fixture](../../tests/AlignedByteConcat.lean) · [Native check](../../runtime/tests/aligned_byte_concat.rs)
+
+The baseline relation SHA-256 was
+`feb44bcee7f5b1cdd4961b61073ca6fd7cf4fce17384c15009f67bc11b0e39fd`.
+The optimized relation SHA-256 is
+`45c70ed2375e1a03aa5b69f592749cbef2ffaa5e29eda4a35e35005af40b4543`.

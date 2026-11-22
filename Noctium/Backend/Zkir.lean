@@ -652,6 +652,11 @@ private def lowerFixedConcat (leftLength rightLength : Nat)
     if left.values.length != leftLength || right.values.length != rightLength then
       rejectLowering "byte leaf count mismatch"
     return {values := left.values ++ right.values}
+  -- An aligned prefix ends between complete Encode chunks.
+  if leftLength % 31 == 0 then
+    let leftChunks ← byteChunks leftLength left
+    let rightChunks ← byteChunks rightLength right
+    return {values := leftChunks ++ rightChunks, packed := true}
   let left ← lowerFixedBytesFromChunks leftLength (← byteChunks leftLength left)
   let right ← lowerFixedBytesFromChunks rightLength (← byteChunks rightLength right)
   let key : ExpressionKey := ("concat", [left, right], none)
