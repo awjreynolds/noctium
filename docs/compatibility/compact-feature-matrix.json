@@ -1040,7 +1040,7 @@
       "layer": "language",
       "surface": "Bindings, patterns and lexical scope",
       "noctiumStatus": "subset",
-      "notes": "const binding, shadowing, destructuring and left-to-right expression evaluation.",
+      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. The native session and Compact 0.36.1 fixture agree on three ordered callback arguments and the scalar return. Broader binding, shadowing and destructuring evidence remains open.",
       "source": [
         "reference"
       ],
@@ -1048,7 +1048,11 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/ReadableUnitBindings.lean",
+        "tests/compact/readable-unit-bindings.mjs",
+        "runtime/tests/readable_unit_bindings.rs"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-16",

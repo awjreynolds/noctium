@@ -1219,7 +1219,6 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     }
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
     let value ← lowerExpr programName callPrefix env value
-    if value.type == .unit then throwErrorAt id "readable witness let cannot bind Unit"
     let localIndex ← get
     modify fun state => {state with nextLet := state.nextLet + 1}
     let internalName := s!"__noctium_let_{localIndex.nextLet}_{id.getId}"
@@ -2254,9 +2253,7 @@ private partial def lowerReadableStatement (programName path : String)
       (annotation.map ResultType.scalar)
     let value ← match annotation with
       | some annotation => coerce source lowered annotation
-      | none => do
-        if lowered.type == .unit then throwErrorAt id "readable witness let cannot bind Unit"
-        pure lowered
+      | none => pure lowered
     let logicalAliases := match value.type with
       | .scalar ty => body.logicalAliases ++ [{name := valueName, ty, source := readableAliasSource value source}]
       | _ => body.logicalAliases
