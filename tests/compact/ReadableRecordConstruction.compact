@@ -54,3 +54,12 @@ export circuit packOctets(seed: Field): Bytes<6> {
   const packed = [7, ...loadVector(seed + 2), ...loadBytes(seed + 3), ...loadUnit(seed + 4), ...[], 23] as Bytes<6>;
   return disclose([packed[5], packed[4], packed[3], packed[2], packed[1], packed[0]] as Bytes<6>);
 }
+
+export circuit sliceSequences(seed: Field): [[Boolean], Vector<1, Uint<8>>, [], Bytes<1>] {
+  return disclose([
+    slice<1>(loadPair(seed + 1), 1),
+    slice<1>(loadVector(seed + 2), 1),
+    slice<0>(loadPair(seed + 3), 2),
+    slice<1>(loadBytes(seed + 4), 1),
+  ]);
+}

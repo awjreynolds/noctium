@@ -159,6 +159,7 @@ scoped syntax "none(" nltype ")" : nlexpr
 scoped syntax "either(" nlexpr "," nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
+scoped syntax (name := readableSequenceSlice) "slice(" nlexpr "," num "," num ")" : nlexpr
 scoped syntax "enumTag(" nlexpr ")" : nlexpr
 scoped syntax "enumMember(" ident "," ident ")" : nlexpr
 
@@ -555,6 +556,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"either({renderExpr tag}, {renderExpr left}, {renderExpr right})"
   | `(nlexpr| field($value, $name:ident)) => s!"field({renderExpr value}, {name.getId})"
   | `(nlexpr| elementAt($value, $index)) => s!"elementAt({renderExpr value}, {renderExpr index})"
+  | `(nlexpr| slice($value, $start:num, $stop:num)) =>
+    s!"slice({renderExpr value}, {start.getNat}, {stop.getNat})"
   | `(nlexpr| enumTag($value)) => s!"enumTag({renderExpr value})"
   | `(nlexpr| enumMember($codec:ident, $variantName:ident)) =>
     s!"enumMember({codec.getId}, {variantName.getId})"
@@ -682,6 +685,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
     disclosedValues condition ++ disclosedValues yes ++ disclosedValues no
   | `(nlexpr| poseidon2($_:num, $left, $right)) => disclosedValues left ++ disclosedValues right
   | `(nlexpr| elementAt($value, $index)) => disclosedValues value ++ disclosedValues index
+  | `(nlexpr| slice($value, $_:num, $_:num)) => disclosedValues value
   | `(nlexpr| persistentHash32($value)) | `(nlexpr| persistentHashNative($value))
   | `(nlexpr| persistentHashPoint($value)) | `(nlexpr| sha256($value))
   | `(nlexpr| sha512($value))
@@ -760,6 +764,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
     inlineAssertions condition ++ inlineAssertions yes ++ inlineAssertions no
   | `(nlexpr| poseidon2($_:num, $left, $right)) => inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| elementAt($value, $index)) => inlineAssertions value ++ inlineAssertions index
+  | `(nlexpr| slice($value, $_:num, $_:num)) => inlineAssertions value
   | `(nlexpr| persistentHash32($value)) | `(nlexpr| persistentHashNative($value))
   | `(nlexpr| persistentHashPoint($value)) | `(nlexpr| sha256($value))
   | `(nlexpr| sha512($value))
@@ -1056,30 +1061,52 @@ private def lowerProjection (stx : Syntax) (value : Lowered)
     | .error diagnostic => throwErrorAt stx diagnostic.message
   pure {value with type := Helpers.resultTypeOfComposite child, term := .project value.term projection}
 
-private def spreadTupleItems (site : Syntax) (type : ResultType) (source : Helpers.Term) :
-    ExprM (List Lowered) :=
+private def sequenceItems (site : Syntax) (type : ResultType) (source : Helpers.Term)
+    (start : Nat := 0) (stop? : Option Nat := none) : ExprM (List Lowered) :=
+  let count (length : Nat) : ExprM Nat := do
+    let stop := stop?.getD length
+    unless start ≤ stop && stop ≤ length do
+      throwErrorAt site "slice requires start ≤ stop ≤ sequence length"
+    pure (stop - start)
   match type with
-  | .unit => pure []
-  | .composite (.tuple types) =>
-    pure (types.zipIdx.map fun (type, index) =>
-      {type := Helpers.resultTypeOfComposite type, term := .project source (.tupleIndex index)})
-  | .composite (.vector length type) =>
-    pure ((List.range length).map fun index =>
-      {type := Helpers.resultTypeOfComposite type, term := .project source (.vectorIndex index)})
-  | .composite (.bytes length) =>
-    pure ((List.range length).map fun index =>
-      {type := .scalar (.uint 255), term := .project source (.byteIndex index)})
-  | .scalar (.bytes length) =>
-    pure ((List.range length).map fun index =>
-      {type := .scalar (.uint 255), term := .bytesAt source index})
-  | _ => throwErrorAt site "tuple spread requires a tuple, vector, fixed Bytes or Unit"
+  | .unit => do
+    let _ ← count 0
+    pure []
+  | .composite (.tuple types) => do
+    let length ← count types.length
+    pure (((types.drop start).take length).zipIdx.map fun (type, index) =>
+      {type := Helpers.resultTypeOfComposite type, term := .project source (.tupleIndex (start + index))})
+  | .composite (.vector length type) => do
+    pure ((List.range (← count length)).map fun index =>
+      {type := Helpers.resultTypeOfComposite type, term := .project source (.vectorIndex (start + index))})
+  | .composite (.bytes length) => do
+    pure ((List.range (← count length)).map fun index =>
+      {type := .scalar (.uint 255), term := .project source (.byteIndex (start + index))})
+  | .scalar (.bytes length) => do
+    pure ((List.range (← count length)).map fun index =>
+      {type := .scalar (.uint 255), term := .bytesAt source (start + index)})
+  | _ => throwErrorAt site "expected a tuple, vector, fixed Bytes or Unit"
+
+private def checkedSequenceTerm (site : Syntax) (payload : Types.CompositeType)
+    (fields : List Lowered) : ExprM Helpers.Term := do
+  let compiled ← checkedPayloadLayout site payload
+  let layouts ← match compiled.checked.value with
+    | .tuple layouts => pure layouts
+    | .vector length element => pure (List.replicate length element)
+    | _ => throwErrorAt site "checked sequence layout mismatch"
+  let span ← liftM (spanValue site)
+  let leaves ← (fields.zip layouts).flatMapM fun (value, layout) => do
+    match Helpers.Iteration.flattenResult span value.type layout value.term with
+    | .ok leaves => pure leaves
+    | .error diagnostic => throwErrorAt site diagnostic.message
+  pure (.composite payload leaves)
 
 private def byteSegments (site : Syntax) (spread : _root_.Bool) (value : Lowered) :
     ExprM (List (Nat × Helpers.Term)) := do
   if spread then
     if let .scalar (.bytes length) := value.type then
       return if length == 0 then [] else [(length, value.term)]
-  let items ← if spread then spreadTupleItems site value.type value.term else pure [value]
+  let items ← if spread then sequenceItems site value.type value.term else pure [value]
   items.mapM fun item => do
     let .scalar (.uint maximum) := item.type
       | throwErrorAt site "packBytes element requires an unsigned type within UInt8"
@@ -1325,7 +1352,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let mut parts : List (List Lowered) := []
     let mut size := 1
     for ((spread, source, value), reference) in arguments.zip references do
-      let fields ← if spread then spreadTupleItems source value.type reference
+      let fields ← if spread then sequenceItems source value.type reference
         else pure [{type := value.type, term := reference}]
       size := size + fields.length
       if size > Types.defaultLimits.maxLayoutNodes then
@@ -1333,14 +1360,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       parts := fields :: parts
     let fields := parts.reverse.flatten
     let payload := Types.CompositeType.tuple (fields.map Lowered.layoutType)
-    let compiled ← checkedPayloadLayout stx payload
-    let .tuple layouts := compiled.checked.value
-      | throwErrorAt stx "checked tuple layout mismatch"
-    let leaves ← (fields.zip layouts).flatMapM fun (value, layout) => do
-      match Helpers.Iteration.flattenResult span value.type layout value.term with
-      | .ok leaves => pure leaves
-      | .error diagnostic => throwErrorAt stx diagnostic.message
-    pure {mergeLowered (.composite payload) (.composite payload leaves) values with before}
+    let term ← checkedSequenceTerm stx payload fields
+    pure {mergeLowered (.composite payload) term values with before}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message
@@ -1724,16 +1745,35 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     | .error message => throwErrorAt stx message
     | .ok _ => pure ()
     pure (mergeLowered (.scalar (.bytes length)) (.bytes operation [value.term]) [value])
-  | `(nlexpr| sliceBytes($value, $start:num, $stop:num)) => do
-    let value ← lowerExpr programName callPrefix env value
-    let .scalar (.bytes length) := value.type
-      | throwErrorAt stx "sliceBytes requires a fixed byte-string value"
-    let operation := Noctium.Helpers.BytesOp.sliceBytes length start.getNat stop.getNat
-    match operation.signature 1 with
-    | .error message => throwErrorAt stx message
-    | .ok _ => pure ()
-    let resultLength := stop.getNat - start.getNat
-    pure (mergeLowered (.scalar (.bytes resultLength)) (.bytes operation [value.term]) [value])
+  | `(nlexpr| sliceBytes($source, $start:num, $stop:num))
+  | `(nlexpr| slice($source, $start:num, $stop:num)) => do
+    let value ← lowerExpr programName callPrefix env source
+    let first := start.getNat
+    let limit := stop.getNat
+    let length := limit - first
+    let sequence := stx.raw.getKind == ``readableSequenceSlice
+    if sequence then
+      modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    if let .scalar (.bytes width) := value.type then
+      let operation := Noctium.Helpers.BytesOp.sliceBytes width first limit
+      match operation.signature 1 with
+      | .error message => throwErrorAt stx message
+      | .ok _ => pure ()
+      return {value with type := .scalar (.bytes length), term := .bytes operation [value.term]}
+    unless sequence do throwErrorAt stx "sliceBytes requires a fixed byte-string value"
+    let span ← liftM (spanValue stx)
+    let (before, references, _) ← stageIterationValues callPrefix env span [value]
+    let [reference] := references | throwErrorAt stx "sequence slice staging failed"
+    let fields ← sequenceItems stx value.type reference first (some limit)
+    if let .composite (.bytes _) := value.type then
+      let segments ← fields.flatMapM (byteSegments stx _root_.Bool.false)
+      let (_, term) := joinByteSegments segments
+      return {value with type := .scalar (.bytes length), term, before}
+    let payload := match value.type with
+      | .composite (.vector _ element) => Types.CompositeType.vector length element
+      | _ => .tuple (fields.map Lowered.layoutType)
+    let term ← checkedSequenceTerm stx payload fields
+    pure {value with type := .composite payload, term, before}
   | `(nlexpr| concatBytes($left, $right)) => do
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right

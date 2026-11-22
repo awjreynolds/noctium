@@ -123,6 +123,19 @@ The pinned Compact fixture and native check cover the nested result, byte
 values, and callback order, including the Unit callback.
 [Source fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
 
+## Slice a checked sequence
+
+`slice(value, start, stop)` takes literal bounds with an exclusive stop. The
+compiler requires `0 ≤ start ≤ stop ≤ length`. A tuple slice retains the selected
+element types. A vector slice retains its element type and uses the new length.
+Fixed Bytes slices use the existing byte operations.
+
+The source expression runs once, even when both bounds are equal. The result
+keeps the privacy origins of the selected elements. The paired Compact and
+native fixture covers an end-aligned tuple, vector and byte slice, plus an
+empty tuple slice whose witness still runs.
+[Source fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 ## Compare checked aggregates
 
 In a readable circuit, `eq(left, right)` compares values with compatible
