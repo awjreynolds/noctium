@@ -125,6 +125,7 @@ scoped syntax "map(" "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "fold(" nlexpr "," "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "decode(" ident "," nlexpr ")" : nlexpr
+scoped syntax "default(" "Payload" ident ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
@@ -802,6 +803,12 @@ private def selectedCodec (name : TSyntax `ident) : ExprM (Helpers.Wire.Codec ×
     | throwErrorAt name s!"add codec '{name.getId}' to the circuit's using clause"
   pure (codec, Helpers.Wire.codecName index)
 
+private def zeroSourceLeaf (name : TSyntax `ident) : Ty → ExprM Helpers.Term
+  | .native => pure (.native 0)
+  | .bool => pure (.bool _root_.Bool.false)
+  | .uint maximum => pure (.uint maximum 0)
+  | type => throwErrorAt name s!"default(Payload ...) does not support source leaf type '{typeName type}'"
+
 private def scalarMaybeType (programName : String) (stx : Syntax) (payloadType : Ty) :
     ExprM Types.CompositeType := do
   let typeId ← match Types.Maybe.scalarTypeId programName payloadType with
@@ -915,6 +922,16 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | none => throwErrorAt type "none requires a Native, Bool, or UInt scalar"
     pure (mergeLowered (.composite maybeType)
       (.composite maybeType [.bool _root_.Bool.false, zero]) [])
+  | `(nlexpr| default(Payload $name:ident)) => do
+    let (codec, _) ← selectedCodec name
+    let composites := (← get).composites
+    let compiled ← match Types.compileType composites codec.payload with
+      | .ok value => pure value
+      | .error diagnostic => throwErrorAt name diagnostic.message
+    let zeros ← (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroSourceLeaf name)
+    let resultType := Helpers.resultTypeOfComposite codec.payload
+    let term := Helpers.Term.composite codec.payload zeros
+    pure {type := resultType, term}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message
