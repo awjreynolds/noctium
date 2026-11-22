@@ -143,6 +143,25 @@ The byte packer starts from the highest byte in each nonempty chunk. Previously 
 
 The comparison starts at `b8b469c`, with `--emit ledger --emit witness` and the default range-pass setting. Pinned `mock-compile` reported fewer rows in 14 of 16 token relations. All Impact plans matched byte for byte. The native byte pack test accepted the regenerated relation and rejected a forged result. The scalar CSE fixture emitted identical bytes. A single token compile in each mode took 4.70 s and 4.68 s. This establishes a small circuit-size reduction. Proof time and funded deployment fall outside this measurement. [Byte packing test](../../runtime/tests/native_byte_packing.rs) · [Issue 74](https://github.com/awjreynolds/noctium/issues/74)
 
+## Fold literal Bytes32 hash-vector packing
+
+A direct Bytes32 literal in a hash vector now uses its canonical FAB fields
+as immediates. The compiler retains symbolic packing and input constraints.
+The independent producer checks the same ordered hash operands.
+
+| Workload | Instructions before → after | Rows before → after | K |
+| --- | ---: | ---: | ---: |
+| One literal and one private Bytes32 | 187 → 127 | 3,999 → 3,949 | 13 |
+| Token `transferFrom` | 1,281 → 1,005 | 61,798 → 61,522 | 16 |
+
+Across the 16 token relations, this removed 1,353 instructions and 1,312 rows
+in ten relations. The other six relations and all Impact plans matched byte
+for byte. K stayed the same for every entrypoint. Pinned ZKIR 3.2.1
+`mock-compile` measured these sizes with range deduplication enabled for the
+token. Both mixed-vector builds matched the Compact runtime 0.21.0 digest
+and rejected a changed return commitment in the native checker.
+[Optimization ticket](https://github.com/awjreynolds/noctium/issues/403) · [Native fixture](../../runtime/tests/native_byte_packing.rs)
+
 ## Reuse existing byte leaves
 
 Static slices select byte leaves directly when the inputs already use that

@@ -1077,11 +1077,20 @@ decreasing_by
     | exact sizeOfSigmaExprHeadLt _ _
     | omega
 
+private def bytes32LiteralFields? : Expr (.bytes 32) → Option (String × String)
+  | .bytes32Literal bytes =>
+    if bytes.length == 32 && bytes.all (· ≤ 255) then
+      some (fieldImmediate bytes[31]!, fieldImmediate (Native.littleEndian (bytes.take 31)))
+    else none
+  | _ => none
+
 private def lowerBytes32VectorFields : List (Expr (.bytes 32)) → LowerM (List String)
   | [] => pure []
   | value :: rest => do
-    let bytes ← lowerBytes value
-    let (highByte, low31) ← alignedBytes32Fields bytes.values
+    let operands ← lowerBytes value
+    let (highByte, low31) ← match bytes32LiteralFields? value with
+      | some fields => pure fields
+      | none => alignedBytes32Fields operands.values
     pure ([highByte, low31] ++ (← lowerBytes32VectorFields rest))
 termination_by values => sizeOf values
 decreasing_by
