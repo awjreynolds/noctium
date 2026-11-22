@@ -112,3 +112,22 @@ The baseline relation SHA-256 was
 `feb44bcee7f5b1cdd4961b61073ca6fd7cf4fce17384c15009f67bc11b0e39fd`.
 The optimized relation SHA-256 is
 `45c70ed2375e1a03aa5b69f592749cbef2ffaa5e29eda4a35e35005af40b4543`.
+
+## Literal Bytes32 in typed hashes
+
+The backend emits the canonical high byte and packed low 31 bytes directly for
+a checked `Bytes32` literal in a typed FAB payload or persistent commitment
+opening. Symbolic fields still follow the ordinary packing path. The independent
+producer checks the same field order and retains every source bound and assertion.
+
+The pinned ZKIR 3.2.1 `mock-compile` measured the `CurveFabHashes.hash` entry
+from baseline `15568d51` and the optimized compiler. Instructions fell from 93 to
+33, relation JSON from 11,213 to 7,553 bytes, and native rows from 47,372 to
+47,312. Both builds used K16. The Impact plans matched byte for byte. The native
+checker returned the same digests and rejected a changed return commitment in
+both builds. This measures circuit size for the selected entry.
+[Mixed literal and symbolic guard](../../tests/NativeBytePacking.lean) · [Measured fixture](../../tests/CurveFabHashes.lean) · [Native check](../../runtime/tests/curve_fab_hashes.rs)
+
+The relation SHA-256 changed from
+`262e8e62464a0e7e1ab4d6d7722b33629acbc3a3b8d3d64f7a3d8879ea9e1e50` to
+`75dd277c4c9af3fefbe1a0bcdd687be610efe920e69b8b55e1a1ed4fca84406d`.
