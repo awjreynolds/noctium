@@ -266,6 +266,67 @@ elab "#noctium_register_functional " proof:ident " for " policy:ident : command 
 elab "#noctium_register_privacy " proof:ident " for " policy:ident : command =>
   register proof policy .privacy
 
+syntax (name := noctiumProofScaffoldCommand)
+  "#noctium_proof_scaffold " ident " for " ident " on " ident
+    " operation " str : command
+
+private def proofScaffoldBody (role : Audit.Role) : String :=
+  match role with
+  | .functional =>
+    "by\n  constructor\n  · intro before hInitial\n    exact ?_\n" ++
+    "  · intro ctx inputs before outputs after hInvariant hPrecondition hRun\n    exact ?_\n" ++
+    "  · intro ctx inputs before hInvariant hPrecondition hEnabled\n    exact ?_\n" ++
+    "  · refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩"
+  | .privacy =>
+    "by\n  intro left right hLeftAdmissible hRightAdmissible hPublicEquivalent " ++
+    "hReleaseAgreement hScope\n  exact ?_"
+
+private def scaffoldTheorem (policy : Name)
+    (role : Audit.Role) (opName : String) (entryIndexValue : Nat) : CommandElabM MessageData := do
+  let conclusion ← ppAuditType <| mkApp (mkConst role.obligation) (mkConst policy)
+  let theoremName := (policy ++ Name.str .anonymous s!"{roleLabel role}Scaffold").toString
+  return m!"NOCTIUM_PROOF_SCAFFOLD\noperation: {opName} (entrypoint index {entryIndexValue})\ntheorem {theoremName} : {conclusion} := {proofScaffoldBody role}"
+
+@[command_elab noctiumProofScaffoldCommand] unsafe def elabProofScaffold : CommandElab := fun stx => do
+  match stx with
+  | `(#noctium_proof_scaffold $roleSyntax:ident for $policySyntax:ident on $contractSyntax:ident
+      operation $operationSyntax:str) => do
+    let role ← match roleSyntax.getId.toString with
+      | "functional" => pure Audit.Role.functional
+      | "privacy" => pure Audit.Role.privacy
+      | _ => throwErrorAt roleSyntax "proof_scaffold_role: expected functional or privacy"
+    let policyName ← liftCoreM <| resolveGlobalConstNoOverload policySyntax
+    let contractName ← liftCoreM <| resolveGlobalConstNoOverload contractSyntax
+    let environment ← getEnv
+    let some policyInfo := environment.toKernelEnv.find? policyName
+      | throwErrorAt policySyntax "unknown_policy"
+    unless policyInfo.levelParams.isEmpty do
+      throwErrorAt policySyntax "polymorphic_policy"
+    match Kernel.isDefEq environment {} policyInfo.type (mkConst ``AuditPolicy) with
+    | .ok true => pure ()
+    | _ => throwErrorAt policySyntax "wrong_policy_type"
+    let policyValue ← evalConstCheck AuditPolicy ``AuditPolicy policyName
+    let policyContract := mkApp (mkConst ``Subject.contract)
+      (mkApp (mkConst ``AuditPolicy.subject) (mkConst policyName))
+    match Kernel.isDefEq environment {} policyContract (mkConst contractName) with
+    | .ok true => pure ()
+    | _ => throwErrorAt contractSyntax
+      "proof_scaffold_contract_mismatch: selected contract is not kernel-equal to the policy contract"
+    let contractValue ← evalConstCheck Contract ``Contract contractName
+    let matchingIndices := contractValue.entrypoints.zipIdx.filterMap fun (entry, entryIndex) =>
+      if entry.name == operationSyntax.getString then some entryIndex else none
+    unless matchingIndices.length == 1 do
+      throwErrorAt operationSyntax
+        (if matchingIndices.isEmpty then "proof_scaffold_operation_missing"
+         else "proof_scaffold_operation_ambiguous")
+    let some operationIndex := matchingIndices[0]? | throwError "proof_scaffold_operation_missing"
+    unless policyValue.subject.entrypoint.val == operationIndex do
+      throwErrorAt operationSyntax
+        s!"proof_scaffold_policy_entrypoint_mismatch: policy selects index {policyValue.subject.entrypoint.val}, named operation is at index {operationIndex}"
+    logInfo (← scaffoldTheorem policyName role
+      s!"{contractValue.name}.{operationSyntax.getString}" operationIndex)
+  | _ => throwUnsupportedSyntax
+
 private def coverageRegistrationJson (registration : Audit.Registration) : Lean.Json :=
   Lean.Json.mkObj [
     ("policy", toJson registration.policy.toString),
