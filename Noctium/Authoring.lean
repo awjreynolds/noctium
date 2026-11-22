@@ -1183,6 +1183,13 @@ private def lowerProjection (stx : Syntax) (value : Lowered)
   let child ← match Helpers.projectedType composites span parent projection with
     | .ok child => pure child
     | .error diagnostic => throwErrorAt stx diagnostic.message
+  -- Grouped outputs with projected curve points need checked views instead of
+  -- re-quoting an aggregate field projection as a scalar source alias.
+  match projection, child with
+  | .field _, .scalar .jubjubPoint
+  | .field _, .scalar (.foreign (.point _)) =>
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+  | _, _ => pure ()
   pure {value with type := Helpers.resultTypeOfComposite child, term := .project value.term projection}
 
 private def sequenceItems (site : Syntax) (type : ResultType) (source : Helpers.Term)
@@ -2330,7 +2337,7 @@ where
       before := (bindings.flatMap fun (value, name) =>
         value.before ++ [.bind name value.type value.term]) ++
         (checks.map fun check => .assert (.at span check))
-      generatedValidity := s!"non-identity key and nonzero signature scalars for {renderExpr stx}" ::
+      generatedValidity := s!"non-identity key and invertible signature s for {renderExpr stx}" ::
         result.generatedValidity }
 
   lowerJubjubSchnorr (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)

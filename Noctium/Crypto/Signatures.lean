@@ -50,7 +50,7 @@ private def ecdsaChecks (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
   let nonIdentity := .eq (.eq pk (.foreignIdentity curve)) (.bool false)
   let nonzeroR := .eq (.eq r (.foreignScalar curve 0)) (.bool false)
   let nonzeroS := .eq (.eq s (.foreignScalar curve 0)) (.bool false)
-  return ([nonIdentity, nonzeroR, nonzeroS], .eq xModN r)
+  return ([nonIdentity, nonzeroS], .boolAnd nonzeroR (.eq xModN r))
 
 private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
     (r s : Expr (.foreign (.scalar curve)))
@@ -64,6 +64,8 @@ private partial def readableSignatureTerm : Expr ty → Except String Helpers.Te
   | .native value => pure (.native value)
   | .bool value => pure (.bool value)
   | .eq left right => return .eq (← readableSignatureTerm left) (← readableSignatureTerm right)
+  | .boolAnd left right =>
+    return .boolAnd (← readableSignatureTerm left) (← readableSignatureTerm right)
   | .foreignPoint curve point =>
     return .foreignConstant (.point curve) (← Foreign.encodePoint curve point)
   | .foreignScalar curve value =>

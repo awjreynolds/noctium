@@ -123,6 +123,42 @@ NOCTIUM_MINT_BINDING_ARTIFACTS="$artifacts" \
   confidential_token_mint_binds_recipient_and_amount_across_calls -- --ignored --exact
 ```
 
+### Funded cross-contract mint on localnet
+
+The native Rust test deploys both contracts, registers a synthetic recipient key
+and proves the caller and mint together in one DUST-funded transaction. The
+finalized receipt includes both contracts' states. It confirms one caller
+issuance, a supply increase from zero to 12, credit epoch one, and the expected
+pending ciphertext and memo. The test compares both complete tagged post-states
+with native execution from the preceding finalized state.
+
+The 2026-11-22 run used Ledger 9.1.0.1 and ZKIR 3.2.1 on the development genesis
+`823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d`.
+Finalized block `86e48eaaddf1cdfede2c10808d56e5874dc3b82b3a5cbeaf910561ae14633a66`
+includes the composed mint. The caller was
+`5cc249283f623f3f4966ccfaa93c406f5c26c8cd7abd5a50d9234bcf2e3ef42e`
+and the token was
+`7fa59ac1f5dd9bfa9e8bcf5f87dcdb6c0d5132da034e4afc732daa9845ea3be9`.
+
+For a fresh run, use the compiler commands above, generate each entrypoint's
+keys with the pinned native ZKIR tool, and assemble `caller-bundle`,
+`register-bundle` and `mint-bundle`. Set `NOCTIUM_CONFIDENTIAL_MINT_BUNDLES` to
+their parent directory and `NOCTIUM_CONFIDENTIAL_MINT_SRS` to the parameter
+cache. For `CALLER`, `REGISTER` and `MINT`, set
+`NOCTIUM_CONFIDENTIAL_MINT_<ROLE>_SHA256` to the manifest digest and
+`NOCTIUM_CONFIDENTIAL_MINT_<ROLE>_SRS_SHA256` to the SRS digest. The three
+circuits use K9, K13 and K15 in that order. The development fee proof uses
+the K10 SRS and DUST keys. [Native key generation](native-toolchain.md) ·
+[Bundle assembly](portable-artifacts.md#build-and-use)
+
+```sh
+NOCTIUM_CONFIDENTIAL_MINT_NODE=http://127.0.0.1:19944 \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked --offline \
+  --no-default-features --features localnet,zkir-321 --test confidential_token \
+  confidential_token_funded_mint_finalizes_registered_key_and_checked_pair \
+  -- --ignored --exact --nocapture
+```
+
 The delegated-spend nonce preimage fits existing source operations:
 `persistentHashVector32([seed, domain, owner, spender, toBytes32(epochNative)])`.
 The pinned mixed record hashes four Bytes32 values followed by one canonical
