@@ -630,6 +630,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"hashToCurveFab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| sha512Fab($environment:ident, $type:ident, [$values,*])) =>
     s!"sha512Fab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
+  | `(nlexpr| keccak256Fab($environment:ident, $type:ident, [$values,*])) =>
+    s!"keccak256Fab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| persistentCommitFab($environment:ident, $type:ident, $opening, [$values,*])) =>
     s!"persistentCommitFab({environment.getId}, {type.getId}, {renderExpr opening}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| transientCommitFab($environment:ident, $type:ident, $opening, [$values,*])) =>
@@ -755,6 +757,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashVector32([$values,*]))
   | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*]))
+  | `(nlexpr| keccak256Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| sha512Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
@@ -846,6 +849,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashVector32([$values,*]))
   | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*]))
+  | `(nlexpr| keccak256Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| sha512Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>

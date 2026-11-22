@@ -47,5 +47,11 @@ return. [Lean fixture](../../tests/TypedPointKeccak.lean)
 [Compact reference](../../tests/compact/typed-point-keccak.mjs)
 [Native check](../../runtime/tests/typed_point_keccak.rs)
 
-Other mixed FAB overloads, broader profile qualification and compiler-wide
-preservation remain separate work.
+Ordinary circuits also accept `keccak256Fab(environment, type, [values])` for
+checked named records and tuples. The backend derives the atom order and byte
+widths from the layout. The native producer checks those widths and binds the
+same typed operands. `Sha512Fab.hash` computes both digests over a record with
+Bytes32, Bool, UInt16 and Native fields. Both Keccak digests match Compact
+0.36.1. The native check rejects UInt16 overflow and a changed return
+commitment. The existing point case emits the same ZKIR and Impact bytes.
+[Mixed FAB source](../../tests/Sha512Fab.lean) · [Compact oracle](../../tests/compact/sha512-fab.mjs) · [Native check](../../runtime/tests/sha512_fab.rs)

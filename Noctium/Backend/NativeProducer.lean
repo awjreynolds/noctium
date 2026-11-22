@@ -209,13 +209,6 @@ private def nativeFieldAtom : Json := Json.mkObj [
   ("tag", toJson ("atom" : String)),
   ("value", Json.mkObj [("tag", toJson ("field" : String))])]
 
-private def byteAtom (length : Nat) : Json := Json.mkObj [
-  ("tag", toJson ("atom" : String)),
-  ("value", Json.mkObj [("tag", toJson ("bytes" : String)), ("length", toJson length)])]
-
-private def secp256k1PointKeccakAlignment : Json := Json.arr #[
-  byteAtom 24, byteAtom 8, byteAtom 24, byteAtom 8, nativeFieldAtom]
-
 /-- Accept only the single fixed-byte source preimage, or the empty preimage.
 Canonical comparison rejects mixed atoms, extra fields and alternate number forms. -/
 private def fixedByteHashLength (alignment : Json) : Except String Nat := do
@@ -241,29 +234,6 @@ private def checkedFixedByteHashTerm (opcode : String) (alignment : Json)
     ensure (value.maximum ≤ 2 ^ (8 * bytesChunkWidth length index) - 1)
       "byte hash operand lacks its exact chunk range bound"
   pure (fixedByteHashTerm opcode length (values.map (·.term)))
-
-private def checkedSecp256k1PointKeccakTerm (alignment : Json)
-    (values : List Fact) : Except String Term := do
-  ensure (alignment == secp256k1PointKeccakAlignment)
-    "Secp256k1Point Keccak requires the canonical FAB alignment"
-  let kind := Foreign.Kind.point .secp256k1
-  let maxima := List.range kind.encodedFieldCount |>.map (foreignEncodedFieldMaximum kind)
-  ensure (values.length == maxima.length)
-    "Secp256k1Point Keccak requires five encoded field operands"
-  for (value, maximum) in values.zip maxima do
-    ensure (value.maximum ≤ maximum)
-      "Secp256k1Point Keccak operand lacks its exact Encode range bound"
-  let some first := values.head? | throw "Secp256k1Point Keccak requires five encoded field operands"
-  let point ← match first.term with
-    | Term.unary opcode point => do
-      ensure (opcode == s!"foreign_encode:{kind.nativeName}:0")
-        "Secp256k1Point Keccak input is not a typed Encode projection"
-      pure point
-    | _ => throw "Secp256k1Point Keccak input is not a typed Encode projection"
-  for (value, index) in values.zipIdx do
-    ensure (value.term == foreignEncodedFieldTerm kind point index)
-      "Secp256k1Point Keccak fields must come from one ordered typed Encode"
-  pure (.unary "keccak256_secp256k1_point" point)
 
 private def bytes32FromChunksTerm (low31 highByte : Term) : Term :=
   .unary "bytes32_from_chunks" (.hash [low31, highByte])
@@ -568,23 +538,18 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
   | "sha512" | "keccak256" => do
     let values ← nativeArguments state instruction "inputs"
     let alignment ← instruction.getObjVal? "alignment"
-    let term ← if opcode == "keccak256" && alignment == secp256k1PointKeccakAlignment then
-        checkedSecp256k1PointKeccakTerm alignment values
-      else if opcode == "sha512" then do
-        let atoms ← alignment.getArr?
-        ensure (atoms.size ≤ 32)
-          "FAB SHA-512 alignment must contain 1 to 32 payload atoms"
-        let singleByteAtom := if atoms.size == 1 then
-          match atoms[0]!.getObjVal? "value" with
-          | .ok value => (stringField value "tag").toOption == some "bytes"
-          | .error _ => false
-          else false
-        if atoms.isEmpty || singleByteAtom then
-          checkedFixedByteHashTerm opcode alignment values
-        else do
-          let (descriptors, operands) ← checkedFabHashOperands alignment values
-          pure (sha512FabTerm descriptors operands)
-      else checkedFixedByteHashTerm opcode alignment values
+    let atoms ← alignment.getArr?
+    ensure (atoms.size ≤ 32) "FAB byte hash alignment exceeds 32 atoms"
+    let singleByteAtom := if atoms.size == 1 then
+      match atoms[0]!.getObjVal? "value" with
+      | .ok value => (stringField value "tag").toOption == some "bytes"
+      | .error _ => false
+      else false
+    let term ← if atoms.isEmpty || singleByteAtom then
+      checkedFixedByteHashTerm opcode alignment values
+    else do
+      let (descriptors, operands) ← checkedFabHashOperands alignment values
+      pure (fabByteHashTerm opcode descriptors operands)
     let fact ← combine term 0 values
     defineResult state instruction {fact with valueType := byteValueType (if opcode == "sha512" then 64 else 32)}
   | "persistent_hash" => do

@@ -24,11 +24,14 @@ noctium_circuit sha512FabInputs where
   private anchor : Native
   output digest : Bytes 64 := disclose(sha512Fab(
     sha512FabEnvironment, sha512FabPayloadType, [octets, flag, counterInput, anchor]))
+  output keccakDigest : Bytes32 := disclose(keccak256Fab(
+    sha512FabEnvironment, sha512FabPayloadType, [octets, flag, counterInput, anchor]))
 end
 
 noctium_contract Sha512Fab where
   entry hash uses sha512FabInputs where
     return resultDigest : Bytes 64 := digest
+    return keccakResult : Bytes32 := keccakDigest
   end
 end
 

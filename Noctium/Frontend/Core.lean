@@ -279,6 +279,7 @@ scoped syntax "persistentHashFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nl
 scoped syntax "transientHashFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "hashToCurveFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "sha512Fab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
+scoped syntax "keccak256Fab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "persistentCommitFab(" ident "," ident "," nlexpr "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "transientCommitFab(" ident "," ident "," nlexpr "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "transientHashNativeVector(" "[" nlexpr,* "]" ")" : nlexpr
@@ -875,6 +876,7 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
     values.getElems.toList.any hasPartialScalar
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*])) =>
     values.getElems.toList.any hasPartialScalar
+  | `(nlexpr| keccak256Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| sha512Fab($_:ident, $_:ident, [$values,*])) =>
     values.getElems.toList.any hasPartialScalar
   | `(nlexpr| persistentCommitFab($_:ident, $_:ident, $opening, [$values,*])) =>
@@ -1199,6 +1201,20 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       `(Sigma.mk $actualType $value)
     let valueList ← sigmaExprListTerm encodedValues
     pure (.bytes 64, ← `(Noctium.Expr.sha512Fab $environmentTerm $typeTerm $valueList))
+  | `(nlexpr| keccak256Fab($environment:ident, $type:ident, [$values,*])) => do
+    let environmentName ← liftCoreM <| resolveGlobalConstNoOverload environment
+    let typeName ← liftCoreM <| resolveGlobalConstNoOverload type
+    let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
+    let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
+    let sourceValues := values.getElems.toList
+    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
+      throwErrorAt stx "keccak256Fab requires 1 to 32 values"
+    let encodedValues ← sourceValues.mapM fun sourceValue => do
+      let (actualType, value) ← expression env sourceValue
+      let actualType ← tyTerm actualType
+      `(Sigma.mk $actualType $value)
+    let valueList ← sigmaExprListTerm encodedValues
+    pure (.bytes 32, ← `(Noctium.Expr.keccak256Fab $environmentTerm $typeTerm $valueList))
   | `(nlexpr| keccak256($value)) => do
     let (valueTy, value) ← expression env value
     match valueTy with

@@ -440,6 +440,11 @@ pub enum Expr {
         schema: Json,
         values: Vec<FabHashInput>,
     },
+    #[serde(rename = "keccak256Fab")]
+    Keccak256Fab {
+        schema: Json,
+        values: Vec<FabHashInput>,
+    },
     #[serde(rename = "hashToCurveFab")]
     HashToCurveFab {
         schema: Json,
@@ -1251,6 +1256,12 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
                 ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
             );
             Value::Bytes(sha2::Sha512::digest(preimage.as_slice()).to_vec())
+        }
+        Expr::Keccak256Fab { schema, values } => {
+            let preimage = zeroize::Zeroizing::new(
+                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+            );
+            Value::Bytes(sha3::Keccak256::digest(preimage.as_slice()).to_vec())
         }
         Expr::HashToCurveFab { schema, values } => hash_to_curve_fab(schema, values, env)?,
         Expr::Keccak256 { length, value } => {

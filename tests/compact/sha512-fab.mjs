@@ -39,6 +39,7 @@ try {
 
   const octets = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
   const digests = [];
+  const keccakDigests = [];
   async function sha512Payload(counter) {
     const context = runtime.createCircuitContext({
       circuitId: 'sha512Fab',
@@ -53,8 +54,9 @@ try {
       counter,
       anchor: 42n,
     });
-    assert.ok(Array.isArray(call.result) && call.result.length === 1, 'expected one SHA-512 output');
+    assert.ok(Array.isArray(call.result) && call.result.length === 2, 'expected two digest outputs');
     digests.push(Buffer.from(call.result[0]).toString('hex'));
+    keccakDigests.push(Buffer.from(call.result[1]).toString('hex'));
   }
 
   await sha512Payload(257n);
@@ -64,6 +66,10 @@ try {
     '6f2b8bc408127949730a24dd6a4b5562a8ec69a7d895a79329c13976447a1c948c4a84e6d070af7e02ea37d89408d1a0679dee79fd6c3cb40e548e4438b7bfae',
     'd65da98a4c62937f9f0aa99c4b68dd81d171a73be6f09f03a85d251ea58d1b6d54d55002038ad3ef43a53c8e43ef808eda8beb48679b092434bffc063bd519aa',
   ]);
+  assert.deepEqual(keccakDigests, [
+    '0a3cf3d2108f7463f9ef5896ebfd31c7fcdde34ac2171cc6b3c48f28d03e8683',
+    'eb28a2f9796f720f03aea8e43e7e6ec85e202d85258bd36da513f50f32acf5ee',
+  ]);
 
   console.log(JSON.stringify({
     compiler: compilerVersion,
@@ -71,6 +77,7 @@ try {
     circuit: 'sha512Fab',
     fields: ['Bytes<32>', 'Boolean', 'Uint<16>', 'Field'],
     digests,
+    keccakDigests,
   }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
