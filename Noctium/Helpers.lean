@@ -954,13 +954,13 @@ private partial def expandRangeStatement (statement : Statement) : ExpansionM (L
   | .branch condition yes no =>
     return [.branch condition (← expandRangeBody yes) (← expandRangeBody no)]
   | .forRange index start stop body => do
-    let mut expanded := []
+    let mut reversed := []
     for offset in List.range (stop - start) do
       let body ← expandRangeBody body
       let body ← freshenStatementsWitnessSites body
       let indexValue := Statement.bind index (.scalar .native) (.native (start + offset))
-      expanded := expanded ++ [.branch (.bool true) (indexValue :: body) []]
-    return expanded
+      reversed := .branch (.bool true) (indexValue :: body) [] :: reversed
+    return reversed.reverse
   | statement => return [statement]
 
 private partial def expandRangeBody (body : List Statement) : ExpansionM (List Statement) := do
