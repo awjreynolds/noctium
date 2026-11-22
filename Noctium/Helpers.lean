@@ -78,6 +78,7 @@ inductive CurveOp where
   | hashToCurve (arity : Nat)
   | foreignUnary (operation : Foreign.UnaryOp)
   | foreignBinary (operation : Foreign.BinaryOp)
+  | foreignEncodedField (kind : Foreign.Kind) (index : Nat)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 def CurveOp.operationName : CurveOp → String
@@ -95,6 +96,7 @@ def CurveOp.operationName : CurveOp → String
     s!"foreignUnary:{operation.name}:{operation.inputKind.sourceName}"
   | .foreignBinary operation =>
     s!"foreignBinary:{operation.name}:{operation.leftKind.sourceName}:{operation.rightKind.sourceName}"
+  | .foreignEncodedField kind index => s!"foreignEncodedField:{kind.sourceName}:{index}"
 
 def CurveOp.signature : CurveOp → List Ty × Ty
   | .scalarFromNative => ([.native], .jubjubScalar)
@@ -110,6 +112,7 @@ def CurveOp.signature : CurveOp → List Ty × Ty
     ([.foreign operation.inputKind], .foreign operation.outputKind)
   | .foreignBinary operation =>
     ([.foreign operation.leftKind, .foreign operation.rightKind], .foreign operation.outputKind)
+  | .foreignEncodedField kind _ => ([.foreign kind], .native)
 
 /-- Closed readable byte/hash operations. Vector and fixed-byte lengths are
 bounded at the typed source boundary, and point hashing follows FAB affine
@@ -393,6 +396,9 @@ private def validateCurveArity (span : SourceSpan) (operation : CurveOp) (argume
   if let .hashToCurve arity := operation then
     if arity > Types.defaultLimits.maxVectorLength then resource span "hashToCurve field count"
     unless arity == arguments.length do fail span "hashToCurve argument count mismatch"
+  if let .foreignEncodedField kind index := operation then
+    unless index < kind.encodedFieldCount do
+      fail span "foreign encoded field index is out of range"
 
 private def validateLimits (limits : Limits) : Except Diagnostic Unit := do
   let hard : Limits := {}
@@ -2498,6 +2504,9 @@ mutual
           let left ← liftD (typedExpr span (.foreign foreignOp.leftKind) left)
           let right ← liftD (typedExpr span (.foreign foreignOp.rightKind) right)
           pure (scalarValue (Expr.foreignBinary foreignOp left right))
+        | .foreignEncodedField kind index, [value] => do
+          let value ← liftD (typedExpr span (.foreign kind) value)
+          pure (scalarValue (Expr.foreignEncodedField value index))
         | _, _ => liftD (fail span "invalid checked curve operation shape")
       pure {result with constraints := values.flatMap (·.constraints) ++ result.constraints}
     | .bytes32Literal bytes => pure (scalarValue (Expr.bytes32Literal bytes))
