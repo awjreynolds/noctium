@@ -174,10 +174,11 @@ and zero bytes. A private guard needs disclosure.
 The native ledger context supplies the caller. The Impact plan checks
 the presence, tag and active address against the ZKIR statement. A
 different ledger caller fails the same transcript check. The Rust SDK
-ordinary-call path prepares an absent caller. Midnight derives a
-top-level user caller only in the relevant unshielded-input context, and
-support for deriving that value during SDK preparation needs separate
-qualification. [Midnight caller semantics](https://docs.midnight.network/compact/reference/ledger-adt#caller)
+ordinary-call path prepares an absent caller. For a top-level user call,
+`prepare_call_with_unshielded_caller` derives the address from a snapshot
+and selected NIGHT outpoints. `prepare_unshielded_caller` checks those
+outpoints against a fresh snapshot and requests signing through a funding
+adapter with explicit caller support. [Midnight caller semantics](https://docs.midnight.network/compact/reference/ledger-adt#caller)
 
 [Lean fixture](../../tests/NativeCaller.lean) ·
 [Compact oracle](../../tests/compact/caller.mjs) ·
@@ -196,6 +197,15 @@ stored the child-reported contract address. The finalized value matched the
 parent's address. A mismatched expected address failed assembly before
 submission. [Lean fixture](../../tests/NativeCallerComposition.lean) ·
 [Composed caller receipt](native-typed-caller-localnet-receipt.json)
+
+A signed user call finalized at localnet block 51112 and stored the
+expected user address. The transaction spent the selected guaranteed NIGHT
+outpoint and returned the same amount to the same owner. The ordinary
+funding route rejected this offer. The focused test also rejected a wrong
+signing key, an altered principal return, and reuse of the spent outpoint.
+The relation measured K8 and 231 rows.
+[Lean fixture](../../tests/NativeUserCaller.lean) ·
+[Signed user caller receipt](native-user-caller-localnet-receipt.json)
 
 ## Reset a ledger cell
 

@@ -1,6 +1,6 @@
 //! Bounded native DUST fee construction. The host owns wallet state, keys and approval.
 #[cfg(feature = "localnet")]
-use crate::client::{shielded_merge_shape_valid, shielded_relay_shape_valid};
+use crate::client::{Snapshot, shielded_merge_shape_valid, shielded_relay_shape_valid};
 use crate::{
     Db,
     proof::{ProvedNativeIntent, TrustedParameters},
@@ -18,7 +18,7 @@ use ledger::{
     dust::{DUST_EXPECTED_FILES, DustActions, DustLocalState, DustOutput, DustSecretKey},
     structure::{
         ContractAction, Intent, LedgerParameters, ProofMarker, Signature, StandardTransaction,
-        Transaction,
+        SignatureVerifyingKey, Transaction,
     },
 };
 use rand::rngs::StdRng;
@@ -171,6 +171,37 @@ impl DustFunding {
             srs,
             now,
             policy,
+            rng,
+        )
+        .await
+    }
+
+    #[cfg(feature = "localnet")]
+    pub(crate) async fn fund_unshielded_caller(
+        &self,
+        contract: &ProvedNativeIntent,
+        snapshot: &Snapshot,
+        network_id: &str,
+        parameters: &LedgerParameters,
+        material: &DustMaterial,
+        srs: &TrustedParameters,
+        now: Timestamp,
+        policy: FeePolicy,
+        rng: StdRng,
+    ) -> Result<FundedTransaction> {
+        crate::unshielded_caller::validate_guaranteed_caller_offer(snapshot, contract)
+            .map_err(|_| Error::Intent)?;
+        let base = one_intent(network_id, CONTRACT_SEGMENT, contract.clone());
+        self.fund_base_inner(
+            contract,
+            base,
+            network_id,
+            parameters,
+            material,
+            srs,
+            now,
+            policy,
+            true,
             rng,
         )
         .await
@@ -645,6 +676,25 @@ impl DustFunding {
         srs: &TrustedParameters,
         now: Timestamp,
         policy: FeePolicy,
+        rng: StdRng,
+    ) -> Result<FundedTransaction> {
+        self.fund_base_inner(
+            contract, base, network_id, parameters, material, srs, now, policy, false, rng,
+        )
+        .await
+    }
+
+    async fn fund_base_inner(
+        &self,
+        contract: &ProvedNativeIntent,
+        base: UnsealedTransaction,
+        network_id: &str,
+        parameters: &LedgerParameters,
+        material: &DustMaterial,
+        srs: &TrustedParameters,
+        now: Timestamp,
+        policy: FeePolicy,
+        allow_guaranteed_caller_offer: bool,
         mut rng: StdRng,
     ) -> Result<FundedTransaction> {
         policy.validate()?;
@@ -655,7 +705,7 @@ impl DustFunding {
             return Err(Error::Parameters);
         }
         if !admissible_actions(contract)
-            || contract.guaranteed_unshielded_offer.is_some()
+            || contract.guaranteed_unshielded_offer.is_some() != allow_guaranteed_caller_offer
             || contract.fallible_unshielded_offer.is_some()
             || contract.dust_actions.is_some()
             || contract.ttl <= now
@@ -731,7 +781,11 @@ impl DustFunding {
             };
             // Binding seals have a fixed encoded size. Estimate from a real seal, without
             // binding a durable transaction identity or changing the retained contract intent.
-            let fees = candidate
+            let signature_candidate = allow_guaranteed_caller_offer
+                .then(|| caller_signature_fee_candidate(&candidate))
+                .transpose()?;
+            let fee_candidate = signature_candidate.as_ref().unwrap_or(&candidate);
+            let fees = fee_candidate
                 .seal(rng.split())
                 .fees_with_margin(parameters, policy.margin_blocks)
                 .map_err(|_| Error::Balance)?;
@@ -790,4 +844,38 @@ pub fn one_intent(
         guaranteed_coins: None,
         fallible_coins: Default::default(),
     })
+}
+
+fn caller_signature_fee_candidate(
+    transaction: &UnsealedTransaction,
+) -> Result<UnsealedTransaction> {
+    let mut candidate = transaction.clone();
+    let Transaction::Standard(standard) = &mut candidate else {
+        return Err(Error::Intent);
+    };
+    let mut contract = (*standard
+        .intents
+        .get(&CONTRACT_SEGMENT)
+        .ok_or(Error::Intent)?)
+    .clone();
+    let offer = contract
+        .guaranteed_unshielded_offer
+        .as_deref()
+        .ok_or(Error::Intent)?;
+    if !offer.signatures.is_empty() {
+        return Err(Error::Intent);
+    }
+    let mut offer = (*offer).clone();
+    let placeholders = offer
+        .inputs
+        .iter()
+        .map(|spend| match &spend.owner {
+            SignatureVerifyingKey::Schnorr(_) => Signature::Schnorr(Default::default()),
+            SignatureVerifyingKey::ECDSA(_) => Signature::ECDSA(Default::default()),
+        })
+        .collect();
+    offer.add_signatures(placeholders);
+    contract.guaranteed_unshielded_offer = Some(Sp::new(offer));
+    standard.intents = standard.intents.insert(CONTRACT_SEGMENT, contract);
+    Ok(candidate)
 }

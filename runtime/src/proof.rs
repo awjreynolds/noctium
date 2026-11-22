@@ -4,6 +4,8 @@ use crate::{
     Config, Db, Plan,
     artifacts::{ContractBundleSet, Role, VerifiedBundle},
     assembly::{BookedComIndices, CheckedNativeCall, NativeIntent},
+    client::{NetworkPolicy, Snapshot},
+    unshielded_caller::{SnapshotUnshieldedSpendScope, check_snapshot_spends},
     zkir::IrSource,
 };
 use base_crypto::cost_model::CostDuration;
@@ -11,7 +13,7 @@ use coin_structure::coin::{Commitment, PublicAddress};
 use futures::{Future, FutureExt, pin_mut, select_biased};
 use ledger::structure::{
     ContractAction, ContractCall, Intent, LedgerParameters, LedgerState, ProofKind, ProofMarker,
-    ProofPreimageVersioned, ProofVersioned, Signature,
+    ProofPreimageVersioned, ProofVersioned, Signature, UtxoSpend,
 };
 use midnight_proofs::{plonk::ConstraintSystem, poly::kzg::params::ParamsKZG, utils::SerdeFormat};
 use midnight_zk_stdlib::{MidnightPK, Relation, ZkStdLib, ZkStdLibArch};
@@ -854,7 +856,7 @@ impl ContractOperationTarget {
         inputs: BTreeMap<String, Json>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<PreparedProof> {
-        self.prepare_call_with_block(current_state, parameters, inputs, None, rng)
+        self.prepare_call_with_context(current_state, parameters, inputs, None, None, rng)
     }
 
     /// Prepare a call using the explicit prospective block context supplied by the host.
@@ -867,15 +869,41 @@ impl ContractOperationTarget {
         block: &BlockContext,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<PreparedProof> {
-        self.prepare_call_with_block(current_state, parameters, inputs, Some(block), rng)
+        self.prepare_call_with_context(current_state, parameters, inputs, Some(block), None, rng)
     }
 
-    fn prepare_call_with_block(
+    /// Derive a top-level user caller from the selected unshielded inputs in the snapshot.
+    /// The proof attaches an exact balanced return offer for later approval and signing.
+    pub fn prepare_call_with_unshielded_caller(
+        &self,
+        current_state: &mut Option<CurrentStateContext>,
+        parameters: &TrustedParameters,
+        inputs: BTreeMap<String, Json>,
+        snapshot: &Snapshot,
+        policy: &NetworkPolicy,
+        spends: &[UtxoSpend],
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<PreparedProof> {
+        let mut inputs = SecretInputs(inputs);
+        snapshot.validate(policy).map_err(|_| Error::BindingMismatch)?;
+        let scope = check_snapshot_spends(snapshot, spends).map_err(|_| Error::InvalidIntent)?;
+        self.prepare_call_with_context(
+            current_state,
+            parameters,
+            std::mem::take(&mut inputs.0),
+            Some(&snapshot.block),
+            Some(&scope),
+            rng,
+        )
+    }
+
+    fn prepare_call_with_context(
         &self,
         current_state: &mut Option<CurrentStateContext>,
         parameters: &TrustedParameters,
         inputs: BTreeMap<String, Json>,
         block: Option<&BlockContext>,
+        unshielded_scope: Option<&SnapshotUnshieldedSpendScope<'_>>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<PreparedProof> {
         let mut inputs = SecretInputs(inputs);
@@ -886,11 +914,13 @@ impl ContractOperationTarget {
         if !self.context_matches(state) {
             return Err(Error::BindingMismatch);
         }
-        let prepared = PreparedProof::from_contract_witness_inputs_with_block(
+        let prepared = PreparedProof::from_contract_witness_inputs_with_context(
             self,
             state,
             std::mem::take(&mut inputs.0),
+            Map::new(),
             block,
+            unshielded_scope,
             rng,
         )?;
         current_state.take().ok_or(Error::BindingMismatch)?;
@@ -1771,6 +1801,7 @@ impl PreparedProof {
             inputs,
             Map::new(),
             block,
+            None,
             rng,
         )
     }
@@ -1788,6 +1819,7 @@ impl PreparedProof {
             inputs,
             com_indices,
             None,
+            None,
             rng,
         )
     }
@@ -1798,6 +1830,7 @@ impl PreparedProof {
         inputs: BTreeMap<String, Json>,
         com_indices: Map<Commitment, u64, Db>,
         block: Option<&BlockContext>,
+        unshielded_scope: Option<&SnapshotUnshieldedSpendScope<'_>>,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<Self> {
         let mut inputs = SecretInputs(inputs);
@@ -1805,6 +1838,13 @@ impl PreparedProof {
             return Err(Error::BindingMismatch);
         }
         let material = target.selected_material()?;
+        if let Some(scope) = unshielded_scope {
+            let snapshot = &scope.snapshot().state;
+            ensure_current_state_matches_snapshot(target, current, snapshot)?;
+            if *snapshot.parameters != material.parameters {
+                return Err(Error::InvalidParameters);
+            }
+        }
         let bundle = target.bundle()?;
         if bundle.authenticated_manifest_sha256() != Some(target.manifest.as_str()) {
             return Err(Error::BindingMismatch);
@@ -1834,11 +1874,12 @@ impl PreparedProof {
             &current.state,
             &com_indices,
             block,
+            unshielded_scope.map(|scope| PublicAddress::User(scope.address())),
             rng,
         )
         .map_err(|_| Error::InvalidPrivateInput)?;
         let expected_state = encode(&predicted)?;
-        let mut prepared = Self::freeze(material, call)?;
+        let mut prepared = Self::freeze_with_unshielded_scope(material, call, unshielded_scope)?;
         prepared.required_parameters_sha256 = Some(target.proof_parameters_sha256.clone());
         let (address, entrypoint) = prepared.call_target()?;
         if address != target.contract_address() || entrypoint != target.operation {
@@ -1865,6 +1906,14 @@ impl PreparedProof {
         Self::freeze(Material::retained(bundle)?, intent)
     }
     fn freeze(material: Material, intent: NativeIntent) -> Result<Self> {
+        Self::freeze_with_unshielded_scope(material, intent, None)
+    }
+
+    fn freeze_with_unshielded_scope(
+        material: Material,
+        mut intent: NativeIntent,
+        scope: Option<&SnapshotUnshieldedSpendScope<'_>>,
+    ) -> Result<Self> {
         if intent.actions.len() != 1
             || intent.dust_actions.is_some()
             || intent.guaranteed_unshielded_offer.is_some()
@@ -1872,6 +1921,9 @@ impl PreparedProof {
         {
             return Err(Error::InvalidIntent);
         }
+        intent.guaranteed_unshielded_offer = scope
+            .map(SnapshotUnshieldedSpendScope::guaranteed_offer)
+            .map(storage::arena::Sp::new);
         let Some(ContractAction::Call(call)) = intent.actions.iter_deref().next() else {
             return Err(Error::InvalidIntent);
         };
@@ -2103,6 +2155,11 @@ impl PreparedProof {
             parameters: params,
         }];
         let intent = prove_intent(&self.intent, &calls, service, max_response_bytes, stop).await?;
+        if intent.guaranteed_unshielded_offer != self.intent.guaranteed_unshielded_offer
+            || intent.fallible_unshielded_offer != self.intent.fallible_unshielded_offer
+        {
+            return Err(Error::BindingMismatch);
+        }
         let Some(ContractAction::Call(call)) = intent.actions.iter_deref().next() else {
             return Err(Error::Attachment);
         };

@@ -1617,20 +1617,123 @@ impl crate::client::FundingAdapter for DevelopmentFunding<'_> {
         .map_err(|_| HostFailure)?;
         Ok(funded.native().clone())
     }
+
+    async fn fund_unshielded_caller(
+        &self,
+        contract: &crate::proof::ProvedNativeIntent,
+        snapshot: &Snapshot,
+        policy: &NetworkPolicy,
+    ) -> std::result::Result<crate::funding::UnsealedTransaction, crate::client::HostFailure> {
+        use crate::client::HostFailure;
+
+        if self.shielded_receive.is_some()
+            || self.shielded_relay.is_some()
+            || self.wallet_shielded_receive.is_some()
+            || self.wallet_shielded_mint.is_some()
+            || self.shielded_transfer.is_some()
+            || self.shielded_split.is_some()
+            || self.shielded_merge.is_some()
+        {
+            return Err(HostFailure);
+        }
+        policy.check(&snapshot.chain).map_err(|_| HostFailure)?;
+        if *policy != self.node.policy {
+            return Err(HostFailure);
+        }
+        crate::unshielded_caller::validate_guaranteed_caller_offer(snapshot, contract)
+            .map_err(|_| HostFailure)?;
+        let state = {
+            let cache = self.node.cache.borrow();
+            let cache = cache.as_ref().ok_or(HostFailure)?;
+            if !cache_matches(cache, snapshot) {
+                return Err(HostFailure);
+            }
+            cache.dust.clone()
+        };
+        let secret = self
+            .node
+            .dust_secret
+            .borrow()
+            .as_ref()
+            .ok_or(HostFailure)?
+            .clone();
+        let rng = self.rng.borrow_mut().take().ok_or(HostFailure)?;
+        let wallet = crate::funding::DustFunding::new(secret, state);
+        let funded = wallet
+            .fund_unshielded_caller(
+                contract,
+                snapshot,
+                &policy.network_id,
+                &snapshot.state.parameters,
+                self.material,
+                self.parameters,
+                snapshot.block.tblock,
+                self.policy,
+                rng,
+            )
+            .await
+            .map_err(|_| HostFailure)?;
+        Ok(funded.native().clone())
+    }
 }
 /// The caller supplies an explicit approval function and a fresh entropy owner.
 pub struct ExplicitSeal<F> {
     approve: F,
     rng: RefCell<Option<rand::rngs::StdRng>>,
+    unshielded_caller_key: Option<ledger::structure::SigningKey>,
 }
 impl<F> ExplicitSeal<F> {
     pub fn new(approve: F, rng: rand::rngs::StdRng) -> Self {
         Self {
             approve,
             rng: RefCell::new(Some(rng)),
+            unshielded_caller_key: None,
         }
     }
+
+    /// Opt in to signing the snapshot-checked contract caller offer after approval.
+    pub fn with_unshielded_caller_key(
+        mut self,
+        key: ledger::structure::SigningKey,
+    ) -> Self {
+        self.unshielded_caller_key = Some(key);
+        self
+    }
 }
+
+fn sign_guaranteed_caller_offer(
+    transaction: &mut crate::funding::UnsealedTransaction,
+    snapshot: &Snapshot,
+    key: &ledger::structure::SigningKey,
+    rng: &mut rand::rngs::StdRng,
+) -> std::result::Result<(), crate::client::HostFailure> {
+    use crate::funding::CONTRACT_SEGMENT;
+    use ledger::structure::Transaction;
+
+    let Transaction::Standard(standard) = transaction else {
+        return Err(crate::client::HostFailure);
+    };
+    let mut contract = (*standard
+        .intents
+        .get(&CONTRACT_SEGMENT)
+        .ok_or(crate::client::HostFailure)?)
+    .clone();
+    crate::unshielded_caller::validate_guaranteed_caller_offer(snapshot, &contract)
+        .map_err(|_| crate::client::HostFailure)?;
+    let signature_count = contract
+        .guaranteed_unshielded_offer
+        .as_deref()
+        .ok_or(crate::client::HostFailure)?
+        .inputs
+        .len();
+    let signing_keys = vec![key.clone(); signature_count];
+    contract = contract
+        .sign(rng, CONTRACT_SEGMENT, &signing_keys, &[], &[])
+        .map_err(|_| crate::client::HostFailure)?;
+    standard.intents = standard.intents.insert(CONTRACT_SEGMENT, contract);
+    Ok(())
+}
+
 impl<F: Fn(&crate::funding::UnsealedTransaction, &NetworkPolicy) -> bool>
     crate::client::SigningAdapter for ExplicitSeal<F>
 {
@@ -1646,12 +1749,16 @@ impl<F: Fn(&crate::funding::UnsealedTransaction, &NetworkPolicy) -> bool>
         if !(self.approve)(transaction, policy) {
             return Err(crate::client::HostFailure);
         }
-        Ok(transaction.seal(
-            self.rng
-                .borrow_mut()
-                .take()
-                .ok_or(crate::client::HostFailure)?,
-        ))
+        let mut rng = self
+            .rng
+            .borrow_mut()
+            .take()
+            .ok_or(crate::client::HostFailure)?;
+        let mut transaction = transaction.clone();
+        if let Some(key) = &self.unshielded_caller_key {
+            sign_guaranteed_caller_offer(&mut transaction, snapshot, key, &mut rng)?;
+        }
+        Ok(transaction.seal(rng))
     }
 }
 
@@ -3189,6 +3296,150 @@ mod tests {
     }
 
     #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the pinned development ledger and authenticated NativeUserCaller artifacts"]
+    fn signed_unshielded_spend_authenticates_the_finalized_user_caller() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            funding::{CONTRACT_SEGMENT, one_intent},
+            proof::{LocalProver, WitnessContractTarget},
+            unshielded_caller::{Error as CallerError, validate_guaranteed_caller_offer},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use coin_structure::coin::{NIGHT, UserAddress};
+        use ledger::structure::{SigningKey, Utxo, UtxoSpend};
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let bundle_root = setting("NOCTIUM_USER_CALLER_BUNDLE")?;
+            let pin = setting("NOCTIUM_USER_CALLER_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&bundle_root), Some(&pin))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            let k = IrSource::load(bundle.file(Role::Circuit)?)?.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_USER_CALLER_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&setting("NOCTIUM_USER_CALLER_NODE")?, &cache)
+                .await?;
+            let parameters = cache.parameters(k).await?;
+
+            let mut seed = zeroize::Zeroizing::new([0u8; 32]);
+            seed[31] = 1;
+            let derivation = "m/44'/2400'/0'/0/0".parse()?;
+            let private = bip32::XPrv::derive_from_path(&*seed, &derivation)?;
+            let key_bytes = zeroize::Zeroizing::new(<[u8; 32]>::from(private.private_key().to_bytes()));
+            let key = SigningKey::Schnorr(
+                base_crypto::schnorr::SigningKey::from_bytes(&*key_bytes)
+                    .map_err(|error| anyhow::anyhow!("development Schnorr key: {error}"))?,
+            );
+            let owner = key.verifying_key();
+            let address = UserAddress::from(owner.clone());
+            let initial = funded.node.sync()?;
+            let generation = &initial.state.dust.generation;
+            let utxo = initial.state.utxo.utxos.iter().map(|entry| entry.0.clone())
+                .filter(|utxo| utxo.owner == address && utxo.type_ == NIGHT && utxo.value > 0)
+                .min_by_key(|utxo| (
+                    generation.night_indices.contains_key(&utxo.initial_nonce()),
+                    utxo.value,
+                ))
+                .context("development wallet has no spendable NIGHT outpoint")?;
+            let prior_dust_generation = generation.night_indices.contains_key(&utxo.initial_nonce());
+            let spend = UtxoSpend {
+                value: utxo.value,
+                type_: utxo.type_.clone(),
+                intent_hash: utxo.intent_hash,
+                output_no: utxo.output_no,
+                owner,
+            };
+            let ttl = initial.block.tblock.to_secs() + 1800;
+            let state_config = serde_json::to_vec(&json!({
+                "state": {"observedUser": {"kind":"bytes", "values": vec![0u8; 32]}},
+            }))?;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?, &state_config, ttl, &mut rng,
+            )?;
+            let operation = target.operation("observe", &parameters, ttl)?;
+            let (state, deployment) = funded.deploy(&target, "observe").await?;
+            let snapshot = funded.node.sync()?;
+            let mut current = Some(state);
+            let prepared = operation.prepare_call_with_unshielded_caller(
+                &mut current, &parameters, BTreeMap::new(), &snapshot, &funded.node.policy,
+                std::slice::from_ref(&spend), &mut rng,
+            )?;
+            ensure!(current.is_none(), "prepared caller did not consume its state token");
+            let proved = prepared.prove(
+                &LocalProver::new(StdRng::from_entropy()), &parameters, 1_048_576,
+                futures::future::pending(),
+            ).await?;
+
+            let mut unsigned = one_intent(
+                &snapshot.chain.network_id, CONTRACT_SEGMENT, proved.native().clone(),
+            );
+            let wrong_key = SigningKey::Schnorr(base_crypto::schnorr::SigningKey::sample(&mut rng));
+            ensure!(
+                sign_guaranteed_caller_offer(&mut unsigned, &snapshot, &wrong_key, &mut rng).is_err(),
+                "caller offer accepted the wrong signing key"
+            );
+            let mut altered = proved.native().clone();
+            let mut altered_offer = altered.guaranteed_unshielded_offer.as_deref()
+                .context("proved caller is missing its exact offer")?.clone();
+            let mut outputs: Vec<ledger::structure::UtxoOutput> = (&altered_offer.outputs).into();
+            outputs[0].value += 1;
+            altered_offer.outputs = outputs.into();
+            altered.guaranteed_unshielded_offer = Some(storage::arena::Sp::new(altered_offer));
+            ensure!(
+                matches!(validate_guaranteed_caller_offer(&snapshot, &altered), Err(CallerError::InvalidOffer)),
+                "changed principal return passed caller offer validation"
+            );
+            let return_intent = proved.native().erase_proofs().erase_signatures().intent_hash(0);
+            let (_, receipt) = funded.finalize_with_unshielded_caller_key(proved.native(), Some(key)).await?;
+            let finalized: ContractState<Db> = native_decode(&receipt.contract_state)?;
+            let user_hex = hex::encode(address.0.0);
+            let expected = crate::create_state(&plan, &BTreeMap::from([(
+                "observedUser".into(), json!({"kind":"bytes", "values": address.0.0}),
+            )]))?;
+            ensure!(finalized.data.get_ref() == expected.get_ref(), "ledger supplied a different caller");
+            let after = funded.node.sync()?;
+
+            ensure!(
+                matches!(validate_guaranteed_caller_offer(&after, proved.native()), Err(CallerError::SpendNotInSnapshot)),
+                "spent caller input remained admissible after finalization"
+            );
+            ensure!(!after.state.utxo.utxos.contains_key(&Utxo::from(spend.clone())), "selected outpoint remained live");
+            ensure!(after.state.utxo.utxos.iter().any(|entry| {
+                let utxo = &entry.0;
+                utxo.owner == address && utxo.type_ == spend.type_ && utxo.value == spend.value
+                    && utxo.output_no == 0 && utxo.intent_hash == return_intent
+            }), "same-owner return outpoint or amount differs");
+            println!("{}", json!({
+                "bundleManifestSha256": pin,
+                "observedUser": user_hex,
+                "contractAddress": receipt.contract_address,
+                "deploymentHeight": deployment.height,
+                "finalizedHeight": receipt.height,
+                "finalizedHash": receipt.finalized_hash,
+                "transactionId": receipt.transaction_id,
+                "spentNight": spend.value.to_string(),
+                "priorDustGeneration": prior_dust_generation,
+                "sameOwnerPrincipalReturned": true,
+                "ordinaryFundingRejectedCallerOffer": true,
+                "wrongSigningKeyRejected": true,
+                "alteredReturnOfferRejected": true,
+                "spentOutpointRejected": true,
+                "k": k,
+            }));
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
     struct FundedLedgerTest {
         node: Node,
         dust: crate::funding::DustMaterial,
@@ -3229,6 +3480,14 @@ mod tests {
             &self,
             intent: &crate::proof::ProvedNativeIntent,
         ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
+            self.finalize_with_unshielded_caller_key(intent, None).await
+        }
+
+        async fn finalize_with_unshielded_caller_key(
+            &self,
+            intent: &crate::proof::ProvedNativeIntent,
+            key: Option<ledger::structure::SigningKey>,
+        ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
             use crate::client::{ChainAdapter, Submission};
             use crate::funding::{FeePolicy, UnsealedTransaction};
             use anyhow::ensure;
@@ -3249,9 +3508,23 @@ mod tests {
             );
             let approve = |_: &UnsealedTransaction, candidate: &NetworkPolicy| candidate == policy;
             let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
-            let bound =
+            let bound = if let Some(key) = key {
+                ensure!(
+                    matches!(
+                        BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer).await,
+                        Err(crate::client::Error::InvalidTransaction)
+                    ),
+                    "ordinary funding accepted the caller offer"
+                );
+                let signer = signer.with_unshielded_caller_key(key);
+                BoundTransaction::prepare_unshielded_caller(
+                    intent, policy.clone(), &self.node, &funding, &signer,
+                )
+                .await?
+            } else {
                 BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer)
-                    .await?;
+                    .await?
+            };
             ensure!(
                 self.node
                     .submit(&bound)

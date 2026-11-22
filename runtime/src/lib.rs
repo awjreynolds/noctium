@@ -9562,6 +9562,7 @@ pub mod profile;
 pub mod proof;
 // Reply constructors live in explicitly selected native host adapters.
 pub mod client;
+mod unshielded_caller;
 pub mod control;
 pub mod control_ffi;
 #[cfg(all(feature = "localnet", feature = "zkir-321"))]
