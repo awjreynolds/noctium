@@ -22,6 +22,7 @@ const vectors = [
   {
     stem: 'ReadableECDSAK1',
     source: 'ReadableECDSAK1.compact',
+    zeroSFailure: 'secp256k1 scalar field has no inverse for 0',
     digest: '4b688df40bcedbe641ddb16ff0a1842d9c67ea1c3bf63f3e0471baa664531d1a',
     r: '241097efbf8b63bf145c8961dbdf10c310efbb3b2676bbc0f8b08505c9e2f795',
     s: '021006b7838609339e8b415a7f9acb1b661828131aef1ecbc7955dfb01f3ca0e',
@@ -31,6 +32,7 @@ const vectors = [
   {
     stem: 'ReadableECDSAR1',
     source: 'ReadableECDSAR1.compact',
+    zeroSFailure: 'secp256r1 scalar field has no inverse for 0',
     digest: '44acf6b7e36c1342c2c5897204fe09504e1e2efb1a900377dbc4e7a6a133ec56',
     r: 'f3ac8061b514795b8843e3d6629527ed2afd6b1f6a555a7acabb5e6f79c8c2ac',
     s: '8bf77819ca05a6b2786c76262bf7371cef97b218e96f175a3ccdda2acc058903',
@@ -64,21 +66,26 @@ try {
     assert.equal(pureCircuits.verify(changedDigest, signature, key), false,
       `${vector.stem} changed digest`);
 
-    for (const component of ['r', 's']) {
-      const zero = {...signature, [component]: 0n};
-      let result;
-      try {
-        result = pureCircuits.verify(digest, zero, key);
-      } catch {
-        result = false;
-      }
-      assert.equal(result, false, `${vector.stem} zero ${component}`);
-    }
+    const zeroR = {...signature, r: 0n};
+    assert.equal(pureCircuits.verify(digest, zeroR, key), false, `${vector.stem} zero r`);
+
+    const zeroS = {...signature, s: 0n};
+    assert.throws(
+      () => pureCircuits.verify(digest, zeroS, key),
+      error => error?.name === 'CompactError' && error.message === vector.zeroSFailure,
+      `${vector.stem} zero s must fail at scalar inversion`,
+    );
   }
   console.log(JSON.stringify({
     compiler: compilerVersion,
     runtime: runtimePackage.version,
-    vectors: vectors.map(({stem}) => ({stem, valid: true, changedDigest: false, zeroScalar: false})),
+    vectors: vectors.map(({stem, zeroSFailure}) => ({
+      stem,
+      valid: true,
+      changedDigest: false,
+      zeroR: false,
+      zeroSFailure: {name: 'CompactError', message: zeroSFailure},
+    })),
   }, null, 2));
 } finally {
   rmSync(scratch, {recursive: true, force: true});
