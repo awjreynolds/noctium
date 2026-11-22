@@ -87,6 +87,7 @@ jobs:
           lake env lean tests/NativeByteConversions.lean
           lake env lean tests/HashDomainConversions.lean
           lake env lean tests/NativeBytePacking.lean
+          lake env lean tests/ByteCastBoundary.lean
           lake env lean tests/NativeByteIndexing.lean
           lake env lean tests/NativeByteReverse.lean
           lake env lean tests/NativeBytes.lean
