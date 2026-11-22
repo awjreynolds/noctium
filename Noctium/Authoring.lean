@@ -157,7 +157,7 @@ scoped syntax "private" ident ":" noctium_witness_input_type : noctium_witness_s
 scoped syntax "let" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
 scoped syntax "read" "private" ident "as" ident : noctium_witness_statement
 scoped syntax "witness" ident "(" nlexpr,* ")" : noctium_witness_statement
-scoped syntax "prove" nlexpr : noctium_witness_statement
+scoped syntax "prove" nlexpr ("as" ident)? : noctium_witness_statement
 scoped syntax "stage" ident ":=" nlexpr : noctium_witness_statement
 scoped syntax "output" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
 scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "end" :
@@ -2262,15 +2262,25 @@ private partial def lowerReadableStatement (programName path : String)
       env := (valueName, value.type, .ref valueName) :: body.env
       statements := body.statements ++ value.before ++ [.bind valueName value.type (.at (← spanValue statement) value.term)]
       logicalAliases}
-  | `(noctium_witness_statement| prove $source:nlexpr) => do
+  | `(noctium_witness_statement| prove $source:nlexpr $[as $binder:ident]?) => do
+    if let some id := binder then
+      if body.env.any (·.1 == id.getId.toString) then
+        throwErrorAt id s!"duplicate readable witness value '{id.getId}'"
     let (lowered, body) ← body.lower programName path
       {exprState with allowAssertThen := _root_.Bool.true} source
     let value ← coerce source lowered .bool
     let observation := {body.observation with
       authoredProves := (body.observation.authoredProves ++ [renderExpr source]).eraseDups}
     let body := {body with observation}.observe value [source]
-    pure {body with
-      statements := body.statements ++ value.before ++ [.assert (.at (← spanValue statement) value.term)]}
+    let span ← spanValue statement
+    let body := {body with statements := body.statements ++ value.before ++ [.assert (.at span value.term)]}
+    match binder with
+    | none => pure body
+    | some id =>
+      let name := id.getId.toString
+      pure {body with
+        env := (name, .unit, .ref name) :: body.env
+        statements := body.statements ++ [.bind name .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
     let .scalar ty := field.signature.result

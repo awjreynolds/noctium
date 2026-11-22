@@ -273,6 +273,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableUnitBindings.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-unit-bindings"
+          .lake/build/bin/noctium compile tests/NamedProofUnit.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/named-proof-unit"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
@@ -283,11 +286,12 @@ jobs:
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
             NOCTIUM_UNIT_BINDINGS_DIR="$artifacts/readable-unit-bindings" \
+            NOCTIUM_NAMED_PROOF_UNIT_DIR="$artifacts/named-proof-unit" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
-              --test readable_unit_bindings -- --ignored
+              --test readable_unit_bindings --test named_proof_unit -- --ignored
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness
