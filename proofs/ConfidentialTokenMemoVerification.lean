@@ -441,6 +441,219 @@ theorem pinned_pairs_have_same_public_bindings :
     publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 one32 zero32) := by
   constructor <;> decide
 
+/-- Exact finite invocation domain for this source-model audit. It includes two
+credential pairs accepted by the toy equations, one wrong account secret, one
+wrong encryption secret and a stale-epoch call. The first four calls expose
+accountId zero32 and epoch 5. The domain does not claim coverage of arbitrary
+wallet secrets. -/
+def memoInvariant (state : LedgerState) : Prop :=
+  state = canonicalAdmittedState ∨ state = expectedClearedState
+
+def memoAdmittedInputs (env : EvalEnv) : Prop :=
+  env = inputs 5 zero32 zero32 ∨ env = inputs 5 two32 two32 ∨
+  env = inputs 5 one32 zero32 ∨ env = inputs 5 zero32 one32 ∨
+  env = inputs 4 zero32 zero32
+
+def memoSpecification : Specification := {
+  initial := fun state => state = canonicalAdmittedState
+  invariant := memoInvariant
+  precondition := fun ctx env state =>
+    ctx = memoContext ∧ memoInvariant state ∧ memoAdmittedInputs env
+  enabled := fun ctx env state =>
+    ctx = memoContext ∧ memoInvariant state ∧
+      (env = inputs 5 zero32 zero32 ∨ env = inputs 5 two32 two32)
+  postcondition := fun _ _ _ outputs after =>
+    outputs = expectedOutputs ∧ after = expectedClearedState
+}
+
+/-- The registered subject names the selected source contract entry at index 6,
+which is definitionally the checked `clearMemosEntry` used above. -/
+def memoSubject : Subject := {
+  contract := OpenZeppelinPort.ConfidentialToken
+  entrypoint := ⟨6, by decide⟩
+  specification := memoSpecification
+}
+
+theorem memoSubject_entry : memoSubject.entry = clearMemosEntry := by rfl
+
+def memoPolicy : AuditPolicy := {
+  subject := memoSubject
+  privacy := { releases := .none, scope := .successfulOnly }
+  functionalGuarantee := "On the explicit finite toy invocation domain, successful clearMemos calls return only the checked identity key coordinates, clear the selected nonempty memo list, preserve the sibling and all other state, and retain the memo invariant. Wrong-secret and stale-epoch inputs remain admitted and reject."
+  privacyGuarantee := "For admitted invocations with equal public source bindings, identical toy context and ledger, successful outcomes agree. Failure channels, provider traffic, proof bytes, deployed behavior and production cryptography are outside this source-model theorem."
+}
+
+theorem admitted_good_run (state : LedgerState)
+    (stateAdmitted : memoInvariant state) (env : EvalEnv)
+    (inputAdmitted : env = inputs 5 zero32 zero32 ∨ env = inputs 5 two32 two32) :
+    clearMemosEntry.run memoContext env state = .ok (expectedOutputs, expectedClearedState) := by
+  rcases stateAdmitted with before | after
+  · subst state
+    rcases inputAdmitted with first | second <;> subst env <;> with_unfolding_all rfl
+  · subst state
+    rcases inputAdmitted with first | second <;> subst env <;> with_unfolding_all rfl
+
+theorem admitted_wrong_account_fails (state : LedgerState)
+    (stateAdmitted : memoInvariant state) :
+    clearMemosEntry.run memoContext (inputs 5 one32 zero32) state =
+      .error "circuit constraint failed" := by
+  rcases stateAdmitted with before | after <;> subst state <;> with_unfolding_all rfl
+
+theorem admitted_wrong_encryption_fails (state : LedgerState)
+    (stateAdmitted : memoInvariant state) :
+    clearMemosEntry.run memoContext (inputs 5 zero32 one32) state =
+      .error "state transition guard failed" := by
+  rcases stateAdmitted with before | after <;> subst state <;> with_unfolding_all rfl
+
+theorem admitted_stale_epoch_fails (state : LedgerState)
+    (stateAdmitted : memoInvariant state) :
+    clearMemosEntry.run memoContext (inputs 4 zero32 zero32) state =
+      .error "state transition guard failed" := by
+  rcases stateAdmitted with before | after <;> subst state <;> with_unfolding_all rfl
+
+/-- Full functional obligation for the admitted source model. Wrong-secret
+attempts remain in the precondition, while `enabled` names the two successful
+credential examples required by progress. -/
+theorem memoFunctional : FunctionalObligation memoPolicy := by
+  change Correctness memoSubject
+  constructor
+  · intro before initial
+    left
+    exact initial
+  · intro ctx env before outputs after invariant admitted success
+    change memoInvariant before at invariant
+    change ctx = memoContext ∧ memoInvariant before ∧ memoAdmittedInputs env at admitted
+    rcases admitted with ⟨rfl, stateAdmitted, inputAdmitted⟩
+    change clearMemosEntry.run memoContext env before = .ok (outputs, after) at success
+    have successfulInput :
+        env = inputs 5 zero32 zero32 ∨ env = inputs 5 two32 two32 := by
+      rcases inputAdmitted with first | second | wrongAccount | wrongEncryption | staleEpoch
+      · exact Or.inl first
+      · exact Or.inr second
+      · subst env
+        rw [admitted_wrong_account_fails before stateAdmitted] at success
+        contradiction
+      · subst env
+        rw [admitted_wrong_encryption_fails before stateAdmitted] at success
+        contradiction
+      · subst env
+        rw [admitted_stale_epoch_fails before stateAdmitted] at success
+        contradiction
+    have actual := admitted_good_run before stateAdmitted env successfulInput
+    rw [actual] at success
+    cases success
+    constructor
+    · exact ⟨rfl, rfl⟩
+    · right
+      rfl
+  · intro ctx env before _invariant admitted enabled
+    change ctx = memoContext ∧ memoInvariant before ∧ memoAdmittedInputs env at admitted
+    rcases admitted with ⟨rfl, _, _⟩
+    change memoContext = memoContext ∧ memoInvariant before ∧
+      (env = inputs 5 zero32 zero32 ∨ env = inputs 5 two32 two32) at enabled
+    rcases enabled with ⟨_, stateAdmitted, inputAdmitted⟩
+    exact ⟨expectedOutputs, expectedClearedState,
+      admitted_good_run before stateAdmitted env inputAdmitted⟩
+  · refine ⟨memoContext, inputs 5 zero32 zero32, canonicalAdmittedState, rfl, ?_, ?_⟩
+    · exact ⟨rfl, Or.inl rfl, Or.inl rfl⟩
+    · exact ⟨rfl, Or.inl rfl, Or.inl rfl⟩
+
+/-- The exact API-level successful-only privacy obligation quantifies over every
+admitted invocation pair. The precondition fixes the explicit toy context and
+canonical ledger invariant. Its finite private-input domain includes both
+wrong-secret rejection cases. -/
+theorem memoPrivacy : PrivacyObligation memoPolicy := by
+  change PrivacyCorrect memoSubject memoPolicy.privacy
+  unfold PrivacyCorrect
+  intro left right leftAdmitted rightAdmitted equivalent _release covered
+  rcases left with ⟨leftContext, leftInputs, leftState⟩
+  rcases right with ⟨rightContext, rightInputs, rightState⟩
+  change leftContext = rightContext ∧ leftState = rightState ∧
+    publicBindings leftInputs = publicBindings rightInputs at equivalent
+  obtain ⟨contextEq, stateEq, publicEq⟩ := equivalent
+  subst rightContext rightState
+  change memoInvariant leftState ∧
+    (leftContext = memoContext ∧ memoInvariant leftState ∧ memoAdmittedInputs leftInputs) at leftAdmitted
+  change memoInvariant leftState ∧
+    (leftContext = memoContext ∧ memoInvariant leftState ∧ memoAdmittedInputs rightInputs) at rightAdmitted
+  rcases leftAdmitted with ⟨leftInvariant, ⟨leftContextEq, _, leftInputDomain⟩⟩
+  rcases rightAdmitted with ⟨rightInvariant, ⟨_, _, rightInputDomain⟩⟩
+  subst leftContext
+  change (∃ outputs state, clearMemosEntry.run memoContext leftInputs leftState = .ok (outputs, state)) ∧
+    (∃ outputs state, clearMemosEntry.run memoContext rightInputs leftState = .ok (outputs, state)) at covered
+  obtain ⟨leftOutputs, leftAfter, leftSuccess⟩ := covered.1
+  obtain ⟨rightOutputs, rightAfter, rightSuccess⟩ := covered.2
+  change clearMemosEntry.run memoContext leftInputs leftState = .ok (leftOutputs, leftAfter) at leftSuccess
+  change clearMemosEntry.run memoContext rightInputs leftState = .ok (rightOutputs, rightAfter) at rightSuccess
+  have leftSuccessfulInput :
+      leftInputs = inputs 5 zero32 zero32 ∨ leftInputs = inputs 5 two32 two32 := by
+    rcases leftInputDomain with first | second | wrongAccount | wrongEncryption | staleEpoch
+    · exact Or.inl first
+    · exact Or.inr second
+    · subst leftInputs
+      rw [admitted_wrong_account_fails leftState leftInvariant] at leftSuccess
+      contradiction
+    · subst leftInputs
+      rw [admitted_wrong_encryption_fails leftState leftInvariant] at leftSuccess
+      contradiction
+    · subst leftInputs
+      rw [admitted_stale_epoch_fails leftState leftInvariant] at leftSuccess
+      contradiction
+  have rightSuccessfulInput :
+      rightInputs = inputs 5 zero32 zero32 ∨ rightInputs = inputs 5 two32 two32 := by
+    rcases rightInputDomain with first | second | wrongAccount | wrongEncryption | staleEpoch
+    · exact Or.inl first
+    · exact Or.inr second
+    · subst rightInputs
+      rw [admitted_wrong_account_fails leftState rightInvariant] at rightSuccess
+      contradiction
+    · subst rightInputs
+      rw [admitted_wrong_encryption_fails leftState rightInvariant] at rightSuccess
+      contradiction
+    · subst rightInputs
+      rw [admitted_stale_epoch_fails leftState rightInvariant] at rightSuccess
+      contradiction
+  rw [admitted_good_run leftState leftInvariant leftInputs leftSuccessfulInput] at leftSuccess
+  rw [admitted_good_run leftState rightInvariant rightInputs rightSuccessfulInput] at rightSuccess
+  cases leftSuccess
+  cases rightSuccess
+  change clearMemosEntry.run memoContext leftInputs leftState =
+    clearMemosEntry.run memoContext rightInputs leftState
+  rw [admitted_good_run leftState leftInvariant leftInputs leftSuccessfulInput,
+    admitted_good_run leftState rightInvariant rightInputs rightSuccessfulInput]
+
+/-- With the same admitted source inputs and state, an all-outcomes policy
+fails because status reveals a wrong private encryption secret. -/
+theorem memoAllOutcomesPrivacyFails :
+    ¬ PrivacyCorrect memoSubject { releases := .none, scope := .allOutcomes } := by
+  intro privacy
+  let accepted : Invocation := ⟨memoContext, inputs 5 zero32 zero32, canonicalAdmittedState⟩
+  let wrongEncryption : Invocation := ⟨memoContext, inputs 5 zero32 one32, canonicalAdmittedState⟩
+  have acceptedAdmitted : memoSubject.admissible accepted := by
+    change memoInvariant canonicalAdmittedState ∧
+      (memoContext = memoContext ∧ memoInvariant canonicalAdmittedState ∧
+        memoAdmittedInputs (inputs 5 zero32 zero32))
+    exact ⟨Or.inl rfl, ⟨rfl, Or.inl rfl, Or.inl rfl⟩⟩
+  have wrongEncryptionAdmitted : memoSubject.admissible wrongEncryption := by
+    change memoInvariant canonicalAdmittedState ∧
+      (memoContext = memoContext ∧ memoInvariant canonicalAdmittedState ∧
+        memoAdmittedInputs (inputs 5 zero32 one32))
+    exact ⟨Or.inl rfl, ⟨rfl, Or.inl rfl, Or.inr (Or.inr (Or.inr (Or.inl rfl)))⟩⟩
+  have publicEquivalent : memoSubject.publicEquivalent accepted wrongEncryption := by
+    change memoContext = memoContext ∧ canonicalAdmittedState = canonicalAdmittedState ∧
+      publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 zero32 one32)
+    exact ⟨rfl, rfl, by decide⟩
+  have outcomeEquality := privacy accepted wrongEncryption acceptedAdmitted
+    wrongEncryptionAdmitted publicEquivalent trivial (by simp [ObservationScope.covers])
+  change clearMemosEntry.run memoContext (inputs 5 zero32 zero32) canonicalAdmittedState =
+    clearMemosEntry.run memoContext (inputs 5 zero32 one32) canonicalAdmittedState at outcomeEquality
+  rw [clear_memos_actual_success_on_admitted_example,
+    clear_memos_actual_wrong_encryption_secret_rejection] at outcomeEquality
+  cases outcomeEquality
+
+#noctium_register_functional memoFunctional for memoPolicy
+#noctium_register_privacy memoPrivacy for memoPolicy
+
 /-- Both toy credential pairs have the same exact source result on the admitted
 example. This is successful-result equality, not a claim about real hashing. -/
 theorem clear_memos_actual_successful_only_source_privacy :
@@ -466,6 +679,22 @@ theorem clear_memos_actual_failure_observer_distinguishes_wrong_account :
   · rw [clear_memos_actual_success_on_admitted_example]
     rfl
   · rw [clear_memos_actual_wrong_account_secret_rejection]
+    rfl
+
+/-- The all-outcomes status observer also distinguishes a wrong encryption
+secret. Both invocations expose the same public source inputs. -/
+theorem clear_memos_actual_failure_observer_distinguishes_wrong_encryption :
+    publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 zero32 one32) ∧
+    succeeded (clearMemosEntry.run memoContext
+      (inputs 5 zero32 zero32) canonicalAdmittedState) = _root_.Bool.true ∧
+    succeeded (clearMemosEntry.run memoContext
+      (inputs 5 zero32 one32) canonicalAdmittedState) = _root_.Bool.false := by
+  constructor
+  · decide
+  constructor
+  · rw [clear_memos_actual_success_on_admitted_example]
+    rfl
+  · rw [clear_memos_actual_wrong_encryption_secret_rejection]
     rfl
 
 /-- Successful-only result equality, conditional on both exact source runs
@@ -541,6 +770,10 @@ theorem failure_observer_distinguishes_wrong_account_secret
 #print axioms clear_memos_actual_wrong_encryption_secret_rejection
 #print axioms clear_memos_actual_successful_only_source_privacy
 #print axioms clear_memos_actual_failure_observer_distinguishes_wrong_account
+#print axioms clear_memos_actual_failure_observer_distinguishes_wrong_encryption
+#print axioms memoFunctional
+#print axioms memoPrivacy
+#print axioms memoAllOutcomesPrivacyFails
 #print axioms successful_projection_from_checked_steps
 #print axioms stale_epoch_rejection_from_effects
 #print axioms successful_only_source_privacy_for_pinned_pair
