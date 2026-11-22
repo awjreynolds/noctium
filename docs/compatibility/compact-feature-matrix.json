@@ -4476,7 +4476,7 @@
       "layer": "standard-library",
       "surface": "transientHash",
       "noctiumStatus": "subset",
-      "notes": "The native field vector route and typed scalar transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Generic typed aggregate alignment remains open.",
+      "notes": "The native field vector route and typed scalar transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits also hash checked flat mixed FAB records through transientHashFab. A paired Compact and native fixture checks field order and independence from commitment openings. Nested layouts remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4493,7 +4493,10 @@
         "docs/development/transient-hash.md",
         "tests/ScalarTransientHash.lean",
         "tests/compact/scalar-transient-hash.mjs",
-        "runtime/tests/scalar_transient_hash.rs"
+        "runtime/tests/scalar_transient_hash.rs",
+        "tests/MixedFabCommitments.lean",
+        "tests/compact/mixed-fab-persistent-hash.mjs",
+        "runtime/tests/mixed_fab_commitments.rs"
       ],
       "equivalence": "unverified"
     },
