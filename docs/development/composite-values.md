@@ -53,6 +53,22 @@ Build the host library with the same environment and `cargo +1.100.0 build --no-
 /private/tmp/noctium-aggregate-cpp-smoke runtime/tests/fixtures/aggregates/schema.json runtime/tests/fixtures/aggregates/value.json runtime/tests/fixtures/aggregates/wire.hex
 ```
 
+## Construct a record in a readable circuit
+
+Use a checked codec from the circuit's `using` clause to construct a nominal record.
+
+```lean
+let constructed := record(Payload readingWire, {
+  active := enabled, count := amount, reading := measure
+})
+```
+
+Supply each declared field once. Initializers execute once in the codec's
+declaration order, which matches the pinned Compact 0.36.1 executable. Bind
+effectful values before the constructor to choose their execution order.
+The result carries the codec's nominal type. Private components still require
+explicit disclosure at public sinks. [Source fixture](../../tests/ReadableRecordConstruction.lean)
+
 ## Compare two flat records
 
 In a readable circuit, `eq(left, right)` compares records with the same

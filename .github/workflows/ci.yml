@@ -258,6 +258,9 @@ jobs:
           .lake/build/bin/noctium compile tests/Issue43EffectBlocks.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --dedup-range-checks --emit ledger --output "$artifacts/dedup"
+          .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/readable-record-construction"
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
@@ -281,7 +284,8 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
               --test collection_reads --test merkle_reads --test counter_snapshot_ffi
-          NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
+          NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
+            NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
@@ -289,6 +293,7 @@ jobs:
             NOCTIUM_NAMED_PROOF_UNIT_DIR="$artifacts/named-proof-unit" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
+              --test readable_record_construction \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test readable_unit_bindings --test named_proof_unit -- --ignored
