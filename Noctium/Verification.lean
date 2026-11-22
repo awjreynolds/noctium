@@ -173,6 +173,10 @@ def check (environment : Environment) (policy proof : Name) (role : Role) : Exce
 
 end Audit
 
+private def roleLabel : Audit.Role → String
+  | .functional => "functional"
+  | .privacy => "privacy"
+
 open Lean Elab Command
 
 initialize proofRegistry : SimplePersistentEnvExtension Audit.Registration (Array Audit.Registration) ←
@@ -181,10 +185,76 @@ initialize proofRegistry : SimplePersistentEnvExtension Audit.Registration (Arra
     addEntryFn := Array.push
   }
 
+private def reduceDiagnosticProjection (environment : Environment)
+    (expression : Lean.Expr) : Option Lean.Expr :=
+  match Kernel.whnf environment {} expression with
+  | .ok result => some result
+  | .error _ => none
+
+private def diagnosticNatLiteral (expression : Lean.Expr) : Option Nat := do
+  match expression with
+  | .lit (.natVal value) => some value
+  | _ =>
+    let (head, arguments) := expression.getAppFnArgs
+    guard (head == ``OfNat.ofNat)
+    guard (arguments.size == 3)
+    guard (arguments[0]! == mkConst ``Nat)
+    let .lit (.natVal value) := arguments[1]! | none
+    let .app (.const `instOfNatNat _) (.lit (.natVal instanceValue)) := arguments[2]! | none
+    guard (value == instanceValue)
+    pure value
+
+private def registrationOperation (environment : Environment) (policy : Name) :
+    Option (String × Option SourceSpan) := do
+  let policyExpr := mkConst policy
+  let subject := mkApp (mkConst ``AuditPolicy.subject) policyExpr
+  let contract ← reduceDiagnosticProjection environment
+    (mkApp (mkConst ``Subject.contract) subject)
+  let entry ← reduceDiagnosticProjection environment
+    (mkApp (mkConst ``Subject.entry) subject)
+  let contractName ← reduceDiagnosticProjection environment
+    (mkApp (mkConst ``Contract.name) contract)
+  let entryName ← reduceDiagnosticProjection environment
+    (mkApp (mkConst ``Entrypoint.name) entry)
+  let Lean.Expr.lit (.strVal contractName) := contractName | none
+  let Lean.Expr.lit (.strVal entryName) := entryName | none
+  let sourceSpan := do
+    let span ← reduceDiagnosticProjection environment
+      (mkApp (mkConst ``Entrypoint.span) entry)
+    let fields := span.getAppArgs
+    guard (fields.size == 3)
+    let Lean.Expr.lit (.strVal file) := fields[0]! | none
+    let line ← diagnosticNatLiteral fields[1]!
+    let column ← diagnosticNatLiteral fields[2]!
+    guard (!file.isEmpty)
+    pure {file, line, column}
+  return (s!"{contractName}.{entryName}", sourceSpan)
+
+private def ppAuditType (expression : Lean.Expr) : CommandElabM Format :=
+  liftTermElabM <| withOptions
+    (fun options => options.setBool `pp.fullNames true |>.setBool `pp.explicit true)
+    (Meta.ppExpr expression)
+
+private def wrongObligationMessage (environment : Environment) (policy proof : Name)
+    (role : Audit.Role) : CommandElabM MessageData := do
+  let some proofInfo := environment.toKernelEnv.find? proof
+    | return m!"wrong_obligation: unknown proof {proof}"
+  let submitted ← ppAuditType proofInfo.type
+  let expectedType := mkApp (mkConst role.obligation) (mkConst policy)
+  let expected ← ppAuditType expectedType
+  let (operation, sourceSpan) :=
+    (registrationOperation environment policy).getD ("<unavailable>", none)
+  let location := (sourceSpan.map fun span =>
+    s!"\noperation source location: {span.file}:{span.line}:{span.column}").getD ""
+  return m!"wrong_obligation: submitted proof '{proof}' has proposition:\n  {submitted}\nexpected {roleLabel role} proposition:\n  {expected}\ncontract/operation: {operation}{location}"
+
 private def register (proof policy : TSyntax `ident) (role : Audit.Role) : CommandElabM Unit := do
   let proofName ← liftCoreM <| resolveGlobalConstNoOverload proof
   let policyName ← liftCoreM <| resolveGlobalConstNoOverload policy
-  match Audit.check (← getEnv) policyName proofName role with
+  let environment ← getEnv
+  match Audit.check environment policyName proofName role with
+  | .error "wrong_obligation" =>
+    throwErrorAt proof (← wrongObligationMessage environment policyName proofName role)
   | .error message => throwError "{message}"
   | .ok registration =>
     modifyEnv fun environment => proofRegistry.addEntry environment registration
@@ -195,10 +265,6 @@ elab "#noctium_register_functional " proof:ident " for " policy:ident : command 
 
 elab "#noctium_register_privacy " proof:ident " for " policy:ident : command =>
   register proof policy .privacy
-
-private def roleLabel : Audit.Role → String
-  | .functional => "functional"
-  | .privacy => "privacy"
 
 private def coverageRegistrationJson (registration : Audit.Registration) : Lean.Json :=
   Lean.Json.mkObj [
