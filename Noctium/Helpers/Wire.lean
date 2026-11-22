@@ -186,12 +186,32 @@ def either (id : Types.DeclId) (left right : Codec) : Codec :=
   }
   {payload := eitherType, frameBytes := 1 + left.frameBytes + right.frameBytes, composites}
 
+private def pairOrdinals : List Nat → List (Nat × Nat)
+  | encoder :: decoder :: rest => (encoder, decoder) :: pairOrdinals rest
+  | _ => []
+
+/-- Allocate deterministic root-scope IDs for the generated codec helpers.
+The candidate window is bounded by the existing root declaration count plus
+the number of IDs required, so sparse large ordinals never force a large scan. -/
+private def codecDeclarationIds (program : Program) (codecCount : Nat) : Except String
+    (List (DeclarationId × DeclarationId)) := do
+  if codecCount == 0 then pure [] else do
+    let occupied := (program.declarations.filter (·.id.scope == 0)).map (·.id.ordinal)
+    let bound := occupied.length + 2 * codecCount
+    let available := ((List.range bound).map (· + 1)).filter fun ordinal =>
+      !occupied.contains ordinal
+    let pairs := pairOrdinals (available.take (2 * codecCount))
+    unless pairs.length == codecCount do
+      throw "unable to allocate root declaration IDs for wire codecs"
+    pure (pairs.map fun (encoder, decoder) => (⟨0, encoder⟩, ⟨0, decoder⟩))
+
 /-- Add the checked codec helpers to a readable circuit's root scope. -/
 def attach (program : Program) (codecs : List Codec) : Except String Program := do
   let composites := compositeEnv program.composites codecs
-  let helpers ← codecs.zipIdx.mapM fun (codec, index) => do
+  let ids ← codecDeclarationIds program codecs.length
+  let helpers ← (codecs.zipIdx.zip ids).mapM fun ((codec, index), (encoder, decoder)) => do
     let compiled ← (Types.compileType composites codec.payload).mapError (·.message)
-    declarations compiled (codecName index) codec.frameBytes ⟨0, 2 * index + 1⟩ ⟨0, 2 * index + 2⟩
+    declarations compiled (codecName index) codec.frameBytes encoder decoder
   pure {program with composites, declarations := program.declarations ++ helpers.flatten}
 
 end Noctium.Helpers.Wire

@@ -164,6 +164,7 @@ scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax (name := readableSequenceSlice) "slice(" nlexpr "," num "," num ")" : nlexpr
 scoped syntax "enumTag(" nlexpr ")" : nlexpr
 scoped syntax "enumMember(" ident "," ident ")" : nlexpr
+scoped syntax "invoke(" ident "," "[" nlexpr,* "]" ")" : nlexpr
 
 declare_syntax_cat noctium_bind_pattern
 declare_syntax_cat noctium_bind_field
@@ -191,7 +192,7 @@ scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "en
 scoped syntax "for" ident (":" nltype)? "in" nlexpr "do" noctium_witness_statement* "end" :
   noctium_witness_statement
 scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_circuit" ident
-  ("using" ident,+)? "where" noctium_witness_statement* "end" : command
+  ("using" ident,+)? ("with" ident)? "where" noctium_witness_statement* "end" : command
 
 private abbrev SurfaceEnv := List (String × ResultType × Noctium.Helpers.Term)
 
@@ -664,6 +665,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| foreignToBytes($value)) => s!"foreignToBytes({renderExpr value})"
   | `(nlexpr| foreignFromBytes($type:nltype, $value)) =>
     s!"foreignFromBytes({renderType type}, {renderExpr value})"
+  | `(nlexpr| invoke($function:ident, [$args:nlexpr,*])) =>
+    s!"invoke({function.getId}, [{String.intercalate ", " (args.getElems.toList.map renderExpr)}])"
   | `(nlexpr| witness $function:ident($args:nlexpr,*)) =>
     s!"witness {function.getId}({String.intercalate ", " (args.getElems.toList.map renderExpr)})"
   | `(nlexpr| map([$sequences,*], fun $parameters:ident* => $body)) =>
@@ -744,6 +747,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
     disclosedValues left ++ disclosedValues right
   | `(nlexpr| foreignFromBytes($_:nltype, $value)) => disclosedValues value
+  | `(nlexpr| invoke($_:ident, [$args:nlexpr,*]))
   | `(nlexpr| witness $_:ident($args:nlexpr,*)) => args.getElems.toList.flatMap disclosedValues
   | `(nlexpr| map([$sequences,*], fun $_:ident* => $body)) =>
     sequences.getElems.toList.flatMap disclosedValues ++ disclosedValues body
@@ -824,6 +828,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
     inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| foreignFromBytes($_:nltype, $value)) => inlineAssertions value
+  | `(nlexpr| invoke($_:ident, [$args:nlexpr,*]))
   | `(nlexpr| witness $_:ident($args:nlexpr,*)) => args.getElems.toList.flatMap inlineAssertions
   | `(nlexpr| map([$sequences,*], fun $_:ident* => $body)) =>
     sequences.getElems.toList.flatMap inlineAssertions ++ inlineAssertions body
@@ -1973,6 +1978,21 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {lowered with generatedValidity :=
       (lowered.generatedValidity ++
         if let .point _ := kind then ["canonical foreign point decoding"] else []).eraseDups}
+  | `(nlexpr| invoke($function:ident, [$args:nlexpr,*])) => do
+    let values ← args.getElems.toList.mapM (lowerExpr programName callPrefix env)
+    let span ← liftM (spanValue stx)
+    let (before, arguments, staged) ← stageIterationValues callPrefix env span values
+    let program ← iterationProgram stx programName (values.flatMap (·.signatures))
+    let helperEnv := iterationEnvironment env staged (← get).iterationParameters
+    let (program, term) ←
+      match Iteration.applyWithLimits {} program 0 helperEnv span (.named function.getId.toString) arguments with
+      | .ok result => pure result
+      | .error diagnostic => throwErrorAt function diagnostic.message
+    let type ← match Helpers.inferWithLimits {} program 0 helperEnv span term with
+      | .ok value => pure value.ty
+      | .error diagnostic => throwErrorAt function diagnostic.message
+    modify fun state => {state with iterationProgram := some program, requiresOutputViews := _root_.Bool.true}
+    pure {mergeLowered type term values with before}
   | `(nlexpr| witness $function:ident($args:nlexpr,*)) => do
     let signature ← liftM (witnessSignature function)
     let signatureName := signature.name
@@ -2863,7 +2883,7 @@ private partial def lowerReadableStatement (programName path : String)
 @[command_elab noctiumAuthoredWitnessCircuitCommand] unsafe def elabAuthoredWitnessCircuit : CommandElab := fun stx => do
   match stx with
   | `(noctium_witness_circuit $name:ident $[using $usingCodecs:ident,*]?
-      where $statements:noctium_witness_statement* end) => do
+      $[with $librarySource:ident]? where $statements:noctium_witness_statement* end) => do
     let fullName := (← getCurrNamespace) ++ name.getId
     let programName := generatedName fullName "__program"
     let observationName := generatedName fullName "__observation"
@@ -2887,11 +2907,26 @@ private partial def lowerReadableStatement (programName path : String)
       codecs := codecs ++ [(codecName.getId, codec)]
       resolvedCodecs := resolvedCodecs ++ [(source, codec)]
       codecTerms := codecTerms.push ⟨mkIdent source⟩
-    let initialComposites := Helpers.Wire.compositeEnv {} (codecs.map (·.2))
+    let (libraryName, library) ← match librarySource with
+      | none => pure (none, none)
+      | some librarySource => do
+        let source ← liftCoreM <| resolveGlobalConstNoOverload librarySource
+        let library ← evalConstCheck Helpers.Program ``Helpers.Program source
+        pure (some source, some library)
+    let attached ← match library with
+      | none => pure none
+      | some library =>
+        match Helpers.Wire.attach library (codecs.map (·.2)) with
+        | .ok program => pure (some program)
+        | .error message => throwErrorAt stx message
+    let initialComposites := (attached.map (·.composites)).getD
+      (Helpers.Wire.compositeEnv {} (codecs.map (·.2)))
     let exprState : AuthoringExprState := {codecs, composites := initialComposites}
     let mut sourceBody : ReadableBody := {
       observation := {entryName := exportName}
-      composites := initialComposites}
+      composites := initialComposites
+      helperProgram := attached
+      witnesses := (attached.map (·.witnesses)).getD []}
     let mut parameters : List Parameter := []
     let mut inputs : List Input := []
     let mut aggregateInputs : List AggregateInput := []
@@ -3047,7 +3082,12 @@ private partial def lowerReadableStatement (programName path : String)
       body := body ++ [.return (some (.composite compositeType outputReferences))]
     let observation := sourceBody.observation
     let helperProgram := sourceBody.helperProgram
-    let declId : DeclarationId := ⟨0, 0⟩
+    let mut ordinal := 0
+    if library.isSome then
+      let declarations := (helperProgram.map (·.declarations)).getD []
+      while declarations.any (fun declaration => declaration.id == ⟨0, ordinal⟩) do
+        ordinal := ordinal + 1
+    let declId : DeclarationId := ⟨0, ordinal⟩
     let declaration : Noctium.Helpers.Declaration :=
       { id := declId,
         name := programNameText,
@@ -3074,7 +3114,7 @@ private partial def lowerReadableStatement (programName path : String)
       | some program =>
         {program with
           declarations := (program.declarations.filter fun item =>
-            item.id != ⟨0, 0⟩) ++ [declaration]
+            library.isSome || item.id != ⟨0, 0⟩) ++ [declaration]
           exports := [entryExport]
           composites := {
             sourceBody.composites with
@@ -3183,7 +3223,10 @@ private partial def lowerReadableStatement (programName path : String)
       `(Noctium.Helpers.AggregateInput.mk $(stringTerm input.name) $(← compositeTypeTerm input.type)
         $visibility $(← quoteSpan input.span))
     let aggregateInputTerms := aggregateInputTerms.toArray
-    let declarationTerms ← program.declarations.mapM fun declaration => do
+    let libraryDeclarations := (library.map (·.declarations)).getD []
+    let newDeclarations := program.declarations.filter fun declaration =>
+      !libraryDeclarations.any (fun inherited => inherited.id == declaration.id)
+    let declarationTerms ← newDeclarations.mapM fun declaration => do
       let parameterTerms ← declaration.parameters.mapM fun parameter => do
         `( ({ name := $(stringTerm parameter.name), ty := $(← tyTerm parameter.ty) } : Noctium.Helpers.Parameter))
       let parameterTerms := parameterTerms.toArray
@@ -3226,16 +3269,28 @@ private partial def lowerReadableStatement (programName path : String)
       enumerations := [$enumerationTerms,*]
       : Noctium.Types.CompositeEnv })
     let exportSpanTerm ← quoteSpan entryExport.span
-    let exportId ← `(Noctium.Helpers.DeclarationId.mk 0 0)
+    let exportId ← `(Noctium.Helpers.DeclarationId.mk 0 $(natTerm ordinal))
     let exportTerm ← `(Noctium.Helpers.Export.mk $(stringTerm entryExport.name) $exportId
       [$inputTerms,*] [$aggregateInputTerms,*] $exportSpanTerm)
-    let programTerm ← `({
-      scopes := [{id := 0}]
-      declarations := [$declarationTerms,*]
-      exports := [$exportTerm]
-      composites := $compositeEnvTerm
-      witnesses := [$signatureTerms,*]
-      : Noctium.Helpers.Program })
+    let localDeclarations ← `([$declarationTerms,*])
+    let programTerm ← match libraryName with
+      | some source =>
+        let library := mkIdent source
+        `({
+          scopes := $(library).scopes
+          declarations := $(library).declarations ++ $localDeclarations
+          exports := [$exportTerm]
+          composites := $compositeEnvTerm
+          witnesses := [$signatureTerms,*]
+          ledger := $(library).ledger
+          : Noctium.Helpers.Program })
+      | none => `({
+          scopes := [{id := 0}]
+          declarations := $localDeclarations
+          exports := [$exportTerm]
+          composites := $compositeEnvTerm
+          witnesses := [$signatureTerms,*]
+          : Noctium.Helpers.Program })
     let programTerm ← if codecTerms.isEmpty || helperProgram.isSome then pure programTerm else
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with
         | .ok program => program

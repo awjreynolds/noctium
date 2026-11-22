@@ -40,6 +40,25 @@ Declare structured programs before opening the Noctium syntax scope, or use
 `Bool.true` and `Bool.false` for Lean Boolean fields. The scope reserves source
 keywords such as `true`, `false` and `output`.
 
+## Call a helper in a readable witness circuit
+
+```lean
+noctium_witness_circuit rewrite using readingWire with readingHelpers where
+  public seed : Native
+  let changed := invoke(raiseReading, [witness loadBase(seed), true])
+  output result := disclose(changed)
+end
+```
+
+The `with` clause links one Lean `Helpers.Program`. It keeps the original lexical
+scopes and declarations. Generated codec helpers and the entry use free
+declaration IDs. `invoke` evaluates arguments once in source order, then uses
+ordinary helper overload and disclosure checks.
+
+The paired Compact and native fixture calls one aggregate helper from two
+entries. One returns the changed record and one projects its reading.
+[Lean fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 ## Checking and execution
 
 A declaration has a lexical identity `(scope, ordinal)`. Names identify overload
