@@ -83,6 +83,25 @@ private def failingBool : Expr .bool := .assertE (.bool Bool.false) (.bool Bool.
   | .error "helper assertion failed" => _root_.Bool.true
   | _ => _root_.Bool.false
 
+noctium_circuit eagerXorWithTrue where
+  public enabled : Bool
+  public value : Bool
+  output flipped : Bool := boolXor(true, assertThen(enabled, value))
+end
+
+private def loweredOpcodes (circuit : Circuit) : Except String (Array String) := do
+  let program ← (Backend.Zkir.lowerCircuit circuit).mapError (·.message)
+  let instructions ← program.getObjValAs? (Array Json) "instructions"
+  instructions.mapM fun instruction => instruction.getObjValAs? String "op"
+
+#guard match loweredOpcodes eagerXorWithTrue with
+  | .ok ops => ops.filter (fun op => ["assert", "not", "xor"].contains op) == #["assert", "not"]
+  | .error _ => Bool.false
+
+#guard match loweredOpcodes booleanInputs with
+  | .ok ops => ops.filter (fun op => ["not", "xor"].contains op) == #["not", "xor", "not"]
+  | .error _ => Bool.false
+
 noctium_circuit booleanNotRetainsPartialOperand where
   private enabled : Bool
   let unused : Bool := boolNot(assertThen(enabled, true))
