@@ -1954,7 +1954,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimContractCall",
       "noctiumStatus": "related-subset",
-      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Other claim shapes and full Compact equivalence remain unverified.",
+      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Native checked intent assembly accepts the matched ConfidentialToken mint commitment and rejects a changed recipient or amount. Other claim shapes and full Compact equivalence remain unverified.",
       "source": [
         "adt"
       ],
@@ -1966,6 +1966,8 @@
       "observedEvidence": [
         "tests/NativeCallClaims.lean",
         "tests/ContractInterfaceComposition.lean",
+        "examples/openzeppelin/ConfidentialTokenComposition.lean",
+        "runtime/tests/confidential_token.rs",
         "docs/development/native-call-claims.md",
         "docs/development/named-interface-stateful-composition-receipt.json"
       ],
