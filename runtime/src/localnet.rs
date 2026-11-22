@@ -4567,4 +4567,109 @@ mod tests {
             Ok(())
         })
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the authenticated SealedCounterListConstructor inspect bundle and funded development node"]
+    fn sealed_counter_list_constructor_finalizes_exact_immutable_state() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{collections::BTreeMap, env, path::Path};
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_SEALED_ADTS_FUNDED_BUNDLE")?;
+            let manifest = setting("NOCTIUM_SEALED_ADTS_FUNDED_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&manifest))?;
+            let bundle_digest = bundle
+                .authenticated_manifest_sha256()
+                .context("verified bundle did not retain its manifest pin")?
+                .to_owned();
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "inspect", "expected inspect bundle");
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let degree = circuit.k();
+            let constructor_arguments = BTreeMap::from([
+                ("amount".into(), json!("5")),
+                ("first".into(), json!("17")),
+            ]);
+            let expected_state =
+                crate::constructor::construct_state(&plan, &constructor_arguments)?;
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_SEALED_ADTS_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_SEALED_ADTS_FUNDED_NODE")?,
+                &cache,
+            )
+            .await?;
+            let parameters = cache.parameters(degree).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{"amount":"5","first":"17"}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let inspect = target.operation("inspect", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "inspect").await?;
+            let deployed_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed_state.data.get_ref() == expected_state.get_ref(),
+                "deployed constructor state differs from native construct_state"
+            );
+
+            let mut current = Some(deployed);
+            let inspected = funded
+                .call(&inspect, &mut current, &parameters, BTreeMap::new())
+                .await?;
+            ensure!(
+                inspected.contract_state == deployment.contract_state,
+                "no-input inspect changed the exact finalized state bytes"
+            );
+            let inspected_state: ContractState<Db> = native_decode(&inspected.contract_state)?;
+            ensure!(
+                inspected_state.data.get_ref() == expected_state.get_ref(),
+                "inspected state differs from native construct_state"
+            );
+
+            println!(
+                "{}",
+                json!({
+                    "scope": "deploy SealedCounterListConstructor(amount=5, first=17), then one no-input inspect",
+                    "contractAddress": target.contract_address(),
+                    "bundleManifestSha256": bundle_digest,
+                    "degree": degree,
+                    "deploymentReceipt": {
+                        "height": deployment.height,
+                        "finalizedHeight": deployment.finalized_height,
+                        "blockHash": deployment.block_hash,
+                        "finalizedHash": deployment.finalized_hash,
+                        "transactionId": deployment.transaction_id
+                    },
+                    "inspectReceipt": {
+                        "height": inspected.height,
+                        "finalizedHeight": inspected.finalized_height,
+                        "blockHash": inspected.block_hash,
+                        "finalizedHash": inspected.finalized_hash,
+                        "transactionId": inspected.transaction_id
+                    },
+                    "constructStateMatchedDeployment": true,
+                    "inspectPreservedExactStateBytes": true
+                })
+            );
+            Ok(())
+        })
+    }
 }
