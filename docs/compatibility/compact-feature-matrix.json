@@ -414,7 +414,7 @@
       "layer": "language",
       "surface": "Struct",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits declare public and private record inputs using a named codec's checked Payload type. Projections preserve private origins. The payment case commits a private record in layout order, projects fields from both inputs and returns explicitly disclosed values. The host rejects malformed records, and the compiler rejects implicit release. Readable circuits support named aggregate outputs and fieldwise equality on flat records with the same nominal type. Native, Bool and bounded UInt field comparisons match pinned Compact for equal records and each changed field. Named constructors validate all fields and preserve codec identity. The selected native case matches Compact 0.36.1 in declaration-order callback execution even with reversed initializer syntax. Source checks reject mixed record identities, invalid fields and implicit disclosure. Destructuring, spread and broader generic struct equivalence remain open.",
+      "notes": "Readable circuits accept nominal record payloads, construct them in declaration order and preserve private origins through projections. Equality compares the canonical leaves of matching checked aggregate types. The nested Compact and native fixtures check equal records and nine changes across scalars, nested records, tuples, vectors, fixed bytes and enum fields. Different nominal types and implicit publication of a private comparison are rejected. Spread and broader generic struct equivalence remain open.",
       "source": [
         "reference"
       ],
@@ -432,7 +432,10 @@
         "runtime/tests/nominal_record_equality.rs",
         "tests/ReadableRecordConstruction.lean",
         "tests/compact/readable-record-construction.mjs",
-        "runtime/tests/readable_record_construction.rs"
+        "runtime/tests/readable_record_construction.rs",
+        "tests/NestedAggregateEquality.lean",
+        "tests/compact/nested-aggregate-equality.mjs",
+        "runtime/tests/nested_aggregate_equality.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

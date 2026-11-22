@@ -1329,15 +1329,11 @@ impl Parser<'_> {
                             (Type::Aggregate(left), Type::Aggregate(right)) => {
                                 ensure!(
                                     left == right,
-                                    "control aggregate equality requires identical nominal types"
+                                    "control equality requires identical checked aggregate types"
                                 );
-                                ensure!(
-                                    self.registry.is_flat_record(left)?,
-                                    "control aggregate equality requires a flat record"
-                                );
-                                a.ty.clone()
+                                Type::parse(left, &self.registry)?
                             }
-                            _ => bail!("control equality requires scalar or flat record operands"),
+                            _ => bail!("control equality requires scalar or matching aggregate operands"),
                         };
                         (Type::Scalar(ScalarType::Bool), ExprKind::Eq(t, a, b))
                     }

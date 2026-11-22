@@ -676,19 +676,11 @@ partial def sourceLeafTypes : Types.Layout → List Ty
   | .bytes length _ => List.replicate length .native
   | .enumeration _ _ _ payloadLeaves _ _ => .native :: List.replicate payloadLeaves .native
 
-/-- Return checked source-leaf types for the supported nominal flat equality shape. -/
-def nominalFlatStructureLeafTypes (program : Program) (span : SourceSpan)
-    (type : Types.CompositeType) : Except Diagnostic (List Ty) := do
-  let .structure id := type | fail span "helper equality requires a nominal flat structure"
-  let compiled ← checkedComposite program span type
-  let .structure layoutId fields := compiled.checked.value
-    | fail span "checked helper structure has a non-structure layout"
-  unless layoutId == id do fail span "checked helper structure identity mismatch"
-  for (_, field) in fields do
-    match field with
-    | .scalar .nativeField | .scalar .booleanField | .scalar (.boundedUnsignedField _) => pure ()
-    | _ => fail span "helper equality supports only Native, Bool, and bounded UInt fields"
-  pure (sourceLeafTypes compiled.checked.value)
+/-- A matching checked layout gives both aggregate operands the same canonical leaf sequence. -/
+def checkedAggregateEquality (program : Program) (span : SourceSpan)
+    (left right : Types.CompositeType) : Except Diagnostic Types.CompiledType := do
+  unless left == right do fail span "helper equality requires identical checked aggregate types"
+  checkedComposite program span left
 
 partial def sourceLeafPaths : Types.Layout → String → List String
   | .unit, _ => []
@@ -1322,9 +1314,8 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let left ← inferPartialTerm fuel program scope env span left
       let right ← inferPartialTerm fuel program scope env span right
       match left.ty, right.ty with
-      | some (.composite (.structure leftId)), some (.composite (.structure rightId)) => do
-        unless leftId == rightId do fail span "helper equality requires identical nominal structure types"
-        discard (nominalFlatStructureLeafTypes program span (.structure leftId))
+      | some (.composite left), some (.composite right) =>
+        discard (checkedAggregateEquality program span left right)
       | _, _ =>
         discard (common span (← scalar span (← knownType span left.ty))
           (← scalar span (← knownType span right.ty)))
@@ -2238,14 +2229,13 @@ mutual
       let right ← lowerTerm program scope env span right
       let constraints := left.constraints ++ right.constraints
       match left.ty, right.ty with
-      | .composite (.structure leftId), .composite (.structure rightId) => do
-        unless leftId == rightId do
-          liftD (fail span "helper equality requires identical nominal structure types")
-        let fields ← liftD (nominalFlatStructureLeafTypes program span (.structure leftId))
+      | .composite leftType, .composite rightType => do
+        let compiled ← liftD (checkedAggregateEquality program span leftType rightType)
         let leftValues := components left
         let rightValues := components right
-        unless leftValues.length == fields.length && rightValues.length == fields.length do
-          liftD (fail span "nominal structure equality leaf count mismatch")
+        let leaves := compiled.checked.expandedLeaves
+        unless leftValues.length == leaves && rightValues.length == leaves do
+          liftD (fail span "aggregate equality leaf count mismatch")
         let equalities ← leftValues.zip rightValues |>.mapM fun (left, right) => do
           let left ← liftD (nativeOfScalar span left)
           let right ← liftD (nativeOfScalar span right)
@@ -2260,7 +2250,7 @@ mutual
         let right ← liftD (typedExpr span ty right)
         let value ← scalarEquality left right
         pure {scalarValue value with constraints}
-      | _, _ => liftD (fail span "helper equality requires scalar operands or matching nominal flat structures")
+      | _, _ => liftD (fail span "helper equality requires scalar operands or matching aggregates")
     | .cast target value =>
       let value ← lowerTerm program scope env span value
       pure {scalarValue (.cast target value.scalar.value) with constraints := value.constraints}
