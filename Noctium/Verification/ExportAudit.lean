@@ -34,6 +34,15 @@ private def roleName : Audit.Role → String
   | .functional => "functional"
   | .privacy => "privacy"
 
+private def roleRecordJson (registration : Audit.Registration) : Json :=
+  Json.mkObj [
+    ("schemaVersion", toJson (1 : Nat)),
+    ("role", toJson (roleName registration.role)),
+    ("obligation", toJson registration.role.obligation.toString),
+    ("policy", toJson registration.policy.toString),
+    ("proof", toJson registration.proof.toString),
+    ("axioms", toJson (registration.axioms.toList.map Name.toString))]
+
 private def checked (environment : Environment) (policy proof : Name) (role : Audit.Role) : IO Audit.Registration :=
   match Audit.check environment policy proof role with
   | .ok result => pure result
@@ -144,10 +153,11 @@ def run (args : List String) : IO UInt32 := do
     let environment ← replay merged
     let operation ← try operationName environment policyName catch _ => pure none
     let functional ← checked environment policyName functionalName .functional
-    let mut allAxioms := functional.axioms.toList
+    let mut proofRoles := #[functional]
     if let some privacy := privacyText then
       let result ← checked environment policyName (← parseName privacy) .privacy
-      allAxioms := allAxioms ++ result.axioms.toList
+      proofRoles := proofRoles.push result
+    let allAxioms := proofRoles.toList.flatMap (·.axioms.toList)
     let scope ← descriptions environment policyName
     IO.println <| (Json.mkObj [
       ("status", toJson (if privacyText.isSome then "source-functional-and-scoped-privacy-checked" else "source-functional-only")),
@@ -156,6 +166,7 @@ def run (args : List String) : IO UInt32 := do
       ("operation", toJson operation),
       ("policy", toJson policyText), ("functionalProof", toJson functionalText),
       ("privacyProof", toJson privacyText),
+      ("proofRoles", toJson (proofRoles.map roleRecordJson)),
       ("axioms", toJson ((allAxioms.eraseDups.mergeSort Name.lt).map Name.toString)),
       ("specification", scope),
       ("externalModelPinRequired", toJson true),
