@@ -107,6 +107,7 @@ jobs:
           lake env lean tests/StructuredMaps.lean
           lake env lean tests/NativePreparationCursor.lean
           lake env lean tests/ImpactEffectBoundaries.lean
+          lake env lean tests/RecordReadAlignment.lean
           lake env lean tests/HostedLedgerWitness.lean
           lake env lean tests/TypedWitnessResultCodec.lean
           lake env lean tests/MerklePathRootNoLeafHash.lean
@@ -209,6 +210,7 @@ jobs:
           lake env lean tests/NativeMapReset.lean
           lake env lean tests/OptionalListHead.lean
           lake env lean tests/MixedLedgerRecord.lean
+          lake env lean tests/TypedRecordMap.lean
           lake env lean tests/MerkleTree.lean
           lake env lean tests/MerkleIndexed.lean
           lake env lean tests/HistoricMerkle.lean
