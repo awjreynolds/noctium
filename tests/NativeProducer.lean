@@ -66,6 +66,17 @@ private def replace (value : Json) (name : String) (replacement : Json) : Json :
   optimized == #[bits "%x" 8, first, assertion "%first", wider, different, reused, assertion "%duplicate"] &&
     accepted (check optimized.toList)
 
+-- Only repeated direct SSA asserts disappear. Lone, guarded and immediate
+-- asserts, plus all surrounding instructions, keep their original order.
+#guard
+  let repeated := assertion "%same"
+  let lone := assertion "%lone"
+  let guarded := replace repeated "guard" (toJson ("%guard" : String))
+  let immediate := assertion "0x01"
+  RangeDedup.removeDuplicateAssertions
+    #[input, repeated, repeated, lone, guarded, guarded, immediate, immediate, output] ==
+    #[input, repeated, lone, guarded, guarded, immediate, immediate, output]
+
 #guard instructionNames.length == 47
 #guard valueTypeNames.length == 15
 #guard instructionNames.eraseDups.length == 47
@@ -230,6 +241,64 @@ private def checkMutation (change : List Json → List Json) : Except String Uni
   let json ← (Zkir.lowerCircuit publicCircuit).mapError (·.message)
   let instructions ← (← json.getObjVal? "instructions").getArr?
   Native.validate required (replace json "instructions" (toJson (change instructions.toList)))
+
+private def repeatedAssertionCircuit : Circuit := {
+  name := "repeatedAssertions"
+  inputs := [
+    {name := "flag", ty := .bool, visibility := .«private»},
+    {name := "other", ty := .bool, visibility := .«private»}]
+  constraints := [
+    (.ref "flag" : Expr .bool),
+    (.ref "flag" : Expr .bool),
+    (.ref "other" : Expr .bool)]
+  outputs := []
+}
+
+private def assertionConditions (instructions : Array Json) : Array Json :=
+  instructions.filterMap fun instruction =>
+    if (instruction.getObjValD "op").getStr?.toOption == some "assert" then
+      (instruction.getObjValD "cond").getStr?.toOption.map toJson
+    else none
+
+private def optimizedAssertionExpected : Except Diagnostic Expected := do
+  let expected ← Native.expectedCircuit repeatedAssertionCircuit
+  pure {expected with assertions := expected.assertions.eraseDups}
+
+private def checkOptimizedAssertionMutation
+    (change : Array Json → Array Json) : Except String Unit := do
+  let expected ← optimizedAssertionExpected |>.mapError (·.message)
+  let json ← (Zkir.lowerCircuit repeatedAssertionCircuit true).mapError (·.message)
+  let instructions ← Native.arrayField json "instructions"
+  Native.validate expected (replace json "instructions" (Json.arr (change instructions)))
+
+#guard match Zkir.lowerCircuit repeatedAssertionCircuit,
+    Zkir.lowerCircuit repeatedAssertionCircuit true with
+  | .ok ordinary, .ok optimized =>
+    match Native.arrayField ordinary "instructions", Native.arrayField optimized "instructions" with
+    | .ok plainItems, .ok optimizedItems =>
+      assertionConditions plainItems == #[toJson ("%input_flag" : String),
+        toJson ("%input_flag" : String), toJson ("%input_other" : String)] &&
+      assertionConditions optimizedItems == #[toJson ("%input_flag" : String),
+        toJson ("%input_other" : String)] &&
+      plainItems.filter (fun item => (item.getObjValD "op").getStr?.toOption != some "assert") ==
+        optimizedItems.filter (fun item => (item.getObjValD "op").getStr?.toOption != some "assert")
+    | _, _ => false
+  | _, _ => false
+
+#guard accepted (checkOptimizedAssertionMutation id)
+#guard rejected (checkOptimizedAssertionMutation fun instructions =>
+  instructions.filter fun item =>
+    (item.getObjValD "op").getStr?.toOption != some "assert" ||
+      (item.getObjValD "cond").getStr?.toOption != some "%input_other")
+#guard rejected (checkOptimizedAssertionMutation fun instructions =>
+  let assertions := instructions.filter fun item =>
+    (item.getObjValD "op").getStr?.toOption == some "assert"
+  let body := instructions.filter fun item =>
+    (item.getObjValD "op").getStr?.toOption != some "assert" &&
+      (item.getObjValD "op").getStr?.toOption != some "output"
+  let outputs := instructions.filter fun item =>
+    (item.getObjValD "op").getStr?.toOption == some "output"
+  body ++ assertions.reverse ++ outputs)
 
 #guard accepted (checkMutation id)
 #guard rejected (checkMutation (List.filter (fun value => (value.getObjValD "op").getStr?.toOption != some "impact")))
