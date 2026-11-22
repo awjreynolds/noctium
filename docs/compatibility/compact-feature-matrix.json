@@ -643,7 +643,7 @@
       "layer": "language",
       "surface": "Type defaults",
       "noctiumStatus": "subset",
-      "notes": "Defaults for every supported type, including inactive Maybe/Either payloads.",
+      "notes": "Readable witness circuits accept default expressions for Native, Bool, bounded UInt and fixed Bytes, alongside checked Payload layout defaults. The matched Compact 0.36.1 fixture covers zero scalars and fixed bytes at widths 0, 3 and 32, and vectors at lengths 0 and 2. Generic curve and foreign defaults remain open.",
       "source": [
         "reference"
       ],
@@ -660,7 +660,8 @@
         "runtime/tests/fixed_bytes_defaults.rs",
         "tests/CompositeDefaults.lean",
         "tests/compact/composite-defaults.mjs",
-        "runtime/tests/composite_defaults.rs"
+        "runtime/tests/composite_defaults.rs",
+        "tests/ReadableDefaults.lean"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
