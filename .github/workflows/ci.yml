@@ -167,6 +167,7 @@ jobs:
           lake env lean tests/NativeCellReset.lean
           lake env lean tests/FlatRecordCellReset.lean
           lake env lean tests/TypedRecordCell.lean
+          lake env lean tests/FixedBytesRecordCell.lean
           lake env lean tests/NativeStandaloneMints.lean
           lake env lean tests/ShieldedReceive.lean
           lake env lean tests/FundedShieldedReceive.lean

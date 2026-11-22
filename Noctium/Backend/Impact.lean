@@ -1108,7 +1108,8 @@ def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
       unless read.components.all (fun component =>
           component.2 == .native || component.2 == .bool ||
             (match component.2 with | .uint _ => true | _ => false) ||
-            component.2 == .bytes 32 || component.2 == .jubjubPoint) ||
+            (match component.2 with | .bytes _ => true | _ => false) ||
+            component.2 == .jubjubPoint) ||
           (read.guard.isNone && read.components.map Prod.snd == shieldedCoinReadTypes) do
         throw "native composite reads require supported scalar fields or an unguarded shielded coin record"
       for (_, ty) in read.components do ty.validate expressionCapabilities
