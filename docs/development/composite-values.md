@@ -103,3 +103,18 @@ The fixture checks identical records and a difference in each field against
 the pinned Compact oracle and the native relation. The replay test exercises
 the same typed comparison in Lean.
 [Lean fixture](../../tests/NominalRecordEquality.lean) · [Native check](../../runtime/tests/nominal_record_equality.rs) · [Compact fixture](../../tests/compact/nominal-record-equality.mjs)
+
+## Use named fieldless enum members
+
+Use a checked enum codec from the circuit's `using` clause.
+
+```lean
+let contractKind := enumMember(recipientWire, Contract)
+output isContract : Bool := eq(choice, contractKind)
+```
+
+The member carries the codec's nominal type. Equality requires two values of
+the same fieldless enum. The declaration order determines the member ordinal.
+Use `enumTag` to return that ordinal as Native. A comparison retains the
+privacy origins of both operands.
+[Lean fixture](../../tests/NamedEnumMembers.lean) · [Native check](../../runtime/tests/named_enum_members.rs) · [Compact fixture](../../tests/compact/named-enum-members.mjs)
