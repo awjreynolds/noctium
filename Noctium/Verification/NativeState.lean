@@ -23,7 +23,10 @@ inductive Slot where
   deriving Repr, DecidableEq
 
 /-- The legacy array constructor retains the fixed claim certificate. The
-vector constructor represents arbitrary current scalar cell/map schemas. -/
+vector constructor represents arbitrary current scalar cell/map schemas. Map
+entries store scalar representatives, with the declaration fixing each map's
+key and value types. The scalar map-index proof therefore covers schema-fixed
+field keys and field-valued entries. -/
 inductive Node where
   | cell (value : Cell)
   | map (entries : List (Scalar × Scalar))
@@ -40,6 +43,7 @@ inductive Op where
   | popeq (value : Cell)
   | dup
   | index (slot : Nat) (pushPath : _root_.Bool)
+  | mapIndex (slot : Nat) (key : Cell)
   | member
   | insert (levels : Nat)
   deriving Repr, DecidableEq
@@ -84,6 +88,15 @@ def step (op : Op) (machine : Machine) : Option Machine := do
     let child ← (items[slot]?).map Slot.toNode
     let rest := if path then .cell (field (scalar slot)) :: .vector items :: rest else rest
     pure {machine with stack := child :: rest}
+  | .mapIndex slot ⟨.field, key⟩, .vector items :: rest => do
+    let some (.map entries) := items[slot]? | none
+    let some value := entries.lookup key | none
+    pure {machine with stack := .cell (field value) :: rest}
+  | .mapIndex slot ⟨.field, key⟩, .array cells entries :: rest => do
+    if slot != cells.length then none
+    let some value := entries.lookup key | none
+    pure {machine with stack := .cell (field value) :: rest}
+  | .mapIndex _ _, _ => none
   | .member, .cell ⟨.field, key⟩ :: .map entries :: rest =>
     pure {machine with stack := .cell (boolean (entries.any (fun p => p.1 == key))) :: rest}
   | .insert levels, value :: rest =>
@@ -158,6 +171,54 @@ theorem run_index_vector (items : List Slot) (slot : Nat) (path : _root_.Bool)
         (if path then .cell (field (scalar slot)) :: .vector items :: stack else stack), reads⟩ := by
   simp [run, step, found]
 
+/-- A direct map index traverses the root slot and the typed scalar key in one
+native VM operation. It returns the field-aligned stored value and leaves the
+caller-owned stack below the root untouched. -/
+theorem run_mapIndex_vector (items : List Slot) (slot : Nat)
+    (entries : List (Scalar × Scalar)) (key value : Scalar)
+    (ops : List Op) (stack : List Node) (reads : List Cell)
+    (foundMap : items[slot]? = some (.map entries))
+    (foundKey : entries.lookup key = some value) :
+    run (.mapIndex slot (field key) :: ops) ⟨.vector items :: stack, reads⟩ =
+      run ops ⟨.cell (field value) :: stack, reads⟩ := by
+  simp [run, step, field, foundMap, foundKey]
+
+/-- The legacy fixed-claim array representation places its embedded map after
+the fixed cell prefix, matching its root-array index. -/
+theorem run_mapIndex_array (cells : List Cell)
+    (entries : List (Scalar × Scalar)) (key value : Scalar)
+    (ops : List Op) (stack : List Node) (reads : List Cell)
+    (slotIsMap : cells.length = slot)
+    (foundKey : entries.lookup key = some value) :
+    run (.mapIndex slot (field key) :: ops) ⟨.array cells entries :: stack, reads⟩ =
+      run ops ⟨.cell (field value) :: stack, reads⟩ := by
+  simp [run, step, field, slotIsMap, foundKey]
+
+/-- Missing map keys reject instead of yielding a default scalar. -/
+theorem run_mapIndex_vector_missing (items : List Slot) (slot : Nat)
+    (entries : List (Scalar × Scalar)) (key : Scalar)
+    (ops : List Op) (stack : List Node) (reads : List Cell)
+    (foundMap : items[slot]? = some (.map entries))
+    (missingKey : entries.lookup key = none) :
+    run (.mapIndex slot (field key) :: ops) ⟨.vector items :: stack, reads⟩ = none := by
+  simp [run, step, field, foundMap, missingKey]
+
+/-- A map index against a cell slot rejects even when the key is present in a
+different state map. -/
+theorem run_mapIndex_vector_wrongContainer (items : List Slot) (slot : Nat)
+    (cell : Cell) (key : Scalar) (ops : List Op) (stack : List Node) (reads : List Cell)
+    (foundCell : items[slot]? = some (.cell cell)) :
+    run (.mapIndex slot (field key) :: ops) ⟨.vector items :: stack, reads⟩ = none := by
+  simp [run, step, field, foundCell]
+
+/-- Map-index requires the ledger's field-aligned scalar key encoding. A bit
+cell cannot silently alias a field key with the same numeric payload. -/
+theorem run_mapIndex_vector_wrongKeyAlignment (items : List Slot) (slot : Nat)
+    (key : Bool)
+    (ops : List Op) (stack : List Node) (reads : List Cell) :
+    run (.mapIndex slot (boolean key) :: ops) ⟨.vector items :: stack, reads⟩ = none := by
+  simp [run, step, boolean]
+
 theorem run_insert_vector_cell (items : List Slot) (slot : Nat) (old value : Cell)
     (ops : List Op) (stack : List Node) (reads : List Cell)
     (found : items[slot]? = some (.cell old))
@@ -218,6 +279,7 @@ def Op.fields : Op → List Scalar
   | .popeq value => scalar 0x0c :: value.fields
   | .dup => [scalar 0x30]
   | .index slot path => scalar (if path then 0x70 else 0x50) :: (field (scalar slot)).fields
+  | .mapIndex slot key => scalar 0x51 :: (field (scalar slot)).fields ++ key.fields
   | .member => [scalar 0x18]
   | .insert levels => [scalar (0x90 + levels)]
 
