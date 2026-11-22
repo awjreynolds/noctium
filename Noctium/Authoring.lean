@@ -148,6 +148,10 @@ declare_syntax_cat noctium_record_field
 scoped syntax ident ":=" nlexpr : noctium_record_field
 scoped syntax ".." nlexpr : noctium_record_field
 scoped syntax "record(" "Payload" ident "," "{" noctium_record_field,* "}" ")" : nlexpr
+declare_syntax_cat noctium_tuple_item
+scoped syntax nlexpr : noctium_tuple_item
+scoped syntax ".." nlexpr : noctium_tuple_item
+scoped syntax "tuple(" noctium_tuple_item,* ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
@@ -506,6 +510,13 @@ private def recordField (field : TSyntax `noctium_record_field) :
   | `(noctium_record_field| ..$source:nlexpr) => some (none, source)
   | _ => none
 
+private def tupleItem (item : TSyntax `noctium_tuple_item) :
+    Option (_root_.Bool × TSyntax `nlexpr) :=
+  match item with
+  | `(noctium_tuple_item| ..$source:nlexpr) => some (_root_.Bool.true, source)
+  | `(noctium_tuple_item| $source:nlexpr) => some (_root_.Bool.false, source)
+  | _ => none
+
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   match stx with
   | `(nlexpr| $id:ident) => id.getId.toString
@@ -531,6 +542,10 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
       | (some name, value) => s!"{name.getId} := {renderExpr value}"
       | (none, value) => ".." ++ renderExpr value
     "record(Payload " ++ codec.getId.toString ++ ", {" ++ String.intercalate ", " rendered ++ "})"
+  | `(nlexpr| tuple($items,*)) =>
+    let rendered := (items.getElems.toList.filterMap tupleItem).map fun (spread, value) =>
+      (if spread then ".." else "") ++ renderExpr value
+    "tuple(" ++ String.intercalate ", " rendered ++ ")"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
@@ -648,6 +663,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| disclose($value)) => renderExpr value :: disclosedValues value
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (disclosedValues ∘ Prod.snd)
+  | `(nlexpr| tuple($items,*)) =>
+    (items.getElems.toList.filterMap tupleItem).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
@@ -722,6 +739,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   match stx with
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (inlineAssertions ∘ Prod.snd)
+  | `(nlexpr| tuple($items,*)) =>
+    (items.getElems.toList.filterMap tupleItem).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) =>
@@ -1035,6 +1054,24 @@ private def lowerProjection (stx : Syntax) (value : Lowered)
     | .error diagnostic => throwErrorAt stx diagnostic.message
   pure {value with type := Helpers.resultTypeOfComposite child, term := .project value.term projection}
 
+private def spreadTupleItems (site : Syntax) (type : ResultType) (source : Helpers.Term) :
+    ExprM (List Lowered) :=
+  match type with
+  | .unit => pure []
+  | .composite (.tuple types) =>
+    pure (types.zipIdx.map fun (type, index) =>
+      {type := Helpers.resultTypeOfComposite type, term := .project source (.tupleIndex index)})
+  | .composite (.vector length type) =>
+    pure ((List.range length).map fun index =>
+      {type := Helpers.resultTypeOfComposite type, term := .project source (.vectorIndex index)})
+  | .composite (.bytes length) =>
+    pure ((List.range length).map fun index =>
+      {type := .scalar (.uint 255), term := .project source (.byteIndex index)})
+  | .scalar (.bytes length) =>
+    pure ((List.range length).map fun index =>
+      {type := .scalar (.uint 255), term := .bytesAt source index})
+  | _ => throwErrorAt site "tuple spread requires a tuple, vector, fixed Bytes or Unit"
+
 private def lowerForeignFieldConstant (stx : Syntax) (kind : Foreign.Kind) (value : Nat) : ExprM Lowered := do
   let encoding ← match Foreign.encodeField kind value with
     | .ok encoding => pure encoding
@@ -1233,6 +1270,34 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves)
       (base.toList.map Prod.fst ++ values)
     pure {result with before := spreadBefore ++ before}
+  | `(nlexpr| tuple($items,*)) => do
+    let arguments ← items.getElems.toList.mapM fun item => do
+      let some (spread, source) := tupleItem item
+        | throwErrorAt item "invalid tuple argument"
+      pure (spread, source, ← lowerExpr programName callPrefix env source)
+    let values := arguments.map fun (_, _, value) => value
+    let span ← liftM (spanValue stx)
+    let (before, references, _) ← stageIterationValues callPrefix env span values
+    let mut parts : List (List Lowered) := []
+    let mut size := 1
+    for ((spread, source, value), reference) in arguments.zip references do
+      let fields ← if spread then spreadTupleItems source value.type reference
+        else pure [{type := value.type, term := reference}]
+      size := size + fields.length
+      if size > Types.defaultLimits.maxLayoutNodes then
+        throwErrorAt source "tuple construction exceeds the layout node limit"
+      parts := fields :: parts
+    let fields := parts.reverse.flatten
+    let payload := Types.CompositeType.tuple (fields.map Lowered.layoutType)
+    let compiled ← checkedPayloadLayout stx payload
+    let .tuple layouts := compiled.checked.value
+      | throwErrorAt stx "checked tuple layout mismatch"
+    let leaves ← (fields.zip layouts).flatMapM fun (value, layout) => do
+      match Helpers.Iteration.flattenResult span value.type layout value.term with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt stx diagnostic.message
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    pure {mergeLowered (.composite payload) (.composite payload leaves) values with before}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message

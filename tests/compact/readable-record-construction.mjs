@@ -51,6 +51,22 @@ try {
     calls.push(['base', value]);
     return [privateState, { reading: 13n, count: 19n, active: false }];
   },
+  loadPair: ({ privateState }, value) => {
+    calls.push(['pair', value]);
+    return [privateState, [11n, true]];
+  },
+  loadVector: ({ privateState }, value) => {
+    calls.push(['vector', value]);
+    return [privateState, [17n, 19n]];
+  },
+  loadBytes: ({ privateState }, value) => {
+    calls.push(['bytes', value]);
+    return [privateState, new Uint8Array([165, 60])];
+  },
+  loadUnit: ({ privateState }, value) => {
+    calls.push(['unit', value]);
+    return [privateState, []];
+  },
   });
   const wallet = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(createConstructorContext([], wallet));
@@ -69,14 +85,19 @@ try {
   const { result: spread } = await contract.circuits.patch(context('patch'), 7n);
   assert.deepEqual(calls, [['base', 7n], ['count', 9n], ['active', 8n], ['base', 10n]]);
   assert.deepEqual(spread, { reading: 13n, count: 17n, active: true });
+  const recordSpreadCalls = calls.splice(0);
+  const { result: tuple } = await contract.circuits.spreadTuple(context('spreadTuple'), 7n);
+  assert.deepEqual(calls, [['pair', 8n], ['vector', 9n], ['bytes', 10n], ['unit', 11n]]);
+  assert.deepEqual(tuple, [[7n, 11n, true], [17n, 19n, 165n, 60n], [true, 1n]]);
   console.log(JSON.stringify({
     calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
     spread: {
-      calls: calls.map(([name, value]) => [name, value.toString()]),
+      calls: recordSpreadCalls.map(([name, value]) => [name, value.toString()]),
       result: { reading: spread.reading.toString(), count: spread.count.toString(), active: spread.active },
     },
-  }));
+    tupleSpread: { calls, result: tuple },
+  }, (_, value) => typeof value === 'bigint' ? value.toString() : value));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
