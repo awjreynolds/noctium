@@ -468,6 +468,11 @@ mutual
     | .disclose _ value => pure (node span "disclose" [("value", ← emitExpression checked scope env span value)])
     | .poseidon2 domain a b => pure (node span "poseidon2" [("domain", toJson (toString domain)),
         ("left", ← emitExpression checked scope env span a), ("right", ← emitExpression checked scope env span b)])
+    | .curve (.foreignEncodedField _ index) [value] => do
+      unless (← get).typed do emitLift (fail span "foreign values require control schema version 2")
+      pure (node span "foreignEncodedField" [
+        ("value", ← emitExpression checked scope env span value),
+        ("index", toJson index)])
     | .curve operation arguments => do
       unless (← get).typed do emitLift (fail span "curve operations require control schema version 2")
       pure (node span "curve" [("operation", toJson operation.operationName),

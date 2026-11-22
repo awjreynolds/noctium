@@ -87,6 +87,13 @@ where
         unless maximum < 256 && !variants.isEmpty && variants.all (·.2.1.isEmpty) do
           throw "transientHashValue requires a one-byte fieldless enum"
         pure [.project value .enumTag]
+      | .curve .jubjubScalar =>
+        pure [.curve .scalarToNative [value]]
+      | .curve .jubjubPoint =>
+        pure [.curve .x [value], .curve .y [value]]
+      | .curve (.foreign kind) =>
+        pure ((List.range kind.encodedFieldCount).map fun index =>
+          .curve (.foreignEncodedField kind index) [value])
       | _ => throw "unsupported transientHashValue leaf type"
 
 private instance : Inhabited Term := ⟨.unit⟩

@@ -167,21 +167,73 @@ private def fabHashFieldMatches (layout : Types.Layout) (value : Sigma Expr) : B
   | .scalar (.boundedUnsignedField maximum), ⟨.uint actualMaximum, _⟩ => maximum == actualMaximum
   | .enumeration _id (.enumTagField maximum) _ 0 _ variants, ⟨.uint actualMaximum, _⟩ =>
       maximum == actualMaximum && !variants.isEmpty && variants.all (·.2.1.isEmpty)
+  | .curve expected, ⟨actual, _⟩ => expected == actual
   | _, _ => false
+
+private def flattenFabHashLayoutFields : Nat → String → Types.Layout →
+    Except String (List (String × Types.Layout))
+  | 0, _, _ => throw "mixed FAB layout traversal exhausted checked fuel"
+  | fuel + 1, path, layout => do
+    match layout with
+    | .unit => pure []
+    | .structure _ fields =>
+      pure (← fields.mapM fun (name, item) =>
+        flattenFabHashLayoutFields fuel (if path.isEmpty then name else path ++ "." ++ name) item).flatten
+    | .tuple items =>
+      pure (← items.zipIdx.mapM fun (item, index) =>
+        flattenFabHashLayoutFields fuel (if path.isEmpty then toString index else path ++ "." ++ toString index) item).flatten
+    | .vector length element =>
+      pure (← (List.range length).mapM fun index =>
+        flattenFabHashLayoutFields fuel s!"{path}[{index}]" element).flatten
+    | _ => pure [(path, layout)]
 
 /-- Preserve the checked root's logical order for mixed-FAB hashing. Named
 structures use declaration order. Anonymous root tuples use tuple item order.
-Only the validator below admits direct leaf layouts. -/
-def fabHashLayoutFields (layout : Types.Layout) : Except String (List (String × Types.Layout)) :=
+Nested records, tuples and fixed vectors retain their recursive source order. -/
+def fabHashLayoutFields (layout : Types.Layout) : Except String (List (String × Types.Layout)) := do
   match layout with
-  | .structure _ fields => pure fields
-  | .tuple items => pure (items.zipIdx.map fun (item, index) => (toString index, item))
-  | _ => throw "mixed FAB hashing requires a flat structure or root tuple"
+  | .structure _ _ | .tuple _ => pure ()
+  | _ => throw "mixed FAB hashing requires a structure or root tuple"
+  flattenFabHashLayoutFields (layout.nodeCount + 1) "" layout
 
 def fabHashEncodedFieldCount (fields : List (String × Types.Layout)) : Nat :=
   fields.foldl (fun count field => count + match field.2 with
     | .bytes length .byteField => (length + 30) / 31
+    | .curve type => type.nativeCallFieldCount
     | _ => 1) 0
+
+private def fabHashUnsignedByteWidth (maximum : Nat) : Nat := Id.run do
+  for width in List.range 32 do
+    let width := width + 1
+    if maximum < 2 ^ (8 * width) then return width
+  return 0
+
+/-- Compact FAB atom descriptors for each checked logical leaf. Curve values
+expand to their canonical Encode atoms while remaining one typed source value. -/
+def fabHashLayoutAtoms : Types.Layout → Except String (List String)
+  | .bytes length .byteField => do
+    unless 1 ≤ length && length ≤ 32 do throw "unsupported mixed FAB byte width"
+    pure [s!"bytes:{length}"]
+  | .scalar .nativeField => pure ["field"]
+  | .scalar .booleanField => pure ["bytes:1"]
+  | .scalar (.boundedUnsignedField maximum) => do
+    let width := fabHashUnsignedByteWidth maximum
+    unless width > 0 do throw "unsupported mixed FAB unsigned width"
+    pure [s!"bytes:{width}"]
+  | .enumeration _ (.enumTagField maximum) _ 0 _ variants => do
+    unless maximum < 256 && !variants.isEmpty && variants.all (fun variant => variant.2.1.isEmpty) do
+      throw "unsupported mixed FAB enum layout"
+    pure ["bytes:1"]
+  | .curve .jubjubScalar => pure ["field"]
+  | .curve .jubjubPoint => pure ["field", "field"]
+  | .curve (.foreign (.base _)) | .curve (.foreign (.scalar .secp256k1))
+  | .curve (.foreign (.scalar .secp256r1)) => pure ["bytes:24", "bytes:8"]
+  | .curve (.foreign (.scalar .curve25519)) => pure ["bytes:26", "bytes:7"]
+  | .curve (.foreign (.point .curve25519)) =>
+    pure ["bytes:24", "bytes:8", "bytes:24", "bytes:8"]
+  | .curve (.foreign (.point _)) =>
+    pure ["bytes:24", "bytes:8", "bytes:24", "bytes:8", "field"]
+  | _ => throw "unsupported mixed FAB field layout"
 
 /-- Project leaves in declaration and index order. Fixed bytes remain a
 single logical field so native packing preserves their chunk boundaries. -/

@@ -2415,6 +2415,9 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
       | .foreignBinary foreignOperation => do
         let operation ← authoringForeignBinaryTerm foreignOperation
         `(Noctium.Helpers.CurveOp.foreignBinary $operation)
+      | .foreignEncodedField kind index => do
+        let kind ← authoringForeignKindTerm kind
+        `(Noctium.Helpers.CurveOp.foreignEncodedField $kind $(natTerm index))
     let arguments ← arguments.mapM termTerm
     let arguments := arguments.toArray
     `(Noctium.Helpers.Term.curve $operation [$arguments,*])
