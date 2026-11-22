@@ -397,12 +397,18 @@ pub(crate) enum FabHashField {
     UInt(BigUint),
     EnumTag { id: String, maximum: BigUint },
     Native,
+    Curve(crate::ScalarType),
 }
 
 impl FabHashField {
     fn encoded_field_count(&self) -> usize {
         match self {
             Self::Bytes(length) => length.div_ceil(31),
+            Self::Curve(crate::ScalarType::JubjubScalar) => 1,
+            Self::Curve(crate::ScalarType::JubjubPoint) => 2,
+            #[cfg(feature = "zkir-321")]
+            Self::Curve(crate::ScalarType::Foreign(ty)) => ty.native_type().encoded_len(),
+            Self::Curve(_) => 0,
             _ => 1,
         }
     }
@@ -1064,7 +1070,7 @@ impl Schema {
         self.measures[self.root]
     }
 
-    fn fab_hash_field(&self, layout: usize) -> Result<FabHashField> {
+    fn fab_hash_field(&self, layout: usize, include_curves: bool) -> Result<FabHashField> {
         match &self.nodes[layout] {
             LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),
             LayoutNode::Scalar(Leaf::Bool) => Ok(FabHashField::Bool),
@@ -1097,6 +1103,7 @@ impl Schema {
                     maximum: BigUint::from(variants.len() - 1),
                 })
             }
+            LayoutNode::Curve(ty) if include_curves => Ok(FabHashField::Curve(ty.clone())),
             _ => bail!("FAB hash supports only flat scalar and byte fields"),
         }
     }
@@ -1104,7 +1111,7 @@ impl Schema {
     /// Return fields for the bounded flat-structure or flat-tuple FAB subset.
     /// Enum payloads need branch-dependent field expressions, so this helper
     /// accepts only one-byte fieldless enums and exposes their tag as a field.
-    pub(crate) fn fab_hash_fields(&self) -> Result<Vec<FabHashField>> {
+    pub(crate) fn fab_hash_fields(&self, include_curves: bool) -> Result<Vec<FabHashField>> {
         let layouts: Vec<_> = match &self.nodes[self.root] {
             LayoutNode::Struct { fields, .. } => fields.iter().map(|field| field.layout).collect(),
             LayoutNode::Tuple(items) => items.clone(),
@@ -1117,7 +1124,7 @@ impl Schema {
 
         layouts
             .iter()
-            .map(|layout| self.fab_hash_field(*layout))
+            .map(|layout| self.fab_hash_field(*layout, include_curves))
             .collect()
     }
 
@@ -1145,7 +1152,7 @@ impl Schema {
                     pending.extend(std::iter::repeat_n(*element, *length));
                 }
                 _ => {
-                    let field = self.fab_hash_field(layout)?;
+                    let field = self.fab_hash_field(layout, true)?;
                     encoded_fields = add(encoded_fields, field.encoded_field_count())?;
                     ensure!(
                         encoded_fields <= crate::MAX_TRANSIENT_HASH_FIELDS,
