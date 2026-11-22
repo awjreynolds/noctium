@@ -57,7 +57,6 @@ theorem prune_evaluation (ctx : EvalContext) (env : EvalEnv)
 theorem pruneCircuit_validate (caps : Capabilities) (c : Circuit) :
     (pruneCircuit c).validate caps = c.validate caps := by
   simp only [Circuit.validate, pruneCircuit, prune_validation]
-  rfl
 
 theorem prune_disclosure_constraints (env : Disclosure.Environment) (span : SourceSpan)
     (conditions : List (Expr .bool)) :

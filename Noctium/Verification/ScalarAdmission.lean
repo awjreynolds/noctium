@@ -119,7 +119,7 @@ theorem lowerCircuit_admission (circuit : Circuit) (json : Json) (program : Prog
       circuit.inputs.map (fun input => (input.visibility, "%input_" ++ input.name)) ∧
     (∀ input ∈ circuit.inputs, NativeRelationJson.validIdentifier ("%input_" ++ input.name) = true) := by
   obtain ⟨expected, source, accepted⟩ := Backend.Zkir.lowerCircuit_validated circuit json lowered
-  obtain ⟨_, _, _, _, _, _, _, _, _, inputShape, _⟩ :=
+  obtain ⟨_, _, _, _, _, _, _, _, _, inputShape, _, _⟩ :=
     ScalarNormalization.expectedCircuit_parts (Passes.pruneCircuit circuit) expected source
   refine ⟨instruction_bound accepted decoded, ?_, ?_⟩
   · have schema := input_schema accepted decoded

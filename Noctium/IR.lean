@@ -1535,16 +1535,39 @@ def validateConstraints (caps : Capabilities) (env : TypeEnv) (span : SourceSpan
     | .error message => .error {span, message}
     | .ok _ => validateConstraints caps env span rest
 
-def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Unit := do
-  if !uniqueNames (c.inputs.map (·.name)) then
-    throw {span := c.span, message := "duplicate circuit input"}
-  let env := c.inputs.map fun i => (i.name, i.ty)
-  for input in c.inputs do
+/-- Validate the declared circuit input types in source order, preserving the
+first diagnostic and the OpaqueString visibility check. -/
+def Circuit.validateInputs (caps : Capabilities) (inputs : List Input) : Except Diagnostic Unit := do
+  for input in inputs do
     match input.ty.validate caps with
     | .error message => throw {span := input.span, message}
     | .ok _ => pure ()
     if input.ty == .opaqueString && input.visibility != .public then
       throw {span := input.span, message := "OpaqueString inputs currently require public visibility"}
+
+/-- Validate one output declaration and value, preserving its diagnostic span. -/
+def Circuit.validateOutput (caps : Capabilities) (env : TypeEnv)
+    (output : Output) : Except Diagnostic Unit := do
+  match output.ty.validate caps with
+  | .error message => throw {span := output.span, message}
+  | .ok _ => pure ()
+  if (env.lookup output.name).isSome then
+    throw {span := output.span, message := s!"output '{output.name}' shadows a circuit input"}
+  match output.value.validate caps env with
+  | .error message => throw {span := output.span, message}
+  | .ok _ => pure ()
+
+/-- Validate outputs in source order, preserving the first diagnostic. -/
+def Circuit.validateOutputs (caps : Capabilities) (env : TypeEnv)
+    (outputs : List Output) : Except Diagnostic Unit := do
+  let _ ← outputs.mapM (Circuit.validateOutput caps env)
+  pure ()
+
+def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Unit := do
+  if !uniqueNames (c.inputs.map (·.name)) then
+    throw {span := c.span, message := "duplicate circuit input"}
+  let env := c.inputs.map fun i => (i.name, i.ty)
+  Circuit.validateInputs caps c.inputs
   if !uniqueNames (c.inputs.flatMap Input.nativeIdentifiers) then
     throw {span := c.span, message := "input names collide after native byte expansion"}
   let projections := c.inputs.flatMap Input.publicProjectionIdentifiers
@@ -1554,15 +1577,7 @@ def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Uni
   if !uniqueNames (c.outputs.map (·.name)) then
     throw {span := c.span, message := "duplicate circuit output"}
   validateConstraints caps env c.span c.constraints
-  for output in c.outputs do
-    match output.ty.validate caps with
-    | .error message => throw {span := output.span, message}
-    | .ok _ => pure ()
-    if (env.lookup output.name).isSome then
-      throw {span := output.span, message := s!"output '{output.name}' shadows a circuit input"}
-    match output.value.validate caps env with
-    | .error message => throw {span := output.span, message}
-    | .ok _ => pure ()
+  Circuit.validateOutputs caps env c.outputs
 
 private def requireState (decls : List StateDecl) (name : String) (kind : StateKind) : Except String Unit :=
   match decls.find? (·.name == name) with

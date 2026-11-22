@@ -82,7 +82,7 @@ private theorem requirements_child (hash : Hash) (inputs : Assignment)
   exact ⟨fun requirement member => requirements.1 requirement (List.mem_append_left _ member), requirements.2⟩
 
 private theorem uint_valid_bound (maximum : Nat)
-    (valid : (Ty.uint maximum).validate {poseidon2 := true} = .ok ()) : maximum ≤ ScalarPolicy.maxUint := by
+    (valid : (Ty.uint maximum).validate Capabilities.scalarFragment = .ok ()) : maximum ≤ ScalarPolicy.maxUint := by
   by_cases bound : maximum ≤ ScalarPolicy.maxUint
   · exact bound
   · simp [Ty.validate, Ty.scalarKind, ScalarPolicy.validate, bound, bind, Except.bind] at valid
@@ -98,7 +98,7 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     (types : TypeEnv) (aliases : AliasEnvironment) (values : EvalEnv)
     (environment : TypedEnvironment hash inputs aliases values types)
     (expression : Expr ty) (admission : ScalarExpression expression) (normalized : Normalized)
-    (valid : expression.validate {poseidon2 := true} types = .ok ())
+    (valid : expression.validate Capabilities.scalarFragment types = .ok ())
     (normal : normalize aliases expression = .ok normalized)
     (requirements : Requirements hash inputs normalized) :
     ∃ value, expression.eval ctx values = .ok value ∧ Represents hash inputs ty normalized value := by
@@ -121,7 +121,7 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
       (ScalarExpression.bool b) _ normal b (by simp [Expr.eval])
   | uint maximum n =>
     simp only [Expr.validate] at valid
-    change Except.bind ((Ty.uint maximum).validate {poseidon2 := true})
+    change Except.bind ((Ty.uint maximum).validate Capabilities.scalarFragment)
       (fun _ => if n ≤ maximum then Except.ok () else Except.error "unsigned constant exceeds its type") = Except.ok () at valid
     rw [except_unit_bind] at valid
     have valueBound : n ≤ maximum := by
@@ -170,8 +170,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
       simp [canonical.2.1, canonical.2.2, bound] <;> rfl
   | add a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind (a.validate {poseidon2 := true} types)
-      (fun _ => b.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (a.validate Capabilities.scalarFragment types)
+      (fun _ => b.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, Functor.map, Except.map, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
@@ -186,8 +186,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     exact (by simp [Expr.eval, ea, eb, implementation.modulus, Field.modulus, bind, Except.bind, Except.map, Except.pure] <;> rfl)
   | mul a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind (a.validate {poseidon2 := true} types)
-      (fun _ => b.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (a.validate Capabilities.scalarFragment types)
+      (fun _ => b.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, Functor.map, Except.map, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
@@ -202,8 +202,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     exact (by simp [Expr.eval, ea, eb, implementation.modulus, Field.modulus, bind, Except.bind, Except.map, Except.pure] <;> rfl)
   | sub a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind (a.validate {poseidon2 := true} types)
-      (fun _ => b.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (a.validate Capabilities.scalarFragment types)
+      (fun _ => b.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, Functor.map, Except.map, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
@@ -218,9 +218,9 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     exact (by simp [Expr.eval, ea, eb, implementation.modulus, Field.modulus, bind, Except.bind, Except.map, Except.pure] <;> rfl)
   | @uadd m n a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind ((Ty.uint (m + n)).validate {poseidon2 := true})
-      (fun _ => Except.bind (a.validate {poseidon2 := true} types)
-        (fun _ => b.validate {poseidon2 := true} types)) = .ok () at valid
+    change Except.bind ((Ty.uint (m + n)).validate Capabilities.scalarFragment)
+      (fun _ => Except.bind (a.validate Capabilities.scalarFragment types)
+        (fun _ => b.validate Capabilities.scalarFragment types)) = .ok () at valid
     rw [except_unit_bind, except_unit_bind] at valid
     have typeBound := uint_valid_bound (m + n) valid.1
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
@@ -243,9 +243,9 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp [typeBound, range, canonical]
   | @usub m n a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind ((Ty.uint m).validate {poseidon2 := true})
-      (fun _ => Except.bind (a.validate {poseidon2 := true} types)
-        (fun _ => b.validate {poseidon2 := true} types)) = .ok () at valid
+    change Except.bind ((Ty.uint m).validate Capabilities.scalarFragment)
+      (fun _ => Except.bind (a.validate Capabilities.scalarFragment types)
+        (fun _ => b.validate Capabilities.scalarFragment types)) = .ok () at valid
     rw [except_unit_bind, except_unit_bind] at valid
     have typeBound := uint_valid_bound m valid.1
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
@@ -284,9 +284,9 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp [typeBound, range, canonical]
   | @umul m n a b leftSupported rightSupported ia ib =>
     simp only [Expr.validate] at valid
-    change Except.bind ((Ty.uint (m * n)).validate {poseidon2 := true})
-      (fun _ => Except.bind (a.validate {poseidon2 := true} types)
-        (fun _ => b.validate {poseidon2 := true} types)) = .ok () at valid
+    change Except.bind ((Ty.uint (m * n)).validate Capabilities.scalarFragment)
+      (fun _ => Except.bind (a.validate Capabilities.scalarFragment types)
+        (fun _ => b.validate Capabilities.scalarFragment types)) = .ok () at valid
     rw [except_unit_bind, except_unit_bind] at valid
     have typeBound := uint_valid_bound (m * n) valid.1
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
@@ -316,8 +316,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp only [(scalarType_notOpaque sourceType).1, (scalarType_notOpaque sourceType).2,
       (scalarType_notOpaque targetType).1, (scalarType_notOpaque targetType).2,
       Bool.or_false, Bool.false_eq_true, if_false] at valid
-    change Except.bind (target.validate {poseidon2 := true})
-      (fun _ => expression.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (target.validate Capabilities.scalarFragment)
+      (fun _ => expression.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, except_bind_ok, pure, Except.pure] at normal
     rcases normal with ⟨vn, nv, equal⟩
@@ -373,8 +373,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
       simp [scalarCast, typeBound, bound, canonical, scalar, Nat.mod_eq_of_lt sourceBound]
   | @letE source ty name expression body sourceScalar valueSupported bodySupported iv ib =>
     simp only [Expr.validate] at valid
-    change Except.bind (expression.validate {poseidon2 := true} types)
-      (fun _ => body.validate {poseidon2 := true} ((name, source) :: types)) = .ok () at valid
+    change Except.bind (expression.validate Capabilities.scalarFragment types)
+      (fun _ => body.validate Capabilities.scalarFragment ((name, source) :: types)) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨vn, nv, bn, nb, equal⟩
@@ -391,8 +391,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simpa only [Expr.eval, ev, bind, Except.bind] using eb
   | @assertE ty condition body conditionSupported bodySupported ic ib =>
     simp only [Expr.validate] at valid
-    change Except.bind (condition.validate {poseidon2 := true} types)
-      (fun _ => body.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (condition.validate Capabilities.scalarFragment types)
+      (fun _ => body.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨cn, nc, bn, nb, equal⟩
@@ -437,8 +437,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp only [scalarKinds.1, scalarKinds.2.1, scalarKinds.2.2,
       (scalarType_notOpaque scalarType).1, (scalarType_notOpaque scalarType).2,
       Bool.or_false, Bool.false_eq_true, if_false] at valid
-    change Except.bind (a.validate {poseidon2 := true} types)
-      (fun _ => b.validate {poseidon2 := true} types) = .ok () at valid
+    change Except.bind (a.validate Capabilities.scalarFragment types)
+      (fun _ => b.validate Capabilities.scalarFragment types) = .ok () at valid
     rw [except_unit_bind] at valid
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
@@ -460,9 +460,9 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp only [scalarKinds.1, scalarKinds.2.1, scalarKinds.2.2,
       (scalarType_notOpaque scalarType).1, (scalarType_notOpaque scalarType).2,
       Bool.or_false, Bool.false_eq_true, if_false] at valid
-    change Except.bind (c.validate {poseidon2 := true} types)
-      (fun _ => Except.bind (a.validate {poseidon2 := true} types)
-        (fun _ => b.validate {poseidon2 := true} types)) = .ok () at valid
+    change Except.bind (c.validate Capabilities.scalarFragment types)
+      (fun _ => Except.bind (a.validate Capabilities.scalarFragment types)
+        (fun _ => b.validate Capabilities.scalarFragment types)) = .ok () at valid
     rw [except_unit_bind, except_unit_bind] at valid
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨cn, nc, an, na, bn, nb, equal⟩
@@ -497,8 +497,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     next invalid => cases valid
     next validDomain =>
       have domainBound : domain < Field.modulus := Nat.lt_of_not_ge validDomain
-      change Except.bind (a.validate {poseidon2 := true} types)
-        (fun _ => b.validate {poseidon2 := true} types) = .ok () at valid
+      change Except.bind (a.validate Capabilities.scalarFragment types)
+        (fun _ => b.validate Capabilities.scalarFragment types) = .ok () at valid
       rw [except_unit_bind] at valid
       simp only [normalize, bind, except_bind_ok, Except.pure] at normal
       rcases normal with ⟨an, na, bn, nb, equal⟩
@@ -529,7 +529,7 @@ theorem normalize_exact (ctx : EvalContext) (hash : Hash)
     (types : TypeEnv) (aliases : AliasEnvironment) (values : EvalEnv)
     (environment : TypedEnvironment hash inputs aliases values types)
     (expression : Expr ty) (admission : ScalarExpression expression) (normalized : Normalized)
-    (valid : expression.validate {poseidon2 := true} types = .ok ())
+    (valid : expression.validate Capabilities.scalarFragment types = .ok ())
     (normal : normalize aliases expression = .ok normalized) :
     Requirements hash inputs normalized ↔ ∃ value, expression.eval ctx values = .ok value := by
   constructor
