@@ -5596,8 +5596,8 @@
       "id": "C-STDLIB-SECP256K1ETHEREUMADDRESS",
       "layer": "standard-library",
       "surface": "secp256k1EthereumAddress",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable witnesses derive an Ethereum address from the big-endian affine coordinates of a typed Secp256k1Point. The pinned Compact circuit, Rust witness session and native ZKIR 3.2.1 checker match the generator address. Compact and the Rust witness session reject a canonical identity point. Public returns derived from a private witness require disclosure.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5610,20 +5610,16 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper takes Keccak256 over 32-byte big-endian x||y, returning the final 20 bytes. Identity keys abort. Native fixture includes the private-key-1 generator/address pair.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/ReadableEthereumAddress.lean",
+        "tests/compact/readable-ethereum-address.mjs",
+        "runtime/tests/witness_control.rs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256R1ECDSAVERIFY",

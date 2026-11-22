@@ -1110,6 +1110,83 @@ fn typed_point_keccak_runs_through_the_witness_plan() -> anyhow::Result<()> {
 
 #[cfg(feature = "zkir-321")]
 #[test]
+#[ignore = "requires fresh ReadableEthereumAddress Lean artifacts"]
+fn readable_ethereum_address_accepts_generator_and_rejects_identity() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+    use transient_crypto::curve::Fr;
+
+    let root = PathBuf::from(std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_DIR").unwrap());
+    let stem = "ReadableEthereumAddress.derive";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
+    let relation = serde_json::from_slice(&relation_bytes)?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(relation_bytes.as_slice())?;
+    let expected = json!({"kind":"bytes", "values":hex::decode(
+        "7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+    )?});
+    let generator = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes":hex::decode(
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )?});
+
+    let attempt = "d".repeat(64);
+    let (mut session, _) = bound_session(&control, BTreeMap::new(), &attempt);
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    let request = &pending["request"];
+    assert_eq!(request["name"], "keyForAddress");
+    assert_eq!(request["arguments"], json!([]));
+    assert_eq!(session.advance()?, pending, "pending callback was not correlated");
+    session.resume_typed(reply(request, &attempt, "value", Some(generator)))?;
+    let completed = session.advance()?;
+    assert_eq!(completed["status"], "completed");
+    assert!(completed.get("request").is_none(), "expected one callback request");
+
+    let completion = session.private_completion(&relation)?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let mut execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    assert_eq!(execution.returns_json()["derivedAddress"], expected);
+    assert!(
+        !execution.preimage.private_transcript.is_empty(),
+        "provider key should remain a private native witness"
+    );
+    execution.preimage.private_transcript[0] =
+        execution.preimage.private_transcript[0] + Fr::from(1u64);
+    assert!(check(&execution, &circuit).is_err());
+
+    let identity_attempt = "f".repeat(64);
+    let (mut identity_session, _) = bound_session(&control, BTreeMap::new(), &identity_attempt);
+    let identity_pending = identity_session.advance()?;
+    assert_eq!(identity_pending["status"], "need_host");
+    let identity_request = &identity_pending["request"];
+    assert_eq!(identity_request["name"], "keyForAddress");
+    assert_eq!(identity_request["arguments"], json!([]));
+    let identity = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes":vec![0; 33]});
+    identity_session.resume_typed(reply(
+        identity_request,
+        &identity_attempt,
+        "value",
+        Some(identity),
+    ))?;
+    let rejected = identity_session.advance()?;
+    assert_eq!(rejected["status"], "failed");
+    assert!(identity_session.private_completion(&relation).is_err());
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
 #[ignore = "requires fresh PrivateStateMixed Lean artifacts"]
 fn typed_private_cells_bind_distinct_read_types() {
     use coin_structure::contract::ContractAddress;

@@ -691,6 +691,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| curveMulGenerator($scalar)) => s!"curveMulGenerator({renderExpr scalar})"
   | `(nlexpr| curveX($point)) => s!"curveX({renderExpr point})"
   | `(nlexpr| curveY($point)) => s!"curveY({renderExpr point})"
+  | `(nlexpr| secp256k1EthereumAddress($key)) => s!"secp256k1EthereumAddress({renderExpr key})"
   | `(nlexpr| curveFromCoordinates($x, $y)) =>
     s!"curveFromCoordinates({renderExpr x}, {renderExpr y})"
   | `(nlexpr| foreignToBytes($value)) => s!"foreignToBytes({renderExpr value})"
@@ -780,7 +781,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| hashToCurve([$values,*])) => values.getElems.toList.flatMap disclosedValues
   | `(nlexpr| foreignNeg($value)) | `(nlexpr| foreignInv($value))
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
-  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value)) => disclosedValues value
+  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
+  | `(nlexpr| secp256k1EthereumAddress($value)) => disclosedValues value
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -872,7 +874,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| hashToCurve([$values,*])) => values.getElems.toList.flatMap inlineAssertions
   | `(nlexpr| foreignNeg($value)) | `(nlexpr| foreignInv($value))
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
-  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value)) => inlineAssertions value
+  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
+  | `(nlexpr| secp256k1EthereumAddress($value)) => inlineAssertions value
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -2128,6 +2131,26 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerForeignUnary programName callPrefix env stx "mulGenerator" value
   | `(nlexpr| curveX($value)) => lowerForeignUnary programName callPrefix env stx "x" value
   | `(nlexpr| curveY($value)) => lowerForeignUnary programName callPrefix env stx "y" value
+  | `(nlexpr| secp256k1EthereumAddress($source)) => do
+    let key ← lowerExpr programName callPrefix env source
+    let kind := Foreign.Kind.point .secp256k1
+    unless key.type == .scalar (.foreign kind) do
+      throwErrorAt source "secp256k1EthereumAddress requires a Secp256k1Point"
+    let name ← freshIterationRef "ethereum-address-key"
+    let point := Helpers.Term.ref name
+    let identity := Helpers.Term.foreignConstant kind (Foreign.identityEncoding .secp256k1)
+    let nonIdentity := Helpers.Term.eq (.eq point identity) (.bool _root_.Bool.false)
+    let encode (coordinate : Foreign.UnaryOp) : Helpers.Term :=
+      .bytes (.reverseBytes 32) [.bytes (.foreignToBytes (.base .secp256k1))
+        [.curve (.foreignUnary coordinate) [point]]]
+    let coordinates := Helpers.Term.bytes (.concatBytes 32 32) [encode (.x .secp256k1),
+      encode (.y .secp256k1)]
+    let span ← liftM (spanValue stx)
+    pure { key with
+      type := .scalar (.bytes 20)
+      term := .bytes (.sliceBytes 32 12 32) [.bytes (.keccak256 64) [coordinates]]
+      before := key.before ++ [.bind name key.type key.term, .assert (.at span nonIdentity)]
+      generatedValidity := s!"non-identity key for {renderExpr stx}" :: key.generatedValidity }
   | `(nlexpr| foreignAdd($left, $right)) =>
     lowerForeignBinary programName callPrefix env stx "add" left right
   | `(nlexpr| foreignSub($left, $right)) =>
