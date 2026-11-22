@@ -440,8 +440,20 @@ mutual
       pure (node span tag [
         ("left", ← emitExpression checked scope env span left),
         ("right", ← emitExpression checked scope env span right)])
-    | .eq a b | .andThen a b | .orElse a b =>
-      let tag := match value with | .eq .. => "eq" | .andThen .. => "and" | _ => "or"
+    | .eq a b => do
+      let leftInfo ← emitLift (checked.infer scope env span a)
+      let rightInfo ← emitLift (checked.infer scope env span b)
+      let (left, right) ← match leftInfo.ty, rightInfo.ty with
+        | .composite leftType, .composite rightType => do
+          let common ← emitLift (Helpers.checkedAggregateEquality checked.program span leftType rightType)
+          let target : ResultType := .composite common.type
+          pure (← emitCoercedExpression checked scope env span target a,
+            ← emitCoercedExpression checked scope env span target b)
+        | _, _ => pure (← emitExpression checked scope env span a,
+            ← emitExpression checked scope env span b)
+      pure (node span "eq" [("left", left), ("right", right)])
+    | .andThen a b | .orElse a b =>
+      let tag := match value with | .andThen .. => "and" | _ => "or"
       pure (node span tag [("left", ← emitExpression checked scope env span a), ("right", ← emitExpression checked scope env span b)])
     | .select c a b | .ite c a b => do
       let tag := match value with | .select .. => "select" | _ => "if"

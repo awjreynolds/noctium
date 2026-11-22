@@ -95,12 +95,12 @@ explicit disclosure at public sinks. [Source fixture](../../tests/ReadableRecord
 
 ## Compare checked aggregates
 
-In a readable circuit, `eq(left, right)` compares values of the same checked
-aggregate type. Records keep their nominal identity. Tuple arity, vector length
-and fixed byte lengths must match. The compiler compares canonical leaves,
-including nested fields. The result retains the privacy origins of both operands.
-Compact 0.36.1 also permits mixed unsigned widths within matching tuples and
-vectors. That comparison path remains open.
+In a readable circuit, `eq(left, right)` compares values with compatible
+checked layouts. Records and enums keep their nominal identities. Tuple arity,
+vector length and fixed byte lengths must match. Compatible unsigned leaves
+in tuples and vectors widen to a common type for comparison. Each input keeps
+its declared range constraints. The result retains the privacy origins of both
+operands.
 
 The nested fixture checks equal inputs and nine independent changes against
 Compact 0.36.1 and the native relation. It covers an inner record, a tuple
@@ -109,6 +109,11 @@ containing a vector, fixed bytes and a fieldless enum.
 
 The flat-record fixture retains its scalar leaf and Lean replay checks.
 [Flat-record fixture](../../tests/NominalRecordEquality.lean)
+
+The mixed-width fixture compares UInt8 and UInt16 fields in tuples and vectors
+against Compact 0.36.1. The native cases check equal and unequal values and reject
+a value outside the narrow input's declared bound.
+[Lean fixture](../../tests/StructuralEqualityWidening.lean) · [Native check](../../runtime/tests/structural_equality_widening.rs) · [Compact fixture](../../tests/compact/structural-equality-widening.mjs)
 
 ## Use named fieldless enum members
 

@@ -753,15 +753,15 @@ private def commonScalarType (left right : Ty) : Except String Ty := do
 private def runtimeEquality (composites : Types.CompositeEnv) (context : EvalContext)
     (left right : RuntimeValue) : Except String Bool := do
   match left, right with
-  | .aggregate leftType leftFingerprint leftLeaves,
-    .aggregate rightType rightFingerprint rightLeaves => do
-      let compiled ← (Helpers.checkedAggregateEquality {composites} {} leftType rightType).mapError
-        (·.message)
-      unless leftFingerprint == compiled.fingerprint && rightFingerprint == compiled.fingerprint do
-        throw "native witness equality found a noncanonical aggregate fingerprint"
-      let leftChecked ← (Types.unflattenChecked compiled leftLeaves).mapError id
-      let rightChecked ← (Types.unflattenChecked compiled rightLeaves).mapError id
-      pure (leftChecked.leaves == rightChecked.leaves)
+  | .aggregate leftType _ leftLeaves, .aggregate rightType _ rightLeaves => do
+      let program : Program := {composites}
+      discard ((Helpers.checkedAggregateEquality program {} leftType rightType).mapError
+        (·.message))
+      unless runtimeMatches program context (.composite leftType) left do
+        throw "native witness equality found an invalid left aggregate operand"
+      unless runtimeMatches program context (.composite rightType) right do
+        throw "native witness equality found an invalid right aggregate operand"
+      pure (leftLeaves == rightLeaves)
   | _, _ => do
       let left ← runtimeScalar left
       let right ← runtimeScalar right

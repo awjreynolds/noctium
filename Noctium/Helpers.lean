@@ -676,11 +676,12 @@ partial def sourceLeafTypes : Types.Layout → List Ty
   | .bytes length _ => List.replicate length .native
   | .enumeration _ _ _ payloadLeaves _ _ => .native :: List.replicate payloadLeaves .native
 
-/-- A matching checked layout gives both aggregate operands the same canonical leaf sequence. -/
+/-- The common checked layout preserves both operands' canonical leaf order. -/
 def checkedAggregateEquality (program : Program) (span : SourceSpan)
     (left right : Types.CompositeType) : Except Diagnostic Types.CompiledType := do
-  unless left == right do fail span "helper equality requires identical checked aggregate types"
-  checkedComposite program span left
+  let some common := left.leastUpperBound? right
+    | fail span "helper equality requires compatible checked aggregate types"
+  checkedComposite program span common
 
 partial def sourceLeafPaths : Types.Layout → String → List String
   | .unit, _ => []

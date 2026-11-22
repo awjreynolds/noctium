@@ -1354,16 +1354,16 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let right ← lowerExpr programName callPrefix env right
     match left.type, right.type with
     | .composite leftType, .composite rightType => do
-      unless leftType == rightType do
+      unless (leftType.leastUpperBound? rightType).isSome do
         let message := match leftType, rightType with
           | .enumeration _, .enumeration _ => "eq enum operands must have the same nominal type"
           | .structure _, .structure _ => "eq record operands must have the same nominal type"
-          | _, _ => "eq aggregate operands must have the same checked type"
+          | _, _ => "eq aggregate operands must have compatible checked types"
         throwErrorAt stx message
       modify fun state => {state with requiresOutputViews := _root_.Bool.true}
       pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
     | .composite _, _ | _, .composite _ =>
-      throwErrorAt stx "eq aggregate operands must have the same checked type"
+      throwErrorAt stx "eq aggregate operands must have compatible checked types"
     | _, _ => do
       let .scalar leftTy := left.type | throwErrorAt stx "eq does not accept Unit"
       let .scalar rightTy := right.type | throwErrorAt stx "eq does not accept Unit"
