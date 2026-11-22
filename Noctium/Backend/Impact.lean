@@ -712,8 +712,8 @@ def Op.fields : Op → List Scalar
         (if isShieldedCoinRecordSchema schema && values.map (·.ty) == shieldedCoinReadTypes then
           shieldedCoinLedgerFieldSequence values
         else ledgerFieldSequence values)
-  | .popeqFields _ values =>
-      if values.map (·.ty) == shieldedCoinReadTypes then
+  | .popeqFields schema values =>
+      if isShieldedCoinRecordSchema schema && values.map (·.ty) == shieldedCoinReadTypes then
         [.native 0x0c] ++ shieldedCoinLedgerFieldSequence values
       else [.native 0x0c] ++ ledgerFieldSequence values
   | .member => [.native 0x18]

@@ -107,6 +107,7 @@ jobs:
           lake env lean tests/StructuredMaps.lean
           lake env lean tests/NativePreparationCursor.lean
           lake env lean tests/ImpactEffectBoundaries.lean
+          lake env lean tests/RecordReadAlignment.lean
           lake env lean tests/HostedLedgerWitness.lean
           lake env lean tests/TypedWitnessResultCodec.lean
           lake env lean tests/MerklePathRootNoLeafHash.lean
