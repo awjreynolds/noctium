@@ -264,7 +264,7 @@ jobs:
             --dedup-range-checks --emit ledger --output "$artifacts/dedup"
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
-            --emit ledger --emit witness --output "$artifacts/readable-record-construction"
+            --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"

@@ -110,6 +110,10 @@ try {
   assert.deepEqual(calls, [['base', 7n]]);
   assert.equal(projectedReading, 14n);
   const helperProjectCalls = calls.splice(0);
+  const { result: genericCount } = await contract.circuits.genericCount(context('genericCount'), 7n);
+  assert.deepEqual(calls, [['count', 7n], ['count', 8n]]);
+  assert.equal(genericCount, 34n);
+  const genericCountCalls = calls.splice(0);
   console.log(JSON.stringify({
     calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
@@ -129,6 +133,7 @@ try {
       result: { reading: rewritten.reading, count: rewritten.count, active: rewritten.active },
     },
     helperProject: { calls: helperProjectCalls, result: projectedReading },
+    genericCount: { calls: genericCountCalls, result: genericCount },
   }, (_, value) => typeof value === 'bigint' ? value.toString() : value));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

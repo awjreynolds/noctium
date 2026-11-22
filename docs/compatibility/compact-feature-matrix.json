@@ -1012,7 +1012,7 @@
       "layer": "language",
       "surface": "Type and natural-number generic parameters",
       "noctiumStatus": "subset",
-      "notes": "Specialization and invalid/recursive instantiation cases.",
+      "notes": "Specialization and invalid or recursive instantiation cases. Typed witness registration specializes a selected generic export and records the concrete signature. The paired Compact and native case specializes one provider-calling helper at UInt8 and UInt16, preserving argument order and distinct call sites.",
       "source": [
         "reference"
       ],
@@ -1020,7 +1020,12 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/ReadableRecordConstruction.lean",
+        "tests/compact/readable-record-construction.mjs",
+        "runtime/tests/readable_record_construction.rs",
+        "docs/development/generics.md"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-17",

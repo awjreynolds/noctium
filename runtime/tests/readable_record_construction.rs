@@ -2,15 +2,14 @@
 
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    check,
+    Plan, check,
     control::{InvocationTarget, Session, TypedResponse},
     create_state,
     host::{self, Capability, Context, Limits, Operation, Provider},
     prepare,
     zkir::IrSource,
-    Plan,
 };
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -134,6 +133,15 @@ fn check_case(
     callbacks: impl IntoIterator<Item = (&'static str, &'static str, Json)>,
     expected: Json,
 ) -> anyhow::Result<()> {
+    check_named_case(entrypoint, "result", callbacks, expected).map(|_| ())
+}
+
+fn check_named_case(
+    entrypoint: &str,
+    return_name: &str,
+    callbacks: impl IntoIterator<Item = (&'static str, &'static str, Json)>,
+    expected: Json,
+) -> anyhow::Result<Json> {
     let directory = PathBuf::from(
         std::env::var_os("NOCTIUM_RECORD_CONSTRUCTION_DIR")
             .expect("NOCTIUM_RECORD_CONSTRUCTION_DIR"),
@@ -187,8 +195,8 @@ fn check_case(
     assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
     let returns = execution.returns_json();
     assert_eq!(returns.len(), 1);
-    assert_eq!(returns.get("result"), Some(&expected));
-    Ok(())
+    assert_eq!(returns.get(return_name), Some(&expected));
+    Ok(binding)
 }
 
 #[test]
@@ -392,4 +400,60 @@ fn record_helpers_rewrite_and_project_nested_values() -> anyhow::Result<()> {
         reading_record("14", "19", true),
     )?;
     check_case("helperProject", [("loadBase", "7", base)], json!("14"))
+}
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn generic_witness_instances_keep_distinct_sites_and_return_observed_count() -> anyhow::Result<()> {
+    let binding = check_named_case(
+        "genericCount",
+        "observed",
+        [
+            ("observeCount", "7", json!("17")),
+            ("observeCount", "8", json!("17")),
+        ],
+        json!("34"),
+    )?;
+    let provider = format!("{SOURCE_NAMESPACE}.observeCount");
+    let sites: Vec<&str> = binding["calls"]
+        .as_array()
+        .expect("emitted witness calls")
+        .iter()
+        .filter(|call| call["name"] == provider)
+        .map(|call| call["site"].as_str().expect("witness call site"))
+        .collect();
+    assert_eq!(sites.len(), 2, "expected both observeCount call instances");
+    assert_ne!(sites[0], sites[1], "witness call sites must be distinct");
+
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_RECORD_CONSTRUCTION_DIR")
+            .expect("NOCTIUM_RECORD_CONSTRUCTION_DIR"),
+    );
+    let specialization: Json = serde_json::from_slice(&fs::read(
+        directory.join("ReadableRecordConstruction.specializedCount.specialization.json"),
+    )?)?;
+    assert_eq!(specialization["sourceExport"], "countTwice");
+    let declarations = specialization["declarations"]
+        .as_array()
+        .expect("specialized declarations");
+    let mut result_maxima: Vec<_> = declarations
+        .iter()
+        .filter(|declaration| {
+            declaration["witnesses"]
+                .as_array()
+                .is_some_and(|witnesses| {
+                    witnesses.iter().any(|witness| {
+                        witness["name"] == provider && witness["type"]["uint"]["maximum"] == "255"
+                    })
+                })
+        })
+        .map(|declaration| {
+            declaration["result"]["uint"]["maximum"]
+                .as_str()
+                .expect("specialized UInt result")
+        })
+        .collect();
+    result_maxima.sort_unstable();
+    assert_eq!(result_maxima, ["255", "65535"]);
+    Ok(())
 }

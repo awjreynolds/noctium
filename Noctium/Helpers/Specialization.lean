@@ -82,6 +82,7 @@ inductive Term where
   | andThen (left right : Term)
   | orElse (left right : Term)
   | witness (name : String) (type : GenericType)
+  | witnessCall (site name : String) (arguments : List Term)
   | poseidon2 (domain : Nat) (left right : Term)
   /-- Calls name a source declaration identity, so specialization never resolves
   a generated call through a runtime-signature overload group. -/
@@ -206,6 +207,7 @@ private structure State where
   source : Program := {}
   instances : List Instance := []
   activeDeclarations : List DeclarationId := []
+  activeGeneratedNames : List String := []
   activeStructures : List Types.DeclId := []
   activeAliases : List Types.DeclId := []
   structureCache : List ((Types.DeclId × List SpecializationArgument) × Types.DeclId) := []
@@ -530,6 +532,11 @@ private def sourceNodeMetadata (span : SourceSpan) : SourceNode → Except Diagn
     | _ => pure ()
   | .term term => match term with
     | .ref name | .witness name _ => textLimit span name
+    | .witnessCall site name _ => do
+      textLimit span site
+      textLimit span name
+      unless Helpers.validWitnessIdentifier site && Helpers.validWitnessIdentifier name do
+        fail span "invalid typed witness site or provider identity"
     | .call target _ _ => do
       if target.scope > 18446744073709551615 || target.ordinal > 18446744073709551615 then
         resource span "declaration identity metadata"
@@ -586,6 +593,9 @@ private def sourceChildren (limits : Limits) (span : SourceSpan) :
       let argumentNodes := arguments.map SourceNode.argument
       let valueNodes := values.map SourceNode.term
       boundedChildren span limits.maxSourceNodes (argumentNodes ++ valueNodes)
+    | .witnessCall _ _ arguments => do
+      if arguments.length > limits.maxTypeArguments then resource span "call argument count"
+      boundedChildren span limits.maxSourceNodes (arguments.map SourceNode.term)
     | .composite type leaves => do
       if leaves.length > limits.maxSourceNodes then resource span "source nodes"
       pure (SourceNode.typeExpr type :: leaves.map SourceNode.term)
@@ -774,8 +784,10 @@ mutual
         state.source.declarations.any (·.id == target) then
       liftM (fail declaration.span "Noctium generated helper identity collision")
     let specialized : Instance := {key, target, name := generatedName}
+    let callerGeneratedNames := state.activeGeneratedNames
     modify fun state => {state with
       activeDeclarations := declaration.id :: state.activeDeclarations
+      activeGeneratedNames := generatedName :: state.activeGeneratedNames
       nextOrdinal := ordinal + 1
       usedNames := generatedName :: state.usedNames}
     let mut parameters := []
@@ -800,6 +812,7 @@ mutual
       span := declaration.span}
     modify fun state => {state with
       activeDeclarations := state.activeDeclarations.filter (· != declaration.id)
+      activeGeneratedNames := callerGeneratedNames
       declarations := generated :: state.declarations
       instances := specialized :: state.instances}
     pure specialized
@@ -903,6 +916,17 @@ mutual
       let type ← normalizeType limits declaration.span types naturals type
       let .scalar type := type | liftM (fail declaration.span "generic witness signature requires a scalar type")
       pure (.witness name type)
+    | .witnessCall sourceSite name arguments => do
+      let state ← get
+      let some generatedName := state.activeGeneratedNames.head?
+        | liftM (fail declaration.span "typed witness call has no active specialization instance")
+      let site := generatedName ++ "." ++ sourceSite
+      if site.utf8ByteSize > 128 then
+        liftM (resource declaration.span "typed witness site identity")
+      unless Helpers.validWitnessIdentifier site do
+        liftM (fail declaration.span "invalid specialized typed witness site identity")
+      let arguments ← arguments.mapM (convertTerm limits declaration types naturals values)
+      pure (.witnessCall site name arguments)
     | .poseidon2 domain left right =>
       .poseidon2 domain <$> convertTerm limits declaration types naturals values left <*>
         convertTerm limits declaration types naturals values right
@@ -1134,44 +1158,54 @@ private def signatureArgument : SpecializationArgument → SignatureArgument
   | .type value => .type (signatureType value)
   | .natural value => .natural (toString value)
 
-private partial def collectWitnessTerms (term : Helpers.Term) (result : Array SignatureValue) : Array SignatureValue :=
+private partial def collectWitnessTerms (providers : List Helpers.WitnessSignature)
+    (term : Helpers.Term) (result : Array SignatureValue) : Array SignatureValue :=
   match term with
   | .witness name type => result.push {name, type := signatureType (.scalar type)}
   | .binary _ left right | .boolAnd left right | .boolOr left right
   | .boolXor left right | .eq left right | .poseidon2 _ left right
   | .andThen left right | .orElse left right | .index left right =>
-    collectWitnessTerms right (collectWitnessTerms left result)
+    collectWitnessTerms providers right (collectWitnessTerms providers left result)
   | .cast _ value | .disclose _ value | .effect _ _ value
-  | .at _ value | .project value _ | .bytesAt value _ => collectWitnessTerms value result
+  | .at _ value | .project value _ | .bytesAt value _ => collectWitnessTerms providers value result
   | .select condition yes no | .ite condition yes no =>
-    collectWitnessTerms no (collectWitnessTerms yes (collectWitnessTerms condition result))
-  | .call _ values | .witnessCall _ _ values | .composite _ values | .curve _ values | .bytes _ values =>
-    values.foldl (fun acc value => collectWitnessTerms value acc) result
+    collectWitnessTerms providers no
+      (collectWitnessTerms providers yes (collectWitnessTerms providers condition result))
+  | .witnessCall _ name values =>
+    let result := values.foldl (fun acc value => collectWitnessTerms providers value acc) result
+    match providers.find? (·.name == name) with
+    | some provider => result.push {name, type := signatureResult provider.result}
+    | none => result
+  | .call _ values | .composite _ values | .curve _ values | .bytes _ values =>
+    values.foldl (fun acc value => collectWitnessTerms providers value acc) result
   | .unit | .native _ | .bool _ | .uint _ _ | .ref _ | .bytes32Literal _
   | .foreignConstant .. => result
 
-private partial def collectWitnessStatements : List Helpers.Statement → Array SignatureValue → Array SignatureValue
+private partial def collectWitnessStatements (providers : List Helpers.WitnessSignature) :
+    List Helpers.Statement → Array SignatureValue → Array SignatureValue
   | [], result => result
   | statement :: rest, result =>
     let result := match statement with
-      | .bind _ _ value | .evaluate value | .assert value | .stage _ _ _ value => collectWitnessTerms value result
-      | .return value => value.toList.foldl (fun acc item => collectWitnessTerms item acc) result
+      | .bind _ _ value | .evaluate value | .assert value | .stage _ _ _ value =>
+        collectWitnessTerms providers value result
+      | .return value => value.toList.foldl (fun acc item => collectWitnessTerms providers item acc) result
       | .branch condition yes no =>
-        let result := collectWitnessTerms condition result
-        let result := collectWitnessStatements yes result
-        collectWitnessStatements no result
-      | .forRange _ _ _ body => collectWitnessStatements body result
+        let result := collectWitnessTerms providers condition result
+        let result := collectWitnessStatements providers yes result
+        collectWitnessStatements providers no result
+      | .forRange _ _ _ body => collectWitnessStatements providers body result
       | .readCell .. => result
-      | .writeCell _ _ value => collectWitnessTerms value result
+      | .writeCell _ _ value => collectWitnessTerms providers value result
       | .readMap _ _ _ _ key | .readMember _ _ _ _ key =>
-        collectWitnessTerms key result
+        collectWitnessTerms providers key result
       | .writeMap _ _ _ key value =>
-        collectWitnessTerms value (collectWitnessTerms key result)
-      | .emitEvent _ payload => collectWitnessTerms payload result
-    collectWitnessStatements rest result
+        collectWitnessTerms providers value (collectWitnessTerms providers key result)
+      | .emitEvent _ payload => collectWitnessTerms providers payload result
+    collectWitnessStatements providers rest result
 
-private def witnessStatements (body : List Helpers.Statement) : List SignatureValue :=
-  (collectWitnessStatements body #[]).toList.eraseDups
+private def witnessStatements (providers : List Helpers.WitnessSignature)
+    (body : List Helpers.Statement) : List SignatureValue :=
+  (collectWitnessStatements providers body #[]).toList.eraseDups
 
 private def sourceIdParts (id : DeclarationId) : String × String :=
   (toString id.scope, toString id.ordinal)
@@ -1190,7 +1224,7 @@ def Result.signatureArtifact (result : Result) : SignatureArtifact :=
       arguments := item.key.arguments.map signatureArgument
       parameters := params
       result := signatureResult declaration.result
-      witnesses := witnessStatements declaration.body}
+      witnesses := witnessStatements result.program.witnesses declaration.body}
   {sourceExport := result.exportName, declarations}
 
 /-- Sidecar for one output in a shared batch. The declaration list records the

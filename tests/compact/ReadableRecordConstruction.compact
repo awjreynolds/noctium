@@ -29,6 +29,10 @@ witness loadVector(marker: Field): Vector<2, Uint<8>>;
 witness loadBytes(marker: Field): Bytes<2>;
 witness loadUnit(marker: Field): [];
 
+circuit observe<T>(marker: Field): T {
+  return observeCount(marker) as T;
+}
+
 export circuit build(seed: Field): Reading {
   return disclose(Reading {
     active: observeActive(seed + 1),
@@ -87,4 +91,10 @@ export circuit helperRewrite(seed: Field): Reading {
 export circuit helperProject(seed: Field): Field {
   const changed = raiseReading(loadBase(seed), true);
   return disclose(changed.reading);
+}
+
+export circuit genericCount(seed: Field): Uint<16> {
+  const small = observe<Uint<8>>(seed);
+  const large = observe<Uint<16>>(seed + 1);
+  return disclose(((small as Uint<16>) + large) as Uint<16>);
 }
