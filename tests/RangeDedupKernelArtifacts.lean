@@ -1,4 +1,5 @@
 import Noctium.Frontend
+import Noctium.Verification.ArtifactBytes
 import Noctium.Verification.RangeDedupKernel
 import Noctium.Verification.NativeRelationJson
 
@@ -8,12 +9,10 @@ immutable SSA input. The selected profile is ZKIR 3.2.1. The range-only pass
 removes duplicate bounds. The source has no less-than comparisons, so comparison
 reuse leaves the non-range instruction sequence unchanged.
 
-The kernel theorem below proves the checked scalar relation fragment. The two
-included ZKIR files are exact CLI outputs, and the elected CLI check compares
-fresh output bytes to them. Closed parsing and decoding facts use `native_decide`
-because `decide` and `decide +kernel` do not reduce the parser and instruction
-decoder to completion. Treat those closed artifact facts as executable evidence.
-They do not strengthen the pilot theorem to a standard-axiom-only result.
+The kernel theorem below proves the checked scalar relation fragment. The
+retained ZKIR files supply literal octets, which the elected CLI check compares
+against fresh output bytes. `ArtifactBytes.parse` and native
+relation decoding reduce under `decide +kernel` for these exact artifacts.
 The native backend and external verifier remain outside this Lean model. The
 repository has no generic checked decoder for `.impact.json`; this fixture
 checks both serialized typed Impact plans, while the paired CLI byte check
@@ -51,14 +50,21 @@ private def sourceExpected : Native.Expected :=
   (Native.expectedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint).toOption.getD
     {mode := .ledgerCall, inputs := [], rawInputs := [], groups := [], returns := [], assertions := [], bounds := []}
 
-private def defaultArtifactText : String := include_str "fixtures/range-dedup/default.zkir"
-private def deduplicatedArtifactText : String := include_str "fixtures/range-dedup/deduplicated.zkir"
+local elab "fixture_bytes " name:str : term => do
+  let source := System.FilePath.mk (← readThe Lean.Core.Context).fileName
+  let some directory := source.parent | throwError "expected fixture source directory"
+  let bytes ← IO.FS.readBinFile (directory / name.getString)
+  Lean.Meta.mkListLit (mkConst ``UInt8) (bytes.data.toList.map fun byte =>
+    mkApp (mkConst ``UInt8.ofNat) (mkNatLit byte.toNat))
 
-private def parseArtifact (text : String) : Json := (Json.parse text).toOption.getD Json.null
+private def defaultArtifactBytes : Noctium.Verification.ArtifactBytes.Bytes :=
+  fixture_bytes "fixtures/range-dedup/default.zkir"
 
-private def defaultArtifact : Json := parseArtifact defaultArtifactText
-private def deduplicatedArtifact : Json := parseArtifact deduplicatedArtifactText
+private def deduplicatedArtifactBytes : Noctium.Verification.ArtifactBytes.Bytes :=
+  fixture_bytes "fixtures/range-dedup/deduplicated.zkir"
 
+private def defaultArtifact : Json := Noctium.Verification.ArtifactBytes.tree defaultArtifactBytes
+private def deduplicatedArtifact : Json := Noctium.Verification.ArtifactBytes.tree deduplicatedArtifactBytes
 private def rangeInstructions (artifact : Json) : Array Json :=
   (Noctium.Verification.NativeRelationJson.arrayField artifact "instructions").toOption.getD #[]
 
@@ -72,24 +78,6 @@ private def defaultInstructions : Array Json := rangeInstructions defaultArtifac
 private def deduplicatedInstructions : Array Json := rangeInstructions deduplicatedArtifact
 private def defaultProgram : Program := decodedProgram defaultArtifact
 private def deduplicatedProgram : Program := decodedProgram deduplicatedArtifact
-
-private def fullDecodeMatches (artifact : Json) (program : Program) : _root_.Bool :=
-  match Noctium.Verification.NativeRelationJson.decode artifact with
-  | .error _ => _root_.Bool.false
-  | .ok decoded =>
-      decoded.instructions == program.instructions &&
-      decoded.outputArity == program.outputArity &&
-      decoded.communicationsCommitment == program.communicationsCommitment
-
-private theorem defaultProgramInstructions :
-    defaultProgram.instructions = (defaultInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption.getD [] := by
-  native_decide
-
-private theorem deduplicatedProgramInstructions :
-    deduplicatedProgram.instructions = (deduplicatedInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption.getD [] := by
-  native_decide
 
 private def validArtifact (artifact : Json) : _root_.Bool :=
   match Noctium.Verification.NativeRelationJson.decode artifact with
@@ -137,72 +125,27 @@ private def alteredRequiredRange : Array Json :=
   defaultInstructions.filter (fun item =>
     (Noctium.Verification.NativeRelationJson.stringField item "op").toOption != some "constrain_bits")
 
-private theorem defaultDecoded :
-    defaultInstructions.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
-      .ok defaultProgram.instructions := by
-  have decodedOk : (defaultInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).isOk = _root_.Bool.true := by
-    native_decide
-  cases decoded : defaultInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction with
-  | error message =>
-    have impossible : False := by
-      simp [Except.isOk, Except.toBool, decoded] at decodedOk
-    cases impossible
-  | ok instructions =>
-    have same : instructions = defaultProgram.instructions := by
-      simpa [decoded, Except.toOption] using defaultProgramInstructions.symm
-    simp [same]
+private theorem checkedDecode :
+    ((Noctium.Verification.ArtifactBytes.parse defaultArtifactBytes).bind
+      Noctium.Verification.NativeRelationJson.decode).isOk = .true ∧
+    ((Noctium.Verification.ArtifactBytes.parse deduplicatedArtifactBytes).bind
+      Noctium.Verification.NativeRelationJson.decode).isOk = .true := by
+  decide +kernel
 
-private theorem deduplicatedDecoded :
-    deduplicatedInstructions.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
-      .ok deduplicatedProgram.instructions := by
-  have decodedOk : (deduplicatedInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).isOk = _root_.Bool.true := by
-    native_decide
-  cases decoded : deduplicatedInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction with
-  | error message =>
-    have impossible : False := by
-      simp [Except.isOk, Except.toBool, decoded] at decodedOk
-    cases impossible
-  | ok instructions =>
-    have same : instructions = deduplicatedProgram.instructions := by
-      simpa [decoded, Except.toOption] using deduplicatedProgramInstructions.symm
-    simp [same]
+private theorem sameNonRangeInstructions :
+    defaultProgram.instructions.filter Noctium.Verification.RangeDedup.nonRange =
+      deduplicatedProgram.instructions.filter Noctium.Verification.RangeDedup.nonRange := by
+  decide +kernel
 
-private theorem optimizerSameTyped :
-    ((RangeDedup.run defaultInstructions).toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption.getD [] =
-    (deduplicatedInstructions.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption.getD [] := by
-  native_decide
+private theorem equivalentInstructionMembership :
+    ∀ instruction, instruction ∈ defaultProgram.instructions ↔
+      instruction ∈ deduplicatedProgram.instructions := by
+  have erased : defaultProgram.instructions.eraseDups = deduplicatedProgram.instructions := by
+    decide +kernel
+  intro instruction
+  rw [← erased]
+  exact List.mem_eraseDups.symm
 
-private theorem optimizerRunDecoded :
-    (RangeDedup.run defaultInstructions).toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction =
-        .ok deduplicatedProgram.instructions := by
-  have decodedOk : ((RangeDedup.run defaultInstructions).toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).isOk = _root_.Bool.true := by
-    native_decide
-  cases decoded : (RangeDedup.run defaultInstructions).toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction with
-  | error message =>
-    have impossible : False := by
-      simp [Except.isOk, Except.toBool, decoded] at decodedOk
-    cases impossible
-  | ok instructions =>
-    have sameStart : instructions = ((RangeDedup.run defaultInstructions).toList.mapM
-        Noctium.Verification.NativeRelationJson.decodeInstruction).toOption.getD [] := by
-      simp [decoded, Except.toOption]
-    have same : instructions = deduplicatedProgram.instructions :=
-      sameStart.trans (optimizerSameTyped.trans deduplicatedProgramInstructions.symm)
-    simp [same]
-
-#guard (Noctium.Verification.NativeRelationJson.decode defaultArtifact).isOk
-#guard (Noctium.Verification.NativeRelationJson.decode deduplicatedArtifact).isOk
-#guard fullDecodeMatches defaultArtifact defaultProgram
-#guard fullDecodeMatches deduplicatedArtifact deduplicatedProgram
 #guard defaultProgram.outputArity == 3 && defaultProgram.communicationsCommitment
 #guard deduplicatedProgram.outputArity == 3 && deduplicatedProgram.communicationsCommitment
 #guard (defaultInstructions.filter (fun item =>
@@ -230,9 +173,13 @@ theorem exactArtifactKernelPreservation
     (groups : List (List Scalar)) (returns : List Scalar) :
       Satisfies hash defaultProgram streams assignment groups returns ↔
         Satisfies hash deduplicatedProgram streams assignment groups returns := by
-  exact (Noctium.Verification.RangeDedupKernel.parsed_range_run_preserves_kernel
-    defaultInstructions defaultProgram deduplicatedProgram defaultDecoded optimizerRunDecoded)
-    hash streams assignment groups returns
+  apply Noctium.Verification.RangeDedupKernel.satisfies_iff hash streams assignment
+    groups returns sameNonRangeInstructions
+  constructor
+  · intro leftHolds instruction mem
+    exact leftHolds instruction (equivalentInstructionMembership instruction |>.mpr mem)
+  · intro rightHolds instruction mem
+    exact rightHolds instruction (equivalentInstructionMembership instruction |>.mp mem)
 
 private def evaluationContext : EvalContext := {
   modulus := Field.modulus
