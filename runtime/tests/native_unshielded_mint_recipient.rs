@@ -39,6 +39,15 @@ fn recipient_mint_returns_color_and_credits_only_contract_self() -> anyhow::Resu
         0x9d, 0xa7,
     ]);
     let token = TokenType::Unshielded(UnshieldedTokenType(expected_color));
+    let inputs = |is_contract: bool, recipient: &[u8; 32], enabled: bool| {
+        BTreeMap::from([
+            ("domain".into(), bytes(&domain.0)),
+            ("amount".into(), json!(amount.to_string())),
+            ("isContract".into(), json!(is_contract)),
+            ("recipient".into(), bytes(recipient)),
+            ("enabled".into(), json!(enabled)),
+        ])
+    };
 
     for (is_contract, recipient_bytes, self_credit) in [
         (true, [9; 32], true),
@@ -46,13 +55,12 @@ fn recipient_mint_returns_color_and_credits_only_contract_self() -> anyhow::Resu
         (false, [9; 32], false),
     ] {
         let recipient = HashOutput(recipient_bytes);
-        let inputs = BTreeMap::from([
-            ("domain".into(), bytes(&domain.0)),
-            ("amount".into(), json!(amount.to_string())),
-            ("isContract".into(), json!(is_contract)),
-            ("recipient".into(), bytes(&recipient.0)),
-        ]);
-        let execution = prepare_with_context(&plan, &inputs, context.clone(), params)?;
+        let execution = prepare_with_context(
+            &plan,
+            &inputs(is_contract, &recipient.0, true),
+            context.clone(),
+            params,
+        )?;
         assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
         assert_eq!(execution.returns_json()["color"], bytes(&expected_color.0));
 
@@ -90,22 +98,36 @@ fn recipient_mint_returns_color_and_credits_only_contract_self() -> anyhow::Resu
         );
     }
 
-    let own_recipient = HashOutput([9; 32]);
-    let self_inputs = BTreeMap::from([
-        ("domain".into(), bytes(&domain.0)),
-        ("amount".into(), json!(amount.to_string())),
-        ("isContract".into(), json!(true)),
-        ("recipient".into(), bytes(&own_recipient.0)),
-    ]);
-    let mut forged = prepare_with_context(&plan, &self_inputs, context.clone(), params)?.preimage;
-    let user_same_bytes = BTreeMap::from([
-        ("domain".into(), bytes(&domain.0)),
-        ("amount".into(), json!(amount.to_string())),
-        ("isContract".into(), json!(false)),
-        ("recipient".into(), bytes(&own_recipient.0)),
-    ]);
+    let inactive = prepare_with_context(
+        &plan,
+        &inputs(true, &own.0.0, false),
+        context.clone(),
+        params,
+    )?;
+    assert_eq!(check(&inactive, &circuit)?, inactive.activity_schedule);
+    assert_eq!(inactive.returns_json()["color"], bytes(&[0; 32]));
+    let inactive_effects = context
+        .query(
+            &inactive.program,
+            None,
+            &params.cost_model.runtime_cost_model,
+        )?
+        .context
+        .effects;
+    assert_eq!(inactive_effects.unshielded_mints.size(), 0);
+    assert_eq!(inactive_effects.unshielded_inputs.size(), 0);
+    assert_eq!(inactive_effects.unshielded_outputs.size(), 0);
+    assert_eq!(inactive_effects.claimed_unshielded_spends.size(), 0);
+
+    let mut forged = prepare_with_context(
+        &plan,
+        &inputs(true, &own.0.0, true),
+        context.clone(),
+        params,
+    )?
+    .preimage;
     forged.public_transcript_inputs =
-        prepare_with_context(&plan, &user_same_bytes, context, params)?
+        prepare_with_context(&plan, &inputs(false, &own.0.0, true), context, params)?
             .preimage
             .public_transcript_inputs
             .clone();

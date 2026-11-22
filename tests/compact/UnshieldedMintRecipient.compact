@@ -2,7 +2,10 @@ pragma language_version 0.28;
 import CompactStandardLibrary;
 
 export circuit mint(domain: Bytes<32>, amount: Uint<64>, isContract: Boolean,
-                    recipient: Bytes<32>): Bytes<32> {
+                    recipient: Bytes<32>, enabled: Boolean): Bytes<32> {
+  if (!disclose(enabled)) {
+    return pad(32, "");
+  }
   const target = isContract ? left<ContractAddress, UserAddress>(ContractAddress{bytes: recipient})
                             : right<ContractAddress, UserAddress>(UserAddress{bytes: recipient});
   return mintUnshieldedToken(disclose(domain), disclose(amount), disclose(target));
