@@ -51,6 +51,13 @@ proof and accepted-state qualification remains tracked in
 
 [`tests/WitnessDisclosure.lean`](../../tests/WitnessDisclosure.lean) checks direct and helper-mediated leaks. Disclosing constants inside a branch does not disclose its private witness guard. The host plan requires explicit disclosure of the guard itself.
 
+Use `default(Payload receiptWire)` in a readable witness circuit whose
+`using` clause lists `receiptWire`. Noctium builds the typed zero leaves
+from the checked codec layout and reconstructs the logical return value.
+The fixture covers a record, a vector of records, an absent Maybe with
+a record payload, and an Either with both fields defaulted.
+[Composite defaults fixture](../../tests/CompositeDefaults.lean)
+
 ## Compile source
 
 Declare `Helpers.WitnessSignature` values on `Helpers.Program.witnesses`. Each signature names its versioned operation, capability, typed parameters and result. Call a signature with `Term.witnessCall site name arguments`. Site names remain unique within each helper declaration.

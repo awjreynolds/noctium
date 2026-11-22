@@ -1,0 +1,12 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+export circuit defaults(): [Limits, Vector<2, Limits>, Maybe<Limits>, Either<Uint<8>, Boolean>] {
+  return [default<Limits>, default<Vector<2, Limits>>, default<Maybe<Limits>>, default<Either<Uint<8>, Boolean>>];
+}
