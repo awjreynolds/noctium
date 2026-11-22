@@ -510,6 +510,13 @@ def LedgerValueType.collectionKey? : LedgerValueType → Option Ty
   | .map ty _ | .set ty => some ty
   | _ => none
 
+/-- Collection operations that address the selected collection as a whole.
+Record Sets have no scalar key type, but support the same root size, emptiness,
+and reset effects as ordinary Maps and Sets. -/
+def LedgerValueType.isCollection : LedgerValueType → Bool
+  | .map .. | .set _ | .recordSet .. => true
+  | _ => false
+
 /-- The final key addresses an entry in the selected parent map or set. -/
 def LedgerValueType.entryParent (schema : LedgerValueType) (keys : List PathKey) :
     Except String LedgerValueType := do
@@ -724,7 +731,7 @@ def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
     Except String Unit := do
   if keys.length >= 16 then throw "collection path exceeds the native index limit"
   let some schema := kind.pathSchema | throw "path must select a Map or Set"
-  unless (← schema.resolvePath keys).collectionKey?.isSome do
+  unless (← schema.resolvePath keys).isCollection do
     throw "path must select a Map or Set"
 
 def StateKind.merkleTreeDepth? : StateKind → Option Nat

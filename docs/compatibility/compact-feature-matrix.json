@@ -2503,7 +2503,7 @@
       "layer": "language-ledger",
       "surface": "Set.isEmpty",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit emptiness matches Compact for root and map-nested Sets. An inactive read binds false and skips path access. Ledger 9.1.0.1 finalized the checked root and nested empty reads with exact unchanged state.",
+      "notes": "Circuit emptiness matches Compact for root and map-nested Sets. An inactive read binds false and skips path access. Ledger 9.1.0.1 finalized the checked root and nested empty reads with exact unchanged state. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and returns empty initially, nonempty after inserting (true, 513) and (false, 513), then empty after reset. An inactive guarded reset preserves exact state.",
       "source": [
         "adt"
       ],
@@ -2514,6 +2514,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2581,7 +2582,7 @@
       "layer": "language-ledger",
       "surface": "Set.resetToDefault",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit reset clears root and nested ordinary Sets. The matched Compact and funded Ledger 9.1.0.1 case clears newly inserted Bytes32 members with exact state. The native checker covers sibling preservation and initialization of a previously absent nested Set.",
+      "notes": "Circuit reset clears root and nested ordinary Sets. The matched Compact and funded Ledger 9.1.0.1 case clears newly inserted Bytes32 members with exact state. The native checker covers sibling preservation and initialization of a previously absent nested Set. The root typed-record Set native relation resets Memo { active: Bool, amount: UInt16 } after inserting (true, 513) and (false, 513) to the exact empty root Set. An inactive guarded reset preserves exact state, and a sealed reset is rejected.",
       "source": [
         "adt"
       ],
@@ -2592,6 +2593,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2607,7 +2609,7 @@
       "layer": "language-ledger",
       "surface": "Set.size",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets.",
+      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset.",
       "source": [
         "adt"
       ],
@@ -2618,6 +2620,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",

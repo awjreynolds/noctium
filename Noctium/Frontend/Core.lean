@@ -2518,7 +2518,7 @@ private def collectionResetTerm (path : TSyntax `nlpath) (storage : TSyntax `ide
   | .«list» .. =>
     unless keyCount ≤ 13 do throwErrorAt path "List paths support at most 13 map keys"
     `(Noctium.Effect.listReset $name $keys)
-  | .map .. | .set _ => `(Noctium.Effect.emptyMapPath $name $keys)
+  | .map .. | .set _ | .recordSet .. => `(Noctium.Effect.emptyMapPath $name $keys)
   | .merkleTree depth historic =>
     unless 1 ≤ keyCount && keyCount ≤ 12 do
       throwErrorAt path "nested MerkleTree paths require one to twelve map keys"
@@ -2690,7 +2690,7 @@ private def elaborateNamedPathRead (schema : List (String × StateKind))
           `(Noctium.Backend.Impact.activityGuardWithin $condition $isZero)
         | _ => throwError "invalid List emptiness effect guard"
       return {updated with env := (destination.getId.toString, .bool, empty) :: updated.env}
-    unless selected.collectionKey?.isSome do
+    unless selected.isCollection do
       throwErrorAt path "isEmpty path must select a Map or Set"
     let (readName, updated) ← freshReadName depth state destination
     let pathTerm ← pathKeysTerm keys
@@ -2703,7 +2703,7 @@ private def elaborateNamedPathRead (schema : List (String × StateKind))
       throwErrorAt path "map or set size path exceeds the native index limit"
     let valueType ← statePathSchema schema storage
     let (keys, selected) ← lowerTreePath state.env valueType sourceKeys
-    unless selected.collectionKey?.isSome do
+    unless selected.isCollection do
       throwErrorAt path "size path must select a Map or Set"
     let (readName, updated) ← freshReadName depth state destination
     let pathTerm ← pathKeysTerm keys

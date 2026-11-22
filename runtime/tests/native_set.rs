@@ -106,6 +106,43 @@ fn typed_record_set_keeps_both_fields_in_one_key() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_RECORD_SET_COLLECTIONS_DIR"]
+fn typed_record_set_reports_size_and_resets() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_SET_COLLECTIONS_DIR")?);
+    let plan = load_plan(&directory, "RecordSetCollections.update.impact.json");
+    let circuit = load_circuit(&directory, "RecordSetCollections.update.zkir");
+    let initial = create_state(&plan, &BTreeMap::from([("memoSet".into(), json!([]))]))?;
+    let mut state = initial.clone();
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    for (active, adding, clear, size) in [
+        (true, false, false, 0),
+        (true, true, false, 1),
+        (false, true, false, 2),
+        (true, false, false, 2),
+        (false, false, true, 0),
+    ] {
+        let inputs = BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("amount".into(), json!("513")),
+            ("adding".into(), json!(adding)),
+            ("clear".into(), json!(clear)),
+        ]);
+        let step = prepare(&plan, &inputs, &state, parameters, address)?;
+        assert_eq!(check(&step, &circuit)?, step.activity_schedule);
+        let returns = step.returns_json();
+        assert_eq!(returns["size"], json!(size.to_string()));
+        assert_eq!(returns["isEmpty"], json!(size == 0));
+        if !adding && !clear {
+            assert_eq!(step.after.state.get_ref(), state.get_ref());
+        }
+        state = step.after.state;
+    }
+    assert_eq!(state.get_ref(), initial.get_ref());
+    Ok(())
+}
+
 fn inputs(
     bucket: u64,
     tag: u8,
