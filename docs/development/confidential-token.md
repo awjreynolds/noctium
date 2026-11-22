@@ -48,6 +48,59 @@ keys, and every candidate ciphertext against actual ordered ledger reads before
 writing. A candidate input is not trusted state. The account ID is returned as
 a typed Bytes32 result bound to the native output commitment.
 
+## Focused `totalSupply` source qualification
+
+[The Lean proof](../../proofs/ConfidentialTokenSupplyVerification.lean) binds
+the actual `totalSupply` entrypoint at index 7 of 16 and checks its source name,
+location, empty input circuit, `UInt128` cell read and exact returned reference.
+For admitted initialized states at the pinned modulus with a canonical public
+supply, the proof shows the getter returns that cell's exact value and preserves
+the full source `LedgerState`. The full-state guarantee assumes empty unshielded
+settlement buffers. `Entrypoint.run` clears those buffers before the read. The
+enabled proof gives progress from the explicitly modeled zero state. A replay
+lemma shows two source-evaluator calls return the same value and state. A
+malformed source-model state missing the `totalSupply` cell rejects. The
+pre-proof source report shows both roles missing, then the final report shows
+an exact functional/privacy pair for this entrypoint. A wrong-role audit check
+rejects.
+
+The zero state is a source-model witness. The kernel checks that the source
+constructor sets `initialized` and leaves `totalSupply` at its typed default.
+Host construction requires separate correspondence evidence. The native test calls
+`construct_state` and checks the `totalSupply` view equals zero before any
+operation ([confidential token test](../../runtime/tests/confidential_token.rs#L1221)).
+
+The privacy statement covers the source evaluator's full observation: the
+returned environment and final ledger state on success, or the error string on
+failure. Equal contexts, empty inputs and identical public ledger states yield
+equal observations, and the returned value equals the already public supply
+cell. The proof covers `totalSupply` in the source model. Native and deployed
+privacy require separate evidence. The other fifteen entrypoints still need
+functional and privacy role registrations.
+
+Run the Lean check from the repository root.
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  mkdir -p "$scratch/examples/openzeppelin"
+  lake build Noctium.Frontend Noctium.Verification
+  lake env lean -o "$scratch/examples/openzeppelin/ConfidentialToken.olean" \
+    examples/openzeppelin/ConfidentialToken.lean
+  lake env sh -c 'LEAN_PATH="$1${LEAN_PATH:+:$LEAN_PATH}"; export LEAN_PATH; shift; exec lean "$@"' \
+    sh "$scratch" proofs/ConfidentialTokenSupplyVerification.lean
+)
+```
+
+A data-only replay on compiler base `ffa8bc88` checked both roles with the
+three approved Lean axioms. The local model export was 54,623,095 bytes, with
+SHA-256 `fccb955d9b7d29d7b696a678922a6203ec5387777957bfc459793c3496aa5e93`.
+The 66,301,535-byte proof export had SHA-256
+`cbb23f0a16a72b65c233aa2495ba4067240c5081b9d1e06dddb1db71b2bc8d09`.
+Release review still needs an independent model pin.
+
 A witness helper now returns a logical Bytes32 value directly, with
 [focused source/host/native evidence](bytes32-witness-output.md). Approval's
 grouped ciphertext result still uses a public account-ID candidate constrained
