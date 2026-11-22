@@ -243,6 +243,7 @@ scoped syntax "default(" nltype ")" : nlexpr
 scoped syntax "disclose(" nlexpr ")" : nlexpr
 scoped syntax "boolAnd(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "boolOr(" nlexpr "," nlexpr ")" : nlexpr
+scoped syntax "boolNot(" nlexpr ")" : nlexpr
 scoped syntax "andThen(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "orElse(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "boolXor(" nlexpr "," nlexpr ")" : nlexpr
@@ -831,6 +832,7 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) =>
     hasPartialScalar value || hasPartialScalar body
   | `(nlexpr| disclose($value)) => hasPartialScalar value
+  | `(nlexpr| boolNot($value)) => hasPartialScalar value
   | `(nlexpr| add($a, $b)) | `(nlexpr| mul($a, $b))
   | `(nlexpr| eq($a, $b)) | `(nlexpr| boolAnd($a, $b))
   | `(nlexpr| boolOr($a, $b)) | `(nlexpr| andThen($a, $b))
@@ -1075,6 +1077,9 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let left ← expected env left .bool
     let right ← expected env right .bool
     pure (.bool, ← `(Noctium.Expr.boolOr $left $right))
+  | `(nlexpr| boolNot($value)) => do
+    let value ← expected env value .bool
+    pure (.bool, ← `(Noctium.Expr.boolXor $value (Noctium.Expr.bool Bool.true)))
   | `(nlexpr| andThen($left, $right)) => do
     let left ← expected env left .bool
     let (rightTy, right) ← expression env right

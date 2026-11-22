@@ -1,81 +1,181 @@
-{"targetProfile":
- {"zkir": "3.2.1",
-  "zkStdlib": "2.4.0",
-  "schemaVersion": 1,
-  "qualification": "selected-native-subset-qualified",
-  "proofServer": "9.0.0",
-  "onchainRuntime": "4.0.1",
-  "nativeSource":
-  {"tag": "zkir-3.2.1",
-   "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
-   "repository": "https://github.com/midnightntwrk/midnight-zkir",
-   "reportedCliVersion": "midnight-zkir 3.2.0",
-   "declaredCrateVersion": "3.2.0"},
-  "name": "midnight-ledger-9-zkir-3.2.1",
-  "ledger": "9.1.0.1",
-  "circuits": "7.3.0"},
- "target": "midnight-ledger-9-zkir-3.2.1",
- "state": [],
- "schemaVersion": 1,
- "returns":
- [{"visibility": "public",
-   "type": "Bool",
-   "name": "andResult",
-   "expression": {"tag": "reference", "name": "andValue"}},
-  {"visibility": "public",
-   "type": "Bool",
-   "name": "orResult",
-   "expression": {"tag": "reference", "name": "orValue"}},
-  {"visibility": "public",
-   "type": "Bool",
-   "name": "xorResult",
-   "expression": {"tag": "reference", "name": "xorValue"}},
-  {"visibility": "public",
-   "type": "Bool",
-   "name": "xorThreeResult",
-   "expression": {"tag": "reference", "name": "xorThreeValue"}}],
- "reads": [],
- "operations": [],
- "nativeCircuitFile": "BooleanGates.truthTable.zkir",
- "guards": [],
- "entrypoint": "truthTable",
- "contractName": "BooleanGates",
- "circuit":
- {"outputs":
-  [{"visibility": "public",
+{
+ "circuit": {
+  "constraints": [],
+  "inputs": [
+   {
+    "name": "left",
     "type": "Bool",
-    "name": "andValue",
-    "expression":
-    {"tag": "boolAnd",
-     "right": {"tag": "reference", "name": "right"},
-     "left": {"tag": "reference", "name": "left"}}},
-   {"visibility": "public",
+    "visibility": "private"
+   },
+   {
+    "name": "right",
     "type": "Bool",
-    "name": "orValue",
-    "expression":
-    {"tag": "boolOr",
-     "right": {"tag": "reference", "name": "right"},
-     "left": {"tag": "reference", "name": "left"}}},
-   {"visibility": "public",
-    "type": "Bool",
-    "name": "xorValue",
-    "expression":
-    {"tag": "boolXor",
-     "right": {"tag": "reference", "name": "right"},
-     "left": {"tag": "reference", "name": "left"}}},
-   {"visibility": "public",
-    "type": "Bool",
-    "name": "xorThreeValue",
-    "expression":
-    {"tag": "boolXor",
-     "right": {"value": true, "tag": "bool"},
-     "left":
-     {"tag": "boolXor",
-      "right": {"tag": "reference", "name": "right"},
-      "left": {"tag": "reference", "name": "left"}}}}],
+    "visibility": "private"
+   }
+  ],
   "name": "booleanInputs",
-  "inputs":
-  [{"visibility": "private", "type": "Bool", "name": "left"},
-   {"visibility": "private", "type": "Bool", "name": "right"}],
-  "file": "booleanInputs.zkir",
-  "constraints": []}}
+  "outputs": [
+   {
+    "expression": {
+     "left": {
+      "name": "left",
+      "tag": "reference"
+     },
+     "right": {
+      "tag": "bool",
+      "value": true
+     },
+     "tag": "boolXor"
+    },
+    "name": "notLeftValue",
+    "type": "Bool",
+    "visibility": "public"
+   },
+   {
+    "expression": {
+     "left": {
+      "name": "left",
+      "tag": "reference"
+     },
+     "right": {
+      "name": "right",
+      "tag": "reference"
+     },
+     "tag": "boolAnd"
+    },
+    "name": "andValue",
+    "type": "Bool",
+    "visibility": "public"
+   },
+   {
+    "expression": {
+     "left": {
+      "name": "left",
+      "tag": "reference"
+     },
+     "right": {
+      "name": "right",
+      "tag": "reference"
+     },
+     "tag": "boolOr"
+    },
+    "name": "orValue",
+    "type": "Bool",
+    "visibility": "public"
+   },
+   {
+    "expression": {
+     "left": {
+      "name": "left",
+      "tag": "reference"
+     },
+     "right": {
+      "name": "right",
+      "tag": "reference"
+     },
+     "tag": "boolXor"
+    },
+    "name": "xorValue",
+    "type": "Bool",
+    "visibility": "public"
+   },
+   {
+    "expression": {
+     "left": {
+      "left": {
+       "name": "left",
+       "tag": "reference"
+      },
+      "right": {
+       "name": "right",
+       "tag": "reference"
+      },
+      "tag": "boolXor"
+     },
+     "right": {
+      "tag": "bool",
+      "value": true
+     },
+     "tag": "boolXor"
+    },
+    "name": "xorThreeValue",
+    "type": "Bool",
+    "visibility": "public"
+   }
+  ]
+ },
+ "contractName": "BooleanGates",
+ "entrypoint": "truthTable",
+ "guards": [],
+ "nativeCircuitFile": "BooleanGates.truthTable.zkir",
+ "operations": [],
+ "reads": [],
+ "returns": [
+  {
+   "expression": {
+    "name": "andValue",
+    "tag": "reference"
+   },
+   "name": "andResult",
+   "type": "Bool",
+   "visibility": "public"
+  },
+  {
+   "expression": {
+    "name": "orValue",
+    "tag": "reference"
+   },
+   "name": "orResult",
+   "type": "Bool",
+   "visibility": "public"
+  },
+  {
+   "expression": {
+    "name": "notLeftValue",
+    "tag": "reference"
+   },
+   "name": "notLeftResult",
+   "type": "Bool",
+   "visibility": "public"
+  },
+  {
+   "expression": {
+    "name": "xorValue",
+    "tag": "reference"
+   },
+   "name": "xorResult",
+   "type": "Bool",
+   "visibility": "public"
+  },
+  {
+   "expression": {
+    "name": "xorThreeValue",
+    "tag": "reference"
+   },
+   "name": "xorThreeResult",
+   "type": "Bool",
+   "visibility": "public"
+  }
+ ],
+ "schemaVersion": 1,
+ "state": [],
+ "target": "midnight-ledger-9-zkir-3.2.1",
+ "targetProfile": {
+  "circuits": "7.3.0",
+  "ledger": "9.1.0.1",
+  "name": "midnight-ledger-9-zkir-3.2.1",
+  "nativeSource": {
+   "declaredCrateVersion": "3.2.0",
+   "reportedCliVersion": "midnight-zkir 3.2.0",
+   "repository": "https://github.com/midnightntwrk/midnight-zkir",
+   "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+   "tag": "zkir-3.2.1"
+  },
+  "onchainRuntime": "4.0.1",
+  "proofServer": "9.0.0",
+  "qualification": "selected-native-subset-qualified",
+  "schemaVersion": 1,
+  "zkStdlib": "2.4.0",
+  "zkir": "3.2.1"
+ }
+}

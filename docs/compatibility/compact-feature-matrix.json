@@ -137,7 +137,7 @@
       "layer": "language",
       "surface": "Boolean",
       "noctiumStatus": "subset",
-      "notes": "Bool values, equality, constants and constraints exist. General Boolean operators and Compact conversion semantics are absent.",
+      "notes": "Bool values, equality, constants and constraints are available. Typed Boolean negation works in circuits and readable helpers. Both truth values match pinned Compact 0.36.1 and the native relation. The Lean frontend rejects non-Bool operands. Broader Compact Boolean operator contexts and conversions still need differential checks.",
       "source": [
         "reference"
       ],
@@ -148,7 +148,10 @@
       "observedEvidence": [
         "Noctium/IR.lean",
         "Noctium/Frontend.lean",
-        "tests/IR.lean"
+        "tests/IR.lean",
+        "tests/BooleanGates.lean",
+        "tests/compact/boolean-negation.mjs",
+        "runtime/tests/native_boolean_gates.rs"
       ],
       "equivalence": "unverified"
     },

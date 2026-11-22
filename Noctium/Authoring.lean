@@ -512,6 +512,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| eq($left, $right)) => s!"eq({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolAnd($left, $right)) => s!"boolAnd({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolOr($left, $right)) => s!"boolOr({renderExpr left}, {renderExpr right})"
+  | `(nlexpr| boolNot($value)) => s!"boolNot({renderExpr value})"
   | `(nlexpr| boolXor($left, $right)) => s!"boolXor({renderExpr left}, {renderExpr right})"
   | `(nlexpr| select($condition, $yes, $no)) =>
     s!"select({renderExpr condition}, {renderExpr yes}, {renderExpr no})"
@@ -616,6 +617,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| boolAnd($left, $right)) | `(nlexpr| boolOr($left, $right))
   | `(nlexpr| boolXor($left, $right)) =>
     disclosedValues left ++ disclosedValues right
+  | `(nlexpr| boolNot($value)) => disclosedValues value
   | `(nlexpr| cast($_:nltype, $value:nlexpr)) => disclosedValues value
   | `(nlexpr| select($condition, $yes, $no)) =>
     disclosedValues condition ++ disclosedValues yes ++ disclosedValues no
@@ -686,6 +688,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| boolAnd($left, $right)) | `(nlexpr| boolOr($left, $right))
   | `(nlexpr| boolXor($left, $right)) =>
     inlineAssertions left ++ inlineAssertions right
+  | `(nlexpr| boolNot($value)) => inlineAssertions value
   | `(nlexpr| cast($_:nltype, $value:nlexpr)) | `(nlexpr| disclose($value)) => inlineAssertions value
   | `(nlexpr| select($condition, $yes, $no)) =>
     inlineAssertions condition ++ inlineAssertions yes ++ inlineAssertions no
@@ -1284,6 +1287,11 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     unless left.type == .scalar .bool && right.type == .scalar .bool do
       throwErrorAt stx "boolXor operands require Bool"
     pure (mergeLowered (.scalar .bool) (.boolXor left.term right.term) [left, right])
+  | `(nlexpr| boolNot($value)) => do
+    let value ← lowerExpr programName callPrefix env value
+    unless value.type == .scalar .bool do
+      throwErrorAt stx "boolNot operand requires Bool"
+    pure (mergeLowered (.scalar .bool) (.boolXor value.term (.bool Bool.true)) [value])
   | `(nlexpr| select($condition, $yes, $no)) => do
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool
