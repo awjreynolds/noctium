@@ -172,16 +172,12 @@ private def nativeExpressionJson : Expr ty → Json
         ("schema", schema), ("opening", nativeExpressionJson opening),
         ("values", encodedValues)]
   | .transientHashFab environment type values => Id.run do
-      let compiled := Types.compileType environment type
-      let schema := match compiled with
-        | .ok value => (Types.schemaJson value).toOption.getD Json.null
-        | .error _ => Json.null
-      let encodedValues := match compiled with
-        | .ok value => match fabHashLayoutFields value.checked.value with
-          | .ok fields => Json.arr
-              (nativeExpressionFabValuesJson (fields.map Prod.snd) values)
-          | .error _ => Json.arr #[]
-        | .error _ => Json.arr #[]
+      let checked : Except String (Json × Json) := do
+        let fields ← validateTransientFabHashFields environment type values
+        let compiled ← (Types.compileType environment type).mapError (·.message)
+        let schema ← Types.schemaJson compiled
+        pure (schema, Json.arr (nativeExpressionFabValuesJson (fields.map Prod.snd) values))
+      let (schema, encodedValues) := checked.toOption.getD (Json.null, Json.arr #[])
       return Json.mkObj [
         ("tag", toJson ("transientHashFab" : String)),
         ("schema", schema), ("values", encodedValues)]

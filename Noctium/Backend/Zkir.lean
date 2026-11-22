@@ -1218,7 +1218,7 @@ def lowerExpr : Expr ty → LowerM String
     modify fun state => {state with expressions := (key, output) :: state.expressions}
     pure output
   | .transientHashFab environment type values => do
-    match validateFabHashLayout environment type values >>= fabHashLayoutFields with
+    match validateTransientFabHashFields environment type values with
     | .error message =>
       rejectLowering message
       pure "0x00"

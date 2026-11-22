@@ -736,15 +736,11 @@ fn aligned_fab_uint(value: &Value, maximum: &BigUint) -> Result<AlignedValue> {
     .ok_or_else(|| anyhow!("invalid FAB unsigned alignment"))
 }
 
-fn aligned_fab_payload(
-    schema_json: &Json,
+fn aligned_fab_values(
+    fields: &[crate::aggregates::FabHashField],
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<AlignedValue> {
-    let schema_bytes = serde_json::to_vec(schema_json)?;
-    let schema = Schema::from_json(&schema_bytes)?;
-    let fields = schema.fab_hash_fields()?;
-    ensure!(!fields.is_empty(), "FAB hash requires at least one field");
     ensure!(
         fields.len() == values.len(),
         "FAB hash value count differs from its schema"
@@ -808,6 +804,17 @@ fn aligned_fab_payload(
     Ok(AlignedValue::concat(&aligned))
 }
 
+fn aligned_fab_payload(
+    schema_json: &Json,
+    values: &[FabHashInput],
+    env: &Environment,
+) -> Result<AlignedValue> {
+    let schema_bytes = serde_json::to_vec(schema_json)?;
+    let schema = Schema::from_json(&schema_bytes)?;
+    let fields = schema.fab_hash_fields()?;
+    aligned_fab_values(&fields, values, env)
+}
+
 fn hash_to_curve_fab(
     schema_json: &Json,
     values: &[FabHashInput],
@@ -864,11 +871,14 @@ fn transient_hash_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let schema_bytes = serde_json::to_vec(schema_json)?;
+    let schema = Schema::from_json(&schema_bytes)?;
+    let typed_fields = schema.transient_hash_fields()?;
+    let payload = aligned_fab_values(&typed_fields, values, env)?;
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
-        !fields.is_empty() && fields.len() <= MAX_TRANSIENT_HASH_FIELDS,
+        fields.len() <= MAX_TRANSIENT_HASH_FIELDS,
         "FAB transient hash field vector exceeds compiler limit"
     );
     Ok(Value::Native(transient_hash(&fields)))

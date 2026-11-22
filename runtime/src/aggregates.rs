@@ -392,6 +392,15 @@ pub(crate) enum FabHashField {
     Native,
 }
 
+impl FabHashField {
+    fn encoded_field_count(&self) -> usize {
+        match self {
+            Self::Bytes(length) => length.div_ceil(31),
+            _ => 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Projection {
     pub kind: String,
@@ -932,6 +941,43 @@ impl Schema {
         )
     }
 
+    fn fab_hash_field(&self, layout: usize) -> Result<FabHashField> {
+        match &self.nodes[layout] {
+            LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),
+            LayoutNode::Scalar(Leaf::Bool) => Ok(FabHashField::Bool),
+            LayoutNode::Scalar(Leaf::UInt(maximum)) => {
+                let width = maximum.bits();
+                ensure!(
+                    width > 0
+                        && width <= crate::scalars::MAX_UINT_BITS as u64
+                        && maximum + 1u8 == (BigUint::from(1u8) << width as usize),
+                    "FAB unsigned field maximum is outside the supported bit widths"
+                );
+                Ok(FabHashField::UInt(maximum.clone()))
+            }
+            LayoutNode::Bytes { length } => {
+                ensure!(
+                    (1..=32).contains(length),
+                    "FAB byte field length is outside the supported range"
+                );
+                Ok(FabHashField::Bytes(*length))
+            }
+            LayoutNode::Enum { id, variants, .. } => {
+                ensure!(
+                    !variants.is_empty()
+                        && variants.len() <= 256
+                        && variants.iter().all(|variant| variant.fields.is_empty()),
+                    "FAB hash supports only one-byte fieldless enums"
+                );
+                Ok(FabHashField::EnumTag {
+                    id: id.clone(),
+                    maximum: BigUint::from(variants.len() - 1),
+                })
+            }
+            _ => bail!("FAB hash supports only flat scalar and byte fields"),
+        }
+    }
+
     /// Return fields for the bounded flat-structure or flat-tuple FAB subset.
     /// Enum payloads need branch-dependent field expressions, so this helper
     /// accepts only one-byte fieldless enums and exposes their tag as a field.
@@ -948,41 +994,45 @@ impl Schema {
 
         layouts
             .iter()
-            .map(|layout| match &self.nodes[*layout] {
-                LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),
-                LayoutNode::Scalar(Leaf::Bool) => Ok(FabHashField::Bool),
-                LayoutNode::Scalar(Leaf::UInt(maximum)) => {
-                    let width = maximum.bits();
-                    ensure!(
-                        width > 0
-                            && width <= crate::scalars::MAX_UINT_BITS as u64
-                            && maximum + 1u8 == (BigUint::from(1u8) << width as usize),
-                        "FAB unsigned field maximum is outside the supported bit widths"
-                    );
-                    Ok(FabHashField::UInt(maximum.clone()))
-                }
-                LayoutNode::Bytes { length } => {
-                    ensure!(
-                        (1..=32).contains(length),
-                        "FAB byte field length is outside the supported range"
-                    );
-                    Ok(FabHashField::Bytes(*length))
-                }
-                LayoutNode::Enum { id, variants, .. } => {
-                    ensure!(
-                        !variants.is_empty()
-                            && variants.len() <= 256
-                            && variants.iter().all(|variant| variant.fields.is_empty()),
-                        "FAB hash supports only one-byte fieldless enums"
-                    );
-                    Ok(FabHashField::EnumTag {
-                        id: id.clone(),
-                        maximum: BigUint::from(variants.len() - 1),
-                    })
-                }
-                _ => bail!("FAB hash supports only flat scalar and byte fields"),
-            })
+            .map(|layout| self.fab_hash_field(*layout))
             .collect()
+    }
+
+    /// Flatten a checked layout for transient hashing in struct, tuple, and
+    /// fixed-vector order. Unit contributes no input fields.
+    pub(crate) fn transient_hash_fields(&self) -> Result<Vec<FabHashField>> {
+        let mut pending = vec![self.root];
+        let mut fields =
+            Vec::with_capacity(self.counts().leaves.min(crate::MAX_TRANSIENT_HASH_FIELDS));
+        let mut encoded_fields = 0usize;
+        let mut visited = 0usize;
+        while let Some(layout) = pending.pop() {
+            visited = add(visited, 1)?;
+            ensure!(
+                visited <= self.counts().expanded_nodes,
+                "FAB transient hash layout traversal limit exceeded"
+            );
+            match &self.nodes[layout] {
+                LayoutNode::Unit => {}
+                LayoutNode::Tuple(items) => pending.extend(items.iter().rev().copied()),
+                LayoutNode::Struct { fields, .. } => {
+                    pending.extend(fields.iter().rev().map(|field| field.layout));
+                }
+                LayoutNode::Vector { length, element } => {
+                    pending.extend(std::iter::repeat_n(*element, *length));
+                }
+                _ => {
+                    let field = self.fab_hash_field(layout)?;
+                    encoded_fields = add(encoded_fields, field.encoded_field_count())?;
+                    ensure!(
+                        encoded_fields <= crate::MAX_TRANSIENT_HASH_FIELDS,
+                        "FAB transient hash field vector exceeds compiler limit"
+                    );
+                    fields.push(field);
+                }
+            }
+        }
+        Ok(fields)
     }
 
     fn flatten_value(&self, json: &[u8]) -> Result<Vec<BigUint>> {
