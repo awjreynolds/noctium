@@ -890,7 +890,7 @@
       "layer": "language",
       "surface": "Statically bounded for loops",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits and Helpers.Statement.forRange support half-open Native ranges with literal bounds, at most 1024 iterations and a preflight nested expansion budget. Body types are checked even when empty. Loop returns reject. Generic Helpers ranges accept compile-time Nat expressions through the same bounds and normalization after specialization. Readable container loops share the checked iteration backend. Native Rust, browser WASM and the pinned Compact oracle agree on the selected byte iteration and invalid callback. The guarded range finalized on Ledger 9 with exact state and private writes committed after finality. The Noctium range count cap is lower than the Compact limit. See tests/ReadableContainerLoop.lean and docs/development/structured-cells.md#finite-range-loops.",
+      "notes": "Readable witness circuits and Helpers.Statement.forRange support half-open Native ranges with literal bounds, a 1024-iteration limit for general bodies and a weighted preflight expansion budget. Body types are checked even when empty. Loop returns reject. Generic Helpers ranges accept compile-time Nat expressions through the same bounds and normalization after specialization. Readable container loops share the checked iteration backend. Native Rust, browser WASM and the pinned Compact oracle agree on the selected byte iteration and invalid callback. The guarded range finalized on Ledger 9 with exact state and private writes committed after finality. Flat effect-free assertion ranges lower to ordered constraints and ledger requirements without one continuation per iteration. The focused checks cover 1025 and 1200 iterations, along with rejection of a nested range that exceeds the weighted budget. General range support remains narrower than the pinned Compact release. See tests/ReadableContainerLoop.lean and docs/development/structured-cells.md#finite-range-loops.",
       "source": [
         "reference"
       ],
@@ -899,7 +899,8 @@
         "ZK"
       ],
       "observedEvidence": [
-        "SEM"
+        "SEM",
+        "tests/StaticAssertionRanges.lean"
       ],
       "equivalence": "unverified"
     },
