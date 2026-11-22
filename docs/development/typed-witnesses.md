@@ -63,6 +63,14 @@ Use `some(record)` to retain the checked payload and set `is_some`. Use
 defaults. A public return containing a private payload requires explicit
 disclosure. [Composite Maybe fixture](../../tests/CompositeMaybe.lean)
 
+`either(isLeft, leftValue, rightValue)` evaluates the three arguments once
+in order. A true tag retains the left payload and supplies the right
+payload's typed default. A false tag retains the right payload and
+supplies the left payload's typed default. The return layout orders
+`is_left`, `left`, and `right`. Public returns still require disclosure
+for private inputs that flow into them.
+[Composite Either fixture](../../tests/CompositeEither.lean)
+
 ## Compile source
 
 Declare `Helpers.WitnessSignature` values on `Helpers.Program.witnesses`. Each signature names its versioned operation, capability, typed parameters and result. Call a signature with `Term.witnessCall site name arguments`. Site names remain unique within each helper declaration.

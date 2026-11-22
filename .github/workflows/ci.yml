@@ -218,6 +218,7 @@ jobs:
           lake env lean tests/FixedBytesDefaults.lean
           lake env lean tests/CompositeDefaults.lean
           lake env lean tests/CompositeMaybe.lean
+          lake env lean tests/CompositeEither.lean
           lake env lean tests/ConstructorMetadata.lean
           lake env lean tests/SealedMapConstructor.lean
           lake env lean tests/SealedRootCounterListConstructor.lean

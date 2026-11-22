@@ -160,6 +160,13 @@ private structure Lowered where
   witnessNames : List String := []
   generatedValidity : List String := []
 
+private def Lowered.layoutType (value : Lowered) : Types.CompositeType :=
+  match value.type with
+  | .unit => .unit
+  | .scalar (.bytes length) => .bytes length
+  | .scalar ty => .scalar ty
+  | .composite type => type
+
 private structure IterationParameter where
   reference : String
   surfaceName : String
@@ -196,11 +203,7 @@ private structure AuthoredOutput where
   nominalBytes32 : Option NominalBytes32 := none
 
 private def AuthoredOutput.layoutType (item : AuthoredOutput) : Types.CompositeType :=
-  match item.value.type with
-  | .unit => .unit
-  | .scalar (.bytes length) => .bytes length
-  | .scalar ty => .scalar ty
-  | .composite type => type
+  item.value.layoutType
 
 private abbrev ExprM := StateT AuthoringExprState CommandElabM
 
@@ -885,13 +888,6 @@ private def scalarMaybeZero : Ty → Option Noctium.Helpers.Term
   | .uint maximum => some (.uint maximum 0)
   | _ => none
 
-private def loweredLayoutType (value : Lowered) : Types.CompositeType :=
-  match value.type with
-  | .unit => .unit
-  | .scalar (.bytes length) => .bytes length
-  | .scalar ty => .scalar ty
-  | .composite type => type
-
 private def compositeEitherType (programName : String) (site : Syntax)
     (left right : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
   let typeId := s!"{programName}.EitherComposite{hash fingerprint}"
@@ -992,8 +988,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt tagSource "Either tag requires Bool"
     let left ← lowerExpr programName callPrefix env leftSource
     let right ← lowerExpr programName callPrefix env rightSource
-    let leftLayout := loweredLayoutType left
-    let rightLayout := loweredLayoutType right
+    let leftLayout := left.layoutType
+    let rightLayout := right.layoutType
     let leftCompiled ← checkedPayloadLayout stx leftLayout
     let rightCompiled ← checkedPayloadLayout stx rightLayout
     let zerosLeft ← zeroPayloadLeaves stx leftCompiled
@@ -1019,12 +1015,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       Helpers.Term.select tagTerm payload zero
     let selectedRight := (zerosRight.zip rightLeaves).map fun (zero, payload) =>
       Helpers.Term.select tagTerm zero payload
-    let stagedTag := {tag with before := before}
-    let stagedLeft := {left with before := []}
-    let stagedRight := {right with before := []}
-    pure (mergeLowered (.composite eitherType)
+    let result := mergeLowered (.composite eitherType)
       (.composite eitherType (tagTerm :: selectedLeft ++ selectedRight))
-      [stagedTag, stagedLeft, stagedRight])
+      [tag, left, right]
+    pure {result with before}
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
     match value.type with

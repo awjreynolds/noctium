@@ -42,11 +42,9 @@ private def compiledChoose := Noctium.Witness.compile choose.__program
         "leftValue.memo.1", "leftValue.memo.2", "leftValue.memo.3",
         "rightValue.0", "rightValue.1"] &&
       compiled.circuit.outputs.map (·.name) == [
-        "result.eitherValue.is_left", "result.eitherValue.left.count",
-        "result.eitherValue.left.enabled", "result.eitherValue.left.memo.0",
-        "result.eitherValue.left.memo.1", "result.eitherValue.left.memo.2",
-        "result.eitherValue.left.memo.3", "result.eitherValue.right.0",
-        "result.eitherValue.right.1"]
+        "result.is_left", "result.left.count", "result.left.enabled",
+        "result.left.memo.0", "result.left.memo.1", "result.left.memo.2",
+        "result.left.memo.3", "result.right.0", "result.right.1"]
   | .error _ => Bool.false
 
 #guard (choose.__program.composites.structures.filter
@@ -65,39 +63,39 @@ private def chooseContext : EvalContext := {
 }
 
 #guard match choose.run chooseContext [
-    ("isLeft", .native 1), ("leftValue.count", .native 17),
+    ("isLeft", .bool Bool.true), ("leftValue.count", .native 17),
     ("leftValue.enabled", .native 1), ("leftValue.memo.0", .native 0),
     ("leftValue.memo.1", .native 1), ("leftValue.memo.2", .native 2),
     ("leftValue.memo.3", .native 255), ("rightValue.0", .native 1),
     ("rightValue.1", .native 0)] with
   | .ok outputs => outputs == [
-      ("result.eitherValue.is_left", .native 1),
-      ("result.eitherValue.left.count", .native 17),
-      ("result.eitherValue.left.enabled", .native 1),
-      ("result.eitherValue.left.memo.0", .native 0),
-      ("result.eitherValue.left.memo.1", .native 1),
-      ("result.eitherValue.left.memo.2", .native 2),
-      ("result.eitherValue.left.memo.3", .native 255),
-      ("result.eitherValue.right.0", .native 0),
-      ("result.eitherValue.right.1", .native 0)]
+      ("result.is_left", .native 1),
+      ("result.left.count", .native 17),
+      ("result.left.enabled", .native 1),
+      ("result.left.memo.0", .native 0),
+      ("result.left.memo.1", .native 1),
+      ("result.left.memo.2", .native 2),
+      ("result.left.memo.3", .native 255),
+      ("result.right.0", .native 0),
+      ("result.right.1", .native 0)]
   | .error _ => Bool.false
 
 #guard match choose.run chooseContext [
-    ("isLeft", .native 0), ("leftValue.count", .native 17),
+    ("isLeft", .bool Bool.false), ("leftValue.count", .native 17),
     ("leftValue.enabled", .native 1), ("leftValue.memo.0", .native 0),
     ("leftValue.memo.1", .native 1), ("leftValue.memo.2", .native 2),
     ("leftValue.memo.3", .native 255), ("rightValue.0", .native 1),
     ("rightValue.1", .native 0)] with
   | .ok outputs => outputs == [
-      ("result.eitherValue.is_left", .native 0),
-      ("result.eitherValue.left.count", .native 0),
-      ("result.eitherValue.left.enabled", .native 0),
-      ("result.eitherValue.left.memo.0", .native 0),
-      ("result.eitherValue.left.memo.1", .native 0),
-      ("result.eitherValue.left.memo.2", .native 0),
-      ("result.eitherValue.left.memo.3", .native 0),
-      ("result.eitherValue.right.0", .native 1),
-      ("result.eitherValue.right.1", .native 0)]
+      ("result.is_left", .native 0),
+      ("result.left.count", .native 0),
+      ("result.left.enabled", .native 0),
+      ("result.left.memo.0", .native 0),
+      ("result.left.memo.1", .native 0),
+      ("result.left.memo.2", .native 0),
+      ("result.left.memo.3", .native 0),
+      ("result.right.0", .native 1),
+      ("result.right.1", .native 0)]
   | .error _ => Bool.false
 
 private def privateChooseProgram : Helpers.Program := {

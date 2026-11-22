@@ -159,7 +159,7 @@ fn readable_composite_either_input_binds_both_tags_and_zeroes_the_inactive_side(
         )?;
         check(&execution, &circuit)?;
         assert_eq!(
-            execution.preimage.inputs,
+            execution.preimage.public_transcript_outputs,
             [u64::from(is_left), 17, 1, 0, 1, 2, 255, 1, 0,].map(Fr::from)
         );
         assert_eq!(
