@@ -52,3 +52,14 @@ Build the host library with the same environment and `cargo +1.100.0 build --no-
 /usr/bin/clang++ -std=c++17 runtime/tests/aggregate_cpp_smoke.cpp -Iruntime/include -L/private/tmp/noctium-rust-runtime-321-target/debug -lnoctium_runtime -Wl,-rpath,/private/tmp/noctium-rust-runtime-321-target/debug -o /private/tmp/noctium-aggregate-cpp-smoke
 /private/tmp/noctium-aggregate-cpp-smoke runtime/tests/fixtures/aggregates/schema.json runtime/tests/fixtures/aggregates/value.json runtime/tests/fixtures/aggregates/wire.hex
 ```
+
+## Compare two flat records
+
+In a readable circuit, `eq(left, right)` compares records with the same
+nominal type and direct Native, Bool or bounded UInt fields. The compiler
+evaluates the operands in order. The result inherits private value and control
+origins from both operands, so a public result may need explicit disclosure.
+The fixture checks identical records and a difference in each field against
+the pinned Compact oracle and the native relation. The replay test exercises
+the same typed comparison in Lean.
+[Lean fixture](../../tests/NominalRecordEquality.lean) · [Native check](../../runtime/tests/nominal_record_equality.rs) · [Compact fixture](../../tests/compact/nominal-record-equality.mjs)

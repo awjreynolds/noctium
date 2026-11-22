@@ -922,6 +922,16 @@ impl Schema {
         self.measures[self.root]
     }
 
+    pub(crate) fn is_flat_record(&self) -> bool {
+        matches!(
+            &self.nodes[self.root],
+            LayoutNode::Struct { fields, .. }
+                if fields
+                    .iter()
+                    .all(|field| matches!(&self.nodes[field.layout], LayoutNode::Scalar(_)))
+        )
+    }
+
     /// Return fields for the bounded flat-structure or flat-tuple FAB subset.
     /// Enum payloads need branch-dependent field expressions, so this helper
     /// accepts only one-byte fieldless enums and exposes their tag as a field.

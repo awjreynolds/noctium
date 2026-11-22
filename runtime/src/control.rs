@@ -1324,9 +1324,21 @@ impl Parser<'_> {
                 let b = self.expr(field(v, "right")?, env, depth + 1)?;
                 match tag {
                     "eq" => {
-                        scalar_type(&a.ty)?;
-                        scalar_type(&b.ty)?;
-                        let t = join(&a.ty, &b.ty)?;
+                        let t = match (&a.ty, &b.ty) {
+                            (Type::Scalar(_), Type::Scalar(_)) => join(&a.ty, &b.ty)?,
+                            (Type::Aggregate(left), Type::Aggregate(right)) => {
+                                ensure!(
+                                    left == right,
+                                    "control aggregate equality requires identical nominal types"
+                                );
+                                ensure!(
+                                    self.registry.is_flat_record(left)?,
+                                    "control aggregate equality requires a flat record"
+                                );
+                                a.ty.clone()
+                            }
+                            _ => bail!("control equality requires scalar or flat record operands"),
+                        };
                         (Type::Scalar(ScalarType::Bool), ExprKind::Eq(t, a, b))
                     }
                     "and" | "or" => {
@@ -6392,8 +6404,29 @@ impl Session {
                 let taint = a.is_tainted() || b.is_tainted();
                 let a = ty.coerce(a)?;
                 let b = ty.coerce(b)?;
+                let equal = match &ty {
+                    Type::Scalar(_) => a.value == b.value,
+                    Type::Aggregate(token) => {
+                        let left = &a
+                            .aggregate
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("control aggregate required"))?
+                            .payload
+                            .value;
+                        let right = &b
+                            .aggregate
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("control aggregate required"))?
+                            .payload
+                            .value;
+                        self.plan.registry.validate(token, left)?;
+                        self.plan.registry.validate(token, right)?;
+                        left == right
+                    }
+                    Type::Unit => bail!("control equality requires scalar or flat record operands"),
+                };
                 self.values
-                    .push(Tracked::scalar(Value::Bool(a.value == b.value), taint));
+                    .push(Tracked::scalar(Value::Bool(equal), taint));
             }
             Task::Curve(operation, count) => {
                 ensure!(self.values.len() >= count, "control curve argument stack");
