@@ -59,21 +59,18 @@ theorem mint_supply_suffix_is_actual_source :
   unfold mintEntry mintSupplySuffix mintSupplyRead mintSupplyWrite mintSupplyWriteValue
   with_unfolding_all rfl
 
-/-- `mint` has no committed call arguments or grouped call-input views. This
-records the empty call interface that blocks composing the local supply suffix
-into a joint claimMint proof. It does not claim the ledger entry has no circuit
-inputs or native effects. -/
-theorem mint_empty_committed_call_interface :
-    mintEntry.callInputs = [] ∧ mintEntry.callInputViews = [] ∧
-      mintEntry.callArguments = [] := by
+/-- `mint` binds exactly the recipient and amount in call order. Those names
+select the first two private typed inputs in the checked witness source. -/
+theorem mint_committed_arguments_are_exact :
+    mintEntry.callInputs = ["recipient", "value"] ∧
+      ((OpenZeppelinPort.creditPending.__program.exports[0]'(by decide)).inputs.take 2).map
+        (fun input => (input.name, input.ty, input.visibility)) =
+        [("recipient", .bytes 32, .private),
+          ("value", .uint uint128Max, .private)] := by
   constructor
   · unfold mintEntry
     with_unfolding_all rfl
-  constructor
-  · unfold mintEntry
-    with_unfolding_all rfl
-  · unfold mintEntry
-    with_unfolding_all rfl
+  · decide +kernel
 
 /-- A successful local suffix replaces only the totalSupply cell. The state
 argument represents the ledger after the entrypoint's guarded prefix. -/

@@ -803,17 +803,65 @@ fn run_entry(
         .get("accountId")
         .or_else(|| values.get("spenderId"))
         .cloned();
-    let source_inputs = source_inputs(&control_plan, values);
+    let native_inputs = collect_native_inputs(
+        entry,
+        &control_plan,
+        values,
+        account_secret,
+        encryption_secret,
+        seeds,
+        decrypt_balance,
+        attempt_number,
+    );
+    let execution = prepare(
+        &native_plan,
+        &native_inputs,
+        prior_state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .unwrap();
+    check(&execution, &circuit).map_err(|error| error.to_string())?;
+    if matches!(
+        entry,
+        "registerWithKey"
+            | "sweep"
+            | "transfer"
+            | "_move"
+            | "burn"
+            | "approve"
+            | "transferFrom"
+            | "burnFrom"
+    ) {
+        assert_eq!(
+            execution.returns_json()["caller"],
+            expected_caller.expect("caller return needs accountId")
+        );
+    }
+    Ok((execution.after.state.clone(), native_inputs))
+}
+
+fn collect_native_inputs(
+    entry: &str,
+    control_plan: &Json,
+    values: BTreeMap<String, Json>,
+    account_secret: &[u8; 32],
+    encryption_secret: &[u8; 32],
+    seeds: &[[u8; 32]],
+    decrypt_balance: Option<Ciphertext>,
+    attempt_number: u64,
+) -> BTreeMap<String, Json> {
+    let source_inputs = source_inputs(control_plan, values);
     let attempt_id = attempt(attempt_number);
     let binding: Json = serde_json::from_str(control_plan["binding"].as_str().unwrap()).unwrap();
     let digest = hex::encode(Sha256::digest(
         control_plan["binding"].as_str().unwrap().as_bytes(),
     ));
-    let wallet = wallet_values(&control_plan, account_secret, encryption_secret);
+    let wallet = wallet_values(control_plan, account_secret, encryption_secret);
     let mut session = Session::from_json_with_invocation_target(
         control_plan.clone(),
         source_inputs,
-        context(&control_plan, &attempt_id),
+        context(control_plan, &attempt_id),
         Some(&digest),
         Some(InvocationTarget {
             contract_address: "a".repeat(64),
@@ -885,34 +933,7 @@ fn run_entry(
     assert_eq!(callbacks, expected_callbacks, "{entry} callbacks");
     let relation = binding["nativeRelation"].clone();
     let completion = session.private_completion(&relation).unwrap();
-    let native_inputs: BTreeMap<String, Json> =
-        serde_json::from_value(completion["inputs"].clone()).unwrap();
-    let execution = prepare(
-        &native_plan,
-        &native_inputs,
-        prior_state,
-        &ledger::structure::INITIAL_PARAMETERS,
-        coin_structure::contract::ContractAddress::default(),
-    )
-    .unwrap();
-    check(&execution, &circuit).map_err(|error| error.to_string())?;
-    if matches!(
-        entry,
-        "registerWithKey"
-            | "sweep"
-            | "transfer"
-            | "_move"
-            | "burn"
-            | "approve"
-            | "transferFrom"
-            | "burnFrom"
-    ) {
-        assert_eq!(
-            execution.returns_json()["caller"],
-            expected_caller.expect("caller return needs accountId")
-        );
-    }
-    Ok((execution.after.state.clone(), native_inputs))
+    serde_json::from_value(completion["inputs"].clone()).unwrap()
 }
 
 fn initial_state(plan: &Plan) -> ChargedState<Db> {
@@ -925,6 +946,193 @@ fn initial_state(plan: &Plan) -> ChargedState<Db> {
         ]),
     )
     .unwrap()
+}
+
+#[test]
+#[ignore = "requires fresh callee and caller plans in NOCTIUM_MINT_BINDING_ARTIFACTS"]
+fn confidential_token_mint_binds_recipient_and_amount_across_calls() -> anyhow::Result<()> {
+    use base_crypto::hash::HashOutput;
+    use coin_structure::contract::ContractAddress;
+    use ledger::structure::INITIAL_PARAMETERS;
+    use noctium_runtime::{
+        Execution,
+        assembly::{CheckedNativeCall, assemble_checked_calls},
+        create_state,
+    };
+    use onchain_runtime::{context::QueryContext, state::EntryPointBuf};
+    use rand::rngs::OsRng;
+    use std::{fs::File, path::PathBuf};
+
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_MINT_BINDING_ARTIFACTS")
+            .expect("set the directory containing fresh callee and caller artifacts"),
+    );
+    let mint = directory.join("callee/OpenZeppelinPort.ConfidentialToken.mint");
+    let claim = directory.join("caller/OpenZeppelinPort.TokenMinter.claimMint");
+    let artifact = |stem: &std::path::Path, extension: &str| {
+        let mut name = stem.as_os_str().to_owned();
+        name.push(extension);
+        File::open(name)
+    };
+    let mint_control: Json = serde_json::from_reader(artifact(&mint, ".witness.control.json")?)?;
+    let mint_plan: Plan = serde_json::from_reader(artifact(&mint, ".impact.json")?)?;
+    let mint_circuit = IrSource::load(artifact(&mint, ".zkir")?)?;
+    let caller_plan: Plan = serde_json::from_reader(artifact(&claim, ".impact.json")?)?;
+    let caller_circuit = IrSource::load(artifact(&claim, ".zkir")?)?;
+
+    let account_secret = [17; 32];
+    let encryption_secret = [7; 32];
+    let recipient = account_id(&account_secret);
+    let recipient_key = EmbeddedGroupAffine::generator() * encryption_scalar(&encryption_secret);
+    let register_plan = serde_json::from_str(artifacts("registerWithKey").1)?;
+    let (mint_initial, _) = run_entry(
+        "registerWithKey",
+        BTreeMap::from([
+            ("accountId".into(), bytes(&recipient)),
+            ("pk".into(), point_json(recipient_key)),
+        ]),
+        &account_secret,
+        &encryption_secret,
+        &[],
+        None,
+        1,
+        &initial_state(&register_plan),
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let callee = ContractAddress(HashOutput([0xaa; 32]));
+    let caller = ContractAddress(HashOutput([0xc2; 32]));
+    let seed = [0x31; 32];
+    let amount = 12u64;
+    let opening = Fr::from(113u64);
+    let mut mint_inputs = BTreeMap::from([
+        ("recipient".into(), bytes(&recipient)),
+        ("value".into(), json!(amount.to_string())),
+        ("recipientPk".into(), point_json(recipient_key)),
+        ("epoch".into(), json!("1")),
+    ]);
+    for (name, field) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
+        .into_iter()
+        .zip(map_record(&mint_plan, &mint_initial, "pending", &recipient))
+    {
+        mint_inputs.insert(name.into(), json!(field_decimal(field)));
+    }
+    let native_mint_inputs = collect_native_inputs(
+        "mint",
+        &mint_control,
+        mint_inputs,
+        &account_secret,
+        &encryption_secret,
+        &[seed],
+        None,
+        2,
+    );
+    let mint_execution = prepare(
+        &mint_plan,
+        &native_mint_inputs,
+        &mint_initial,
+        &INITIAL_PARAMETERS,
+        callee,
+    )?;
+    check(&mint_execution, &mint_circuit)?;
+    let after = &mint_execution.after.state;
+    assert_eq!(
+        state_cell(&mint_plan, after, "totalSupply"),
+        &field_value(Fr::from(amount))
+    );
+    assert_eq!(
+        map_record(&mint_plan, after, "creditEpochs", &recipient),
+        vec![Fr::from(1u64)]
+    );
+    let (pending, memo) = expected_credit(&seed, &recipient, recipient_key, 1, amount);
+    assert_ciphertext(&mint_plan, after, "pending", &recipient, pending);
+    assert_eq!(
+        memo_records(&mint_plan, after, &recipient),
+        (
+            1,
+            vec![vec![
+                memo.ephemeral.x().unwrap(),
+                memo.ephemeral.y().unwrap(),
+                memo.amount
+            ]]
+        )
+    );
+
+    let caller_initial = create_state(
+        &caller_plan,
+        &BTreeMap::from([
+            ("route".into(), bytes(&callee.0.0)),
+            ("issuanceCount".into(), json!("0")),
+        ]),
+    )?;
+    let prepare_caller = |recipient: &[u8; 32], amount: u64| -> anyhow::Result<Execution> {
+        let execution = prepare(
+            &caller_plan,
+            &BTreeMap::from([
+                ("opening".into(), json!(field_decimal(opening))),
+                ("recipient".into(), bytes(recipient)),
+                ("value".into(), json!(amount.to_string())),
+            ]),
+            &caller_initial,
+            &INITIAL_PARAMETERS,
+            caller,
+        )?;
+        check(&execution, &caller_circuit)?;
+        assert_eq!(
+            state_cell(&caller_plan, &execution.after.state, "issuanceCount"),
+            &AlignedValue::from(1u64)
+        );
+        Ok(execution)
+    };
+    let assemble = |execution: &Execution| {
+        assemble_checked_calls(
+            &[
+                CheckedNativeCall {
+                    execution,
+                    circuit: &caller_circuit,
+                    initial_context: QueryContext::new(caller_initial.clone(), caller),
+                    entry_point: EntryPointBuf(b"claimMint".to_vec()),
+                    communication_commitment_rand: Fr::from(53u64),
+                },
+                CheckedNativeCall {
+                    execution: &mint_execution,
+                    circuit: &mint_circuit,
+                    initial_context: QueryContext::new(mint_initial.clone(), callee),
+                    entry_point: EntryPointBuf(b"mint".to_vec()),
+                    communication_commitment_rand: opening,
+                },
+            ],
+            &INITIAL_PARAMETERS,
+            1_800_000_000,
+            &mut OsRng,
+        )
+    };
+    let matched = assemble(&prepare_caller(&recipient, amount)?)?;
+    let mut calls = matched.calls();
+    let caller_call = calls.next().expect("checked caller");
+    let mint_call = calls.next().expect("checked mint");
+    assert!(caller_call.calls(mint_call));
+    assert!(calls.next().is_none());
+
+    let other_recipient = account_id(&[18; 32]);
+    for (changed_recipient, changed_amount) in
+        [(&recipient, amount + 1), (&other_recipient, amount)]
+    {
+        let independently_checked = prepare_caller(changed_recipient, changed_amount)?;
+        let error = match assemble(&independently_checked) {
+            Err(error) => error,
+            Ok(_) => panic!("changed mint commitment passed checked intent assembly"),
+        };
+        assert!(
+            matches!(
+                error.to_string().as_str(),
+                "official native call forest partition failed"
+                    | "contract claim has no matching later call in this intent"
+            ),
+            "{error:#}"
+        );
+    }
+    Ok(())
 }
 
 fn approve_inputs(
