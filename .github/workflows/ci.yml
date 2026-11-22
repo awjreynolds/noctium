@@ -252,6 +252,10 @@ jobs:
         run: |
           artifacts=$(mktemp -d)
           trap 'rm -rf "$artifacts"' EXIT
+          .lake/build/bin/noctium compile tests/ReadableBindPatterns.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/readable-bind-patterns"
+          export NOCTIUM_BIND_PATTERNS_DIR="$artifacts/readable-bind-patterns"
           .lake/build/bin/noctium compile tests/Issue43EffectBlocks.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/default"
@@ -280,6 +284,8 @@ jobs:
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-proof-unit"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+            --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \

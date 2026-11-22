@@ -154,10 +154,20 @@ scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "enumTag(" nlexpr ")" : nlexpr
 
+declare_syntax_cat noctium_bind_pattern
+declare_syntax_cat noctium_bind_field
+scoped syntax ident : noctium_bind_pattern
+scoped syntax "_" : noctium_bind_pattern
+scoped syntax "[" noctium_bind_pattern,* "]" : noctium_bind_pattern
+scoped syntax "{" noctium_bind_field,* "}" : noctium_bind_pattern
+scoped syntax ident (":=" noctium_bind_pattern)? : noctium_bind_field
+
 declare_syntax_cat noctium_witness_statement
 scoped syntax "public" ident ":" noctium_witness_input_type : noctium_witness_statement
 scoped syntax "private" ident ":" noctium_witness_input_type : noctium_witness_statement
 scoped syntax "let" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
+scoped syntax "let" "[" noctium_bind_pattern,* "]" ":=" nlexpr : noctium_witness_statement
+scoped syntax "let" "{" noctium_bind_field,* "}" ":=" nlexpr : noctium_witness_statement
 scoped syntax "read" "private" ident "as" ident : noctium_witness_statement
 scoped syntax "witness" ident "(" nlexpr,* ")" : noctium_witness_statement
 scoped syntax "prove" nlexpr ("as" ident)? : noctium_witness_statement
@@ -2270,11 +2280,84 @@ private def lookupPrivateField (fieldPath : TSyntax `ident) : CommandElabM Priva
     | throwErrorAt fieldPath "schema '{schema.name}' has no field '{fieldName}'"
   pure field
 
+private partial def patternBindings (composites : Types.CompositeEnv)
+    (pattern : TSyntax `noctium_bind_pattern) (type : ResultType)
+    (select : Helpers.Term → Helpers.Term) :
+    CommandElabM (List (TSyntax `ident × ResultType × (Helpers.Term → Helpers.Term))) := do
+  match pattern with
+  | `(noctium_bind_pattern| $id:ident) => pure [(id, type, select)]
+  | `(noctium_bind_pattern| _) => pure []
+  | `(noctium_bind_pattern| [$items,*]) => do
+    let (types, project) : List Types.CompositeType × (Nat → Helpers.Term → Helpers.Term) ←
+      match type with
+      | .unit => pure ([], fun _ value => value)
+      | .composite (.tuple types) => pure (types, fun index value => .project value (.tupleIndex index))
+      | .composite (.vector length type) =>
+        pure (List.replicate length type, fun index value => .project value (.vectorIndex index))
+      | .composite (.bytes length) =>
+        pure (List.replicate length (.scalar (.uint 255)), fun index value => .project value (.byteIndex index))
+      | .scalar (.bytes length) =>
+        pure (List.replicate length (.scalar (.uint 255)), fun index value => .bytesAt value index)
+      | _ => throwErrorAt pattern "positional pattern requires a tuple, vector or fixed bytes"
+    unless items.getElems.size == types.length do
+      throwErrorAt pattern s!"positional pattern requires {types.length} positions"
+    (items.getElems.toList.zip types).zipIdx.flatMapM fun ((item, child), index) =>
+      patternBindings composites item (Helpers.resultTypeOfComposite child) (project index ∘ select)
+  | `(noctium_bind_pattern| {$fields,*}) => do
+    let .composite (.structure id) := type | throwErrorAt pattern "record pattern requires a nominal record value"
+    let mut seen : List String := []
+    let mut bindings := []
+    for field in fields.getElems do
+      let `(noctium_bind_field| $name:ident $[:= $nested:noctium_bind_pattern]?) := field
+        | throwErrorAt field "invalid record pattern field"
+      let key := name.getId.toString
+      if seen.contains key then throwErrorAt name s!"duplicate record pattern field '{key}'"
+      let projection := Types.Projection.field key
+      let span ← spanValue name
+      let child ← match Helpers.projectedType composites span (.structure id) projection with
+        | .ok child => pure (Helpers.resultTypeOfComposite child)
+        | .error diagnostic => throwErrorAt name diagnostic.message
+      let projectChild := fun value => Helpers.Term.project (select value) projection
+      let selected ← match nested with
+        | none => pure [(name, child, projectChild)]
+        | some binding => patternBindings composites binding child projectChild
+      seen := seen ++ [key]
+      bindings := bindings ++ selected
+    pure bindings
+  | _ => throwErrorAt pattern "unsupported readable binding pattern"
+
+private def lowerReadablePattern (programName path : String) (exprState : AuthoringExprState)
+    (body : ReadableBody) (statement : Syntax) (pattern : TSyntax `noctium_bind_pattern)
+    (source : TSyntax `nlexpr) : CommandElabM ReadableBody := do
+  let (value, body) ← body.lower programName path exprState source
+  let bindings ← patternBindings body.composites pattern value.type id
+  let mut env := body.env
+  for (id, type, _) in bindings do
+    let name := id.getId.toString
+    if env.any (·.1 == name) then throwErrorAt id s!"duplicate readable witness value '{name}'"
+    env := (name, type, .ref name) :: env
+  let span ← spanValue statement
+  let ((before, terms, _), state) ← (stageIterationValues ("s" ++ path) env span [value]).run
+    {exprState with nextLet := body.nextLet, iterationProgram := body.helperProgram}
+  let [staged] := terms | throwErrorAt statement "binding pattern must stage one source value"
+  let projected ← bindings.mapM fun (id, type, project) => do
+    pure (Statement.bind id.getId.toString type (.at (← spanValue id) (project staged)))
+  let body := body.observe value [source]
+  pure {body with
+    env := env
+    statements := body.statements ++ before ++ projected
+    nextLet := state.nextLet
+    requiresOutputViews := _root_.Bool.true}
+
 private partial def lowerReadableStatement (programName path : String)
     (exprState : AuthoringExprState) (codecTerms : Array (TSyntax `term))
     (body : ReadableBody) (statement : TSyntax `noctium_witness_statement) :
     CommandElabM ReadableBody := do
   match statement with
+  | `(noctium_witness_statement| let [$items,*] := $source:nlexpr) =>
+    lowerReadablePattern programName path exprState body statement (← `(noctium_bind_pattern| [$items,*])) source
+  | `(noctium_witness_statement| let {$fields,*} := $source:nlexpr) =>
+    lowerReadablePattern programName path exprState body statement (← `(noctium_bind_pattern| {$fields,*})) source
   | `(noctium_witness_statement| read private $fieldPath:ident as $id:ident) => do
     let field ← lookupPrivateField fieldPath
     let valueName := id.getId.toString
@@ -2684,10 +2767,12 @@ private partial def lowerReadableStatement (programName path : String)
       let nominalBytes32Outputs := authoredOutputs.filterMap fun item =>
         item.nominalBytes32.map fun nominal => (item.name, nominal)
       let defineAlias (item : AuthoredOutput) (ty : Ty) (value : TSyntax `term) : CommandElabM Name := do
-        let aliasName := generatedName fullName s!"__logicalOutput_{item.ordinal}_{item.name}"
+        let suffix := s!"__logicalOutput_{item.ordinal}_{item.name}"
+        let aliasName := generatedName fullName suffix
         if (← getEnv).contains aliasName then
           throwErrorAt stx "generated logical output alias name already exists"
-        elabCommand (← `(def $(mkIdent aliasName) : Noctium.Expr $(← tyTerm ty) := $value))
+        let localName := generatedName name.getId suffix
+        elabCommand (← `(def $(mkIdent localName) : Noctium.Expr $(← tyTerm ty) := $value))
         pure aliasName
       for binding in (if grouped && !useOutputViews then sourceBody.logicalAliases else []) do
         if logicalEnv.any (fun alias => alias.1 == binding.name) then

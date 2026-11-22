@@ -1,0 +1,20 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Reading {
+  count: Uint<8>;
+  active: Boolean;
+}
+
+struct Packet {
+  reading: Reading;
+  measures: [Field, Boolean];
+  omitted: Field;
+}
+
+witness load(seed: Field): Packet;
+
+export circuit unpack(seed: Field): Field {
+  const { measures: [first, ], reading: { count: amount } } = load(seed);
+  return disclose(first + (amount as Field));
+}
