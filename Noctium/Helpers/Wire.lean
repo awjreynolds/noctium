@@ -41,6 +41,53 @@ private partial def wireLeaves : Types.Layout → Except String (List Leaf)
     pure [{path := [.enumTag], type := .uint maximum, nativeLeaf := true}]
   | _ => throw "unsupported aggregate wire layout"
 
+/-- Pack checked byte projections in the pinned little-endian FAB field order. -/
+private def packHashBytes : List Term → Term
+  | [] => .native 0
+  | [byte] => byte
+  | byte :: rest => .binary .add byte (.binary .mul (.native 256) (packHashBytes rest))
+
+/-- Project a bound aggregate into the Native operands of transient_hash. -/
+def transientHashOperands (compiled : Types.CompiledType) (value : Term) :
+    Except String (List Term) := do
+  let layout := compiled.checked.value
+  let fields ← transientFabHashLayoutFields layout
+  unless fabHashEncodedFieldCount fields ≤ Types.defaultLimits.maxVectorLength do
+    throw "transientHashValue exceeds the native transient hash field limit"
+  visit (compiled.checked.layoutNodes + 1) value layout
+where
+  visit : Nat → Term → Types.Layout → Except String (List Term)
+    | 0, _, _ => throw "transientHashValue exhausted checked layout fuel"
+    | fuel + 1, value, layout => do
+      match layout with
+      | .unit => pure []
+      | .tuple items =>
+        pure (← items.zipIdx.mapM fun (item, index) =>
+          visit fuel (.project value (.tupleIndex index)) item).flatten
+      | .structure _ fields =>
+        pure (← fields.mapM fun (name, field) =>
+          visit fuel (.project value (.field name)) field).flatten
+      | .vector length element =>
+        pure (← (List.range length).mapM fun index =>
+          visit fuel (.project value (.vectorIndex index)) element).flatten
+      | .scalar .nativeField => pure [value]
+      | .scalar .booleanField => pure [.cast .native value]
+      | .scalar (.boundedUnsignedField maximum) =>
+        unless (List.range ScalarPolicy.maxBits).any (fun bits => 2 ^ (bits + 1) - 1 == maximum) do
+          throw "transientHashValue requires a supported UInt width"
+        pure [.cast .native value]
+      | .bytes length .byteField =>
+        unless 0 < length && length ≤ 32 do
+          throw "transientHashValue requires fixed byte leaves from Bytes1 through Bytes32"
+        let byte := fun index => Term.cast .native (.project value (.byteIndex index))
+        let low := packHashBytes ((List.range (min length 31)).map byte)
+        pure (if length == 32 then [byte 31, low] else [low])
+      | .enumeration _ (.enumTagField maximum) _ 0 _ variants =>
+        unless maximum < 256 && !variants.isEmpty && variants.all (·.2.1.isEmpty) do
+          throw "transientHashValue requires a one-byte fieldless enum"
+        pure [.project value .enumTag]
+      | _ => throw "unsupported transientHashValue leaf type"
+
 private instance : Inhabited Term := ⟨.unit⟩
 
 

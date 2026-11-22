@@ -4476,7 +4476,7 @@
       "layer": "standard-library",
       "surface": "transientHash",
       "noctiumStatus": "subset",
-      "notes": "The native field vector route and typed scalar transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use transientHashFab with ordered typed leaves for checked records, tuples and fixed vectors. The native and Compact fixtures agree on mixed leaf encodings, changed vector order, empty preimages and independence from commitment openings. Direct readable composite arguments and additional leaf types remain open.",
+      "notes": "The native field vector route and typed transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use ordered typed leaves for checked records, tuples and fixed vectors. Readable circuits accept a single checked composite value. The native and Compact fixtures agree on mixed leaf encodings and empty preimages. The readable fixture accepts a single private aggregate in the host session and rejects a digest published without release. Additional leaf types remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4499,7 +4499,9 @@
         "runtime/tests/mixed_fab_commitments.rs",
         "tests/NestedTransientHash.lean",
         "tests/compact/nested-transient-hash.mjs",
-        "runtime/tests/nested_transient_hash.rs"
+        "runtime/tests/nested_transient_hash.rs",
+        "tests/ReadableFabHash.lean",
+        "runtime/tests/readable_fab_hash.rs"
       ],
       "equivalence": "unverified"
     },

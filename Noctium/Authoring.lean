@@ -210,7 +210,7 @@ private structure AuthoringExprState where
   composites : Types.CompositeEnv := {}
   iterationProgram : Option Helpers.Program := none
   iterationWitnesses : List Helpers.WitnessSignature := []
-  usedIteration : _root_.Bool := _root_.Bool.false
+  requiresOutputViews : _root_.Bool := _root_.Bool.false
   nextCall : Nat := 0
   nextLet : Nat := 0
   iterationParameters : List IterationParameter := []
@@ -1199,7 +1199,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt stx "duplicate iteration callback parameter"
     modify fun state => {state with
       iterationProgram := some program
-      usedIteration := _root_.Bool.true}
+      requiresOutputViews := _root_.Bool.true}
     let bindings ← prepareCallbackParameters parameterNames elementTypes
     let callback ← lowerExpr programName (callPrefix ++ ".map")
       (callbackSurfaceEnv bindings ++ env) body
@@ -1227,7 +1227,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     modify fun state => {state with
       iterationProgram := some compiledProgram
       iterationWitnesses := compiledProgram.witnesses
-      usedIteration := _root_.Bool.true}
+      requiresOutputViews := _root_.Bool.true}
     pure {
       type, term, before
       signatures := uniqueWitnesses (values.flatMap (·.signatures) ++ callback.signatures)
@@ -1257,7 +1257,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt stx "duplicate iteration callback parameter"
     modify fun state => {state with
       iterationProgram := some program
-      usedIteration := _root_.Bool.true}
+      requiresOutputViews := _root_.Bool.true}
     let bindings ← prepareCallbackParameters parameterNames
       (some initial.type :: elementTypes)
     let callback ← lowerExpr programName (callPrefix ++ ".fold")
@@ -1287,7 +1287,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     modify fun state => {state with
       iterationProgram := some compiledProgram
       iterationWitnesses := compiledProgram.witnesses
-      usedIteration := _root_.Bool.true}
+      requiresOutputViews := _root_.Bool.true}
     pure {
       type, term, before
       signatures := uniqueWitnesses (values.flatMap (·.signatures) ++ callback.signatures)
@@ -1464,12 +1464,36 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerBytesOperation programName callPrefix env stx .transientHashNativeVector values.getElems.toList
   | `(nlexpr| transientHashValue($source)) => do
     let value ← lowerExpr programName callPrefix env source
-    let .scalar ty := value.type
-      | throwErrorAt source "transientHashValue requires Native, Bool or UInt"
-    unless (ScalarPolicy.validate ty.scalarKind).isOk do
-      throwErrorAt source "transientHashValue requires Native, Bool or UInt"
-    let operand := if ty == .native then value.term else .cast .native value.term
-    pure (mergeLowered (.scalar .native) (.bytes .transientHashNativeVector [operand]) [value])
+    let (before, operands) ← match value.type with
+      | .unit => do
+        modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+        pure (value.before ++ [.evaluate value.term], [])
+      | .scalar ty => do
+        unless (ScalarPolicy.validate ty.scalarKind).isOk do
+          throwErrorAt source "transientHashValue requires Native, Bool or UInt"
+        let operand := if ty == .native then value.term else .cast .native value.term
+        pure (value.before, [operand])
+      | .composite type => do
+        modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+        let compiled ← match Types.compileType (← get).composites type with
+          | .ok result => pure result
+          | .error diagnostic => throwErrorAt source diagnostic.message
+        let (before, reference) ← match value.term with
+          | .ref _ => pure (value.before, value.term)
+          | _ => do
+            let binding ← freshIterationRef "hash-payload"
+            pure (value.before ++ [.bind binding value.type value.term],
+              Noctium.Helpers.Term.ref binding)
+        let operands ← match Helpers.Wire.transientHashOperands compiled reference with
+          | .ok result => pure result
+          | .error message => throwErrorAt source message
+        pure (before, operands)
+    pure {
+      value with
+      type := .scalar .native
+      term := .bytes .transientHashNativeVector operands
+      before
+    }
   | `(nlexpr| persistentHashPoint($point)) =>
     lowerBytesOperation programName callPrefix env stx .persistentHashPoint [point]
   | `(nlexpr| sha256($value)) => do
@@ -2257,14 +2281,14 @@ private def ReadableBody.lower (body : ReadableBody) (programName path : String)
       composites := body.composites
       iterationProgram := body.helperProgram
       iterationWitnesses := body.witnesses
-      usedIteration := body.requiresOutputViews
+      requiresOutputViews := body.requiresOutputViews
       nextLet := body.nextLet
       iterationParameters := body.iterationParameters}
   pure (value, {body with
     composites := state.composites
     nextLet := state.nextLet
     helperProgram := state.iterationProgram
-    requiresOutputViews := state.usedIteration
+    requiresOutputViews := state.requiresOutputViews
     iterationParameters := state.iterationParameters})
 
 private def ReadableBody.observe (body : ReadableBody) (value : Lowered)
@@ -2492,7 +2516,7 @@ private partial def lowerReadableStatement (programName path : String)
       exprState with
       iterationProgram := sourceBody.helperProgram
       iterationWitnesses := sourceBody.witnesses
-      usedIteration := sourceBody.requiresOutputViews
+      requiresOutputViews := sourceBody.requiresOutputViews
       nextLet := sourceBody.nextLet
       iterationParameters := sourceBody.iterationParameters}
     let ((before, terms, staged), loopExprState) ←
@@ -2514,7 +2538,7 @@ private partial def lowerReadableStatement (programName path : String)
       exprState with
       iterationProgram := some program
       iterationWitnesses := sourceBody.witnesses
-      usedIteration := sourceBody.requiresOutputViews
+      requiresOutputViews := sourceBody.requiresOutputViews
       nextLet := loopExprState.nextLet
       iterationParameters := sourceBody.iterationParameters}
     let (elementRef, loopExprState) ← match knownElementType with
@@ -2542,7 +2566,7 @@ private partial def lowerReadableStatement (programName path : String)
       exprState with
       iterationProgram := loop.helperProgram
       iterationWitnesses := loop.witnesses
-      usedIteration := loop.requiresOutputViews
+      requiresOutputViews := loop.requiresOutputViews
       nextLet := loop.nextLet
       iterationParameters := retainedParameters}
     let (callbackProgram, _) ←

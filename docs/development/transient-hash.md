@@ -54,6 +54,12 @@ vector order, and an empty preimage against the same Compact release.
 [Lean fixture](../../tests/NestedTransientHash.lean) · [Native
 test](../../runtime/tests/nested_transient_hash.rs) · [Compact oracle](../../tests/compact/nested-transient-hash.mjs)
 
+Readable circuits use `transientHashValue(payload)` directly on a checked
+composite value. The payload evaluates once. Its fields use the same FAB
+order and fixed-byte chunk packing as the ordinary route. A private
+payload still requires explicit disclosure to publish its digest.
+[Lean fixture](../../tests/ReadableFabHash.lean) · [Native test](../../runtime/tests/readable_fab_hash.rs)
+
 ## Schnorr reference boundary
 
 The pinned Compact Schnorr message is `Vector<N, Field>`. Its challenge preimage is exactly `[announcement.x, announcement.y, publicKey.x, publicKey.y] ++ messageFields`. Source struct/vector flattening preserves that order and emits no extra operands. [Pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L360), [datatype flattening](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/circuit-passes/flatten-datatypes.ss#L80), [ZKIR lowering](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/zkir-v3-passes/reduce-to-zkir.ss#L255).
