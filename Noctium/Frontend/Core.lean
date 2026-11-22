@@ -956,15 +956,7 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     pure (target, ← `(Noctium.Expr.cast $(← tyTerm target) $value))
   | `(nlexpr| default($target:nltype)) =>
     let target ← readTy target
-    match target with
-    | .native => pure (.native, ← `(Noctium.Expr.native 0))
-    | .bool => pure (.bool, ← `(Noctium.Expr.bool Bool.false))
-    | .uint maximum => pure (target, ← `(Noctium.Expr.uint $(natTerm maximum) 0))
-    | .bytes _ => pure (target, ← `(Noctium.GuardedExpression.zeroValue $(← tyTerm target)))
-    | .opaqueBytes => pure (target, ← `(Noctium.Expr.opaqueBytesEmpty))
-    | .opaqueString => pure (target, ← `(Noctium.Expr.opaqueStringEmpty))
-    | .jubjubScalar | .jubjubPoint => throwErrorAt stx "Jubjub values have no generic default expression"
-    | .foreign _ => throwErrorAt stx "foreign values have no generic default expression"
+    pure (target, ← `(Noctium.GuardedExpression.zeroValue $(← tyTerm target)))
   | `(nlexpr| disclose($value)) =>
     let (ty, value) ← expression env value
     pure (ty, ← `(Noctium.Expr.disclose $(← spanTerm stx) $value))

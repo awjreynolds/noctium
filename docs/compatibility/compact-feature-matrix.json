@@ -643,7 +643,7 @@
       "layer": "language",
       "surface": "Type defaults",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits accept default expressions for Native, Bool, bounded UInt and fixed Bytes, alongside checked Payload layout defaults. The matched Compact 0.36.1 fixture covers zero scalars and fixed bytes at widths 0, 3 and 32, and vectors at lengths 0 and 2. Generic curve and foreign defaults remain open.",
+      "notes": "Readable witness circuits accept default expressions for Native, Bool, bounded UInt and fixed Bytes, alongside checked Payload layout defaults. The matched Compact 0.36.1 fixture covers zero scalars and fixed bytes at widths 0, 3 and 32, and vectors at lengths 0 and 2. Ordinary and readable expressions also support zero and identity defaults for Jubjub, Secp256k1, Secp256r1 and Curve25519. The pinned Compact and ordinary native cases agree on all eleven typed values. Curve values in grouped Payload layouts still require schema support.",
       "source": [
         "reference"
       ],
@@ -661,7 +661,10 @@
         "tests/CompositeDefaults.lean",
         "tests/compact/composite-defaults.mjs",
         "runtime/tests/composite_defaults.rs",
-        "tests/ReadableDefaults.lean"
+        "tests/ReadableDefaults.lean",
+        "tests/CurveDefaults.lean",
+        "tests/compact/curve-defaults.mjs",
+        "runtime/tests/curve_defaults.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
