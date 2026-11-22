@@ -40,6 +40,9 @@ inductive Expr : Ty → Type where
   | opaqueBytesProjection (value : Expr .opaqueBytes) : Expr .native
   /-- The one Native projection used for FAB `Compress` alignment of UTF-8 text. -/
   | opaqueStringProjection (value : Expr .opaqueString) : Expr .native
+  /-- Canonical empty values for opaque Compress-aligned state. -/
+  | opaqueBytesEmpty : Expr .opaqueBytes
+  | opaqueStringEmpty : Expr .opaqueString
   /-- A fixed-length, right-zero-padded source byte string. -/
   | bytesLiteral (length : Nat) (values : List Nat) : Expr (.bytes length)
   /-- Reverse a fixed-length source byte string without changing its type. -/
@@ -973,6 +976,7 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
       else throw "byte index is out of range"
   | .opaqueBytesProjection value => value.validate caps env
   | .opaqueStringProjection value => value.validate caps env
+  | .opaqueBytesEmpty | .opaqueStringEmpty => pure ()
   | .bytesLiteral length values => do
     unless length ≤ maxBytesLength do
       throw s!"byte string length exceeds the maximum of {maxBytesLength}"

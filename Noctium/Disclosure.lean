@@ -39,7 +39,7 @@ mutual
 /-- Every scalar/native constructor has an explicit rule. Hashing propagates
 origins. Missing references fail closed instead of becoming public values. -/
 def origins (env : Environment) : Expr ty → Except String Origins
-  | .native _ | .bool _ | .uint _ _ => pure []
+  | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty => pure []
   | .bytesField value _ | .bytesAt value _ => origins env value
   | .opaqueBytesProjection value => origins env value
   | .opaqueStringProjection value => origins env value

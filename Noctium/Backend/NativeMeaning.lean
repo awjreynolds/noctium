@@ -487,6 +487,7 @@ private def alignedFabPayload (fields : List (String × Types.Layout))
 mutual
 def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Normalized
   | .native value => pure {term := .constant value}
+  | .opaqueBytesEmpty | .opaqueStringEmpty => pure {term := .constant 0}
   | .opaqueBytesProjection value => normalize env value
   | .opaqueStringProjection value => normalize env value
   | .bool value => pure (requireSourceType .bool (.constant (if value then 1 else 0)) [])

@@ -1882,7 +1882,8 @@ private def typedExpr (span : SourceSpan) (target : Ty) (value : Lowered) : Exce
   else fail span "helper lowering expected declared scalar type"
 
 private partial def expressionUsesName (name : String) : Expr ty → Bool
-  | .native _ | .bool _ | .uint _ _ | .bytesLiteral _ _ | .bytes32Literal _
+  | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty
+  | .bytesLiteral _ _ | .bytes32Literal _
   | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ => false
   | .bytesField value _ | .bytesAt value _ | .reverseBytes value | .sliceBytes value _ _
   | .sha256 value | .sha512 value | .keccak256 value | .keccak256Secp256k1Point value
@@ -1915,7 +1916,7 @@ private partial def expressionUsesName (name : String) : Expr ty → Bool
   | _ => true
 
 private partial def expressionIsTotal (env : TypeEnv) : Expr ty → Bool
-  | .native _ | .bool _ | .uint _ _ => true
+  | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty => true
   | .foreignPoint curve point => Foreign.pointValid curve point
   | .bytesLiteral length values =>
     length ≤ maxBytesLength && values.length == length && values.all (· ≤ 255)

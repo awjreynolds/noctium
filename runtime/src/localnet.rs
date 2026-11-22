@@ -5212,4 +5212,193 @@ mod tests {
             Ok(())
         })
     }
+
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated OpaqueCellReset bundles and a funded development node"]
+    fn guarded_opaque_cell_resets_finalize_on_development_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            assembly::NativeIntent,
+            proof::{LocalProver, WitnessContractTarget},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value, ValueAtom};
+        use ledger::structure::{ContractAction, ProofPreimageVersioned};
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{fab::AlignedValueExt, proofs::Zkir};
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let root = setting("NOCTIUM_OPAQUE_RESET_FUNDED_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_OPAQUE_RESET_FUNDED_MANIFESTS")?)?;
+            let mut bundles = Vec::new();
+            let mut degrees = BTreeMap::new();
+            for entry in ["seed", "clear"] {
+                let pin = pins
+                    .get(entry)
+                    .context("missing opaque reset manifest pin")?;
+                let directory = Path::new(&root).join(format!("{entry}-bundle"));
+                let bundle = artifacts::verify(&directory, Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(
+                    plan.entrypoint == entry,
+                    "unexpected opaque reset bundle plan"
+                );
+                degrees.insert(entry, IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                bundles.push(bundle);
+            }
+            let seed_plan: crate::Plan = serde_json::from_slice(bundles[0].file(Role::Plan)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_OPAQUE_RESET_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_OPAQUE_RESET_FUNDED_NODE")?, &cache)
+                    .await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let empty_values = BTreeMap::from([
+                ("text".into(), json!({"kind":"opaqueString","value":""})),
+                ("bytes".into(), json!({"kind":"opaqueBytes","values":[]})),
+            ]);
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &serde_json::to_vec(&json!({"state": &empty_values}))?,
+                ttl,
+                &mut rng,
+            )?;
+            let (state, deployment) = funded.deploy(&target, "seed").await?;
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed.data.get_ref()
+                    == crate::create_state(&seed_plan, &empty_values)?.get_ref(),
+                "deployment did not store canonical empty opaque Cells"
+            );
+
+            let text = "é\0λ";
+            let bytes = [0u8, 1, 255];
+            let text_value = json!({"kind":"opaqueString","value":text});
+            let bytes_value = json!({"kind":"opaqueBytes","values":bytes});
+            let seed_parameters = cache.parameters(degrees["seed"]).await?;
+            let seed = target.operation("seed", &seed_parameters, ttl)?;
+            let mut current = Some(state);
+            let stored = funded
+                .call(
+                    &seed,
+                    &mut current,
+                    &seed_parameters,
+                    BTreeMap::from([
+                        ("nextText".into(), text_value.clone()),
+                        ("nextBytes".into(), bytes_value.clone()),
+                    ]),
+                )
+                .await?;
+            let stored_state: ContractState<Db> = native_decode(&stored.contract_state)?;
+            let expected_storage = crate::create_state(
+                &seed_plan,
+                &BTreeMap::from([("text".into(), text_value), ("bytes".into(), bytes_value)]),
+            )?;
+            ensure!(
+                stored_state.data.get_ref() == expected_storage.get_ref(),
+                "seed mismatch"
+            );
+
+            let receipt_details = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height, "finalizedHash": receipt.finalized_hash,
+                    "transactionId": receipt.transaction_id,
+                })
+            };
+            let clear_parameters = cache.parameters(degrees["clear"]).await?;
+            let clear = target.operation("clear", &clear_parameters, ttl)?;
+            let mut resets = BTreeMap::new();
+            for (name, enabled, expected, raw) in [
+                (
+                    "inactive",
+                    false,
+                    &stored,
+                    [text.as_bytes(), bytes.as_slice()],
+                ),
+                (
+                    "active",
+                    true,
+                    &deployment,
+                    [b"".as_slice(), b"".as_slice()],
+                ),
+            ] {
+                let prepared = clear.prepare_call(
+                    &mut current,
+                    &clear_parameters,
+                    BTreeMap::from([("enabled".into(), json!(enabled))]),
+                    &mut rng,
+                )?;
+                let native: NativeIntent = native_decode(&prepared.private_intent_bytes()?)?;
+                let Some(ContractAction::Call(call)) = native.actions.get(0) else {
+                    anyhow::bail!("missing opaque reset call");
+                };
+                let ProofPreimageVersioned::V2(preimage) = &call.proof else {
+                    anyhow::bail!("unexpected opaque reset proof version");
+                };
+                let mut projection = Vec::new();
+                for value in raw {
+                    AlignedValue::new(
+                        Value(vec![ValueAtom::from(value)]),
+                        Alignment::singleton(AlignmentAtom::Compress),
+                    )
+                    .context("expected canonical Compress atom")?
+                    .value_only_field_repr(&mut projection);
+                }
+                ensure!(
+                    preimage.public_transcript_outputs == projection,
+                    "{name} reset proof did not bind both expected opaque returns"
+                );
+                let proved = prepared
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        &clear_parameters,
+                        1_048_576,
+                        futures::future::pending(),
+                    )
+                    .await?;
+                let (bound, receipt) = funded.finalize(proved.native()).await?;
+                ensure!(
+                    receipt.contract_state == expected.contract_state,
+                    "{name} reset state changed unexpectedly"
+                );
+                current = Some(
+                    proved
+                        .contract_binding()
+                        .context("missing opaque reset binding")?
+                        .admit_committed_state(
+                            &receipt.contract_state,
+                            bound.expected_state(),
+                            &receipt.finalized_hash,
+                            false,
+                        )?,
+                );
+                resets.insert(name, receipt_details(&receipt));
+            }
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                    "deployment": receipt_details(&deployment),
+                    "seed": receipt_details(&stored),
+                    "resets": resets,
+                    "inactivePreservedExactSeededState": true,
+                    "activeRestoredExactEmptyState": true,
+                    "bothReturnsBoundPerGuard": true,
+                })
+            );
+            Ok(())
+        })
+    }
 }

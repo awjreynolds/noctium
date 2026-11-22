@@ -36,7 +36,7 @@ def nativeModulus : Nat :=
 mutual
 private def checkConstants : Expr ty → Except String Unit
   | .native n => if n < nativeModulus then pure () else throw "noncanonical Native constant"
-  | .bool _ | .ref _ => pure ()
+  | .bool _ | .ref _ | .opaqueBytesEmpty | .opaqueStringEmpty => pure ()
   | .foreignBase curve value => discard (Foreign.encodeField (.base curve) value)
   | .foreignScalar curve value => discard (Foreign.encodeField (.scalar curve) value)
   | .foreignPoint curve value => discard (Foreign.encodePoint curve value)
@@ -804,11 +804,19 @@ private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit :
 
 mutual
 private def lowerOpaqueBytes : Expr .opaqueBytes → LowerM String
+  | .opaqueBytesEmpty => pure "0x00"
   | .ref name => do
     pure ((← get).aliases.lookup name |>.getD ("%input_" ++ name))
   | .disclose _ value => lowerOpaqueBytes value
   | .copyValue value => do
     unary "copy" (← lowerOpaqueBytes value) "val"
+  | @Expr.letE .bool .opaqueBytes name value body => do
+    let value ← lowerExpr value
+    let aliases := (← get).aliases
+    modify fun state => {state with aliases := (name, value) :: aliases}
+    let result ← lowerOpaqueBytes body
+    modify fun state => {state with aliases}
+    pure result
   | @Expr.letE .opaqueBytes _ name value body => do
     let value ← lowerOpaqueBytes value
     let aliases := (← get).aliases
@@ -827,11 +835,19 @@ decreasing_by
   all_goals simp_wf <;> omega
 
 private def lowerOpaqueString : Expr .opaqueString → LowerM String
+  | .opaqueStringEmpty => pure "0x00"
   | .ref name => do
     pure ((← get).aliases.lookup name |>.getD ("%input_" ++ name))
   | .disclose _ value => lowerOpaqueString value
   | .copyValue value => do
     unary "copy" (← lowerOpaqueString value) "val"
+  | @Expr.letE .bool .opaqueString name value body => do
+    let value ← lowerExpr value
+    let aliases := (← get).aliases
+    modify fun state => {state with aliases := (name, value) :: aliases}
+    let result ← lowerOpaqueString body
+    modify fun state => {state with aliases}
+    pure result
   | @Expr.letE .opaqueString _ name value body => do
     let value ← lowerOpaqueString value
     let aliases := (← get).aliases
@@ -1096,6 +1112,7 @@ def lowerExpr : Expr ty → LowerM String
     lowerForeignFromBytes kind length (← lowerBytes value)
   | .opaqueBytesProjection value => lowerOpaqueBytes value
   | .opaqueStringProjection value => lowerOpaqueString value
+  | .opaqueBytesEmpty | .opaqueStringEmpty => pure "0x00"
   | .foreignBase curve value => lowerForeignConstant (.base curve) (Foreign.encodeField (.base curve) value)
   | .foreignScalar curve value => lowerForeignConstant (.scalar curve) (Foreign.encodeField (.scalar curve) value)
   | .foreignPoint curve value => lowerForeignConstant (.point curve) (Foreign.encodePoint curve value)
