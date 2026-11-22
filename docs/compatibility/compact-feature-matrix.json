@@ -2844,7 +2844,7 @@
       "layer": "language-ledger",
       "surface": "List.head",
       "noctiumStatus": "subset",
-      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and a typed scalar or the declared record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a single typed Maybe view on both compilers, with tag first and canonical zero for an empty List. The host ledger getter remains unqualified.",
+      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and a typed scalar or the declared record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a single typed Maybe view on both compilers, with tag first and canonical zero for an empty List. A matched two-field Native record case also returns one Maybe view while preserving the nominal List element type. The host ledger getter remains unqualified.",
       "source": [
         "adt"
       ],
@@ -2856,6 +2856,9 @@
       "observedEvidence": [
         "tests/NativeScalarListMaybe.lean",
         "runtime/tests/scalar_list_maybe.rs",
+        "tests/RecordListHeadMaybe.lean",
+        "runtime/tests/record_list_head_maybe.rs",
+        "tests/compact/record-list-head-maybe.mjs",
         "tests/compact/ListHeadMaybe.compact",
         "tests/compact/list-head-maybe.mjs",
         "tests/OptionalListHead.lean",

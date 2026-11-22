@@ -1729,7 +1729,8 @@ private def statePathSchema (schema : List (String × StateKind)) (storage : TSy
 
 private def lowerListPath (schema : List (String × StateKind)) (env : Bindings)
     (path : TSyntax `nlpath) :
-    CommandElabM (TSyntax `ident × TSyntax `term × Types.CompositeType × List (String × Ty)) := do
+    CommandElabM (TSyntax `ident × TSyntax `term × Types.CompositeEnv ×
+      Types.CompositeType × List (String × Ty)) := do
   let (storage, sourceKeys) ← sourcePathParts path
   unless sourceKeys.length ≤ 13 do
     throwErrorAt path "List paths support at most 13 map keys"
@@ -1740,7 +1741,7 @@ private def lowerListPath (schema : List (String × StateKind)) (env : Bindings)
   let fields ← match LedgerValueType.listElementFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt path message
-  pure (storage, ← pathKeysTerm keys, type, fields)
+  pure (storage, ← pathKeysTerm keys, environment, type, fields)
 
 private def counterPathTerm (env : Bindings) (schema : LedgerValueType)
     (keys : List (TSyntax `nlexpr)) : CommandElabM (TSyntax `term) := do
@@ -1876,10 +1877,18 @@ private inductive MerkleLeafType where
   | record (fields : List (String × Ty))
   deriving BEq
 
+private structure OptionalRecordHead where
+  presentName : String
+  recordName : String
+  environment : Types.CompositeEnv
+  type : Types.CompositeType
+  fields : List (String × Ty)
+
 private structure EntryEffects where
   env : Bindings
   nominalBytes32Bindings : List (String × NominalBytes32) := []
   merkleLeafTypes : List (String × MerkleLeafType) := []
+  optionalRecordHeads : List OptionalRecordHead := []
   terms : Array (TSyntax `term) := #[]
   spans : Array (TSyntax `term) := #[]
   guards : Array (TSyntax `term) := #[]
@@ -2245,7 +2254,7 @@ private def elaborateCounterAdjust (schema : List (String × StateKind))
 private def elaborateListLength (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (destinationId : TSyntax `ident)
     (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (storage, keys, _, _) ← lowerListPath schema state.env path
+  let (storage, keys, _, _, _) ← lowerListPath schema state.env path
   let (readName, updated) ← freshReadName depth state destinationId
   let term ← `(Noctium.Effect.listLength
     $(stringTerm storage.getId.toString) $(stringTerm readName) $keys)
@@ -2262,7 +2271,7 @@ private def listElementTypeTerm (source : Syntax) (type : Types.CompositeType) :
 private def elaborateListHead (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (destination : TSyntax `ident) (depth : Nat)
     (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (storage, keys, type, fields) ← lowerListPath schema state.env path
+  let (storage, keys, _, type, fields) ← lowerListPath schema state.env path
   let (readName, updated) ← freshReadName depth state destination
   let (updated, destinations) ← match type with
     | .scalar ty => do
@@ -2294,7 +2303,7 @@ private def listLengthIsZero (storage : TSyntax `ident) (keys : TSyntax `term)
 private def elaborateListHeadOrDefault (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (present record : TSyntax `ident) (depth : Nat)
     (guard span : TSyntax `term) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (storage, keys, _, _) ← lowerListPath schema state.env path
+  let (storage, keys, environment, type, fields) ← lowerListPath schema state.env path
   ensureFresh state.env present
   let (state, isZero) ← listLengthIsZero storage keys "noctiumOptionalHeadLength" state
   let presentValue ← `(Noctium.Expr.eq $isZero (Noctium.Expr.bool Bool.false))
@@ -2310,12 +2319,22 @@ private def elaborateListHeadOrDefault (schema : List (String × StateKind))
     spans := state.spans.push span |>.push span
     guards := state.guards.push guard |>.push headGuard
   }
-  elaborateListHead schema path record depth updated
+  let headed ← elaborateListHead schema path record depth updated
+  match type with
+  | .structure _ =>
+    pure {headed with optionalRecordHeads := {
+      presentName
+      recordName := record.getId.toString
+      environment
+      type
+      fields
+    } :: headed.optionalRecordHeads}
+  | _ => pure headed
 
 private def elaborateListPushFront (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (payload : TSyntax `nlledgervalue)
     (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (storage, keys, type, fields) ← lowerListPath schema state.env path
+  let (storage, keys, _, type, fields) ← lowerListPath schema state.env path
   let valuesTerm ← match payload with
     | `(nlledgervalue| $item:nlexpr) => do
       let .scalar ty := type
@@ -2334,7 +2353,7 @@ private def elaborateListPushFront (schema : List (String × StateKind))
 
 private def elaborateListPopFront (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (storage, keys, _, _) ← lowerListPath schema state.env path
+  let (storage, keys, _, _, _) ← lowerListPath schema state.env path
   let term ← `(Noctium.Effect.listPopFront $(stringTerm storage.getId.toString) $keys)
   pure {state with terms := state.terms.push term}
 
@@ -3436,14 +3455,17 @@ private partial def elaborateStatements (schema : List (String × StateKind))
           $parentExpression $negated))
       let branchEnv := state.env
       let branchNominalBytes32Bindings := state.nominalBytes32Bindings
+      let branchOptionalRecordHeads := state.optionalRecordHeads
       let afterThen ← elaborateStatements schema thenPath (depth + 1) thenStatements state
       let afterElse ← elaborateStatements schema elsePath (depth + 1) elseStatements
         {afterThen with
           env := branchEnv
-          nominalBytes32Bindings := branchNominalBytes32Bindings}
+          nominalBytes32Bindings := branchNominalBytes32Bindings
+          optionalRecordHeads := branchOptionalRecordHeads}
       state := {afterElse with
         env := branchEnv
-        nominalBytes32Bindings := branchNominalBytes32Bindings}
+        nominalBytes32Bindings := branchNominalBytes32Bindings
+        optionalRecordHeads := branchOptionalRecordHeads}
     | _ => throwErrorAt statement "unsupported Noctium state statement"
   pure state
 
@@ -3451,6 +3473,116 @@ private def maybeReturnBinding (environment : Bindings) (name : String) :
     Option (Ty × TSyntax `term) := do
   let (_, ty, expression) ← environment.find? (fun binding => binding.1 == name)
   pure (ty, expression)
+
+private def sourceSpanValueTerm (span : SourceSpan) : CommandElabM (TSyntax `term) := do
+  `({ file := $(stringTerm span.file), line := $(natTerm span.line),
+      column := $(natTerm span.column) : Noctium.SourceSpan })
+
+private def flatNativeRecordId (head : OptionalRecordHead) : Option String := do
+  let .structure typeId := head.type | none
+  let declaration ← head.environment.structures.find? (·.id == typeId)
+  guard (!declaration.fields.isEmpty)
+  guard (declaration.fields.all (·.type == .scalar .native))
+  guard (head.fields == declaration.fields.map fun field => (field.name, .native))
+  pure typeId
+
+private def maybeRecordTypeId (contractName recordId : String) : CommandElabM String := do
+  let recordName := (recordId.splitOn ".").getLast!
+  let typeId := s!"{contractName}.Maybe{recordName}"
+  unless Types.validDeclId typeId do
+    throwError "generated record Maybe type id is invalid"
+  pure typeId
+
+private def recordMaybeEnvironment (environment : Types.CompositeEnv) (recordId typeId : String)
+    (span : SourceSpan) : CommandElabM (TSyntax `term) := do
+  let some record := environment.structures.find? (·.id == recordId)
+    | throwError s!"List record declaration '{recordId}' is missing"
+  let expectedFields : List (String × Types.CompositeType) := [
+    ("is_some", .scalar .bool),
+    ("value", .structure recordId)
+  ]
+  if environment.enumerations.any (·.id == typeId) then
+    throwError s!"generated record Maybe type id '{typeId}' collides with an enum"
+  if environment.structures.any (·.id == typeId) then
+    throwError s!"generated record Maybe type id '{typeId}' collides with another structure"
+  let sourceFields : Array (TSyntax `term) ← record.fields.toArray.mapM fun field => do
+    let name := stringTerm field.name
+    let fieldType : TSyntax `term ← `(Noctium.Types.CompositeType.scalar $(← tyTerm .native))
+    let fieldSpan ← sourceSpanValueTerm field.span
+    `(Noctium.Types.Field.mk $name $fieldType $fieldSpan)
+  let recordIdTerm := stringTerm recordId
+  let recordSpan ← sourceSpanValueTerm record.span
+  let recordTerm ← `(Noctium.Types.StructDecl.mk $recordIdTerm [$sourceFields,*] $recordSpan)
+  let generated : Types.StructDecl := {
+    id := typeId
+    fields := expectedFields.map fun (name, type) => {name, type, span}
+    span
+  }
+  let extended : Types.CompositeEnv := {structures := [record, generated]}
+  match Types.compileType extended (.structure typeId) with
+    | .ok _ => pure ()
+    | .error diagnostic => throwError diagnostic.message
+  let typeIdTerm := stringTerm typeId
+  let isSomeName := stringTerm "is_some"
+  let isSomeType ← `(Noctium.Types.CompositeType.scalar $(← tyTerm .bool))
+  let isSomeSpan ← sourceSpanValueTerm span
+  let isSomeField ← `(Noctium.Types.Field.mk $isSomeName $isSomeType $isSomeSpan)
+  let valueName := stringTerm "value"
+  let valueType ← `(Noctium.Types.CompositeType.structure $recordIdTerm)
+  let valueSpan ← sourceSpanValueTerm span
+  let valueField ← `(Noctium.Types.Field.mk $valueName $valueType $valueSpan)
+  let generatedSpan ← sourceSpanValueTerm span
+  let generatedTerm ← `(Noctium.Types.StructDecl.mk $typeIdTerm [$isSomeField, $valueField] $generatedSpan)
+  let term ← `(Noctium.Types.CompositeEnv.mk [$recordTerm, $generatedTerm]
+    ([] : List Noctium.Types.EnumDecl))
+  pure term
+
+private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax `ident)
+    (presentExpression : TSyntax `term)
+    (statement : TSyntax `nlreturn) (state : EntryEffects) (head : OptionalRecordHead) :
+    CommandElabM EntryEffects := do
+  let some recordId := flatNativeRecordId head
+    | throwErrorAt statement
+      "returnMaybe record payload must be a checked flat Native-field List record"
+  let labelName := label.getId.toString
+  let typeId ← maybeRecordTypeId contractName recordId
+  let compositeType ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
+  let span ← spanTerm statement
+  let file ← getFileName
+  let fileMap ← getFileMap
+  let position := fileMap.toPosition (statement.raw.getPos?.getD 0)
+  let spanValue : SourceSpan := {
+    file
+    line := position.line
+    column := position.column + 1
+  }
+  let environmentTerm ←
+    recordMaybeEnvironment head.environment recordId typeId spanValue
+  let isSomeReturnName := s!"{labelName}_is_some"
+  let valueReturnNames := head.fields.map fun (field, _) => s!"{labelName}_value_{field}"
+  let physicalNames := isSomeReturnName :: valueReturnNames
+  let physicalNameTerms := physicalNames.toArray.map stringTerm
+  for returnName in physicalNames do
+    if state.env.any (fun binding => binding.1 == returnName) then
+      throwErrorAt label s!"structured return field '{returnName}' collides with an input or read binding"
+  let isSomeReturn ← `(Noctium.Output.mk $(stringTerm isSomeReturnName) Noctium.Ty.native
+    (Noctium.Expr.cast Noctium.Ty.native $presentExpression) $span)
+  let mut returnTerms := #[isSomeReturn]
+  for ((fieldName, _), returnName) in head.fields.zip valueReturnNames do
+    let bindingName := s!"{head.recordName}_{fieldName}"
+    let some (.native, fieldExpression) := maybeReturnBinding state.env bindingName
+      | throwErrorAt statement s!"returnMaybe record field '{bindingName}' is not a Native binding"
+    -- `headOrDefault`'s guarded read already constrains inactive Native leaves to zero.
+    let canonicalField := fieldExpression
+    let fieldReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
+      $canonicalField $span)
+    returnTerms := returnTerms.push fieldReturn
+  let view ← `(Noctium.ReturnView.mk $(stringTerm labelName) $environmentTerm
+    $compositeType [$physicalNameTerms,*])
+  pure {state with
+    returns := state.returns ++ returnTerms
+    returnViews := state.returnViews.push view
+  }
 
 private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident)
     (presentName payloadName : TSyntax `ident) (statement : TSyntax `nlreturn)
@@ -3460,6 +3592,10 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
   let payloadBindingName := payloadName.getId.toString
   let some (.bool, presentExpression) := maybeReturnBinding state.env presentBindingName
     | throwErrorAt presentName "returnMaybe tag must reference a Bool binding"
+  if let some head := state.optionalRecordHeads.find? fun candidate =>
+      candidate.presentName == presentBindingName && candidate.recordName == payloadBindingName then
+    return ← elaborateRecordMaybeReturn contractName label presentExpression
+      statement state head
   let some (payloadType, payloadExpression) := maybeReturnBinding state.env payloadBindingName
     | throwErrorAt payloadName "returnMaybe payload must reference a scalar binding"
   let typeId ← match Noctium.Types.Maybe.scalarTypeId contractName payloadType with
