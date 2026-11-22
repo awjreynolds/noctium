@@ -264,6 +264,9 @@ jobs:
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
+          .lake/build/bin/noctium compile tests/ScalarTransientHash.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/scalar-transient-hash"
           .lake/build/bin/noctium compile tests/CompositeEitherInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-either-input"
@@ -285,6 +288,7 @@ jobs:
               --no-default-features --features zkir-321 --test effect_blocks \
               --test collection_reads --test merkle_reads --test counter_snapshot_ffi
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
+            NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
@@ -294,6 +298,7 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
               --test readable_record_construction \
+              --test scalar_transient_hash \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test readable_unit_bindings --test named_proof_unit -- --ignored
