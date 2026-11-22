@@ -376,7 +376,7 @@
       "layer": "language",
       "surface": "Tuple and unit []",
       "noctiumStatus": "subset",
-      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement patterns support nested positional bindings, ignored positions and exact arity checks. The selected nested witness case matches Compact 0.36.1 for one callback and the returned value. Parameter patterns, spread and broader unit-return equivalence remain open.",
+      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Spread and broader constructor and unit-return equivalence remain open.",
       "source": [
         "reference"
       ],
@@ -1046,7 +1046,7 @@
       "layer": "language",
       "surface": "Bindings, patterns and lexical scope",
       "noctiumStatus": "subset",
-      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements destructure records by name and tuples, fixed vectors and bytes by position. Nested named and positional patterns evaluate the source once and preserve private origins. One native fixture matches Compact 0.36.1 for nested patterns. Parameter patterns and broader shadowing and expression binding remain open.",
+      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements and circuit inputs destructure records by name and tuples, fixed vectors and bytes by position. Nested patterns evaluate the source once and preserve private origins. The native nested cases match Compact 0.36.1. A parameter pattern binds aliases to one named ABI input and supports several returned values. Constructor parameters and broader shadowing and expression binding remain open.",
       "source": [
         "reference"
       ],
@@ -1060,6 +1060,7 @@
         "runtime/tests/readable_unit_bindings.rs",
         "tests/ReadableBindPatterns.lean",
         "tests/compact/readable-bind-patterns.mjs",
+        "tests/compact/readable-input-patterns.mjs",
         "runtime/tests/readable_bind_patterns.rs"
       ],
       "equivalence": "unverified",
