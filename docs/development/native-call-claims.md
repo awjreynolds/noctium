@@ -352,6 +352,25 @@ NOCTIUM_ARCHIVED_COMPOSITION_DIR=/path/to/block-30432 \
   retained_composition_proofs_verify_against_their_installed_keys_and_historical_srs --ignored --exact
 ```
 
+The archived verifier keys also regenerate from the receipt-pinned ZKIR and
+SRS. Use the native 3.2.1 `zkir` binary with SHA-256
+`7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40`.
+Set `MIDNIGHT_PP` to the parameter directory for each operation during key
+generation. The caller uses K9 and the callee uses K7.
+
+```sh
+mkdir -p "$KEYS/caller" "$KEYS/callee"
+MIDNIGHT_PP="$CALLER_SRS_DIR" zkir compile "$CIRCUITS/IndependentCaller.claim.zkir" \
+  "$KEYS/caller/IndependentCaller.claim.prover" "$KEYS/caller/IndependentCaller.claim.verifier"
+MIDNIGHT_PP="$CALLEE_SRS_DIR" zkir compile "$CIRCUITS/IndependentCallee.advance.zkir" \
+  "$KEYS/callee/IndependentCallee.advance.prover" "$KEYS/callee/IndependentCallee.advance.verifier"
+```
+
+Set `NOCTIUM_ARCHIVED_REGENERATED_KEYS_DIR` to `$KEYS` when running the replay
+test above. Each regenerated verifier was 1,353 bytes and matched the exact
+tagged key installed for its operation. Both crossed key comparisons failed.
+[Receipt pins](independent-composition-receipt.json)
+
 To run the funded case, compile and bundle `IndependentCaller.claim` at K9 and
 `IndependentCallee.advance` at K7 from the fixture. Name the public bundles
 `caller-bundle` and `callee-bundle`. Set the same manifest, SRS and node
