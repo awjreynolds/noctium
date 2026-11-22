@@ -6265,8 +6265,8 @@
       "id": "C-STDLIB-BLOCKTIMEGTE",
       "layer": "standard-library",
       "surface": "blockTimeGte",
-      "noctiumStatus": "related-subset",
-      "notes": "No direct non-strict helper is evidenced. The related strict blockTimeBefore(UInt64 deadline) result can be inverted with select(result, false, true) to express current time >= deadline. Evidence covers the strict operand and Bool select, not a differential case or finalized call for this exact helper. Full equivalence remains unverified.",
+      "noctiumStatus": "subset",
+      "notes": "blockTimeAtOrAfter(UInt64 deadline) complements the native strict-before predicate when active. The Compact 0.36.1 and native fixtures agree below, on and above the deadline and when disabled. Native checks also cover UInt64 maximum clock time. The active inclusive fixture finalized on Ledger 9.1.0.1 at cutoff zero.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6288,7 +6288,8 @@
         "tests/compact/BlockTime.compact",
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
-        "runtime/tests/native_block_time.rs"
+        "runtime/tests/native_block_time.rs",
+        "docs/development/native-block-time-inclusive-receipt.json"
       ],
       "equivalence": "unverified"
     },
@@ -6328,8 +6329,8 @@
       "id": "C-STDLIB-BLOCKTIMELTE",
       "layer": "standard-library",
       "surface": "blockTimeLte",
-      "noctiumStatus": "related-subset",
-      "notes": "No direct non-strict helper is evidenced. The related strict blockTimeAfter(UInt64 deadline) result can be inverted with select(result, false, true) to express current time <= deadline. Evidence covers the strict operand and Bool select, not a differential case or finalized call for this exact helper. Full equivalence remains unverified.",
+      "noctiumStatus": "subset",
+      "notes": "blockTimeAtOrBefore(UInt64 deadline) complements the native strict-after predicate when active. The Compact 0.36.1 and native fixtures agree below, on and above the deadline and when disabled. Native checks also cover UInt64 maximum clock time. The active inclusive fixture finalized on Ledger 9.1.0.1 at cutoff zero.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6351,7 +6352,8 @@
         "tests/compact/BlockTime.compact",
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
-        "runtime/tests/native_block_time.rs"
+        "runtime/tests/native_block_time.rs",
+        "docs/development/native-block-time-inclusive-receipt.json"
       ],
       "equivalence": "unverified"
     },

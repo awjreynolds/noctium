@@ -484,6 +484,8 @@ scoped syntax "popFront" nlpath : nleffect
 scoped syntax "remove" nlpath : nleffect
 scoped syntax "blockTimeBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "blockTimeAfter(" nlexpr ")" "as" ident : nleffect
+scoped syntax "blockTimeAtOrAfter(" nlexpr ")" "as" ident : nleffect
+scoped syntax "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "counterLessThan" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "insert" nlpath : nleffect
 scoped syntax "when" nlexpr "write" ident ":=" nlexpr : nleffect
@@ -520,6 +522,8 @@ scoped syntax "when" nlexpr "popFront" nlpath : nleffect
 scoped syntax "when" nlexpr "remove" nlpath : nleffect
 scoped syntax "when" nlexpr "blockTimeBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "when" nlexpr "blockTimeAfter(" nlexpr ")" "as" ident : nleffect
+scoped syntax "when" nlexpr "blockTimeAtOrAfter(" nlexpr ")" "as" ident : nleffect
+scoped syntax "when" nlexpr "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "when" nlexpr "insert" nlpath : nleffect
 
 declare_syntax_cat nlstatement
@@ -2042,7 +2046,9 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr popFront $_path:nlpath) => some condition
   | `(nleffect| when $condition:nlexpr remove $_path:nlpath) => some condition
   | `(nleffect| when $condition:nlexpr blockTimeBefore($_deadline:nlexpr) as $_dest:ident)
-  | `(nleffect| when $condition:nlexpr blockTimeAfter($_deadline:nlexpr) as $_dest:ident) =>
+  | `(nleffect| when $condition:nlexpr blockTimeAfter($_deadline:nlexpr) as $_dest:ident)
+  | `(nleffect| when $condition:nlexpr blockTimeAtOrAfter($_deadline:nlexpr) as $_dest:ident)
+  | `(nleffect| when $condition:nlexpr blockTimeAtOrBefore($_deadline:nlexpr) as $_dest:ident) =>
     some condition
   | `(nleffect| when $condition:nlexpr counterLessThan $_path:nlpath against $_threshold:nlexpr as $_destination:ident) =>
     some condition
@@ -2227,14 +2233,23 @@ private def elaborateTokenBalanceRead (state : EntryEffects) (depth : Nat)
   let updated := {updated with terms := updated.terms.push term}
   bindReadName updated destination.getId.toString readName resultTy
 private def elaborateBlockTimeRead (state : EntryEffects) (depth : Nat)
-    (destination : TSyntax `ident) (before : _root_.Bool) (deadline : TSyntax `nlexpr) :
+    (destination : TSyntax `ident) (before : _root_.Bool) (deadline : TSyntax `nlexpr)
+    (complementGuard : Option (TSyntax `term) := none) :
     CommandElabM EntryEffects := do
   let value ← checkedExpression state.env deadline (.uint (2 ^ 64 - 1))
   let (name, updated) ← freshReadName depth state destination
   let direction ← if before then `(Bool.true) else `(Bool.false)
   let term ← `(Noctium.Effect.blockTimeCompare $(stringTerm name) $direction $value)
-  bindReadName {updated with terms := updated.terms.push term}
-    destination.getId.toString name .bool
+  let updated := {updated with terms := updated.terms.push term}
+  let sourceName := destination.getId.toString
+  let some guard := complementGuard | bindReadName updated sourceName name .bool
+  let complemented ← `(Noctium.Expr.select (Noctium.Expr.ref $(stringTerm name))
+    (Noctium.Expr.bool Bool.false) (Noctium.Expr.bool Bool.true))
+  -- The inactive strict read produces false, so complement only an active observation.
+  let result ← `(match ($guard : Option (Noctium.Expr Noctium.Ty.bool)) with
+    | none => $complemented
+    | some active => Noctium.Expr.select active $complemented (Noctium.Expr.bool Bool.false))
+  pure {updated with env := (sourceName, .bool, result) :: updated.env}
 
 private def elaborateCounterLessThan (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (threshold : TSyntax `nlexpr)
@@ -3344,6 +3359,12 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| blockTimeAfter($deadline) as $destination:ident)
   | `(nleffect| when $_:nlexpr blockTimeAfter($deadline) as $destination:ident) =>
     state := ← elaborateBlockTimeRead state depth destination Bool.false deadline
+  | `(nleffect| blockTimeAtOrAfter($deadline) as $destination:ident)
+  | `(nleffect| when $_:nlexpr blockTimeAtOrAfter($deadline) as $destination:ident) =>
+    state := ← elaborateBlockTimeRead state depth destination Bool.true deadline (some guard)
+  | `(nleffect| blockTimeAtOrBefore($deadline) as $destination:ident)
+  | `(nleffect| when $_:nlexpr blockTimeAtOrBefore($deadline) as $destination:ident) =>
+    state := ← elaborateBlockTimeRead state depth destination Bool.false deadline (some guard)
   | `(nleffect| checkRoot $path:nlpath against $expected:nlexpr as $destination:ident)
   | `(nleffect| when $_:nlexpr checkRoot $path:nlpath against $expected:nlexpr as $destination:ident) => do
     let (storage, keys, _, _, nested) ← lowerMerkleTreePath schema state.env path

@@ -2,7 +2,7 @@
 #[cfg(feature = "zkir-321")]
 #[test]
 #[ignore = "requires fresh NativeBlockTime artifacts in NOCTIUM_BLOCK_TIME_DIR"]
-fn block_time_comparisons_are_strict_and_bind_the_native_result() {
+fn strict_and_inclusive_block_time_reads_bind_the_native_result() {
     use base_crypto::time::Timestamp;
     use coin_structure::contract::ContractAddress;
     use noctium_runtime::{
@@ -37,12 +37,18 @@ fn block_time_comparisons_are_strict_and_bind_the_native_result() {
         ])
     };
 
+    let compact_max_safe = 9_007_199_254_740_991;
     for (time, cutoff, before, after) in [
         (9, 10, true, false),
         (10, 10, false, false),
         (11, 10, false, true),
+        (0, 0, false, false),
         (0, u64::MAX, true, false),
+        (compact_max_safe, compact_max_safe, false, false),
+        (compact_max_safe, compact_max_safe + 1, true, false),
+        (compact_max_safe, compact_max_safe - 1, false, true),
         (u64::MAX, 0, false, true),
+        (u64::MAX, u64::MAX, false, false),
     ] {
         let execution =
             prepare_with_context(&plan, &inputs(cutoff, true), context(time), params).unwrap();
@@ -50,8 +56,11 @@ fn block_time_comparisons_are_strict_and_bind_the_native_result() {
             check(&execution, &circuit).unwrap(),
             execution.activity_schedule
         );
-        assert_eq!(execution.returns_json()["beforeDeadline"], json!(before));
-        assert_eq!(execution.returns_json()["afterDeadline"], json!(after));
+        let returns = execution.returns_json();
+        assert_eq!(returns["beforeDeadline"], json!(before));
+        assert_eq!(returns["afterDeadline"], json!(after));
+        assert_eq!(returns["atOrAfterDeadline"], json!(!before));
+        assert_eq!(returns["atOrBeforeDeadline"], json!(!after));
     }
 
     let execution = prepare_with_context(&plan, &inputs(10, true), context(9), params).unwrap();
@@ -114,4 +123,6 @@ fn block_time_comparisons_are_strict_and_bind_the_native_result() {
     );
     assert_eq!(inactive.returns_json()["beforeDeadline"], json!(false));
     assert_eq!(inactive.returns_json()["afterDeadline"], json!(false));
+    assert_eq!(inactive.returns_json()["atOrAfterDeadline"], json!(false));
+    assert_eq!(inactive.returns_json()["atOrBeforeDeadline"], json!(false));
 }

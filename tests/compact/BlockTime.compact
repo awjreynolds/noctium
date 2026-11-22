@@ -1,10 +1,12 @@
 pragma language_version 0.28;
 import CompactStandardLibrary;
 
-export circuit checkTime(cutoff: Uint<64>, enabled: Boolean): [Boolean, Boolean] {
+export circuit checkTime(cutoff: Uint<64>, enabled: Boolean): [Boolean, Boolean, Boolean, Boolean] {
   if (disclose(enabled)) {
     return [kernel.blockTimeLessThan(disclose(cutoff)),
-            kernel.blockTimeGreaterThan(disclose(cutoff))];
+            kernel.blockTimeGreaterThan(disclose(cutoff)),
+            blockTimeGte(disclose(cutoff)),
+            blockTimeLte(disclose(cutoff))];
   }
-  return [false, false];
+  return [false, false, false, false];
 }
