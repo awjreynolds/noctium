@@ -53,6 +53,21 @@ impl std::fmt::Display for Error {
     }
 }
 impl std::error::Error for Error {}
+
+#[derive(Debug)]
+pub enum WitnessPreparationError {
+    Node(Error),
+    Witness(crate::witness_execution::Error),
+}
+impl std::fmt::Display for WitnessPreparationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Node(error) => error.fmt(f),
+            Self::Witness(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for WitnessPreparationError {}
 type Result<T> = std::result::Result<T, Error>;
 fn check(value: bool, error: Error) -> Result<()> {
     if value { Ok(()) } else { Err(error) }
@@ -932,6 +947,20 @@ impl Node {
         let final_hash = hash_text(&self.rpc.call("chain_getFinalizedHead", json!([]))?)?;
         self.replay_to(&final_hash, &mut self.cache.borrow_mut(), None)
     }
+
+    /// Prepare a completed typed witness against this node's verified finalized snapshot.
+    /// The caller cannot supply a clock value or a replacement block context.
+    pub fn prepare_contract_witness_proof(
+        &self,
+        execution: &mut crate::witness_execution::WitnessExecution,
+        rng: &mut (impl rand::Rng + rand::CryptoRng),
+    ) -> std::result::Result<crate::witness_execution::WitnessProof, WitnessPreparationError> {
+        let snapshot = self.sync().map_err(WitnessPreparationError::Node)?;
+        execution
+            .prepare_contract_proof_with_snapshot(&snapshot, &self.policy, rng)
+            .map_err(WitnessPreparationError::Witness)
+    }
+
     fn replay_to(
         &self,
         final_hash: &str,

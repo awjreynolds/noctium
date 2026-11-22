@@ -556,6 +556,30 @@ impl WitnessExecution {
         &mut self,
         rng: &mut (impl Rng + CryptoRng),
     ) -> Result<WitnessProof> {
+        self.prepare_contract_proof_with_block(None, rng)
+    }
+
+    pub(crate) fn prepare_contract_proof_with_snapshot(
+        &mut self,
+        snapshot: &client::Snapshot,
+        policy: &client::NetworkPolicy,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<WitnessProof> {
+        snapshot
+            .validate(policy)
+            .map_err(|_| Error::Proof(proof::Error::BindingMismatch))?;
+        let target = self.contract_target.as_ref().ok_or(Error::State)?;
+        let current_state = self.current_state.as_ref().ok_or(Error::State)?;
+        proof::ensure_current_state_matches_verified_snapshot(target, current_state, snapshot)
+            .map_err(Error::Proof)?;
+        self.prepare_contract_proof_with_block(Some(&snapshot.block), rng)
+    }
+
+    fn prepare_contract_proof_with_block(
+        &mut self,
+        block: Option<&onchain_runtime::context::BlockContext>,
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> Result<WitnessProof> {
         let target = self.contract_target.as_ref().ok_or(Error::State)?;
         let current_state = self.current_state.as_ref().ok_or(Error::State)?;
         let session = self.session.as_mut().ok_or(Error::State)?;
@@ -581,10 +605,11 @@ impl WitnessExecution {
         let expected_inputs = inputs
             .try_clone_accounted()
             .map_err(|_| Error::ResourceLimit)?;
-        let prepared = PreparedProof::from_contract_witness_inputs(
+        let prepared = PreparedProof::from_contract_witness_inputs_with_block(
             target,
             current_state,
             std::mem::take(&mut inputs.values),
+            block,
             rng,
         )
         .map_err(Error::Proof)?;
@@ -627,7 +652,8 @@ impl WitnessContractTarget {
         let attempt = client::SubmissionAttempt::recover(store, deployment_attempt_id)
             .await
             .map_err(Error::Client)?;
-        self.restore_deployment(&attempt, ttl, rng).map_err(Error::Proof)
+        self.restore_deployment(&attempt, ttl, rng)
+            .map_err(Error::Proof)
     }
 
     /// Rebind a trusted durable attempt to authenticated artifacts, then reobserve finality and CAS.
@@ -638,8 +664,8 @@ impl WitnessContractTarget {
         descriptor_json: &[u8],
         context_json: &[u8],
     ) -> Result<WitnessClient> {
-        let recovery_context = native_client::recovery_host_context(context_json)
-            .map_err(Error::Client)?;
+        let recovery_context =
+            native_client::recovery_host_context(context_json).map_err(Error::Client)?;
         if recovery_context.attempt_id != attempt_id {
             return Err(Error::Client(client::Error::Identity));
         }
@@ -1134,6 +1160,11 @@ mod tests {
             .unwrap_or_else(|_| panic!("missing NOCTIUM_WITNESS_PUBLIC_{name}"))
     }
 
+    fn block_time_fixture_env(name: &str) -> String {
+        std::env::var(format!("NOCTIUM_BLOCK_TIME_WITNESS_{name}"))
+            .unwrap_or_else(|_| panic!("missing NOCTIUM_BLOCK_TIME_WITNESS_{name}"))
+    }
+
     fn test_context(plan: &Json, attempt_id: &str) -> host::Context {
         let mut operations = BTreeMap::<String, Operation>::new();
         let mut providers = Vec::new();
@@ -1263,6 +1294,7 @@ mod tests {
     fn deployment_state_context(
         target: &WitnessContractTarget,
         operation: &str,
+        chain: Option<&client::ChainIdentity>,
     ) -> CurrentStateContext {
         use ledger::structure::ContractAction;
 
@@ -1278,9 +1310,181 @@ mod tests {
         };
         let mut state_bytes = Vec::new();
         serialize::tagged_serialize(&deployment.initial_state, &mut state_bytes).unwrap();
-        binding
-            .admit_committed_state(&state_bytes, &state_bytes, &"f".repeat(64), true)
+        let checkpoint = "f".repeat(64);
+        match chain {
+            Some(chain) => binding.admit_committed_state_on_chain(
+                &state_bytes,
+                &state_bytes,
+                &checkpoint,
+                true,
+                chain,
+            ),
+            None => binding.admit_committed_state(&state_bytes, &state_bytes, &checkpoint, true),
+        }
+        .unwrap()
+    }
+
+    fn deployment_snapshot(
+        target: &WitnessContractTarget,
+        policy: &client::NetworkPolicy,
+    ) -> client::Snapshot {
+        use coin_structure::contract::ContractAddress;
+        use ledger::structure::{ContractAction, LedgerState};
+        use onchain_runtime::context::BlockContext;
+
+        let ContractAction::Deploy(deployment) = target
+            .deployment_intent()
+            .actions
+            .iter_deref()
+            .next()
             .unwrap()
+        else {
+            unreachable!()
+        };
+        let address = ContractAddress(base_crypto::hash::HashOutput(
+            hex::decode(target.contract_address())
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        ));
+        let mut state = LedgerState::<crate::Db>::new(policy.network_id.clone());
+        state.contract = state
+            .contract
+            .insert(address, deployment.initial_state.clone());
+        client::Snapshot {
+            chain: client::ChainIdentity {
+                network_id: policy.network_id.clone(),
+                genesis: policy.genesis.clone(),
+                spec_version: policy.spec_version,
+                transaction_version: policy.transaction_version,
+                profile: policy.profile.clone(),
+            },
+            finalized_hash: "f".repeat(64),
+            height: 1,
+            state,
+            block: BlockContext::default(),
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the retained BlockTime bundle and pinned public K7 parameters"]
+    fn block_time_missing_snapshot_and_wrong_chain_keep_completed_source() {
+        let bundle = artifacts::verify(
+            std::path::Path::new(&block_time_fixture_env("BUNDLE")),
+            Some(&block_time_fixture_env("MANIFEST_SHA256")),
+        )
+        .unwrap();
+        let parameters_bytes = std::fs::read(block_time_fixture_env("PARAMETERS")).unwrap();
+        let parameters_digest = block_time_fixture_env("PARAMETERS_SHA256");
+        let parameters =
+            TrustedParameters::from_bytes(&parameters_bytes, 7, &parameters_digest).unwrap();
+        let control_plan: Json =
+            serde_json::from_slice(bundle.file(Role::WitnessControl).unwrap()).unwrap();
+        let entrypoint = serde_json::from_slice::<Json>(bundle.file(Role::Plan).unwrap()).unwrap()
+            ["entrypoint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let bundles = ContractBundleSet::new(vec![bundle]).unwrap();
+        let contract = WitnessContractTarget::from_state_config(
+            bundles,
+            br#"{"state":{"total":"0"}}"#,
+            TTL,
+            &mut OsRng,
+        )
+        .unwrap();
+        let operation = contract.operation(&entrypoint, &parameters, TTL).unwrap();
+        let policy = client::NetworkPolicy {
+            network_id: "noctium-test".into(),
+            genesis: "a".repeat(64),
+            spec_version: 2001100,
+            transaction_version: 4,
+            profile: crate::profile::NAME.into(),
+            max_dust: 10u128.pow(22),
+        };
+        let snapshot = deployment_snapshot(&contract, &policy);
+        let mut checkpoint = Some(deployment_state_context(
+            &contract,
+            &entrypoint,
+            Some(&snapshot.chain),
+        ));
+        let attempt = "d".repeat(64);
+        let mut execution = WitnessExecution::begin_contract_operation(
+            &operation,
+            &mut checkpoint,
+            BTreeMap::from([
+                ("expected".into(), json!("14")),
+                ("seed".into(), json!("7")),
+                ("cutoff".into(), json!("2000000000")),
+                ("enabled".into(), json!(true)),
+            ]),
+            test_context(&control_plan, &attempt),
+            &parameters,
+        )
+        .unwrap();
+        assert!(complete_source(&mut execution, &attempt));
+
+        assert!(matches!(
+            execution.prepare_contract_proof(&mut OsRng),
+            Err(Error::Proof(proof::Error::InvalidPrivateInput))
+        ));
+        assert!(execution.session.is_some());
+        assert!(execution.current_state.is_some());
+
+        let mut wrong_policy = policy.clone();
+        wrong_policy.genesis = "b".repeat(64);
+        assert!(matches!(
+            execution.prepare_contract_proof_with_snapshot(&snapshot, &wrong_policy, &mut OsRng),
+            Err(Error::Proof(proof::Error::BindingMismatch))
+        ));
+        assert!(execution.session.is_some());
+        assert!(execution.current_state.is_some());
+
+        let mut other_chain_policy = policy.clone();
+        other_chain_policy.genesis = "b".repeat(64);
+        let other_chain_snapshot = deployment_snapshot(&contract, &other_chain_policy);
+        other_chain_snapshot.validate(&other_chain_policy).unwrap();
+        assert!(matches!(
+            execution.prepare_contract_proof_with_snapshot(
+                &other_chain_snapshot,
+                &other_chain_policy,
+                &mut OsRng
+            ),
+            Err(Error::Proof(proof::Error::BindingMismatch))
+        ));
+        assert!(execution.session.is_some());
+        assert!(execution.current_state.is_some());
+
+        let mut wrong_state = client::Snapshot {
+            chain: snapshot.chain.clone(),
+            finalized_hash: snapshot.finalized_hash.clone(),
+            height: snapshot.height,
+            state: snapshot.state.clone(),
+            block: snapshot.block.clone(),
+        };
+        let address = coin_structure::contract::ContractAddress(base_crypto::hash::HashOutput(
+            hex::decode(operation.contract_address())
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        ));
+        wrong_state.state.contract = wrong_state
+            .state
+            .contract
+            .insert(address, Default::default());
+        assert!(matches!(
+            execution.prepare_contract_proof_with_snapshot(&wrong_state, &policy, &mut OsRng),
+            Err(Error::Proof(proof::Error::BindingMismatch))
+        ));
+        assert!(execution.session.is_some());
+        assert!(execution.current_state.is_some());
+
+        let proof = execution
+            .prepare_contract_proof_with_snapshot(&snapshot, &policy, &mut OsRng)
+            .unwrap();
+        assert!(execution.session.is_none());
+        assert!(execution.current_state.is_none());
+        drop(proof);
     }
 
     #[test]
@@ -1311,7 +1515,7 @@ mod tests {
         )
         .unwrap();
         let operation = contract.operation(&entrypoint, &parameters, TTL).unwrap();
-        let checkpoint = deployment_state_context(&contract, &entrypoint);
+        let checkpoint = deployment_state_context(&contract, &entrypoint, None);
 
         let mut available = Some(checkpoint);
         let mut rejected_inputs = source_inputs("15");
