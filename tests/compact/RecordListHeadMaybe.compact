@@ -1,0 +1,17 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Memo {
+  first: Field;
+  second: Field;
+}
+
+export ledger inbox: List<Memo>;
+
+export circuit seed(): [] {
+  inbox.pushFront(disclose(Memo { first: 17 as Field, second: 23 as Field }));
+}
+
+export circuit peek(): Maybe<Memo> {
+  return inbox.head();
+}

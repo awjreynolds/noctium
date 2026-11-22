@@ -87,3 +87,9 @@ NOCTIUM_SCALAR_LIST_MAYBE_DIR="$PWD/build/scalar-list-maybe" \
   cargo test --locked --manifest-path runtime/Cargo.toml \
   --no-default-features --features zkir-321 --test scalar_list_maybe -- --ignored
 ```
+
+[RecordListHeadMaybe.lean](../../tests/RecordListHeadMaybe.lean) uses the
+same source form for a record with Native fields. The return keeps the
+List element's nominal type and orders the tag before the record fields.
+The paired fixture checks an empty List and a List seeded with `{17, 23}`.
+[Compact runner](../../tests/compact/record-list-head-maybe.mjs) · [Native checker](../../runtime/tests/record_list_head_maybe.rs)
