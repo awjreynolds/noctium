@@ -222,6 +222,7 @@ jobs:
           lake env lean tests/OpaqueDefaults.lean
           lake env lean tests/FixedBytesDefaults.lean
           lake env lean tests/CompositeDefaults.lean
+          lake env lean tests/ReadableDefaults.lean
           lake env lean tests/CompositeMaybe.lean
           lake env lean tests/CompositeMaybeInput.lean
           lake env lean tests/CompositeEither.lean

@@ -21,3 +21,10 @@ for (const [index, length] of [0, 4, 32].entries()) {
   assert.deepEqual([...result.result[index]], Array(length).fill(0));
 }
 console.log('Compact 0.36.1 returned zero-filled defaults at widths 0, 4 and 32');
+
+const { result: readable } = await contract.circuits.readableDefaults(createCircuitContext({
+  circuitId: 'readableDefaults', contractAddress: dummyContractAddress(), contractState: currentContractState.data,
+  privateState: null, coinPublicKeyOrZswapState: coinPublicKey,
+}));
+assert.deepEqual(readable, [0n, false, 0n, new Uint8Array(0), new Uint8Array(3),
+  new Uint8Array(32), [0n, 0n], []]);

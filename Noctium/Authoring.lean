@@ -542,6 +542,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| encode($codec:ident, $value)) => s!"encode({codec.getId}, {renderExpr value})"
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
   | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
+  | `(nlexpr| default($type:nltype)) => s!"default({renderType type})"
   | `(nlexpr| record(Payload $codec:ident, { $fields,* })) =>
     let rendered := (fields.getElems.toList.filterMap recordField).map fun
       | (some name, value) => s!"{name.getId} := {renderExpr value}"
@@ -965,6 +966,16 @@ private def zeroSourceLeaf (site : Syntax) : Ty → ExprM Helpers.Term
   | .uint maximum => pure (.uint maximum 0)
   | type => throwErrorAt site s!"typed composite zero does not support source leaf type '{typeName type}'"
 
+private def zeroScalarTerm (site : Syntax) (type : Ty) : ExprM Helpers.Term := do
+  match type with
+  | .native | .bool | .uint _ => zeroSourceLeaf site type
+  | .bytes 32 => pure (.bytes32Literal (List.replicate 32 0))
+  | .bytes length => pure (.bytes (.bytesLiteral length (List.replicate length 0)) [])
+  | .jubjubScalar | .jubjubPoint =>
+    throwErrorAt site "Jubjub values have no generic default expression"
+  | .foreign _ => throwErrorAt site "foreign values have no generic default expression"
+  | _ => throwErrorAt site s!"readable scalar default does not support type '{typeName type}'"
+
 private def zeroPayloadLeaves (site : Syntax) (compiled : Types.CompiledType) :
     ExprM (List Helpers.Term) :=
   (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroSourceLeaf site)
@@ -1297,6 +1308,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let resultType := Helpers.resultTypeOfComposite codec.payload
     let term := Helpers.Term.composite codec.payload zeros
     pure {type := resultType, term}
+  | `(nlexpr| default($target:nltype)) => do
+    let payloadType ← liftM (readScalarTy target)
+    let term ← zeroScalarTerm target payloadType
+    pure {type := .scalar payloadType, term}
   | `(nlexpr| record(Payload $name:ident, { $fields,* })) => do
     let (codec, _) ← selectedCodec name
     let .structure id := codec.payload
