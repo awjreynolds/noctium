@@ -1637,6 +1637,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let .scalar source := value.type | throwErrorAt stx "cannot cast Unit"
     if source.isJubjub || target.isJubjub then
       throwErrorAt stx "Jubjub values require an explicitly supported curve route"
+    if source.isBytes || target.isBytes then
+      throwErrorAt stx "byte strings do not support scalar casts"
     pure {value with
       type := .scalar target,
       term := .cast target value.term,

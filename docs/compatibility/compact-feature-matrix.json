@@ -617,7 +617,7 @@
       "layer": "language",
       "surface": "Type conversions",
       "noctiumStatus": "subset",
-      "notes": "Each permitted and rejected source/target pair, range failures, byte order and foreign-field restrictions.",
+      "notes": "Ordinary and readable scalar casts reject fixed Bytes at the source boundary. Checked byte projection followed by widening to Native gives the same numeric value as Compact 0.36.1. Noctium uses explicit byte decoding for whole Bytes values. Short-width numeric encoding with a fit check is tracked in #512.",
       "source": [
         "reference"
       ],

@@ -953,6 +953,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       throwErrorAt stx "OpaqueString does not support scalar casts"
     if target.isJubjub || source.isJubjub || target.isForeign || source.isForeign then
       throwErrorAt stx "curve values require explicit typed conversions"
+    if target.isBytes || source.isBytes then
+      throwErrorAt stx "byte strings do not support scalar casts"
     pure (target, ← `(Noctium.Expr.cast $(← tyTerm target) $value))
   | `(nlexpr| default($target:nltype)) =>
     let target ← readTy target

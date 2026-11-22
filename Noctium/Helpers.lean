@@ -1325,7 +1325,8 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       if target.isBytes then fail span "byte strings do not support scalar casts"
       liftError span (target.validate {poseidon2 := true})
       let value ← inferPartialTerm fuel program scope env span value
-      discard (scalar span (← knownType span value.ty))
+      let source ← scalar span (← knownType span value.ty)
+      if source.isBytes then fail span "byte strings do not support scalar casts"
       pure (combine (some (.scalar target)) [value] [.fallibleCast])
     | .disclose _ value => inferPartialTerm fuel program scope env span value
     | .select condition yes no =>
