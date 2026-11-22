@@ -221,6 +221,7 @@ jobs:
           lake env lean tests/CompositeMaybe.lean
           lake env lean tests/CompositeMaybeInput.lean
           lake env lean tests/CompositeEither.lean
+          lake env lean tests/CompositeEitherInput.lean
           lake env lean tests/CompositeWitnessArguments.lean
           lake env lean tests/ConstructorMetadata.lean
           lake env lean tests/SealedMapConstructor.lean

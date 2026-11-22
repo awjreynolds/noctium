@@ -3645,7 +3645,7 @@
       "layer": "standard-library",
       "surface": "Either",
       "noctiumStatus": "subset",
-      "notes": "Lean returnEither emits a typed Native, Bool or bounded UInt sum return in is_left, left, right order. A matched Compact and native UInt8/UInt16 fixture checks both tags and zero inactive operands. Readable witness either accepts checked composite arms and returns the same ordered fields. The pinned Compact and native session fixtures match both tags for a UInt8/Bool/Bytes4 record and a two-Boolean vector, including exact defaults for the inactive arm. The source fixture rejects implicit disclosure of a private payload. Broader nested sum and source-position coverage remains open.",
+      "notes": "Lean returnEither emits a typed Native, Bool or bounded UInt sum return in is_left, left, right order. A matched Compact and native UInt8/UInt16 fixture checks both tags and zero inactive operands. Readable witness either accepts checked composite arms and returns the same ordered fields. The pinned Compact and native session fixtures match both tags for a UInt8/Bool/Bytes4 record and a two-Boolean vector, including exact defaults for the inactive arm. The source fixture rejects implicit disclosure of a private payload. Readable Either input codecs preserve the supplied tag and both payloads. The paired Compact and Rust fixtures return both exact payloads and write the tag to a Bool cell for each branch. Broader nested sum and source-position coverage remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3664,7 +3664,10 @@
         "tests/compact/scalar-either-returns.mjs",
         "tests/CompositeEither.lean",
         "tests/compact/composite-either.mjs",
-        "runtime/tests/composite_either.rs"
+        "runtime/tests/composite_either.rs",
+        "tests/CompositeEitherInput.lean",
+        "tests/compact/composite-either-input.mjs",
+        "runtime/tests/composite_either_input.rs"
       ],
       "equivalence": "unverified"
     },

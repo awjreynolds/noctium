@@ -1,0 +1,15 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+export ledger seen: Boolean;
+
+export circuit echo(value: Either<Limits, Vector<2, Boolean>>): Either<Limits, Vector<2, Boolean>> {
+  seen = disclose(value.is_left);
+  return disclose(value);
+}
