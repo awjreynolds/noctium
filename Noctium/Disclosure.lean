@@ -370,6 +370,14 @@ def describeEffect : Effect → LedgerEffectDescriptor
     let sink := s!"public record Set membership guard '{state}'"
     .publicEffect "memberRecordSet" .stateRead .publicActivity sink
       (recordKeyOperands sink state values) [destination]
+  | .readRecordMap state destination _ values =>
+    let sink := s!"public record Map read key '{state}'"
+    .publicEffect "readRecordMap" .stateRead .publicActivity sink
+      (recordKeyOperands sink state values) [destination]
+  | .memberRecordMap state destination values =>
+    let sink := s!"public record Map membership key '{state}'"
+    .publicEffect "memberRecordMap" .stateRead .publicActivity sink
+      (recordKeyOperands sink state values) [destination]
   | .mapIsEmpty state destination keys =>
     .publicEffect "mapIsEmpty" .stateRead .publicActivity s!"public map or set emptiness guard '{state}'"
       [.path s!"public map or set emptiness path '{state}'" keys] [destination]
@@ -476,6 +484,15 @@ def describeEffect : Effect → LedgerEffectDescriptor
   | .removeRecordSet state values =>
     let sink := s!"public record Set removal key '{state}'"
     .publicEffect "removeRecordSet" .stateWrite .publicActivity sink
+      (recordKeyOperands sink state values) []
+  | .writeRecordMap state values _ value =>
+    let sink := s!"public record Map write key '{state}'"
+    .publicEffect "writeRecordMap" .stateWrite .publicActivity sink
+      (recordKeyOperands sink state values ++
+        [.payload "value" s!"public record Map value '{state}'" value]) []
+  | .removeRecordMap state values =>
+    let sink := s!"public record Map removal key '{state}'"
+    .publicEffect "removeRecordMap" .stateWrite .publicActivity sink
       (recordKeyOperands sink state values) []
   | .removePath state keys =>
     let sink := s!"public nested map removal path '{state}'"

@@ -447,6 +447,8 @@ inductive LedgerValueType where
   /-- A root Set keyed by one checked flat typed record. Field order and types
   come from the shared record layout. Nested paths still use scalar PathKeys. -/
   | recordSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
+  /-- A root Map keyed by one checked flat typed record, with scalar values. -/
+  | recordMapKey (environment : Types.CompositeEnv) (type : Types.CompositeType) (valueTy : Ty)
   /-- The fixed QualifiedShieldedCoinInfo Set key stays on its specialized
   native coin operations, separate from ordinary typed record Set keys. -/
   | shieldedCoinSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
@@ -481,6 +483,7 @@ def LedgerValueType.resolvePath (schema : LedgerValueType) : List PathKey →
       value.resolvePath rest
     | .set _ => throw "set members have no readable value"
     | .recordSet .. => throw "record Set members have no readable value"
+    | .recordMapKey .. => throw "record Map values are scalar and have no nested path"
     | .shieldedCoinSet .. => throw "qualified shielded coin Set members have no readable value"
     | .composite .. => throw "nested map path continues through a composite value"
     | .list .. => throw "nested map path continues through a list value"
@@ -723,7 +726,7 @@ def StateKind.pathSchema : StateKind → Option LedgerValueType
 /-- Root collections supported as sealed constructor-owned state. Empty state is
 the default, so a constructor action is optional. -/
 def StateKind.isDefaultEmptyRoot : StateKind → Bool
-  | .tree .counter | .tree (.set _) | .tree (.recordSet _ _) |
+  | .tree .counter | .tree (.set _) | .tree (.recordSet _ _) | .tree (.recordMapKey _ _ _) |
       .tree (.«list» _ (.scalar _)) => true
   | _ => false
 
@@ -1008,6 +1011,11 @@ inductive Effect where
   | readPath (state destination : String) (keys : List PathKey) (valueTy : Ty)
   | memberPath (state destination : String) (keys : List PathKey)
   | memberRecordSet (state destination : String) (values : List LedgerFieldExpr)
+  | readRecordMap (state destination : String) (valueTy : Ty) (values : List LedgerFieldExpr)
+  | memberRecordMap (state destination : String) (values : List LedgerFieldExpr)
+  | writeRecordMap (state : String) (values : List LedgerFieldExpr)
+      (valueTy : Ty) (value : Expr valueTy)
+  | removeRecordMap (state : String) (values : List LedgerFieldExpr)
   | mapIsEmpty (state destination : String) (keys : List PathKey)
   | mapSize (state destination : String) (keys : List PathKey)
   | counterRead (state destination : String) (keys : List PathKey)
@@ -1490,6 +1498,10 @@ where
       let fields ← LedgerValueType.ledgerRecordWriteFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
+    | .recordMapKey environment type valueTy => do
+      let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+      for (_, ty) in fields do validateStateScalar caps ty
+      validateStateScalar caps valueTy
     | .shieldedCoinSet environment type => do
       let fields ← LedgerValueType.shieldedCoinRecordFields environment type
       for (_, ty) in fields do
@@ -1532,6 +1544,17 @@ private def resolveRecordSetFields (decls : List StateDecl) (state : String)
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Set key field type mismatch"
   pure fields
+
+private def resolveRecordMap (decls : List StateDecl) (state : String)
+    (values : List LedgerFieldExpr) : Except String (Types.CompositeEnv × List (String × Ty) × Ty) := do
+  let some declaration := decls.find? (·.name == state)
+    | throw s!"unknown record-key Map '{state}'"
+  let .tree (.recordMapKey environment type valueTy) := declaration.kind
+    | throw s!"state '{state}' is not a record-key Map"
+  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+    throw "record Map key field type mismatch"
+  pure (environment, fields, valueTy)
 
 private def resolveMerkleTreePath (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String (Nat × Bool) := do
@@ -1659,7 +1682,8 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       throw {span := state.span, message := s!"sealed state '{state.name}' must be initialized by the constructor"}
 
 private def Effect.writeTarget : Effect → Option String
-  | .writeCell state _ _ | .writeMap state .. | .insertPath state .. | .writePath state .. |
+  | .writeCell state _ _ | .writeMap state .. | .writeRecordMap state .. |
+    .removeRecordMap state .. | .insertPath state .. | .writePath state .. |
     .receiveShieldedToMap state .. | .insertShieldedCoinSet state .. |
     .insertShieldedCoinSetTo state .. |
     .sendShieldedFromMap state .. |
@@ -1801,7 +1825,9 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           .claimContractCall .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
           .readContractAddress .. | .readTokenBalance .. | .mintShielded .. | .mintUnshielded .. |
           .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
-          .readPath .. | .memberPath .. | .memberRecordSet .. | .mapIsEmpty .. | .mapSize .. |
+          .readPath .. | .memberPath .. | .memberRecordSet .. | .readRecordMap .. |
+          .memberRecordMap .. | .writeRecordMap .. | .removeRecordMap .. |
+          .mapIsEmpty .. | .mapSize .. |
           .insertPath .. | .writePath .. | .emptyMapPath .. | .setInsert .. |
           .setInsertRecord .. | .removeRecordSet .. |
           .readCompositePath .. | .writeCompositePath .. | .counterRead .. | .counterLessThan .. |
@@ -1831,6 +1857,21 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         if !caps.stateMaps then throw "target lacks state maps"
         requireState decls state (.map keyTy valueTy)
         key.validate caps env
+        pure [(destination, .bool)]
+      | .readRecordMap state destination valueTy values => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let (_, fields, foundValueTy) ← resolveRecordMap decls state values
+        unless foundValueTy == valueTy do throw "record Map value type mismatch"
+        for (_, ty) in fields do ty.validate caps
+        for value in values do match value with
+          | .mk ty expression => ty.validate caps; expression.validate caps env
+        pure [(destination, valueTy)]
+      | .memberRecordMap state destination values => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let (_, fields, _) ← resolveRecordMap decls state values
+        for (_, ty) in fields do ty.validate caps
+        for value in values do match value with
+          | .mk ty expression => ty.validate caps; expression.validate caps env
         pure [(destination, .bool)]
       | .readContractAddress destination => do
         (.bytes 32 : Ty).validate caps
@@ -2034,6 +2075,23 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         requireState decls state (.map keyTy valueTy)
         key.validate caps env
         value.validate caps env
+        pure []
+      | .writeRecordMap state values valueTy value => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let (_, fields, foundValueTy) ← resolveRecordMap decls state values
+        unless foundValueTy == valueTy do throw "record Map value type mismatch"
+        for (_, ty) in fields do ty.validate caps
+        for field in values do match field with
+          | .mk ty expression => ty.validate caps; expression.validate caps env
+        valueTy.validate caps
+        value.validate caps env
+        pure []
+      | .removeRecordMap state values => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let (_, fields, _) ← resolveRecordMap decls state values
+        for (_, ty) in fields do ty.validate caps
+        for field in values do match field with
+          | .mk ty expression => ty.validate caps; expression.validate caps env
         pure []
       | .requireAbsent state keyTy key =>
         if !caps.stateMaps then throw "target lacks state maps"

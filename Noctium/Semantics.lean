@@ -1496,6 +1496,18 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some root := next.trees.lookup name | throw s!"missing record Set '{name}'"
       let key ← evaluateRecordKey ctx env values
       env := (destination, .bool (← treeMember root [key])) :: env
+    | .readRecordMap name destination valueTy values => do
+      let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let key ← evaluateRecordKey ctx env values
+      let some (.scalar raw) := treeLookup root [key]
+        | throw s!"missing record Map key in '{name}'"
+      let some value := raw.as valueTy | throw s!"record Map value type mismatch '{name}'"
+      if !canonical ctx valueTy value then throw s!"noncanonical record Map value '{name}'"
+      env := (destination, Value.pack valueTy value) :: env
+    | .memberRecordMap name destination values => do
+      let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let key ← evaluateRecordKey ctx env values
+      env := (destination, .bool (← treeMember root [key])) :: env
     | .mapIsEmpty name destination keys => do
       let empty ← mapIsEmptyAt next name (← evaluatePath ctx env keys)
       env := (destination, .bool empty) :: env
@@ -1673,6 +1685,16 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
     | .removeRecordSet name values => do
       let key ← evaluateRecordKey ctx env values
       next ← removeMapAt next name [key]
+    | .writeRecordMap name values valueTy value => do
+      let key ← evaluateRecordKey ctx env values
+      let payload := LedgerValue.scalar (Value.pack valueTy (← value.eval ctx env))
+      let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let some updated := treeSet root [key] payload
+        | throw s!"record Map root is not a map '{name}'"
+      next := {next with trees := updateAssoc name updated next.trees}
+    | .removeRecordMap name values => do
+      let key ← evaluateRecordKey ctx env values
+      next ← removeMapAt next name [key]
     | .removePath name keys => do
       next ← removeMapAt next name (← evaluatePath ctx env keys)
 
@@ -1739,7 +1761,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .readTokenBalance .. |
             .readPath .. | .readCompositePath .. | .memberPath .. | .insertPath .. |
             .writePath .. | .writeCompositePath .. | .emptyMapPath .. | .setInsert .. | .counterRead .. |
-            .memberRecordSet .. | .setInsertRecord .. | .removeRecordSet .. |
+            .memberRecordSet .. | .readRecordMap .. | .memberRecordMap .. |
+            .writeRecordMap .. | .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. |
             .counterLessThan .. |
             .counterAdjust .. | .counterReset .. | .removePath .. |
             .listLength .. | .listHead .. | .listPushFront .. | .listPopFront .. | .listReset .. |
@@ -1985,7 +2008,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
           env := updatedEnv
           next := updatedState
-        | .memberRecordSet .. | .setInsertRecord .. | .removeRecordSet .. => do
+        | .memberRecordSet .. | .readRecordMap .. | .memberRecordMap .. |
+            .writeRecordMap .. | .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. => do
           let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
           env := updatedEnv
           next := updatedState
@@ -2042,6 +2066,21 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           env := (destination, .bool false) :: env
         | .memberRecordSet _ destination .. =>
           env := (destination, .bool false) :: env
+        | .memberRecordMap _ destination .. =>
+          env := (destination, .bool false) :: env
+        | .readRecordMap _ destination ty .. =>
+          let zero : ty.Denote := match ty with
+            | .native => 0
+            | .bool => false
+            | .uint _ => 0
+            | .bytes length => List.replicate length 0
+            | .opaqueBytes => []
+            | .opaqueString => ""
+            | .jubjubScalar => 0
+            | .jubjubPoint => (0, 1)
+            | .foreign (.base _) | .foreign (.scalar _) => 0
+            | .foreign (.point _) => .identity
+          env := (destination, Value.pack ty zero) :: env
         | .readContractAddress destination =>
           env := (destination, .bytes 32 (List.replicate 32 0)) :: env
         | .readTokenBalance destination _ _ query =>
