@@ -1459,6 +1459,16 @@ pub struct DevelopmentFunding<'a> {
     shielded_merge: Option<shielded_merge::BookedMerge>,
 }
 impl<'a> DevelopmentFunding<'a> {
+    fn has_shielded_offer(&self) -> bool {
+        self.shielded_receive.is_some()
+            || self.shielded_relay.is_some()
+            || self.wallet_shielded_receive.is_some()
+            || self.wallet_shielded_mint.is_some()
+            || self.shielded_transfer.is_some()
+            || self.shielded_split.is_some()
+            || self.shielded_merge.is_some()
+    }
+
     pub fn new(
         node: &'a Node,
         material: &'a crate::funding::DustMaterial,
@@ -1493,6 +1503,14 @@ impl crate::client::FundingAdapter for DevelopmentFunding<'_> {
         policy.check(&snapshot.chain).map_err(|_| HostFailure)?;
         if *policy != self.node.policy {
             return Err(HostFailure);
+        }
+        let settle_mint = contract.guaranteed_unshielded_offer.is_some();
+        if settle_mint {
+            if self.has_shielded_offer() {
+                return Err(HostFailure);
+            }
+            crate::unshielded_mint::validate_user_output_offer(contract)
+                .map_err(|_| HostFailure)?;
         }
         let state = {
             let cache = self.node.cache.borrow();
@@ -1629,6 +1647,19 @@ impl crate::client::FundingAdapter for DevelopmentFunding<'_> {
                     rng,
                 )
                 .await
+        } else if settle_mint {
+            wallet
+                .fund_unshielded_mint(
+                    contract,
+                    &policy.network_id,
+                    &snapshot.state.parameters,
+                    self.material,
+                    self.parameters,
+                    snapshot.block.tblock,
+                    self.policy,
+                    rng,
+                )
+                .await
         } else {
             wallet
                 .fund(
@@ -1655,14 +1686,7 @@ impl crate::client::FundingAdapter for DevelopmentFunding<'_> {
     ) -> std::result::Result<crate::funding::UnsealedTransaction, crate::client::HostFailure> {
         use crate::client::HostFailure;
 
-        if self.shielded_receive.is_some()
-            || self.shielded_relay.is_some()
-            || self.wallet_shielded_receive.is_some()
-            || self.wallet_shielded_mint.is_some()
-            || self.shielded_transfer.is_some()
-            || self.shielded_split.is_some()
-            || self.shielded_merge.is_some()
-        {
+        if self.has_shielded_offer() {
             return Err(HostFailure);
         }
         policy.check(&snapshot.chain).map_err(|_| HostFailure)?;
@@ -3428,7 +3452,7 @@ mod tests {
                 "changed principal return passed caller offer validation"
             );
             let return_intent = proved.native().erase_proofs().erase_signatures().intent_hash(0);
-            let (_, receipt) = funded.finalize_with_unshielded_caller_key(proved.native(), Some(key)).await?;
+            let (_, receipt) = funded.finalize_with_funding(proved.native(), TestFunding::Caller(key)).await?;
             let finalized: ContractState<Db> = native_decode(&receipt.contract_state)?;
             let user_hex = hex::encode(address.0.0);
             let expected = crate::create_state(&plan, &BTreeMap::from([(
@@ -3466,6 +3490,13 @@ mod tests {
             }));
             Ok(())
         })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    enum TestFunding {
+        Ordinary,
+        Caller(ledger::structure::SigningKey),
+        Mint,
     }
 
     #[cfg(feature = "zkir-321")]
@@ -3509,13 +3540,13 @@ mod tests {
             &self,
             intent: &crate::proof::ProvedNativeIntent,
         ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
-            self.finalize_with_unshielded_caller_key(intent, None).await
+            self.finalize_with_funding(intent, TestFunding::Ordinary).await
         }
 
-        async fn finalize_with_unshielded_caller_key(
+        async fn finalize_with_funding(
             &self,
             intent: &crate::proof::ProvedNativeIntent,
-            key: Option<ledger::structure::SigningKey>,
+            mode: TestFunding,
         ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
             use crate::client::{ChainAdapter, Submission};
             use crate::funding::{FeePolicy, UnsealedTransaction};
@@ -3537,22 +3568,26 @@ mod tests {
             );
             let approve = |_: &UnsealedTransaction, candidate: &NetworkPolicy| candidate == policy;
             let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
-            let bound = if let Some(key) = key {
-                ensure!(
-                    matches!(
-                        BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer).await,
-                        Err(crate::client::Error::InvalidTransaction)
-                    ),
-                    "ordinary funding accepted the caller offer"
-                );
-                let signer = signer.with_unshielded_caller_key(key);
-                BoundTransaction::prepare_unshielded_caller(
+            let bound = match mode {
+                TestFunding::Caller(key) => {
+                    ensure!(
+                        matches!(
+                            BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer).await,
+                            Err(crate::client::Error::InvalidTransaction)
+                        ),
+                        "ordinary funding accepted the caller offer"
+                    );
+                    let signer = signer.with_unshielded_caller_key(key);
+                    BoundTransaction::prepare_unshielded_caller(
+                        intent, policy.clone(), &self.node, &funding, &signer,
+                    ).await?
+                }
+                TestFunding::Mint => BoundTransaction::prepare_unshielded_mint(
                     intent, policy.clone(), &self.node, &funding, &signer,
-                )
-                .await?
-            } else {
-                BoundTransaction::prepare(intent, policy.clone(), &self.node, &funding, &signer)
-                    .await?
+                ).await?,
+                TestFunding::Ordinary => BoundTransaction::prepare(
+                    intent, policy.clone(), &self.node, &funding, &signer,
+                ).await?,
             };
             ensure!(
                 self.node
@@ -3648,6 +3683,259 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires the pinned NativeUnshieldedMintRecipient bundle and funded development node"]
+    fn funded_recipient_mint_distinguishes_contract_and_user_with_same_address_bytes()
+    -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            client::ContractEvent,
+            proof::{LocalProver, WitnessContractTarget},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use coin_structure::{
+            coin::{PublicAddress, TokenType, UserAddress},
+            contract::ContractAddress,
+        };
+        use futures::executor::block_on;
+        use ledger::structure::{ContractAction, GUARANTEED_SEGMENT, Transaction, Utxo, UtxoOutput};
+        use onchain_runtime::{context::ClaimedUnshieldedSpendsKey, state::ContractState};
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let manifest = setting("NOCTIUM_FUNDED_RECIPIENT_MINT_MANIFEST_SHA256")?;
+            let bundle = artifacts::verify(
+                Path::new(&setting("NOCTIUM_FUNDED_RECIPIENT_MINT_BUNDLE")?),
+                Some(&manifest),
+            )?;
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_FUNDED_RECIPIENT_MINT_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let parameters = cache.parameters(circuit.k()).await?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_FUNDED_RECIPIENT_MINT_NODE")?, &cache)
+                    .await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation("mint", &parameters, ttl)?;
+            let (deployed, deployment) = funded
+                .deploy(&target, "mint")
+                .await
+                .context("finalize recipient-mint deployment")?;
+            ensure!(
+                deployment.event == ContractEvent::Deploy,
+                "recipient-mint deployment receipt has the wrong event"
+            );
+            eprintln!(
+                "recipient-mint deployment {} finalized at {}",
+                target.contract_address(),
+                deployment.finalized_hash,
+            );
+            let mut current = Some(deployed);
+
+            let address_bytes: [u8; 32] = hex::decode(target.contract_address())?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("target address is not 32 bytes"))?;
+            let own = ContractAddress(HashOutput(address_bytes));
+            let domain = HashOutput(std::array::from_fn(|index| (index + 1) as u8));
+            let amount = 7u64;
+            let token_color = own.custom_unshielded_token_type(domain);
+            let expected_color = token_color.0;
+            let token = TokenType::Unshielded(token_color);
+            let inputs = |is_contract: bool| {
+                BTreeMap::from([
+                    ("domain".into(), json!({"kind":"bytes", "values":domain.0})),
+                    ("amount".into(), json!(amount.to_string())),
+                    ("isContract".into(), json!(is_contract)),
+                    (
+                        "recipient".into(),
+                        json!({"kind":"bytes", "values":address_bytes}),
+                    ),
+                    ("enabled".into(), json!(true)),
+                ])
+            };
+
+            let mut receipts = Vec::new();
+            for (is_contract, recipient) in [
+                (true, PublicAddress::Contract(own)),
+                (false, PublicAddress::User(UserAddress(own.0))),
+            ] {
+                let recipient_tag = if is_contract { "contract" } else { "user" };
+                let prepared = operation.prepare_call(
+                    &mut current,
+                    &parameters,
+                    inputs(is_contract),
+                    &mut rng,
+                )?;
+                let proved = prepared
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        &parameters,
+                        1_048_576,
+                        futures::future::pending(),
+                    )
+                    .await?;
+                let Some(ContractAction::Call(call)) = proved.native().actions.get(0) else {
+                    anyhow::bail!("recipient-mint proof omitted its contract call");
+                };
+                let transcript = call
+                    .guaranteed_transcript
+                    .as_ref()
+                    .context("recipient-mint call omitted its guaranteed transcript")?;
+                let effects = &transcript.effects;
+                ensure!(
+                    effects.unshielded_mints.get(&domain).map(|value| *value) == Some(amount),
+                    "mint transcript has the wrong domain amount"
+                );
+                ensure!(
+                    effects.unshielded_mints.size() == 1,
+                    "mint transcript contains unexpected domains"
+                );
+                let self_credit = is_contract;
+                ensure!(
+                    effects.unshielded_inputs.get(&token).map(|value| *value)
+                        == self_credit.then_some(amount as u128),
+                    "same-byte recipient tag produced the wrong contract credit"
+                );
+                ensure!(
+                    effects.unshielded_inputs.size() == usize::from(self_credit),
+                    "mint transcript contains unexpected contract credits"
+                );
+                ensure!(
+                    effects.unshielded_outputs.size() == 0,
+                    "mint operation unexpectedly produced user-side UTXOs"
+                );
+                ensure!(
+                    effects
+                        .claimed_unshielded_spends
+                        .get(&ClaimedUnshieldedSpendsKey(token.clone(), recipient))
+                        .map(|value| *value)
+                        == Some(amount as u128),
+                    "claim transcript has the wrong principal tag or amount"
+                );
+                ensure!(
+                    effects.claimed_unshielded_spends.size() == 1,
+                    "mint transcript contains unexpected recipient claims"
+                );
+
+                let binding = proved
+                    .contract_binding()
+                    .context("missing checked contract binding")?;
+                let funding = if is_contract { TestFunding::Ordinary } else { TestFunding::Mint };
+                let (bound, receipt) = funded
+                    .finalize_with_funding(proved.native(), funding)
+                    .await
+                    .with_context(|| format!("finalize {recipient_tag}-tagged mint"))?;
+                ensure!(
+                    receipt.event == ContractEvent::Call
+                        && receipt.contract_address == target.contract_address(),
+                    "recipient-mint call receipt has the wrong target or event"
+                );
+                current = Some(binding.admit_committed_state(
+                    &receipt.contract_state,
+                    bound.expected_state(),
+                    &receipt.finalized_hash,
+                    false,
+                )?);
+                let state: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    state.balance.get(&token).map(|value| *value) == Some(amount as u128),
+                    "finalized contract balance differs from the self-credit expectation"
+                );
+                let Transaction::Standard(signed) = native_decode::<crate::funding::SealedTransaction>(bound.bytes())? else {
+                    anyhow::bail!("mint receipt must identify a standard transaction");
+                };
+                let intent = signed.intents.get(&crate::funding::CONTRACT_SEGMENT)
+                    .context("mint transaction omitted contract segment")?;
+                if is_contract {
+                    ensure!(intent.guaranteed_unshielded_offer.is_none(), "self-credit produced a user offer");
+                } else {
+                    let offer = intent.guaranteed_unshielded_offer.as_deref()
+                        .context("signed mint transaction omitted the user offer")?;
+                    let expected = UtxoOutput {
+                        value: u128::from(amount),
+                        owner: UserAddress(own.0),
+                        type_: token_color,
+                    };
+                    ensure!(offer.inputs.is_empty() && offer.signatures.is_empty()
+                        && offer.outputs.len() == 1 && offer.outputs.get(0) == Some(&expected),
+                        "signed user offer does not match the proved mint");
+                    let utxo = Utxo {
+                        value: u128::from(amount),
+                        owner: UserAddress(own.0),
+                        type_: token_color,
+                        // The ledger hashes guaranteed outputs in logical segment zero.
+                        intent_hash: intent
+                            .erase_proofs()
+                            .erase_signatures()
+                            .intent_hash(GUARANTEED_SEGMENT),
+                        output_no: 0,
+                    };
+                    ensure!(funded.node.sync()?.state.utxo.utxos.contains_key(&utxo),
+                        "exact user output is missing from the finalized ledger");
+                }
+                eprintln!("{recipient_tag}-tagged mint finalized at {}", receipt.finalized_hash);
+                receipts.push(receipt);
+            }
+
+            ensure!(
+                receipts.len() == 2,
+                "expected two finalized recipient-mint calls"
+            );
+            ensure!(
+                receipts[0].transaction_id != receipts[1].transaction_id,
+                "same-byte recipient cases did not produce distinct transactions"
+            );
+            let first: ContractState<Db> = native_decode(&receipts[0].contract_state)?;
+            let second: ContractState<Db> = native_decode(&receipts[1].contract_state)?;
+            ensure!(
+                second.balance.get(&token).map(|value| *value)
+                    == first.balance.get(&token).map(|value| *value),
+                "user-tagged same-byte mint changed the contract balance"
+            );
+            println!(
+                "{}",
+                json!({
+                    "bundleManifestSha256": manifest,
+                    "deploymentHeight": deployment.height,
+                    "deploymentFinalizedHash": deployment.finalized_hash,
+                    "contractAddress": target.contract_address(),
+                    "domain": hex::encode(domain.0),
+                    "expectedColor": hex::encode(expected_color.0),
+                    "amount": amount.to_string(),
+                    "selfCall": {
+                        "height": receipts[0].height,
+                        "finalizedHash": receipts[0].finalized_hash,
+                        "transactionId": receipts[0].transaction_id,
+                        "contractBalance": amount.to_string(),
+                        "recipientTag": "contract"
+                    },
+                    "sameBytesUserCall": {
+                        "height": receipts[1].height,
+                        "finalizedHash": receipts[1].finalized_hash,
+                        "transactionId": receipts[1].transaction_id,
+                        "contractBalance": second.balance.get(&token).map(|value| value.to_string()),
+                        "recipientTag": "user",
+                        "finalizedUserOutput": {"index":0,"value":amount.to_string()}
+                    }
+                })
+            );
+            Ok(())
+        })
+    }
     #[cfg(feature = "zkir-321")]
     #[test]
     #[ignore = "requires the pinned NativeContractAddress bundle and funded development node"]

@@ -6054,7 +6054,7 @@
       "layer": "standard-library",
       "surface": "mintUnshieldedToken",
       "noctiumStatus": "subset",
-      "notes": "The mintUnshieldedTo source form composes the native UInt64 mint, token color and tagged spend. Compact 0.36.1 and the native checker match self-contract, other-contract, same-bytes user and inactive calls. The inactive call returns zero bytes and leaves all settlement effects empty. The native checker rejects a changed recipient tag. Finalized calls using this source form remain open.",
+      "notes": "The mintUnshieldedTo source form composes the native UInt64 mint, token color and tagged spend. Compact 0.36.1 and the native checker match self-contract, other-contract, same-bytes user and inactive calls. The inactive call returns zero bytes and leaves all settlement effects empty. The native checker rejects a changed recipient tag. One guaranteed custom-token mint finalized through the native Rust client for each of the two recipient tags using the same address bytes. The self call credits the contract. The user call leaves its balance unchanged and creates the exact 7-token user output in verified ledger replay. Other-contract settlement and broader offer shapes remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6072,7 +6072,8 @@
         "tests/compact/UnshieldedMintRecipient.compact",
         "tests/compact/unshielded-mint-recipient.mjs",
         "runtime/tests/native_unshielded_mint_recipient.rs",
-        "docs/development/native-contract.md#mint-an-unshielded-token-to-a-tagged-recipient"
+        "docs/development/native-contract.md#mint-an-unshielded-token-to-a-tagged-recipient",
+        "docs/development/native-unshielded-recipient-mint-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
