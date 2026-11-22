@@ -68,18 +68,18 @@ theorem decoded : Noctium.Verification.NativeRelationJson.decode emittedJson =
     rw [h] at check
     exact congrArg Except.ok (Option.some.inj check)
 theorem sound (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar))
-    (sat : DecodedCircuitRelation emittedJson hash input.streams witness groups) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar))
+    (sat : DecodedCircuitRelation emittedJson hash input.streams assignment groups) :
     claimEntry.circuit.run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] ∧
-    program.returns witness = [input.nullifier] ∧
-    program.returns witness = groups.getLastD [] :=
-  {NS}.decoded_constraints_sound emittedJson decoded ctx hash agreement input witness groups sat
+    program.returns assignment = [input.nullifier] ∧
+    program.returns assignment = groups.getLastD [] :=
+  {NS}.decoded_constraints_sound emittedJson decoded ctx hash agreement input assignment groups sat
  theorem complete (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
     (input : InputValues) (canonical : CanonicalInputs ctx input) (leaf node : Nat)
     (trace : HashTrace ctx input leaf node) :
     let nativeInputs := Inputs.ofSource ctx input canonical agreement.modulus
-    ∃ witness, DecodedCircuitRelation emittedJson hash nativeInputs.streams witness
+    ∃ assignment, DecodedCircuitRelation emittedJson hash nativeInputs.streams assignment
       [[nativeInputs.root], [nativeInputs.campaign], [nativeInputs.nullifier], [nativeInputs.nullifier]] :=
   {NS}.decoded_eligible_constraints_complete emittedJson decoded ctx hash agreement input canonical leaf node trace
 #print axioms decoded
@@ -205,7 +205,9 @@ def main() -> int:
         check_certificate(missing_constraint, "MissingConstraintCertificate.lean", "MissingConstraintCertificate", negative=True)
         roots = PROOF_ROOTS + ["PrivateClaimEmittedCertificate.decoded", "PrivateClaimEmittedCertificate.sound",
                                "PrivateClaimEmittedCertificate.complete"]
-        export = run(["lake", "env", "leanexport", "proofs.PrivateClaimEmittedCertificate", "--", *roots], environment)
+        export = run(["lake", "env", "sh", "-c",
+                      'LEAN_PATH="$1${LEAN_PATH:+:$LEAN_PATH}"; export LEAN_PATH; shift; exec "$@"',
+                      "sh", str(imports), "leanexport", "proofs.PrivateClaimEmittedCertificate", "--", *roots], environment)
         exported = output / "proof-closure.ndjson"
         exported.write_text(export.stdout)
         axioms = exported_axioms(exported)
