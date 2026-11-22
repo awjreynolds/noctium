@@ -570,6 +570,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"persistentHashNativeVector([{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     s!"transientHashNativeVector([{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
+  | `(nlexpr| transientHashValue($value)) => s!"transientHashValue({renderExpr value})"
   | `(nlexpr| persistentHashPoint($point)) => s!"persistentHashPoint({renderExpr point})"
   | `(nlexpr| reverseBytes32($value)) => s!"reverseBytes32({renderExpr value})"
   | `(nlexpr| reverseBytes($value)) => s!"reverseBytes({renderExpr value})"
@@ -672,6 +673,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     values.getElems.toList.flatMap disclosedValues
+  | `(nlexpr| transientHashValue($value)) => disclosedValues value
   | `(nlexpr| tokenType($domain, $contractAddress)) =>
     disclosedValues domain ++ disclosedValues contractAddress
   | `(nlexpr| persistentCommitFab($_:ident, $_:ident, $opening, [$values,*]))
@@ -745,6 +747,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     values.getElems.toList.flatMap inlineAssertions
+  | `(nlexpr| transientHashValue($value)) => inlineAssertions value
   | `(nlexpr| tokenType($domain, $contractAddress)) =>
     inlineAssertions domain ++ inlineAssertions contractAddress
   | `(nlexpr| persistentCommitFab($_:ident, $_:ident, $opening, [$values,*]))
@@ -1457,6 +1460,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerBytesOperation programName callPrefix env stx .persistentHashNativeVector values.getElems.toList
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     lowerBytesOperation programName callPrefix env stx .transientHashNativeVector values.getElems.toList
+  | `(nlexpr| transientHashValue($source)) => do
+    let value ← lowerExpr programName callPrefix env source
+    let .scalar ty := value.type
+      | throwErrorAt source "transientHashValue requires Native, Bool or UInt"
+    unless (ScalarPolicy.validate ty.scalarKind).isOk do
+      throwErrorAt source "transientHashValue requires Native, Bool or UInt"
+    let operand := if ty == .native then value.term else .cast .native value.term
+    pure (mergeLowered (.scalar .native) (.bytes .transientHashNativeVector [operand]) [value])
   | `(nlexpr| persistentHashPoint($point)) =>
     lowerBytesOperation programName callPrefix env stx .persistentHashPoint [point]
   | `(nlexpr| sha256($value)) => do

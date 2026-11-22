@@ -279,6 +279,7 @@ scoped syntax "sha512Fab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "persistentCommitFab(" ident "," ident "," nlexpr "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "transientCommitFab(" ident "," ident "," nlexpr "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "transientHashNativeVector(" "[" nlexpr,* "]" ")" : nlexpr
+scoped syntax "transientHashValue(" nlexpr ")" : nlexpr
 scoped syntax "shieldedOutputNonce(" nlexpr ")" : nlexpr
 scoped syntax "shieldedBurnKey(" ")" : nlexpr
 scoped syntax "shieldedIndexedNonce(" nlexpr "," nlexpr ")" : nlexpr
@@ -878,6 +879,7 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
     hasPartialScalar opening || inputs.getElems.any partialValue || outputs.getElems.any partialValue
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     values.getElems.toList.any hasPartialScalar
+  | `(nlexpr| transientHashValue($value)) => hasPartialScalar value
   | `(nlexpr| persistentHashPoint($point)) => hasPartialScalar point
   | `(nlexpr| hashToCurve([$values,*])) => Bool.true
   | `(nlexpr| toBytes32($value)) => hasPartialScalar value
@@ -1366,6 +1368,12 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       pure expression
     let valueList ← nativeExprListTerm values
     pure (.native, ← `(Noctium.Expr.transientHash $valueList))
+  | `(nlexpr| transientHashValue($source)) => do
+    let (ty, value) ← expression env source
+    unless (ScalarPolicy.validate ty.scalarKind).isOk do
+      throwErrorAt source "transientHashValue requires Native, Bool or UInt"
+    let value ← if ty == .native then pure value else `(Noctium.Expr.cast Noctium.Ty.native $value)
+    pure (.native, ← `(Noctium.Expr.transientHash [$value]))
   | `(nlexpr| persistentHashPoint($point)) => do
     let point ← expected env point .jubjubPoint
     let x ← `(Noctium.Expr.jubjubCoordinate $point 0)

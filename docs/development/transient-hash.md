@@ -19,6 +19,15 @@ The leading 17 is an explicit application choice. The compiler does not insert o
 
 `poseidon2(domain, left, right)` retains its existing meaning: the hash of exactly `[domain, left, right]`. The compiler shares an equivalent vector computation, while evaluating every operand and its assertions before reusing a result. Chaining pairwise calls produces a different hash from a single longer vector.
 
+## Typed scalar preimages
+
+`transientHashValue(value)` hashes one `Native`, `Bool` or bounded `UInt`
+value in ordinary and readable circuits. It uses one canonical Native field.
+`false` and `true` encode as zero and one. Equal field representations produce
+the same hash across the supported scalar types, as observed in pinned
+Compact 0.36.1. Private origins and partial operand checks still apply.
+[Source fixture](../../tests/ScalarTransientHash.lean) · [Native test](../../runtime/tests/scalar_transient_hash.rs) · [Compact oracle](../../tests/compact/scalar-transient-hash.mjs)
+
 ## Empty vectors and semantic evaluation
 
 The pinned fixed-length Poseidon implementation returns zero for an empty vector. This is native behavior, not a replacement for a missing hash implementation. Lean semantic evaluation requires a configured transient-hash oracle and fails closed by default, including for empty vectors. The Rust evaluator calls the native implementation directly.

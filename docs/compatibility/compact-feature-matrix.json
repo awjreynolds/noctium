@@ -4474,8 +4474,8 @@
       "id": "C-STDLIB-TRANSIENTHASH",
       "layer": "standard-library",
       "surface": "transientHash",
-      "noctiumStatus": "related-subset",
-      "notes": "Noctium poseidon2 exists, generic input alignment and exact Compact hash domain/padding unverified.",
+      "noctiumStatus": "subset",
+      "notes": "The native field vector route and typed scalar transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Generic typed aggregate alignment remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4489,7 +4489,10 @@
         "ABI"
       ],
       "observedEvidence": [
-        "docs/development/native-localnet.md"
+        "docs/development/transient-hash.md",
+        "tests/ScalarTransientHash.lean",
+        "tests/compact/scalar-transient-hash.mjs",
+        "runtime/tests/scalar_transient_hash.rs"
       ],
       "equivalence": "unverified"
     },

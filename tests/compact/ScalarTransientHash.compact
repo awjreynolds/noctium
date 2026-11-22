@@ -1,0 +1,14 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+export circuit hashField(value: Field): Field {
+  return transientHash<Field>(value);
+}
+
+export circuit hashFlag(value: Boolean): Field {
+  return transientHash<Boolean>(value);
+}
+
+export circuit hashByte(value: Uint<8>): Field {
+  return transientHash<Uint<8>>(value);
+}
