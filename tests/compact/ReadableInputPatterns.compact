@@ -1,0 +1,19 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Reading {
+  count: Uint<8>;
+  active: Boolean;
+}
+
+struct Packet {
+  reading: Reading;
+  measures: [Field, Boolean];
+  omitted: Field;
+}
+
+export circuit summarize(
+  { measures: [measure, ], reading: { count: amount, active } }: Packet
+): [Field, Boolean] {
+  return [measure + (amount as Field), active];
+}
