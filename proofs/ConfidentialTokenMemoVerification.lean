@@ -175,6 +175,17 @@ theorem canonical_admission_facts :
   simp [canonicalAdmittedState, memoTreeBefore, keyRecord, memoKey, otherMemoKey,
     otherMemoPayload, List.lookup]
 
+/-- The admitted source state contains one memo for the selected account and a
+separate memo for another account. -/
+theorem canonical_selected_and_sibling_memos :
+    memoTreeBefore = .map [
+      (memoKey, .list [[.native 11, .native 12, .native 13]]),
+      (otherMemoKey, .list [otherMemoPayload])] ∧
+    memoTreeAfter = .map [
+      (memoKey, .list []),
+      (otherMemoKey, .list [otherMemoPayload])] := by
+  simp [memoTreeBefore, memoTreeAfter, memoKey, otherMemoKey, otherMemoPayload]
+
 theorem expected_state_frame_facts :
     expectedClearedState.cells = canonicalAdmittedState.cells ∧
     expectedClearedState.maps = canonicalAdmittedState.maps ∧
@@ -283,6 +294,52 @@ theorem entrypoint_success_from_checked_steps
       .ok (outputs, next) := rfl
   rw [hout]
 
+/-- The selected disclosure checks and the checked circuit both reduce for
+the explicit toy context and admitted example below. -/
+theorem clear_memos_disclosure_is_admitted :
+    (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true := by
+  have valid : Disclosure.entrypoint clearMemosEntry = .ok () := by
+    with_unfolding_all rfl
+  rw [valid]
+  rfl
+
+theorem clear_memos_checked_circuit_accepts_example :
+    clearMemosEntry.circuit.run memoContext (inputs 5 zero32 zero32) =
+      .ok expectedOutputs := by
+  with_unfolding_all rfl
+
+/-- Full source execution on the declared state clears its nonempty memo list,
+preserves the sibling list, and returns the checked identity-key coordinates.
+All values reduce in the kernel under `memoContext`, the explicit toy oracle. -/
+theorem clear_memos_actual_success_on_admitted_example :
+    clearMemosEntry.run memoContext (inputs 5 zero32 zero32) canonicalAdmittedState =
+      .ok (expectedOutputs, expectedClearedState) := by
+  with_unfolding_all rfl
+
+theorem clear_memos_actual_two_secret_success :
+    clearMemosEntry.run memoContext (inputs 5 two32 two32) canonicalAdmittedState =
+      .ok (expectedOutputs, expectedClearedState) := by
+  with_unfolding_all rfl
+
+/-- A stale epoch reaches the source effects and fails their guard. -/
+theorem clear_memos_actual_stale_epoch_rejection :
+    clearMemosEntry.run memoContext (inputs 4 zero32 zero32) canonicalAdmittedState =
+      .error "state transition guard failed" := by
+  with_unfolding_all rfl
+
+/-- A wrong account secret fails the checked source constraint. -/
+theorem clear_memos_actual_wrong_account_secret_rejection :
+    clearMemosEntry.run memoContext (inputs 5 one32 zero32) canonicalAdmittedState =
+      .error "circuit constraint failed" := by
+  with_unfolding_all rfl
+
+/-- A wrong encryption secret derives a nonmatching key and fails the source
+key-coordinate guard after the circuit succeeds. -/
+theorem clear_memos_actual_wrong_encryption_secret_rejection :
+    clearMemosEntry.run memoContext (inputs 5 zero32 one32) canonicalAdmittedState =
+      .error "state transition guard failed" := by
+  with_unfolding_all rfl
+
 theorem clear_memos_transition_from_checked_steps
     (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitResult : clearMemosEntry.circuit.run memoContext
@@ -384,6 +441,33 @@ theorem pinned_pairs_have_same_public_bindings :
     publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 one32 zero32) := by
   constructor <;> decide
 
+/-- Both toy credential pairs have the same exact source result on the admitted
+example. This is successful-result equality, not a claim about real hashing. -/
+theorem clear_memos_actual_successful_only_source_privacy :
+    publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 two32 two32) ∧
+    clearMemosEntry.run memoContext (inputs 5 zero32 zero32) canonicalAdmittedState =
+      clearMemosEntry.run memoContext (inputs 5 two32 two32) canonicalAdmittedState := by
+  constructor
+  · exact pinned_pairs_have_same_public_bindings.1
+  · rw [clear_memos_actual_success_on_admitted_example,
+      clear_memos_actual_two_secret_success]
+
+/-- The status observer separates the accepted example from a wrong account
+secret even though their public source bindings match. -/
+theorem clear_memos_actual_failure_observer_distinguishes_wrong_account :
+    publicBindings (inputs 5 zero32 zero32) = publicBindings (inputs 5 one32 zero32) ∧
+    succeeded (clearMemosEntry.run memoContext
+      (inputs 5 zero32 zero32) canonicalAdmittedState) = _root_.Bool.true ∧
+    succeeded (clearMemosEntry.run memoContext
+      (inputs 5 one32 zero32) canonicalAdmittedState) = _root_.Bool.false := by
+  constructor
+  · exact pinned_pairs_have_same_public_bindings.2
+  constructor
+  · rw [clear_memos_actual_success_on_admitted_example]
+    rfl
+  · rw [clear_memos_actual_wrong_account_secret_rejection]
+    rfl
+
 /-- Successful-only result equality, conditional on both exact source runs
 being admitted. Failure status remains outside this theorem. -/
 theorem successful_only_source_privacy_for_pinned_pair
@@ -450,6 +534,13 @@ theorem failure_observer_distinguishes_wrong_account_secret
 
 #print axioms entrypoint_success_from_checked_steps
 #print axioms clear_memos_transition_from_checked_steps
+#print axioms clear_memos_actual_success_on_admitted_example
+#print axioms clear_memos_actual_two_secret_success
+#print axioms clear_memos_actual_stale_epoch_rejection
+#print axioms clear_memos_actual_wrong_account_secret_rejection
+#print axioms clear_memos_actual_wrong_encryption_secret_rejection
+#print axioms clear_memos_actual_successful_only_source_privacy
+#print axioms clear_memos_actual_failure_observer_distinguishes_wrong_account
 #print axioms successful_projection_from_checked_steps
 #print axioms stale_epoch_rejection_from_effects
 #print axioms successful_only_source_privacy_for_pinned_pair
