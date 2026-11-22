@@ -298,6 +298,27 @@ def pairReplay : Bool := Id.run do
 
 #guard pairReplay
 
+private def pairEqualityReplay (amount : Nat) (expected : Bool) : Bool := Id.run do
+  let program : Program := {
+    composites := pairProgram.composites
+    declarations := [{
+      id := ⟨0, 0⟩
+      name := "equalPair"
+      result := .scalar .bool
+      body := [.return (some (.eq
+        (.composite pairType [.uint 255 7, .bool true])
+        (.composite pairType [.uint 255 amount, .bool true])))]
+    }]
+    exports := [{name := "equal", target := ⟨0, 0⟩}]
+  }
+  let .ok source ← recordInvocation {} 256 nativeContext program "equal" [] [] {}
+      (fun _ => .failure "record comparison has no witnesses") | return false
+  let .ok report ← replayInvocation {} 256 nativeContext source [] | return false
+  return report.matchesRecordedSource && report.execution.result == .success (.scalar (.bool expected))
+
+#guard pairEqualityReplay 7 true
+#guard pairEqualityReplay 8 false
+
 def unitWitnessProgram : Program := {
   witnesses := [{
     name := "unitResult"

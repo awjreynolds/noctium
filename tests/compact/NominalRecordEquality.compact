@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+
+struct PairedReading {
+  reading: Field;
+  count: Uint<8>;
+  active: Boolean;
+}
+
+export circuit compare(left: PairedReading, right: PairedReading): Boolean {
+  return left == right;
+}
