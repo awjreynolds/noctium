@@ -991,6 +991,60 @@ fn readable_private_state_source_binds_callbacks_stages_and_native_constraints()
 
 #[cfg(feature = "zkir-321")]
 #[test]
+#[ignore = "requires fresh TypedPointKeccak Lean artifacts"]
+fn typed_point_keccak_runs_through_the_witness_plan() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+
+    let root = PathBuf::from(std::env::var_os("NOCTIUM_HOSTED_POINT_KECCAK_DIR").unwrap());
+    let stem = "TypedPointKeccak.hashHosted";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let expected = json!({"kind":"bytes", "values":hex::decode(
+        "571cf838e63c171196cd7a301bb8fab87d13d946769a41e1004d9da49f6bfca8"
+    )?});
+    let attempt = "c".repeat(64);
+    let (mut session, _) = bound_session(
+        &control,
+        BTreeMap::from([("expected".into(), expected.clone())]),
+        &attempt,
+    );
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    let request = &pending["request"];
+    let wrong_curve = json!({"kind":"foreign", "type":"Secp256r1Point", "bytes": vec![0; 33]});
+    assert!(session
+        .resume_typed(reply(request, &attempt, "value", Some(wrong_curve)))
+        .is_err());
+    assert_eq!(session.advance()?, pending);
+    let point = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes": hex::decode(
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )?});
+    session.resume_typed(reply(request, &attempt, "value", Some(point)))?;
+    assert_eq!(session.advance()?["status"], "completed");
+
+    let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
+    let relation = serde_json::from_slice(&relation_bytes)?;
+    let completion = session.private_completion(&relation)?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(relation_bytes.as_slice())?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    assert_eq!(execution.returns_json()["pointDigest"], expected);
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
 #[ignore = "requires fresh PrivateStateMixed Lean artifacts"]
 fn typed_private_cells_bind_distinct_read_types() {
     use coin_structure::contract::ContractAddress;
