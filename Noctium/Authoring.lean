@@ -696,6 +696,10 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"secp256k1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
   | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
     s!"secp256r1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    s!"jubjubSchnorrVerify([{String.intercalate ", " (messages.getElems.toList.map renderExpr)}], {renderExpr announcement}, {renderExpr response}, {renderExpr key})"
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    s!"ed25519Verify({renderExpr message}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
   | `(nlexpr| curveFromCoordinates($x, $y)) =>
     s!"curveFromCoordinates({renderExpr x}, {renderExpr y})"
   | `(nlexpr| foreignToBytes($value)) => s!"foreignToBytes({renderExpr value})"
@@ -790,6 +794,11 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
   | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
     [digest, r, s, key].flatMap disclosedValues
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    messages.getElems.toList.flatMap disclosedValues ++
+      [announcement, response, key].flatMap disclosedValues
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    [message, r, s, key].flatMap disclosedValues
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -886,6 +895,11 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
   | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
     [digest, r, s, key].flatMap inlineAssertions
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    messages.getElems.toList.flatMap inlineAssertions ++
+      [announcement, response, key].flatMap inlineAssertions
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    [message, r, s, key].flatMap inlineAssertions
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -2142,6 +2156,11 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerEcdsa programName callPrefix env stx .secp256k1 digest r s key
   | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
     lowerEcdsa programName callPrefix env stx .secp256r1 digest r s key
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    lowerJubjubSchnorr programName callPrefix env stx messages.getElems.toList
+      announcement response key
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    lowerEd25519 programName callPrefix env stx message r s key
   | `(nlexpr| foreignAdd($left, $right)) =>
     lowerForeignBinary programName callPrefix env stx "add" left right
   | `(nlexpr| foreignSub($left, $right)) =>
@@ -2289,6 +2308,67 @@ where
         value.before ++ [.bind name value.type value.term]) ++
         (checks.map fun check => .assert (.at span check))
       generatedValidity := s!"non-identity key and nonzero signature scalars for {renderExpr stx}" ::
+        result.generatedValidity }
+
+  lowerJubjubSchnorr (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (messages : List (TSyntax `nlexpr)) (announcement response key : TSyntax `nlexpr) : ExprM Lowered := do
+    unless messages.length + 4 ≤ 1024 do
+      throwErrorAt stx "jubjubSchnorrVerify challenge input exceeds 1024 Native fields"
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "Jubjub Schnorr signature argument type mismatch"
+      let name ← freshIterationRef s!"schnorr-argument-{callPrefix}"
+      pure (value, name)
+    let messages ← messages.mapM fun source => operand source .native
+    let (announcement, announcementName) ← operand announcement .jubjubPoint
+    let (response, responseName) ← operand response .native
+    let (key, keyName) ← operand key .jubjubPoint
+    let messageNames := messages.map Prod.snd
+    let (checks, equation) ← match Crypto.readableJubjubSchnorrChecks
+        messageNames announcementName responseName keyName with
+      | .ok formula => pure formula
+      | .error message => throwErrorAt stx message
+    let span ← liftM (spanValue stx)
+    let bindings := messages ++ [(announcement, announcementName), (response, responseName),
+      (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity Jubjub key for {renderExpr stx}" ::
+        result.generatedValidity }
+
+  lowerEd25519 (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (message r s key : TSyntax `nlexpr) : ExprM Lowered := do
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "Ed25519 signature argument type mismatch"
+      let name ← freshIterationRef s!"ed25519-argument-{callPrefix}"
+      pure (value, name)
+    let messageValue ← lowerExpr programName callPrefix env message
+    let .scalar (.bytes length) := messageValue.type
+      | throwErrorAt message "ed25519Verify requires a Bytes message"
+    unless length + 64 ≤ 1024 do
+      throwErrorAt stx "ed25519Verify input exceeds 1024 bytes"
+    let messageName ← freshIterationRef s!"ed25519-argument-{callPrefix}"
+    let (r, rName) ← operand r (.foreign (.point .curve25519))
+    let (s, sName) ← operand s (.foreign (.scalar .curve25519))
+    let (key, keyName) ← operand key (.foreign (.point .curve25519))
+    let (checks, equation) ← match Crypto.readableEd25519Checks length
+        messageName rName sName keyName with
+      | .ok formula => pure formula
+      | .error error => throwErrorAt stx error
+    let span ← liftM (spanValue stx)
+    let bindings := [(messageValue, messageName), (r, rName), (s, sName), (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity Ed25519 key for {renderExpr stx}" ::
         result.generatedValidity }
 
   lowerForeignUnary (programName callPrefix : String) (env : SurfaceEnv) (stx : Syntax)

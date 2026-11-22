@@ -59,29 +59,56 @@ private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
   checks.foldr (fun check result => .assertE check result) equation
 
 -- Readable circuits schedule these same checks before the equation in the witness plan.
-private partial def readableEcdsaTerm : Expr ty → Except String Helpers.Term
+private partial def readableSignatureTerm : Expr ty → Except String Helpers.Term
   | .ref name => pure (.ref name)
+  | .native value => pure (.native value)
   | .bool value => pure (.bool value)
-  | .eq left right => return .eq (← readableEcdsaTerm left) (← readableEcdsaTerm right)
+  | .eq left right => return .eq (← readableSignatureTerm left) (← readableSignatureTerm right)
   | .foreignPoint curve point =>
     return .foreignConstant (.point curve) (← Foreign.encodePoint curve point)
   | .foreignScalar curve value =>
     return .foreignConstant (.scalar curve) (← Foreign.encodeField (.scalar curve) value)
+  | .foreignBase curve value =>
+    return .foreignConstant (.base curve) (← Foreign.encodeField (.base curve) value)
   | .foreignUnary operation operand =>
-    return .curve (.foreignUnary operation) [← readableEcdsaTerm operand]
+    return .curve (.foreignUnary operation) [← readableSignatureTerm operand]
   | .foreignBinary operation left right =>
-    return .curve (.foreignBinary operation) [← readableEcdsaTerm left, ← readableEcdsaTerm right]
-  | .reverseBytes32 bytes => return .bytes .reverseBytes32 [← readableEcdsaTerm bytes]
+    return .curve (.foreignBinary operation)
+      [← readableSignatureTerm left, ← readableSignatureTerm right]
+  | .jubjubCoordinate point index => do
+    let operation ← match index with
+      | 0 => pure .x
+      | 1 => pure .y
+      | _ => throw "Jubjub coordinate index is out of range"
+    return .curve operation [← readableSignatureTerm point]
+  | .jubjubScalarFromNative value =>
+    return .curve .scalarFromNative [← readableSignatureTerm value]
+  | .jubjubMulGenerator scalar =>
+    return .curve .mulGenerator [← readableSignatureTerm scalar]
+  | .jubjubMul point scalar =>
+    return .curve .mul [← readableSignatureTerm point, ← readableSignatureTerm scalar]
+  | .jubjubAdd left right =>
+    return .curve .add [← readableSignatureTerm left, ← readableSignatureTerm right]
+  | .jubjubFromCoordinates x y =>
+    return .curve .fromCoordinates [← readableSignatureTerm x, ← readableSignatureTerm y]
+  | .transientHash values =>
+    return .bytes .transientHashNativeVector (← values.mapM readableSignatureTerm)
+  | .concatBytes (leftLength := leftLength) (rightLength := rightLength) left right =>
+    return .bytes (.concatBytes leftLength rightLength)
+      [← readableSignatureTerm left, ← readableSignatureTerm right]
+  | .sha512 (length := length) value =>
+    return .bytes (.sha512 length) [← readableSignatureTerm value]
+  | .reverseBytes32 bytes => return .bytes .reverseBytes32 [← readableSignatureTerm bytes]
   | .foreignFromBytes (length := length) kind bytes =>
-    return .bytes (.foreignFromBytes kind length) [← readableEcdsaTerm bytes]
+    return .bytes (.foreignFromBytes kind length) [← readableSignatureTerm bytes]
   | .foreignToBytes (kind := kind) operand =>
-    return .bytes (.foreignToBytes kind) [← readableEcdsaTerm operand]
-  | _ => throw "operation in the ECDSA recipe lacks a readable witness representation"
+    return .bytes (.foreignToBytes kind) [← readableSignatureTerm operand]
+  | _ => throw "operation in the signature recipe lacks a readable witness representation"
 
 def readableEcdsaChecks (curve : Foreign.Curve) (digest r s key : String) :
     Except String (List Helpers.Term × Helpers.Term) := do
   let (checks, equation) := ecdsaChecks curve (.ref digest) (.ref r) (.ref s) (.ref key)
-  return (← checks.mapM readableEcdsaTerm, ← readableEcdsaTerm equation)
+  return (← checks.mapM readableSignatureTerm, ← readableSignatureTerm equation)
 
 def secp256k1EcdsaVerify (msgHash : Expr (.bytes 32))
     (r s : Expr (.foreign (.scalar .secp256k1)))
@@ -115,9 +142,9 @@ def verify (msgHash : Expr (.bytes 32)) (signature : Secp256r1EcdsaSignature)
 
 end Secp256r1EcdsaSignature
 
-def jubjubSchnorrVerify (msg : List (Expr .native))
+private def jubjubSchnorrChecks (msg : List (Expr .native))
     (announcement : Expr .jubjubPoint) (response : Expr .native)
-    (pk : Expr .jubjubPoint) : Expr .bool := Id.run do
+    (pk : Expr .jubjubPoint) : List (Expr .bool) × Expr .bool := Id.run do
   let challengeInputs : List (Expr .native) :=
     [Expr.jubjubCoordinate announcement 0, Expr.jubjubCoordinate announcement 1,
       Expr.jubjubCoordinate pk 0, Expr.jubjubCoordinate pk 1] ++ msg
@@ -126,7 +153,19 @@ def jubjubSchnorrVerify (msg : List (Expr .native))
   let rhs := Expr.jubjubAdd announcement (Expr.jubjubMul pk challenge)
   let identity := Expr.jubjubFromCoordinates (.native 0) (.native 1)
   let nonIdentity := Expr.eq (.eq pk identity) (.bool false)
-  return .assertE nonIdentity (.eq lhs rhs)
+  return ([nonIdentity], .eq lhs rhs)
+
+def jubjubSchnorrVerify (msg : List (Expr .native))
+    (announcement : Expr .jubjubPoint) (response : Expr .native)
+    (pk : Expr .jubjubPoint) : Expr .bool := Id.run do
+  let (checks, equation) := jubjubSchnorrChecks msg announcement response pk
+  return checks.foldr (fun check result => .assertE check result) equation
+
+def readableJubjubSchnorrChecks (messages : List String)
+    (announcement response key : String) : Except String (List Helpers.Term × Helpers.Term) := do
+  let (checks, equation) := jubjubSchnorrChecks
+    (messages.map Expr.ref) (.ref announcement) (.ref response) (.ref key)
+  return (← checks.mapM readableSignatureTerm, ← readableSignatureTerm equation)
 
 namespace JubjubSchnorrSignature
 
@@ -139,10 +178,10 @@ def verify (msg : List (Expr .native)) (signature : JubjubSchnorrSignature)
 
 end JubjubSchnorrSignature
 
-def ed25519Verify {length : Nat} (msg : Expr (.bytes length))
+private def ed25519Checks {length : Nat} (msg : Expr (.bytes length))
     (r : Expr (.foreign (.point .curve25519)))
     (s : Expr (.foreign (.scalar .curve25519)))
-    (pk : Expr (.foreign (.point .curve25519))) : Expr .bool := Id.run do
+    (pk : Expr (.foreign (.point .curve25519))) : List (Expr .bool) × Expr .bool := Id.run do
   let encodedR : Expr (.bytes 32) := .foreignToBytes r
   let encodedPk : Expr (.bytes 32) := .foreignToBytes pk
   let preimage := Expr.concatBytes (Expr.concatBytes encodedR encodedPk) msg
@@ -157,7 +196,20 @@ def ed25519Verify {length : Nat} (msg : Expr (.bytes length))
     .foreignBinary (.add (.point .curve25519)) r publicKeyTerm
   let x : Expr (.foreign (.base .curve25519)) := .foreignUnary (.x .curve25519) pk
   let nonIdentity := .eq (.eq x (.foreignBase .curve25519 0)) (.bool false)
-  return .assertE nonIdentity (.eq lhs rhs)
+  return ([nonIdentity], .eq lhs rhs)
+
+def ed25519Verify {length : Nat} (msg : Expr (.bytes length))
+    (r : Expr (.foreign (.point .curve25519)))
+    (s : Expr (.foreign (.scalar .curve25519)))
+    (pk : Expr (.foreign (.point .curve25519))) : Expr .bool := Id.run do
+  let (checks, equation) := ed25519Checks msg r s pk
+  return checks.foldr (fun check result => .assertE check result) equation
+
+def readableEd25519Checks (messageLength : Nat) (message r s key : String) :
+    Except String (List Helpers.Term × Helpers.Term) := do
+  let (checks, equation) := ed25519Checks (.ref message : Expr (.bytes messageLength))
+    (.ref r) (.ref s) (.ref key)
+  return (← checks.mapM readableSignatureTerm, ← readableSignatureTerm equation)
 
 namespace Ed25519Signature
 

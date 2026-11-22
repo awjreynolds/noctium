@@ -47,6 +47,12 @@ each curve. Releasing the verification result requires explicit disclosure
 when the signature comes from a private witness.
 [Readable source](../../tests/ReadableECDSA.lean) · [Compact comparison](../../tests/compact/readable-ecdsa.mjs) · [Native check](../../runtime/tests/signature_helpers.rs)
 
+Readable circuits also share the ordinary Jubjub Schnorr and Ed25519
+equations. The fixture destructures each checked provider record once and
+checks a valid signature and a changed message. The Rust witness session,
+native ZKIR 3.2.1 checker and pinned Compact reference agree on those cases.
+[Readable source](../../tests/ReadableSignatures.lean) · [Compact comparison](../../tests/compact/readable-signatures.mjs) · [Native check](../../runtime/tests/signature_helpers.rs)
+
 ## Protocol and failure rules
 
 ECDSA interprets the supplied 32-byte digest as a big-endian integer and reduces it into the curve's scalar field. The equation checks the x-coordinate of `[digest/s]G + [r/s]key`, reduced modulo the scalar order, against r. Both high-s and low-s signatures are accepted. A low-s rule needs an additional application policy. The helper does not hash a message or establish a relationship between the digest and another contract value.
