@@ -1,4 +1,4 @@
-import Noctium.IR
+import Noctium.Helpers.Wire
 
 namespace Noctium.Crypto
 
@@ -24,6 +24,13 @@ structure Ed25519Signature where
   r : Expr (.foreign (.point .curve25519))
   s : Expr (.foreign (.scalar .curve25519))
   deriving Repr
+
+private def signatureCodec (id : Types.DeclId) (fields : List (String × Ty)) : Helpers.Wire.Codec := {
+  payload := .structure id
+  frameBytes := 64
+  composites := {structures := [{id, fields := fields.map fun (name, ty) =>
+    {name, type := .scalar ty}}]}
+}
 
 private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
     (r s : Expr (.foreign (.scalar curve)))
@@ -52,6 +59,9 @@ def secp256k1EcdsaVerify (msgHash : Expr (.bytes 32))
 
 namespace Secp256k1EcdsaSignature
 
+def codec : Helpers.Wire.Codec := signatureCodec "Noctium.Crypto.Secp256k1EcdsaSignature"
+  [("r", .foreign (.scalar .secp256k1)), ("s", .foreign (.scalar .secp256k1))]
+
 def verify (msgHash : Expr (.bytes 32)) (signature : Secp256k1EcdsaSignature)
     (pk : Expr (.foreign (.point .secp256k1))) : Expr .bool :=
   secp256k1EcdsaVerify msgHash signature.r signature.s pk
@@ -64,6 +74,9 @@ def secp256r1EcdsaVerify (msgHash : Expr (.bytes 32))
   ecdsaVerify .secp256r1 msgHash r s pk
 
 namespace Secp256r1EcdsaSignature
+
+def codec : Helpers.Wire.Codec := signatureCodec "Noctium.Crypto.Secp256r1EcdsaSignature"
+  [("r", .foreign (.scalar .secp256r1)), ("s", .foreign (.scalar .secp256r1))]
 
 def verify (msgHash : Expr (.bytes 32)) (signature : Secp256r1EcdsaSignature)
     (pk : Expr (.foreign (.point .secp256r1))) : Expr .bool :=
@@ -85,6 +98,9 @@ def jubjubSchnorrVerify (msg : List (Expr .native))
   return .assertE nonIdentity (.eq lhs rhs)
 
 namespace JubjubSchnorrSignature
+
+def codec : Helpers.Wire.Codec := signatureCodec "Noctium.Crypto.JubjubSchnorrSignature"
+  [("announcement", .jubjubPoint), ("response", .native)]
 
 def verify (msg : List (Expr .native)) (signature : JubjubSchnorrSignature)
     (pk : Expr .jubjubPoint) : Expr .bool :=
@@ -113,6 +129,9 @@ def ed25519Verify {length : Nat} (msg : Expr (.bytes length))
   return .assertE nonIdentity (.eq lhs rhs)
 
 namespace Ed25519Signature
+
+def codec : Helpers.Wire.Codec := signatureCodec "Noctium.Crypto.Ed25519Signature"
+  [("r", .foreign (.point .curve25519)), ("s", .foreign (.scalar .curve25519))]
 
 def verify {length : Nat} (msg : Expr (.bytes length)) (signature : Ed25519Signature)
     (pk : Expr (.foreign (.point .curve25519))) : Expr .bool :=
