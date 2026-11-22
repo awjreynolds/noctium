@@ -35,6 +35,7 @@ fn typed_boolean_gates_bind_truth_tables_and_eager_assertions() {
                 BTreeMap::from([
                     ("andResult".into(), json!(left && right)),
                     ("orResult".into(), json!(left || right)),
+                    ("notLeftResult".into(), json!(!left)),
                     ("xorResult".into(), json!(left ^ right)),
                     ("xorThreeResult".into(), json!(left ^ right ^ true)),
                 ])

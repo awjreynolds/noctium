@@ -1,0 +1,5 @@
+pragma language_version 0.28;
+
+export circuit negate(value: Boolean): Boolean {
+  return !value;
+}
