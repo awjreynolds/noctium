@@ -196,6 +196,7 @@ jobs:
           lake env lean tests/NativeScalarList.lean
           lake env lean tests/NativeScalarListMaybe.lean
           lake env lean tests/RecordListHeadMaybe.lean
+          lake env lean tests/TypedRecordListHeadMaybe.lean
           lake env lean tests/ScalarMaybeAuthoring.lean
           lake env lean tests/NativeScalarEitherReturns.lean
           lake env lean tests/NativeMapDefault.lean

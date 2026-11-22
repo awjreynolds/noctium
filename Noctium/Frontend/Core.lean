@@ -3624,12 +3624,21 @@ private def sourceSpanValueTerm (span : SourceSpan) : CommandElabM (TSyntax `ter
   `({ file := $(stringTerm span.file), line := $(natTerm span.line),
       column := $(natTerm span.column) : Noctium.SourceSpan })
 
-private def flatNativeRecordId (head : OptionalRecordHead) : Option String := do
+private def returnMaybeListFieldTySupported : Ty → _root_.Bool
+  | .native => _root_.Bool.true
+  | .bool => _root_.Bool.true
+  | .uint _ => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+private def flatMaybeRecordId (head : OptionalRecordHead) : Option String := do
   let .structure typeId := head.type | none
   let declaration ← head.environment.structures.find? (·.id == typeId)
   guard (!declaration.fields.isEmpty)
-  guard (declaration.fields.all (·.type == .scalar .native))
-  guard (head.fields == declaration.fields.map fun field => (field.name, .native))
+  let fields ← declaration.fields.mapM fun field => do
+    let .scalar ty := field.type | none
+    guard (returnMaybeListFieldTySupported ty)
+    pure (field.name, ty)
+  guard (head.fields == fields)
   pure typeId
 
 private def maybeRecordTypeId (contractName recordId : String) : CommandElabM String := do
@@ -3653,7 +3662,9 @@ private def recordMaybeEnvironment (environment : Types.CompositeEnv) (recordId 
     throwError s!"generated record Maybe type id '{typeId}' collides with another structure"
   let sourceFields : Array (TSyntax `term) ← record.fields.toArray.mapM fun field => do
     let name := stringTerm field.name
-    let fieldType : TSyntax `term ← `(Noctium.Types.CompositeType.scalar $(← tyTerm .native))
+    let .scalar ty := field.type
+      | throwError s!"List record field '{field.name}' must be scalar"
+    let fieldType : TSyntax `term ← `(Noctium.Types.CompositeType.scalar $(← tyTerm ty))
     let fieldSpan ← sourceSpanValueTerm field.span
     `(Noctium.Types.Field.mk $name $fieldType $fieldSpan)
   let recordIdTerm := stringTerm recordId
@@ -3687,9 +3698,9 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
     (presentExpression : TSyntax `term)
     (statement : TSyntax `nlreturn) (state : EntryEffects) (head : OptionalRecordHead) :
     CommandElabM EntryEffects := do
-  let some recordId := flatNativeRecordId head
+  let some recordId := flatMaybeRecordId head
     | throwErrorAt statement
-      "returnMaybe record payload must be a checked flat Native-field List record"
+      "returnMaybe record payload must be a checked flat Native, Bool, or UInt List record"
   let labelName := label.getId.toString
   let typeId ← maybeRecordTypeId contractName recordId
   let compositeType ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
@@ -3714,12 +3725,16 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
   let isSomeReturn ← `(Noctium.Output.mk $(stringTerm isSomeReturnName) Noctium.Ty.native
     (Noctium.Expr.cast Noctium.Ty.native $presentExpression) $span)
   let mut returnTerms := #[isSomeReturn]
-  for ((fieldName, _), returnName) in head.fields.zip valueReturnNames do
+  for ((fieldName, fieldTy), returnName) in head.fields.zip valueReturnNames do
     let bindingName := s!"{head.recordName}_{fieldName}"
-    let some (.native, fieldExpression) := maybeReturnBinding state.env bindingName
-      | throwErrorAt statement s!"returnMaybe record field '{bindingName}' is not a Native binding"
-    -- `headOrDefault`'s guarded read already constrains inactive Native leaves to zero.
-    let canonicalField := fieldExpression
+    let some (bindingTy, fieldExpression) := maybeReturnBinding state.env bindingName
+      | throwErrorAt statement s!"returnMaybe record field '{bindingName}' is not a typed binding"
+    unless bindingTy == fieldTy do
+      throwErrorAt statement s!"returnMaybe record field '{bindingName}' has the wrong type"
+    -- Keep the physical ledger ABI Native. The logical return view restores the
+    -- checked Bool or UInt field type for host reconstruction.
+    let canonicalField ← if fieldTy == .native then pure fieldExpression else
+      `(Noctium.Expr.cast Noctium.Ty.native $fieldExpression)
     let fieldReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
       $canonicalField $span)
     returnTerms := returnTerms.push fieldReturn

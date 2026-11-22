@@ -561,6 +561,45 @@ def LedgerValueType.recordFields (environment : Types.CompositeEnv)
       throw "mixed ledger record layout does not match its flat field declaration"
     pure fields
 
+/-- Describe a flat List record, including checked Bool and bounded UInt fields.
+Only this List boundary accepts typed fields. Other ledger record routes keep
+their existing Native-only or Bytes32/JubjubPoint rules. -/
+private def listRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+  let .structure id := type | throw "List records must be named structures"
+  let some declaration := environment.structures.find? (·.id == id)
+    | throw "List record declaration is missing"
+  unless !declaration.fields.isEmpty do throw "List records must contain at least one field"
+  let fields ← declaration.fields.mapM fun field => do
+    match field.type with
+    | .scalar .native => pure (field.name, Ty.native)
+    | .scalar .bool => pure (field.name, Ty.bool)
+    | .scalar (.uint maximum) => do
+      ScalarPolicy.validate (.uint maximum)
+      pure (field.name, .uint maximum)
+    | .scalar (.bytes 32) => pure (field.name, Ty.bytes 32)
+    | .scalar .jubjubPoint => pure (field.name, Ty.jubjubPoint)
+    | _ => throw "List records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
+  let referencedByOtherStruct := environment.structures.any fun existing =>
+    existing.id != id && existing.fields.any fun field =>
+      field.type.referencedIds.contains id
+  let referencedByEnum := environment.enumerations.any fun enumeration =>
+    enumeration.variants.any fun variant => variant.fields.any fun field =>
+      field.type.referencedIds.contains id
+  unless !referencedByOtherStruct && !referencedByEnum do
+    throw "typed List records cannot be nested in other composite declarations"
+  -- Validate the bounded layout while treating each supported ledger field as
+  -- one host field. Bytes32 and JubjubPoint retain their typed codecs below.
+  let normalized : Types.CompositeEnv := {environment with structures := environment.structures.map fun existing =>
+    if existing.id == id then
+      {existing with fields := existing.fields.map fun field =>
+        {field with type := .scalar .native}}
+    else existing}
+  let checked ← (Types.checkedLayout Types.defaultLimits normalized type).mapError (·.message)
+  unless checked.value.nativeFieldOnly && checked.expandedLeaves == fields.length do
+    throw "List record layout does not match its flat field declaration"
+  pure fields
+
 def LedgerValueType.shieldedCoinRecordFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) := do
   let .structure id := type | throw "shielded coin map value must be a named flat record"
@@ -583,7 +622,9 @@ def LedgerValueType.listElementFields (environment : Types.CompositeEnv)
   | .scalar ty => pure [("value", ty)]
   | _ => match LedgerValueType.recordFields environment type with
     | .ok fields => pure fields
-    | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
+    | .error _ => match listRecordFields environment type with
+      | .ok fields => pure fields
+      | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
 
 def LedgerValueType.listPath (schema : LedgerValueType) (keys : List PathKey) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
