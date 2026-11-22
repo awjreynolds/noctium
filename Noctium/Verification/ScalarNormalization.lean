@@ -6,6 +6,11 @@ namespace Noctium.Verification.ScalarNormalization
 
 open Backend.Native NativeRelation
 
+/-- Capability set used by the scalar-normalization proof. Keep the scalar
+operations admitted by `ScalarExpression`, including equality and selection,
+while leaving unrelated source features disabled. -/
+def Capabilities.scalarFragment : Capabilities := Capabilities.crypto
+
 /-- Keep scalar meaning partial. Unsupported byte and operation terms have no
 field value and cannot enter scalar range or assertion checks. -/
 abbrev interpret := ScalarTermMeaning.interpret?
