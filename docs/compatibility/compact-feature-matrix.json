@@ -420,7 +420,7 @@
       "layer": "language",
       "surface": "Struct",
       "noctiumStatus": "subset",
-      "notes": "Readable circuits accept nominal record payloads, construct them in declaration order and preserve private origins through projections. Equality compares the canonical leaves of matching checked aggregate types. The nested Compact and native fixtures check equal records and nine changes across scalars, nested records, tuples, vectors, fixed bytes and enum fields. Different nominal types and implicit publication of a private comparison are rejected. Spread and broader generic struct equivalence remain open.",
+      "notes": "Readable circuits accept nominal record payloads, construct them in declaration order and preserve private origins through projections. A leading same-type spread evaluates once, followed by named overrides in declaration order. The pinned Compact 0.36.1 and native cases agree on the returned record and provider order, including an entirely overridden spread. Equality compares the canonical leaves of matching checked aggregate types. The nested Compact and native fixtures check equal records and nine changes across scalars, nested records, tuples, vectors, fixed bytes and enum fields. Different nominal types and implicit publication of a private comparison are rejected. Broader generic struct equivalence remains open.",
       "source": [
         "reference"
       ],

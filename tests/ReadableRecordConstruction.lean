@@ -21,9 +21,22 @@ private def readingWire : Helpers.Wire.Codec := {
   }]}
 }
 
+private def envelopeWire : Helpers.Wire.Codec := {
+  payload := .structure "ReadableRecordConstruction.Envelope"
+  frameBytes := 66
+  composites := {structures := readingWire.composites.structures ++ [{
+    id := "ReadableRecordConstruction.Envelope"
+    fields := [
+      {name := "payload", type := readingWire.payload},
+      {name := "epoch", type := .scalar .native}
+    ]
+  }]}
+}
+
 noctium_witness observeActive(marker : Native) : Bool
 noctium_witness observeCount(marker : Native) : UInt 8
 noctium_witness observeReading(marker : Native) : Native
+noctium_witness loadBase(marker : Native) : Payload readingWire
 
 noctium_witness_circuit build using readingWire where
   public seed : Native
@@ -43,6 +56,62 @@ end
 
 #guard (Noctium.Witness.compile build.__program
   "noctium.witness-circuit.ReadableRecordConstruction.build.v1").isOk
+
+noctium_witness_circuit patch using readingWire, envelopeWire where
+  public seed : Native
+  let updated := record(Payload readingWire, {
+    ..witness loadBase(seed),
+    active := witness observeActive(add(seed, 1)),
+    count := witness observeCount(add(seed, 2))
+  })
+  let replaced := record(Payload readingWire, {
+    ..witness loadBase(add(seed, 3)),
+    active := false,
+    count := uint(1),
+    reading := seed
+  })
+  prove eq(field(replaced, reading), seed)
+  let wrapped := record(Payload envelopeWire, {payload := updated, epoch := 0})
+  let patched := record(Payload envelopeWire, {..wrapped, epoch := seed})
+  output result := disclose(field(patched, payload))
+end
+
+#guard (Noctium.Witness.compile patch.__program
+  "noctium.witness-circuit.ReadableRecordConstruction.patch.v1").isOk
+
+private def otherReadingWire : Helpers.Wire.Codec := {
+  payload := .structure "ReadableRecordConstruction.OtherReading"
+  frameBytes := 34
+  composites := {structures := [{
+    id := "ReadableRecordConstruction.OtherReading"
+    fields := [
+      {name := "reading", type := .scalar .native},
+      {name := "count", type := .scalar (.uint 255)},
+      {name := "active", type := .scalar .bool}
+    ]
+  }]}
+}
+
+noctium_witness loadOtherBase(marker : Native) : Payload otherReadingWire
+
+/- error: record spread requires the same nominal Payload type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsOtherNominalSpread using readingWire, otherReadingWire where
+  public seed : Native
+  output result := disclose(record(Payload readingWire, {
+    ..witness loadOtherBase(seed)
+  }))
+end
+
+/- error: record spread must appear once, before named fields -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsLateSpread using readingWire where
+  public seed : Native
+  output result := disclose(record(Payload readingWire, {
+    active := false,
+    ..witness loadBase(seed)
+  }))
+end
 
 /- error: unknown record field 'x' -/
 #guard_msgs (substring := true) in
@@ -107,6 +176,9 @@ end
 
 noctium_contract ReadableRecordConstruction where
   entry build uses ReadableRecordConstruction.build where
+    return result
+  end
+  entry patch uses ReadableRecordConstruction.patch where
     return result
   end
 end

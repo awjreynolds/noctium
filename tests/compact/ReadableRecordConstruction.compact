@@ -7,9 +7,15 @@ struct Reading {
   active: Boolean;
 }
 
+struct Envelope {
+  payload: Reading;
+  epoch: Field;
+}
+
 witness observeActive(value: Field): Boolean;
 witness observeCount(value: Field): Uint<8>;
 witness observeReading(value: Field): Field;
+witness loadBase(value: Field): Reading;
 
 export circuit build(seed: Field): Reading {
   return disclose(Reading {
@@ -17,4 +23,19 @@ export circuit build(seed: Field): Reading {
     count: observeCount(seed + 2),
     reading: observeReading(seed + 3),
   });
+}
+
+export circuit patch(seed: Field): Reading {
+  const partial = Reading {
+    ...loadBase(seed),
+    active: observeActive(seed + 1),
+    count: observeCount(seed + 2),
+  };
+  const replaced = Reading {
+    ...loadBase(seed + 3), active: false, count: 1, reading: seed,
+  };
+  assert(replaced.reading == seed, "explicit reading must override the spread");
+  const wrapped = Envelope { payload: partial, epoch: 0 as Field };
+  const patched = Envelope { ...wrapped, epoch: seed };
+  return disclose(patched.payload);
 }
