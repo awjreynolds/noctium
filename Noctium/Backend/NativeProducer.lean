@@ -281,7 +281,8 @@ private def fabAlignmentDescriptor (atom : Json) : Except String String := do
   | "bytes" => do
     fields value ["tag", "length"]
     let length ← natField value "length"
-    ensure (length ≤ 32) "mixed FAB byte atom width is unsupported"
+    ensure (length ≤ Types.defaultLimits.maxVectorLength)
+      "mixed FAB byte atom width is unsupported"
     pure s!"bytes:{length}"
   | _ => throw "mixed FAB alignment has an unsupported atom"
 
@@ -312,11 +313,15 @@ private def checkedFabHashOperands (alignment : Json) (values : List Fact) :
         remaining := remaining.drop 2
         terms := terms ++ [highByte.term, low31.term]
       else do
-        let some value := remaining.head? | throw "mixed FAB byte atom lacks an operand"
-        ensure (value.maximum ≤ 2 ^ (8 * width) - 1)
-          "mixed FAB byte operand lacks its exact byte-width range"
-        remaining := remaining.drop 1
-        terms := terms ++ [value.term]
+        let count := bytesChunkCount width
+        let chunks := remaining.take count
+        ensure (chunks.length == count) "mixed FAB byte atom lacks aligned chunk operands"
+        for (value, index) in chunks.zipIdx do
+          let chunkWidth := bytesChunkWidth width (count - 1 - index)
+          ensure (value.maximum ≤ 2 ^ (8 * chunkWidth) - 1)
+            "mixed FAB byte operand lacks its exact chunk range"
+        remaining := remaining.drop count
+        terms := terms ++ (chunks.map (·.term))
   ensure remaining.isEmpty "mixed FAB alignment and operand counts differ"
   pure (descriptors, terms)
 
@@ -588,7 +593,7 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
                 match value.getObjVal? "tag", value.getObjVal? "length" with
                 | .ok tag, .ok length =>
                   match tag.getStr?, length.getNat? with
-                  | .ok "bytes", .ok width => width < 32
+                  | .ok "bytes", .ok width => width != 32
                   | _, _ => false
                 | _, _ => false
               | .error _ => false) then do

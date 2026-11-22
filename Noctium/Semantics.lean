@@ -577,7 +577,8 @@ decreasing_by
 private def fabAlignedFieldValues (ctx : EvalContext) (env : EvalEnv)
     : Types.Layout → Sigma Expr → Except String (List Nat)
   | .bytes length .byteField, ⟨.bytes actualLength, expression⟩ => do
-    unless length == actualLength && length ≤ 32 do throw "mixed FAB Bytes field type mismatch"
+    unless length == actualLength && length ≤ maxBytesLength do
+      throw "mixed FAB Bytes field type mismatch"
     let bytes ← expression.eval ctx env
     unless bytes.length == length && bytes.all (· ≤ 255) do
       throw "mixed FAB Bytes field is not canonical"
