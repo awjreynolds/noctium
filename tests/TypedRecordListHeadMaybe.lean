@@ -82,3 +82,15 @@ private def overwideUIntListEnvironment : Types.CompositeEnv := {
     (.structure "OverwideUIntMemo") with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false
+
+private def nestedTypedListEnvironment : Types.CompositeEnv := {
+  structures := [
+    {id := "NestedTypedMemo", fields := [{name := "active", type := .scalar .bool}]},
+    {id := "OuterTypedMemo", fields := [{name := "inner", type := .structure "NestedTypedMemo"}]}
+  ]
+}
+
+#guard match LedgerValueType.listElementFields nestedTypedListEnvironment
+    (.structure "OuterTypedMemo") with
+  | .error _ => _root_.Bool.true
+  | .ok _ => _root_.Bool.false
