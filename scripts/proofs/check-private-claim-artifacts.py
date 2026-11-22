@@ -197,7 +197,7 @@ def certificate_source(build: dict, artifacts: Path) -> str:
     definitions = []
     for constant, filename in [("standaloneBytes", ARTIFACTS[0]), ("planBytes", ARTIFACTS[1]),
                                ("callBytes", ARTIFACTS[2]), ("profileBytes", ARTIFACTS[3])]:
-        definitions.append(f"def {constant} : Bytes := {lean_bytes((artifacts / filename).read_bytes())}")
+        definitions.append(f"def {constant} : Noctium.Verification.ArtifactBytes.«Bytes» := {lean_bytes((artifacts / filename).read_bytes())}")
     checks = []
     for name, decoder, constant, expected in [("standalone", "decodeProgram", "standaloneBytes", "program"),
                                             ("plan", "decodePlan", "planBytes", "symbolicPlan"),
@@ -227,14 +227,19 @@ def sourceIdentity : String := {json.dumps(build['sourceCommit'])}
 {os.linesep.join(checks)}
 theorem certified : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes :=
   ⟨standaloneValid, planValid, callValid, profileValid, rfl, rfl, ⟨rfl,rfl,rfl,rfl⟩⟩
-theorem binding : Noctium.Verification.NativePrivacy.ExactArtifactBinding Bytes BuildIdentity sourceIdentity
-    planBytes callBytes (tree planBytes) (tree callBytes) build parse (Authenticated authority) :=
+theorem binding : Noctium.Verification.NativePrivacy.ExactArtifactBinding
+    Noctium.Verification.ArtifactBytes.«Bytes» BuildIdentity sourceIdentity
+    planBytes callBytes (Noctium.Verification.ArtifactBytes.«tree» planBytes)
+      (Noctium.Verification.ArtifactBytes.«tree» callBytes) build parse (Authenticated authority) :=
   exact_byte_build_binding authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes certified
-theorem functional : FunctionalPreservation (tree planBytes) (tree callBytes) :=
+theorem functional : FunctionalPreservation (Noctium.Verification.ArtifactBytes.«tree» planBytes)
+    (Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   concrete_preservation authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes certified
-theorem complete : EligibleCompleteness (tree planBytes) (tree callBytes) :=
+theorem complete : EligibleCompleteness (Noctium.Verification.ArtifactBytes.«tree» planBytes)
+    (Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   concrete_complete authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes certified
-theorem privacy : Noctium.PrivateClaimNativePrivacy.DecodedPrivacyObligation (tree planBytes) (tree callBytes) :=
+theorem privacy : Noctium.PrivateClaimNativePrivacy.DecodedPrivacyObligation
+    (Noctium.Verification.ArtifactBytes.«tree» planBytes) (Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   concrete_privacy authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes certified
 #print axioms certified
 #print axioms binding
@@ -300,9 +305,23 @@ def check_files(directory: Path, record: dict) -> None:
 def measure(commit: str, output: Path, toolchain: Path | None = None) -> dict:
     measured = toolchain_measurement(toolchain)
     record = source_build(commit, output, Path(measured["root"]))
+    build = {"sourceCommit": commit, "sourceTree": record["source"]["tree"],
+             "sourceClosureSha256": record["source"]["sha256"], "sourcePolicy": SOURCE_POLICY,
+             "nativePolicy": NATIVE_POLICY, "theoremClosureSha256": record["baseProofSha256"],
+             "trustedModelSha256": record["modelSha256"], "toolchainSha256": measured["sha256"],
+             "importProducts": record["imports"], "compilerProductSha256": record["compilerSha256"]}
+    check_driver_source(record["source"]["files"])
+    make_certificate(output, build, Path(measured["root"]))
     trust = {"status": "measurement-only-not-an-authority", "sourceCommit": commit, "sourceTree": record["source"]["tree"],
              "targetProfileSha256": record["source"]["profileSha256"], "trustedModelSha256": record["modelSha256"],
-             "toolchain": measured, "businessSpecificationReviewed": False}
+             "toolchain": measured, "businessSpecificationReviewed": False,
+             "artifactSha256": record["artifacts"], "compilerProductSha256": record["compilerSha256"],
+             "sourceClosureSha256": record["source"]["sha256"], "theoremClosureSha256": record["baseProofSha256"],
+             "importProducts": record["imports"], "localCertificateSha256": sha(output / "certificate.ndjson"),
+             "localCertificateAxiomsSha256": sha(output / "certificate-axioms.txt"),
+             "localKernelReplaySha256": sha(output / "kernel-replay.txt"),
+             "localKernelReplayPassed": True, "externalAuthorityChecked": False,
+             "compiledContractVerified": False}
     save(output / "measurements.json", trust)
     return trust
 
@@ -500,7 +519,7 @@ def regress(authority_path: Path, authority_pin: str, bundle: Path) -> dict:
 set_option maxRecDepth 100000
 set_option maxHeartbeats 100000000
 open Noctium.Verification.ArtifactBytes Noctium.Verification.ArtifactCertificate
-""" + "def bytes : Bytes := " + lean_bytes(changed) + "\n" +             "example : (decodeProgram bytes).toOption = some Noctium.PrivateClaimNativeState.callProgram := by decide +kernel\n"
+""" + "def bytes : Noctium.Verification.ArtifactBytes.«Bytes» := " + lean_bytes(changed) + "\n" +             "example : (decodeProgram bytes).toOption = some Noctium.PrivateClaimNativeState.callProgram := by decide +kernel\n"
         path = temporary / (label + ".lean")
         path.write_text(source)
         env = clean_env(tools, Path(str(bundle / "proof-imports") + os.pathsep + str(trusted / "source/.lake/build/lib/lean")))

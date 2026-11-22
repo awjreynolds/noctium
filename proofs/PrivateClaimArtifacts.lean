@@ -8,7 +8,7 @@ open PrivateClaimLowering PrivateClaimNativeState PrivateClaimNativePrivacy
 /-- The actual four public artifact byte streams pass independent translation
 validation and match an external, independently authenticated build authority. -/
 structure Certified (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes) : Prop where
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes») : Prop where
   standalone : decodeProgram standaloneBytes = .ok program
   plan : decodePlan planBytes = .ok symbolicPlan
   call : decodeProgram callBytes = .ok callProgram
@@ -18,10 +18,11 @@ structure Certified (authority : Authority) (build : BuildIdentity) (sourceIdent
   buildIdentity : Authenticated authority build sourceIdentity planBytes callBytes
 
 theorem exact_byte_build_binding (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes)
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes»)
     (certificate : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes) :
-    NativePrivacy.ExactArtifactBinding Bytes BuildIdentity sourceIdentity planBytes callBytes
-      (tree planBytes) (tree callBytes) build parse (Authenticated authority) :=
+    NativePrivacy.ExactArtifactBinding _root_.Noctium.Verification.ArtifactBytes.«Bytes» BuildIdentity
+      sourceIdentity planBytes callBytes (_root_.Noctium.Verification.ArtifactBytes.«tree» planBytes)
+      (_root_.Noctium.Verification.ArtifactBytes.«tree» callBytes) build parse (Authenticated authority) :=
   exact_binding authority build sourceIdentity planBytes callBytes ⟨_, certificate.plan⟩ ⟨_, certificate.call⟩
     certificate.buildIdentity
 
@@ -29,9 +30,10 @@ theorem exact_byte_build_binding (authority : Authority) (build : BuildIdentity)
 Build identity is an external-authority equality checked by the trusted data
 process, not a verdict supplied by the untrusted candidate manifest. -/
 theorem concrete_privacy (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes)
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes»)
     (certificate : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes) :
-    DecodedPrivacyObligation (tree planBytes) (tree callBytes) :=
+    DecodedPrivacyObligation (_root_.Noctium.Verification.ArtifactBytes.«tree» planBytes)
+      (_root_.Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   decoded_obligation _ _ (validated_tree _ _ _ certificate.plan).2 (validated_tree _ _ _ certificate.call).2
 
 /-- Exact-byte target preservation for arbitrary native assignments/traces.
@@ -50,9 +52,10 @@ def FunctionalPreservation (planTree callTree : Lean.Json) : Prop :=
     after.stack = (NativeState.initial input.root input.campaign (encodedEntries (mark input.nullifier entries))).stack
 
 theorem concrete_preservation (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes)
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes»)
     (certificate : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes) :
-    FunctionalPreservation (tree planBytes) (tree callBytes) :=
+    FunctionalPreservation (_root_.Noctium.Verification.ArtifactBytes.«tree» planBytes)
+      (_root_.Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   decoded_execution_sound _ _ (validated_tree _ _ _ certificate.plan).2 (validated_tree _ _ _ certificate.call).2
 
 def EligibleCompleteness (planTree callTree : Lean.Json) : Prop :=
@@ -62,17 +65,18 @@ def EligibleCompleteness (planTree callTree : Lean.Json) : Prop :=
     (entries : List (NativeRelation.Scalar × _root_.Bool)),
     (PrivateClaimProofs.typedEntries (sourceValues entries)).lookup (.native input.nullifier) = none →
     let native := Inputs.ofSource ctx input canonical agreement.modulus
-    ∃ witness after, DecodedExecution planTree callTree hash (callStreams native native.root native.campaign NativeRelation.zero)
-      witness native.root native.campaign entries (NativeState.groups (operations witness)) after
+    ∃ assignment after, DecodedExecution planTree callTree hash (callStreams native native.root native.campaign NativeRelation.zero)
+      assignment native.root native.campaign entries (NativeState.groups (operations assignment)) after
 
 theorem concrete_complete (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes)
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes»)
     (certificate : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes) :
-    EligibleCompleteness (tree planBytes) (tree callBytes) :=
+    EligibleCompleteness (_root_.Noctium.Verification.ArtifactBytes.«tree» planBytes)
+      (_root_.Noctium.Verification.ArtifactBytes.«tree» callBytes) :=
   decoded_execution_complete _ _ (validated_tree _ _ _ certificate.plan).2 (validated_tree _ _ _ certificate.call).2
 
 theorem concrete_functional (authority : Authority) (build : BuildIdentity) (sourceIdentity : String)
-    (standaloneBytes planBytes callBytes profileBytes : Bytes)
+    (standaloneBytes planBytes callBytes profileBytes : _root_.Noctium.Verification.ArtifactBytes.«Bytes»)
     (certificate : Certified authority build sourceIdentity standaloneBytes planBytes callBytes profileBytes) :
     decodeProgram standaloneBytes = .ok program ∧ decodePlan planBytes = .ok symbolicPlan ∧
       decodeProgram callBytes = .ok callProgram ∧ decodeProfile profileBytes = .ok selectedProfile :=
