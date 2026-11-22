@@ -267,8 +267,7 @@ elab "#noctium_register_privacy " proof:ident " for " policy:ident : command =>
   register proof policy .privacy
 
 syntax (name := noctiumProofScaffoldCommand)
-  "#noctium_proof_scaffold " ident " for " ident " on " ident
-    " operation " str : command
+  "#noctium_proof_scaffold " ident " for " ident " in " ident str : command
 
 private def proofScaffoldBody (role : Audit.Role) : String :=
   match role with
@@ -289,8 +288,8 @@ private def scaffoldTheorem (policy : Name)
 
 @[command_elab noctiumProofScaffoldCommand] unsafe def elabProofScaffold : CommandElab := fun stx => do
   match stx with
-  | `(#noctium_proof_scaffold $roleSyntax:ident for $policySyntax:ident on $contractSyntax:ident
-      operation $operationSyntax:str) => do
+  | `(#noctium_proof_scaffold $roleSyntax:ident for $policySyntax:ident in $contractSyntax:ident
+      $operationSyntax:str) => do
     let role ← match roleSyntax.getId.toString with
       | "functional" => pure Audit.Role.functional
       | "privacy" => pure Audit.Role.privacy

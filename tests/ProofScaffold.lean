@@ -95,7 +95,7 @@ theorem ProofScaffoldFixture.policy.functionalScaffold : Noctium.Verification.Fu
   · refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
 -/
 #guard_msgs in
-#noctium_proof_scaffold functional for policy on sourceContract operation "run"
+#noctium_proof_scaffold functional for policy in sourceContract "run"
 
 /--
 info: NOCTIUM_PROOF_SCAFFOLD
@@ -106,7 +106,7 @@ theorem ProofScaffoldFixture.policy.privacyScaffold : Noctium.Verification.Priva
   exact ?_
 -/
 #guard_msgs in
-#noctium_proof_scaffold privacy for policy on sourceContract operation "run"
+#noctium_proof_scaffold privacy for policy in sourceContract "run"
 
 theorem policy.functionalScaffold : FunctionalObligation policy := functional
 
@@ -123,25 +123,25 @@ theorem policy.privacyScaffold : PrivacyObligation policy := by
 error: proof_scaffold_contract_mismatch: selected contract is not kernel-equal to the policy contract
 -/
 #guard_msgs (substring := true) in
-#noctium_proof_scaffold functional for policy on sameDisplayNameContract operation "run"
+#noctium_proof_scaffold functional for policy in sameDisplayNameContract "run"
 
 /--
 error: proof_scaffold_policy_entrypoint_mismatch: policy selects index 0, named operation is at index 1
 -/
 #guard_msgs (substring := true) in
-#noctium_proof_scaffold functional for policy on sourceContract operation "other"
+#noctium_proof_scaffold functional for policy in sourceContract "other"
 
 /--
 error: proof_scaffold_operation_missing
 -/
 #guard_msgs (substring := true) in
-#noctium_proof_scaffold functional for policy on sourceContract operation "missing"
+#noctium_proof_scaffold functional for policy in sourceContract "missing"
 
 /--
 error: proof_scaffold_operation_ambiguous
 -/
 #guard_msgs (substring := true) in
-#noctium_proof_scaffold functional for duplicatePolicy on duplicateContract operation "run"
+#noctium_proof_scaffold functional for duplicatePolicy in duplicateContract "run"
 
 run_cmd do
   let registrations := proofRegistry.getState (← Lean.getEnv)
