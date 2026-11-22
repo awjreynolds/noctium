@@ -129,6 +129,7 @@ scoped syntax "default(" "Payload" ident ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
+scoped syntax "either(" nlexpr "," nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "enumTag(" nlexpr ")" : nlexpr
@@ -483,6 +484,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
+  | `(nlexpr| either($tag, $left, $right)) =>
+    s!"either({renderExpr tag}, {renderExpr left}, {renderExpr right})"
   | `(nlexpr| field($value, $name:ident)) => s!"field({renderExpr value}, {name.getId})"
   | `(nlexpr| elementAt($value, $index)) => s!"elementAt({renderExpr value}, {renderExpr index})"
   | `(nlexpr| enumTag($value)) => s!"enumTag({renderExpr value})"
@@ -610,6 +613,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| enumTag($value))
   | `(nlexpr| toBytes32($value)) | `(nlexpr| reverseBytes32($value))
   | `(nlexpr| reverseBytes($value)) => disclosedValues value
+  | `(nlexpr| either($tag, $left, $right)) =>
+    disclosedValues tag ++ disclosedValues left ++ disclosedValues right
   | `(nlexpr| sliceBytes($value, $_:num, $_:num)) => disclosedValues value
   | `(nlexpr| concatBytes($left, $right)) => disclosedValues left ++ disclosedValues right
   | `(nlexpr| byteAt($value, $_:num)) => disclosedValues value
@@ -678,6 +683,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| enumTag($value))
   | `(nlexpr| toBytes32($value)) | `(nlexpr| reverseBytes32($value))
   | `(nlexpr| reverseBytes($value)) => inlineAssertions value
+  | `(nlexpr| either($tag, $left, $right)) =>
+    inlineAssertions tag ++ inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| sliceBytes($value, $_:num, $_:num)) => inlineAssertions value
   | `(nlexpr| concatBytes($left, $right)) => inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| byteAt($value, $_:num)) => inlineAssertions value
@@ -878,6 +885,39 @@ private def scalarMaybeZero : Ty → Option Noctium.Helpers.Term
   | .uint maximum => some (.uint maximum 0)
   | _ => none
 
+private def loweredLayoutType (value : Lowered) : Types.CompositeType :=
+  match value.type with
+  | .unit => .unit
+  | .scalar (.bytes length) => .bytes length
+  | .scalar ty => .scalar ty
+  | .composite type => type
+
+private def compositeEitherType (programName : String) (site : Syntax)
+    (left right : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
+  let typeId := s!"{programName}.EitherComposite{hash fingerprint}"
+  unless Types.validDeclId typeId do
+    throwErrorAt site "generated composite Either type id is invalid"
+  let expectedFields : List (String × Types.CompositeType) := [
+    ("is_left", .scalar .bool),
+    ("left", left),
+    ("right", right)
+  ]
+  let state ← get
+  if state.composites.enumerations.any (·.id == typeId) then
+    throwErrorAt site s!"composite Either type id '{typeId}' collides with an enum"
+  match state.composites.structures.find? (·.id == typeId) with
+  | some existing =>
+    unless existing.fields.map (fun field => (field.name, field.type)) == expectedFields do
+      throwErrorAt site s!"composite Either type id '{typeId}' collides with another structure"
+  | none =>
+    modify fun state => {state with composites := {
+      state.composites with
+      structures := state.composites.structures ++ [{
+        id := typeId
+        fields := expectedFields.map fun (name, type) => {name, type}
+      }]}}
+  pure (.structure typeId)
+
 private def nominalBytes32ForCodec? (codec : Helpers.Wire.Codec) :
     Option NominalBytes32 :=
   if codec.frameBytes != 32 then none else
@@ -946,6 +986,45 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {type := .scalar .native, term := .native n.getNat}
   | `(nlexpr| true) => pure {type := .scalar .bool, term := .bool _root_.Bool.true}
   | `(nlexpr| false) => pure {type := .scalar .bool, term := .bool _root_.Bool.false}
+  | `(nlexpr| either($tagSource, $leftSource, $rightSource)) => do
+    let tag ← lowerExpr programName callPrefix env tagSource
+    unless tag.type == .scalar .bool do
+      throwErrorAt tagSource "Either tag requires Bool"
+    let left ← lowerExpr programName callPrefix env leftSource
+    let right ← lowerExpr programName callPrefix env rightSource
+    let leftLayout := loweredLayoutType left
+    let rightLayout := loweredLayoutType right
+    let leftCompiled ← checkedPayloadLayout stx leftLayout
+    let rightCompiled ← checkedPayloadLayout stx rightLayout
+    let zerosLeft ← zeroPayloadLeaves stx leftCompiled
+    let zerosRight ← zeroPayloadLeaves stx rightCompiled
+    let fingerprint :=
+      s!"{leftCompiled.fingerprint.length}:{leftCompiled.fingerprint}{rightCompiled.fingerprint.length}:{rightCompiled.fingerprint}"
+    let eitherType ← compositeEitherType programName stx leftLayout rightLayout fingerprint
+    let span ← liftM (spanValue stx)
+    let (before, terms, _) ← stageIterationValues callPrefix env span [tag, left, right]
+    let [tagTerm, leftTerm, rightTerm] := terms
+      | throwErrorAt stx "composite Either argument staging failed"
+    let leftLeaves ← match Helpers.Iteration.flattenResult span left.type
+        leftCompiled.checked.value leftTerm with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt stx diagnostic.message
+    let rightLeaves ← match Helpers.Iteration.flattenResult span right.type
+        rightCompiled.checked.value rightTerm with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt stx diagnostic.message
+    unless leftLeaves.length == zerosLeft.length && rightLeaves.length == zerosRight.length do
+      throwErrorAt stx "composite Either payload leaf count mismatch"
+    let selectedLeft := (leftLeaves.zip zerosLeft).map fun (payload, zero) =>
+      Helpers.Term.select tagTerm payload zero
+    let selectedRight := (zerosRight.zip rightLeaves).map fun (zero, payload) =>
+      Helpers.Term.select tagTerm zero payload
+    let stagedTag := {tag with before := before}
+    let stagedLeft := {left with before := []}
+    let stagedRight := {right with before := []}
+    pure (mergeLowered (.composite eitherType)
+      (.composite eitherType (tagTerm :: selectedLeft ++ selectedRight))
+      [stagedTag, stagedLeft, stagedRight])
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
     match value.type with
