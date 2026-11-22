@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export sealed ledger registered: Set<Field>;
+export sealed ledger emptySet: Set<Field>;
+
+constructor(key: Field) {
+  registered.insert(disclose(key));
+  registered.insert(disclose(key));
+}
+
+export circuit inspect(key: Field): [Boolean, Uint<64>, Boolean] {
+  return [registered.member(disclose(key)), registered.size(), emptySet.isEmpty()];
+}

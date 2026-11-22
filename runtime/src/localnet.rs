@@ -4843,6 +4843,80 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the authenticated SealedSetConstructor inspect bundle and a funded development node"]
+    fn sealed_root_set_constructor_finalizes_exact_immutable_state() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_SEALED_SET_FUNDED_BUNDLE")?;
+            let manifest = setting("NOCTIUM_SEALED_SET_FUNDED_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&manifest))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "inspect", "expected sealed Set inspect bundle");
+            let k = IrSource::load(bundle.file(Role::Circuit)?)?.k();
+            let arguments = BTreeMap::from([("key".into(), json!("17"))]);
+            let expected = crate::constructor::construct_state(&plan, &arguments)?;
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_SEALED_SET_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_SEALED_SET_FUNDED_NODE")?, &cache,
+            ).await?;
+            let parameters = cache.parameters(k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                &serde_json::to_vec(&json!({"state": arguments}))?,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let inspect = target.operation("inspect", &parameters, ttl)?;
+            let (state, deployment) = funded.deploy(&target, "inspect").await?;
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed.data.get_ref() == expected.get_ref(),
+                "deployed sealed Sets differ from native construction"
+            );
+
+            let mut current = Some(state);
+            let receipt = funded.call(
+                &inspect, &mut current, &parameters,
+                BTreeMap::from([("key".into(), json!("17"))]),
+            ).await?;
+            ensure!(
+                receipt.contract_state == deployment.contract_state,
+                "sealed Set inspect changed finalized state bytes"
+            );
+            println!("{}", json!({
+                "contractAddress": target.contract_address(),
+                "bundleManifestSha256": manifest,
+                "k": k,
+                "deploymentHeight": deployment.height,
+                "deploymentTransactionId": deployment.transaction_id,
+                "finalizedHeight": receipt.height,
+                "finalizedHash": receipt.finalized_hash,
+                "transactionId": receipt.transaction_id,
+                "constructStateMatchedDeployment": true,
+                "inspectPreservedExactStateBytes": true,
+            }));
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the authenticated SealedCounterListConstructor inspect bundle and funded development node"]
     fn sealed_counter_list_constructor_finalizes_exact_immutable_state() -> anyhow::Result<()> {
         use crate::{

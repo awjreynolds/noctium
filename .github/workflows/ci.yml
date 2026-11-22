@@ -216,6 +216,7 @@ jobs:
           lake env lean tests/ConstructorMetadata.lean
           lake env lean tests/SealedMapConstructor.lean
           lake env lean tests/SealedRootCounterListConstructor.lean
+          lake env lean tests/SealedRootSetConstructor.lean
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
           lake env lean tests/Issue43MapMembership.lean

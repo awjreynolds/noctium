@@ -766,6 +766,11 @@ private def constructorListPushJson (push : ConstructorListPush) : Json :=
     ("state", toJson push.state),
     ("value", nativeExpressionJson push.value)]
 
+private def constructorSetInsertJson (insertion : ConstructorSetInsert) : Json :=
+  Json.mkObj [
+    ("name", toJson insertion.name),
+    ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression)]
+
 private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [
     ("name", toJson parameter.name), ("type", toJson (constructorTypeName parameter.type))])),
@@ -778,7 +783,9 @@ private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   (if ctor.counterIncrements.isEmpty then [] else [
     ("counterIncrements", toJson (ctor.counterIncrements.map constructorCounterIncrementJson))]) ++
   (if ctor.listPushes.isEmpty then [] else [
-    ("listPushes", toJson (ctor.listPushes.map constructorListPushJson))]))
+    ("listPushes", toJson (ctor.listPushes.map constructorListPushJson))]) ++
+  (if ctor.setInserts.isEmpty then [] else [
+    ("setInserts", toJson (ctor.setInserts.map constructorSetInsertJson))]))
 
 private def jsonLetParts (expression : Json) : Except String (Array Json × Json) := do
   let tag ← (← expression.getObjVal? "tag").getStr?
