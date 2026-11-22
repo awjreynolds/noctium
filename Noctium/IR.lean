@@ -570,15 +570,15 @@ def LedgerValueType.recordFields (environment : Types.CompositeEnv)
       throw "mixed ledger record layout does not match its flat field declaration"
     pure fields
 
-/-- Describe a flat List record, including checked Bool and bounded UInt fields.
-Only this List boundary accepts typed fields. Other ledger record routes keep
-their existing Native-only or Bytes32/JubjubPoint rules. -/
-private def listRecordFields (environment : Types.CompositeEnv)
+/-- Describe a flat typed record after the generic checked Native record path.
+The List element path and root Cell path share this checked representation.
+Nested Map records keep their existing recordFields rules. -/
+private def flatTypedRecordFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) := do
-  let .structure id := type | throw "List records must be named structures"
+  let .structure id := type | throw "typed ledger records must be named structures"
   let some declaration := environment.structures.find? (·.id == id)
-    | throw "List record declaration is missing"
-  unless !declaration.fields.isEmpty do throw "List records must contain at least one field"
+    | throw "typed ledger record declaration is missing"
+  unless !declaration.fields.isEmpty do throw "typed ledger records must contain at least one field"
   let fields ← declaration.fields.mapM fun field => do
     match field.type with
     | .scalar .native => pure (field.name, Ty.native)
@@ -588,7 +588,7 @@ private def listRecordFields (environment : Types.CompositeEnv)
       pure (field.name, .uint maximum)
     | .scalar (.bytes 32) => pure (field.name, Ty.bytes 32)
     | .scalar .jubjubPoint => pure (field.name, Ty.jubjubPoint)
-    | _ => throw "List records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
+    | _ => throw "typed ledger records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
   let referencedByOtherStruct := environment.structures.any fun existing =>
     existing.id != id && existing.fields.any fun field =>
       field.type.referencedIds.contains id
@@ -596,7 +596,7 @@ private def listRecordFields (environment : Types.CompositeEnv)
     enumeration.variants.any fun variant => variant.fields.any fun field =>
       field.type.referencedIds.contains id
   unless !referencedByOtherStruct && !referencedByEnum do
-    throw "typed List records cannot be nested in other composite declarations"
+    throw "typed ledger records cannot be nested in other composite declarations"
   -- Validate the bounded layout while treating each supported ledger field as
   -- one host field. Bytes32 and JubjubPoint retain their typed codecs below.
   let normalized : Types.CompositeEnv := {environment with structures := environment.structures.map fun existing =>
@@ -606,7 +606,7 @@ private def listRecordFields (environment : Types.CompositeEnv)
     else existing}
   let checked ← (Types.checkedLayout Types.defaultLimits normalized type).mapError (·.message)
   unless checked.value.nativeFieldOnly && checked.expandedLeaves == fields.length do
-    throw "List record layout does not match its flat field declaration"
+    throw "typed ledger record layout does not match its flat field declaration"
   pure fields
 
 def LedgerValueType.shieldedCoinRecordFields (environment : Types.CompositeEnv)
@@ -623,17 +623,33 @@ def LedgerValueType.shieldedCoinRecordFields (environment : Types.CompositeEnv)
   pure [("nonce", .bytes 32), ("color", .bytes 32),
     ("value", .uint (2 ^ 128 - 1)), ("mtIndex", .uint (2 ^ 64 - 1))]
 
+/-- Describe a root composite Cell. Its checked flat typed path is deliberately
+separate from generic nested composite records. -/
+def LedgerValueType.cellRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+  match LedgerValueType.recordFields environment type with
+  | .ok fields => pure fields
+  | .error _ => match flatTypedRecordFields environment type with
+    | .ok fields => pure fields
+    | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
+
+/-- Ordinary root Cell writes accept checked Native and typed flat records.
+The shielded coin record remains on its specialized write effects. -/
+def LedgerValueType.cellWriteRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+  match LedgerValueType.recordFields environment type with
+  | .ok fields => pure fields
+  | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+    | .ok _ => .error "shielded coin Cells require their specialized write effect"
+    | .error _ => flatTypedRecordFields environment type
+
 /-- Describe a List element as its typed scalar value or as the fields of its
 existing checked record representation. -/
 def LedgerValueType.listElementFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   match type with
   | .scalar ty => pure [("value", ty)]
-  | _ => match LedgerValueType.recordFields environment type with
-    | .ok fields => pure fields
-    | .error _ => match listRecordFields environment type with
-      | .ok fields => pure fields
-      | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
+  | _ => LedgerValueType.cellRecordFields environment type
 
 def LedgerValueType.listPath (schema : LedgerValueType) (keys : List PathKey) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
@@ -1434,6 +1450,17 @@ where
       for (_, ty) in fields do
         validateStateScalar caps ty
 
+/-- Validate a root Cell tree value. Nested composites still use the generic
+schema validator, so typed records do not spread into Map values. -/
+def LedgerValueType.validateCellRoot (caps : Capabilities)
+    (schema : LedgerValueType) : Except String Unit := do
+  match schema with
+  | .composite environment type => do
+    let fields ← LedgerValueType.cellRecordFields environment type
+    for (_, ty) in fields do
+      validateStateScalar caps ty
+  | _ => LedgerValueType.validate caps schema
+
 private def resolveTreeState (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String LedgerValueType := do
   let some decl := decls.find? (·.name == state) | throw s!"unknown tree state '{state}'"
@@ -1653,7 +1680,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
       | .ok _ => pure ()
     match decl.kind with
     | .tree schema =>
-      match schema.validate caps with
+      match schema.validateCellRoot caps with
       | .error message => throw {span := decl.span, message}
       | .ok _ => pure ()
     | _ => pure ()
@@ -2140,12 +2167,23 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         value.validate caps env
         pure []
       | .readCompositePath state _ keys type destinations => do
-        if !caps.stateMaps then throw "target lacks state maps"
         for key in keys do key.validate caps env
-        let .composite compositeEnv foundType ← resolveTreeState decls state keys
-          | throw "nested composite read must select a composite value"
+        let (compositeEnv, foundType) ← if keys.isEmpty then do
+          if !caps.stateCells then throw "target lacks state cells"
+          let some declaration := decls.find? (·.name == state)
+            | throw s!"unknown root composite Cell '{state}'"
+          let .tree (.composite compositeEnv foundType) := declaration.kind
+            | throw "root composite read must target a checked record Cell"
+          pure (compositeEnv, foundType)
+        else do
+          if !caps.stateMaps then throw "target lacks state maps"
+          let .composite compositeEnv foundType ← resolveTreeState decls state keys
+            | throw "nested composite read must select a composite value"
+          pure (compositeEnv, foundType)
         unless foundType == type do throw "nested composite read type mismatch"
-        let fields ← match LedgerValueType.recordFields compositeEnv type with
+        let fields ← if keys.isEmpty then
+          LedgerValueType.cellRecordFields compositeEnv type
+        else match LedgerValueType.recordFields compositeEnv type with
           | .ok fields => pure fields
           | .error _ => LedgerValueType.shieldedCoinRecordFields compositeEnv type
         unless fields.map Prod.snd == destinations.map Prod.snd do
@@ -2162,9 +2200,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let .tree (.composite compositeEnv foundType) := declaration.kind
             | throw "root composite write must target a checked record Cell"
           unless foundType == type do throw "nested composite write type mismatch"
-          match LedgerValueType.recordFields compositeEnv type with
-          | .ok fields => pure fields
-          | .error _ => LedgerValueType.shieldedCoinRecordFields compositeEnv type
+          LedgerValueType.cellWriteRecordFields compositeEnv type
         else do
           if !caps.stateMaps then throw "target lacks state maps"
           let .composite compositeEnv foundType ← resolveTreeState decls state keys
@@ -2295,7 +2331,7 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
       | .error message => throw {span := decl.span, message}
       | .ok _ => pure ()
     if let .tree schema := decl.kind then
-      match schema.validate caps with
+      match schema.validateCellRoot caps with
       | .error message => throw {span := decl.span, message}
       | .ok _ => pure ()
     if let some depth := decl.kind.merkleTreeDepth? then

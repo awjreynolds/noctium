@@ -2177,7 +2177,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order.",
       "source": [
         "adt"
       ],
@@ -2187,6 +2187,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordCell.lean",
+        "runtime/tests/flat_record_cell.rs",
         "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
@@ -2219,7 +2221,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open. A flat Bool/UInt16 record resets to the exact constructor state and returns its typed defaults.",
       "source": [
         "adt"
       ],
@@ -2229,6 +2231,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordCell.lean",
         "tests/NativeCellReset.lean",
         "tests/compact/cell-reset.mjs",
         "runtime/tests/native_cell_reset.rs",
@@ -2254,7 +2257,7 @@
       "layer": "language-ledger",
       "surface": "Cell.write",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values. The explicit byte-aligned UInt128 type writes one 16-byte FAB atom. Native checking covers max and zero updates, unchanged state under the inactive guard, and malformed field-aligned writes.",
+      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values. The explicit byte-aligned UInt128 type writes one 16-byte FAB atom. Native checking covers max and zero updates, unchanged state under the inactive guard, and malformed field-aligned writes. A flat Bool/UInt16 record writes disclosed private inputs and rejects UInt16 overflow.",
       "source": [
         "adt"
       ],
@@ -2264,6 +2267,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordCell.lean",
+        "runtime/tests/flat_record_cell.rs",
         "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
