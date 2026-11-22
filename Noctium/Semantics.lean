@@ -1346,14 +1346,13 @@ private def blockTimeResult (ctx : EvalContext) (env : EvalEnv) (before : Bool)
   unless seconds < 2 ^ 64 do throw "block time deadline exceeds u64"
   pure (.bool (if before then time < seconds else seconds < time))
 
-/-- Execute ordered effects against a private tentative state and retain the
-ordered read environment for expressions evaluated after the effects. Returning
-an error never exposes that tentative state. -/
-def runEffectsWithEnv (ctx : EvalContext) (effects : List Effect) (env : EvalEnv)
+/-- Execute one ordered source effect, preserving its environment and exact
+error behavior. The list evaluator below folds this worker from left to right. -/
+def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
     (state : LedgerState) : Except String (EvalEnv × LedgerState) := do
   let mut env := env
   let mut next := state
-  for effect in effects do
+  do
     match effect with
     | .readCell name destination ty =>
       let some raw := next.cells.lookup name | throw s!"missing state cell '{name}'"
@@ -1636,7 +1635,16 @@ def runEffectsWithEnv (ctx : EvalContext) (effects : List Effect) (env : EvalEnv
       next ← insertSetAt next name (← evaluatePath ctx env keys)
     | .removePath name keys => do
       next ← removeMapAt next name (← evaluatePath ctx env keys)
+
   pure (env, next)
+
+/-- Execute ordered effects against a private tentative state and retain the
+ordered read environment for expressions evaluated after the effects. Returning
+an error never exposes that tentative state. -/
+def runEffectsWithEnv (ctx : EvalContext) (effects : List Effect) (env : EvalEnv)
+    (state : LedgerState) : Except String (EvalEnv × LedgerState) :=
+  effects.foldlM (fun frame effect => runEffectWithEnv ctx effect frame.1 frame.2)
+    (env, state)
 
 /-- Execute ordered effects while preserving the historical state-only result. -/
 def runEffects (ctx : EvalContext) (effects : List Effect) (env : EvalEnv)
