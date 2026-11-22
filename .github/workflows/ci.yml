@@ -161,6 +161,7 @@ jobs:
           lake env lean tests/CounterCompare.lean
           lake env lean tests/NativeSet.lean
           lake env lean tests/TypedSetKey.lean
+          lake env lean tests/TypedRecordMapKey.lean
           lake env lean tests/NativeCaller.lean
           lake env lean tests/NativeCallerComposition.lean
           lake env lean tests/NativeUserCaller.lean

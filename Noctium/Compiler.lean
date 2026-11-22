@@ -217,6 +217,9 @@ private def operationJsonBare : Backend.Impact.Op → Json
   | .mapIndex slot key => Json.mkObj [("op", toJson ("index" : String)),
       ("slot", toJson slot), ("pushPath", toJson Bool.false),
       ("key", alignedExpressionJson key)]
+  | .indexRecordPath slot schema expressions => Json.mkObj [
+      ("op", toJson ("indexRecordPath" : String)), ("slot", toJson slot),
+      ("schema", schema), ("expressions", toJson (expressions.map ledgerFieldExprJson))]
   | .indexPath slot pushPath keys => Json.mkObj [
       ("op", toJson ("indexPath" : String)), ("slot", toJson slot),
       ("pushPath", toJson pushPath),
@@ -592,6 +595,21 @@ private def effectJson : Effect → Json
       ("op", toJson ("memberRecordSet" : String)), ("state", toJson state),
       ("destination", toJson destination),
       ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .readRecordMap state destination _ values => Json.mkObj [
+      ("op", toJson ("readRecordMap" : String)), ("state", toJson state),
+      ("destination", toJson destination),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .memberRecordMap state destination values => Json.mkObj [
+      ("op", toJson ("memberRecordMap" : String)), ("state", toJson state),
+      ("destination", toJson destination),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .writeRecordMap state values _ value => Json.mkObj [
+      ("op", toJson ("writeRecordMap" : String)), ("state", toJson state),
+      ("values", toJson (values.map sourceLedgerFieldExprJson)),
+      ("value", expressionJson value)]
+  | .removeRecordMap state values => Json.mkObj [
+      ("op", toJson ("removeRecordMap" : String)), ("state", toJson state),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
   | .counterRead state destination keys => Json.mkObj [
       ("op", toJson ("counterRead" : String)), ("state", toJson state),
       ("destination", toJson destination),
@@ -745,6 +763,9 @@ private def stateJson (state : StateDecl) : Json :=
     | _, .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
     | _, .recordSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", cellCompositeSchema environment type)])]
+    | _, .recordMapKey environment type valueTy => Json.mkObj [("map", toJson [
+        Json.mkObj [("composite", cellCompositeSchema environment type)],
+        Json.mkObj [("scalar", toJson (typeName valueTy))]])]
     | _, .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", compositeSchema environment type)])]
     | rootCell, .composite environment type => Json.mkObj [("composite",
