@@ -228,6 +228,7 @@ jobs:
           lake env lean tests/CurveDefaults.lean
           lake env lean tests/CompositeMaybe.lean
           lake env lean tests/CompositeMaybeInput.lean
+          lake env lean tests/MaybeBytesCurves.lean
           lake env lean tests/CompositeEither.lean
           lake env lean tests/CompositeEitherInput.lean
           lake env lean tests/NominalRecordEquality.lean
@@ -272,6 +273,9 @@ jobs:
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
+          .lake/build/bin/noctium compile tests/MaybeBytesCurves.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/maybe-bytes-curves"
           .lake/build/bin/noctium compile tests/ScalarTransientHash.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/scalar-transient-hash"
@@ -336,6 +340,7 @@ jobs:
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
+            NOCTIUM_MAYBE_BYTES_CURVES_DIR="$artifacts/maybe-bytes-curves" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
             NOCTIUM_MIXED_FAB_COMMITMENTS_DIR="$artifacts/mixed-fab-commitments" \
             NOCTIUM_NESTED_TRANSIENT_HASH_DIR="$artifacts/nested-transient-hash" \
@@ -359,6 +364,7 @@ jobs:
               --test readable_record_construction \
               --test scalar_transient_hash \
               --test composite_maybe_input --test composite_either_input \
+              --test maybe_bytes_curves \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test curve_defaults \
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \

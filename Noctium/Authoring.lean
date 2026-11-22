@@ -1075,11 +1075,25 @@ private def scalarMaybeType (programName : String) (stx : Syntax) (payloadType :
       structures := state.composites.structures ++ [declaration]}}
   pure (Types.Maybe.scalarType typeId)
 
-private def scalarMaybeZero : Ty → Option Noctium.Helpers.Term
-  | .native => some (.native 0)
-  | .bool => some (.bool _root_.Bool.false)
-  | .uint maximum => some (.uint maximum 0)
-  | _ => none
+private def scalarMaybePayload : Ty → Types.CompositeType
+  | .bytes length => .bytes length
+  | ty => .scalar ty
+
+private def checkedMaybeType (programName : String) (site : Syntax)
+    (payload : Types.CompositeType) (compiled : Types.CompiledType) : ExprM Types.CompositeType := do
+  if let .scalar ty := payload then
+    match ty with
+    | .native | .bool | .uint _ => return ← scalarMaybeType programName site ty
+    | _ => pure ()
+  compositeMaybeType programName site payload compiled.fingerprint
+
+private def lowerAbsentMaybe (programName : String) (site : Syntax)
+    (payload : Types.CompositeType) : ExprM Lowered := do
+  let compiled ← checkedPayloadLayout site payload
+  let maybeType ← checkedMaybeType programName site payload compiled
+  let zeros ← zeroPayloadLeaves site compiled
+  pure (mergeLowered (.composite maybeType)
+    (.composite maybeType (.bool _root_.Bool.false :: zeros)) [])
 
 private def compositeEitherType (programName : String) (site : Syntax)
     (left right : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
@@ -1304,54 +1318,32 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {result with before}
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
-    match value.type with
-    | .scalar payloadType => do
-      let maybeType ← scalarMaybeType programName stx payloadType
-      pure (mergeLowered (.composite maybeType)
-        (.composite maybeType [.bool _root_.Bool.true, value.term]) [value])
-    | .composite payloadType => do
-      let compiled ← checkedPayloadLayout stx payloadType
-      let maybeType ← compositeMaybeType programName stx payloadType compiled.fingerprint
-      let span ← liftM (spanValue stx)
-      let (before, terms, _) ← stageIterationValues callPrefix env span [value]
-      let some stagedPayload := terms.head?
-        | throwErrorAt stx "composite some payload staging failed"
-      let payloadLeaves ← match Helpers.Iteration.flattenResult span value.type
-          compiled.checked.value stagedPayload with
-        | .ok leaves => pure leaves
-        | .error diagnostic => throwErrorAt stx diagnostic.message
-      let stagedValue := {value with before}
-      pure (mergeLowered (.composite maybeType)
-        (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [stagedValue])
-    | .unit => throwErrorAt stx "some does not accept Unit"
+    let payload ← match value.type with
+      | .scalar ty => pure (scalarMaybePayload ty)
+      | .composite payload => pure payload
+      | .unit => throwErrorAt stx "some does not accept Unit"
+    let compiled ← checkedPayloadLayout stx payload
+    let maybeType ← checkedMaybeType programName stx payload compiled
+    if let .scalar ty := value.type then
+      unless ty.isBytes do
+        return mergeLowered (.composite maybeType)
+          (.composite maybeType [.bool _root_.Bool.true, value.term]) [value]
+    let span ← liftM (spanValue stx)
+    let (before, terms, _) ← stageIterationValues callPrefix env span [value]
+    let some stagedPayload := terms.head?
+      | throwErrorAt stx "some payload staging failed"
+    let payloadLeaves ← match Helpers.Iteration.flattenResult span value.type
+        compiled.checked.value stagedPayload with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt stx diagnostic.message
+    pure (mergeLowered (.composite maybeType)
+      (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [{value with before}])
   | `(nlexpr| none($type:nltype)) => do
     let payloadType ← liftM (readScalarTy type)
-    let maybeType ← scalarMaybeType programName stx payloadType
-    let zero ← match scalarMaybeZero payloadType with
-      | some zero => pure zero
-      | none => throwErrorAt type "none requires a Native, Bool, or UInt scalar"
-    pure (mergeLowered (.composite maybeType)
-      (.composite maybeType [.bool _root_.Bool.false, zero]) [])
+    lowerAbsentMaybe programName stx (scalarMaybePayload payloadType)
   | `(nlexpr| none(Payload $name:ident)) => do
     let (codec, _) ← selectedCodec name
-    let compiled ← checkedPayloadLayout name codec.payload
-    match codec.payload with
-    | .scalar payloadType => do
-      let maybeType ← scalarMaybeType programName name payloadType
-      let zero ← match scalarMaybeZero payloadType with
-        | some zero => pure zero
-        | none => throwErrorAt name "none requires a Native, Bool, or UInt scalar payload"
-      pure (mergeLowered (.composite maybeType)
-        (.composite maybeType [.bool _root_.Bool.false, zero]) [])
-    | .unit => do
-      let maybeType ← compositeMaybeType programName name .unit compiled.fingerprint
-      pure (mergeLowered (.composite maybeType)
-        (.composite maybeType [.bool _root_.Bool.false]) [])
-    | payloadType => do
-      let zeros ← zeroPayloadLeaves name compiled
-      let maybeType ← compositeMaybeType programName name payloadType compiled.fingerprint
-      pure (mergeLowered (.composite maybeType)
-        (.composite maybeType (.bool _root_.Bool.false :: zeros)) [])
+    lowerAbsentMaybe programName name codec.payload
   | `(nlexpr| default(Payload $name:ident)) => do
     let (codec, _) ← selectedCodec name
     let compiled ← checkedPayloadLayout name codec.payload

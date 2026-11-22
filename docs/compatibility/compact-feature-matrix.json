@@ -3695,7 +3695,7 @@
       "layer": "standard-library",
       "surface": "Maybe",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs and projects typed Maybe values for Native, Bool and bounded UInt, with false and a canonical zero payload for none. Matched Compact 0.36.1 and native ZKIR 3.2.1 checks cover those scalar outputs. Scalar native List heads also return Maybe for UInt8. Composite some and none in readable witness circuits match pinned Compact for a Limits record containing UInt8, Bool and Bytes4. The native session accepted the logical record, the proof bound its flattened fields and both return values, and the relation rejected a changed return commitment. Source disclosure rejects a private record returned through some without explicit release. Other source positions and element families remain open. A named Maybe codec accepts a composite caller argument. The matched Compact and Rust fixtures preserve the full record for both tags, including a nonzero payload with a false tag, and write the supplied tag to a Bool cell.",
+      "notes": "Readable witness authoring constructs and projects typed Maybe values for Native, Bool and bounded UInt, with false and a canonical zero payload for none. Matched Compact 0.36.1 and native ZKIR 3.2.1 checks cover those scalar outputs. Scalar native List heads also return Maybe for UInt8. Composite some and none in readable witness circuits match pinned Compact for a Limits record containing UInt8, Bool and Bytes4. The native session accepted the logical record, the proof bound its flattened fields and both return values, and the relation rejected a changed return commitment. Source disclosure rejects a private record returned through some without explicit release. The checked constructors also match Compact for fixed bytes, including length zero, and for Jubjub and Secp256k1 points. Native ZKIR binds the tag and payload, including canonical curve identities when absent. Other source positions and element families remain open. A named Maybe codec accepts a composite caller argument. The matched Compact and Rust fixtures preserve the full record for both tags, including a nonzero payload with a false tag, and write the supplied tag to a Bool cell.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3723,7 +3723,11 @@
         "runtime/tests/composite_maybe.rs",
         "tests/CompositeMaybeInput.lean",
         "tests/compact/composite-maybe-input.mjs",
-        "runtime/tests/composite_maybe_input.rs"
+        "runtime/tests/composite_maybe_input.rs",
+        "tests/MaybeBytesCurves.lean",
+        "tests/compact/MaybeBytesCurves.compact",
+        "tests/compact/maybe-bytes-curves.mjs",
+        "runtime/tests/maybe_bytes_curves.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4419,7 +4423,7 @@
       "layer": "standard-library",
       "surface": "some",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs typed Some values for Native, Bool and bounded UInt and returns checked aggregate fields. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover the tag and payload. Other element families and nested uses remain open. The checked Limits record case also matches the composite constructor's ordered tag and payload.",
+      "notes": "Readable witness authoring constructs typed Some values for Native, Bool and bounded UInt and returns checked aggregate fields. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover the tag and payload. Paired checks also cover fixed bytes, including length zero, and the Jubjub and Secp256k1 generators. Other element families and nested uses remain open. The checked Limits record case also matches the composite constructor's ordered tag and payload.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4440,7 +4444,11 @@
         "tests/compact/scalar-maybe-authoring.mjs",
         "tests/CompositeMaybe.lean",
         "tests/compact/composite-maybe.mjs",
-        "runtime/tests/composite_maybe.rs"
+        "runtime/tests/composite_maybe.rs",
+        "tests/MaybeBytesCurves.lean",
+        "tests/compact/MaybeBytesCurves.compact",
+        "tests/compact/maybe-bytes-curves.mjs",
+        "runtime/tests/maybe_bytes_curves.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4449,7 +4457,7 @@
       "layer": "standard-library",
       "surface": "none",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs typed None values for Native, Bool and bounded UInt, zeroing the inactive payload. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover those layouts. Other element families and nested uses remain open. The checked Limits record case also matches the absent tag and typed defaults for all payload fields.",
+      "notes": "Readable witness authoring constructs typed None values for Native, Bool and bounded UInt, zeroing the inactive payload. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover those layouts. Paired checks also cover zero-filled fixed bytes, including length zero, and canonical Jubjub and Secp256k1 identities. Other element families and nested uses remain open. The checked Limits record case also matches the absent tag and typed defaults for all payload fields.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4470,7 +4478,11 @@
         "tests/compact/scalar-maybe-authoring.mjs",
         "tests/CompositeMaybe.lean",
         "tests/compact/composite-maybe.mjs",
-        "runtime/tests/composite_maybe.rs"
+        "runtime/tests/composite_maybe.rs",
+        "tests/MaybeBytesCurves.lean",
+        "tests/compact/MaybeBytesCurves.compact",
+        "tests/compact/maybe-bytes-curves.mjs",
+        "runtime/tests/maybe_bytes_curves.rs"
       ],
       "equivalence": "unverified"
     },
