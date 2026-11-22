@@ -5676,8 +5676,8 @@
       "id": "C-STDLIB-MERKLETREEPATHROOT",
       "layer": "standard-library",
       "surface": "merkleTreePathRoot",
-      "noctiumStatus": "related-subset",
-      "notes": "The shielded role example hashes a Bytes32 leaf using the ledger domain and computes a depth-20 root from checked path directions and siblings. The native result and three authorization rejections match the pinned Compact workload. The general API needs separate evidence.",
+      "noctiumStatus": "subset",
+      "notes": "The reusable typed helper hashes the mdn:lh domain and a checked FAB leaf before folding the path at its declared depth. The native ZKIR 3.2.1 depth-two case matches the pinned Compact mixed-record leaf root and rejects a wrong leaf type. The leaf and directions stay private until explicit root disclosure. The existing depth-20 shielded role example also matches its pinned Compact workload. Leaf layouts outside the checked FAB schema and broader host qualification remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5691,8 +5691,11 @@
         "ABI"
       ],
       "observedEvidence": [
-        "docs/development/native-localnet.md",
-        "docs/development/shielded-role-gate.md"
+        "docs/development/shielded-role-gate.md",
+        "Noctium/Helpers/MerklePath.lean",
+        "tests/TypedMerklePathRoot.lean",
+        "tests/compact/merkle-structured-path.mjs",
+        "runtime/tests/merkle_path_types.rs"
       ],
       "equivalence": "unverified"
     },
