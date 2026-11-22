@@ -230,6 +230,9 @@ private def sameValue : (ty : Ty) → ty.Denote → ty.Denote → Bool
   | .jubjubPoint, a, b => a == b
   | .foreign _, a, b => a == b
 
+/-- Native equality reduces to equality of the underlying field values. -/
+theorem sameValue_native_eq (a b : Nat) : sameValue .native a b = (a == b) := rfl
+
 private def canonical (ctx : EvalContext) (ty : Ty) (v : ty.Denote) : Bool :=
   match ty with
   | .native => v < ctx.modulus
@@ -1651,6 +1654,32 @@ def runEffects (ctx : EvalContext) (effects : List Effect) (env : EvalEnv)
     (state : LedgerState) : Except String LedgerState := do
   let (_, next) ← runEffectsWithEnv ctx effects env state
   pure next
+
+/-- A top-level Counter increment succeeds when its stored UInt64 value is
+canonical and has room for one more count. This equation keeps the evaluator's
+private tree and overflow helpers behind the public ordered-effect interface. -/
+theorem runEffectWithEnv_counterAdjust_top_increment
+    (ctx : EvalContext) (env : EvalEnv) (state : LedgerState) (name : String)
+    (current : Nat)
+    (lookup : state.trees.lookup name =
+      some (.scalar (.uint (2 ^ 64 - 1) current)))
+    (canonicalCurrent : current < ctx.modulus)
+    (room : current < 2 ^ 64 - 1)
+    (canonicalOne : 1 < ctx.modulus) :
+    runEffectWithEnv ctx
+      (.counterAdjust name [] false (.uint (2 ^ 32 - 1) 1)) env state =
+    .ok (env, {state with trees := updateAssoc name (.scalar (.uint (2 ^ 64 - 1) (current + 1))) state.trees}) := by
+  have currentBound : current ≤ 2 ^ 64 - 1 := by omega
+  have currentNotTooLarge : ¬ (2 ^ 64 - 1) < current := by omega
+  have noOverflow : ¬ (2 ^ 64 - 1 - 1) < current := by omega
+  have uint64Policy : 2 ^ 64 - 1 ≤ ScalarPolicy.maxUint := by decide
+  have uint32Policy : 2 ^ 32 - 1 ≤ ScalarPolicy.maxUint := by decide
+  simp [runEffectWithEnv, evaluatePath, counterValueAt, canonical_eq,
+    Expr.eval, Value.as, adjustCounter, treeSet, treeLookup, lookup,
+    uint64Policy, uint32Policy,
+    currentNotTooLarge, noOverflow, Nat.not_le_of_gt canonicalCurrent,
+    canonicalOne]
+  rfl
 
 /-- Execute source effects with optional scalar read/write and require guards.
 Inactive reads bind their canonical zero without touching state or keys.
