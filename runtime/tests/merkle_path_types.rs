@@ -10,7 +10,11 @@ use noctium_runtime::{
 };
 use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 const EXPECTED_ROOT: &str =
     "23615363679718302500648733510038242834016166715802047945282536128750549339216";
@@ -109,21 +113,28 @@ fn reply(request: &Json, attempt_id: &str, value: Json) -> TypedResponse {
     .unwrap()
 }
 
+fn path_entry(sibling: &str, direction: Json) -> Json {
+    json!({
+        "kind":"struct", "id":"MerkleTreePathEntry", "fields":[
+            {"name":"sibling","value":{"kind":"struct","id":"MerkleTreeDigest","fields":[
+                {"name":"field","value":{"kind":"native","value":sibling}}
+            ]}},
+            {"name":"goes_left","value":{"kind":"bool", "value":direction}}
+        ]
+    })
+}
+
 fn path_payload(direction: Option<Json>, depth: usize) -> Json {
-    let siblings = [17u64, 29];
+    let siblings = ["17", "29"];
     let directions = [json!(true), json!(false)];
     let entries = (0..depth)
         .map(|index| {
-            json!({
-                "kind":"struct", "id":"MerkleTreePathEntry", "fields":[
-                    {"name":"sibling","value":{"kind":"struct","id":"MerkleTreeDigest","fields":[
-                        {"name":"field","value":{"kind":"native","value":siblings[index].to_string()}}
-                    ]}},
-                    {"name":"goes_left","value":{
-                        "kind":"bool", "value":direction.clone().unwrap_or_else(|| directions[index].clone())
-                    }}
-                ]
-            })
+            path_entry(
+                siblings[index],
+                direction
+                    .clone()
+                    .unwrap_or_else(|| directions[index].clone()),
+            )
         })
         .collect::<Vec<_>>();
     json!({
@@ -146,58 +157,84 @@ fn reject_provider_payload(control: &Json, value: Json) {
     );
 }
 
-#[test]
-#[ignore = "requires fresh MerklePathRootNoLeafHash outputs in NOCTIUM_MERKLE_PATH_TYPES_DIR"]
-fn nested_merkle_path_preserves_entry_order_and_checks_provider_shape() {
-    let directory = artifacts();
-    let stem = "MerklePathRootNoLeafHashSource.digest";
-    let control: Json = serde_json::from_slice(
-        &fs::read(directory.join(format!("{stem}.witness.control.json"))).unwrap(),
-    )
-    .unwrap();
-    let plan: Plan =
-        serde_json::from_slice(&fs::read(directory.join(format!("{stem}.impact.json"))).unwrap())
-            .unwrap();
-    let relation = IrSource::load(
-        fs::read(directory.join(format!("{stem}.zkir")))
-            .unwrap()
-            .as_slice(),
-    )
-    .unwrap();
-
+fn check_path_root(
+    directory: &Path,
+    stem: &str,
+    control: &Json,
+    payload: Json,
+) -> anyhow::Result<Json> {
+    let plan: Plan = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{stem}.impact.json")),
+    )?)?;
+    let relation = IrSource::load(fs::File::open(directory.join(format!("{stem}.zkir")))?)?;
     let attempt_id = "a".repeat(64);
-    let mut session = session(&control, &attempt_id);
-    let pending = session.advance().unwrap();
+    let mut session = session(control, &attempt_id);
+    let pending = session.advance()?;
     assert_eq!(pending["status"], "need_host");
-    session
-        .resume_typed(reply(
-            &pending["request"],
-            &attempt_id,
-            path_payload(None, 2),
-        ))
-        .unwrap();
-    assert_eq!(session.advance().unwrap()["status"], "completed");
-
-    let binding: Json = serde_json::from_str(control["binding"].as_str().unwrap()).unwrap();
-    let completion = session
-        .private_completion(&binding["nativeRelation"])
-        .unwrap();
-    let inputs = serde_json::from_value(completion["inputs"].clone()).unwrap();
-    let initial = create_state(&plan, &BTreeMap::new()).unwrap();
+    session.resume_typed(reply(&pending["request"], &attempt_id, payload))?;
+    assert_eq!(session.advance()?["status"], "completed");
+    let binding: Json = serde_json::from_str(control["binding"].as_str().unwrap())?;
+    let completion = session.private_completion(&binding["nativeRelation"])?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
     let execution = prepare(
         &plan,
         &inputs,
         &initial,
         &ledger::structure::INITIAL_PARAMETERS,
         coin_structure::contract::ContractAddress::default(),
-    )
-    .unwrap();
+    )?;
+    assert_eq!(check(&execution, &relation)?, execution.activity_schedule);
+    Ok(execution.returns_json()["root"].clone())
+}
+
+#[test]
+#[ignore = "requires fresh MerklePathRootNoLeafHash outputs in NOCTIUM_MERKLE_PATH_TYPES_DIR"]
+fn nested_merkle_path_preserves_entry_order_and_checks_provider_shape() -> anyhow::Result<()> {
+    let directory = artifacts();
+    let stem = "MerklePathRootNoLeafHashSource.digest";
+    let control: Json = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{stem}.witness.control.json")),
+    )?)?;
     assert_eq!(
-        check(&execution, &relation).unwrap(),
-        execution.activity_schedule
+        check_path_root(&directory, stem, &control, path_payload(None, 2))?,
+        EXPECTED_ROOT
     );
-    assert_eq!(execution.returns_json()["root"], EXPECTED_ROOT);
 
     reject_provider_payload(&control, path_payload(Some(json!(2)), 2));
     reject_provider_payload(&control, path_payload(None, 1));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh TypedMerklePathRoot outputs in NOCTIUM_TYPED_MERKLE_PATH_ROOT_DIR"]
+fn typed_merkle_path_hashes_the_canonical_leaf_and_matches_compact() -> anyhow::Result<()> {
+    let directory = PathBuf::from(env::var("NOCTIUM_TYPED_MERKLE_PATH_ROOT_DIR")?);
+    let stem = "TypedMerklePathRootSource.root";
+    let control: Json = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{stem}.witness.control.json")),
+    )?)?;
+    let payload = json!({"kind":"struct", "id":"TypedMerklePathRoot.Path", "fields":[
+        {"name":"leaf","value":{"kind":"struct", "id":"TypedMerklePathRoot.MixedMerkleLeaf", "fields":[
+            {"name":"tag", "value":{"kind":"bytes","values":[12,0,0]}},
+            {"name":"details", "value":{"kind":"tuple","items":[
+                {"kind":"bool","value":true},
+                {"kind":"uint","maximum":"65535","value":"258"},
+                {"kind":"enum","id":"TypedMerklePathRoot.LeafMarker","variant":"Only","fields":[]}
+            ]}}
+        ]}},
+        {"name":"path","value":{"kind":"vector","items":[
+            path_entry("0", json!(false)), path_entry("0", json!(false))
+        ]}}
+    ]});
+    let root = check_path_root(&directory, stem, &control, payload.clone())?;
+    assert_eq!(
+        root,
+        "31400609395615079034746563944767363629115546679921774204850545210160415781421"
+    );
+
+    let mut wrong_leaf = payload;
+    wrong_leaf["fields"][0]["value"]["id"] = json!("WrongLeaf");
+    reject_provider_payload(&control, wrong_leaf);
+    Ok(())
 }
