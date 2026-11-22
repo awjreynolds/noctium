@@ -88,6 +88,7 @@ private partial def callViewLeafTypes : Types.Layout → List Ty
   | .scalar .booleanField => [.bool]
   | .scalar (.boundedUnsignedField maximum) | .scalar (.enumTagField maximum) => [.uint maximum]
   | .scalar .byteField => [.uint 255]
+  | .curve type => List.replicate type.nativeCallFieldCount .native
   | .tuple items => items.flatMap callViewLeafTypes
   | .structure _ fields => fields.flatMap (callViewLeafTypes ∘ Prod.snd)
   | .vector length element => (List.replicate length (callViewLeafTypes element)).flatten

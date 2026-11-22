@@ -96,6 +96,8 @@ def compileType (environment : CompositeEnv) (type : CompositeType)
 inductive AggregateValue where
   | unit
   | scalar (type : Ty) (number : Nat)
+  | jubjubPoint (x y : Nat)
+  | foreignPoint (curve : Foreign.Curve) (point : Foreign.Point)
   | tuple (items : List AggregateValue)
   | structure (id : DeclId) (fields : List (String × AggregateValue))
   | enumeration (id variant : String) (fields : List (String × AggregateValue))
@@ -110,10 +112,42 @@ private def leafType : ScalarLeaf → Except String Ty
   | _ => throw "invalid standalone aggregate scalar layout"
 
 private def scalarValid (type : Ty) (number : Nat) : Except String Unit := do
-  if type.isJubjub then throw "Jubjub values require a qualified curve schema"
   if type.isBytes then throw "byte strings require an aggregate bytes value"
-  ScalarPolicy.validate type.scalarKind
-  unless ScalarPolicy.accepts type.scalarKind number do throw "aggregate scalar is outside its type"
+  match type with
+  | .jubjubScalar =>
+    unless number < Jubjub.scalarOrder do throw "aggregate Jubjub scalar is outside its type"
+  | .foreign (.base curve) =>
+    unless number < curve.baseModulus do throw "aggregate foreign base value is outside its type"
+  | .foreign (.scalar curve) =>
+    unless number < curve.scalarModulus do throw "aggregate foreign scalar is outside its type"
+  | .jubjubPoint => throw "Jubjub points require a point aggregate value"
+  | .foreign (.point _) => throw "foreign points require a point aggregate value"
+  | _ =>
+    ScalarPolicy.validate type.scalarKind
+    unless ScalarPolicy.accepts type.scalarKind number do throw "aggregate scalar is outside its type"
+
+private def flattenCurve (type : Ty) (value : AggregateValue) : Except String (List Nat) := do
+  let fields ← match type, value with
+    | .jubjubScalar, .scalar .jubjubScalar number => do
+      scalarValid .jubjubScalar number
+      pure [number]
+    | .jubjubPoint, .jubjubPoint x y => do
+      unless Jubjub.pointValid x y do throw "aggregate Jubjub point is not canonical or on curve"
+      pure [x, y]
+    | .foreign (.base curve), .scalar (.foreign (.base actual)) number => do
+      unless curve == actual do throw "aggregate foreign curve type mismatch"
+      scalarValid (.foreign (.base curve)) number
+      Foreign.encodeValue (.base curve) number
+    | .foreign (.scalar curve), .scalar (.foreign (.scalar actual)) number => do
+      unless curve == actual do throw "aggregate foreign curve type mismatch"
+      scalarValid (.foreign (.scalar curve)) number
+      Foreign.encodeValue (.scalar curve) number
+    | .foreign (.point curve), .foreignPoint actual point => do
+      unless curve == actual do throw "aggregate foreign curve type mismatch"
+      Foreign.encodeValue (.point curve) point
+    | _, _ => throw "aggregate curve value/layout mismatch"
+  unless fields.length == type.nativeCallFieldCount do throw "aggregate curve encoding width mismatch"
+  pure fields
 
 private def flattenAux : Nat → Layout → AggregateValue → Except String (List Nat)
   | 0, _, _ => throw "aggregate layout traversal exhausted checked fuel"
@@ -124,6 +158,7 @@ private def flattenAux : Nat → Layout → AggregateValue → Except String (Li
       unless type == (← leafType leaf) do throw "aggregate scalar type mismatch"
       scalarValid type number
       pure [number]
+    | .curve type, value => flattenCurve type value
     | .tuple layouts, .tuple values =>
       unless layouts.length == values.length do throw "aggregate tuple arity mismatch"
       let parts ← (layouts.zip values).mapM fun (layout, value) => flattenAux fuel layout value
@@ -167,6 +202,32 @@ private def unflattenAux : Nat → Layout → List Nat → Except String (Aggreg
       let type ← leafType leaf
       scalarValid type number
       pure (.scalar type number, rest)
+    | .curve type => do
+      let width := type.nativeCallFieldCount
+      let (fields, rest) := leaves.splitAt width
+      unless fields.length == width do throw "short aggregate curve input"
+      let value ← match type with
+        | .jubjubScalar => do
+          let [number] := fields | throw "Jubjub scalar encoding requires one field"
+          scalarValid .jubjubScalar number
+          pure (.scalar .jubjubScalar number)
+        | .jubjubPoint => do
+          let [x, y] := fields | throw "Jubjub point encoding requires two fields"
+          unless Jubjub.pointValid x y do throw "aggregate Jubjub point is not canonical or on curve"
+          pure (.jubjubPoint x y)
+        | .foreign (.base curve) => do
+          let number ← Foreign.decodeValue (.base curve) fields
+          scalarValid (.foreign (.base curve)) number
+          pure (.scalar (.foreign (.base curve)) number)
+        | .foreign (.scalar curve) => do
+          let number ← Foreign.decodeValue (.scalar curve) fields
+          scalarValid (.foreign (.scalar curve)) number
+          pure (.scalar (.foreign (.scalar curve)) number)
+        | .foreign (.point curve) => do
+          let point ← Foreign.decodeValue (.point curve) fields
+          pure (.foreignPoint curve point)
+        | _ => throw "invalid aggregate curve layout type"
+      pure (value, rest)
     | .tuple layouts =>
       let mut rest := leaves
       let mut values := []

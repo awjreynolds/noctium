@@ -211,11 +211,10 @@ private structure EdwardsPoint where
 
 private def edwardsIdentity : EdwardsPoint := ⟨0, 1, 1, 0⟩
 
-private def edwardsAdd (p₁ p₂ : EdwardsPoint) : EdwardsPoint := Id.run do
-  let p := curve25519P
+private def edwardsAdd (p coefficient : Nat) (p₁ p₂ : EdwardsPoint) : EdwardsPoint := Id.run do
   let a := (((p₁.y + p - p₁.x) % p) * ((p₂.y + p - p₂.x) % p)) % p
   let b := (((p₁.y + p₁.x) % p) * ((p₂.y + p₂.x) % p)) % p
-  let c := (((2 * curve25519D % p) * p₁.t % p) * p₂.t) % p
+  let c := (((2 * coefficient % p) * p₁.t % p) * p₂.t) % p
   let d := ((2 * p₁.z % p) * p₂.z) % p
   let e := (b + p - a) % p
   let f := (d + p - c) % p
@@ -232,31 +231,33 @@ private def secpPointValid (curve : Curve) (x y : Nat) : Bool :=
       0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b) % p
   | .curve25519 => false
 
-private def curve25519PrimeSubgroup (x y : Nat) : Bool := Id.run do
-  let point : EdwardsPoint := ⟨x, y, 1, x * y % curve25519P⟩
+/-- Check a canonical affine point on a twisted Edwards curve with a = -1.
+Used with the pinned Curve25519 and Jubjub parameters. -/
+def edwardsPrimePoint (p coefficient order x y : Nat) : Bool := Id.run do
+  if x >= p || y >= p then return false
+  let xSq := x * x % p
+  let ySq := y * y % p
+  let lhs := (ySq + p - xSq) % p
+  let rhs := (1 + coefficient * xSq % p * ySq) % p
+  if lhs != rhs then return false
+  let point : EdwardsPoint := ⟨x, y, 1, x * y % p⟩
   let mut multiple := point
   let mut result := edwardsIdentity
-  let mut scalar := curve25519L
-  for _ in [0:253] do
-    if scalar % 2 == 1 then result := edwardsAdd result multiple
-    multiple := edwardsAdd multiple multiple
+  let mut scalar := order
+  for _ in [0:order.log2 + 1] do
+    if scalar % 2 == 1 then result := edwardsAdd p coefficient result multiple
+    multiple := edwardsAdd p coefficient multiple multiple
     scalar := scalar / 2
   return result.z != 0 && result.x == 0 && result.y == result.z
 
 /-- Canonical curve membership for the supported Secp and Edwards curves. -/
 def pointValid (curve : Curve) : Point → Bool
   | .identity => true
-  | .affine x y => Id.run do
-    let p := curve.baseModulus
-    if x >= p || y >= p then return false
+  | .affine x y =>
     if curve == .curve25519 then
-      if x == 0 && y == 1 then return false
-      let xSq := x * x % p
-      let ySq := y * y % p
-      let lhs := (ySq + p - xSq) % p
-      let rhs := (1 + curve25519D * xSq % p * ySq) % p
-      return lhs == rhs && curve25519PrimeSubgroup x y
-    return secpPointValid curve x y
+      !(x == 0 && y == 1) && edwardsPrimePoint curve25519P curve25519D curve25519L x y
+    else
+      x < curve.baseModulus && y < curve.baseModulus && secpPointValid curve x y
 
 def Kind.canonical : (kind : Kind) → kind.Denote → Bool
   | .base curve, value => value < curve.baseModulus
@@ -276,6 +277,24 @@ def encodePoint (curve : Curve) (point : Point) : Except String (List Nat) := do
 
 private def littleEndianBytes (length value : Nat) : List Nat :=
   (List.range length).map fun index => value / (256 ^ index) % 256
+
+/-- Scalar transport bytes used by the typed host ABI. -/
+def canonicalBytes : (kind : Kind) → kind.Denote → Except String (List Nat)
+  | .base curve, value => do
+    unless value < curve.baseModulus do throw "foreign field value is not canonical"
+    pure (littleEndianBytes 32 value)
+  | .scalar curve, value => do
+    unless value < curve.scalarModulus do throw "foreign field value is not canonical"
+    pure (littleEndianBytes 32 value)
+  | .point curve, value => do
+    unless pointValid curve value do throw "foreign point is not canonical or on curve"
+    match value with
+    | .identity =>
+      if curve == .curve25519 then pure (littleEndianBytes 32 1)
+      else pure (List.replicate 33 0)
+    | .affine x y =>
+      if curve == .curve25519 then pure (littleEndianBytes 32 (y + x % 2 * 2 ^ 255))
+      else pure ((2 + y % 2) :: (littleEndianBytes 32 x).reverse)
 
 /-- Compact's `keccak256<Secp256k1Point>` hashes the canonical FAB encoding:
 two 24-byte/8-byte coordinate pairs and a 32-byte identity field. -/
