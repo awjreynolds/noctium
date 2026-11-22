@@ -1,0 +1,36 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit inspect(
+  bytes: Bytes<3>,
+  jubjub: JubjubPoint,
+  secp256k1: Secp256k1Point
+): [
+  Maybe<Bytes<3>>,
+  Maybe<Bytes<3>>,
+  Maybe<JubjubPoint>,
+  Maybe<JubjubPoint>,
+  Maybe<Secp256k1Point>,
+  Maybe<Secp256k1Point>,
+  Bytes<3>,
+  JubjubPoint,
+  Secp256k1Point,
+  Maybe<Bytes<0>>,
+  Maybe<Bytes<0>>,
+  Bytes<0>
+] {
+  return [
+    some<Bytes<3>>(bytes),
+    none<Bytes<3>>(),
+    some<JubjubPoint>(jubjub),
+    none<JubjubPoint>(),
+    some<Secp256k1Point>(secp256k1),
+    none<Secp256k1Point>(),
+    default<Bytes<3>>,
+    default<JubjubPoint>,
+    default<Secp256k1Point>,
+    some<Bytes<0>>(default<Bytes<0>>),
+    none<Bytes<0>>(),
+    default<Bytes<0>>
+  ];
+}
