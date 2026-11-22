@@ -308,6 +308,14 @@ private def splitBytes32Fields : Term → Except String (Term × Term)
 private def alignedBytes32Fields (value : Normalized) : Except String (Term × Term) := do
   splitBytes32Fields value.term
 
+private def alignedBytes32Value (value : Expr (.bytes 32)) (normalized : Normalized) : Except String (Term × Term) := do
+  match value with
+  | .bytes32Literal values =>
+    if values.length == 32 && values.all (· ≤ 255) then
+      pure (.constant values[31]!, .constant (littleEndian (values.take 31)))
+    else alignedBytes32Fields normalized
+  | _ => alignedBytes32Fields normalized
+
 private def bytes32FromChunksTerm (low31 highByte : Term) : Term :=
   .unary "bytes32_from_chunks" (.hash [low31, highByte])
 
@@ -633,7 +641,8 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     pure {term, bounds := normalized.bounds, assertions := normalized.assertions}
   | .persistentHashVector32 values => do
     let normalized ← values.mapM (normalize env)
-    let fields ← normalized.mapM alignedBytes32Fields
+    let fields ← values.zip normalized |>.mapM fun (value, item) =>
+      alignedBytes32Value value item
     let term := persistentHashVector32Term fields
     let bounds := (normalized.map (fun item => item.bounds)).flatten
     let assertions := (normalized.map (fun item => item.assertions)).flatten

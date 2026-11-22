@@ -26,6 +26,32 @@ private def nativeBytePackingSymbolicCircuit : Noctium.Circuit := {
   outputs := [{name := "digest", ty := .bytes 32, value := .disclose {} (.persistentHash32 (.ref "payload"))}]
 }
 
+private def nativeBytePackingLiteralVectorCircuit : Noctium.Circuit := {
+  name := "native_byte_packing_literal_vector"
+  outputs := [{name := "digest", ty := .bytes 32, value := .persistentHashVector32 [
+    .bytes32Literal nativeBytePackingLiteralValues,
+    .bytes32Literal (List.replicate 32 7)]}]
+}
+
+private def nativeBytePackingMixedVectorCircuit : Noctium.Circuit := {
+  name := "native_byte_packing_mixed_vector"
+  inputs := [{name := "payload", ty := .bytes 32, visibility := .«private»}]
+  outputs := [{name := "digest", ty := .bytes 32, value := .disclose {} (.persistentHashVector32 [
+    .bytes32Literal nativeBytePackingLiteralValues,
+    .ref "payload"])}]
+}
+
+noctium_circuit hashVectorInputs where
+  private payload : Bytes 32
+end
+
+noctium_contract HashVectorFold where
+  entry measureHashVector uses hashVectorInputs where
+    return digest : Bytes 32 := disclose(persistentHashVector32([
+      bytes32("noctium:packing-test"), payload]))
+  end
+end
+
 private def nativeBytePackingInstructions (relation : Lean.Json) : List Lean.Json :=
   ((relation.getObjValD "instructions").getArr?).toOption.getD #[] |>.toList
 
@@ -42,6 +68,16 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
   | .error _ => _root_.Bool.false
 
 #guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingSymbolicCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "add" == 30 && nativeBytePackingCount relation "mul" == 30
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingLiteralVectorCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "add" == 0 && nativeBytePackingCount relation "mul" == 0
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingMixedVectorCircuit with
   | .ok relation =>
       nativeBytePackingCount relation "add" == 30 && nativeBytePackingCount relation "mul" == 30
   | .error _ => _root_.Bool.false

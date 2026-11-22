@@ -2,7 +2,7 @@
 
 use noctium_runtime::{Expr, Plan, check, create_state, prepare, zkir::IrSource};
 use serde_json::{Value as Json, json};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs::File, path::PathBuf};
 
 const PLAN: &str =
     include_str!("fixtures/native-byte-packing/321/NativeBytePacking.pack.impact.json");
@@ -58,4 +58,46 @@ fn typed_byte_packing_preserves_chunk_order_and_committed_results() {
     };
     let execution = prepare(&forged, &inputs, &initial, params, address).unwrap();
     assert!(check(&execution, &circuit).is_err());
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_HASH_VECTOR_FOLD_DIR"]
+fn mixed_hash_vector_matches_reference_and_rejects_changed_digest() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_HASH_VECTOR_FOLD_DIR").expect("NOCTIUM_HASH_VECTOR_FOLD_DIR"),
+    );
+    let mut plan: Plan = serde_json::from_reader(File::open(
+        directory.join("HashVectorFold.measureHashVector.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(File::open(
+        directory.join("HashVectorFold.measureHashVector.zkir"),
+    )?)?;
+    let state = create_state(&plan, &BTreeMap::new())?;
+    let payload: Vec<u8> = (0..32).map(|index| (index * 37 + 19) as u8).collect();
+    let inputs = BTreeMap::from([("payload".into(), json!({"kind":"bytes","values":payload}))]);
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let execution = prepare(&plan, &inputs, &state, params, address)?;
+    check(&execution, &circuit)?;
+
+    // Compact runtime 0.21.0 persistentHash over Vector<2, Bytes<32>>.
+    let mut digest =
+        hex::decode("eb0509340ad024a26240beabba4fec0cb19825494f6fbeea40e7e4ea553a9cd0")?;
+    assert_eq!(
+        execution.returns_json()["digest"],
+        json!({"kind":"bytes","values":digest})
+    );
+    digest[0] ^= 1;
+    let returned = plan
+        .returns
+        .iter_mut()
+        .find(|item| item.name == "digest")
+        .unwrap();
+    returned.expression = Expr::BytesLiteral {
+        length: 32,
+        values: digest,
+    };
+    let changed = prepare(&plan, &inputs, &state, params, address)?;
+    assert!(check(&changed, &circuit).is_err());
+    Ok(())
 }
