@@ -43,6 +43,16 @@ private def vectorWire : Helpers.Wire.Codec := {
   frameBytes := 2
 }
 
+private def wideVectorWire : Helpers.Wire.Codec := {
+  payload := .vector 3 (.scalar (.uint 65535))
+  frameBytes := 6
+}
+
+private def emptyVectorWire : Helpers.Wire.Codec := {
+  payload := .vector 0 (.scalar (.uint 255))
+  frameBytes := 0
+}
+
 noctium_witness observeActive(marker : Native) : Bool
 noctium_witness observeCount(marker : Native) : UInt 8
 noctium_witness observeReading(marker : Native) : Native
@@ -139,6 +149,32 @@ end
 
 #guard (Noctium.Witness.compile sliceSequences.__program
   "noctium.witness-circuit.ReadableRecordConstruction.sliceSequences.v1").isOk
+
+noctium_witness_circuit constructVectors using vectorWire, wideVectorWire, emptyVectorWire where
+  public seed : Native
+  let values := witness loadVector(add(seed, 2))
+  let inferred := vector(uint(5), ..values)
+  let widened := vector(Payload wideVectorWire, [uint(5), ..values])
+  let empty := vector(Payload emptyVectorWire, [..witness loadUnit(add(seed, 4))])
+  output result := disclose(tuple(inferred, widened, empty))
+end
+
+#guard (Noctium.Witness.compile constructVectors.__program
+  "noctium.witness-circuit.ReadableRecordConstruction.constructVectors.v1").isOk
+
+/- error: vector element count does not match its declared length -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsVectorLength using wideVectorWire where
+  public seed : Native
+  output result := disclose(vector(Payload wideVectorWire, [uint(5)]))
+end
+
+/- error: vector element has an incompatible declared type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsVectorElementType using wideVectorWire where
+  public seed : Native
+  output result := disclose(vector(Payload wideVectorWire, [true, uint(5), uint(6)]))
+end
 
 /- error: slice requires start ≤ stop ≤ sequence length -/
 #guard_msgs (substring := true) in
@@ -277,6 +313,9 @@ noctium_contract ReadableRecordConstruction where
     return result : Bytes 6 := revealed
   end
   entry sliceSequences uses ReadableRecordConstruction.sliceSequences where
+    return result
+  end
+  entry constructVectors uses ReadableRecordConstruction.constructVectors where
     return result
   end
 end

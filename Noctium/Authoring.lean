@@ -153,6 +153,8 @@ scoped syntax nlexpr : noctium_tuple_item
 scoped syntax ".." nlexpr : noctium_tuple_item
 scoped syntax "tuple(" noctium_tuple_item,* ")" : nlexpr
 scoped syntax (name := readablePackBytes) "packBytes(" noctium_tuple_item,* ")" : nlexpr
+scoped syntax (name := readableVector) "vector(" noctium_tuple_item,* ")" : nlexpr
+scoped syntax "vector(" "Payload" ident "," "[" noctium_tuple_item,* "]" ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
@@ -544,11 +546,18 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
       | (some name, value) => s!"{name.getId} := {renderExpr value}"
       | (none, value) => ".." ++ renderExpr value
     "record(Payload " ++ codec.getId.toString ++ ", {" ++ String.intercalate ", " rendered ++ "})"
-  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*))
+  | `(nlexpr| vector($items,*)) | `(nlexpr| vector(Payload $_:ident, [$items,*])) =>
     let rendered := (items.getElems.toList.filterMap tupleItem).map fun (spread, value) =>
       (if spread then ".." else "") ++ renderExpr value
-    let name := if stx.raw.getKind == ``readablePackBytes then "packBytes" else "tuple"
-    name ++ "(" ++ String.intercalate ", " rendered ++ ")"
+    let arguments := String.intercalate ", " rendered
+    match stx with
+    | `(nlexpr| vector(Payload $codec:ident, [$_items,*])) =>
+      s!"vector(Payload {codec.getId}, [{arguments}])"
+    | _ =>
+      let name := if stx.raw.getKind == ``readablePackBytes then "packBytes"
+        else if stx.raw.getKind == ``readableVector then "vector" else "tuple"
+      name ++ "(" ++ arguments ++ ")"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
@@ -668,7 +677,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| disclose($value)) => renderExpr value :: disclosedValues value
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (disclosedValues ∘ Prod.snd)
-  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*))
+  | `(nlexpr| vector($items,*)) | `(nlexpr| vector(Payload $_:ident, [$items,*])) =>
     (items.getElems.toList.filterMap tupleItem).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
@@ -745,7 +755,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   match stx with
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (inlineAssertions ∘ Prod.snd)
-  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*))
+  | `(nlexpr| vector($items,*)) | `(nlexpr| vector(Payload $_:ident, [$items,*])) =>
     (items.getElems.toList.filterMap tupleItem).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
@@ -1094,12 +1105,35 @@ private def checkedSequenceTerm (site : Syntax) (payload : Types.CompositeType)
     | .tuple layouts => pure layouts
     | .vector length element => pure (List.replicate length element)
     | _ => throwErrorAt site "checked sequence layout mismatch"
+  unless fields.length == layouts.length do
+    throwErrorAt site "checked sequence length mismatch"
   let span ← liftM (spanValue site)
   let leaves ← (fields.zip layouts).flatMapM fun (value, layout) => do
     match Helpers.Iteration.flattenResult span value.type layout value.term with
     | .ok leaves => pure leaves
     | .error diagnostic => throwErrorAt site diagnostic.message
   pure (.composite payload leaves)
+
+private def vectorPayload (site : Syntax) (codecName : Option (TSyntax `ident))
+    (items : List Types.CompositeType) : ExprM Types.CompositeType := do
+  match codecName with
+  | some name =>
+    let (codec, _) ← selectedCodec name
+    let .vector length element := codec.payload
+      | throwErrorAt name "vector requires a fixed vector Payload codec"
+    unless items.length == length do
+      throwErrorAt site "vector element count does not match its declared length"
+    unless items.all (·.isSubtype element) do
+      throwErrorAt site "vector element has an incompatible declared type"
+    pure codec.payload
+  | none =>
+    let first :: rest := items
+      | throwErrorAt site "empty vector construction requires a fixed vector Payload codec"
+    let element ← rest.foldlM (fun common next => do
+      let some joined := common.leastUpperBound? next
+        | throwErrorAt site "vector elements have no common type"
+      pure joined) first
+    pure (.vector items.length element)
 
 private def byteSegments (site : Syntax) (spread : _root_.Bool) (value : Lowered) :
     ExprM (List (Nat × Helpers.Term)) := do
@@ -1321,7 +1355,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves)
       (base.toList.map Prod.fst ++ values)
     pure {result with before := spreadBefore ++ before}
-  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) => do
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*))
+  | `(nlexpr| vector($items,*)) | `(nlexpr| vector(Payload $_:ident, [$items,*])) => do
     let pack := stx.raw.getKind == ``readablePackBytes
     let arguments ← items.getElems.toList.mapM fun item => do
       let some (spread, source) := tupleItem item
@@ -1359,7 +1394,13 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         throwErrorAt source "tuple construction exceeds the layout node limit"
       parts := fields :: parts
     let fields := parts.reverse.flatten
-    let payload := Types.CompositeType.tuple (fields.map Lowered.layoutType)
+    let layouts := fields.map Lowered.layoutType
+    let payload ← match stx with
+      | `(nlexpr| vector(Payload $codec:ident, [$_items,*])) =>
+        vectorPayload stx (some codec) layouts
+      | _ =>
+        if stx.raw.getKind == ``readableVector then vectorPayload stx none layouts
+        else pure (.tuple layouts)
     let term ← checkedSequenceTerm stx payload fields
     pure {mergeLowered (.composite payload) term values with before}
   | `(nlexpr| uint($n:num)) => do

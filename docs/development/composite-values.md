@@ -123,6 +123,23 @@ The pinned Compact fixture and native check cover the nested result, byte
 values, and callback order, including the Unit callback.
 [Source fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
 
+## Construct a fixed vector
+
+```lean
+let inferred := vector(uint(5), ..values)
+let widened := vector(Payload wideVectorWire, [uint(5), ..values])
+```
+
+The first form infers the length and common element type. The second uses a
+fixed vector codec from the circuit's `using` clause. It checks the declared
+length and permits compatible widening. Use a codec to construct an empty
+vector, since an empty input supplies no element type. A spread's source still
+runs once when it contributes zero elements.
+
+The paired case compares inferred UInt8 elements, a declared UInt16 vector,
+and an empty vector against pinned Compact and the native checker.
+[Source fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 ## Slice a checked sequence
 
 `slice(value, start, stop)` takes literal bounds with an exclusive stop. The
