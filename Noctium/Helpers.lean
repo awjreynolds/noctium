@@ -232,8 +232,12 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
   | .keccak256Secp256k1Point =>
     unless argumentCount == 1 do throw "keccak256 Secp256k1Point requires one point argument"
     pure ([.foreign (.point .secp256k1)], .bytes 32)
-  | .fabDigest algorithm _ parameters =>
-    unless 0 < argumentCount && argumentCount ≤ 32 && argumentCount == parameters.length do
+  | .fabDigest algorithm type parameters =>
+    let emptyRootVector := match type with
+      | .vector 0 _ => true
+      | _ => false
+    unless (argumentCount > 0 || emptyRootVector) &&
+        argumentCount ≤ 32 && argumentCount == parameters.length do
       throw "FAB digest operand count differs from the checked layout"
     pure (parameters, algorithm.resultType)
   | .reverseBytes32 =>
