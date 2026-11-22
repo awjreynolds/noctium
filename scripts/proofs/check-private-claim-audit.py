@@ -15,8 +15,7 @@ MODULE = "proofs.PrivateClaimVerification"
 OPERATION = "PrivateClaim.claim"
 TARGET = ROOT / "profiles/midnight-ledger-9-zkir-3.2.1-target.json"
 MODEL_PIN = ROOT / "proofs/PrivateClaimVerification.model.sha256"
-MODEL_ROOTS = ["Noctium.Verification.FunctionalObligation", "Noctium.Verification.PrivacyObligation",
-               f"{NS}.policy"]
+OBLIGATION_ROOTS = ["Noctium.Verification.FunctionalObligation", "Noctium.Verification.PrivacyObligation"]
 AXIOMS = ["propext", "Classical.choice", "Quot.sound"]
 OPERATION_ROOTS = ["Noctium.Contract.name", "Noctium.Entrypoint.name"]
 SOURCE_COVERAGE_PREFIX = "NOCTIUM_SOURCE_PROOF_COVERAGE "
@@ -120,6 +119,36 @@ def validate_source_coverage(operations: list[tuple[str, int, str]], reports: li
     return [f"{contract}.{entrypoint}" for contract, _, entrypoint in operations]
 
 
+def validate_replayed_source_identity(selected_operations: list[str], reports: list[dict],
+                                      replay: dict) -> None:
+    operation = replay.get("operation")
+    if not isinstance(operation, str) or not operation:
+        raise ValueError(f"source_proof_identity_missing: {OPERATION}.operation")
+    if selected_operations != [operation]:
+        raise ValueError(f"source_proof_identity_unbound_operation: {operation}: {selected_operations}")
+    row = next((row for report in reports for row in report["entrypoints"]
+                if f"{report['contract']}.{row['entrypoint']}" == operation), None)
+    if row is None:
+        raise ValueError(f"source_proof_identity_missing: {operation}.coverage")
+    policy = replay.get("policy")
+    if not isinstance(policy, str) or not policy:
+        raise ValueError(f"source_proof_identity_missing: {operation}.policy")
+    roles = {role["role"]: role for role in row["roles"]}
+    for role, key in (("functional", "functionalProof"), ("privacy", "privacyProof")):
+        proof = replay.get(key)
+        if not isinstance(proof, str) or not proof:
+            raise ValueError(f"source_proof_identity_missing: {operation}.{role}.{key}")
+        registration = roles[role]["registrations"][0]
+        if not isinstance(registration, dict):
+            raise ValueError(f"source_proof_identity_malformed: {operation}.{role}.registration")
+        for field, expected in (("policy", policy), ("proof", proof)):
+            identity = registration.get(field)
+            if not isinstance(identity, str) or not identity:
+                raise ValueError(f"source_proof_identity_missing: {operation}.{role}.{field}")
+            if identity != expected:
+                raise ValueError(f"source_proof_identity_mismatch: {operation}.{role}.{field}")
+
+
 def run(args: list[str], env: dict[str, str] | None = None, stdin: str | None = None) -> str:
     result = subprocess.run(args, cwd=ROOT, env=env, input=stdin, capture_output=True, text=True, timeout=240)
     if result.returncode:
@@ -131,6 +160,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--report", action="store_true", help="print the checked source report as JSON")
+    parser.add_argument("--operation", choices=[OPERATION, "BoundedScalars.apply"])
     parser.add_argument("--proof-export", type=Path, help="candidate data export for --report")
     parser.add_argument("--trusted-model-export", type=Path)
     parser.add_argument("--trusted-model-sha256")
@@ -141,6 +171,17 @@ def main() -> int:
         parser.error("--report uses the checked-in fixture model pin")
     if args.proof_export and not args.report:
         parser.error("--proof-export requires --report")
+    if args.operation is not None and not args.report:
+        parser.error("--operation requires --report")
+    operation = args.operation or OPERATION
+    namespace, module = NS, MODULE
+    example_source, support_source = "examples/PrivateClaim.lean", "proofs/PrivateClaim.lean"
+    verification_source, model_pin = "proofs/PrivateClaimVerification.lean", MODEL_PIN
+    if operation == "BoundedScalars.apply":
+        namespace, module = "Noctium.BoundedScalarsVerification", "proofs.BoundedScalarsVerification"
+        example_source, support_source = "examples/BoundedScalars.lean", None
+        verification_source, model_pin = "proofs/BoundedScalarsVerification.lean", ROOT / "proofs/BoundedScalarsVerification.model.sha256"
+    model_roots = [*OBLIGATION_ROOTS, f"{namespace}.policy"]
     run(["lake", "build", "Noctium", "Noctium.Frontend", "Noctium.Verification.ExportAudit"])
     with tempfile.TemporaryDirectory(prefix="noctium-private-claim-audit-") as directory:
         scratch = Path(directory)
@@ -151,40 +192,47 @@ def main() -> int:
         for subdir in ["examples", "proofs"]:
             (imports / subdir).mkdir(parents=True)
         environment = os.environ.copy()
-        environment["LEAN_PATH"] = str(imports)
+        environment.pop("LEAN_PATH", None)
+
+        def run_with_imports(command: list[str], stdin: str | None = None) -> str:
+            launcher = ('LEAN_PATH="$1${LEAN_PATH:+:$LEAN_PATH}"; export LEAN_PATH; '
+                        'shift; exec "$@"')
+            return run(["lake", "env", "sh", "-c", launcher, "sh", str(imports), *command], environment, stdin)
 
         def build(path: str, source: str | None = None) -> str:
-            command = ["lake", "env", "lean", "-D", "Elab.async=false", "-o", str(imports / Path(path).with_suffix(".olean"))]
+            command = ["lean", "-D", "Elab.async=false", "-o", str(imports / Path(path).with_suffix(".olean"))]
             if source is not None and not (ROOT / path).exists():
                 candidate = scratch / "source" / path
                 candidate.parent.mkdir(parents=True, exist_ok=True)
                 candidate.write_text(source)
                 command += ["--root", str(scratch / "source"), str(candidate)]
-                return run(command, environment)
+                return run_with_imports(command)
             command += (["--stdin", path] if source is not None else [path])
-            return run(command, environment, source)
+            return run_with_imports(command, source)
 
         def export(filename: str, roots: list[str], module: str = MODULE) -> Path:
-            contents = run(["lake", "env", "leanexport", module, "--", *roots], environment)
+            contents = run_with_imports(["leanexport", module, "--", *roots])
             destination = output / filename
             destination.write_text(contents)
             return destination
 
-        build("examples/PrivateClaim.lean")
-        build("proofs/PrivateClaim.lean")
-        report = build("proofs/PrivateClaimVerification.lean")
+        build(example_source)
+        if support_source:
+            build(support_source)
+        report = build(verification_source)
         (output / "direct-axioms.txt").write_text(report)
-        assert report.count("depends on axioms: [propext, Classical.choice, Quot.sound]") == 2, report
+        if operation == OPERATION:
+            assert report.count("depends on axioms: [propext, Classical.choice, Quot.sound]") == 2, report
         selected_operations = []
         source_coverage = []
         if args.report:
             compiler_output = scratch / "compiler-artifacts"
-            run(["lake", "exe", "noctium", "compile", "examples/PrivateClaim.lean",
+            run(["lake", "exe", "noctium", "compile", example_source,
                  "--target", str(TARGET), "--emit", "ledger", "--output", str(compiler_output)])
             metadata = json.loads((compiler_output / "noctium.json").read_text())
             operations = expected_source_operations(metadata)
             contract_names = list(dict.fromkeys(contract for contract, _, _ in operations))
-            coverage_source = ("import proofs.PrivateClaimVerification\n"
+            coverage_source = (f"import {module}\n"
                                "import Noctium.Verification\n"
                                "open Noctium Noctium.Verification\n" +
                                "".join(f"#noctium_source_proof_coverage {contract}\n"
@@ -196,7 +244,7 @@ def main() -> int:
                                    if SOURCE_COVERAGE_PREFIX in line]
                 selected_operations = validate_source_coverage(operations, source_coverage)
             except ValueError as error:
-                parser.exit(1, f"{OPERATION}: {error}\n")
+                parser.exit(1, f"{operation}: {error}\n")
         if not args.report:
             negative = '''import proofs.PrivateClaimVerification
 open Noctium Noctium.Verification Noctium.PrivateClaimVerification
@@ -206,29 +254,30 @@ def wrongPolicy : AuditPolicy :=
 end PrivateClaimAuditNegative
 '''
             build("proofs/PrivateClaimAuditNegative.lean", negative)
-            roots = [*MODEL_ROOTS, "PrivateClaimAuditNegative.wrongPolicy", *AXIOMS]
+            roots = [*model_roots, "PrivateClaimAuditNegative.wrongPolicy", *AXIOMS]
             baseline = export("baseline-model.ndjson", roots, "proofs.PrivateClaimAuditNegative")
         else:
-            baseline = export("baseline-model.ndjson", [*MODEL_ROOTS, *OPERATION_ROOTS, *AXIOMS])
+            baseline = export("baseline-model.ndjson", [*model_roots, *OPERATION_ROOTS, *AXIOMS], module)
         proof = (args.proof_export.resolve() if args.proof_export
-                 else export("proofs.ndjson", [f"{NS}.functional", f"{NS}.privacy"]))
+                 else export("proofs.ndjson", [f"{namespace}.functional", f"{namespace}.privacy"], module))
         # Retain reviewed input bytes before the external driver reads them. A local
         # regression baseline is not an independent review of the business specification.
         model = output / "trusted-model.ndjson"
         model.write_bytes(args.trusted_model_export.read_bytes() if args.trusted_model_export else baseline.read_bytes())
         pin = args.trusted_model_sha256
         if pin is None:
-            pin = MODEL_PIN.read_text().strip() if args.report else hashlib.sha256(model.read_bytes()).hexdigest()
+            pin = model_pin.read_text().strip() if args.report else hashlib.sha256(model.read_bytes()).hexdigest()
         (output / "trusted-model.sha256").write_text(pin + "\n")
 
-        def audit(candidate: Path, expected_error: str | None = None, policy: str = f"{NS}.policy") -> dict:
+        def audit(candidate: Path, expected_error: str | None = None, policy: str | None = None) -> dict:
             command = ["python3", "scripts/proofs/audit-source-proof.py", "--model-export", str(model),
                        "--proof-export", str(candidate), "--trusted-model-sha256", pin,
-                       "--policy", policy, "--functional-proof", f"{NS}.functional", "--privacy-proof", f"{NS}.privacy"]
+                       "--policy", policy or f"{namespace}.policy", "--functional-proof", f"{namespace}.functional",
+                       "--privacy-proof", f"{namespace}.privacy"]
             checked = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=240)
             result = json.loads(checked.stdout)
             if args.report and checked.returncode != 0:
-                parser.exit(1, f"{OPERATION}: {result['error']}\n")
+                parser.exit(1, f"{operation}: {result['error']}\n")
             if expected_error:
                 assert checked.returncode != 0 and expected_error in result["error"], result
             else:
@@ -239,13 +288,17 @@ end PrivateClaimAuditNegative
             return result
 
         accepted = audit(proof)
-        (output / "audit.json").write_text(json.dumps(accepted, indent=2, sort_keys=True) + "\n")
         if args.report:
-            if (accepted.get("operation") != OPERATION
+            if (accepted.get("operation") != operation
                     or accepted.get("operation") not in selected_operations
                     or accepted.get("sourceFunctionalChecked") is not True
                     or accepted.get("sourcePrivacyChecked") is not True):
-                parser.exit(1, f"{OPERATION}: unexpected checked subject or proof roles\n")
+                parser.exit(1, f"{operation}: unexpected checked subject or proof roles\n")
+            try:
+                validate_replayed_source_identity(selected_operations, source_coverage, accepted)
+            except ValueError as error:
+                parser.exit(1, f"{operation}: {error}\n")
+            (output / "audit.json").write_text(json.dumps(accepted, indent=2, sort_keys=True) + "\n")
             accepted["selectedOperations"] = selected_operations
             accepted["sourceProofCoverage"] = source_coverage
             specification = accepted["specification"]
@@ -259,6 +312,7 @@ end PrivateClaimAuditNegative
             })
             print(json.dumps(accepted, indent=2, sort_keys=True))
             return 0
+        (output / "audit.json").write_text(json.dumps(accepted, indent=2, sort_keys=True) + "\n")
         run(["lake", "env", "leanchecker", "--from-export", str(proof)])
         if not args.trusted_model_export:
             wrong_policy = audit(proof, "wrong_obligation", "PrivateClaimAuditNegative.wrongPolicy")

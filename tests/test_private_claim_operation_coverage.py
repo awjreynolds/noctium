@@ -36,6 +36,51 @@ class PrivateClaimOperationCoverageTests(unittest.TestCase):
         self.assertEqual(AUDIT.validate_source_coverage(self.operations, self.coverage),
                          ["PrivateClaim.claim", "PrivateClaim.verify"])
 
+    def test_binds_single_selected_operation_to_replayed_identities(self):
+        operations = ["PrivateClaim.claim"]
+        coverage = [report([row("claim", 0)])]
+        replay = {"operation": "PrivateClaim.claim", "policy": "Fixture.policy",
+                  "functionalProof": "Fixture.functional", "privacyProof": "Fixture.privacy"}
+        self.assertEqual(AUDIT.validate_source_coverage([self.operations[0]], coverage),
+                         ["PrivateClaim.claim"])
+        self.assertIsNone(AUDIT.validate_replayed_source_identity(operations, coverage, replay))
+
+    def test_rejects_unbound_selected_operations(self):
+        replay = {"operation": "PrivateClaim.claim", "policy": "Fixture.policy",
+                  "functionalProof": "Fixture.functional", "privacyProof": "Fixture.privacy"}
+        with self.assertRaisesRegex(ValueError, r"unbound_operation: PrivateClaim.claim"):
+            AUDIT.validate_replayed_source_identity(
+                ["PrivateClaim.claim", "PrivateClaim.verify"], self.coverage, replay)
+
+    def test_rejects_role_proof_mismatch_including_swapped_proofs(self):
+        operations = ["PrivateClaim.claim"]
+        coverage = [report([row("claim", 0)])]
+        replay = {"operation": "PrivateClaim.claim", "policy": "Fixture.policy",
+                  "functionalProof": "Fixture.functional", "privacyProof": "Fixture.privacy"}
+        coverage[0]["entrypoints"][0]["roles"][0]["registrations"][0]["proof"] = "Fixture.privacy"
+        coverage[0]["entrypoints"][0]["roles"][1]["registrations"][0]["proof"] = "Fixture.functional"
+        with self.assertRaisesRegex(ValueError, r"mismatch: PrivateClaim.claim.functional.proof"):
+            AUDIT.validate_replayed_source_identity(operations, coverage, replay)
+
+    def test_rejects_missing_and_malformed_registration_identities(self):
+        operations = ["PrivateClaim.claim"]
+        coverage = [report([row("claim", 0)])]
+        replay = {"operation": "PrivateClaim.claim", "policy": "Fixture.policy",
+                  "functionalProof": "Fixture.functional", "privacyProof": "Fixture.privacy"}
+        del replay["privacyProof"]
+        with self.assertRaisesRegex(ValueError, r"missing: PrivateClaim.claim.privacy.privacyProof"):
+            AUDIT.validate_replayed_source_identity(operations, coverage, replay)
+        replay["privacyProof"] = "Fixture.privacy"
+        coverage[0]["entrypoints"][0]["roles"][0]["registrations"][0]["policy"] = "Fixture.otherPolicy"
+        with self.assertRaisesRegex(ValueError, r"mismatch: PrivateClaim.claim.functional.policy"):
+            AUDIT.validate_replayed_source_identity(operations, coverage, replay)
+        coverage[0]["entrypoints"][0]["roles"][0]["registrations"][0]["policy"] = None
+        with self.assertRaisesRegex(ValueError, r"missing: PrivateClaim.claim.functional.policy"):
+            AUDIT.validate_replayed_source_identity(operations, coverage, replay)
+        coverage[0]["entrypoints"][0]["roles"][0]["registrations"][0] = None
+        with self.assertRaisesRegex(ValueError, r"malformed: PrivateClaim.claim.functional.registration"):
+            AUDIT.validate_replayed_source_identity(operations, coverage, replay)
+
     def test_rejects_missing_or_extra_entrypoints(self):
         with self.assertRaisesRegex(ValueError, r"missing=\['verify'\]"):
             AUDIT.validate_source_coverage(self.operations, [report([row("claim", 0)])])
