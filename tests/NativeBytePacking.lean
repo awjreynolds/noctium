@@ -1,5 +1,6 @@
 import Noctium.Frontend
 import Noctium.Backend.Zkir
+import Noctium.Semantics
 
 open scoped Noctium
 
@@ -41,6 +42,29 @@ private def nativeBytePackingMixedVectorCircuit : Noctium.Circuit := {
     .ref "payload"])}]
 }
 
+private def narrowPackedByte (maximum value : Nat) : Noctium.Expr (.bytes 1) :=
+  .sliceBytes (.toBytes32 (.cast .native (.uint maximum value))) 0 1
+
+private def narrowLiteralPackingCircuit : Noctium.Circuit := {
+  name := "narrow_literal_packing"
+  outputs := [{
+    name := "packed"
+    ty := .bytes 2
+    value := .disclose {} (.concatBytes (narrowPackedByte 7 7) (narrowPackedByte 23 23))
+  }]
+}
+
+private def narrowRuntimePackingCircuit : Noctium.Circuit := {
+  name := "narrow_runtime_packing"
+  inputs := [{name := "octet", ty := .uint 7, visibility := .«public»}]
+  outputs := [{
+    name := "packed"
+    ty := .bytes 1
+    value := .disclose {} (.sliceBytes
+      (.toBytes32 (.cast .native (.ref "octet" : Noctium.Expr (.uint 7)))) 0 1)
+  }]
+}
+
 noctium_circuit hashVectorInputs where
   private payload : Bytes 32
 end
@@ -80,6 +104,33 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
 #guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingMixedVectorCircuit with
   | .ok relation =>
       nativeBytePackingCount relation "add" == 30 && nativeBytePackingCount relation "mul" == 30
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit narrowLiteralPackingCircuit with
+  | .ok relation =>
+      (nativeBytePackingInstructions relation).map nativeBytePackingOpcode ==
+        [some "mul", some "add", some "impact", some "output"]
+  | .error _ => _root_.Bool.false
+
+private def narrowPackingContext : Noctium.EvalContext := {
+  modulus := Noctium.Field.modulus
+  poseidon2 := fun _ _ _ => pure 0
+}
+
+#guard match narrowRuntimePackingCircuit.run narrowPackingContext [
+    ("octet", .uint 7 6)] with
+  | .ok [("packed", .bytes 1 [6])] => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+#guard match narrowRuntimePackingCircuit.run narrowPackingContext [
+    ("octet", .uint 7 8)] with
+  | .error _ => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit narrowRuntimePackingCircuit with
+  | .ok relation =>
+      (nativeBytePackingInstructions relation).map nativeBytePackingOpcode ==
+        [some "public_input", some "constrain_bits", some "impact", some "impact", some "output"]
   | .error _ => _root_.Bool.false
 
 noctium_contract NativeBytePacking where

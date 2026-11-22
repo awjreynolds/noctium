@@ -390,9 +390,9 @@ def bytesByteAtTerm (length : Nat) (bytes : Term) (index : Nat) : Term :=
   if length == 32 then bytes32ByteAtTerm bytes index
   else .unary s!"bytes_byte_at:{length}:{index}" bytes
 
-/-- A Native widened from a range-checked byte has 31 zero high bytes. -/
+/-- A Native widened from an unsigned value bounded to one byte has 31 zero high bytes. -/
 def isWidenedByte : Expr ty → Bool
-  | .cast (source := .uint 255) .native _ => true
+  | .cast (source := .uint maximum) .native _ => maximum ≤ 255
   | _ => false
 
 /-- Typed Bool constants and bridges stay distinct from Native field values. -/
