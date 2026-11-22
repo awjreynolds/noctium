@@ -2269,7 +2269,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
                         )
                     }
                     None => {
-                        let parsed = checked_record_schema(schema)?;
+                        let parsed = checked_list_record_schema(schema)?;
                         ensure!(
                             expressions.len() == parsed.fields.len(),
                             "list record expression count mismatch"
@@ -2862,7 +2862,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             );
             return Ok(());
         }
-        checked_record_schema(
+        checked_list_record_schema(
             parts
                 .get("composite")
                 .ok_or_else(|| anyhow!("List requires a scalar or record element"))?,
@@ -3221,22 +3221,26 @@ fn valid_record_identifier(value: &str, qualified: bool) -> bool {
         })
 }
 
-fn record_type_name(ty: &ScalarType) -> Result<&'static str> {
+fn record_type_name(ty: &ScalarType) -> Result<Cow<'static, str>> {
     Ok(match ty {
-        ScalarType::Native => "Native",
-        ScalarType::Bytes32 => "Bytes<32>",
-        ScalarType::UInt(maximum) if maximum == &BigUint::from(u128::MAX) => {
-            "UIntRange<340282366920938463463374607431768211456>"
-        }
-        ScalarType::UInt(maximum) if maximum == &BigUint::from(u64::MAX) => {
-            "UIntRange<18446744073709551616>"
-        }
-        ScalarType::JubjubPoint => "JubjubPoint",
+        ScalarType::Native => "Native".into(),
+        ScalarType::Bool => "Bool".into(),
+        ScalarType::Bytes32 => "Bytes<32>".into(),
+        ScalarType::UInt(maximum) => format!("UIntRange<{}>", maximum + 1u8).into(),
+        ScalarType::JubjubPoint => "JubjubPoint".into(),
         _ => bail!("unsupported mixed record field type"),
     })
 }
 
 fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    checked_record_schema_fields(json, false)
+}
+
+fn checked_list_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    checked_record_schema_fields(json, true)
+}
+
+fn checked_record_schema_fields(json: &Json, list_element: bool) -> Result<CheckedRecordSchema> {
     if is_shielded_coin_record_schema(json) {
         let fields = [
             ("nonce", "Bytes<32>"),
@@ -3324,10 +3328,11 @@ fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
             .ok_or_else(|| anyhow!("invalid mixed record field type"))?;
         let ty = ScalarType::parse(ty_name)?;
         ensure!(
-            matches!(
+            (matches!(
                 &ty,
                 ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint
-            ) && record_type_name(&ty)? == ty_name,
+            ) || list_element && matches!(&ty, ScalarType::Bool | ScalarType::UInt(_)))
+                && record_type_name(&ty)?.as_ref() == ty_name,
             "unsupported or noncanonical mixed record field type"
         );
         checked.push(RecordField {
@@ -3984,7 +3989,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         "scalar List operation requires one expression"
                     );
                 } else {
-                    checked_record_schema(schema)?;
+                    checked_list_record_schema(schema)?;
                 }
             }
             _ => {}
@@ -4019,7 +4024,7 @@ fn record_values_from_json(schema: &CheckedRecordSchema, json: &Json) -> Result<
                 let value = object
                     .get(name)
                     .ok_or_else(|| anyhow!("mixed record value is missing a field"))?;
-                input_value(record_type_name(&field.ty)?, value)
+                input_value(record_type_name(&field.ty)?.as_ref(), value)
             })
             .collect::<Result<Vec<_>>>()?
     };
@@ -4120,7 +4125,7 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
     let defaults = schema
         .fields
         .iter()
-        .map(|field| inactive_read_value(record_type_name(&field.ty)?))
+        .map(|field| inactive_read_value(record_type_name(&field.ty)?.as_ref()))
         .collect::<Result<Vec<_>>>()?;
     let templates = defaults
         .iter()
@@ -4153,7 +4158,7 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
         };
         values.push(decode_state_cell(
             &part,
-            record_type_name(&field.ty)?,
+            record_type_name(&field.ty)?.as_ref(),
             alignment,
         )?);
     }
@@ -4179,7 +4184,7 @@ pub(crate) fn default_record_value(schema: &Json) -> Result<Json> {
             let name = field
                 .name
                 .ok_or_else(|| anyhow!("mixed record field lacks a name"))?;
-            let value = inactive_read_value(record_type_name(&field.ty)?)?.public_json();
+            let value = inactive_read_value(record_type_name(&field.ty)?.as_ref())?.public_json();
             Ok((name, value))
         })
         .collect::<Result<serde_json::Map<_, _>>>()?;
@@ -4276,8 +4281,12 @@ fn validate_record_fields(schema: &aggregates::Schema, fields: &[Fr]) -> Result<
     Ok(())
 }
 
-fn record_component_names(read: &Read, expressions: &[Expr], schema: &Json) -> Result<()> {
-    let checked = checked_record_schema(schema)?;
+fn record_component_names(
+    read: &Read,
+    expressions: &[Expr],
+    schema: &Json,
+    checked: &CheckedRecordSchema,
+) -> Result<()> {
     ensure!(
         read.ty == "Composite"
             && read.schema.as_ref() == Some(schema)
@@ -4293,7 +4302,7 @@ fn record_component_names(read: &Read, expressions: &[Expr], schema: &Json) -> R
         let component_type = ScalarType::parse(&component.ty)?;
         ensure!(
             component_type == field.ty
-                && component.ty == record_type_name(&field.ty)?
+                && component.ty == record_type_name(&field.ty)?.as_ref()
                 && names.insert(component.name.as_str()),
             "invalid record read component"
         );
@@ -5532,7 +5541,7 @@ fn native_list_value(
         let ty = validate_tree_scalar_type(ty_name)?;
         decode_state_cell(head, ty_name, &list_scalar_storage_alignment(&ty))?;
     } else {
-        let checked = checked_record_schema(
+        let checked = checked_list_record_schema(
             schema
                 .get("composite")
                 .ok_or_else(|| anyhow!("List state requires a scalar or record element"))?,
@@ -7284,12 +7293,12 @@ impl PreparationCursor {
                             );
                             event = Some(read_event(read, false, env, vec![read.name.clone()]));
                         } else {
-                            record_component_names(read, expressions, schema)?;
                             let checked = checked_record_schema(schema)?;
+                            record_component_names(read, expressions, schema, &checked)?;
                             let defaults = checked
                                 .fields
                                 .iter()
-                                .map(|field| inactive_read_value(record_type_name(&field.ty)?))
+                                .map(|field| inactive_read_value(record_type_name(&field.ty)?.as_ref()))
                                 .collect::<Result<Vec<_>>>()?;
                             let produced = bind_record_values(read, &checked, &defaults, env)?;
                             event = Some(read_event(read, false, env, produced));
@@ -7378,12 +7387,12 @@ impl PreparationCursor {
                                     env,
                                 )?);
                             } else {
-                                record_component_names(read, expressions, schema)?;
-                                let checked = checked_record_schema(schema)?;
+                                let checked = checked_list_record_schema(schema)?;
+                                record_component_names(read, expressions, schema, &checked)?;
                                 let defaults = checked
                                     .fields
                                     .iter()
-                                    .map(|field| inactive_read_value(record_type_name(&field.ty)?))
+                                    .map(|field| inactive_read_value(record_type_name(&field.ty)?.as_ref()))
                                     .collect::<Result<Vec<_>>>()?;
                                 let produced = bind_record_values(read, &checked, &defaults, env)?;
                                 event = Some(read_event(read, false, env, produced));
@@ -7764,7 +7773,8 @@ impl PreparationCursor {
                         result: value,
                     }
                 } else {
-                    record_component_names(read, expressions, schema)?;
+                    let checked = checked_record_schema(schema)?;
+                    record_component_names(read, expressions, schema, &checked)?;
                     let (slot, keys) = previous_index
                         .as_ref()
                         .ok_or_else(|| anyhow!("record read lacks a native index"))?;
@@ -7787,7 +7797,6 @@ impl PreparationCursor {
                         &context
                     };
                     let value = read_state_aligned(read_context, *slot, keys)?;
-                    let checked = checked_record_schema(schema)?;
                     let values = decode_record_value(&checked, &value)?;
                     let produced = bind_record_values(read, &checked, &values, env)?;
                     event = Some(read_event(read, true, env, produced));
@@ -8220,8 +8229,8 @@ impl PreparationCursor {
                         env,
                     )?);
                 } else {
-                    record_component_names(read, expressions, schema)?;
-                    let checked = checked_record_schema(schema)?;
+                    let checked = checked_list_record_schema(schema)?;
+                    record_component_names(read, expressions, schema, &checked)?;
                     let values = decode_record_value(&checked, &head)?;
                     let produced = bind_record_values(read, &checked, &values, env)?;
                     event = Some(read_event(read, true, env, produced));
@@ -8264,7 +8273,7 @@ impl PreparationCursor {
                     value.validate()?;
                     aligned_storage_cell(&value)?
                 } else {
-                    let checked = checked_record_schema(schema)?;
+                    let checked = checked_list_record_schema(schema)?;
                     let fields = record_values_from_expressions(&checked, expressions, &env)?;
                     aligned_record_value(&checked, &fields)?
                 };

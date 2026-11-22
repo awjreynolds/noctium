@@ -732,7 +732,8 @@ private def stateJson (state : StateDecl) : Json :=
     | .composite environment type => Json.mkObj [("composite", compositeSchema environment type)]
     | .list environment type => Json.mkObj [("list", match type with
         | .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
-        | _ => Json.mkObj [("composite", compositeSchema environment type)])]
+        | _ => Json.mkObj [("composite",
+          (Backend.Impact.listElementOperationSchema environment type).toOption.getD Json.null)])]
     | .counter => Json.mkObj [("counter", toJson Bool.true)]
     | .merkleTree depth historic => Json.mkObj (
         [("merkleTree", toJson depth)] ++

@@ -1106,9 +1106,11 @@ def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
       unless uniqueNames (read.components.map Prod.fst) do
         throw "duplicate native composite read field binding"
       unless read.components.all (fun component =>
-          component.2 == .native || component.2 == .bytes 32 || component.2 == .jubjubPoint) ||
+          component.2 == .native || component.2 == .bool ||
+            (match component.2 with | .uint _ => true | _ => false) ||
+            component.2 == .bytes 32 || component.2 == .jubjubPoint) ||
           (read.guard.isNone && read.components.map Prod.snd == shieldedCoinReadTypes) do
-        throw "native composite reads require supported fields or an unguarded shielded coin record"
+        throw "native composite reads require supported scalar fields or an unguarded shielded coin record"
       for (_, ty) in read.components do ty.validate expressionCapabilities
     if let some guard := read.guard then guard.validate expressionCapabilities env
 
@@ -1245,11 +1247,24 @@ def recordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType)
         ("name", Lean.toJson name),
         ("type", Lean.toJson (Noctium.NativeExpression.typeName ty))]))]
 
-private def listElementOperationSchema (environment : Types.CompositeEnv)
+/-- Produce the record schema shared by List operations and state metadata. -/
+def listElementOperationSchema (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String Lean.Json :=
   match type with
   | .scalar ty => pure (Lean.Json.str (Noctium.NativeExpression.typeName ty))
-  | _ => recordSchema environment type
+  | _ => do
+    match LedgerValueType.recordFields environment type with
+    | .ok _ => recordSchema environment type
+    | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+      | .ok _ => recordSchema environment type
+      | .error _ => do
+        let fields ← LedgerValueType.listElementFields environment type
+        let .structure id := type | throw "List records must be named structures"
+        pure <| Lean.Json.mkObj [
+          ("id", Lean.toJson id),
+          ("fields", Lean.toJson (fields.map fun (name, ty) => Lean.Json.mkObj [
+            ("name", Lean.toJson name),
+            ("type", Lean.toJson (Noctium.NativeExpression.typeName ty))]))]
 
 private def listHeadParts (environment : Types.CompositeEnv)
     (type : Types.CompositeType) (destination : String)

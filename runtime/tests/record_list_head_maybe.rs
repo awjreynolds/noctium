@@ -64,3 +64,48 @@ fn record_list_head_returns_one_ordered_maybe() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_TYPED_RECORD_LIST_DIR"]
+fn record_list_head_preserves_bool_and_uint_fields() -> Result<()> {
+    let directory = PathBuf::from(std::env::var("NOCTIUM_TYPED_RECORD_LIST_DIR")?);
+    let load = |entry: &str| -> Result<(Plan, IrSource)> {
+        let stem = format!("TypedRecordListHeadMaybe.{entry}");
+        Ok((
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?,
+            IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?,
+        ))
+    };
+    let (head, head_relation) = load("peek")?;
+    let (seed, seed_relation) = load("seed")?;
+    let empty = create_state(&head, &BTreeMap::from([("inbox".into(), json!([]))]))?;
+    let address = ContractAddress::default();
+    let mut inputs = BTreeMap::from([
+        ("active".into(), json!(true)),
+        ("amount".into(), json!("513")),
+    ]);
+    let inserted = prepare(&seed, &inputs, &empty, &INITIAL_PARAMETERS, address)?;
+    check(&inserted, &seed_relation)?;
+    for (state, present, amount) in [(&empty, false, 0), (&inserted.after.state, true, 513)] {
+        let read = prepare(&head, &BTreeMap::new(), state, &INITIAL_PARAMETERS, address)?;
+        check(&read, &head_relation)?;
+        assert_eq!(read.after.state, *state);
+        let returns = read.returns_json();
+        assert_eq!(returns.len(), 1);
+        assert_eq!(
+            returns["head"]["fields"],
+            json!([
+                {"name":"is_some","value":{"kind":"bool","value":present}},
+                {"name":"value","value":{
+                    "kind":"struct","id":"TypedRecordListHeadMaybe.Memo","fields":[
+                        {"name":"active","value":{"kind":"bool","value":present}},
+                        {"name":"amount","value":{"kind":"uint","maximum":"65535","value":amount.to_string()}}
+                    ]
+                }}
+            ])
+        );
+    }
+    inputs.insert("amount".into(), json!("65536"));
+    assert!(prepare(&seed, &inputs, &empty, &INITIAL_PARAMETERS, address).is_err());
+    Ok(())
+}
