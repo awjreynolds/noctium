@@ -8,9 +8,12 @@ private theorem bind_ok (first : Except ε α) (next : α → Except ε β) (val
     Except.bind first next = .ok value ↔ ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
   cases first <;> simp [Except.bind]
 
-private theorem except_unit_bind (first next : Except ε Unit) :
-    Except.bind first (fun _ => next) = .ok () ↔ first = .ok () ∧ next = .ok () := by
-  cases first <;> simp [Except.bind]
+private theorem throw_eq_error (error : ε) : (throw error : Except ε α) = .error error := rfl
+
+private theorem map_ok (action : Except ε α) (function : α → β) (value : β) :
+    function <$> action = .ok value ↔
+      ∃ result, action = .ok result ∧ function result = value := by
+  cases action <;> simp [Functor.map, Except.map]
 
 private theorem mapM_ok_transfer (left : α → Except ε β) (right : α → Except δ β)
     (agreement : ∀ value result, left value = .ok result ↔ right value = .ok result)
@@ -50,39 +53,6 @@ private theorem forIn_extract (body : α → PUnit → Except ε (ForInStep PUni
       rcases List.mem_cons.mp member with equal | member
       · simpa [equal] using holds
       · exact ih success found member
-
-private theorem mapM_extract (function : α → Except ε β) (values : List α)
-    (results : List β) (success : values.mapM function = .ok results) :
-    ∀ value ∈ values, ∃ result, function value = .ok result := by
-  induction values generalizing results with
-  | nil =>
-    intro value member
-    simp at member
-  | cons head tail ih =>
-    simp only [List.mapM_cons, bind, bind_ok] at success
-    rcases success with ⟨headResult, headSuccess, tailResult, tailSuccess, equal⟩
-    cases equal
-    intro value member
-    rcases List.mem_cons.mp member with same | member
-    · subst value
-      exact ⟨headResult, headSuccess⟩
-    · obtain ⟨result, success⟩ := ih tailResult tailSuccess value member
-      exact ⟨result, success⟩
-
-private theorem validateOutput_value (caps : Capabilities) (env : TypeEnv) (output : Output)
-    (success : Circuit.validateOutput caps env output = .ok ()) :
-    output.value.validate caps env = .ok () := by
-  unfold Circuit.validateOutput at success
-  cases typeCheck : output.ty.validate caps with
-  | error message => simp [typeCheck, bind, Except.bind] at success
-  | ok checkedType =>
-    simp only [typeCheck, bind, Except.bind] at success
-    by_cases shadows : (env.lookup output.name).isSome
-    · simp [shadows, bind, Except.bind] at success
-    · simp only [shadows] at success
-      cases valueCheck : output.value.validate caps env with
-      | error message => simp [valueCheck, bind, Except.bind] at success
-      | ok value => cases value; rfl
 
 def circuitAliases (circuit : Circuit) : AliasEnvironment :=
   circuit.inputs.map (fun input => (input.name, .input ("%input_" ++ input.name)))
@@ -383,53 +353,58 @@ theorem circuit_validation_parts_with_capabilities (caps : Capabilities) (circui
     validateConstraints caps (circuit.inputs.map (fun input => (input.name, input.ty))) circuit.span circuit.constraints = .ok () ∧
     ∀ output ∈ circuit.outputs, output.value.validate caps
       (circuit.inputs.map (fun input => (input.name, input.ty))) = .ok () := by
-  have valid' := valid
-  unfold Circuit.validate at valid'
   cases inputNames : uniqueNames (circuit.inputs.map (·.name)) with
   | false =>
-    simp only [inputNames, Bool.not_false, ↓reduceIte] at valid'
-    cases valid'
+    simp [Circuit.validate, inputNames, bind, bind_ok, throw_eq_error] at valid
   | true =>
-    cases inputChecks : Circuit.validateInputs caps circuit.inputs with
-    | error diagnostic =>
-      rw [inputChecks] at valid'
-      simp [inputNames, bind, Except.bind] at valid'
-    | ok inputUnit =>
-      rw [inputChecks] at valid'
-      cases nativeNames : uniqueNames (circuit.inputs.flatMap Input.nativeIdentifiers) with
-      | false =>
-        simp [inputNames, nativeNames, bind, Except.bind] at valid'
+    cases nativeNames : uniqueNames (circuit.inputs.flatMap Input.nativeIdentifiers) with
+    | false =>
+      simp [Circuit.validate, inputNames, nativeNames, bind, bind_ok, throw_eq_error] at valid
+    | true =>
+      cases projectionNames : uniqueNames (circuit.inputs.flatMap Input.publicProjectionIdentifiers) with
+      | false => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+          bind, bind_ok, throw_eq_error] at valid
       | true =>
-        cases projectionNames : uniqueNames (circuit.inputs.flatMap Input.publicProjectionIdentifiers) with
-        | false => simp [inputNames, nativeNames, projectionNames, bind, Except.bind] at valid'
-        | true =>
-          cases projectionCollision : (circuit.inputs.flatMap Input.publicProjectionIdentifiers).any
-              (fun name => circuit.inputs.any (fun input => input.name == name)) with
-          | true => simp [inputNames, nativeNames, projectionNames,
-              projectionCollision, bind, Except.bind] at valid'
-          | false =>
-            cases outputNames : uniqueNames (circuit.outputs.map (·.name)) with
-            | false => simp [inputNames, nativeNames, projectionNames,
-                projectionCollision, outputNames, bind, Except.bind] at valid'
-            | true =>
-              simp only [inputNames, nativeNames, projectionNames,
-                projectionCollision, outputNames, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at valid'
-              change Except.bind
-                  (validateConstraints caps (circuit.inputs.map (fun input => (input.name, input.ty)))
-                    circuit.span circuit.constraints)
-                  (fun _ => Circuit.validateOutputs caps
-                    (circuit.inputs.map (fun input => (input.name, input.ty))) circuit.outputs) = .ok () at valid'
-              rw [except_unit_bind] at valid'
-              rcases valid' with ⟨constraintsValid, outputsValid⟩
-              refine ⟨constraintsValid, ?_⟩
-              unfold Circuit.validateOutputs at outputsValid
-              simp only [bind, bind_ok] at outputsValid
-              rcases outputsValid with ⟨_, outputsMapped, _⟩
-              intro output member
-              obtain ⟨_, outputValid⟩ := mapM_extract
-                (Circuit.validateOutput caps (circuit.inputs.map (fun input => (input.name, input.ty))))
-                circuit.outputs _ outputsMapped output member
-              exact validateOutput_value caps _ output outputValid
+        cases projectionCollision : (circuit.inputs.flatMap Input.publicProjectionIdentifiers).any
+            (fun name => circuit.inputs.any (fun input => input.name == name)) with
+        | true => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+            projectionCollision, bind, bind_ok, throw_eq_error] at valid
+        | false =>
+          cases outputNames : uniqueNames (circuit.outputs.map (·.name)) with
+          | false => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+              projectionCollision, outputNames, bind, bind_ok, throw_eq_error] at valid
+          | true =>
+            simp only [Circuit.validate, inputNames, nativeNames, projectionNames,
+              projectionCollision, outputNames, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+              bind, bind_ok] at valid
+            rcases valid with ⟨_, _, afterInputs⟩
+            change Except.bind (validateConstraints caps
+              (circuit.inputs.map (fun input => (input.name, input.ty))) circuit.span circuit.constraints)
+              _ = .ok () at afterInputs
+            obtain ⟨checked, constraintsValid, afterConstraints⟩ := (bind_ok _ _ _).mp afterInputs
+            cases checked
+            change ((fun _ : PUnit => ()) <$> (_ : Except Diagnostic PUnit)) =
+              Except.ok () at afterConstraints
+            obtain ⟨⟨⟩, outputsValid, _⟩ := (map_ok _ _ _).mp afterConstraints
+            refine ⟨constraintsValid, ?_⟩
+            refine forIn_extract _ (fun output => output.value.validate caps
+              (circuit.inputs.map (fun input => (input.name, input.ty))) = .ok ())
+              circuit.outputs ?_ outputsValid
+            intro output step success
+            cases typeCheck : output.ty.validate caps with
+            | error message => simp [typeCheck, bind, Except.bind, throw_eq_error] at success
+            | ok checkedType =>
+              simp only [typeCheck] at success
+              split at success
+              next shadows => simp [shadows, bind, Except.bind, throw_eq_error] at success
+              next unshadowed =>
+                cases valueCheck : output.value.validate caps
+                    (circuit.inputs.map (fun input => (input.name, input.ty))) with
+                | error message => simp [valueCheck, bind, Except.bind, throw_eq_error] at success
+                | ok value =>
+                  simp only [valueCheck] at success
+                  cases success
+                  exact ⟨rfl, rfl⟩
 
 theorem circuit_validation_parts (circuit : Circuit)
     (valid : circuit.validate Capabilities.crypto = .ok ()) :
