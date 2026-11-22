@@ -889,15 +889,10 @@ fn aligned_fab_payload(
     schema_json: &Json,
     values: &[FabHashInput],
     env: &Environment,
-    include_curves: bool,
 ) -> Result<AlignedValue> {
     let schema_bytes = serde_json::to_vec(schema_json)?;
     let schema = Schema::from_json(&schema_bytes)?;
-    let fields = if include_curves {
-        schema.fab_hash_nested_fields()?
-    } else {
-        schema.fab_hash_fields()?
-    };
+    let fields = schema.fab_hash_nested_fields()?;
     aligned_fab_values(&fields, values, env)
 }
 
@@ -906,7 +901,7 @@ fn hash_to_curve_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    let payload = aligned_fab_payload(schema_json, values, env, true)?;
+    let payload = aligned_fab_payload(schema_json, values, env)?;
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
@@ -923,7 +918,7 @@ fn persistent_hash_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    persistent_hash(aligned_fab_payload(schema_json, values, env, true)?)
+    persistent_hash(aligned_fab_payload(schema_json, values, env)?)
 }
 
 fn persistent_commit_fab(
@@ -933,7 +928,7 @@ fn persistent_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = claim_hash_output(evaluate(opening, env)?, "FAB persistent commitment opening")?;
-    let payload = aligned_fab_payload(schema_json, values, env, false)?;
+    let payload = aligned_fab_payload(schema_json, values, env)?;
     let commitment = base_crypto::hash::persistent_commit(&ValueReprAlignedValue(payload), opening);
     Ok(Value::Bytes(commitment.0.to_vec()))
 }
@@ -945,7 +940,7 @@ fn transient_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = evaluate(opening, env)?.field()?;
-    let payload = aligned_fab_payload(schema_json, values, env, false)?;
+    let payload = aligned_fab_payload(schema_json, values, env)?;
     Ok(Value::Native(transient_crypto::hash::transient_commit(
         &ValueReprAlignedValue(payload),
         opening,
@@ -1253,7 +1248,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::Sha512Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env, false)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
             );
             Value::Bytes(sha2::Sha512::digest(preimage.as_slice()).to_vec())
         }

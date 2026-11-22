@@ -126,6 +126,30 @@ fn curve_fab_hashes_match_compact_oracles_and_bind_return_commitment() -> anyhow
                     "y":"23820288451142401238103521862534681424716203618312892062945957612621911308121"
                 }),
             ),
+            (
+                "persistentCommitOutput".into(),
+                json!({
+                    "kind":"bytes",
+                    "values":hex::decode(
+                        "64e39fd0347562cd6bc4bf0e240a5081700885dc8193008f3d531283b7a772bc"
+                    )?
+                }),
+            ),
+            (
+                "transientCommitOutput".into(),
+                json!(
+                    "43834219855257331008480478917217379826888172132588787922878333292523868224849"
+                ),
+            ),
+            (
+                "sha512Output".into(),
+                json!({
+                    "kind":"bytes",
+                    "values":hex::decode(
+                        "d21d1fd0b4e7915f8419812e711ea0c4746cef7ebe95b10a4c661a7d128fa71bbef47a4b077aeac0542882d29cc4f838dfdbd701746f9f51b756faceab01bdb2"
+                    )?
+                }),
+            ),
         ])
     );
 
