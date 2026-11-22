@@ -34,7 +34,7 @@ noctium_witness_circuit registerAccount where
 end
 
 noctium_witness_circuit creditPending where
-  public recipient : Bytes32
+  private recipient : Bytes32
   private value : UInt 128
   public recipientPk : JubjubPoint
   public previousC1X : Native
@@ -576,7 +576,7 @@ noctium_contract ConfidentialToken where
     return caller : Bytes32 := accountId
   end
 
-  entry mint uses creditPending where
+  entry mint uses creditPending arguments [recipient, value] where
     read initialized as isInitialized
     require eq(isInitialized, true)
     member encryptionKeys[disclose(recipient)] as registered

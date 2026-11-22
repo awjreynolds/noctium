@@ -93,6 +93,36 @@ cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked --offline \
   confidential_token_registration_pending_sweep_and_transfer_use_native_relations -- --exact
 ```
 
+`TokenMinter.claimMint` binds the ordered `Bytes32` recipient and `UInt 128`
+amount to the actual `ConfidentialToken.mint` call. The caller discloses the
+commitment. The callee discloses the recipient for its ledger map operations
+and writes the disclosed updated total supply. The proof records the exact
+argument order and the checked supply update.
+
+The focused native test uses fresh caller and callee artifacts. It checks the
+mint supply, ciphertext, memo and epoch, then checks one caller counter
+advance. Changing either committed argument leaves the caller independently
+checkable and prevents the pair from assembling into one intent.
+[Caller source](../../examples/openzeppelin/ConfidentialTokenComposition.lean) · [Mint proof](../../proofs/ConfidentialTokenMintSupply.lean) · [Native check](../../runtime/tests/confidential_token.rs)
+
+```sh
+mkdir -p build/experiments .lake/build/lib/lean/examples/openzeppelin
+artifacts=$(mktemp -d "$PWD/build/experiments/committed-mint.XXXXXX")
+trap 'rm -r "$artifacts"' EXIT
+target=profiles/midnight-ledger-9-zkir-3.2.1-target.json
+lake build noctium
+lake env lean -o .lake/build/lib/lean/examples/openzeppelin/ConfidentialToken.olean \
+  examples/openzeppelin/ConfidentialToken.lean
+.lake/build/bin/noctium compile examples/openzeppelin/ConfidentialToken.lean \
+  --target "$target" --emit ledger --emit witness --output "$artifacts/callee"
+.lake/build/bin/noctium compile examples/openzeppelin/ConfidentialTokenComposition.lean \
+  --target "$target" --emit ledger --emit witness --output "$artifacts/caller"
+NOCTIUM_MINT_BINDING_ARTIFACTS="$artifacts" \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked --offline \
+  --no-default-features --features zkir-321 --test confidential_token \
+  confidential_token_mint_binds_recipient_and_amount_across_calls -- --ignored --exact
+```
+
 The delegated-spend nonce preimage fits existing source operations:
 `persistentHashVector32([seed, domain, owner, spender, toBytes32(epochNative)])`.
 The pinned mixed record hashes four Bytes32 values followed by one canonical
