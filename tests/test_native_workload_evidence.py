@@ -51,7 +51,7 @@ class NativeWorkloadEvidenceTests(unittest.TestCase):
         matrix, _, _ = inputs()
         copy = next(row for row in matrix["entries"] if row["id"] == "ZKIR-OP-COPY")
         copy["evidence"]["ids"].append("E-NOCTIUM321-COPY")
-        with self.assertRaisesRegex(ValueError, "duplicate_matrix_evidence_link"):
+        with self.assertRaisesRegex(ValueError, "duplicate_matrix_evidence_id"):
             CHECK["validate_citations"](matrix, ROOT)
 
     def test_unresolved_registry_citation_is_rejected(self):
@@ -61,10 +61,10 @@ class NativeWorkloadEvidenceTests(unittest.TestCase):
             CHECK["validate_citations"](matrix, ROOT)
 
     def test_copy_observation_count_and_scope_are_checked(self):
-        matrix, _, _ = inputs()
+        matrix, _, profile = inputs()
         matrix["evidenceRegister"]["E-NOCTIUM321-COPY"]["checkerObservation"]["copyOpcodeCount"] = 35
         with self.assertRaisesRegex(ValueError, "copy_checker_observation_count_mismatch"):
-            CHECK["validate_copy_evidence"](matrix, ROOT)
+            CHECK["validate_copy_evidence"](matrix, ROOT, profile)
 
         matrix, _, _ = inputs()
         matrix["evidenceRegister"]["E-NOCTIUM321-COPY"]["ledger"] = True
@@ -73,18 +73,22 @@ class NativeWorkloadEvidenceTests(unittest.TestCase):
 
     def test_changed_historical_boolean_fixture_is_rejected(self):
         matrix, history, _ = inputs()
+        paths = CHECK["historical_fixture_paths"](history)
+        boolean_record = history["regressions"]["booleanDeserialization"]
         changed = CHECK["evidence_file"](
-            ROOT, CHECK["BOOLEAN_ZKIR"], CHECK["BOOLEAN_ZKIR_SHA256"], "boolean_zkir") + b" "
+            ROOT, paths["booleanZkir"], boolean_record["fixtureSha256"], "boolean_zkir") + b" "
         with self.assertRaisesRegex(ValueError, "boolean_zkir_digest_mismatch"):
             CHECK["validate_historical_fixtures"](
-                matrix, history, ROOT, {CHECK["BOOLEAN_ZKIR"]: changed})
+                matrix, history, ROOT, {paths["booleanZkir"]: changed})
 
         matrix, history, _ = inputs()
+        paths = CHECK["historical_fixture_paths"](history)
+        jubjub_record = history["regressions"]["jubjub"]
         changed = CHECK["evidence_file"](
-            ROOT, CHECK["JUBJUB_ZKIR"], CHECK["JUBJUB_ZKIR_SHA256"], "jubjub_zkir") + b" "
+            ROOT, paths["jubjubZkir"], jubjub_record["fixtureSha256"], "jubjub_zkir") + b" "
         with self.assertRaisesRegex(ValueError, "jubjub_zkir_digest_mismatch"):
             CHECK["validate_historical_fixtures"](
-                matrix, history, ROOT, {CHECK["JUBJUB_ZKIR"]: changed})
+                matrix, history, ROOT, {paths["jubjubZkir"]: changed})
 
     def test_fixture_opcode_and_case_counts_are_rechecked(self):
         matrix, history, _ = inputs()
@@ -93,12 +97,13 @@ class NativeWorkloadEvidenceTests(unittest.TestCase):
             CHECK["validate_historical_fixtures"](matrix, history, ROOT)
 
         matrix, history, _ = inputs()
-        cases = json.loads((ROOT / "tests/zkir321/boolean-cases.json").read_bytes())
+        paths = CHECK["historical_fixture_paths"](history)
+        cases = json.loads((ROOT / "docs/compatibility" / paths["booleanCases"]).read_bytes())
         cases.pop()
         changed = json.dumps(cases, separators=(",", ":")).encode()
-        with self.assertRaisesRegex(ValueError, "boolean_cases_digest_mismatch"):
+        with self.assertRaisesRegex(ValueError, "boolean_case_count_mismatch"):
             CHECK["validate_historical_fixtures"](
-                matrix, history, ROOT, {CHECK["BOOLEAN_CASES"]: changed})
+                matrix, history, ROOT, {paths["booleanCases"]: changed})
 
     def test_full_qualification_promotion_is_rejected(self):
         _, history, _ = inputs()
@@ -116,7 +121,7 @@ class NativeWorkloadEvidenceTests(unittest.TestCase):
     def test_profile_mismatch_is_rejected(self):
         matrix, history, profile = inputs()
         profile["nativeSource"]["revision"] = "0" * 40
-        with self.assertRaisesRegex(ValueError, "pinned_profile_identity_mismatch"):
+        with self.assertRaisesRegex(ValueError, "target_profile_identity_mismatch"):
             CHECK["validate_profile"](profile, matrix, history)
 
 
