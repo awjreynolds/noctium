@@ -2,7 +2,7 @@
 use crate::{Db, client::Snapshot, proof::ProvedNativeIntent};
 use coin_structure::coin::UserAddress;
 use ledger::structure::{
-    ContractAction, Signature, SignatureVerifyingKey, UnshieldedOffer, Utxo, UtxoOutput, UtxoSpend,
+    ContractAction, Signature, UnshieldedOffer, Utxo, UtxoOutput, UtxoSpend,
 };
 use serialize::Serializable;
 use std::collections::BTreeSet;
@@ -22,7 +22,6 @@ pub(crate) enum Error {
 /// The exact ordered spend inputs accepted against one retained client snapshot.
 pub(crate) struct SnapshotUnshieldedSpendScope<'snapshot> {
     snapshot: &'snapshot Snapshot,
-    owner: SignatureVerifyingKey,
     address: UserAddress,
     spends: Vec<UtxoSpend>,
 }
@@ -32,16 +31,8 @@ impl<'snapshot> SnapshotUnshieldedSpendScope<'snapshot> {
         self.snapshot
     }
 
-    pub(crate) fn owner(&self) -> &SignatureVerifyingKey {
-        &self.owner
-    }
-
     pub(crate) fn address(&self) -> UserAddress {
         self.address
-    }
-
-    pub(crate) fn spends(&self) -> &[UtxoSpend] {
-        &self.spends
     }
 
     /// Build the guaranteed offer with one same-owner return per exact spend.
@@ -112,11 +103,9 @@ pub(crate) fn check_snapshot_spends<'snapshot>(
         }
     }
 
-    let owner = owner.clone();
     let address = UserAddress::from(owner.clone());
     Ok(SnapshotUnshieldedSpendScope {
         snapshot,
-        owner,
         address,
         spends: spends.to_vec(),
     })
@@ -159,7 +148,7 @@ mod tests {
     use crate::client::ChainIdentity;
     use base_crypto::{hash::HashOutput, time::Timestamp};
     use coin_structure::coin::{NIGHT, UnshieldedTokenType};
-    use ledger::structure::{LedgerState, UtxoMeta, UtxoState};
+    use ledger::structure::{LedgerState, SignatureVerifyingKey, UtxoMeta, UtxoState};
     use onchain_runtime::context::BlockContext;
     use storage::arena::Sp;
 
@@ -210,8 +199,7 @@ mod tests {
         let snapshot = snapshot_with(&spends);
 
         let scope = check_snapshot_spends(&snapshot, &spends).unwrap();
-        assert_eq!(scope.spends(), spends.as_slice());
-        assert_eq!(scope.owner(), &spends[0].owner);
+        assert_eq!(scope.address(), UserAddress::from(spends[0].owner.clone()));
         assert_eq!(scope.snapshot().height, snapshot.height);
 
         let offer = scope.guaranteed_offer();
