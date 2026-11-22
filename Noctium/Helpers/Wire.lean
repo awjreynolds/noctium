@@ -90,6 +90,27 @@ def declarations (compiled : Types.CompiledType) (name : String) (width : Nat)
       result := .composite compiled.type,
       body := [.return (some (.composite compiled.type decoded.reverse))]}]
 
+/-- Build a fixed-frame codec for a nominal `Maybe<T>` record. The tag leads
+the record and the payload retains the exact type and declarations from its
+codec. The caller owns the nominal identity. Normal codec admission checks the
+combined environment and frame width. -/
+def maybe (id : Types.DeclId) (payload : Codec) : Codec :=
+  let maybeType : Types.CompositeType := .structure id
+  let declaration : Types.StructDecl := {
+    id
+    fields := [
+      {name := "is_some", type := .scalar .bool},
+      {name := "value", type := payload.payload}
+    ]
+  }
+  -- Keep duplicates in this environment so the shared layout validator rejects
+  -- a caller ID that collides with a declaration inside the payload codec.
+  let composites : Types.CompositeEnv := {
+    structures := payload.composites.structures ++ [declaration]
+    enumerations := payload.composites.enumerations
+  }
+  {payload := maybeType, frameBytes := payload.frameBytes + 1, composites}
+
 def compositeEnv (base : Types.CompositeEnv) (codecs : List Codec) : Types.CompositeEnv :=
   {
     structures := (base.structures ++ codecs.flatMap (·.composites.structures)).eraseDups

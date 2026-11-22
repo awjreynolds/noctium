@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+export ledger seen: Boolean;
+
+export circuit echo(value: Maybe<Limits>): Maybe<Limits> {
+  const disclosed = disclose(value);
+  seen = disclosed.is_some;
+  return disclosed;
+}
