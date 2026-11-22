@@ -1,18 +1,22 @@
 //! Snapshot-bound validation for an unshielded caller input scope.
-use crate::{Db, client::Snapshot};
+use crate::{Db, client::Snapshot, proof::ProvedNativeIntent};
 use coin_structure::coin::UserAddress;
 use ledger::structure::{
-    Signature, SignatureVerifyingKey, UnshieldedOffer, Utxo, UtxoOutput, UtxoSpend,
+    ContractAction, Signature, SignatureVerifyingKey, UnshieldedOffer, Utxo, UtxoOutput, UtxoSpend,
 };
+use serialize::Serializable;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Error {
     Empty,
+    ZeroValue,
+    Size,
     MixedOwners,
     NonCanonicalOrder,
     DuplicateOutpoint,
     SpendNotInSnapshot,
+    InvalidOffer,
 }
 
 /// The exact ordered spend inputs accepted against one retained client snapshot.
@@ -74,6 +78,17 @@ pub(crate) fn check_snapshot_spends<'snapshot>(
         return Err(Error::Empty);
     };
 
+    let limit = snapshot.state.parameters.limits.transaction_byte_limit;
+    spends.iter().try_fold(0u64, |size, spend| {
+        if spend.value == 0 {
+            return Err(Error::ZeroValue);
+        }
+        let length = u64::try_from(spend.serialized_size()).map_err(|_| Error::Size)?;
+        size.checked_add(length)
+            .filter(|&total| total <= limit)
+            .ok_or(Error::Size)
+    })?;
+
     let owner = &first.owner;
     if spends.iter().any(|spend| &spend.owner != owner) {
         return Err(Error::MixedOwners);
@@ -105,6 +120,37 @@ pub(crate) fn check_snapshot_spends<'snapshot>(
         address,
         spends: spends.to_vec(),
     })
+}
+
+/// Re-admit the exact unsealed offer against the funding snapshot before requesting approval.
+pub(crate) fn validate_guaranteed_caller_offer(
+    snapshot: &Snapshot,
+    contract: &ProvedNativeIntent,
+) -> Result<(), Error> {
+    if contract.actions.len() != 1
+        || !matches!(contract.actions.get(0), Some(ContractAction::Call(_)))
+        || contract.fallible_unshielded_offer.is_some()
+        || contract.dust_actions.is_some()
+    {
+        return Err(Error::InvalidOffer);
+    }
+    let offer = contract
+        .guaranteed_unshielded_offer
+        .as_deref()
+        .ok_or(Error::InvalidOffer)?;
+    if !offer.signatures.is_empty()
+        || offer.inputs.len() != offer.outputs.len()
+        || u64::try_from(offer.inputs.len()).map_err(|_| Error::Size)?
+            > snapshot.state.parameters.limits.transaction_byte_limit
+    {
+        return Err(Error::InvalidOffer);
+    }
+    let spends: Vec<UtxoSpend> = (&offer.inputs).into();
+    let scope = check_snapshot_spends(snapshot, &spends)?;
+    if *offer != scope.guaranteed_offer() {
+        return Err(Error::InvalidOffer);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -191,6 +237,12 @@ mod tests {
         assert!(matches!(
             check_snapshot_spends(&snapshot, &[wrong_value]),
             Err(Error::SpendNotInSnapshot)
+        ));
+
+        let zero = test_spend(0, NIGHT, 3);
+        assert!(matches!(
+            check_snapshot_spends(&snapshot_with(std::slice::from_ref(&zero)), &[zero]),
+            Err(Error::ZeroValue)
         ));
 
         let mut mixed_owner = spends[0].clone();

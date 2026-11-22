@@ -241,6 +241,16 @@ pub trait FundingAdapter {
         snapshot: &Snapshot,
         policy: &NetworkPolicy,
     ) -> std::result::Result<UnsealedTransaction, HostFailure>;
+
+    /// Fund a pre-checked unshielded caller intent without changing its selected spends.
+    async fn fund_unshielded_caller(
+        &self,
+        _contract: &ProvedNativeIntent,
+        _snapshot: &Snapshot,
+        _policy: &NetworkPolicy,
+    ) -> std::result::Result<UnsealedTransaction, HostFailure> {
+        Err(HostFailure)
+    }
 }
 #[allow(async_fn_in_trait)]
 pub trait SigningAdapter {
@@ -540,6 +550,13 @@ pub(crate) fn shielded_merge_claims_match<P: storage::Storable<Db>>(
     }
 }
 
+enum ContractFunding {
+    Offerless,
+    #[cfg(feature = "localnet")]
+    Shielded(Vec<u8>),
+    UnshieldedCaller,
+}
+
 impl BoundTransaction {
     pub async fn prepare(
         contract: &ProvedNativeIntent,
@@ -548,7 +565,21 @@ impl BoundTransaction {
         funding: &impl FundingAdapter,
         signer: &impl SigningAdapter,
     ) -> Result<Self> {
-        Self::prepare_inner(contract, policy, chain, funding, signer, None).await
+        Self::prepare_inner(contract, policy, chain, funding, signer, ContractFunding::Offerless)
+            .await
+    }
+
+    /// Fund and bind a single top-level call with a same-owner unshielded return offer.
+    /// The caller inputs must still exist in the fresh funding snapshot.
+    pub async fn prepare_unshielded_caller(
+        contract: &ProvedNativeIntent,
+        policy: NetworkPolicy,
+        chain: &impl ChainAdapter,
+        funding: &impl FundingAdapter,
+        signer: &impl SigningAdapter,
+    ) -> Result<Self> {
+        Self::prepare_inner(contract, policy, chain, funding, signer, ContractFunding::UnshieldedCaller)
+            .await
     }
 
     #[cfg(feature = "localnet")]
@@ -573,7 +604,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -625,7 +656,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -683,7 +714,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -709,7 +740,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -736,7 +767,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -817,7 +848,7 @@ impl BoundTransaction {
             chain,
             funding,
             signer,
-            Some(expected_offer),
+            ContractFunding::Shielded(expected_offer),
         )
         .await
     }
@@ -828,7 +859,7 @@ impl BoundTransaction {
         chain: &impl ChainAdapter,
         funding: &impl FundingAdapter,
         signer: &impl SigningAdapter,
-        expected_guaranteed_offer: Option<Vec<u8>>,
+        offer: ContractFunding,
     ) -> Result<Self> {
         policy.validate()?;
         let snapshot = chain.snapshot().await.map_err(|_| Error::Network)?;
@@ -836,7 +867,6 @@ impl BoundTransaction {
         require(
             admissible_actions(contract)
                 && contract.dust_actions.is_none()
-                && contract.guaranteed_unshielded_offer.is_none()
                 && contract.fallible_unshielded_offer.is_none(),
             Error::InvalidTransaction,
         )?;
@@ -850,10 +880,18 @@ impl BoundTransaction {
             ContractAction::Call(call) => (call.address, ContractEvent::Call),
             ContractAction::Maintain(update) => (update.address, ContractEvent::Maintain),
         };
-        let funded = funding
-            .fund(contract, &snapshot, &policy)
-            .await
-            .map_err(|_| Error::Funding)?;
+        let funded = match &offer {
+            ContractFunding::UnshieldedCaller => {
+                crate::unshielded_caller::validate_guaranteed_caller_offer(&snapshot, contract)
+                    .map_err(|_| Error::InvalidTransaction)?;
+                funding.fund_unshielded_caller(contract, &snapshot, &policy).await
+            }
+            _ => {
+                require(contract.guaranteed_unshielded_offer.is_none(), Error::InvalidTransaction)?;
+                funding.fund(contract, &snapshot, &policy).await
+            }
+        }
+        .map_err(|_| Error::Funding)?;
         let Transaction::Standard(funded_stx) = &funded else {
             return Err(Error::Funding);
         };
@@ -867,9 +905,10 @@ impl BoundTransaction {
                     == Some(encode(contract)?),
             Error::AlteredTransaction,
         )?;
-        let guaranteed_offer_matches = match expected_guaranteed_offer {
-            Some(expected) => body(&funded_stx.guaranteed_coins)? == expected,
-            None => funded_stx.guaranteed_coins.is_none(),
+        let guaranteed_offer_matches = match offer {
+            #[cfg(feature = "localnet")]
+            ContractFunding::Shielded(expected) => body(&funded_stx.guaranteed_coins)? == expected,
+            _ => funded_stx.guaranteed_coins.is_none(),
         };
         require(
             guaranteed_offer_matches
