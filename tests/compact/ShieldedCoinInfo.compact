@@ -8,3 +8,9 @@ export circuit shieldedCoinInfoShape(
 ): ShieldedCoinInfo {
   return ShieldedCoinInfo{ nonce: nonce, color: color, value: value };
 }
+
+export circuit qualifiedShieldedCoinInfoEcho(
+  coin: QualifiedShieldedCoinInfo
+): QualifiedShieldedCoinInfo {
+  return coin;
+}
