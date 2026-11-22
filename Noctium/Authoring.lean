@@ -730,6 +730,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| keccak256($value)) | `(nlexpr| degradeToNative($value))
   | `(nlexpr| upgradeFromNative($value))
   | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
+  | `(nlexpr| fromBytesChecked($_:nltype, $value))
   | `(nlexpr| deserialize($_:nltype, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
@@ -818,6 +819,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| keccak256($value)) | `(nlexpr| degradeToNative($value))
   | `(nlexpr| upgradeFromNative($value))
   | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
+  | `(nlexpr| fromBytesChecked($_:nltype, $value))
   | `(nlexpr| deserialize($_:nltype, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
@@ -1971,6 +1973,23 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     | .ok _ => pure ()
     let result := mergeLowered (.scalar target) (.bytes operation [value.term]) [value]
     pure {result with generatedValidity := s!"checked wire decode {renderExpr stx}" :: result.generatedValidity}
+  | `(nlexpr| fromBytesChecked($target:nltype, $value)) => do
+    let target ← readScalarTy target
+    unless target == .native ||
+        (match target with | .uint _ => _root_.Bool.true | _ => _root_.Bool.false) do
+      throwErrorAt stx "fromBytesChecked supports only Native and UInt"
+    let value ← lowerExpr programName callPrefix env value
+    let .scalar (.bytes length) := value.type
+      | throwErrorAt stx "fromBytesChecked requires fixed bytes"
+    let operation := Noctium.Helpers.BytesOp.fromBytesChecked target length
+    let (expected, resultType) ← match operation.signature 1 with
+      | .ok signature => pure signature
+      | .error message => throwErrorAt stx message
+    unless expected == [.bytes length] && resultType == target do
+      throwErrorAt stx "fromBytesChecked argument type mismatch"
+    let lowered := mergeLowered (.scalar target) (.bytes operation [value.term]) [value]
+    pure {lowered with generatedValidity :=
+      s!"checked byte decode {renderExpr stx}" :: lowered.generatedValidity |>.eraseDups}
   | `(nlexpr| encode($name:ident, $value)) => do
     let (codec, helper) ← selectedCodec name
     let value ← lowerExpr programName callPrefix env value
@@ -2439,6 +2458,8 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
         `(Noctium.Helpers.BytesOp.serialize $(← tyTerm source) $(natTerm length))
       | .deserialize target length =>
         `(Noctium.Helpers.BytesOp.deserialize $(← tyTerm target) $(natTerm length))
+      | .fromBytesChecked target length =>
+        `(Noctium.Helpers.BytesOp.fromBytesChecked $(← tyTerm target) $(natTerm length))
       | .bytesLiteral length values => do
         let values := values.map natTerm |>.toArray
         `(Noctium.Helpers.BytesOp.bytesLiteral $(natTerm length) [$values,*])
