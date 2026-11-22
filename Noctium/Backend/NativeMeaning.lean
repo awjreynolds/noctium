@@ -164,17 +164,14 @@ private def fabBytes32Pairs : List Term → List (Term × Term)
 def fixedByteHashTerm (algorithm : String) (length : Nat) (alignedChunks : List Term) : Term :=
   .unary s!"{algorithm}_bytes:{length}" (.hash alignedChunks)
 
-/-- Canonical symbolic meaning of SHA-512 over a checked FAB field sequence.
-A singleton byte atom has the same binary representation as fixed-byte SHA-512. -/
-def sha512FabTerm (alignment : List String) (values : List Term) : Term := Id.run do
-  match alignment with
-  | [descriptor] =>
+/-- Singleton bytes use the same symbolic meaning as a fixed-byte hash. -/
+def fabByteHashTerm (algorithm : String) (alignment : List String) (values : List Term) : Term := Id.run do
+  if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
         if 0 < width && width ≤ 32 && values.length == (width + 30) / 31 then
-          return fixedByteHashTerm "sha512" width values
-    return .unary ("sha512_fab:" ++ String.intercalate "," alignment) (.hash values)
-  | _ => return .unary ("sha512_fab:" ++ String.intercalate "," alignment) (.hash values)
+          return fixedByteHashTerm algorithm width values
+  return .unary (algorithm ++ "_fab:" ++ String.intercalate "," alignment) (.hash values)
 
 /-- Homogeneous FAB roots share the existing native meaning for their canonical
 single/vector encodings. Mixed layouts retain their explicit alignment tag. -/
@@ -272,7 +269,7 @@ private def bytesFieldTerms (terms : List Term) (index : Nat) : Except String (L
 
 private def opaqueBytes32Value : Term → Bool
   | .unary opcode _ => opcode == "persistent_hash32" || opcode == "persistent_hash_native" ||
-      opcode == "keccak256_secp256k1_point" ||
+      opcode.startsWith "keccak256_fab:" ||
       opcode.startsWith "persistent_hash_vector32:" || opcode.startsWith "persistent_hash_native_vector:" ||
       opcode.startsWith "persistent_hash_fab:" || opcode.startsWith "sha512_fab:" ||
       opcode.startsWith "to_bytes32_" || opcode.startsWith "from_bytes32_" ||
@@ -446,6 +443,12 @@ private def normalizeForeignBinary (op : Foreign.BinaryOp) (left right : Normali
     assertions := left.assertions ++ right.assertions ++ partialAssertions
   }
 
+private def normalizeReverseBytes (length : Nat) (normalized : Normalized) : Except String Normalized := do
+  let chunks ← bytesChunksTerm length normalized.term
+  let term := if length == 0 then Term.bytes [] else
+    reverseBytesTerm length (bytesFromChunksTerm length chunks)
+  pure {normalized with term}
+
 private def arithmetic (ty : Ty) (opcode : String) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary opcode left.term right.term) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
 
@@ -575,10 +578,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       pure {term := byte, bounds := normalized.bounds ++ [(byte, 255)], assertions := normalized.assertions}
   | .reverseBytes (length := length) value => do
     let normalized ← normalize env value
-    let chunks ← bytesChunksTerm length normalized.term
-    let term := if length == 0 then Term.bytes [] else
-      reverseBytesTerm length (bytesFromChunksTerm length chunks)
-    pure {normalized with term}
+    normalizeReverseBytes length normalized
   | .sliceBytes (length := length) value start end_ => do
     let normalized ← normalize env value
     unless start ≤ end_ && end_ ≤ length do throw "byte slice is out of range"
@@ -628,14 +628,24 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     let normalizedValues ← normalizeFabValues env values
     let payload ← alignedFabPayload fields normalizedValues
     let {alignment, operands, bounds, assertions} := payload
-    pure (Normalized.mk (sha512FabTerm alignment operands) bounds assertions)
+    pure (Normalized.mk (fabByteHashTerm "sha512" alignment operands) bounds assertions)
+  | .keccak256Fab compositeEnv compositeType values => do
+    let compiled ← validateFabHashLayout compositeEnv compositeType values
+    let fields ← fabHashLayoutFields compiled
+    let normalizedValues ← normalizeFabValues env values
+    let payload ← alignedFabPayload fields normalizedValues
+    let {alignment, operands, bounds, assertions} := payload
+    pure (Normalized.mk (fabByteHashTerm "keccak256" alignment operands) bounds assertions)
   | .keccak256 (length := length) value => do
     let normalized ← normalize env value
     let chunks ← bytesChunksTerm length normalized.term
     pure {normalized with term := fixedByteHashTerm "keccak256" length chunks.reverse}
   | .keccak256Secp256k1Point value => do
     let normalized ← normalize env value
-    pure {normalized with term := .unary "keccak256_secp256k1_point" normalized.term}
+    let kind := Foreign.Kind.point .secp256k1
+    let alignment ← fabHashLayoutAtoms (.curve (.foreign kind))
+    let operands := (List.range kind.encodedFieldCount).map (foreignEncodedFieldTerm kind normalized.term)
+    pure {normalized with term := fabByteHashTerm "keccak256" alignment operands}
   | .persistentHash32 value => do
     let normalized ← normalize env value
     let (highByte, low31) ← alignedBytes32Value value normalized
@@ -709,9 +719,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       payload.bounds payload.assertions)
   | .reverseBytes32 value => do
     let normalized ← normalize env value
-    let (highByte, low31) ← alignedBytes32Fields normalized
-    let bytes := bytes32FromChunksTerm low31 highByte
-    pure {normalized with term := reverseBytes32Term bytes}
+    normalizeReverseBytes 32 normalized
   | .toBytes32 (source := source) value => do
     let normalized ← normalize env value
     if isWidenedByte value then

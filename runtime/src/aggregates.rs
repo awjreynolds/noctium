@@ -401,7 +401,7 @@ pub(crate) enum FabHashField {
 }
 
 impl FabHashField {
-    fn encoded_field_count(&self) -> usize {
+    pub(crate) fn encoded_field_count(&self) -> usize {
         match self {
             Self::Bytes(length) => length.div_ceil(31),
             Self::Curve(crate::ScalarType::JubjubScalar) => 1,
@@ -1938,6 +1938,13 @@ impl Schema {
 
     pub fn root_type_key(&self) -> Result<String> {
         self.node_type_key(self.root)
+    }
+
+    pub(crate) fn root_bytes_length(&self) -> Option<usize> {
+        match &self.nodes[self.root] {
+            LayoutNode::Bytes { length } => Some(*length),
+            _ => None,
+        }
     }
 
     pub(crate) fn can_widen_to(&self, target: &Self) -> Result<bool> {

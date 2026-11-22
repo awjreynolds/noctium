@@ -25,17 +25,53 @@ Publishing a verification result derived from private data requires explicit dis
 | `ed25519Verify` | Bytes message, Curve25519Point R, Curve25519Scalar S, Curve25519Point key | Bool |
 | `secp256k1EthereumAddress` | Secp256k1Point key | Bytes20 |
 
+## Portable signature records
+
+Each signature type exposes a `codec`. Use the codec in the readable circuit's
+`using` clause and declare the argument as `Payload codecName`. The checked
+record keeps its nominal identity and curve-specific fields through the host
+witness plan and native return views. Its Noctium wire frame holds two 32-byte
+fields. The field names and order match the pinned Compact signature types.
+
+The focused case echoes all four records through the Rust witness session and
+ZKIR 3.2.1 native checker. It rejects a different signature identity, a scalar
+from a different curve, and a changed native return commitment. Returning a
+private input in the fixture requires explicit disclosure.
+[Lean fixture](../../tests/SignaturePayloads.lean) · [Compact reference](../../tests/compact/SignaturePayloads.compact) · [Native check](../../runtime/tests/signature_helpers.rs)
+
+Readable witness circuits also support the secp256k1 and P-256 verification
+helpers. Read one checked signature record from the provider, then pass its
+`r` and `s` fields to the same verification equations used by ordinary
+circuits. The paired vectors cover a valid signature and a changed digest for
+each curve. Releasing the verification result requires explicit disclosure
+when the signature comes from a private witness.
+[Readable source](../../tests/ReadableECDSA.lean) · [Compact comparison](../../tests/compact/readable-ecdsa.mjs) · [Native check](../../runtime/tests/signature_helpers.rs)
+
+Readable circuits also share the ordinary Jubjub Schnorr and Ed25519
+equations. The fixture destructures each checked provider record once and
+checks a valid signature and a changed message. The Rust witness session,
+native ZKIR 3.2.1 checker and pinned Compact reference agree on those cases.
+[Readable source](../../tests/ReadableSignatures.lean) · [Compact comparison](../../tests/compact/readable-signatures.mjs) · [Native check](../../runtime/tests/signature_helpers.rs)
+
 ## Protocol and failure rules
 
 ECDSA interprets the supplied 32-byte digest as a big-endian integer and reduces it into the curve's scalar field. The equation checks the x-coordinate of `[digest/s]G + [r/s]key`, reduced modulo the scalar order, against r. Both high-s and low-s signatures are accepted. A low-s rule needs an additional application policy. The helper does not hash a message or establish a relationship between the digest and another contract value.
 
-Identity public keys and zero r or s abort. Coordinate extraction also aborts when the computed point is the identity. Other equation mismatches return false. The explicit zero-r rejection is a deliberate stricter boundary than the pinned Compact helper, which lacks this explicit guard. Do not treat this as exact invalid-input equivalence.
+Noctium aborts for identity public keys, zero r or s, or an identity point at coordinate extraction. Other equation mismatches return false. The pinned Compact 0.36.1 helpers return false for zero r or s on the two compared vectors.
 
 Jubjub Schnorr hashes exactly `[R.x, R.y, key.x, key.y] ++ messageFields`. It reduces both the resulting Native challenge and Native response modulo the Jubjub scalar order, then checks `[response]G = R + [challenge]key`. The total preimage is limited to 1024 Native fields, leaving 1020 message fields. Identity public keys abort. Identity announcements are permitted. A mismatched equation returns false. A pairwise hash chain or byte-message encoding defines a different protocol.
 
 Ed25519 checks `[S]G = R + [SHA512(encode(R) || encode(key) || message)]key`, reducing the SHA-512 output into the scalar field. The point encodings are canonical compressed Edwards encodings. Message length is zero through 960 bytes, because the existing hash input limit includes the 64-byte R/key prefix. No implicit prehash changes the signed message. Typed points require prime-subgroup validity and typed S requires canonical scalar encoding. Identity public keys abort. An ordinary equation mismatch returns false. Import a signature's S through canonical typed input decoding. Reducing arbitrary signature bytes modulo the order loses the original encoding check.
 
 Ethereum address derivation applies Keccak-256 to the two 32-byte big-endian affine coordinates `x || y`, without a SEC1 prefix, then returns the final 20 bytes. Identity keys abort.
+
+Readable witness circuits also accept `secp256k1EthereumAddress(point)`. A
+provider expression supplies one checked `Secp256k1Point`, and the circuit
+rejects identity before encoding either coordinate. A result derived
+from a private witness requires `disclose` at a public return. The Rust witness
+session and native ZKIR 3.2.1 checker match the Compact 0.36.1 generator address.
+The Compact and Rust witness cases both reject a canonical identity point.
+[Lean source](../../tests/ReadableEthereumAddress.lean) · [Compact reference](../../tests/compact/readable-ethereum-address.mjs) · [Rust integration](../../runtime/tests/witness_control.rs)
 
 The [pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L354) and [ZKIR v3 helpers](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/zkir-v3-library.compact) serve as semantic references. The MIT implementation does not copy their Apache-2.0 source. Ed25519's published vector and encoding rules come from [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html#section-7.1).
 

@@ -1,0 +1,26 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit verifySchnorr(
+  messages: Vector<2, Field>,
+  signature: JubjubSchnorrSignature,
+  key: JubjubPoint
+): Boolean {
+  return jubjubSchnorrVerify<2>(messages, signature, key);
+}
+
+export pure circuit verifyEd25519Empty(
+  message: Bytes<0>,
+  signature: Ed25519Signature,
+  key: Curve25519Point
+): Boolean {
+  return ed25519Verify<0>(message, signature, key);
+}
+
+export pure circuit verifyEd25519OneByte(
+  message: Bytes<1>,
+  signature: Ed25519Signature,
+  key: Curve25519Point
+): Boolean {
+  return ed25519Verify<1>(message, signature, key);
+}

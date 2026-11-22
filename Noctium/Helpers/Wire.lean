@@ -42,6 +42,39 @@ private partial def wireLeaves : Types.Layout → Except String (List Leaf)
     pure [{path := [.enumTag], type := .uint maximum, nativeLeaf := true}]
   | _ => throw "unsupported aggregate wire layout"
 
+/-- Project the layout's ordered, typed FAB leaves without serializing a host frame. -/
+def fabDigestOperands (compiled : Types.CompiledType) (value : Term) :
+    Except String (List (Ty × Term)) := do
+  let layout := compiled.checked.value
+  let fields ← fabHashLayoutFields layout
+  let atoms ← fields.mapM fun field => fabHashLayoutAtoms field.2
+  unless !fields.isEmpty && atoms.flatten.length ≤ 32 do
+    throw "FAB digest alignment must contain 1 to 32 atoms"
+  visit (layout.nodeCount + 1) value layout
+where
+  visit : Nat → Term → Types.Layout → Except String (List (Ty × Term))
+    | 0, _, _ => throw "FAB digest projection exhausted checked layout fuel"
+    | fuel + 1, value, layout => do
+      match layout with
+      | .unit => pure []
+      | .structure _ fields =>
+        pure (← fields.mapM fun (name, field) =>
+          visit fuel (.project value (.field name)) field).flatten
+      | .tuple items =>
+        pure (← items.zipIdx.mapM fun (item, index) =>
+          visit fuel (.project value (.tupleIndex index)) item).flatten
+      | .vector length element =>
+        pure (← (List.range length).mapM fun index =>
+          visit fuel (.project value (.vectorIndex index)) element).flatten
+      | .scalar .nativeField => pure [(.native, value)]
+      | .scalar .booleanField => pure [(.bool, value)]
+      | .scalar (.boundedUnsignedField maximum) => pure [(.uint maximum, value)]
+      | .bytes length .byteField => pure [(.bytes length, value)]
+      | .curve ty => pure [(ty, value)]
+      | .enumeration _ (.enumTagField maximum) _ 0 _ _ =>
+        pure [(.uint maximum, .cast (.uint maximum) (.project value .enumTag))]
+      | _ => throw "unsupported FAB digest leaf type"
+
 /-- Pack checked byte projections in the pinned little-endian FAB field order. -/
 private def packHashBytes : List Term → Term
   | [] => .native 0

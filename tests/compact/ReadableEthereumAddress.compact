@@ -1,0 +1,6 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit derive(point: Secp256k1Point): Bytes<20> {
+  return secp256k1EthereumAddress(point);
+}

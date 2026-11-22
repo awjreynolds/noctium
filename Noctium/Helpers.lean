@@ -114,6 +114,19 @@ def CurveOp.signature : CurveOp → List Ty × Ty
     ([.foreign operation.leftKind, .foreign operation.rightKind], .foreign operation.outputKind)
   | .foreignEncodedField kind _ => ([.foreign kind], .native)
 
+inductive FabDigest where
+  | sha512
+  | keccak256
+  deriving Repr, BEq, DecidableEq
+
+def FabDigest.name : FabDigest → String
+  | .sha512 => "sha512"
+  | .keccak256 => "keccak256"
+
+def FabDigest.resultType : FabDigest → Ty
+  | .sha512 => .bytes 64
+  | .keccak256 => .bytes 32
+
 /-- Closed readable byte/hash operations. Vector and fixed-byte lengths are
 bounded at the typed source boundary, and point hashing follows FAB affine
 coordinates. -/
@@ -129,6 +142,7 @@ inductive BytesOp where
   | sha512 (length : Nat)
   | keccak256 (length : Nat)
   | keccak256Secp256k1Point
+  | fabDigest (algorithm : FabDigest) (type : Types.CompositeType) (parameters : List Ty)
   | reverseBytes32
   | reverseBytes (length : Nat)
   | sliceBytes (length start stop : Nat)
@@ -154,6 +168,7 @@ def BytesOp.operationName : BytesOp → String
   | .sha512 length => s!"sha512:{length}"
   | .keccak256 length => s!"keccak256:{length}"
   | .keccak256Secp256k1Point => "keccak256:Secp256k1Point"
+  | .fabDigest algorithm _ _ => algorithm.name ++ "Fab"
   | .reverseBytes32 => "reverseBytes32"
   | .reverseBytes length => s!"reverseBytes:{length}"
   | .sliceBytes length start stop => s!"sliceBytes:{length}:{start}:{stop}"
@@ -214,6 +229,10 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
   | .keccak256Secp256k1Point =>
     unless argumentCount == 1 do throw "keccak256 Secp256k1Point requires one point argument"
     pure ([.foreign (.point .secp256k1)], .bytes 32)
+  | .fabDigest algorithm _ parameters =>
+    unless 0 < argumentCount && argumentCount ≤ 32 && argumentCount == parameters.length do
+      throw "FAB digest operand count differs from the checked layout"
+    pure (parameters, algorithm.resultType)
   | .reverseBytes32 =>
     unless argumentCount == 1 do throw "reverseBytes32 requires one Bytes32 argument"
     pure ([.bytes 32], .bytes 32)
@@ -1277,6 +1296,12 @@ theorem resolveWithLimits_mapDeclarationBodies
 abbrev Environment := List (String × ResultType)
 abbrev PartialEnvironment := List (String × Option ResultType)
 
+private def BytesOp.acceptsAggregateBytes (operation : BytesOp) (expected : Ty)
+    (actual : ResultType) : Bool :=
+  match operation, expected, actual with
+  | .fabDigest .., .bytes length, .composite (.bytes actualLength) => length == actualLength
+  | _, _, _ => false
+
 private def scalar (span : SourceSpan) : ResultType → Except Diagnostic Ty
   | .scalar ty => pure ty
   | .unit => fail span "unit is not a scalar helper argument"
@@ -1459,7 +1484,8 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
         {span, message}
       let values ← arguments.mapM (inferPartialTerm fuel program scope env span)
       for (value, expectedType) in values.zip expected do
-        unless partialSubtype value.ty (.scalar expectedType) do
+        unless partialSubtype value.ty (.scalar expectedType) ||
+            value.ty.any (operation.acceptsAggregateBytes expectedType) do
           fail span s!"{operation.operationName} argument type mismatch"
       pure (combine (some (.scalar result)) values
         (match operation with
@@ -1998,6 +2024,29 @@ private def typedExpr (span : SourceSpan) (target : Ty) (value : Lowered) : Exce
   if h : value.scalar.ty = target then pure (h ▸ value.scalar.value)
   else fail span "helper lowering expected declared scalar type"
 
+private def packFabOctets : List (Expr .native) → Expr .native
+  | [] => .native 0
+  | [octet] => octet
+  | octet :: rest => .add octet (.mul (.native 256) (packFabOctets rest))
+
+private def fabDigestInput (span : SourceSpan) :
+    (type : Ty) → Lowered → Except Diagnostic (Expr type)
+  | .bytes length, value => do
+    if value.ty == .composite (.bytes length) then
+      unless length > 0 && length <= 32 do
+        fail span "FAB byte projection requires 1 to 32 octets"
+      let octets ← (components value).mapM (nativeOfScalar span)
+      unless octets.length == length do fail span "FAB byte projection width mismatch"
+      if h : length = 32 then
+        let low := Expr.toBytes32 (packFabOctets (octets.take 31))
+        let high := Expr.toBytes32 (octets.getD 31 (.native 0))
+        pure (h.symm ▸ Expr.concatBytes (.sliceBytes low 0 31) (.sliceBytes high 0 1))
+      else
+        let packed := Expr.toBytes32 (packFabOctets octets)
+        pure (by simpa using Expr.sliceBytes packed 0 length)
+    else typedExpr span (.bytes length) value
+  | type, value => typedExpr span type value
+
 private partial def expressionUsesName (name : String) : Expr ty → Bool
   | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty
   | .bytesLiteral _ _ | .bytes32Literal _
@@ -2015,7 +2064,7 @@ private partial def expressionUsesName (name : String) : Expr ty → Bool
   | .persistentCommitFab _ _ opening values | .transientCommitFab _ _ opening values =>
     expressionUsesName name opening ||
       values.any (fun ⟨_, value⟩ => expressionUsesName name value)
-  | .sha512Fab _ _ values | .transientHashFab _ _ values =>
+  | .sha512Fab _ _ values | .keccak256Fab _ _ values | .transientHashFab _ _ values =>
     values.any (fun ⟨_, value⟩ => expressionUsesName name value)
   | .concatBytes left right | .foreignBinary _ left right | .jubjubMul left right
   | .jubjubAdd left right | .add left right | .mul left right | .sub left right
@@ -2646,7 +2695,7 @@ mutual
         {span, message})
       let values ← arguments.mapM (lowerTerm program scope env span)
       for (value, expectedType) in values.zip expectedTypes do
-        unless value.ty == .scalar expectedType do
+        unless value.ty == .scalar expectedType || operation.acceptsAggregateBytes expectedType value.ty do
           liftD (fail span s!"{operation.operationName} argument type mismatch")
       let result ← match operation, values with
         | .bytesLiteral length bytes, [] => do
@@ -2682,6 +2731,13 @@ mutual
         | .keccak256Secp256k1Point, [value] => do
           let value ← liftD (typedExpr span (.foreign (.point .secp256k1)) value)
           pure (scalarValue (Expr.keccak256Secp256k1Point value))
+        | .fabDigest algorithm type parameters, values => do
+          let operands ← (parameters.zip values).mapM fun (ty, value) => do
+            pure (Sigma.mk ty (← liftD (fabDigestInput span ty value)))
+          discard (liftD (liftError span (validateFabHashLayout program.composites type operands)))
+          match algorithm with
+          | .sha512 => pure (scalarValue (Expr.sha512Fab program.composites type operands))
+          | .keccak256 => pure (scalarValue (Expr.keccak256Fab program.composites type operands))
         | .reverseBytes32, [value] => do
           let value ← liftD (typedExpr span (.bytes 32) value)
           pure (scalarValue (Expr.reverseBytes32 value))

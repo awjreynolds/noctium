@@ -1218,7 +1218,7 @@
       "layer": "private-runtime",
       "surface": "Witness declarations and callbacks",
       "noctiumStatus": "subset",
-      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. The native checker exercises the emitted relation.",
+      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. A private Secp256k1Point provider feeds Keccak in the emitted witness plan. A wrong-curve reply leaves the request pending, and the native checker binds the same digest as the Compact reference.",
       "source": [
         "reference"
       ],
@@ -1234,7 +1234,9 @@
         "docs/development/guarded-ledger-localnet-receipts.json",
         "tests/CompositeWitnessArguments.lean",
         "tests/compact/composite-witness-arguments.mjs",
-        "runtime/tests/composite_witness_arguments.rs"
+        "runtime/tests/composite_witness_arguments.rs",
+        "tests/TypedPointKeccak.lean",
+        "runtime/tests/witness_control.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
@@ -1952,7 +1954,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimContractCall",
       "noctiumStatus": "related-subset",
-      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Other claim shapes and full Compact equivalence remain unverified.",
+      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Native checked intent assembly accepts the matched ConfidentialToken mint commitment and rejects a changed recipient or amount. Other claim shapes and full Compact equivalence remain unverified.",
       "source": [
         "adt"
       ],
@@ -1964,6 +1966,8 @@
       "observedEvidence": [
         "tests/NativeCallClaims.lean",
         "tests/ContractInterfaceComposition.lean",
+        "examples/openzeppelin/ConfidentialTokenComposition.lean",
+        "runtime/tests/confidential_token.rs",
         "docs/development/native-call-claims.md",
         "docs/development/named-interface-stateful-composition-receipt.json"
       ],
@@ -3774,7 +3778,7 @@
       "layer": "standard-library",
       "surface": "JubjubSchnorrSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries JubjubPoint announcement and Native response. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries JubjubPoint announcement and Native response. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3789,7 +3793,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3798,7 +3805,7 @@
       "layer": "standard-library",
       "surface": "Secp256k1EcdsaSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries two Secp256k1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries two Secp256k1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3813,7 +3820,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3822,7 +3832,7 @@
       "layer": "standard-library",
       "surface": "Secp256r1EcdsaSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries two Secp256r1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries two Secp256r1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3837,7 +3847,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3846,7 +3859,7 @@
       "layer": "standard-library",
       "surface": "Ed25519Signature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries a Curve25519 Point and Scalar. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries a Curve25519 Point and Scalar. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3861,7 +3874,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4740,7 +4756,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes and typed Secp256k1Point are supported. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte FAB preimage and digest. The native check rejects a changed digest return and an out-of-field point coordinate. Other typed FAB overloads remain open.",
+      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4760,6 +4776,10 @@
         "tests/compact/TypedPointKeccak.compact",
         "tests/compact/typed-point-keccak.mjs",
         "runtime/tests/typed_point_keccak.rs",
+        "tests/Sha512Fab.lean",
+        "tests/compact/sha512-fab.mjs",
+        "runtime/tests/sha512_fab.rs",
+        "runtime/tests/witness_control.rs",
         "docs/development/byte-hashes.md"
       ],
       "equivalence": "unverified"
@@ -4769,7 +4789,7 @@
       "layer": "standard-library",
       "surface": "sha512",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust check rejects a mismatched byte wrapper. Further layout and host qualification remain open.",
+      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4787,6 +4807,7 @@
         "runtime/tests/byte_hashes.rs",
         "tests/Sha512Fab.lean",
         "runtime/tests/sha512_fab.rs",
+        "runtime/tests/witness_control.rs",
         "tests/compact/sha512-fab.mjs",
         "tests/CurveFabHashes.lean",
         "runtime/tests/curve_fab_hashes.rs"
@@ -5511,8 +5532,8 @@
       "id": "C-STDLIB-JUBJUBSCHNORRVERIFY",
       "layer": "standard-library",
       "surface": "jubjubSchnorrVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Jubjub Schnorr preserves the R, public-key and message field order, with the existing 1020-field limit. Ordinary and readable circuits use the same checked Lean equation. One typed provider reply supplies the signature. The pinned Compact and native ZKIR 3.2.1 cases agree on the selected valid signature and changed message.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5525,27 +5546,22 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper hashes exactly [R.x,R.y,key.x,key.y] followed by Native message fields, at most 1020 message fields. Challenge/response reduce to JubjubScalar. Identity keys abort and identity announcements are allowed.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableSignatures.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-signatures.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256K1ECDSAVERIFY",
       "layer": "standard-library",
       "surface": "secp256k1EcdsaVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable circuits share the checked Lean secp256k1 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5558,27 +5574,22 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper consumes a big-endian Bytes32 digest and canonical Secp256k1Scalar r/s. Both high/low s are accepted. Identity keys and zero r/s abort. Explicit r=0 rejection is stricter than pinned Compact. Message binding remains the caller obligation.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableECDSA.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-ecdsa.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256K1ETHEREUMADDRESS",
       "layer": "standard-library",
       "surface": "secp256k1EthereumAddress",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable witnesses derive an Ethereum address from the big-endian affine coordinates of a typed Secp256k1Point. The pinned Compact circuit, Rust witness session and native ZKIR 3.2.1 checker match the generator address. Compact and the Rust witness session reject a canonical identity point. Public returns derived from a private witness require disclosure.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5591,27 +5602,23 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper takes Keccak256 over 32-byte big-endian x||y, returning the final 20 bytes. Identity keys abort. Native fixture includes the private-key-1 generator/address pair.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/ReadableEthereumAddress.lean",
+        "tests/compact/readable-ethereum-address.mjs",
+        "runtime/tests/witness_control.rs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256R1ECDSAVERIFY",
       "layer": "standard-library",
       "surface": "secp256r1EcdsaVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable circuits share the checked Lean P-256 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5624,27 +5631,22 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper consumes a big-endian Bytes32 digest and canonical Secp256r1Scalar r/s. Both high/low s are accepted. Identity keys and zero r/s abort. Explicit r=0 rejection is stricter than pinned Compact. Message binding remains the caller obligation.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableECDSA.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-ecdsa.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-ED25519VERIFY",
       "layer": "standard-library",
       "surface": "ed25519Verify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ed25519 hashes the compressed announcement and public key before the message, with the existing 960-byte limit. Ordinary and readable circuits use the same checked Lean equation. One typed provider reply supplies the signature. The pinned Compact and native ZKIR 3.2.1 cases agree on the selected valid signature and changed message.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5657,20 +5659,15 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper checks SHA512(encode(R)||encode(key)||message), with canonical prime-subgroup points and scalar S, using zero through 960 message bytes. Identity keys abort. RFC8032 empty-message vector and changed-message rejection are scoped native cases.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableSignatures.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-signatures.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-MERKLETREEPATHROOT",

@@ -114,9 +114,9 @@ theorem scalar_projection (hash : Hash) (input : Inputs) (sr sc presence : Scala
     (sat : CircuitSatisfies hash callProgram (callStreams input sr sc presence) w publicGroups) :
     CircuitSatisfies hash program input.streams w (program.groups w) := by
   constructor
-  · intro instruction member
-    simp only [program, List.mem_cons, List.not_mem_nil, or_false] at member
-    rcases member with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
+  · intro instruction membership
+    simp only [program, List.mem_cons, List.not_mem_nil, or_false] at membership
+    rcases membership with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
     all_goals subst instruction
     all_goals first | trivial | exact sat.instructions _ (by decide +kernel)
   · have hp := sat.publicInputs
@@ -346,9 +346,9 @@ theorem call_assignment_complete (hash : Hash) (input : Inputs)
       (callWitness hash input) (groups (operations (callWitness hash input))) := by
   have original := computed_assignment_satisfies hash input direction0 direction1 root nullifier
   constructor
-  · intro instruction member
-    simp only [callProgram, List.mem_cons, List.not_mem_nil, or_false] at member
-    rcases member with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
+  · intro instruction membership
+    simp only [callProgram, List.mem_cons, List.not_mem_nil, or_false] at membership
+    rcases membership with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
     all_goals subst instruction
     all_goals first | trivial | exact original.instructions _ (by decide +kernel) |
       simp [Instruction.Holds, Operand.read, ref, imm, callWitness, computedWitness,

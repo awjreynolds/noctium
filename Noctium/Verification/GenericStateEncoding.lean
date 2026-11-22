@@ -6,19 +6,39 @@ import Noctium.Verification.GenericStateKeys
 namespace Noctium.Verification.GenericStateEncoding
 open NativeRelation NativeState ScalarNormalization
 
+/-- The native flat state root stores only Native, Bool, and bounded UInt
+scalars. Carry the source scalar witness into every accepted field projection. -/
+@[simp] def scalarType? : (ty : Ty) → Option (ScalarType ty)
+  | .native => some .native
+  | .bool => some .bool
+  | .uint maximum => if maximum ≤ ScalarPolicy.maxUint then some (.uint maximum) else none
+  | .bytes _ | .opaqueBytes | .opaqueString | .jubjubScalar | .jubjubPoint | .foreign _ => none
+
+/-- Numeric projection on the historical scalar storage subset. Unsupported
+types only appear in impossible canonical theorem branches, and the encoder
+rejects them before constructing a field. -/
+@[simp] def number : (ty : Ty) → ty.Denote → Nat
+  | .native, value | .uint _, value => value
+  | .bool, value => if value then 1 else 0
+  | .bytes _, _ | .opaqueBytes, _ | .opaqueString, _ | .jubjubScalar, _ |
+    .jubjubPoint, _ | .foreign _, _ => 0
+
 /-- A native field cell retains the source type in the declaration schema.
 Boolean cells use field alignment; membership results use bit alignment. -/
+@[simp] private def encodeScalarValue : (ty : Ty) → ty.Denote → Option Cell
+  | .native, value =>
+    if value < Field.modulus then some (field (scalar value)) else none
+  | .bool, value => some (field (scalar (if value then 1 else 0)))
+  | .uint maximum, value =>
+    if maximum ≤ ScalarPolicy.maxUint && value ≤ maximum && value < Field.modulus then
+      some (field (scalar value))
+    else none
+  | .bytes _, _ | .opaqueBytes, _ | .opaqueString, _ | .jubjubScalar, _ |
+    .jubjubPoint, _ | .foreign _, _ => none
+
 def encodeValue (ty : Ty) (raw : Value) : Option Cell := do
   let some value := raw.as ty | none
-  let allowed : Bool := match ty with
-    | .native => decide (number .native value < Field.modulus)
-    | .bool => true
-    | .uint maximum => decide (maximum ≤ ScalarPolicy.maxUint) &&
-        decide (number (.uint maximum) value ≤ maximum) &&
-          decide (number (.uint maximum) value < Field.modulus)
-  if allowed then
-    some (field (scalar (number ty value)))
-  else none
+  encodeScalarValue ty value
 
 def decodeValue : Ty → Cell → Option Value
   | .native, ⟨.field, value⟩ => some (.native value.val)
@@ -26,7 +46,9 @@ def decodeValue : Ty → Cell → Option Value
     if value = zero then some (.bool false)
     else if value = one then some (.bool true) else none
   | .uint maximum, ⟨.field, value⟩ =>
-    if value.val ≤ maximum then some (.uint maximum value.val) else none
+    if maximum ≤ ScalarPolicy.maxUint && value.val ≤ maximum then
+      some (.uint maximum value.val)
+    else none
   | _, _ => none
 
 def encodeMapEntry (keyTy valueTy : Ty) (entry : Value × Value) : Option (Scalar × Scalar) := do
@@ -37,6 +59,7 @@ def encodeMapEntry (keyTy valueTy : Ty) (entry : Value × Value) : Option (Scala
 def encodeDeclaration (state : LedgerState) (declaration : StateDecl) : Option Slot :=
   match declaration.kind with
   | .cell ty => do
+    unless declaration.cellAlignment?.isNone do none
     let raw ← state.cells.lookup declaration.name
     let value ← encodeValue ty raw
     some (Slot.cell value)
@@ -45,9 +68,12 @@ def encodeDeclaration (state : LedgerState) (declaration : StateDecl) : Option S
     let encoded ← entries.mapM (encodeMapEntry keyTy valueTy)
     if (encoded.map Prod.fst).eraseDups.length != encoded.length then none else
     some (Slot.map encoded)
+  | .tree _ | .merkleTree _ | .historicMerkleTree _ | .opaqueString => none
 
-/-- The ordered declarations are exactly the native root array slots. Missing,
-mistyped, or noncanonical declared values reject before a VM trace is admitted. -/
+/-- Raw declaration fold used by transition and frame proofs. It preserves
+declaration order and encodes each declared cell or map, but it does not
+validate the complete initial ledger shape or reject unsupported empty maps.
+Initial-state admission must go through `encodeInitialState`. -/
 def encodeState (declarations : List StateDecl) (state : LedgerState) :
     Option (List Slot) := declarations.mapM (encodeDeclaration state)
 
@@ -57,13 +83,43 @@ def initial (slots : List Slot) : Machine :=
 def cellCount (declarations : List StateDecl) : Nat :=
   (declarations.filter fun declaration => match declaration.kind with
     | .cell _ => true
-    | .map _ _ => false).length
+    | .map _ _ | .tree _ | .merkleTree _ | .historicMerkleTree _ | .opaqueString => false).length
 
 def mapCount (declarations : List StateDecl) : Nat :=
-  declarations.length - cellCount declarations
+  (declarations.filter fun declaration => match declaration.kind with
+    | .map _ _ => true
+    | .cell _ | .tree _ | .merkleTree _ | .historicMerkleTree _ | .opaqueString => false).length
 
-/-- Admission concerns the schema and initial encoding. It asserts no source
-transition result and no native trace outcome. -/
+/-- Checked entry point for a native initial state. It admits only unique,
+declaration-ordered Native, Bool, bounded UInt cells and maps, requires exact
+cell/map association-list counts, and rejects trees and unencoded effect
+collections. `encodeState` remains the raw declaration fold used after this
+boundary by transition proofs. -/
+def declarationSupported : StateDecl → Bool
+  | {kind := .cell ty, cellAlignment? := none, ..} => (scalarType? ty).isSome
+  | {kind := .map keyTy valueTy, ..} =>
+    (scalarType? keyTy).isSome && (scalarType? valueTy).isSome
+  | _ => false
+
+def initialShapeValid (declarations : List StateDecl) (state : LedgerState) : Bool :=
+  decide (declarations.length < Field.modulus) &&
+    state.cells.length == cellCount declarations &&
+    state.maps.length == mapCount declarations && state.trees.isEmpty &&
+    state.events.isEmpty && state.shieldedMints.isEmpty && state.unshieldedMints.isEmpty &&
+    state.unshieldedInputs.isEmpty && state.unshieldedOutputs.isEmpty &&
+    state.unshieldedSpendClaims.isEmpty &&
+    uniqueNames (declarations.map (·.name)) &&
+    uniqueNames (state.cells.map Prod.fst) && uniqueNames (state.maps.map Prod.fst) &&
+    declarations.all declarationSupported
+
+def encodeInitialState (declarations : List StateDecl) (state : LedgerState) :
+    Option (List Slot) :=
+  if initialShapeValid declarations state then encodeState declarations state else none
+
+/-- Proof boundary for a checked initial ledger: declarations and source
+associations have unique names, cell/map counts match exactly, no recursive
+roots exist, and `encodeInitialState` produced the supplied ordered slots.
+This does not assert a source transition result or native trace outcome. -/
 structure AdmittedState (declarations : List StateDecl)
     (source : LedgerState) (slots : List Slot) : Prop where
   uniqueDeclarations : uniqueNames (declarations.map (·.name)) = true
@@ -71,8 +127,17 @@ structure AdmittedState (declarations : List StateDecl)
   uniqueMaps : uniqueNames (source.maps.map Prod.fst) = true
   exactCellCount : source.cells.length = cellCount declarations
   exactMapCount : source.maps.length = mapCount declarations
+  noRecursiveRoots : source.trees = []
   slotBound : declarations.length < Field.modulus
-  encoded : encodeState declarations source = some slots
+  initialEncoded : encodeInitialState declarations source = some slots
+
+theorem AdmittedState.encoded (admitted : AdmittedState declarations source slots) :
+    encodeState declarations source = some slots := by
+  have encoded := admitted.initialEncoded
+  unfold encodeInitialState at encoded
+  split at encoded
+  · exact encoded
+  · simp at encoded
 
 theorem AdmittedState.distinctDeclarations
     (admitted : AdmittedState declarations source slots) :
@@ -134,15 +199,8 @@ theorem encodeState_slot (declarations : List StateDecl) (state : LedgerState)
 theorem encodeValue_pack (ty : Ty) (value : ty.Denote)
     (canonical : Canonical ty value) :
     encodeValue ty (Value.pack ty value) = some (field (scalar (number ty value))) := by
-  cases ty with
-  | native =>
-    simp only [Canonical, number] at canonical
-    simp [encodeValue, Value.pack, Value.as, number, canonical.1]
-  | bool =>
-    cases value <;> simp [encodeValue, Value.pack, Value.as]
-  | uint maximum =>
-    simp only [Canonical, number] at canonical
-    simp [encodeValue, Value.pack, Value.as, number, canonical.1, canonical.2.1, canonical.2.2]
+  cases ty <;> simp_all [Canonical, ScalarNormalization.sourceNumber?, encodeValue,
+    Value.pack, Value.as, scalarType?, encodeScalarValue, number]
 
 theorem encodeMapEntry_pack (keyTy valueTy : Ty)
     (key : keyTy.Denote) (value : valueTy.Denote)
@@ -158,14 +216,16 @@ theorem decode_encode_pack (ty : Ty) (value : ty.Denote)
     decodeValue ty (field (scalar (number ty value))) = some (Value.pack ty value) := by
   cases ty with
   | native =>
-    simp only [Canonical, number] at canonical
-    simp [decodeValue, field, Value.pack, number, scalar_no_wrap _ canonical.1]
+    simp only [Canonical, ScalarNormalization.sourceNumber?] at canonical
+    simp [decodeValue, field, Value.pack, scalar_no_wrap _ canonical.1]
   | bool =>
     cases value <;> decide
   | uint maximum =>
-    simp only [Canonical, number] at canonical
-    simp [decodeValue, field, Value.pack, number,
-      scalar_no_wrap _ canonical.1, canonical.2.2]
+    simp only [Canonical, ScalarNormalization.sourceNumber?] at canonical
+    simp [decodeValue, field, Value.pack, scalar_no_wrap _ canonical.1,
+      canonical.2.1, canonical.2.2]
+  | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+    simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
 
 /-- Accepted typed encodings round-trip. This rules out a native read being
 attributed to a different source value of the same declared type. -/
@@ -177,41 +237,49 @@ theorem decode_encodeValue (ty : Ty) (raw : Value) (cell : Cell)
     cases raw with
     | native value =>
       by_cases canonical : value < Field.modulus
-      · simp [encodeValue, Value.as, number, canonical] at accepted
+      · simp [encodeValue, Value.as, encodeScalarValue, canonical] at accepted
         cases accepted
         exact decode_encode_pack .native value ⟨canonical, trivial⟩
-      · simp [encodeValue, Value.as, number, canonical] at accepted
-    | bool _ => simp [encodeValue, Value.as] at accepted
-    | uint _ _ => simp [encodeValue, Value.as] at accepted
+      · simp [encodeValue, Value.as, encodeScalarValue, canonical] at accepted
+    | _ => simp [encodeValue, Value.as] at accepted
   | bool =>
     cases raw with
-    | native _ => simp [encodeValue, Value.as] at accepted
     | bool value =>
-      simp [encodeValue, Value.as] at accepted
+      simp [encodeValue, Value.as, encodeScalarValue] at accepted
       cases accepted
       exact decode_encode_pack .bool value ⟨by cases value <;> decide, trivial⟩
-    | uint _ _ => simp [encodeValue, Value.as] at accepted
+    | _ => simp [encodeValue, Value.as] at accepted
   | uint maximum =>
     cases raw with
-    | native _ => simp [encodeValue, Value.as] at accepted
-    | bool _ => simp [encodeValue, Value.as] at accepted
     | uint found value =>
       by_cases same : maximum = found
       · subst found
         by_cases within : maximum ≤ ScalarPolicy.maxUint ∧
             value ≤ maximum ∧ value < Field.modulus
-        · simp [encodeValue, Value.as, number, within.1, within.2.1,
+        · simp [encodeValue, Value.as, encodeScalarValue, within.1, within.2.1,
             within.2.2] at accepted
           cases accepted
           exact decode_encode_pack (.uint maximum) value
             ⟨within.2.2, within.1, within.2.1⟩
-        · simp [encodeValue, Value.as, number] at accepted
+        · simp [encodeValue, Value.as, encodeScalarValue] at accepted
           have allowed : maximum ≤ ScalarPolicy.maxUint ∧
               value ≤ maximum ∧ value < Field.modulus :=
-            ⟨accepted.1.1.1, of_decide_eq_true accepted.1.1.2,
-              of_decide_eq_true accepted.1.2⟩
+            ⟨accepted.1.1.1, accepted.1.1.2, accepted.1.2⟩
           exact False.elim (within allowed)
       · simp [encodeValue, Value.as, same] at accepted
+    | _ => simp [encodeValue, Value.as] at accepted
+  | bytes length =>
+    cases h : raw.as (.bytes length) <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | opaqueBytes =>
+    cases h : raw.as .opaqueBytes <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | opaqueString =>
+    cases h : raw.as .opaqueString <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | jubjubScalar =>
+    cases h : raw.as .jubjubScalar <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | jubjubPoint =>
+    cases h : raw.as .jubjubPoint <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | foreign kind =>
+    cases h : raw.as (.foreign kind) <;> simp [encodeValue, encodeScalarValue, h] at accepted
 
 theorem encodeValue_source (ty : Ty) (raw : Value) (cell : Cell)
     (accepted : encodeValue ty raw = some cell) :
@@ -222,35 +290,41 @@ theorem encodeValue_source (ty : Ty) (raw : Value) (cell : Cell)
     cases raw with
     | native value =>
       by_cases bound : value < Field.modulus
-      · simp [encodeValue, Value.as, number, bound] at accepted
-        cases accepted
-        exact ⟨value, rfl, ⟨bound, trivial⟩, rfl⟩
-      · simp [encodeValue, Value.as, number, bound] at accepted
-    | bool _ => simp [encodeValue, Value.as] at accepted
-    | uint _ _ => simp [encodeValue, Value.as] at accepted
+      · simp [encodeValue, Value.as, encodeScalarValue, bound] at accepted
+        exact ⟨value, rfl, ⟨bound, trivial⟩, accepted.symm⟩
+      · simp [encodeValue, Value.as, encodeScalarValue, bound] at accepted
+    | _ => simp [encodeValue, Value.as] at accepted
   | bool =>
     cases raw with
-    | native _ => simp [encodeValue, Value.as] at accepted
     | bool value =>
-      simp [encodeValue, Value.as] at accepted
-      cases accepted
-      exact ⟨value, rfl, ⟨by cases value <;> decide, trivial⟩, rfl⟩
-    | uint _ _ => simp [encodeValue, Value.as] at accepted
+      simp [encodeValue, Value.as, encodeScalarValue] at accepted
+      exact ⟨value, rfl, ⟨by cases value <;> decide, trivial⟩, accepted.symm⟩
+    | _ => simp [encodeValue, Value.as] at accepted
   | uint maximum =>
     cases raw with
-    | native _ => simp [encodeValue, Value.as] at accepted
-    | bool _ => simp [encodeValue, Value.as] at accepted
     | uint found value =>
       by_cases same : maximum = found
       · subst found
-        simp [encodeValue, Value.as, number] at accepted
+        simp [encodeValue, Value.as, encodeScalarValue] at accepted
         have hmax := accepted.1.1.1
-        have hvalue := of_decide_eq_true accepted.1.1.2
-        have hfield := of_decide_eq_true accepted.1.2
+        have hvalue := accepted.1.1.2
+        have hfield := accepted.1.2
         have equal := accepted.2
-        cases equal
-        exact ⟨value, by simp [Value.as], ⟨hfield, hmax, hvalue⟩, rfl⟩
+        exact ⟨value, by simp [Value.as], ⟨hfield, hmax, hvalue⟩, equal.symm⟩
       · simp [encodeValue, Value.as, same] at accepted
+    | _ => simp [encodeValue, Value.as] at accepted
+  | bytes length =>
+    cases h : raw.as (.bytes length) <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | opaqueBytes =>
+    cases h : raw.as .opaqueBytes <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | opaqueString =>
+    cases h : raw.as .opaqueString <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | jubjubScalar =>
+    cases h : raw.as .jubjubScalar <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | jubjubPoint =>
+    cases h : raw.as .jubjubPoint <;> simp [encodeValue, encodeScalarValue, h] at accepted
+  | foreign kind =>
+    cases h : raw.as (.foreign kind) <;> simp [encodeValue, encodeScalarValue, h] at accepted
 
 theorem encoded_cell_source (state : LedgerState) (name : String)
     (ty : Ty) (cell : Cell)
@@ -301,6 +375,8 @@ theorem encoded_cell_typed (state : LedgerState) (name : String)
         subst sameMax
         cases sameValue
         exact ⟨value, rfl, canonical, same⟩
+      | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+        simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
 
 private theorem option_mapM_member {α β : Type} (f : α → Option β)
     (items : List α) (results : List β) (item : α)
@@ -324,11 +400,151 @@ private theorem option_mapM_member {α β : Type} (f : α → Option β)
         · obtain ⟨result, encoded, inResults⟩ := ih rest later inTail
           exact ⟨result, encoded, List.mem_cons_of_mem _ inResults⟩
 
+private theorem foreignCurve_beq_eq (left right : Foreign.Curve)
+    (same : (left == right) = true) : left = right := by
+  cases left <;> cases right
+  all_goals change Foreign.instBEqCurve.beq _ _ = true at same
+  all_goals simp [Foreign.instBEqCurve.beq, Foreign.Curve.ctorIdx] at same ⊢
+
+private theorem foreignPoint_beq_eq (left right : Foreign.Point)
+    (same : (left == right) = true) : left = right := by
+  cases left with
+  | identity => cases right with
+    | identity => rfl
+    | affine _ _ => simp [Foreign.instBEqPoint.beq, BEq.beq] at same
+  | affine leftX leftY => cases right with
+    | identity => simp [Foreign.instBEqPoint.beq, BEq.beq] at same
+    | affine rightX rightY =>
+      change Foreign.instBEqPoint.beq (.affine leftX leftY) (.affine rightX rightY) = true at same
+      simp [Foreign.instBEqPoint.beq, BEq.beq] at same
+      rcases same with ⟨sameX, sameY⟩
+      cases sameX
+      cases sameY
+      rfl
+
+private theorem foreignCurve_beq_refl (curve : Foreign.Curve) :
+    Foreign.instBEqCurve.beq curve curve = true := by
+  cases curve <;> rfl
+
+private theorem foreignPoint_beq_refl (point : Foreign.Point) :
+    Foreign.instBEqPoint.beq point point = true := by
+  cases point <;> simp [Foreign.instBEqPoint.beq, BEq.beq]
+
+private theorem value_beq_refl (value : Value) : (value == value) = true := by
+  cases value with
+  | native value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | bool value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | uint maximum value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | bytes length values =>
+    change Noctium.instBEqValue.beq (.bytes length values) (.bytes length values) = true
+    simp [Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+      show (values == values) = true from beq_self_eq_true values]
+  | opaqueBytes values =>
+    change Noctium.instBEqValue.beq (.opaqueBytes values) (.opaqueBytes values) = true
+    simp [Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+      show (values == values) = true from beq_self_eq_true values]
+  | opaqueString value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | jubjubScalar value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | jubjubPoint x y => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
+  | foreignBase curve value =>
+    change Foreign.instBEqCurve.beq curve curve && (value == value) = true
+    simp [foreignCurve_beq_refl, beq_self_eq_true]
+  | foreignScalar curve value =>
+    change Foreign.instBEqCurve.beq curve curve && (value == value) = true
+    simp [foreignCurve_beq_refl, beq_self_eq_true]
+  | foreignPoint curve value =>
+    change Foreign.instBEqCurve.beq curve curve && Foreign.instBEqPoint.beq value value = true
+    simp [foreignCurve_beq_refl, foreignPoint_beq_refl]
+
 private theorem value_beq_eq (left right : Value) (same : (left == right) = true) :
     left = right := by
-  cases left <;> cases right <;>
-    simp [BEq.beq, Noctium.instBEqValue.beq] at same ⊢ <;>
-    exact same
+  cases left with
+  | native leftValue =>
+    cases right with
+    | native rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.native (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | bool leftValue =>
+    cases right with
+    | bool rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.bool (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | uint leftMaximum leftValue =>
+    cases right with
+    | uint rightMaximum rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases of_decide_eq_true same.1
+      cases of_decide_eq_true same.2
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | bytes leftLength leftValue =>
+    cases right with
+    | bytes rightLength rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases of_decide_eq_true same.1
+      have valuesEqual := same.2
+      change (leftValue == rightValue) = true at valuesEqual
+      cases beq_iff_eq.mp valuesEqual
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | opaqueBytes leftValue =>
+    cases right with
+    | opaqueBytes rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.opaqueBytes (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | opaqueString leftValue =>
+    cases right with
+    | opaqueString rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.opaqueString (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | jubjubScalar leftValue =>
+    cases right with
+    | jubjubScalar rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.jubjubScalar (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | jubjubPoint leftX leftY =>
+    cases right with
+    | jubjubPoint rightX rightY =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases of_decide_eq_true same.1
+      cases of_decide_eq_true same.2
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | foreignBase leftCurve leftValue =>
+    cases right with
+    | foreignBase rightCurve rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases foreignCurve_beq_eq leftCurve rightCurve same.1
+      cases of_decide_eq_true same.2
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | foreignScalar leftCurve leftValue =>
+    cases right with
+    | foreignScalar rightCurve rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases foreignCurve_beq_eq leftCurve rightCurve same.1
+      cases of_decide_eq_true same.2
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | foreignPoint leftCurve leftValue =>
+    cases right with
+    | foreignPoint rightCurve rightValue =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx,
+        Bool.and_eq_true] at same
+      cases foreignCurve_beq_eq leftCurve rightCurve same.1
+      cases foreignPoint_beq_eq leftValue rightValue same.2
+      rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
 
 private theorem lookup_member_value (entries : List (Value × Value))
     (key raw : Value) (found : entries.lookup key = some raw) :
@@ -459,6 +675,8 @@ theorem encodeDeclaration_updateCell_other (state : LedgerState)
     simp [encodeDeclaration, kind,
       updateEntry_lookup_other name declaration.name raw state.cells different]
   | map keyTy valueTy => simp [encodeDeclaration, kind]
+  | tree _ | merkleTree _ | historicMerkleTree _ | opaqueString =>
+    simp [encodeDeclaration, kind]
 
 theorem encodeDeclaration_updateCell_same (state : LedgerState)
     (name : String) (ty : Ty) (value : ty.Denote)
@@ -564,6 +782,8 @@ theorem encodeValue_pack_injective (ty : Ty) (left right : ty.Denote)
   | native => exact Value.native.inj packed
   | bool => exact Value.bool.inj packed
   | uint _ => exact Value.uint.inj packed |>.2
+  | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+    simp [Canonical, ScalarNormalization.sourceNumber?] at leftCanonical
 
 private theorem encodeMapEntry_key_cell (keyTy valueTy : Ty)
     (entry : Value × Value) (pair : Scalar × Scalar)
@@ -596,7 +816,12 @@ theorem encodeMapEntry_key_match (keyTy valueTy : Ty)
     rw [encodeValue_pack keyTy key canonical] at cell
     have pairEqual : pair.1 = scalar (number keyTy key) := by
       simpa [field] using congrArg Cell.value (Option.some.inj cell).symm
-    cases keyTy <;> simp [pairEqual, Value.pack, BEq.beq, Noctium.instBEqValue.beq]
+    cases keyTy with
+    | native => simp [pairEqual, Value.pack, value_beq_refl]
+    | bool => simp [pairEqual, Value.pack, value_beq_refl]
+    | uint _ => simp [pairEqual, Value.pack, value_beq_refl]
+    | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+      simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
   · have sourceFalse : (entry.1 == Value.pack keyTy key) = false := by
       cases sourceEq : (entry.1 == Value.pack keyTy key) with
       | false => rfl
@@ -611,7 +836,7 @@ theorem encodeMapEntry_key_match (keyTy valueTy : Ty)
         have decoded := decode_encodeValue keyTy entry.1 _ cell
         rw [decode_encode_pack keyTy key canonical] at decoded
         exact False.elim (same (Option.some.inj decoded).symm)
-    simp [sourceFalse, scalarFalse]
+    rw [sourceFalse, scalarFalse]
 
 theorem encodeMapEntries_filter_key (keyTy valueTy : Ty)
     (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
@@ -642,11 +867,40 @@ theorem encodeMapEntries_filter_key (keyTy valueTy : Ty)
         | false =>
           have encodedEqual : (pair.1 == scalar (number keyTy key)) = false := by
             simpa [equal] using matched.symm
-          simp [equal, first, restFiltered, bne, encodedEqual]
+          have encodedKeep : (pair.1 != scalar (number keyTy key)) = true := by
+            apply bne_iff_ne.mpr
+            intro pairEquality
+            rw [pairEquality, beq_self_eq_true] at encodedEqual
+            cases encodedEqual
+          have sourceKept : (entry :: rest).filter
+              (fun entry => !(entry.1 == Value.pack keyTy key)) =
+              entry :: rest.filter (fun entry => !(entry.1 == Value.pack keyTy key)) := by
+            simp [equal]
+          have encodedKept : (pair :: remaining).filter
+              (fun pair => pair.1 != scalar (number keyTy key)) =
+              pair :: remaining.filter (fun pair => pair.1 != scalar (number keyTy key)) := by
+            rw [List.filter_cons, encodedKeep]
+            rfl
+          rw [sourceKept, encodedKept]
+          simp [first, restFiltered]
         | true =>
           have encodedEqual : (pair.1 == scalar (number keyTy key)) = true := by
             simpa [equal] using matched.symm
-          simp [equal, restFiltered, bne, encodedEqual]
+          have encodedDrop : (pair.1 != scalar (number keyTy key)) = false := by
+            have pairEquality : pair.1 = scalar (number keyTy key) :=
+              beq_iff_eq.mp encodedEqual
+            simp [pairEquality]
+          have sourceDropped : (entry :: rest).filter
+              (fun entry => !(entry.1 == Value.pack keyTy key)) =
+              rest.filter (fun entry => !(entry.1 == Value.pack keyTy key)) := by
+            simp [equal]
+          have encodedDropped : (pair :: remaining).filter
+              (fun pair => pair.1 != scalar (number keyTy key)) =
+              remaining.filter (fun pair => pair.1 != scalar (number keyTy key)) := by
+            rw [List.filter_cons, encodedDrop]
+            rfl
+          rw [sourceDropped, encodedDropped]
+          exact restFiltered
 
 theorem encodeMapEntries_update_key (keyTy valueTy : Ty)
     (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
@@ -705,6 +959,8 @@ theorem encodeDeclaration_updateMap_other (state : LedgerState)
   | map keyTy valueTy =>
     simp [encodeDeclaration, kind,
       updateEntry_lookup_other name declaration.name entries state.maps different]
+  | tree _ | merkleTree _ | historicMerkleTree _ | opaqueString =>
+    simp [encodeDeclaration, kind]
 
 theorem encodeDeclaration_updateMap_same (state : LedgerState)
     (name : String) (keyTy valueTy : Ty)
@@ -724,11 +980,40 @@ theorem encodeDeclaration_updateMap_same (state : LedgerState)
   have noDuplicates := encodedMap_update_distinct encoded
     (scalar (number keyTy key)) (scalar (number valueTy value)) distinct
   have sameLength := eraseDups_eq_self_of_nodup _ noDuplicates
-  simp [encodeDeclaration, updateEntry_lookup_same, updated]
-  have concrete := sameLength
-  simp only [List.map_cons] at concrete
-  rw [concrete]
-  simp
+  simp only [encodeDeclaration, updateEntry_lookup_same]
+  change Option.bind
+      (some (SourceEffects.updateEntry (Value.pack keyTy key)
+        (Value.pack valueTy value) entries))
+      (fun entries => do
+        let encoded ← entries.mapM (encodeMapEntry keyTy valueTy)
+        if (encoded.map Prod.fst).eraseDups.length != encoded.length then none
+        else some (Slot.map encoded)) = _
+  rw [Option.bind_some]
+  rw [updated]
+  change Option.bind
+      (some ((scalar (number keyTy key), scalar (number valueTy value)) ::
+        List.filter (fun pair => pair.1 != scalar (number keyTy key)) encoded))
+      (fun encoded => if
+        ((encoded.map Prod.fst).eraseDups.length != encoded.length) = true then none
+        else some (Slot.map encoded)) = _
+  rw [Option.bind_some]
+  have lengths :
+      (List.map Prod.fst
+        ((scalar (number keyTy key), scalar (number valueTy value)) ::
+          List.filter (fun pair => pair.1 != scalar (number keyTy key)) encoded)).eraseDups.length =
+        ((scalar (number keyTy key), scalar (number valueTy value)) ::
+          List.filter (fun pair => pair.1 != scalar (number keyTy key)) encoded).length := by
+    simpa only [List.length_map] using congrArg List.length sameLength
+  have noLengthMismatch :
+      ((List.map Prod.fst
+        ((scalar (number keyTy key), scalar (number valueTy value)) ::
+          List.filter (fun pair => pair.1 != scalar (number keyTy key)) encoded)).eraseDups.length !=
+        ((scalar (number keyTy key), scalar (number valueTy value)) ::
+          List.filter (fun pair => pair.1 != scalar (number keyTy key)) encoded).length) = false := by
+    rw [lengths]
+    simp
+  rw [noLengthMismatch]
+  rfl
 
 theorem encodeState_updateMap_framed (declarations : List StateDecl)
     (state : LedgerState) (name : String) (entries : List (Value × Value))

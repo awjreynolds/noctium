@@ -375,6 +375,117 @@ fn byte_scalar_type(length: usize) -> ScalarType {
     }
 }
 
+fn fab_digest_scalar_type(field: &crate::aggregates::FabHashField) -> ScalarType {
+    use crate::aggregates::FabHashField;
+    match field {
+        FabHashField::Bytes(length) => byte_scalar_type(*length),
+        FabHashField::Bool => ScalarType::Bool,
+        FabHashField::UInt(maximum) | FabHashField::EnumTag { maximum, .. } => {
+            ScalarType::UInt(maximum.clone())
+        }
+        FabHashField::Native => ScalarType::Native,
+        FabHashField::Curve(ty) => ty.clone(),
+    }
+}
+
+#[derive(Clone)]
+enum FabDigestArgumentKind {
+    Scalar,
+    AggregateBytes { token: String, length: usize },
+}
+
+fn aggregate_bytes_value(value: &Json, length: usize) -> Result<Value> {
+    ensure!(
+        text(value, "kind")? == "bytes",
+        "control aggregate byte value"
+    );
+    let raw_bytes = list(value, "values")?;
+    ensure!(raw_bytes.len() == length, "control aggregate byte length");
+    let bytes = raw_bytes
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|byte| *byte <= u8::MAX as u64)
+                .map(|byte| byte as u8)
+                .ok_or_else(|| anyhow!("control aggregate byte out of range"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Value::Bytes(bytes))
+}
+
+fn fab_curve_source_name(ty: &ScalarType) -> Result<String> {
+    match ty {
+        ScalarType::JubjubScalar => Ok("JubjubScalar".to_owned()),
+        ScalarType::JubjubPoint => Ok("JubjubPoint".to_owned()),
+        #[cfg(feature = "zkir-321")]
+        ScalarType::Foreign(ty) => Ok(ty.source_name().to_owned()),
+        _ => bail!("unsupported FAB curve field type"),
+    }
+}
+
+fn fab_digest_input(
+    field: &crate::aggregates::FabHashField,
+    index: usize,
+) -> Result<crate::FabHashInput> {
+    use crate::aggregates::FabHashField;
+    let value = || {
+        Box::new(crate::Expr::Reference {
+            name: index.to_string(),
+        })
+    };
+    Ok(match field {
+        FabHashField::Bytes(length) => crate::FabHashInput::Bytes {
+            length: *length,
+            value: value(),
+        },
+        FabHashField::Bool => crate::FabHashInput::Bool { value: value() },
+        FabHashField::UInt(maximum) => crate::FabHashInput::Uint {
+            maximum: maximum.to_str_radix(10),
+            value: value(),
+        },
+        FabHashField::EnumTag { id, maximum } => crate::FabHashInput::EnumTag {
+            id: id.clone(),
+            maximum: maximum.to_str_radix(10),
+            value: value(),
+        },
+        FabHashField::Native => crate::FabHashInput::Native { value: value() },
+        FabHashField::Curve(ty) => crate::FabHashInput::Curve {
+            ty: fab_curve_source_name(ty)?,
+            value: value(),
+        },
+    })
+}
+
+fn fab_digest_operation(
+    operation: &str,
+    schema: Json,
+    fields: &[crate::aggregates::FabHashField],
+) -> Result<(Vec<ScalarType>, ScalarType, crate::Expr)> {
+    let parameters = fields
+        .iter()
+        .map(fab_digest_scalar_type)
+        .collect::<Vec<_>>();
+    let values = fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| fab_digest_input(field, index))
+        .collect::<Result<Vec<_>>>()?;
+    match operation {
+        "sha512" => Ok((
+            parameters,
+            ScalarType::Bytes(64),
+            crate::Expr::Sha512Fab { schema, values },
+        )),
+        "keccak256" => Ok((
+            parameters,
+            ScalarType::Bytes32,
+            crate::Expr::Keccak256Fab { schema, values },
+        )),
+        _ => bail!("unsupported control FAB digest operation"),
+    }
+}
+
 fn canonical_byte_length(text: &str) -> Result<usize> {
     ensure!(
         !text.is_empty()
@@ -672,6 +783,16 @@ fn bytes_operation(
             },
         ));
     }
+    #[cfg(feature = "zkir-321")]
+    if operation == "keccak256:Secp256k1Point" {
+        ensure!(count == 1, "typed Keccak point argument count");
+        let point = crate::foreign::ForeignType::parse_source_name("Secp256k1Point")?;
+        return Ok((
+            vec![ScalarType::Foreign(point)],
+            Bytes32,
+            crate::Expr::Keccak256Secp256k1Point { value: argument(0) },
+        ));
+    }
     if let Some(encoded_length) = operation.strip_prefix("keccak256:") {
         let length = canonical_byte_length(encoded_length)?;
         ensure!(count == 1, "keccak256 argument count");
@@ -934,6 +1055,13 @@ enum ExprKind {
     #[cfg(feature = "zkir-321")]
     ForeignEncodedField(Arc<Expr>, usize),
     Bytes(String, Vec<Arc<Expr>>),
+    FabDigest {
+        parameters: Vec<ScalarType>,
+        result: ScalarType,
+        expression: crate::Expr,
+        argument_kinds: Vec<FabDigestArgumentKind>,
+        arguments: Vec<Arc<Expr>>,
+    },
     Call(String, Vec<Arc<Expr>>),
     Witness(String),
     WitnessCall {
@@ -1010,6 +1138,9 @@ struct Parser<'a> {
     witnesses: &'a BTreeMap<String, String>,
     typed_witnesses: &'a BTreeMap<String, witness::WitnessSignature>,
     registry: &'a witness::Registry,
+    registered_schemas: &'a BTreeMap<String, Json>,
+    fab_digest_layouts: BTreeMap<String, (Json, Vec<crate::aggregates::FabHashField>)>,
+    aggregate_bytes_lengths: BTreeMap<String, Option<usize>>,
     schema_version: u32,
     nodes: usize,
     deepest: usize,
@@ -1026,6 +1157,52 @@ impl Parser<'_> {
         );
         Ok(())
     }
+
+    fn fab_digest_layout(
+        &mut self,
+        token: &str,
+    ) -> Result<(Json, Vec<crate::aggregates::FabHashField>)> {
+        if let Some(layout) = self.fab_digest_layouts.get(token) {
+            return Ok(layout.clone());
+        }
+        let schema_json = self
+            .registered_schemas
+            .get(token)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown control aggregate type"))?;
+        let schema_bytes = serde_json::to_vec(&schema_json)?;
+        let schema = crate::aggregates::Schema::from_json(&schema_bytes)?;
+        let fields = schema.fab_hash_nested_fields()?;
+        let encoded_fields = fields.iter().try_fold(0usize, |total, field| {
+            total
+                .checked_add(field.encoded_field_count())
+                .ok_or_else(|| anyhow!("FAB digest alignment size overflow"))
+        })?;
+        ensure!(
+            (1..=32).contains(&encoded_fields),
+            "FAB digest alignment must contain 1 to 32 atoms"
+        );
+        let layout = (schema_json, fields);
+        self.fab_digest_layouts
+            .insert(token.to_owned(), layout.clone());
+        Ok(layout)
+    }
+
+    fn aggregate_bytes_length(&mut self, token: &str) -> Result<Option<usize>> {
+        if let Some(length) = self.aggregate_bytes_lengths.get(token) {
+            return Ok(*length);
+        }
+        let schema_json = self
+            .registered_schemas
+            .get(token)
+            .ok_or_else(|| anyhow!("unknown control aggregate type"))?;
+        let schema_bytes = serde_json::to_vec(schema_json)?;
+        let length = crate::aggregates::Schema::from_json(&schema_bytes)?.root_bytes_length();
+        self.aggregate_bytes_lengths
+            .insert(token.to_owned(), length);
+        Ok(length)
+    }
+
     fn expr(&mut self, v: &Json, env: &BTreeMap<String, Type>, depth: usize) -> Result<Arc<Expr>> {
         self.tick(depth)?;
         let tag = text(v, "tag")?;
@@ -1639,6 +1816,68 @@ impl Parser<'_> {
                         format!("concatBytes:{left_length}:{right_length}"),
                         vec![left, right],
                     ),
+                )
+            }
+            "fabDigest" => {
+                ensure!(self.schema_version == 2, "FAB digests require v2 plan");
+                shape(v, &["tag", "operation", "type", "arguments"], true)?;
+                let operation = text(v, "operation")?.to_owned();
+                ensure!(
+                    matches!(operation.as_str(), "sha512" | "keccak256"),
+                    "unsupported control FAB digest operation"
+                );
+                let token = text(v, "type")?.to_owned();
+                ensure!(
+                    matches!(parse_type(&token, self.registry)?, Type::Aggregate(_)),
+                    "FAB digest requires an aggregate type"
+                );
+                let (schema, fields) = self.fab_digest_layout(&token)?;
+                let raw_arguments = list(v, "arguments")?;
+                ensure!(
+                    raw_arguments.len() == fields.len(),
+                    "control FAB digest argument count"
+                );
+                let mut arguments = Vec::with_capacity(raw_arguments.len());
+                let mut argument_kinds = Vec::with_capacity(raw_arguments.len());
+                for (raw, field) in raw_arguments.iter().zip(&fields) {
+                    let argument = self.expr(raw, env, depth + 1)?;
+                    let argument_kind = match (&argument.ty, field) {
+                        (Type::Scalar(actual), _) if *actual == fab_digest_scalar_type(field) => {
+                            FabDigestArgumentKind::Scalar
+                        }
+                        (
+                            Type::Aggregate(token),
+                            crate::aggregates::FabHashField::Bytes(length),
+                        ) => {
+                            ensure!(
+                                self.aggregate_bytes_length(token)? == Some(*length),
+                                "control FAB digest aggregate byte argument type"
+                            );
+                            FabDigestArgumentKind::AggregateBytes {
+                                token: token.clone(),
+                                length: *length,
+                            }
+                        }
+                        _ => bail!("control FAB digest argument type"),
+                    };
+                    argument_kinds.push(argument_kind);
+                    arguments.push(argument);
+                }
+                let (parameters, result, expression) =
+                    fab_digest_operation(&operation, schema, &fields)?;
+                ensure!(
+                    parameters.len() == arguments.len(),
+                    "control FAB digest argument count"
+                );
+                (
+                    Type::Scalar(result.clone()),
+                    ExprKind::FabDigest {
+                        parameters,
+                        result,
+                        expression,
+                        argument_kinds,
+                        arguments,
+                    },
                 )
             }
             "bytes" => {
@@ -3533,6 +3772,16 @@ impl Plan {
                 registry.register_json(&format!("Aggregate:{id}"), &bytes)?;
             }
         }
+        let registered_schemas = registry
+            .declarations()?
+            .into_iter()
+            .map(|declaration| {
+                Ok((
+                    text(&declaration, "id")?.to_owned(),
+                    field(&declaration, "schema")?.clone(),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
         shape(field(v, "limits")?, &["maxSteps"], false)?;
         let max_steps = field(field(v, "limits")?, "maxSteps")?
             .as_u64()
@@ -3632,6 +3881,9 @@ impl Plan {
                 witnesses: &witnesses,
                 typed_witnesses: &typed_witnesses,
                 registry: &registry,
+                registered_schemas: &registered_schemas,
+                fab_digest_layouts: BTreeMap::new(),
+                aggregate_bytes_lengths: BTreeMap::new(),
                 schema_version,
                 nodes: 0,
                 deepest: 0,
@@ -4254,7 +4506,8 @@ impl Abstractor<'_> {
             | ExprKind::Index { .. }
             | ExprKind::Hash(_, _, _)
             | ExprKind::Curve(_, _)
-            | ExprKind::Bytes(_, _) => None,
+            | ExprKind::Bytes(_, _)
+            | ExprKind::FabDigest { .. } => None,
             #[cfg(feature = "zkir-321")]
             ExprKind::ForeignEncodedField(value, _) => {
                 let _ = self.expression(value, env)?;
@@ -4760,6 +5013,12 @@ enum Task {
     #[cfg(feature = "zkir-321")]
     ForeignEncodedField(usize),
     Bytes(String, usize),
+    FabDigest(
+        Vec<ScalarType>,
+        ScalarType,
+        crate::Expr,
+        Vec<FabDigestArgumentKind>,
+    ),
     EagerSelect(Type),
     Choose(Arc<Expr>, Arc<Expr>, Type, Env, Arc<Expr>),
     Short(bool, Arc<Expr>, Env),
@@ -6250,6 +6509,23 @@ impl Session {
                         self.tasks.push(Task::Eval(argument.clone(), env.clone()));
                     }
                 }
+                ExprKind::FabDigest {
+                    parameters,
+                    result,
+                    expression,
+                    argument_kinds,
+                    arguments,
+                } => {
+                    self.tasks.push(Task::FabDigest(
+                        parameters.clone(),
+                        result.clone(),
+                        expression.clone(),
+                        argument_kinds.clone(),
+                    ));
+                    for argument in arguments.iter().rev() {
+                        self.tasks.push(Task::Eval(argument.clone(), env.clone()));
+                    }
+                }
                 ExprKind::Select(c, a, b) => {
                     self.tasks.push(Task::EagerSelect(expr.ty.clone()));
                     self.tasks.push(Task::Eval(b.clone(), env.clone()));
@@ -6473,6 +6749,39 @@ impl Session {
                     evaluate_operation(bytes_operation(&operation, count)?, values)?,
                     taint,
                 ));
+            }
+            Task::FabDigest(parameters, result, expression, argument_kinds) => {
+                let count = argument_kinds.len();
+                ensure!(
+                    self.values.len() >= count,
+                    "control FAB digest argument stack"
+                );
+                let arguments = self.values.split_off(self.values.len() - count);
+                let mut taint = false;
+                let values = arguments
+                    .into_iter()
+                    .zip(argument_kinds)
+                    .map(|(argument, kind)| {
+                        taint |= argument.is_tainted();
+                        match kind {
+                            FabDigestArgumentKind::Scalar => argument
+                                .value
+                                .ok_or_else(|| anyhow!("control FAB digest scalar required")),
+                            FabDigestArgumentKind::AggregateBytes { token, length } => {
+                                let aggregate = argument.aggregate.as_ref().ok_or_else(|| {
+                                    anyhow!("control FAB digest aggregate required")
+                                })?;
+                                ensure!(
+                                    aggregate.token == token,
+                                    "control FAB digest aggregate type mismatch"
+                                );
+                                aggregate_bytes_value(&aggregate.payload.value, length)
+                            }
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let value = evaluate_operation((parameters, result, expression), values)?;
+                self.values.push(Tracked::scalar(value, taint));
             }
             Task::Hash(domain) => {
                 let b = self.pop()?;

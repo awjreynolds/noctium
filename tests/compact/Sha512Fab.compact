@@ -8,6 +8,6 @@ export struct Sha512FabPayload {
   anchor: Field;
 }
 
-export circuit sha512Fab(payload: Sha512FabPayload): [Bytes<64>] {
-  return [sha512<Sha512FabPayload>(payload)];
+export circuit sha512Fab(payload: Sha512FabPayload): [Bytes<64>, Bytes<32>] {
+  return [sha512<Sha512FabPayload>(payload), keccak256<Sha512FabPayload>(payload)];
 }

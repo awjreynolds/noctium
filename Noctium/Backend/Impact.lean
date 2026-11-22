@@ -1519,7 +1519,7 @@ private def expressionNames : Expr ty → List String
   | .persistentHashFab _ _ values => expressionNamesFabValues values
   | .transientHashFab _ _ values => expressionNamesFabValues values
   | .hashToCurveFab _ _ values => expressionNamesFabValues values
-  | .sha512Fab _ _ values => expressionNamesFabValues values
+  | .sha512Fab _ _ values | .keccak256Fab _ _ values => expressionNamesFabValues values
   | .persistentCommitFab _ _ opening values | .transientCommitFab _ _ opening values =>
     expressionNames opening ++ expressionNamesFabValues values
   | .hashToCurve values | .persistentHashNativeVector values | .transientHash values => values.flatMap expressionNames

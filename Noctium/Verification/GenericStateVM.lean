@@ -2,7 +2,7 @@ import Noctium.Verification.GenericStateEncoding
 import Noctium.Verification.SourceEffects
 
 namespace Noctium.Verification.GenericStateVM
-open NativeRelation NativeState GenericStateEncoding ScalarNormalization
+open NativeRelation NativeState GenericStateEncoding
 
 def readCellOps (slot : Nat) (expected : Cell) : List Op :=
   [.dup, .index slot false, .popeq expected]
@@ -152,7 +152,7 @@ theorem readCell_source_typed (declarations : List StateDecl) (state : LedgerSta
     (accepted : run (readCellOps slot expected) ⟨[.vector items], reads⟩ = some after) :
     ∃ value,
       state.cells.lookup name = some (Value.pack ty value) ∧
-      Canonical ty value ∧
+      ScalarNormalization.Canonical ty value ∧
       expected = field (scalar (number ty value)) ∧
       after = ⟨[.vector items], reads ++ [expected]⟩ := by
   obtain ⟨found, final⟩ := readCell_sound_prefix items slot expected reads after accepted
@@ -166,16 +166,20 @@ theorem readCell_source_typed (declarations : List StateDecl) (state : LedgerSta
 
 private theorem sourceCanonical (ctx : EvalContext) (ty : Ty)
     (value : ty.Denote) (modulus : ctx.modulus = Field.modulus)
-    (canonical : Canonical ty value) :
+    (canonical : ScalarNormalization.Canonical ty value) :
     SourceEffects.canonicalValue ctx ty value = true := by
   cases ty with
   | native =>
-    simpa [SourceEffects.canonicalValue, Canonical, number, modulus] using canonical.1
+    simpa [SourceEffects.canonicalValue, ScalarNormalization.Canonical,
+      ScalarNormalization.sourceNumber?, modulus] using canonical.1
   | bool => rfl
   | uint maximum =>
     rcases canonical with ⟨bound, maximumBound, valueBound⟩
-    have fieldBound : value < Field.modulus := by simpa [number] using bound
+    have fieldBound : value < Field.modulus := by
+      simpa [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] using bound
     simp [SourceEffects.canonicalValue, modulus, fieldBound, maximumBound, valueBound]
+  | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+    simp [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] at canonical
 
 /-- A successful checked read segment executes the corresponding original
 source effect with the same typed value and unchanged tentative ledger state. -/
@@ -197,7 +201,12 @@ theorem readCell_source_step (ctx : EvalContext) (env : EvalEnv)
       declaration encoded accepted
   have checked := sourceCanonical ctx ty value modulus canonical
   refine ⟨value, ?_, fieldValue, final⟩
-  simp [SourceEffects.step, lookup, number_pack_as, checked] <;> rfl
+  simp only [SourceEffects.step, runEffectWithEnv, lookup]
+  rw [ScalarNormalization.number_pack_as ty value canonical]
+  simp only []
+  change (if !(SourceEffects.canonicalValue ctx ty value) then _ else _) = _
+  simp [checked]
+  rfl
 
 /-- A successful absence check observes a map slot with no matching key and
 leaves the native root unchanged. -/
@@ -276,7 +285,7 @@ theorem requireAbsent_source_step (ctx : EvalContext) (env : EvalEnv)
       {name, kind := .map keyTy valueTy})
     (encoded : encodeState declarations state = some items)
     (keyEval : keyExpr.eval ctx env = .ok key)
-    (canonical : Canonical keyTy key)
+    (canonical : ScalarNormalization.Canonical keyTy key)
     (accepted : run (requireAbsentOps slot (scalar (number keyTy key)))
       ⟨[.vector items], reads⟩ = some after) :
     SourceEffects.step ctx (.requireAbsent name keyTy keyExpr) (env, state) =
@@ -293,15 +302,16 @@ theorem requireAbsent_source_step (ctx : EvalContext) (env : EvalEnv)
   have sourceAbsent := encodedMap_absent keyTy valueTy entries encodedEntries key
     canonical mapped absent
   constructor
-  · simp only [SourceEffects.step, keyEval, mapLookup, bind, Except.bind]
-    simp [sourceAbsent] <;> rfl
+  · simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, sourceAbsent,
+      bind, Except.bind, Except.pure]
+    rfl
   · exact final
 
 theorem require_source_step (ctx : EvalContext) (env : EvalEnv)
     (state : LedgerState) (condition : Expr .bool)
     (evaluated : condition.eval ctx env = .ok true) :
     SourceEffects.step ctx (.require condition) (env, state) = .ok (env, state) := by
-  simp only [SourceEffects.step, evaluated, bind, Except.bind]
+  simp [SourceEffects.step, runEffectWithEnv, evaluated, bind, Except.bind, Except.pure]
   rfl
 
 theorem writeCell_exact (items : List Slot) (slot : Nat) (old value : Cell)
@@ -324,7 +334,7 @@ theorem writeCell_source_step (ctx : EvalContext) (env : EvalEnv)
     (encoded : encodeState declarations state = some items)
     (slotBound : declarations.length < Field.modulus)
     (evaluated : expression.eval ctx env = .ok value)
-    (canonical : Canonical ty value) :
+    (canonical : ScalarNormalization.Canonical ty value) :
     ∃ next,
       SourceEffects.step ctx (.writeCell name ty expression) (env, state) =
         .ok (env, next) ∧
@@ -362,10 +372,13 @@ theorem writeCell_source_step (ctx : EvalContext) (env : EvalEnv)
   obtain ⟨old, found⟩ := oldFound
   have oldEncoded : encodeDeclaration state {name, kind := .cell ty} = some (.cell old) := by
     simpa [found] using slotEncoding.symm
-  obtain ⟨oldValue, oldLookup, _, _⟩ := encoded_cell_typed state name ty old oldEncoded
+  obtain ⟨oldValue, oldLookup, oldCanonical, _⟩ :=
+    encoded_cell_typed state name ty old oldEncoded
   let next : LedgerState := {state with cells := SourceEffects.updateEntry name (Value.pack ty value) state.cells}
   refine ⟨next, ?_, ?_, ?_⟩
-  · simp [SourceEffects.step, oldLookup, evaluated, next]
+  · simp only [SourceEffects.step, runEffectWithEnv, oldLookup, evaluated]
+    rw [ScalarNormalization.number_pack_as ty oldValue oldCanonical]
+    simp [next, SourceEffects.updateEntry, updateAssoc]
     rfl
   · exact encodeState_updateCell_at declarations state items slot name ty value
       encoded declaration distinct canonical
@@ -417,8 +430,8 @@ theorem writeMap_source_step (ctx : EvalContext) (env : EvalEnv)
     (slotBound : declarations.length < Field.modulus)
     (keyEval : keyExpr.eval ctx env = .ok key)
     (valueEval : valueExpr.eval ctx env = .ok value)
-    (keyCanonical : Canonical keyTy key)
-    (valueCanonical : Canonical valueTy value) :
+    (keyCanonical : ScalarNormalization.Canonical keyTy key)
+    (valueCanonical : ScalarNormalization.Canonical valueTy value) :
     ∃ (next : LedgerState) (encodedEntries : List (Scalar × Scalar)),
       SourceEffects.step ctx (.writeMap name keyTy valueTy keyExpr valueExpr) (env, state) =
         .ok (env, next) ∧
@@ -477,7 +490,7 @@ theorem writeMap_source_step (ctx : EvalContext) (env : EvalEnv)
   refine ⟨next, encodedEntries, ?_, ?_, ?_⟩
   · have typed := encodedMapEntries_typed keyTy valueTy entries encodedEntries mapped
     have checked := mapEntries_typeCheck entries keyTy valueTy name typed
-    simp only [SourceEffects.step, keyEval, valueEval, mapLookup,
+    simp only [SourceEffects.step, runEffectWithEnv, keyEval, valueEval, mapLookup,
       bind, Except.bind]
     change ((fun _ : PUnit => (env, next)) <$>
       (forIn entries PUnit.unit fun entry _ =>

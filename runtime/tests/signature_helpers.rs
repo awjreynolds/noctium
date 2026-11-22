@@ -1,9 +1,17 @@
 #![cfg(feature = "zkir-321")]
 
-use noctium_runtime::{Plan, check, create_state, field_decimal, prepare, zkir::IrSource};
+use noctium_runtime::{
+    Plan, check,
+    control::{InvocationTarget, Session, TypedResponse},
+    create_state, field_decimal,
+    host::{self, Capability, Context, Limits, Operation, Provider},
+    prepare,
+    zkir::IrSource,
+};
 use num_bigint::BigUint;
 use serde_json::{Value as Json, json};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 use transient_crypto::curve::{EmbeddedFr, EmbeddedGroupAffine, Fr};
 use transient_crypto::hash::transient_hash;
 
@@ -207,6 +215,454 @@ fn returns(k: bool, p: bool, schnorr: bool) -> BTreeMap<String, Json> {
             bytes(&hex::decode("7e5f4552091a69125d5dfcb7b8c2659029395bdf").unwrap()),
         ),
     ])
+}
+
+fn signature_record(name: &str, fields: [(&str, Json); 2]) -> Json {
+    json!({
+        "kind": "struct",
+        "id": format!("Noctium.Crypto.{name}"),
+        "fields": fields.map(|(name, value)| json!({ "name": name, "value": value }))
+    })
+}
+
+fn readable_ecdsa_session(
+    control: &Json,
+    inputs: BTreeMap<String, Json>,
+    attempt_id: &str,
+) -> anyhow::Result<(Session, Json, Json)> {
+    let binding_text = control["binding"].as_str().expect("embedded binding");
+    let pin = hex::encode(Sha256::digest(binding_text.as_bytes()));
+    let binding: Json = serde_json::from_str(binding_text)?;
+    let entrypoint = binding["target"]["entrypoint"]
+        .as_str()
+        .expect("entrypoint binding")
+        .to_owned();
+    let witnesses = control["witnesses"].as_array().expect("witness metadata");
+    anyhow::ensure!(witnesses.len() == 1, "expected one provider");
+    let witness = &witnesses[0];
+    anyhow::ensure!(witness["parameters"] == json!([]), "signature provider must take no args");
+    let operation = witness["operation"].as_str().expect("provider operation").to_owned();
+    let capability = witness["capability"].as_str().expect("provider capability").to_owned();
+    let input = witness["name"].as_str().expect("provider name").to_owned();
+    let result_type = witness["resultType"]
+        .as_str()
+        .expect("provider result type")
+        .to_owned();
+    let mut session = Session::from_json_with_invocation_target(
+        control.clone(),
+        inputs,
+        Context {
+            protocol_version: 1,
+            namespace: "noctium".into(),
+            base_revision: "r0".into(),
+            attempt_id: attempt_id.into(),
+            operations: vec![Operation {
+                operation: operation.clone(),
+                argument_schema: BTreeMap::new(),
+                result_schema: result_type,
+            }],
+            providers: vec![Provider {
+                input,
+                operation: operation.clone(),
+                capability: capability.clone(),
+                arguments: BTreeMap::new(),
+            }],
+            commit_capability: "commit".into(),
+            limits: Limits::default(),
+            capabilities: vec![Capability {
+                id: capability,
+                namespace: "noctium".into(),
+                key_prefix: "lookup/".into(),
+                operations: vec![operation],
+            }, Capability {
+                id: "commit".into(),
+                namespace: "noctium".into(),
+                key_prefix: "noctium/".into(),
+                operations: vec![host::CAS.into()],
+            }],
+        },
+        Some(&pin),
+        Some(InvocationTarget {
+            contract_address: "a".repeat(64),
+            entrypoint,
+        }),
+    )?;
+    let pending = session.advance()?;
+    anyhow::ensure!(pending["status"] == "need_host", "expected a signature provider request");
+    Ok((session, pending, binding))
+}
+
+fn signature_provider_response(
+    request: &Json,
+    attempt_id: &str,
+    value: Json,
+) -> TypedResponse {
+    serde_json::from_value(json!({
+        "protocolVersion": 2,
+        "requestId": request["requestId"],
+        "attemptId": attempt_id,
+        "outcome": "value",
+        "operation": request["operation"],
+        "capability": request["capability"],
+        "schema": request["schema"],
+        "value": value,
+    }))
+    .unwrap()
+}
+
+#[test]
+#[ignore = "requires fresh ReadableECDSA artifacts in NOCTIUM_READABLE_ECDSA_DIR"]
+fn readable_ecdsa_callbacks_match_vectors_and_reject_zero_s() -> anyhow::Result<()> {
+    let directory = PathBuf::from(std::env::var_os("NOCTIUM_READABLE_ECDSA_DIR").unwrap());
+    let supplied = inputs();
+    let cases = [
+        (
+            "ReadableECDSA.k1",
+            "keySignatureK1",
+            "Secp256k1EcdsaSignature",
+            "Secp256k1Scalar",
+            "kDigest",
+            "kKey",
+            "kR",
+            "kS",
+        ),
+        (
+            "ReadableECDSA.r1",
+            "keySignatureR1",
+            "Secp256r1EcdsaSignature",
+            "Secp256r1Scalar",
+            "pDigest",
+            "pKey",
+            "pR",
+            "pS",
+        ),
+    ];
+
+    for (stem, provider, signature_type, scalar_type, digest_name, key_name, r_name, s_name) in
+        cases
+    {
+        let control: Json = serde_json::from_reader(fs::File::open(
+            directory.join(format!("{stem}.witness.control.json")),
+        )?)?;
+        let plan: Plan = serde_json::from_reader(fs::File::open(
+            directory.join(format!("{stem}.impact.json")),
+        )?)?;
+        let circuit = IrSource::load(fs::File::open(directory.join(format!("{stem}.zkir")))?)?;
+        let initial = create_state(&plan, &BTreeMap::new())?;
+        let base_digest = supplied[digest_name].clone();
+        let key = supplied[key_name].clone();
+        let valid_signature = signature_record(
+            signature_type,
+            [(
+                "r",
+                supplied[r_name].clone(),
+            ), (
+                "s",
+                supplied[s_name].clone(),
+            )],
+        );
+        let run = |digest: Json,
+                   signature: Json,
+                   suffix: char|
+         -> anyhow::Result<(Session, Json, Json)> {
+            let attempt_id = suffix.to_string().repeat(64);
+            let call_inputs = BTreeMap::from([
+                ("digest".into(), digest),
+                ("key".into(), key.clone()),
+            ]);
+            let (mut session, pending, binding) =
+                readable_ecdsa_session(&control, call_inputs, &attempt_id)?;
+            let request = &pending["request"];
+            anyhow::ensure!(request["name"] == provider, "unexpected ECDSA provider request");
+            anyhow::ensure!(request["arguments"] == json!([]), "signature provider takes no args");
+            anyhow::ensure!(session.advance()? == pending, "provider request lost correlation");
+            session.resume_typed(signature_provider_response(
+                request,
+                &attempt_id,
+                signature,
+            ))?;
+            let terminal = session.advance()?;
+            Ok((session, terminal, binding))
+        };
+        let check_result = |session: &mut Session, binding: &Json, expected: bool| -> anyhow::Result<()> {
+            let completion = session.private_completion(&binding["nativeRelation"])?;
+            let native_inputs: BTreeMap<String, Json> =
+                serde_json::from_value(completion["inputs"].clone())?;
+            let execution = prepare(
+                &plan,
+                &native_inputs,
+                &initial,
+                &ledger::structure::INITIAL_PARAMETERS,
+                coin_structure::contract::ContractAddress::default(),
+            )?;
+            assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+            let returns = execution.returns_json();
+            assert_eq!(returns["signatureValid"], json!(expected));
+            assert_eq!(returns.len(), 1);
+            Ok(())
+        };
+
+        let (mut session, status, binding) = run(base_digest.clone(), valid_signature.clone(), 'b')?;
+        assert_eq!(status["status"], "completed", "{stem} valid vector");
+        check_result(&mut session, &binding, true)?;
+
+        let mut changed_digest = base_digest;
+        changed_digest["values"][0] = json!(5);
+        let (mut session, status, binding) = run(changed_digest, valid_signature.clone(), 'c')?;
+        assert_eq!(status["status"], "completed", "{stem} changed digest");
+        check_result(&mut session, &binding, false)?;
+
+        let zero_s = signature_record(
+            signature_type,
+            [
+                ("r", supplied[r_name].clone()),
+                ("s", foreign(scalar_type, vec![0; 32])),
+            ],
+        );
+        let (mut session, status, binding) = run(supplied[digest_name].clone(), zero_s, 'd')?;
+        assert_eq!(status["status"], "failed", "{stem} zero s accepted");
+        assert!(session.private_completion(&binding["nativeRelation"]).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableSignatures artifacts in NOCTIUM_READABLE_SIGNATURES_DIR"]
+fn readable_schnorr_and_ed25519_callbacks_match_vectors() -> anyhow::Result<()> {
+    let directory = PathBuf::from(std::env::var_os("NOCTIUM_READABLE_SIGNATURES_DIR").unwrap());
+    let supplied = inputs();
+
+    let schnorr_stem = "ReadableSignatures.schnorr";
+    let schnorr_control: Json = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{schnorr_stem}.witness.control.json")),
+    )?)?;
+    let schnorr_plan: Plan = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{schnorr_stem}.impact.json")),
+    )?)?;
+    let schnorr_circuit = IrSource::load(fs::File::open(
+        directory.join(format!("{schnorr_stem}.zkir")),
+    )?)?;
+    let schnorr_initial = create_state(&schnorr_plan, &BTreeMap::new())?;
+    let schnorr_inputs = BTreeMap::from([
+        ("message0".into(), supplied["jMessage0"].clone()),
+        (
+            "changedMessage0".into(),
+            json!(field_decimal(Fr::from(12u64))),
+        ),
+        ("message1".into(), supplied["jMessage1"].clone()),
+        ("key".into(), supplied["jKey"].clone()),
+    ]);
+    let schnorr_signature = signature_record(
+        "JubjubSchnorrSignature",
+        [
+            ("announcement", supplied["jAnnouncement"].clone()),
+            (
+                "response",
+                json!({"kind":"native", "value":supplied["jResponse"]}),
+            ),
+        ],
+    );
+    let schnorr_attempt = "e".repeat(64);
+    let (mut schnorr_session, schnorr_pending, schnorr_binding) =
+        readable_ecdsa_session(&schnorr_control, schnorr_inputs, &schnorr_attempt)?;
+    let schnorr_request = &schnorr_pending["request"];
+    assert_eq!(schnorr_request["name"], "schnorrSignature");
+    assert_eq!(schnorr_request["arguments"], json!([]));
+    assert_eq!(schnorr_session.advance()?, schnorr_pending);
+    schnorr_session.resume_typed(signature_provider_response(
+        schnorr_request,
+        &schnorr_attempt,
+        schnorr_signature,
+    ))?;
+    let schnorr_terminal = schnorr_session.advance()?;
+    assert_eq!(schnorr_terminal["status"], "completed");
+    assert!(schnorr_terminal.get("request").is_none());
+    let schnorr_completion =
+        schnorr_session.private_completion(&schnorr_binding["nativeRelation"])?;
+    let schnorr_native_inputs: BTreeMap<String, Json> =
+        serde_json::from_value(schnorr_completion["inputs"].clone())?;
+    let schnorr_execution = prepare(
+        &schnorr_plan,
+        &schnorr_native_inputs,
+        &schnorr_initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(
+        check(&schnorr_execution, &schnorr_circuit)?,
+        schnorr_execution.activity_schedule
+    );
+    assert_eq!(schnorr_execution.returns_json()["signatureValid"], json!(true));
+    assert_eq!(
+        schnorr_execution.returns_json()["changedSignatureValid"],
+        json!(false)
+    );
+
+    let ed_stem = "ReadableSignatures.ed25519";
+    let ed_control: Json = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{ed_stem}.witness.control.json")),
+    )?)?;
+    let ed_plan: Plan = serde_json::from_reader(fs::File::open(
+        directory.join(format!("{ed_stem}.impact.json")),
+    )?)?;
+    let ed_circuit = IrSource::load(fs::File::open(directory.join(format!("{ed_stem}.zkir")))?)?;
+    let ed_initial = create_state(&ed_plan, &BTreeMap::new())?;
+    let ed_inputs = BTreeMap::from([
+        ("message".into(), supplied["edEmpty"].clone()),
+        ("changedMessage".into(), supplied["edChanged"].clone()),
+        ("key".into(), supplied["edKey"].clone()),
+    ]);
+    let ed_signature = signature_record(
+        "Ed25519Signature",
+        [
+            ("r", supplied["edR"].clone()),
+            ("s", supplied["edS"].clone()),
+        ],
+    );
+    let ed_attempt = "f".repeat(64);
+    let (mut ed_session, ed_pending, ed_binding) =
+        readable_ecdsa_session(&ed_control, ed_inputs, &ed_attempt)?;
+    let ed_request = &ed_pending["request"];
+    assert_eq!(ed_request["name"], "ed25519Signature");
+    assert_eq!(ed_request["arguments"], json!([]));
+    assert_eq!(ed_session.advance()?, ed_pending);
+    ed_session.resume_typed(signature_provider_response(
+        ed_request,
+        &ed_attempt,
+        ed_signature,
+    ))?;
+    let ed_terminal = ed_session.advance()?;
+    assert_eq!(ed_terminal["status"], "completed");
+    assert!(ed_terminal.get("request").is_none());
+    let ed_completion = ed_session.private_completion(&ed_binding["nativeRelation"])?;
+    let ed_native_inputs: BTreeMap<String, Json> =
+        serde_json::from_value(ed_completion["inputs"].clone())?;
+    let ed_execution = prepare(
+        &ed_plan,
+        &ed_native_inputs,
+        &ed_initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(
+        check(&ed_execution, &ed_circuit)?,
+        ed_execution.activity_schedule
+    );
+    assert_eq!(ed_execution.returns_json()["signatureValid"], json!(true));
+    assert_eq!(
+        ed_execution.returns_json()["changedSignatureValid"],
+        json!(false)
+    );
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh SignaturePayloads artifacts in NOCTIUM_SIGNATURE_PAYLOADS_DIR"]
+fn portable_signature_records_roundtrip_and_reject_wrong_identity() -> anyhow::Result<()> {
+    let dir = PathBuf::from(std::env::var_os("NOCTIUM_SIGNATURE_PAYLOADS_DIR").unwrap());
+    let stem = "SignaturePayloads.echo";
+    let control: Json = serde_json::from_reader(fs::File::open(
+        dir.join(format!("{stem}.witness.control.json")),
+    )?)?;
+    let binding_text = control["binding"].as_str().expect("embedded binding");
+    let pin = hex::encode(Sha256::digest(binding_text.as_bytes()));
+    let binding: Json = serde_json::from_str(binding_text)?;
+    let values = inputs();
+    let signatures = BTreeMap::from([
+        (
+            "schnorr".into(),
+            signature_record(
+                "JubjubSchnorrSignature",
+                [
+                    ("announcement", values["jAnnouncement"].clone()),
+                    (
+                        "response",
+                        json!({"kind": "native", "value": values["jResponse"]}),
+                    ),
+                ],
+            ),
+        ),
+        (
+            "k1".into(),
+            signature_record(
+                "Secp256k1EcdsaSignature",
+                [("r", values["kR"].clone()), ("s", values["kS"].clone())],
+            ),
+        ),
+        (
+            "r1".into(),
+            signature_record(
+                "Secp256r1EcdsaSignature",
+                [("r", values["pR"].clone()), ("s", values["pS"].clone())],
+            ),
+        ),
+        (
+            "ed".into(),
+            signature_record(
+                "Ed25519Signature",
+                [("r", values["edR"].clone()), ("s", values["edS"].clone())],
+            ),
+        ),
+    ]);
+    let start = |inputs| {
+        Session::from_json_with_invocation_target(
+            control.clone(),
+            inputs,
+            Context {
+                protocol_version: 1,
+                namespace: "noctium".into(),
+                base_revision: "r0".into(),
+                attempt_id: "b".repeat(64),
+                operations: vec![],
+                providers: vec![],
+                commit_capability: "commit".into(),
+                limits: Limits::default(),
+                capabilities: vec![Capability {
+                    id: "commit".into(),
+                    namespace: "noctium".into(),
+                    key_prefix: "noctium/".into(),
+                    operations: vec![host::CAS.into()],
+                }],
+            },
+            Some(&pin),
+            Some(InvocationTarget {
+                contract_address: "a".repeat(64),
+                entrypoint: "echo".into(),
+            }),
+        )
+    };
+    let mut wrong_identity = signatures.clone();
+    wrong_identity.get_mut("k1").unwrap()["id"] = signatures["r1"]["id"].clone();
+    assert!(start(wrong_identity).is_err());
+    let mut wrong_curve = signatures.clone();
+    wrong_curve.get_mut("k1").unwrap()["fields"][0]["value"] = values["pR"].clone();
+    assert!(start(wrong_curve).is_err());
+
+    let mut session = start(signatures.clone())?;
+    assert_eq!(session.advance()?["status"], "completed");
+    let completion = session.private_completion(&binding["nativeRelation"])?;
+    let plan: Plan =
+        serde_json::from_reader(fs::File::open(dir.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(dir.join(format!("{stem}.zkir")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let mut execution = prepare(
+        &plan,
+        &serde_json::from_value(completion["inputs"].clone())?,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    let expected = signatures
+        .into_iter()
+        .map(|(name, value)| (format!("{name}Result"), value))
+        .collect();
+    assert_eq!(execution.returns_json(), expected);
+    let (commitment, randomness) = execution.preimage.communications_commitment.unwrap();
+    execution.preimage.communications_commitment = Some((commitment + Fr::from(1u64), randomness));
+    assert!(check(&execution, &circuit).is_err());
+    Ok(())
 }
 
 #[test]

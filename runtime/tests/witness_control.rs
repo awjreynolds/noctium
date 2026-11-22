@@ -9,6 +9,71 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(feature = "zkir-321")]
 #[test]
+#[ignore = "requires fresh Sha512Fab Lean artifacts"]
+fn typed_fab_digests_use_the_provider_record_in_host_and_native_execution() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+
+    let root = PathBuf::from(std::env::var_os("NOCTIUM_SHA512_FAB_DIR").unwrap());
+    let stem = "Sha512Fab.hashHosted";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let sha = json!({"kind":"bytes", "values": hex::decode(
+        "6f2b8bc408127949730a24dd6a4b5562a8ec69a7d895a79329c13976447a1c948c4a84e6d070af7e02ea37d89408d1a0679dee79fd6c3cb40e548e4438b7bfae"
+    )?});
+    let keccak = json!({"kind":"bytes", "values": hex::decode(
+        "0a3cf3d2108f7463f9ef5896ebfd31c7fcdde34ac2171cc6b3c48f28d03e8683"
+    )?});
+    let payload = json!({"kind":"struct", "id":"Sha512Fab.Payload", "fields":[
+        {"name":"octets", "value":{"kind":"bytes", "values": (1u8..=32).collect::<Vec<_>>()}},
+        {"name":"flag", "value":{"kind":"bool", "value":true}},
+        {"name":"counter", "value":{"kind":"uint", "maximum":"65535", "value":"257"}},
+        {"name":"anchor", "value":{"kind":"native", "value":"42"}}
+    ]});
+    let attempt = "a".repeat(64);
+    let (mut session, _) = bound_session(
+        &control,
+        BTreeMap::from([
+            ("expectedSha".into(), sha.clone()),
+            ("expectedKeccak".into(), keccak.clone()),
+        ]),
+        &attempt,
+    );
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    let request = &pending["request"];
+    let mut wrong_schema = payload.clone();
+    wrong_schema["id"] = json!("Sha512Fab.Other");
+    assert!(session
+        .resume_typed(reply(request, &attempt, "value", Some(wrong_schema)))
+        .is_err());
+    assert_eq!(session.advance()?, pending);
+    session.resume_typed(reply(request, &attempt, "value", Some(payload)))?;
+    assert_eq!(session.advance()?["status"], "completed");
+    let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
+    let relation = serde_json::from_slice(&relation_bytes)?;
+    let completion = session.private_completion(&relation)?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let circuit = IrSource::load(relation_bytes.as_slice())?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    let result = execution.returns_json();
+    assert_eq!(result["shaDigest"], sha);
+    assert_eq!(result["keccakDigest"], keccak);
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
 #[ignore = "requires fresh TypedCallArguments Lean artifacts"]
 fn hosted_arguments_move_to_the_native_header_without_changing_provider_inputs() {
     use coin_structure::contract::ContractAddress;
@@ -987,6 +1052,137 @@ fn readable_private_state_source_binds_callbacks_stages_and_native_constraints()
         execution.preimage.private_transcript[0] = Fr::from(9u64);
         assert!(check(&execution, &circuit).is_err());
     }
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
+#[ignore = "requires fresh TypedPointKeccak Lean artifacts"]
+fn typed_point_keccak_runs_through_the_witness_plan() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+
+    let root = PathBuf::from(std::env::var_os("NOCTIUM_HOSTED_POINT_KECCAK_DIR").unwrap());
+    let stem = "TypedPointKeccak.hashHosted";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let expected = json!({"kind":"bytes", "values":hex::decode(
+        "571cf838e63c171196cd7a301bb8fab87d13d946769a41e1004d9da49f6bfca8"
+    )?});
+    let attempt = "c".repeat(64);
+    let (mut session, _) = bound_session(
+        &control,
+        BTreeMap::from([("expected".into(), expected.clone())]),
+        &attempt,
+    );
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    let request = &pending["request"];
+    let wrong_curve = json!({"kind":"foreign", "type":"Secp256r1Point", "bytes": vec![0; 33]});
+    assert!(session
+        .resume_typed(reply(request, &attempt, "value", Some(wrong_curve)))
+        .is_err());
+    assert_eq!(session.advance()?, pending);
+    let point = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes": hex::decode(
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )?});
+    session.resume_typed(reply(request, &attempt, "value", Some(point)))?;
+    assert_eq!(session.advance()?["status"], "completed");
+
+    let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
+    let relation = serde_json::from_slice(&relation_bytes)?;
+    let completion = session.private_completion(&relation)?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(relation_bytes.as_slice())?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    assert_eq!(execution.returns_json()["pointDigest"], expected);
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
+#[ignore = "requires fresh ReadableEthereumAddress Lean artifacts"]
+fn readable_ethereum_address_accepts_generator_and_rejects_identity() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+    use transient_crypto::curve::Fr;
+
+    let root = PathBuf::from(std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_DIR").unwrap());
+    let stem = "ReadableEthereumAddress.derive";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
+    let relation = serde_json::from_slice(&relation_bytes)?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(relation_bytes.as_slice())?;
+    let expected = json!({"kind":"bytes", "values":hex::decode(
+        "7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+    )?});
+    let generator = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes":hex::decode(
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )?});
+
+    let attempt = "d".repeat(64);
+    let (mut session, _) = bound_session(&control, BTreeMap::new(), &attempt);
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    let request = &pending["request"];
+    assert_eq!(request["name"], "keyForAddress");
+    assert_eq!(request["arguments"], json!([]));
+    assert_eq!(session.advance()?, pending, "pending callback was not correlated");
+    session.resume_typed(reply(request, &attempt, "value", Some(generator)))?;
+    let completed = session.advance()?;
+    assert_eq!(completed["status"], "completed");
+    assert!(completed.get("request").is_none(), "expected one callback request");
+
+    let completion = session.private_completion(&relation)?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let mut execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    assert_eq!(execution.returns_json()["derivedAddress"], expected);
+    assert!(
+        !execution.preimage.private_transcript.is_empty(),
+        "provider key should remain a private native witness"
+    );
+    execution.preimage.private_transcript[0] =
+        execution.preimage.private_transcript[0] + Fr::from(1u64);
+    assert!(check(&execution, &circuit).is_err());
+
+    let identity_attempt = "f".repeat(64);
+    let (mut identity_session, _) = bound_session(&control, BTreeMap::new(), &identity_attempt);
+    let identity_pending = identity_session.advance()?;
+    assert_eq!(identity_pending["status"], "need_host");
+    let identity_request = &identity_pending["request"];
+    assert_eq!(identity_request["name"], "keyForAddress");
+    assert_eq!(identity_request["arguments"], json!([]));
+    let identity = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes":vec![0; 33]});
+    identity_session.resume_typed(reply(
+        identity_request,
+        &identity_attempt,
+        "value",
+        Some(identity),
+    ))?;
+    let rejected = identity_session.advance()?;
+    assert_eq!(rejected["status"], "failed");
+    assert!(identity_session.private_completion(&relation).is_err());
+    Ok(())
 }
 
 #[cfg(feature = "zkir-321")]

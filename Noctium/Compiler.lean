@@ -73,6 +73,8 @@ private def expressionJson : Expr ty → Json
       _root_.Noctium.NativeExpression.toJson (.hashToCurveFab environment type values)
   | .sha512Fab environment type values =>
       _root_.Noctium.NativeExpression.toJson (.sha512Fab environment type values)
+  | .keccak256Fab environment type values =>
+      _root_.Noctium.NativeExpression.toJson (.keccak256Fab environment type values)
   | .persistentCommitFab environment type opening values =>
       _root_.Noctium.NativeExpression.toJson
         (.persistentCommitFab environment type opening values)

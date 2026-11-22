@@ -630,6 +630,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"hashToCurveFab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| sha512Fab($environment:ident, $type:ident, [$values,*])) =>
     s!"sha512Fab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
+  | `(nlexpr| keccak256Fab($environment:ident, $type:ident, [$values,*])) =>
+    s!"keccak256Fab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| persistentCommitFab($environment:ident, $type:ident, $opening, [$values,*])) =>
     s!"persistentCommitFab({environment.getId}, {type.getId}, {renderExpr opening}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| transientCommitFab($environment:ident, $type:ident, $opening, [$values,*])) =>
@@ -689,6 +691,15 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| curveMulGenerator($scalar)) => s!"curveMulGenerator({renderExpr scalar})"
   | `(nlexpr| curveX($point)) => s!"curveX({renderExpr point})"
   | `(nlexpr| curveY($point)) => s!"curveY({renderExpr point})"
+  | `(nlexpr| secp256k1EthereumAddress($key)) => s!"secp256k1EthereumAddress({renderExpr key})"
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key)) =>
+    s!"secp256k1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    s!"secp256r1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    s!"jubjubSchnorrVerify([{String.intercalate ", " (messages.getElems.toList.map renderExpr)}], {renderExpr announcement}, {renderExpr response}, {renderExpr key})"
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    s!"ed25519Verify({renderExpr message}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
   | `(nlexpr| curveFromCoordinates($x, $y)) =>
     s!"curveFromCoordinates({renderExpr x}, {renderExpr y})"
   | `(nlexpr| foreignToBytes($value)) => s!"foreignToBytes({renderExpr value})"
@@ -755,6 +766,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashVector32([$values,*]))
   | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*]))
+  | `(nlexpr| keccak256Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| sha512Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
@@ -777,7 +789,16 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| hashToCurve([$values,*])) => values.getElems.toList.flatMap disclosedValues
   | `(nlexpr| foreignNeg($value)) | `(nlexpr| foreignInv($value))
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
-  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value)) => disclosedValues value
+  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
+  | `(nlexpr| secp256k1EthereumAddress($value)) => disclosedValues value
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    [digest, r, s, key].flatMap disclosedValues
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    messages.getElems.toList.flatMap disclosedValues ++
+      [announcement, response, key].flatMap disclosedValues
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    [message, r, s, key].flatMap disclosedValues
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -846,6 +867,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashVector32([$values,*]))
   | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*]))
+  | `(nlexpr| keccak256Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| sha512Fab($_:ident, $_:ident, [$values,*]))
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
@@ -868,7 +890,16 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| hashToCurve([$values,*])) => values.getElems.toList.flatMap inlineAssertions
   | `(nlexpr| foreignNeg($value)) | `(nlexpr| foreignInv($value))
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
-  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value)) => inlineAssertions value
+  | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
+  | `(nlexpr| secp256k1EthereumAddress($value)) => inlineAssertions value
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    [digest, r, s, key].flatMap inlineAssertions
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    messages.getElems.toList.flatMap inlineAssertions ++
+      [announcement, response, key].flatMap inlineAssertions
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    [message, r, s, key].flatMap inlineAssertions
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -1152,6 +1183,13 @@ private def lowerProjection (stx : Syntax) (value : Lowered)
   let child ← match Helpers.projectedType composites span parent projection with
     | .ok child => pure child
     | .error diagnostic => throwErrorAt stx diagnostic.message
+  -- Grouped outputs with projected curve points need checked views instead of
+  -- re-quoting an aggregate field projection as a scalar source alias.
+  match projection, child with
+  | .field _, .scalar .jubjubPoint
+  | .field _, .scalar (.foreign (.point _)) =>
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+  | _, _ => pure ()
   pure {value with type := Helpers.resultTypeOfComposite child, term := .project value.term projection}
 
 private def sequenceItems (site : Syntax) (type : ResultType) (source : Helpers.Term)
@@ -1259,6 +1297,25 @@ private def freshReadableLet (id : Ident) : ExprM String := do
   let ordinal := (← get).nextLet
   modify fun state => {state with nextLet := ordinal + 1}
   pure s!"__noctium_let_{ordinal}_{id.getId}"
+
+private def lowerFabDigest (site : Syntax) (algorithm : Helpers.FabDigest)
+    (type : Types.CompositeType) (value : Lowered) : ExprM Lowered := do
+  modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+  let compiled ← match Types.compileType (← get).composites type with
+    | .ok compiled => pure compiled
+    | .error diagnostic => throwErrorAt site diagnostic.message
+  let (before, reference) ← match value.term with
+    | .ref _ => pure (value.before, value.term)
+    | _ => do
+      let binding ← freshIterationRef "digest-payload"
+      pure (value.before ++ [.bind binding value.type value.term], Helpers.Term.ref binding)
+  let operands ← match Helpers.Wire.fabDigestOperands compiled reference with
+    | .ok operands => pure operands
+    | .error message => throwErrorAt site message
+  pure {value with
+    before
+    type := .scalar algorithm.resultType
+    term := .bytes (.fabDigest algorithm type (operands.map Prod.fst)) (operands.map Prod.snd)}
 
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
     (stx : TSyntax `nlexpr) : ExprM Lowered := do
@@ -1888,8 +1945,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
   | `(nlexpr| sha512($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    if let .composite type := value.type then
+      return ← lowerFabDigest stx .sha512 type value
     let .scalar (.bytes length) := value.type
-      | throwErrorAt stx "sha512 requires a fixed byte-string value"
+      | throwErrorAt stx "sha512 requires fixed bytes or a checked FAB payload"
     let operation := Noctium.Helpers.BytesOp.sha512 length
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
@@ -1897,12 +1956,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
   | `(nlexpr| keccak256($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    if let .composite type := value.type then
+      return ← lowerFabDigest stx .keccak256 type value
     let operation ← match value.type with
       | .scalar (.bytes length) => pure (Noctium.Helpers.BytesOp.keccak256 length)
       | .scalar (.foreign (.point .secp256k1)) => pure .keccak256Secp256k1Point
       | .scalar (.foreign (.point _)) =>
         throwErrorAt stx "keccak256 point overload supports Secp256k1Point"
-      | _ => throwErrorAt stx "keccak256 requires a fixed byte string or Secp256k1Point"
+      | _ => throwErrorAt stx "keccak256 requires fixed bytes, a checked FAB payload, or Secp256k1Point"
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
       | .ok signature => pure signature
@@ -2101,6 +2162,35 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerForeignUnary programName callPrefix env stx "mulGenerator" value
   | `(nlexpr| curveX($value)) => lowerForeignUnary programName callPrefix env stx "x" value
   | `(nlexpr| curveY($value)) => lowerForeignUnary programName callPrefix env stx "y" value
+  | `(nlexpr| secp256k1EthereumAddress($source)) => do
+    let key ← lowerExpr programName callPrefix env source
+    let kind := Foreign.Kind.point .secp256k1
+    unless key.type == .scalar (.foreign kind) do
+      throwErrorAt source "secp256k1EthereumAddress requires a Secp256k1Point"
+    let name ← freshIterationRef "ethereum-address-key"
+    let point := Helpers.Term.ref name
+    let identity := Helpers.Term.foreignConstant kind (Foreign.identityEncoding .secp256k1)
+    let nonIdentity := Helpers.Term.eq (.eq point identity) (.bool _root_.Bool.false)
+    let encode (coordinate : Foreign.UnaryOp) : Helpers.Term :=
+      .bytes (.reverseBytes 32) [.bytes (.foreignToBytes (.base .secp256k1))
+        [.curve (.foreignUnary coordinate) [point]]]
+    let coordinates := Helpers.Term.bytes (.concatBytes 32 32) [encode (.x .secp256k1),
+      encode (.y .secp256k1)]
+    let span ← liftM (spanValue stx)
+    pure { key with
+      type := .scalar (.bytes 20)
+      term := .bytes (.sliceBytes 32 12 32) [.bytes (.keccak256 64) [coordinates]]
+      before := key.before ++ [.bind name key.type key.term, .assert (.at span nonIdentity)]
+      generatedValidity := s!"non-identity key for {renderExpr stx}" :: key.generatedValidity }
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key)) =>
+    lowerEcdsa programName callPrefix env stx .secp256k1 digest r s key
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    lowerEcdsa programName callPrefix env stx .secp256r1 digest r s key
+  | `(nlexpr| jubjubSchnorrVerify([$messages,*], $announcement, $response, $key)) =>
+    lowerJubjubSchnorr programName callPrefix env stx messages.getElems.toList
+      announcement response key
+  | `(nlexpr| ed25519Verify($message, $r, $s, $key)) =>
+    lowerEd25519 programName callPrefix env stx message r s key
   | `(nlexpr| foreignAdd($left, $right)) =>
     lowerForeignBinary programName callPrefix env stx "add" left right
   | `(nlexpr| foreignSub($left, $right)) =>
@@ -2224,6 +2314,92 @@ where
     pure { mergeLowered (.scalar result) term values with
       generatedValidity := (values.flatMap (·.generatedValidity) ++
         if operation == .fromCoordinates then ["Jubjub point coordinate validation"] else []).eraseDups }
+
+  lowerEcdsa (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (curve : Foreign.Curve) (digest r s key : TSyntax `nlexpr) : ExprM Lowered := do
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "ECDSA requires a Bytes32 digest and matching curve scalars and key"
+      let name ← freshIterationRef "ecdsa-argument"
+      pure (value, name)
+    let (digest, digestName) ← operand digest (.bytes 32)
+    let (r, rName) ← operand r (.foreign (.scalar curve))
+    let (s, sName) ← operand s (.foreign (.scalar curve))
+    let (key, keyName) ← operand key (.foreign (.point curve))
+    let (checks, equation) ← match Crypto.readableEcdsaChecks curve digestName rName sName keyName with
+      | .ok formula => pure formula
+      | .error message => throwErrorAt stx message
+    let span ← liftM (spanValue stx)
+    let bindings := [(digest, digestName), (r, rName), (s, sName), (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity key and nonzero signature scalars for {renderExpr stx}" ::
+        result.generatedValidity }
+
+  lowerJubjubSchnorr (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (messages : List (TSyntax `nlexpr)) (announcement response key : TSyntax `nlexpr) : ExprM Lowered := do
+    unless messages.length + 4 ≤ 1024 do
+      throwErrorAt stx "jubjubSchnorrVerify challenge input exceeds 1024 Native fields"
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "Jubjub Schnorr signature argument type mismatch"
+      let name ← freshIterationRef s!"schnorr-argument-{callPrefix}"
+      pure (value, name)
+    let messages ← messages.mapM fun source => operand source .native
+    let (announcement, announcementName) ← operand announcement .jubjubPoint
+    let (response, responseName) ← operand response .native
+    let (key, keyName) ← operand key .jubjubPoint
+    let messageNames := messages.map Prod.snd
+    let (checks, equation) ← match Crypto.readableJubjubSchnorrChecks
+        messageNames announcementName responseName keyName with
+      | .ok formula => pure formula
+      | .error message => throwErrorAt stx message
+    let span ← liftM (spanValue stx)
+    let bindings := messages ++ [(announcement, announcementName), (response, responseName),
+      (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity Jubjub key for {renderExpr stx}" ::
+        result.generatedValidity }
+
+  lowerEd25519 (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (message r s key : TSyntax `nlexpr) : ExprM Lowered := do
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "Ed25519 signature argument type mismatch"
+      let name ← freshIterationRef s!"ed25519-argument-{callPrefix}"
+      pure (value, name)
+    let messageValue ← lowerExpr programName callPrefix env message
+    let .scalar (.bytes length) := messageValue.type
+      | throwErrorAt message "ed25519Verify requires a Bytes message"
+    unless length + 64 ≤ 1024 do
+      throwErrorAt stx "ed25519Verify input exceeds 1024 bytes"
+    let messageName ← freshIterationRef s!"ed25519-argument-{callPrefix}"
+    let (r, rName) ← operand r (.foreign (.point .curve25519))
+    let (s, sName) ← operand s (.foreign (.scalar .curve25519))
+    let (key, keyName) ← operand key (.foreign (.point .curve25519))
+    let (checks, equation) ← match Crypto.readableEd25519Checks length
+        messageName rName sName keyName with
+      | .ok formula => pure formula
+      | .error error => throwErrorAt stx error
+    let span ← liftM (spanValue stx)
+    let bindings := [(messageValue, messageName), (r, rName), (s, sName), (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity Ed25519 key for {renderExpr stx}" ::
+        result.generatedValidity }
 
   lowerForeignUnary (programName callPrefix : String) (env : SurfaceEnv) (stx : Syntax)
       (operationName : String) (valueStx : TSyntax `nlexpr) : ExprM Lowered := do
@@ -2480,6 +2656,12 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
       | .sha512 length => `(Noctium.Helpers.BytesOp.sha512 $(natTerm length))
       | .keccak256 length => `(Noctium.Helpers.BytesOp.keccak256 $(natTerm length))
       | .keccak256Secp256k1Point => `(Noctium.Helpers.BytesOp.keccak256Secp256k1Point)
+      | .fabDigest algorithm type parameters => do
+        let algorithm ← match algorithm with
+          | .sha512 => `(Noctium.Helpers.FabDigest.sha512)
+          | .keccak256 => `(Noctium.Helpers.FabDigest.keccak256)
+        let parameters ← parameters.toArray.mapM tyTerm
+        `(Noctium.Helpers.BytesOp.fabDigest $algorithm $(← compositeTypeTerm type) [$parameters,*])
       | .reverseBytes32 => `(Noctium.Helpers.BytesOp.reverseBytes32)
       | .reverseBytes length => `(Noctium.Helpers.BytesOp.reverseBytes $(natTerm length))
       | .sliceBytes length start stop =>
