@@ -34,6 +34,7 @@ inductive Aligned where
   | compressString (value : Expr .opaqueString)
   | nativeFields (values : List Scalar)
   | counter (value : Expr (.uint (2 ^ 64 - 1)))
+  | u128 (value : Expr (.uint (2 ^ 128 - 1)))
   deriving Repr
 
 private def alignedByteChunkCount (length : Nat) : Nat := (length + 30) / 31
@@ -279,6 +280,7 @@ def Aligned.fields : Aligned → List Scalar
   | .compressString value => [.native 1, .native (Field.modulus - 1), .opaqueStringProjection value]
   | .nativeFields values => nativeFieldSequence values
   | .counter value => [.native 1, .native 8, .cast .native value]
+  | .u128 value => [.native 1, .native 16, .cast .native value]
 
 private def mintFieldGroups (slot : Nat) (domain : Expr (.bytes 32))
     (amount : Expr (.uint (2 ^ 64 - 1))) : List (List Scalar) :=
@@ -1150,50 +1152,71 @@ private def keyValueJson (kind : Foreign.Kind) (value : Expr (.foreign kind))
     Lean.Json.arr ((natBytes field).toArray.map Lean.toJson))
   )
 
-private def storageWriteValue : (ty : Ty) → Expr ty → Except String Op
-  | .foreign kind, value =>
+private def storageWriteValueWithAlignment : (ty : Ty) → Expr ty → Option CellAlignment → Except String Op
+  | .foreign kind, value, _ =>
     pure (.pushFields (Lean.Json.str kind.sourceName)
       (nativeFieldExpressions (foreignNativeFields kind value)) true)
-  | .jubjubScalar, value =>
+  | .jubjubScalar, value, _ =>
     pure (.pushFields (Lean.Json.str "JubjubScalar")
       (nativeFieldExpressions [.jubjubScalarToNative value]) true)
-  | .jubjubPoint, value =>
+  | .jubjubPoint, value, _ =>
     pure (.pushFields (Lean.Json.str "JubjubPoint")
       (nativeFieldExpressions [.jubjubCoordinate value 0, .jubjubCoordinate value 1]) true)
-  | .bytes 32, value => pure (.push (.bytes32 value) true)
-  | .bytes length, value => pure (.push (.bytes length value) true)
-  | .opaqueBytes, value => pure (.push (.compress value) true)
-  | .opaqueString, value => pure (.push (.compressString value) true)
-  | ty, value => do
-    pure (.push (.field (← nativeValue ty value)) true)
+  | .bytes 32, value, _ => pure (.push (.bytes32 value) true)
+  | .bytes length, value, _ => pure (.push (.bytes length value) true)
+  | .opaqueBytes, value, _ => pure (.push (.compress value) true)
+  | .opaqueString, value, _ => pure (.push (.compressString value) true)
+  | .uint maximum, value, cellAlignment? =>
+    if cellAlignment? == some .u128 then
+      if h : maximum = 2 ^ 128 - 1 then
+        pure (.push (.u128 (h ▸ value)) true)
+      else
+        throw "u128 cell alignment requires UInt 128"
+    else do
+      pure (.push (.field (← nativeValue (.uint maximum) value)) true)
+  | ty, value, _ => do pure (.push (.field (← nativeValue ty value)) true)
 
-private def storageReadValue (ty : Ty) (name : String) : Except String Op := do
-  match ty with
-  | .bytes 32 =>
+private def storageWriteValue (ty : Ty) (value : Expr ty) : Except String Op :=
+  storageWriteValueWithAlignment ty value none
+
+private def storageReadValueWithAlignment : (ty : Ty) → String → Option CellAlignment → Except String Op
+  | .uint maximum, name, cellAlignment? => do
+    if cellAlignment? == some .u128 then
+      unless maximum == 2 ^ 128 - 1 do
+        throw "u128 cell alignment requires UInt 128"
+      let value : Expr (.uint (2 ^ 128 - 1)) := .ref name
+      pure (.popeq (.u128 value))
+    else
+      let value : Expr (.uint maximum) := .ref name
+      pure (.popeq (.field (.cast .native value)))
+  | .bytes 32, name, _ => do
     let value : Expr (.bytes 32) := .ref name
     pure (.popeq (.bytes32 value))
-  | .bytes length =>
+  | .bytes length, name, _ => do
     let value : Expr (.bytes length) := .ref name
     pure (.popeq (.bytes length value))
-  | .opaqueBytes =>
+  | .opaqueBytes, name, _ => do
     let value : Expr .opaqueBytes := .ref name
     pure (.popeq (.compress value))
-  | .opaqueString =>
+  | .opaqueString, name, _ => do
     let value : Expr .opaqueString := .ref name
     pure (.popeq (.compressString value))
-  | .foreign kind =>
+  | .foreign kind, name, _ => do
     let value : Expr (.foreign kind) := .ref name
     pure (.popeqFields (Lean.Json.str kind.sourceName)
       (nativeFieldExpressions (foreignNativeFields kind value)))
-  | .jubjubScalar =>
+  | .jubjubScalar, name, _ => do
     let value : Expr .jubjubScalar := .ref name
     pure (.popeqFields (Lean.Json.str "JubjubScalar")
       (nativeFieldExpressions [.jubjubScalarToNative value]))
-  | .jubjubPoint =>
+  | .jubjubPoint, name, _ => do
     let value : Expr .jubjubPoint := .ref name
     pure (.popeqFields (Lean.Json.str "JubjubPoint")
       (nativeFieldExpressions [.jubjubCoordinate value 0, .jubjubCoordinate value 1]))
-  | _ => pure (.popeq (.field (← nativeRead ty name)))
+  | ty, name, _ => do pure (.popeq (.field (← nativeRead ty name)))
+
+private def storageReadValue (ty : Ty) (name : String) : Except String Op :=
+  storageReadValueWithAlignment ty name none
 
 private def nativePathKeys (keys : List PathKey) : Except String (List Aligned) :=
   keys.mapM fun key => match key with
@@ -1266,6 +1289,12 @@ private def stateSlot (state : List StateDecl) (name : String) : Except String N
   match state.findIdx? (·.name == name) with
   | some index => pure index
   | none => throw s!"unknown ledger state '{name}'"
+
+private def stateCellAlignment (state : List StateDecl) (name : String) : Option CellAlignment :=
+  (state.find? (·.name == name)).bind fun declaration =>
+    match declaration.kind with
+    | .cell _ => declaration.cellAlignment?
+    | _ => none
 
 private def resolveTreeState (state : List StateDecl) (name : String)
     (keys : List PathKey) : Except String LedgerValueType := do
@@ -1621,7 +1650,7 @@ def appendEffect (state : List StateDecl) (effect : Effect)
   match effect with
   | .readCell name destination ty =>
     let slot ← stateSlot state name
-    let value ← storageReadValue ty destination
+    let value ← storageReadValueWithAlignment ty destination (stateCellAlignment state name)
     pure { plan with
       operations := plan.operations ++ [.dup, .index slot, value]
       reads := plan.reads ++ [{name := destination, ty}] }
@@ -1768,7 +1797,7 @@ def appendEffect (state : List StateDecl) (effect : Effect)
       guards := plan.guards ++ [.eq (.ref readName : Expr .bool) (.bool false)] }
   | .writeCell name ty value =>
     let slot ← stateSlot state name
-    let value ← storageWriteValue ty value
+    let value ← storageWriteValueWithAlignment ty value (stateCellAlignment state name)
     pure {plan with operations := plan.operations ++ [
       .push (.field (.native slot)), value, .insert 1]}
   | .writeMap name _ ty key value =>
@@ -2285,7 +2314,7 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
   match effect with
   | .readCell name destination ty =>
     let slot ← stateSlot state name
-    let value ← storageReadValue ty destination
+    let value ← storageReadValueWithAlignment ty destination (stateCellAlignment state name)
     plan := { plan with
       operations := plan.operations ++ [.dup, .index slot, value]
       reads := plan.reads ++ [{name := destination, ty}] }
@@ -2435,7 +2464,7 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
       guards := plan.guards ++ [.eq (.ref name : Expr .bool) (.bool false)] }
   | .writeCell name ty value =>
     let slot ← stateSlot state name
-    let value ← storageWriteValue ty value
+    let value ← storageWriteValueWithAlignment ty value (stateCellAlignment state name)
     plan := {plan with operations := plan.operations ++ [
       .push (.field (.native slot)), value, .insert 1]}
   | .writeMap name _ ty key value =>
@@ -2719,6 +2748,11 @@ def Aligned.toJson (ctx : EvalContext) (env : EvalEnv) (value : Aligned) : Excep
       let value ← expression.eval ctx env
       pure (Lean.toJson [natBytes value], Lean.Json.mkObj [
         ("tag", Lean.toJson ("bytes" : String)), ("length", Lean.toJson (8 : Nat))])
+    | .u128 expression => do
+      let value ← expression.eval ctx env
+      pure (Lean.toJson [natBytes value], Lean.Json.mkObj [
+        ("tag", Lean.toJson ("bytes" : String)),
+          ("length", Lean.toJson (16 : Nat))])
   let alignmentSegments := match value with
     | .foreignKey kind _ => Lean.Json.arr (Array.replicate kind.encodedFieldCount
         (Lean.Json.mkObj [("tag", Lean.toJson ("atom" : String)), ("value", alignment)]))

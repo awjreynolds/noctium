@@ -2087,7 +2087,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard.",
       "source": [
         "adt"
       ],
@@ -2103,7 +2103,9 @@
         "tests/compact/opaque-cells.mjs",
         "Noctium/IR.lean",
         "Noctium/Backend/Impact.lean",
-        "docs/development/native-localnet.md"
+        "docs/development/native-localnet.md",
+        "tests/ByteAlignedUInt128Cell.lean",
+        "runtime/tests/uint128_fab_read.rs"
       ],
       "equivalence": "unverified",
       "structuredCellUpdate": {
@@ -2162,7 +2164,7 @@
       "layer": "language-ledger",
       "surface": "Cell.write",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values.",
+      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values. The explicit byte-aligned UInt128 type writes one 16-byte FAB atom. Native checking covers max and zero updates, unchanged state under the inactive guard, and malformed field-aligned writes.",
       "source": [
         "adt"
       ],
@@ -2178,7 +2180,9 @@
         "tests/compact/opaque-cells.mjs",
         "Noctium/IR.lean",
         "Noctium/Backend/Impact.lean",
-        "docs/development/native-localnet.md"
+        "docs/development/native-localnet.md",
+        "tests/ByteAlignedUInt128Cell.lean",
+        "runtime/tests/uint128_fab_read.rs"
       ],
       "equivalence": "unverified",
       "structuredCellUpdate": {

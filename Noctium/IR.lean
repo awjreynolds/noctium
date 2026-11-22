@@ -565,11 +565,18 @@ def StateKind.isHistoricMerkleTree : StateKind → Bool
   | .historicMerkleTree _ => true
   | _ => false
 
+inductive CellAlignment where
+  | u128
+  deriving Repr, BEq, DecidableEq
+
 structure StateDecl where
   name : String
   kind : StateKind
   sealed : Bool := false
   span : SourceSpan := {}
+  /-- Explicit ledger encoding for a direct state cell. The logical cell type
+  stays unchanged; alignment selects the native ledger atom representation. -/
+  cellAlignment? : Option CellAlignment := none
   deriving Repr
 
 inductive ConstructorType where
@@ -2122,6 +2129,13 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
       throw {span := decl.span, message := "only cells, maps, root Counters, root scalar Lists and root Sets can be sealed"}
     if decl.kind == .opaqueString && !decl.sealed then
       throw {span := decl.span, message := "OpaqueString state must be sealed"}
+    if let some alignment := decl.cellAlignment? then
+      match alignment, decl.kind with
+      | .u128, .cell (.uint maximum) =>
+        unless maximum == 2 ^ 128 - 1 do
+          throw {span := decl.span, message := "u128 cell alignment requires UInt 128"}
+      | _, _ =>
+        throw {span := decl.span, message := "cell alignment applies only to UInt 128 cells"}
     if let .map keyTy _ := decl.kind then
       match validateLedgerMapKeyType keyTy with
       | .error message => throw {span := decl.span, message}
