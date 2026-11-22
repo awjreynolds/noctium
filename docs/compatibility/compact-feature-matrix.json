@@ -901,7 +901,7 @@
       "layer": "language",
       "surface": "Named circuits and circuit calls",
       "noctiumStatus": "subset",
-      "notes": "Parameters, arity, results, helper calls and recursive-call rejection.",
+      "notes": "Parameters, arity, results, helper calls and recursive-call rejection. Readable witness circuits link one Lean helper program and invoke checked named helpers with scalar or aggregate arguments. The paired Compact and native fixture calls one aggregate helper from two entries, preserves argument witness order and rejects a wrong arity during elaboration.",
       "source": [
         "reference"
       ],
@@ -909,7 +909,12 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/ReadableRecordConstruction.lean",
+        "tests/compact/readable-record-construction.mjs",
+        "runtime/tests/readable_record_construction.rs",
+        "docs/development/named-helpers.md"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-16",

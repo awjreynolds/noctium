@@ -102,6 +102,14 @@ try {
   assert.deepEqual(calls, [['vector', 9n], ['unit', 11n]]);
   assert.deepEqual(constructedVectors, [[5n, 17n, 19n], [5n, 17n, 19n], []]);
   const vectorConstructionCalls = calls.splice(0);
+  const { result: rewritten } = await contract.circuits.helperRewrite(context('helperRewrite'), 7n);
+  assert.deepEqual(calls, [['base', 7n], ['active', 8n]]);
+  assert.deepEqual(rewritten, { reading: 14n, count: 19n, active: true });
+  const helperRewriteCalls = calls.splice(0);
+  const { result: projectedReading } = await contract.circuits.helperProject(context('helperProject'), 7n);
+  assert.deepEqual(calls, [['base', 7n]]);
+  assert.equal(projectedReading, 14n);
+  const helperProjectCalls = calls.splice(0);
   console.log(JSON.stringify({
     calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
@@ -116,6 +124,11 @@ try {
       result: [[true], slicedSequences[1], slicedSequences[2], [...slicedSequences[3]]],
     },
     vectorConstruction: { calls: vectorConstructionCalls, result: constructedVectors },
+    helperRewrite: {
+      calls: helperRewriteCalls,
+      result: { reading: rewritten.reading, count: rewritten.count, active: rewritten.active },
+    },
+    helperProject: { calls: helperProjectCalls, result: projectedReading },
   }, (_, value) => typeof value === 'bigint' ? value.toString() : value));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

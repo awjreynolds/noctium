@@ -378,3 +378,18 @@ fn vector_construction_preserves_inferred_and_explicit_element_types() -> anyhow
         }),
     )
 }
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn record_helpers_rewrite_and_project_nested_values() -> anyhow::Result<()> {
+    let base = reading_record("13", "19", false);
+    check_case(
+        "helperRewrite",
+        [
+            ("loadBase", "7", base.clone()),
+            ("observeActive", "8", json!(true)),
+        ],
+        reading_record("14", "19", true),
+    )?;
+    check_case("helperProject", [("loadBase", "7", base)], json!("14"))
+}

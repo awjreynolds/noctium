@@ -12,6 +12,14 @@ struct Envelope {
   epoch: Field;
 }
 
+pure circuit raiseReading(value: Reading, active: Boolean): Reading {
+  return Reading {
+    reading: value.reading + 1,
+    count: value.count,
+    active: active,
+  };
+}
+
 witness observeActive(value: Field): Boolean;
 witness observeCount(value: Field): Uint<8>;
 witness observeReading(value: Field): Field;
@@ -70,4 +78,13 @@ export circuit constructVectors(seed: Field): [Vector<3, Uint<8>>, Vector<3, Uin
   const wide = [5 as Uint<8>, ...values] as Vector<3, Uint<16>>;
   const empty = [...loadUnit(seed + 4)] as Vector<0, Uint<8>>;
   return disclose([narrow, wide, empty]);
+}
+
+export circuit helperRewrite(seed: Field): Reading {
+  return disclose(raiseReading(loadBase(seed), observeActive(seed + 1)));
+}
+
+export circuit helperProject(seed: Field): Field {
+  const changed = raiseReading(loadBase(seed), true);
+  return disclose(changed.reading);
 }

@@ -62,6 +62,62 @@ noctium_witness loadVector(marker : Native) : Payload vectorWire
 noctium_witness loadBytes(marker : Native) : Bytes 2
 noctium_witness loadUnit(marker : Native) : Unit
 
+private def readingHelpers : Helpers.Program := {
+  scopes := [{id := 0}, {id := 1, parent := some 0}]
+  declarations := [
+    {id := ⟨0, 0⟩, name := "raiseReading",
+      parameters := [{name := "base", ty := .native}, {name := "active", ty := .bool}],
+      compositeParameters := [("base", readingWire.payload)],
+      result := .composite readingWire.payload, declaredPure := _root_.Bool.true,
+      body := [
+        .bind "nextReading" (.scalar .native)
+          (.call "increment" [.project (.ref "base") (.field "reading")]),
+        .return (some (.composite readingWire.payload [
+          .ref "nextReading",
+          .project (.ref "base") (.field "count"),
+          .ref "active"
+        ]))]},
+    {id := ⟨0, 1⟩, name := "increment",
+      parameters := [{name := "value", ty := .native}], result := .scalar .native,
+      declaredPure := _root_.Bool.true,
+      body := [.return (some (.binary .add (.ref "value") (.native 1)))]},
+    {id := ⟨1, 0⟩, name := "increment",
+      parameters := [{name := "value", ty := .native}], result := .scalar .native,
+      declaredPure := _root_.Bool.true,
+      body := [.return (some (.binary .add (.ref "value") (.native 10)))]}
+  ],
+  composites := readingWire.composites
+}
+
+noctium_witness_circuit helperRewrite using readingWire with readingHelpers where
+  public seed : Native
+  let rewritten := invoke(raiseReading, [
+    witness loadBase(seed),
+    witness observeActive(add(seed, 1))
+  ])
+  output result := disclose(rewritten)
+end
+
+noctium_witness_circuit helperProject using readingWire with readingHelpers where
+  public seed : Native
+  let rewritten := invoke(raiseReading, [witness loadBase(seed), true])
+  output readingOnly : Native := disclose(field(rewritten, reading))
+end
+
+/- error: no compatible helper overload 'raiseReading' -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsHelperArity using readingWire with readingHelpers where
+  public seed : Native
+  output result := disclose(invoke(raiseReading, [witness loadBase(seed)]))
+end
+
+/- error: undisclosed private -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsUndisclosedHelper using readingWire with readingHelpers where
+  public seed : Native
+  output result := invoke(raiseReading, [witness loadBase(seed), true])
+end
+
 noctium_witness_circuit build using readingWire where
   public seed : Native
   let constructed := record(Payload readingWire, {
@@ -300,6 +356,12 @@ noctium_witness_circuit buildsQualifiedCoin using qualifiedCoinWire where
 end
 
 noctium_contract ReadableRecordConstruction where
+  entry helperRewrite uses ReadableRecordConstruction.helperRewrite where
+    return result
+  end
+  entry helperProject uses ReadableRecordConstruction.helperProject where
+    return result : Native := readingOnly
+  end
   entry build uses ReadableRecordConstruction.build where
     return result
   end
