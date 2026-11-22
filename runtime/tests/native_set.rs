@@ -24,6 +24,88 @@ fn load_circuit(directory: &Path, name: &str) -> IrSource {
     IrSource::load(std::fs::read(directory.join(name)).unwrap().as_slice()).unwrap()
 }
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_TYPED_RECORD_SET_DIR"]
+fn typed_record_set_keeps_both_fields_in_one_key() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_TYPED_RECORD_SET_DIR").expect("typed record Set artifacts"),
+    );
+    let plan = load_plan(&directory, "TypedSetKey.update.impact.json");
+    let circuit = load_circuit(&directory, "TypedSetKey.update.zkir");
+    let mut state = create_state(&plan, &BTreeMap::from([("memoSet".into(), json!([]))]))?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let inputs = |active, amount: u32, adding, removing| {
+        BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+            ("adding".into(), json!(adding)),
+            ("removing".into(), json!(removing)),
+        ])
+    };
+    for (active, amount, adding, removing, before, count) in [
+        (true, 513, false, false, false, 0),
+        (true, 513, true, false, false, 1),
+        (false, 513, false, false, false, 1),
+        (true, 514, false, false, false, 1),
+        (false, 513, true, false, false, 2),
+        (true, 513, false, true, true, 1),
+        (true, 513, false, false, false, 1),
+        (false, 513, false, false, true, 1),
+    ] {
+        let args = inputs(active, amount, adding, removing);
+        let result = prepare(&plan, &args, &state, params, address)?;
+        check(&result, &circuit)?;
+        assert_eq!(result.returns_json()["wasPresent"], json!(before));
+        if !adding && !removing {
+            assert_eq!(result.after.state.get_ref(), state.get_ref());
+        }
+        state = result.after.state;
+        let StateValue::Array(slots) = state.get_ref() else {
+            anyhow::bail!("expected a state array");
+        };
+        let Some(StateValue::Map(set)) = slots.get(0) else {
+            anyhow::bail!("expected a Set-backed map");
+        };
+        let key = AlignedValue::concat(
+            [
+                field_value(Fr::from(u8::from(active))),
+                field_value(Fr::from(amount)),
+            ]
+            .iter(),
+        );
+        assert_eq!(set.size(), count);
+        assert_eq!(set.get(&key).is_some(), (before || adding) && !removing);
+    }
+
+    assert!(
+        prepare(
+            &plan,
+            &inputs(true, 65536, true, false),
+            &state,
+            params,
+            address
+        )
+        .is_err()
+    );
+    let mut mismatched = plan.clone();
+    mismatched.state[0].kind["tree"]["set"]["composite"]["fields"]
+        .as_array_mut()
+        .expect("typed key schema fields")
+        .swap(0, 1);
+    assert!(
+        prepare(
+            &mismatched,
+            &inputs(true, 513, true, false),
+            &state,
+            params,
+            address
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
 fn inputs(
     bucket: u64,
     tag: u8,

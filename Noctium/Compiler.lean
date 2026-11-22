@@ -320,6 +320,10 @@ private def operationJsonBare : Backend.Impact.Op → Json
   | .mapRemove slot keys => Json.mkObj [
       ("op", toJson ("mapRemove" : String)), ("slot", toJson slot),
       ("keys", toJson (keys.map fun key => Json.mkObj (alignedJson key)))]
+  | .mapRemoveRecord slot schema values => Json.mkObj [
+      ("op", toJson ("mapRemoveRecord" : String)), ("slot", toJson slot),
+      ("schema", schema),
+      ("expressions", toJson (values.map ledgerFieldExprJson))]
   | .claimContractCall address entryPointHash commitment => Json.mkObj [
       ("op", toJson ("claimcontractcall" : String)),
       ("address", nativeExpressionJson address),
@@ -584,6 +588,10 @@ private def effectJson : Effect → Json
       ("destination", toJson destination),
       ("keys", toJson (keys.map fun key => match key with
         | .mk _ value => expressionJson value))]
+  | .memberRecordSet state destination values => Json.mkObj [
+      ("op", toJson ("memberRecordSet" : String)), ("state", toJson state),
+      ("destination", toJson destination),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
   | .counterRead state destination keys => Json.mkObj [
       ("op", toJson ("counterRead" : String)), ("state", toJson state),
       ("destination", toJson destination),
@@ -706,6 +714,12 @@ private def effectJson : Effect → Json
       ("op", toJson ("setInsert" : String)), ("state", toJson state),
       ("keys", toJson (keys.map fun key => match key with
         | .mk _ value => expressionJson value))]
+  | .setInsertRecord state values => Json.mkObj [
+      ("op", toJson ("setInsertRecord" : String)), ("state", toJson state),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .removeRecordSet state values => Json.mkObj [
+      ("op", toJson ("removeRecordSet" : String)), ("state", toJson state),
+      ("values", toJson (values.map sourceLedgerFieldExprJson))]
   | .removePath state keys => Json.mkObj [
       ("op", toJson ("removePath" : String)), ("state", toJson state),
       ("keys", toJson (keys.map fun key => match key with
@@ -729,6 +743,8 @@ private def stateJson (state : StateDecl) : Json :=
     | _, _, .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
     | _, _, .map keyTy value => Json.mkObj [("map", toJson [toJson (typeName keyTy), treeJson Bool.false Bool.true value])]
     | _, _, .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
+    | _, _, .recordSet environment type => Json.mkObj [("set", Json.mkObj [
+        ("composite", cellCompositeSchema environment type)])]
     | _, _, .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", compositeSchema environment type)])]
     | rootCell, mapValue, .composite environment type => Json.mkObj [("composite",
