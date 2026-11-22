@@ -71,6 +71,22 @@ supplies the left payload's typed default. The return layout orders
 for private inputs that flow into them.
 [Composite Either fixture](../../tests/CompositeEither.lean)
 
+## Pass a record to a witness
+
+Declare a witness parameter with the codec that defines its layout.
+The circuit lists the same codec in its `using` clause.
+
+```lean
+noctium_witness inspect(payload : Payload limitsWire, amount : UInt8) : Bool
+```
+
+A call to `witness inspect(payload, amount)` sends one typed record
+followed by the amount. The host protocol preserves the record identity
+and checked fields. The circuit still constrains the reply where the
+contract requires a condition. The matched fixture covers a UInt8,
+a Bool and four bytes, including rejection of a wrong-typed callback reply.
+[Lean fixture](../../tests/CompositeWitnessArguments.lean) · [Compact fixture](../../tests/compact/composite-witness-arguments.mjs) · [Native check](../../runtime/tests/composite_witness_arguments.rs)
+
 ## Compile source
 
 Declare `Helpers.WitnessSignature` values on `Helpers.Program.witnesses`. Each signature names its versioned operation, capability, typed parameters and result. Call a signature with `Term.witnessCall site name arguments`. Site names remain unique within each helper declaration.
