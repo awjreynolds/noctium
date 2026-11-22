@@ -8,10 +8,12 @@ immutable SSA input. The selected profile is ZKIR 3.2.1. The range-only pass
 removes duplicate bounds. The source has no less-than comparisons, so comparison
 reuse leaves the non-range instruction sequence unchanged.
 
-The kernel theorem below proves the checked scalar relation fragment. Closed
-artifact parsing uses `native_decide` because the compiler's lowering path does
-not reduce under `decide +kernel`. Treat those closed parser facts as executable
-evidence. They do not strengthen the theorem to a standard-axiom-only result.
+The kernel theorem below proves the checked scalar relation fragment. The two
+included ZKIR files are exact CLI outputs, and the elected CLI check compares
+fresh output bytes to them. Closed parsing and decoding facts use `native_decide`
+because `decide` and `decide +kernel` do not reduce the parser and instruction
+decoder to completion. Treat those closed artifact facts as executable evidence.
+They do not strengthen the pilot theorem to a standard-axiom-only result.
 The native backend and external verifier remain outside this Lean model. The
 repository has no generic checked decoder for `.impact.json`; this fixture
 checks both serialized typed Impact plans, while the paired CLI byte check
@@ -49,11 +51,13 @@ private def sourceExpected : Native.Expected :=
   (Native.expectedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint).toOption.getD
     {mode := .ledgerCall, inputs := [], rawInputs := [], groups := [], returns := [], assertions := [], bounds := []}
 
-private def artifactFor (deduplicate : _root_.Bool) : Json :=
-  ((Zkir.lowerPrunedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint deduplicate).toOption.map Prod.snd).getD Json.null
+private def defaultArtifactText : String := include_str "fixtures/range-dedup/default.zkir"
+private def deduplicatedArtifactText : String := include_str "fixtures/range-dedup/deduplicated.zkir"
 
-private def defaultArtifact : Json := artifactFor _root_.Bool.false
-private def deduplicatedArtifact : Json := artifactFor _root_.Bool.true
+private def parseArtifact (text : String) : Json := (Json.parse text).toOption.getD Json.null
+
+private def defaultArtifact : Json := parseArtifact defaultArtifactText
+private def deduplicatedArtifact : Json := parseArtifact deduplicatedArtifactText
 
 private def rangeInstructions (artifact : Json) : Array Json :=
   (Noctium.Verification.NativeRelationJson.arrayField artifact "instructions").toOption.getD #[]
@@ -68,6 +72,14 @@ private def defaultInstructions : Array Json := rangeInstructions defaultArtifac
 private def deduplicatedInstructions : Array Json := rangeInstructions deduplicatedArtifact
 private def defaultProgram : Program := decodedProgram defaultArtifact
 private def deduplicatedProgram : Program := decodedProgram deduplicatedArtifact
+
+private def fullDecodeMatches (artifact : Json) (program : Program) : _root_.Bool :=
+  match Noctium.Verification.NativeRelationJson.decode artifact with
+  | .error _ => _root_.Bool.false
+  | .ok decoded =>
+      decoded.instructions == program.instructions &&
+      decoded.outputArity == program.outputArity &&
+      decoded.communicationsCommitment == program.communicationsCommitment
 
 private theorem defaultProgramInstructions :
     defaultProgram.instructions = (defaultInstructions.toList.mapM
@@ -189,6 +201,8 @@ private theorem optimizerRunDecoded :
 
 #guard (Noctium.Verification.NativeRelationJson.decode defaultArtifact).isOk
 #guard (Noctium.Verification.NativeRelationJson.decode deduplicatedArtifact).isOk
+#guard fullDecodeMatches defaultArtifact defaultProgram
+#guard fullDecodeMatches deduplicatedArtifact deduplicatedProgram
 #guard defaultProgram.outputArity == 3 && defaultProgram.communicationsCommitment
 #guard deduplicatedProgram.outputArity == 3 && deduplicatedProgram.communicationsCommitment
 #guard (defaultInstructions.filter (fun item =>
@@ -248,6 +262,3 @@ private def ledgerArtifactPair (deduplicate : _root_.Bool) :=
       defaultImpact.compress == deduplicatedImpact.compress
     | _, _ => _root_.Bool.false
   | _, _ => _root_.Bool.false
-
-
-
