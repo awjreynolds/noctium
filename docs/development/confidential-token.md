@@ -80,6 +80,19 @@ Clearing with epoch one rejects. Clearing with epoch two empties only Alice's
 memo List and preserves the epoch and other ledger state. Self-transfer and
 wrong-key clearing also reject. The expanded focused native case passes in 0.56 seconds.
 
+The same native test now checks the mint epoch guard before the valid mint. It
+runs the typed witness and native Impact check twice from the same registered
+recipient pre-state, keeping recipient, public key, private amount, seed and
+previous pending ciphertext fixed. Epoch zero rejects as stale, then epoch one
+passes and retains the supply, pending credit, epoch and memo assertions.
+Reproduce the focused test with:
+
+```sh
+cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked --offline \
+  --no-default-features --features zkir-321 --test confidential_token \
+  confidential_token_registration_pending_sweep_and_transfer_use_native_relations -- --exact
+```
+
 The delegated-spend nonce preimage fits existing source operations:
 `persistentHashVector32([seed, domain, owner, spender, toBytes32(epochNative)])`.
 The pinned mixed record hashes four Bytes32 values followed by one canonical

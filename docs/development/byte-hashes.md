@@ -55,3 +55,12 @@ Bytes32, Bool, UInt16 and Native fields. Both Keccak digests match Compact
 0.36.1. The native check rejects UInt16 overflow and a changed return
 commitment. The existing point case emits the same ZKIR and Impact bytes.
 [Mixed FAB source](../../tests/Sha512Fab.lean) · [Compact oracle](../../tests/compact/sha512-fab.mjs) · [Native check](../../runtime/tests/sha512_fab.rs)
+
+Readable witness circuits accept `sha512(record)` and `keccak256(record)` over
+checked FAB layouts. A witness provider returns the named record once, and
+the compiler derives the field order and byte widths from its declaration.
+`Sha512Fab.hashHosted` checks both digests against the pinned Compact vector in
+the Rust witness session and the native ZKIR checker. The session rejects a
+reply with a different record identity. Returning a digest derived from a
+private witness requires `disclose`.
+[Hosted case](../../runtime/tests/witness_control.rs)

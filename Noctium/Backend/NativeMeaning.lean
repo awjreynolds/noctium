@@ -443,6 +443,12 @@ private def normalizeForeignBinary (op : Foreign.BinaryOp) (left right : Normali
     assertions := left.assertions ++ right.assertions ++ partialAssertions
   }
 
+private def normalizeReverseBytes (length : Nat) (normalized : Normalized) : Except String Normalized := do
+  let chunks ← bytesChunksTerm length normalized.term
+  let term := if length == 0 then Term.bytes [] else
+    reverseBytesTerm length (bytesFromChunksTerm length chunks)
+  pure {normalized with term}
+
 private def arithmetic (ty : Ty) (opcode : String) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary opcode left.term right.term) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
 
@@ -572,10 +578,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       pure {term := byte, bounds := normalized.bounds ++ [(byte, 255)], assertions := normalized.assertions}
   | .reverseBytes (length := length) value => do
     let normalized ← normalize env value
-    let chunks ← bytesChunksTerm length normalized.term
-    let term := if length == 0 then Term.bytes [] else
-      reverseBytesTerm length (bytesFromChunksTerm length chunks)
-    pure {normalized with term}
+    normalizeReverseBytes length normalized
   | .sliceBytes (length := length) value start end_ => do
     let normalized ← normalize env value
     unless start ≤ end_ && end_ ≤ length do throw "byte slice is out of range"
@@ -716,9 +719,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       payload.bounds payload.assertions)
   | .reverseBytes32 value => do
     let normalized ← normalize env value
-    let (highByte, low31) ← alignedBytes32Fields normalized
-    let bytes := bytes32FromChunksTerm low31 highByte
-    pure {normalized with term := reverseBytes32Term bytes}
+    normalizeReverseBytes 32 normalized
   | .toBytes32 (source := source) value => do
     let normalized ← normalize env value
     if isWidenedByte value then

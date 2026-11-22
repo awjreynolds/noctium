@@ -1291,6 +1291,25 @@ private def freshReadableLet (id : Ident) : ExprM String := do
   modify fun state => {state with nextLet := ordinal + 1}
   pure s!"__noctium_let_{ordinal}_{id.getId}"
 
+private def lowerFabDigest (site : Syntax) (algorithm : Helpers.FabDigest)
+    (type : Types.CompositeType) (value : Lowered) : ExprM Lowered := do
+  modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+  let compiled ← match Types.compileType (← get).composites type with
+    | .ok compiled => pure compiled
+    | .error diagnostic => throwErrorAt site diagnostic.message
+  let (before, reference) ← match value.term with
+    | .ref _ => pure (value.before, value.term)
+    | _ => do
+      let binding ← freshIterationRef "digest-payload"
+      pure (value.before ++ [.bind binding value.type value.term], Helpers.Term.ref binding)
+  let operands ← match Helpers.Wire.fabDigestOperands compiled reference with
+    | .ok operands => pure operands
+    | .error message => throwErrorAt site message
+  pure {value with
+    before
+    type := .scalar algorithm.resultType
+    term := .bytes (.fabDigest algorithm type (operands.map Prod.fst)) (operands.map Prod.snd)}
+
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
     (stx : TSyntax `nlexpr) : ExprM Lowered := do
   match stx with
@@ -1919,8 +1938,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
   | `(nlexpr| sha512($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    if let .composite type := value.type then
+      return ← lowerFabDigest stx .sha512 type value
     let .scalar (.bytes length) := value.type
-      | throwErrorAt stx "sha512 requires a fixed byte-string value"
+      | throwErrorAt stx "sha512 requires fixed bytes or a checked FAB payload"
     let operation := Noctium.Helpers.BytesOp.sha512 length
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
@@ -1928,12 +1949,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
   | `(nlexpr| keccak256($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    if let .composite type := value.type then
+      return ← lowerFabDigest stx .keccak256 type value
     let operation ← match value.type with
       | .scalar (.bytes length) => pure (Noctium.Helpers.BytesOp.keccak256 length)
       | .scalar (.foreign (.point .secp256k1)) => pure .keccak256Secp256k1Point
       | .scalar (.foreign (.point _)) =>
         throwErrorAt stx "keccak256 point overload supports Secp256k1Point"
-      | _ => throwErrorAt stx "keccak256 requires a fixed byte string or Secp256k1Point"
+      | _ => throwErrorAt stx "keccak256 requires fixed bytes, a checked FAB payload, or Secp256k1Point"
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
       | .ok signature => pure signature
@@ -2626,6 +2649,12 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
       | .sha512 length => `(Noctium.Helpers.BytesOp.sha512 $(natTerm length))
       | .keccak256 length => `(Noctium.Helpers.BytesOp.keccak256 $(natTerm length))
       | .keccak256Secp256k1Point => `(Noctium.Helpers.BytesOp.keccak256Secp256k1Point)
+      | .fabDigest algorithm type parameters => do
+        let algorithm ← match algorithm with
+          | .sha512 => `(Noctium.Helpers.FabDigest.sha512)
+          | .keccak256 => `(Noctium.Helpers.FabDigest.keccak256)
+        let parameters ← parameters.toArray.mapM tyTerm
+        `(Noctium.Helpers.BytesOp.fabDigest $algorithm $(← compositeTypeTerm type) [$parameters,*])
       | .reverseBytes32 => `(Noctium.Helpers.BytesOp.reverseBytes32)
       | .reverseBytes length => `(Noctium.Helpers.BytesOp.reverseBytes $(natTerm length))
       | .sliceBytes length start stop =>
