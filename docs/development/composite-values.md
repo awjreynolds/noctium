@@ -93,6 +93,18 @@ effectful values before the constructor to choose their execution order.
 The result carries the codec's nominal type. Private components still require
 explicit disclosure at public sinks. [Source fixture](../../tests/ReadableRecordConstruction.lean)
 
+Use a leading spread to inherit fields from a record of the same nominal type.
+
+```lean
+let updated := record(Payload readingWire, {..previous, active := enabled})
+```
+
+The base evaluates once, even when every field has an override. Overrides
+evaluate afterward in declaration order. Inherited fields keep their disclosure
+requirements. Replaced fields take the origins of their new values. The pinned
+Compact 0.36.1 comparison checks the returned value and provider call order.
+[Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 ## Compare checked aggregates
 
 In a readable circuit, `eq(left, right)` compares values with compatible

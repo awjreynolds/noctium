@@ -47,22 +47,35 @@ try {
     calls.push(['reading', value]);
     return [privateState, 9n];
   },
+  loadBase: ({ privateState }, value) => {
+    calls.push(['base', value]);
+    return [privateState, { reading: 13n, count: 19n, active: false }];
+  },
   });
   const wallet = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(createConstructorContext([], wallet));
-  const { result } = await contract.circuits.build(createCircuitContext({
-    circuitId: 'build',
+  const context = circuitId => createCircuitContext({
+    circuitId,
     contractAddress: dummyContractAddress(),
     coinPublicKeyOrZswapState: wallet,
     contractState: currentContractState.data,
     privateState: null,
-  }), 7n);
+  });
+  const { result } = await contract.circuits.build(context('build'), 7n);
 
   assert.deepEqual(calls, [['reading', 10n], ['count', 9n], ['active', 8n]]);
   assert.deepEqual(result, { reading: 9n, count: 17n, active: true });
+  const constructionCalls = calls.splice(0);
+  const { result: spread } = await contract.circuits.patch(context('patch'), 7n);
+  assert.deepEqual(calls, [['base', 7n], ['count', 9n], ['active', 8n], ['base', 10n]]);
+  assert.deepEqual(spread, { reading: 13n, count: 17n, active: true });
   console.log(JSON.stringify({
-    calls: calls.map(([name, value]) => [name, value.toString()]),
+    calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
+    spread: {
+      calls: calls.map(([name, value]) => [name, value.toString()]),
+      result: { reading: spread.reading.toString(), count: spread.count.toString(), active: spread.active },
+    },
   }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

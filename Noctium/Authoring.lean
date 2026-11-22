@@ -146,6 +146,7 @@ scoped syntax "decode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "default(" "Payload" ident ")" : nlexpr
 declare_syntax_cat noctium_record_field
 scoped syntax ident ":=" nlexpr : noctium_record_field
+scoped syntax ".." nlexpr : noctium_record_field
 scoped syntax "record(" "Payload" ident "," "{" noctium_record_field,* "}" ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
@@ -499,9 +500,10 @@ private partial def renderType : TSyntax `nltype → String
   | _ => "?"
 
 private def recordField (field : TSyntax `noctium_record_field) :
-    Option (TSyntax `ident × TSyntax `nlexpr) :=
+    Option (Option (TSyntax `ident) × TSyntax `nlexpr) :=
   match field with
-  | `(noctium_record_field| $name:ident := $source:nlexpr) => some (name, source)
+  | `(noctium_record_field| $name:ident := $source:nlexpr) => some (some name, source)
+  | `(noctium_record_field| ..$source:nlexpr) => some (none, source)
   | _ => none
 
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
@@ -525,8 +527,9 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
   | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
   | `(nlexpr| record(Payload $codec:ident, { $fields,* })) =>
-    let rendered := (fields.getElems.toList.filterMap recordField).map fun (name, value) =>
-      s!"{name.getId} := {renderExpr value}"
+    let rendered := (fields.getElems.toList.filterMap recordField).map fun
+      | (some name, value) => s!"{name.getId} := {renderExpr value}"
+      | (none, value) => ".." ++ renderExpr value
     "record(Payload " ++ codec.getId.toString ++ ", {" ++ String.intercalate ", " rendered ++ "})"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
@@ -1172,23 +1175,44 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | throwErrorAt name "checked record Payload has a non-structure layout"
     let some declaration := compiled.environment.structures.find? (·.id == id)
       | throwErrorAt name "checked record Payload has no structure declaration"
+    let mut spread : Option (TSyntax `nlexpr) := none
     let mut initializers : List (String × TSyntax `nlexpr) := []
-    for field in fields.getElems do
+    for (field, index) in fields.getElems.toList.zipIdx do
       let some (fieldName, source) := recordField field
         | throwErrorAt field "invalid record field initializer"
+      let some fieldName := fieldName
+        | unless index == 0 do throwErrorAt field "record spread must appear once, before named fields"
+          spread := some source
+          continue
       let key := fieldName.getId.toString
       if initializers.any (·.1 == key) then
         throwErrorAt fieldName s!"duplicate record field '{key}'"
       unless declaration.fields.any (·.name == key) do
         throwErrorAt fieldName s!"unknown record field '{key}'"
       initializers := initializers ++ [(key, source)]
+    let span ← liftM (spanValue stx)
+    let (spreadBefore, base) ← match spread with
+      | none => pure ([], none)
+      | some source => do
+        let expected := ResultType.composite codec.payload
+        let value ← match ← lowerExpectedIterationRef env expected source with
+          | some value => pure value
+          | none => lowerExpr programName callPrefix env source
+        unless value.type == expected do
+          throwErrorAt source "record spread requires the same nominal Payload type"
+        let (before, references, _) ← stageIterationValues callPrefix env span [value]
+        let [reference] := references
+          | throwErrorAt source "record spread value staging failed"
+        pure (before, some (value, reference))
     -- The pinned Compact compiler evaluates named initializers in declaration order.
     let values ← layoutFields.mapM fun (key, _) => do
-      let some (_, source) := initializers.find? (·.1 == key)
-        | throwErrorAt stx s!"missing record field '{key}'"
       let some declared := declaration.fields.find? (·.name == key)
         | throwErrorAt stx s!"checked record field '{key}' has no declaration"
       let expected := Helpers.resultTypeOfComposite declared.type
+      let some (_, source) := initializers.find? (·.1 == key)
+        | match base with
+          | some (_, reference) => pure {type := expected, term := .project reference (.field key)}
+          | none => throwErrorAt stx s!"missing record field '{key}'"
       let value ← match ← lowerExpectedIterationRef env expected source with
         | some value => pure value
         | none => lowerExpr programName callPrefix env source
@@ -1201,14 +1225,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         unless value.type == expected || matchingBytes do
           throwErrorAt source s!"record field '{key}' has the wrong Payload type"
         pure value
-    let span ← liftM (spanValue stx)
     let (before, terms, _) ← stageIterationValues callPrefix env span values
     let leaves ← (layoutFields.zip (values.zip terms)).flatMapM fun ((_, layout), value, reference) => do
       match Helpers.Iteration.flattenResult span value.type layout reference with
       | .ok leaves => pure leaves
       | .error diagnostic => throwErrorAt stx diagnostic.message
-    let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves) values
-    pure {result with before}
+    let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves)
+      (base.toList.map Prod.fst ++ values)
+    pure {result with before := spreadBefore ++ before}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message
