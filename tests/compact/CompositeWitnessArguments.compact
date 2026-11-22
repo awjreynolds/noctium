@@ -1,0 +1,14 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+witness inspect(payload: Limits, amount: Uint<8>): Boolean;
+
+export circuit inspectLimits(payload: Limits, amount: Uint<8>): Boolean {
+  return disclose(inspect(payload, amount));
+}

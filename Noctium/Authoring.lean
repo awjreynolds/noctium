@@ -28,6 +28,15 @@ structure WitnessResultCodec where
   codec : Name
   deriving Repr, BEq
 
+/-- The checked wire codec that fixes one typed witness callback's aggregate
+parameter ABI. Parameter types alone carry nominal layout identity, while this
+registry also pins the declared frame and field environment. -/
+structure WitnessParameterCodec where
+  signatureName : String
+  parameterName : String
+  codec : Name
+  deriving Repr, BEq
+
 structure ObservationInput where
   name : String
   type : String
@@ -92,6 +101,13 @@ initialize noctiumWitnessResultCodecRegistry : SimplePersistentEnvExtension
     addEntryFn := Array.push
   }
 
+initialize noctiumWitnessParameterCodecRegistry : SimplePersistentEnvExtension
+    Noctium.Authoring.WitnessParameterCodec (Array Noctium.Authoring.WitnessParameterCodec) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
 end Noctium.Authoring
 
 namespace Noctium
@@ -113,6 +129,7 @@ scoped syntax (name := noctiumPrivateStateCommand) "noctium_private_state" ident
 
 declare_syntax_cat noctium_witness_parameter
 scoped syntax ident ":" nltype : noctium_witness_parameter
+scoped syntax ident ":" "Payload" ident : noctium_witness_parameter
 declare_syntax_cat noctium_witness_result
 scoped syntax "Payload" ident : noctium_witness_result
 scoped syntax nltype : noctium_witness_result
@@ -1563,18 +1580,25 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let signatureName := signature.name
     validIdentity function signatureName
     unless signature.parameters.all (fun p => match p.type with
-      | .scalar _ => _root_.Bool.true
+      | .scalar _ | .composite _ => _root_.Bool.true
       | _ => _root_.Bool.false) do
-      throwErrorAt function "witness callback parameters must use supported scalar types"
+      throwErrorAt function "witness callback parameters must use supported scalar or Payload types"
     unless args.getElems.size == signature.parameters.length do
       throwErrorAt stx s!"witness '{function.getId}' argument count does not match its declaration"
     let mut loweredArgs := []
     for (argument, parameter) in (args.getElems.toList.zip signature.parameters) do
-      let .scalar parameterTy := parameter.type | throwErrorAt function "Unit witness parameters are unsupported"
-      let value ← match ← lowerExpectedIterationRef env (.scalar parameterTy) argument with
-        | some value => pure value
-        | none => lowerExpr programName callPrefix env argument
-      let value ← coerce argument value parameterTy
+      let value ← match parameter.type with
+        | .scalar parameterTy => do
+          let value ← match ← lowerExpectedIterationRef env (.scalar parameterTy) argument with
+            | some value => pure value
+            | none => lowerExpr programName callPrefix env argument
+          coerce argument value parameterTy
+        | .composite parameterType => do
+          let value ← lowerExpr programName callPrefix env argument
+          unless value.type == .composite parameterType do
+            throwErrorAt argument "witness callback aggregate argument must use the declared Payload codec"
+          pure value
+        | .unit => throwErrorAt function "Unit witness parameters are unsupported"
       loweredArgs := loweredArgs ++ [value]
     let callNo ← get
     modify fun state => {state with nextCall := state.nextCall + 1}
@@ -2032,11 +2056,29 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
     validIdentity name operation
     validIdentity name capability
     let mut parameters : List WitnessParameter := []
+    let mut parameterCodecs : List WitnessParameterCodec := []
     for parameterStx in params.getElems do
       match parameterStx with
       | `(noctium_witness_parameter| $parameter:ident : $type:nltype) => do
         let ty ← readScalarTy type
         parameters := parameters ++ [{name := parameter.getId.toString, type := .scalar ty}]
+      | `(noctium_witness_parameter| $parameter:ident : Payload $codecName:ident) => do
+        let source ← liftCoreM <| resolveGlobalConstNoOverload codecName
+        let codec ← evalConstCheck Helpers.Wire.Codec ``Helpers.Wire.Codec source
+        match codec.payload with
+        | .unit | .scalar _ =>
+          throwErrorAt codecName "witness callback Payload parameters must use an aggregate"
+        | _ => pure ()
+        let compiled ← match Types.compileType codec.composites codec.payload with
+          | .ok value => pure value
+          | .error diagnostic => throwErrorAt codecName diagnostic.message
+        let _ ← match Helpers.Wire.declarations compiled
+            (fullName ++ ".parameter." ++ parameter.getId.toString) codec.frameBytes ⟨0, 1⟩ ⟨0, 2⟩ with
+          | .ok declarations => pure declarations
+          | .error message => throwErrorAt codecName message
+        let parameterName := parameter.getId.toString
+        parameters := parameters ++ [{name := parameterName, type := .composite codec.payload}]
+        parameterCodecs := parameterCodecs ++ [{signatureName := fullName, parameterName, codec := source}]
       | _ => throwErrorAt parameterStx "unsupported witness parameter"
     let parameterNames := parameters.map (·.name)
     unless uniqueStrings parameterNames do throwErrorAt name "duplicate witness parameter"
@@ -2074,6 +2116,8 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
     let signatureTerm ← quoteSignature signature
     elabCommand (← `(def $(mkIdent generatedSyntaxName) : Noctium.Helpers.WitnessSignature := $signatureTerm))
     modifyEnv fun env => noctiumWitnessSignatureRegistry.addEntry env signature
+    for parameterCodec in parameterCodecs do
+      modifyEnv fun env => noctiumWitnessParameterCodecRegistry.addEntry env parameterCodec
     if let some codec := resultCodec then
       modifyEnv fun env => noctiumWitnessResultCodecRegistry.addEntry env
         {signatureName, codec}
@@ -2427,6 +2471,7 @@ private partial def lowerReadableStatement (programName path : String)
           sourceBody statement
     let witnesses := sourceBody.witnesses
     let resultCodecs := (noctiumWitnessResultCodecRegistry.getState (← getEnv)).toList
+    let parameterCodecs := (noctiumWitnessParameterCodecRegistry.getState (← getEnv)).toList
     for signature in witnesses do
       if let some required := resultCodecs.find? (·.signatureName == signature.name) then
         let some (_, requiredCodec) := resolvedCodecs.find? (·.1 == required.codec)
@@ -2440,6 +2485,22 @@ private partial def lowerReadableStatement (programName path : String)
             if conflicts then
               throwErrorAt name
                 s!"witness result '{signature.name}' has conflicting codecs '{required.codec}' and '{candidateName}' in this circuit's using clause"
+      for parameter in signature.parameters do
+        if let some required := parameterCodecs.find? (fun item =>
+            item.signatureName == signature.name && item.parameterName == parameter.name) then
+          let some (_, requiredCodec) := resolvedCodecs.find? (·.1 == required.codec)
+            | throwErrorAt name
+                s!"witness parameter '{signature.name}.{parameter.name}' requires codec '{required.codec}' in this circuit's using clause"
+          if let .composite payload := parameter.type then
+            unless requiredCodec.payload == payload do
+              throwErrorAt name s!"witness parameter '{signature.name}.{parameter.name}' codec payload identity mismatch"
+            for (candidateName, candidate) in resolvedCodecs do
+              let conflicts := candidate.payload == payload &&
+                (candidate.frameBytes != requiredCodec.frameBytes ||
+                  candidate.composites != requiredCodec.composites)
+              if conflicts then
+                throwErrorAt name
+                  s!"witness parameter '{signature.name}.{parameter.name}' has conflicting codecs '{required.codec}' and '{candidateName}' in this circuit's using clause"
     let mut body := sourceBody.statements
     let compositeId := programNameText ++ ".Output"
     let compositeType := Types.CompositeType.structure compositeId
