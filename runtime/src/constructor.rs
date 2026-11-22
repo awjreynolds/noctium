@@ -17,6 +17,10 @@ pub struct Constructor {
     pub initializers: Vec<Initializer>,
     #[serde(default, rename = "mapInserts")]
     pub map_inserts: Vec<MapInsert>,
+    #[serde(default, rename = "counterIncrements")]
+    pub counter_increments: Vec<CounterIncrement>,
+    #[serde(default, rename = "listPushes")]
+    pub list_pushes: Vec<ListPush>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -41,6 +45,20 @@ pub struct Initializer {
 pub struct MapInsert {
     pub state: String,
     pub key: Expr,
+    pub value: Expr,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CounterIncrement {
+    pub state: String,
+    pub amount: Expr,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListPush {
+    pub state: String,
     pub value: Expr,
 }
 
@@ -156,6 +174,74 @@ fn flat_map_types(decl: &StateDecl) -> Result<Option<(ScalarType, ScalarType)>> 
 
 type ConstructorMap = HashMap<AlignedValue, StateValue<Db>, Db>;
 
+fn constructor_counter(decl: &StateDecl) -> bool {
+    decl.kind == json!({"tree":{"counter":true}})
+}
+
+fn flat_scalar_list_type(decl: &StateDecl) -> Result<Option<ScalarType>> {
+    let Some(tree) = decl.kind.get("tree") else {
+        return Ok(None);
+    };
+    let Some(list) = tree.get("list") else {
+        return Ok(None);
+    };
+    ensure!(
+        decl.kind.as_object().is_some_and(|kind| kind.len() == 1)
+            && tree.as_object().is_some_and(|fields| fields.len() == 1),
+        "constructor List requires a root List state"
+    );
+    let element = list
+        .as_object()
+        .filter(|element| element.len() == 1)
+        .ok_or_else(|| anyhow!("constructor List requires a scalar element"))?;
+    let ty = element
+        .get("scalar")
+        .and_then(Json::as_str)
+        .ok_or_else(|| anyhow!("constructor List requires a scalar element"))?;
+    let ty = crate::validate_tree_scalar_type(ty)?;
+    ensure!(
+        ty != ScalarType::OpaqueString,
+        "OpaqueString is not supported in constructor Lists"
+    );
+    Ok(Some(ty))
+}
+
+fn counter_totals(
+    plan: &Plan,
+    increments: &[CounterIncrement],
+    environment: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, u64>> {
+    let amount_type = ScalarType::parse("UIntRange<4294967296>")?;
+    let mut totals = BTreeMap::<String, u64>::new();
+    for increment in increments {
+        let declaration = plan
+            .state
+            .iter()
+            .find(|declaration| declaration.name == increment.state)
+            .ok_or_else(|| anyhow!("unknown constructor Counter state"))?;
+        ensure!(
+            constructor_counter(declaration),
+            "constructor Counter increment requires a root Counter"
+        );
+        let amount = evaluate(&increment.amount, environment)?;
+        ensure!(
+            amount.scalar_type() == amount_type,
+            "constructor Counter increment amount must use the native UInt32 width"
+        );
+        amount.validate()?;
+        let Value::UInt { number, .. } = amount else {
+            bail!("constructor Counter increment amount must use the native UInt32 width")
+        };
+        let amount = u64::try_from(number)
+            .map_err(|_| anyhow!("constructor Counter amount exceeds UInt64"))?;
+        let total = totals.entry(increment.state.clone()).or_default();
+        *total = total
+            .checked_add(amount)
+            .ok_or_else(|| anyhow!("constructor Counter sum exceeds UInt64"))?;
+    }
+    Ok(totals)
+}
+
 fn apply_map_inserts(
     plan: &Plan,
     inserts: &[MapInsert],
@@ -205,6 +291,59 @@ fn apply_map_inserts(
     Ok(ChargedState::new(StateValue::Array(slots)))
 }
 
+fn apply_list_pushes(
+    plan: &Plan,
+    pushes: &[ListPush],
+    environment: &BTreeMap<String, Value>,
+    state: ChargedState<Db>,
+) -> Result<ChargedState<Db>> {
+    if pushes.is_empty() {
+        return Ok(state);
+    }
+    let StateValue::Array(state_slots) = state.get_ref() else {
+        bail!("constructor List state requires array storage")
+    };
+    let mut slots = state_slots.clone();
+    let mut lengths = BTreeMap::<usize, u64>::new();
+    for push in pushes {
+        let (slot, declaration) = plan
+            .state
+            .iter()
+            .enumerate()
+            .find(|(_, declaration)| declaration.name == push.state)
+            .ok_or_else(|| anyhow!("unknown constructor List state"))?;
+        let element_type = flat_scalar_list_type(declaration)?
+            .ok_or_else(|| anyhow!("constructor List push requires a flat scalar List"))?;
+        let value = evaluate(&push.value, environment)?;
+        ensure!(
+            value.scalar_type() == element_type,
+            "constructor List value type mismatch"
+        );
+        value.validate()?;
+        let head = crate::aligned_storage_cell(&value)?;
+        let length = lengths.entry(slot).or_default();
+        *length = length
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("constructor List length exceeds UInt64"))?;
+        let previous = slots
+            .get(slot)
+            .ok_or_else(|| anyhow!("constructor List slot is outside state"))?
+            .clone();
+        let list = StateValue::Array(
+            vec![
+                StateValue::Cell(Sp::new(head)),
+                previous,
+                StateValue::Cell(Sp::new(AlignedValue::from(*length))),
+            ]
+            .into(),
+        );
+        slots = slots
+            .insert(slot, list)
+            .ok_or_else(|| anyhow!("constructor List slot is outside state"))?;
+    }
+    Ok(ChargedState::new(StateValue::Array(slots)))
+}
+
 /// Build fresh genesis from the artifact's public constructor arguments.
 /// This evaluates source initialization off chain; the ledger has no constructor proof.
 pub fn construct_state(
@@ -224,9 +363,15 @@ pub fn construct_state(
         constructor.initializers.len() <= plan.state.len(),
         "too many constructor initializers"
     );
+    let action_count = constructor
+        .map_inserts
+        .len()
+        .checked_add(constructor.counter_increments.len())
+        .and_then(|count| count.checked_add(constructor.list_pushes.len()))
+        .ok_or_else(|| anyhow!("too many constructor collection actions"))?;
     ensure!(
-        constructor.map_inserts.len() <= 64,
-        "too many constructor Map inserts"
+        action_count <= 64,
+        "too many constructor collection actions"
     );
     for declaration in &plan.state {
         if declaration.kind.get("map").is_some() {
@@ -330,6 +475,11 @@ pub fn construct_state(
     }
     for declaration in &plan.state {
         if declaration.sealed && declaration.kind.get("map").is_none() {
+            let collection_default =
+                constructor_counter(declaration) || flat_scalar_list_type(declaration)?.is_some();
+            if collection_default {
+                continue;
+            }
             cell_type(declaration)?;
             ensure!(
                 initialized.contains(declaration.name.as_str()),
@@ -337,8 +487,13 @@ pub fn construct_state(
             );
         }
     }
+    let counter_totals = counter_totals(plan, &constructor.counter_increments, &scalars)?;
+    for (state, total) in counter_totals {
+        config.insert(state, json!(total.to_string()));
+    }
     let state = create_state(plan, &config)?;
-    apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)
+    let state = apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)?;
+    apply_list_pushes(plan, &constructor.list_pushes, &scalars, state)
 }
 
 pub(crate) fn deployment_state(

@@ -541,6 +541,12 @@ def StateKind.pathSchema : StateKind → Option LedgerValueType
   | .tree schema => some schema
   | _ => none
 
+/-- Root collections supported as sealed constructor-owned state. Empty state is
+the default, so a constructor action is optional. -/
+def StateKind.isDefaultEmptyRoot : StateKind → Bool
+  | .tree .counter | .tree (.«list» _ (.scalar _)) => true
+  | _ => false
+
 def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
     Except String Unit := do
   if keys.length >= 16 then throw "collection path exceeds the native index limit"
@@ -592,11 +598,24 @@ structure ConstructorMapInsert where
   value : Expr valueType
   deriving Repr
 
+structure ConstructorCounterIncrement where
+  state : String
+  amount : Expr (.uint (2 ^ 32 - 1))
+  deriving Repr
+
+structure ConstructorListPush where
+  state : String
+  valueType : Ty
+  value : Expr valueType
+  deriving Repr
+
 /-- Fresh-deployment inputs and cell values. This metadata never enters a circuit. -/
 structure Constructor where
   parameters : List ConstructorParameter := []
   initializers : List ConstructorInitializer := []
   mapInserts : List ConstructorMapInsert := []
+  counterIncrements : List ConstructorCounterIncrement := []
+  listPushes : List ConstructorListPush := []
   deriving Repr
 
 inductive EventFieldType where
@@ -1307,8 +1326,9 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
   let initializerNames := constructor.initializers.map (·.state)
   unless uniqueNames initializerNames do
     throw {span, message := "duplicate constructor state initializer"}
-  if constructor.mapInserts.length > 64 then
-    throw {span, message := "constructor Map insert limit exceeded"}
+  if constructor.mapInserts.length + constructor.counterIncrements.length +
+      constructor.listPushes.length > 64 then
+    throw {span, message := "constructor Map, Counter and List action limit exceeded"}
   for initializer in constructor.initializers do
     unless Types.validFieldName initializer.state do
       throw {span, message := s!"invalid constructor state name '{initializer.state}'"}
@@ -1348,9 +1368,32 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     match insertion.value.validate caps scalarEnvironment with
     | .error message => throw {span, message}
     | .ok _ => pure ()
+  for increment in constructor.counterIncrements do
+    unless Types.validFieldName increment.state do
+      throw {span, message := s!"invalid constructor Counter state name '{increment.state}'"}
+    let some state := states.find? (·.name == increment.state)
+      | throw {span, message := s!"constructor increments unknown Counter '{increment.state}'"}
+    unless state.kind == .tree .counter do
+      throw {span := state.span, message := s!"constructor increment requires a root Counter '{increment.state}'"}
+    match increment.amount.validate caps scalarEnvironment with
+    | .error message => throw {span, message}
+    | .ok _ => pure ()
+  for push in constructor.listPushes do
+    unless Types.validFieldName push.state do
+      throw {span, message := s!"invalid constructor List state name '{push.state}'"}
+    let some state := states.find? (·.name == push.state)
+      | throw {span, message := s!"constructor pushes to unknown List '{push.state}'"}
+    let .tree (.«list» _ (.scalar elementTy)) := state.kind
+      | throw {span := state.span, message := s!"constructor pushFront requires a root scalar List '{push.state}'"}
+    unless push.valueType == elementTy do
+      throw {span := state.span, message := s!"constructor List element type mismatch for '{push.state}'"}
+    match push.value.validate caps scalarEnvironment with
+    | .error message => throw {span, message}
+    | .ok _ => pure ()
   for state in states do
     let sealedMap := match state.kind with | .map .. => true | _ => false
-    if state.sealed && !sealedMap && !(initializerNames.contains state.name) then
+    if state.sealed && !sealedMap && !state.kind.isDefaultEmptyRoot &&
+        !(initializerNames.contains state.name) then
       throw {span := state.span, message := s!"sealed state '{state.name}' must be initialized by the constructor"}
 
 private def Effect.writeTarget : Effect → Option String
@@ -2050,8 +2093,10 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
   if !uniqueNames (c.entrypoints.map (·.name)) then
     throw {span := c.span, message := "duplicate contract entrypoint"}
   for decl in c.state do
-    if decl.sealed && !(match decl.kind with | .cell _ | .map .. | .opaqueString => true | _ => false) then
-      throw {span := decl.span, message := "only cells and maps can be sealed"}
+    if decl.sealed && !(match decl.kind with
+        | .cell _ | .map .. | .opaqueString => true
+        | kind => kind.isDefaultEmptyRoot) then
+      throw {span := decl.span, message := "only cells, maps, root Counters and root scalar Lists can be sealed"}
     if decl.kind == .opaqueString && !decl.sealed then
       throw {span := decl.span, message := "OpaqueString state must be sealed"}
     if let .map keyTy _ := decl.kind then
@@ -2082,7 +2127,9 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
   | some constructor => Constructor.validate caps c.state constructor c.span
   | none =>
     if c.state.any fun state =>
-        state.sealed && !(match state.kind with | .map .. => true | _ => false) then
+        state.sealed && !(match state.kind with
+          | .map .. => true
+          | kind => kind.isDefaultEmptyRoot) then
       throw {span := c.span, message := "sealed states require a constructor"}
   for entry in c.entrypoints do entry.validate caps c.state
 

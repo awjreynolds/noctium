@@ -1,0 +1,29 @@
+{
+  "bundleManifestSha256": "214ad856f80adab42869454459490f5b270fa17e5317953bad55c3da25ee35ed",
+  "constructStateMatchedDeployment": true,
+  "contractAddress": "cc01108060d7d4ccf4888579521dd014264e32501795b5cbf0b4e20ac35125c3",
+  "degree": 7,
+  "deploymentReceipt": {
+    "blockHash": "b14bd707ef5c9280c9180b2275a144b6192afa40a5bf24ca70c9dadb953384d8",
+    "finalizedHash": "b14bd707ef5c9280c9180b2275a144b6192afa40a5bf24ca70c9dadb953384d8",
+    "finalizedHeight": 51062,
+    "height": 51062,
+    "transactionId": "ea5e6c1e72e33c836d566f4e0e35f6141a5ca121cc5cb6f009a074d79b204525"
+  },
+  "inspectPreservedExactStateBytes": true,
+  "inspectReceipt": {
+    "blockHash": "2465ecd072c8f9f2ca0a5825110a0b7c43cc63ff989ae84b5976a4d1a3ef0134",
+    "finalizedHash": "2465ecd072c8f9f2ca0a5825110a0b7c43cc63ff989ae84b5976a4d1a3ef0134",
+    "finalizedHeight": 51065,
+    "height": 51065,
+    "transactionId": "a8dd84f7c215b63568ca5d3d3663a7e54c5a74d640937f732fbcd9082e901351"
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "rows": 116,
+  "scope": "deploy SealedCounterListConstructor(amount=5, first=17), then one no-input inspect",
+  "sourceCompilerRevision": "7a2928b39bb075fa9956272ef34acc64ba2bfd9f",
+  "sourceSha256": "50501193b32cc534a65c278f5e2a4f60055b25a147f92e882001dfb644d0c93f",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}
