@@ -2366,7 +2366,7 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
       match LedgerValueType.cellRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
-    else match LedgerValueType.cellRecordFields environment (.structure typeId) with
+    else match LedgerValueType.ledgerRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
     let (readName, updated) ← freshReadName depth state destination
@@ -2599,7 +2599,7 @@ private def elaborateMapDefault (schema : List (String × StateKind)) (path : TS
       let type ← tyTerm ty
       `(Noctium.Effect.writePath $name $keys $type (Noctium.GuardedExpression.zeroValue $type))
     | .composite environment (.structure id) => do
-      let fields ← match LedgerValueType.recordFields environment (.structure id) with
+      let fields ← match LedgerValueType.ledgerRecordFields environment (.structure id) with
         | .ok fields => pure fields
         | .error message => throwErrorAt path message
       let values ← zeroLedgerFieldValues fields
@@ -2616,7 +2616,9 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
   let (path, result) ← lowerTreePath state.env treeSchema keys
   let (.composite environment type) := result
     | throwErrorAt payload "composite write must select a composite record"
-  let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+  let fields ← match (if path.isEmpty then
+      LedgerValueType.cellWriteRecordFields environment type
+    else LedgerValueType.ledgerRecordWriteFields environment type) with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
   let valueList ← elaborateLedgerFieldValues state.env payload fields
@@ -4321,7 +4323,7 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
             let valueTerm ← `(Noctium.LedgerValueType.shieldedCoinSet $environmentTerm $compositeTypeTerm)
             pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
           | .error _ => do
-            match LedgerValueType.cellRecordFields environment compositeType with
+            match LedgerValueType.ledgerRecordFields environment compositeType with
             | .ok _ =>
               let valueSchema := LedgerValueType.recordSet environment compositeType
               let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm)

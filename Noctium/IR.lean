@@ -600,11 +600,11 @@ def LedgerValueType.recordFields (environment : Types.CompositeEnv)
       throw "mixed ledger record layout does not match its flat field declaration"
     pure fields
 
-/-- Describe a flat typed record after the generic checked Native record path.
-The List element path and root Cell path share this checked representation.
-Nested Map records keep their existing recordFields rules. -/
+/-- Describe a flat typed root Cell record after the generic checked Native
+record path. The List element path uses a narrower byte-width policy, and
+nested Map records keep their existing recordFields rules. -/
 private def flatTypedRecordFields (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+    (type : Types.CompositeType) (allowFixedBytes : Bool) : Except String (List (String × Ty)) := do
   let .structure id := type | throw "typed ledger records must be named structures"
   let some declaration := environment.structures.find? (·.id == id)
     | throw "typed ledger record declaration is missing"
@@ -617,8 +617,14 @@ private def flatTypedRecordFields (environment : Types.CompositeEnv)
       ScalarPolicy.validate (.uint maximum)
       pure (field.name, .uint maximum)
     | .scalar (.bytes 32) => pure (field.name, Ty.bytes 32)
+    | .scalar (.bytes length) => do
+      unless allowFixedBytes do
+        throw "typed ledger records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
+      unless length ≤ maxBytesLength do
+        throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+      pure (field.name, .bytes length)
     | .scalar .jubjubPoint => pure (field.name, Ty.jubjubPoint)
-    | _ => throw "typed ledger records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
+    | _ => throw "typed ledger records must be flat Native, Bool, UInt, fixed Bytes, or JubjubPoint fields"
   let referencedByOtherStruct := environment.structures.any fun existing =>
     existing.id != id && existing.fields.any fun field =>
       field.type.referencedIds.contains id
@@ -628,7 +634,7 @@ private def flatTypedRecordFields (environment : Types.CompositeEnv)
   unless !referencedByOtherStruct && !referencedByEnum do
     throw "typed ledger records cannot be nested in other composite declarations"
   -- Validate the bounded layout while treating each supported ledger field as
-  -- one host field. Bytes32 and JubjubPoint retain their typed codecs below.
+  -- one host field. Fixed Bytes and JubjubPoint retain their typed codecs below.
   let normalized : Types.CompositeEnv := {environment with structures := environment.structures.map fun existing =>
     if existing.id == id then
       {existing with fields := existing.fields.map fun field =>
@@ -659,19 +665,40 @@ def LedgerValueType.cellRecordFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   match LedgerValueType.recordFields environment type with
   | .ok fields => pure fields
-  | .error _ => match flatTypedRecordFields environment type with
+  | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
     | .ok fields => pure fields
-    | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
+    | .error _ => flatTypedRecordFields environment type true
 
-/-- Ordinary Cell and Map record writes accept checked Native and typed flat
-records. The shielded coin record remains on its specialized write effects. -/
+/-- Read a Map or List record with the existing checked typed fields. Fixed
+Bytes fields stay exclusive to root Cells. Qualified coin records retain their
+schema-specific fields for transcript alignment. -/
+def LedgerValueType.ledgerRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+  match LedgerValueType.shieldedCoinRecordFields environment type with
+  | .ok fields => pure fields
+  | .error _ => match LedgerValueType.recordFields environment type with
+    | .ok fields => pure fields
+    | .error _ => flatTypedRecordFields environment type false
+
+/-- Ordinary Map values and typed Set keys accept checked Native and typed
+flat records. Qualified coin records keep their specialized write effects. -/
 def LedgerValueType.ledgerRecordWriteFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
-  match LedgerValueType.recordFields environment type with
-  | .ok fields => pure fields
-  | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+  match LedgerValueType.shieldedCoinRecordFields environment type with
     | .ok _ => .error "shielded coin records require their specialized write effect"
-    | .error _ => flatTypedRecordFields environment type
+    | .error _ => LedgerValueType.ledgerRecordFields environment type
+
+/-- Ordinary root Cell writes accept checked Native and typed flat records,
+including fixed Bytes widths. Qualified coin records keep specialized writes. -/
+def LedgerValueType.cellWriteRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+  match LedgerValueType.shieldedCoinRecordFields environment type with
+  | .ok _ => .error "shielded coin Cells require their specialized write effect"
+  | .error _ => LedgerValueType.cellRecordFields environment type
+
+private def listRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+  LedgerValueType.ledgerRecordFields environment type
 
 /-- Describe a List element as its typed scalar value or as the fields of its
 existing checked record representation. -/
@@ -679,7 +706,7 @@ def LedgerValueType.listElementFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   match type with
   | .scalar ty => pure [("value", ty)]
-  | _ => LedgerValueType.cellRecordFields environment type
+  | _ => listRecordFields environment type
 
 def LedgerValueType.listPath (schema : LedgerValueType) (keys : List PathKey) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
@@ -693,7 +720,7 @@ def LedgerValueType.compositeSchema (schema : LedgerValueType) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) :=
   match schema with
   | .composite environment type => do
-    let fields ← LedgerValueType.cellRecordFields environment type
+    let fields ← LedgerValueType.ledgerRecordFields environment type
     pure (environment, type, fields)
   | _ => .error "nested map value is not a composite record"
 
@@ -914,7 +941,7 @@ def LedgerValueType.cellWriteEffectFields (environment : Types.CompositeEnv)
     unless nonce == List.replicate 32 0 && color == List.replicate 32 0 do
       throw "qualified coin Cell resets require zero bytes"
     pure fields
-  else LedgerValueType.ledgerRecordWriteFields environment type
+  else LedgerValueType.cellWriteRecordFields environment type
 
 /-- State effects are ordered transaction instructions, not circuit nodes.
 A read binds a typed name for later guards/writes. Outputs are bound explicitly
@@ -1507,7 +1534,7 @@ where
       for (_, ty) in fields do
         validateStateScalar caps ty
     | .composite environment type => do
-      let fields ← LedgerValueType.cellRecordFields environment type
+      let fields ← LedgerValueType.ledgerRecordFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
     | .list environment type => do
@@ -2317,7 +2344,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         unless foundType == type do throw "nested composite read type mismatch"
         let fields ← if keys.isEmpty then
           LedgerValueType.cellRecordFields compositeEnv type
-        else LedgerValueType.cellRecordFields compositeEnv type
+        else LedgerValueType.ledgerRecordFields compositeEnv type
         unless fields.map Prod.snd == destinations.map Prod.snd do
           throw "nested composite read destination count mismatch"
         unless uniqueNames (destinations.map Prod.fst) do throw "duplicate nested composite read destination"

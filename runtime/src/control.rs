@@ -4247,6 +4247,7 @@ fn expected_ledger_inputs(
                 let name = name(text(component, "name")?)?;
                 let projections = match ScalarType::parse(text(component, "type")?)? {
                     ScalarType::Bytes32 => crate::byte_projection_bindings(&name, 32)?,
+                    ScalarType::Bytes(length) => crate::byte_projection_bindings(&name, length)?,
                     ScalarType::JubjubPoint => expected_point_projection_bindings(&name),
                     _ => {
                         append_impact_ledger_input(
