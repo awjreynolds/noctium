@@ -1,0 +1,6 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit defaults(): [Opaque<"string">, Opaque<"Uint8Array">] {
+  return [default<Opaque<"string">>, default<Opaque<"Uint8Array">>];
+}

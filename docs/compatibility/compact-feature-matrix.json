@@ -617,11 +617,15 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/OpaqueDefaults.lean",
+        "tests/compact/opaque-defaults.mjs",
+        "runtime/tests/opaque_defaults.rs"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
-        "checkedOn": "2026-11-16",
-        "scope": "Native/Bool/UInt scalar defaults are implemented. Composite and inactive sum-payload defaults remain open.",
+        "checkedOn": "2026-11-22",
+        "scope": "Native, Bool and UInt scalar defaults are implemented. Explicit OpaqueBytes and OpaqueString defaults return the canonical typed empties. The matched Compact 0.36.1 fixture and native checker agree on both returns, and the native relation rejects a changed return commitment. Composite and inactive sum-payload defaults remain open.",
         "evidence": [
           "tests/BoundedScalars.lean",
           "tests/scalars/constraint-cases.json"
