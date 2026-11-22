@@ -1298,6 +1298,26 @@ fn confidential_token_registration_pending_sweep_and_transfer_use_native_relatio
     {
         mint_values.insert(name.into(), json!(field_decimal(value)));
     }
+    let mut stale_epoch_values = mint_values.clone();
+    stale_epoch_values.insert("epoch".into(), json!("0"));
+    let stale_epoch_error = match run_entry(
+        "mint",
+        stale_epoch_values,
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[mint_seed],
+        None,
+        4,
+        &state,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("stale expected epoch passed native mint relation"),
+    };
+    assert_eq!(
+        stale_epoch_error,
+        "native circuit assertion or preimage check failed",
+        "stale epoch rejected for an unrelated reason"
+    );
     state = run_entry(
         "mint",
         mint_values,
