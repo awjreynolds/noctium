@@ -132,6 +132,13 @@ private def isZeroQualifiedCoinFields (values : List LedgerFieldExpr) : _root_.B
   | [none] => Bool.true
   | _ => Bool.false
 #guard (qualifiedCoinCellClear.validate Capabilities.source QualifiedCoinCellReset.state).isOk
+#guard match qualifiedCoinCellClear.effects with
+  | [.writeCompositePath slot keys type (.mk (.bytes 32) _ :: rest)] =>
+      let forged := {qualifiedCoinCellClear with effects := [
+        .writeCompositePath slot keys type
+          (.mk (.bytes 32) (.bytes32Literal (1 :: List.replicate 31 0)) :: rest)]}
+      (forged.validate Capabilities.source QualifiedCoinCellReset.state).isOk == Bool.false
+  | _ => Bool.false
 #guard match qualifiedCoinCellClear.validate
     {Capabilities.source with stateCells := Bool.false} QualifiedCoinCellReset.state with
   | .error diagnostic => diagnostic.message == "target lacks state cells"

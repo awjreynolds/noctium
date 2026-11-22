@@ -2922,11 +2922,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        if depth == 0 {
-            checked_typed_record_schema(schema)?;
-        } else {
-            checked_record_schema(schema)?;
-        }
+        checked_typed_record_schema(schema)?;
         return Ok(());
     }
     if let Some(key) = fields.get("set") {
@@ -3964,7 +3960,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     validate_record_cell(plan, slot, schema)?;
                     continue;
                 }
-                checked_record_schema(schema)?;
+                checked_typed_record_schema(schema)?;
                 let path_operation = index
                     .checked_sub(2)
                     .and_then(|index| plan.operations.get(index))
@@ -4014,11 +4010,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 else {
                     bail!("record read has no indexed path")
                 };
-                if keys.is_empty() {
-                    checked_typed_record_schema(schema)?;
-                } else {
-                    checked_record_schema(schema)?;
-                }
+                checked_typed_record_schema(schema)?;
                 ensure!(
                     tree_schema_at_path(plan, *slot, keys.len())?.get("composite") == Some(schema),
                     "record read differs from state schema"

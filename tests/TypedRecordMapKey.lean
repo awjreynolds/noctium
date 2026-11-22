@@ -91,7 +91,7 @@ private def validateGuardedRecordMapEffect (effect : Effect) : Except Diagnostic
 
 #guard match RecordMapKeys.state with
   | [{kind := .tree (.recordMapKey environment type (.uint 65535)), ..}] =>
-      match LedgerValueType.cellWriteRecordFields environment type with
+      match LedgerValueType.ledgerRecordWriteFields environment type with
       | .ok fields => fields == [("active", .bool), ("amount", .uint 65535)]
       | .error _ => _root_.Bool.false
   | _ => _root_.Bool.false
