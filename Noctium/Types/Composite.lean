@@ -156,6 +156,7 @@ length, so layout construction never allocates one node per vector element. -/
 inductive Layout where
   | unit
   | scalar (leaf : ScalarLeaf)
+  | curve (type : Ty)
   | tuple (items : List Layout)
   | structure (id : DeclId) (fields : List (String × Layout))
   | vector (length : Nat) (element : Layout)
@@ -190,6 +191,7 @@ mutual
   def Layout.leafCount : Layout → Nat
     | .unit => 0
     | .scalar _ => 1
+    | .curve type => type.nativeCallFieldCount
     | .tuple items => LayoutList.leafCount items
     | .structure _ fields => LayoutFields.leafCount fields
     | .vector length element => length * element.leafCount
@@ -207,7 +209,7 @@ end
 
 mutual
   def Layout.nodeCount : Layout → Nat
-    | .unit | .scalar _ | .bytes _ _ => 1
+    | .unit | .scalar _ | .curve _ | .bytes _ _ => 1
     | .tuple items => 1 + LayoutList.nodeCount items
     | .structure _ fields => 1 + LayoutFields.nodeCount fields
     | .vector _ element => 1 + element.nodeCount
@@ -229,6 +231,7 @@ end
 mutual
   def Layout.expandedNodeCount : Layout → Nat
     | .unit | .scalar _ => 1
+    | .curve type => 1 + type.nativeCallFieldCount
     | .tuple items => 1 + LayoutList.expandedNodeCount items
     | .structure _ fields => 1 + LayoutFields.expandedNodeCount fields
     | .vector length element => 1 + length * element.expandedNodeCount
@@ -284,6 +287,10 @@ mutual
     | unit : CompositeSubtype .unit .unit
     | native : CompositeSubtype (.scalar .native) (.scalar .native)
     | boolean : CompositeSubtype (.scalar .bool) (.scalar .bool)
+    | jubjubScalar : CompositeSubtype (.scalar .jubjubScalar) (.scalar .jubjubScalar)
+    | jubjubPoint : CompositeSubtype (.scalar .jubjubPoint) (.scalar .jubjubPoint)
+    | foreign (kind : Foreign.Kind) :
+        CompositeSubtype (.scalar (.foreign kind)) (.scalar (.foreign kind))
     | unsigned {source target : Nat} (bound : source ≤ target)
         (supported : target ≤ ScalarPolicy.maxUint) :
         CompositeSubtype (.scalar (.uint source)) (.scalar (.uint target))
@@ -553,7 +560,9 @@ private def measureType (fuel : Nat) (limits : Limits) (environment : CompositeE
   | fuel + 1 => match type with
     | .unit => checkedMeasure limits span 0 1 1
     | .scalar ty => do
-      if ty.isBytes then throw {span, message := "byte strings require a composite bytes layout"}
+      if ty.isJubjub || ty.isForeign then
+        let width := ty.nativeCallFieldCount
+        return ← checkedMeasure limits span width (1 + width) 1
       match validateScalarLayoutTy ty with
       | .ok _ => pure ()
       | .error message => throw {span, message}
@@ -625,6 +634,7 @@ private def layoutType (fuel : Nat) (limits : Limits) (environment : CompositeEn
   | fuel + 1 => match type with
     | .unit => pure .unit
     | .scalar ty => do
+      if ty.isJubjub || ty.isForeign then return .curve ty
       match validateScalarLayoutTy ty with
       | .ok _ => pure ()
       | .error message => throw {span, message}

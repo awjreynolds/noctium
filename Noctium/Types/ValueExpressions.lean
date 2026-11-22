@@ -1,5 +1,6 @@
 import Noctium.Types.Values
 import Noctium.Semantics
+import Noctium.Wire
 
 namespace Noctium.Types
 
@@ -31,17 +32,29 @@ inductive AggregateExpression where
   deriving Repr
 
 private def scalarExpression (type : Ty) (number : Nat) : Except String ScalarExpression := do
-  ScalarPolicy.validate type.scalarKind
-  unless ScalarPolicy.accepts type.scalarKind number do throw "invalid aggregate scalar expression constant"
   match type with
-  | .native => pure ⟨.native, .native number⟩
-  | .bool => pure ⟨.bool, .bool (number == 1)⟩
-  | .uint maximum => pure ⟨.uint maximum, .uint maximum number⟩
+  | .jubjubScalar => do
+    unless number < Jubjub.scalarOrder do throw "invalid aggregate Jubjub scalar expression constant"
+    pure ⟨.jubjubScalar, .jubjubScalarFromNative (.native number)⟩
+  | .foreign (.base curve) => do
+    unless number < curve.baseModulus do throw "invalid aggregate foreign base expression constant"
+    pure ⟨.foreign (.base curve), .foreignBase curve number⟩
+  | .foreign (.scalar curve) => do
+    unless number < curve.scalarModulus do throw "invalid aggregate foreign scalar expression constant"
+    pure ⟨.foreign (.scalar curve), .foreignScalar curve number⟩
+  | .jubjubPoint => throw "Jubjub points require a point aggregate expression"
+  | .foreign (.point _) => throw "foreign points require a point aggregate expression"
   | .bytes _ => throw "byte strings require an aggregate bytes expression"
   | .opaqueBytes => throw "OpaqueBytes require a qualified ledger scalar expression"
   | .opaqueString => throw "OpaqueString requires a qualified ledger scalar expression"
-  | .jubjubScalar | .jubjubPoint => throw "Jubjub values require a qualified curve expression"
-  | .foreign _ => throw "foreign values require a qualified curve expression"
+  | .native | .bool | .uint _ => do
+    ScalarPolicy.validate type.scalarKind
+    unless ScalarPolicy.accepts type.scalarKind number do throw "invalid aggregate scalar expression constant"
+    match type with
+    | .native => pure ⟨.native, .native number⟩
+    | .bool => pure ⟨.bool, .bool (number == 1)⟩
+    | .uint maximum => pure ⟨.uint maximum, .uint maximum number⟩
+    | _ => throw "invalid aggregate scalar expression constant"
 
 private def literalAux : Nat → AggregateValue → Except String AggregateExpression
   | 0, _ => throw "aggregate literal traversal exhausted checked fuel"
@@ -49,6 +62,10 @@ private def literalAux : Nat → AggregateValue → Except String AggregateExpre
     match value with
     | .unit => pure .unit
     | .scalar type number => pure (.scalar (← scalarExpression type number))
+    | .jubjubPoint x y => do
+      unless Jubjub.pointValid x y do throw "aggregate Jubjub point is not canonical or on curve"
+      pure (.scalar ⟨.jubjubPoint, .jubjubFromCoordinates (.native x) (.native y)⟩)
+    | .foreignPoint curve point => pure (.scalar ⟨.foreign (.point curve), .foreignPoint curve point⟩)
     | .tuple items => pure (.tuple (← items.mapM (literalAux fuel)))
     | .structure id fields => pure (.structure id (← fields.mapM fun (name, value) => do pure (name, ← literalAux fuel value)))
     | .enumeration id variant fields => pure (.enumeration id variant (← fields.mapM fun (name, value) => do pure (name, ← literalAux fuel value)))
@@ -72,6 +89,12 @@ private def expressionAux (environment : TypeEnv) : Nat → Layout → Aggregate
       unless value.type == expected do throw "aggregate expression scalar type mismatch"
       value.value.validate Capabilities.crypto environment
       pure [value]
+    | .curve type, .scalar value => do
+      unless value.type == type do throw "aggregate expression curve type mismatch"
+      value.value.validate Capabilities.crypto environment
+      let fields := value.value.nativeCallFields
+      unless fields.length == type.nativeCallFieldCount do throw "aggregate expression curve encoding width mismatch"
+      pure (fields.map fun field => ⟨.native, field⟩)
     | .tuple layouts, .tuple values =>
       unless layouts.length == values.length do throw "aggregate expression tuple arity mismatch"
       pure (← (layouts.zip values).mapM fun (layout, value) => expressionAux environment fuel layout value).flatten
@@ -119,17 +142,27 @@ private def evalAux (context : EvalContext) (environment : EvalEnv) : Nat → Ag
     match expression with
     | .unit => pure .unit
     | .scalar value =>
-      let number ← match value with
-        | ⟨.native, value⟩ => value.eval context environment
-        | ⟨.bool, value⟩ => pure (if ← value.eval context environment then 1 else 0)
-        | ⟨.uint maximum, expression⟩ => @Noctium.Expr.eval (.uint maximum) context environment expression
-        | ⟨.bytes _, _⟩ => throw "byte strings require an aggregate bytes expression"
-        | ⟨.opaqueBytes, _⟩ => throw "OpaqueBytes require a qualified ledger scalar expression"
-        | ⟨.opaqueString, _⟩ => throw "OpaqueString requires a qualified ledger scalar expression"
-        | ⟨.jubjubScalar, _⟩ | ⟨.jubjubPoint, _⟩ =>
-          throw "Jubjub values require a qualified curve expression"
-        | ⟨.foreign _, _⟩ => throw "foreign values require a qualified curve expression"
-      pure (.scalar value.type number)
+      match value with
+      | ⟨.jubjubPoint, expression⟩ => do
+        let (x, y) ← Noctium.Expr.eval (ty := .jubjubPoint) context environment expression
+        pure (.jubjubPoint x y)
+      | ⟨.foreign (.point curve), expression⟩ => do
+        pure (.foreignPoint curve (← Noctium.Expr.eval (ty := .foreign (.point curve)) context environment expression))
+      | _ => do
+        let number ← match value with
+          | ⟨.native, value⟩ => value.eval context environment
+          | ⟨.bool, value⟩ => pure (if ← value.eval context environment then 1 else 0)
+          | ⟨.uint maximum, expression⟩ => @Noctium.Expr.eval (.uint maximum) context environment expression
+          | ⟨.bytes _, _⟩ => throw "byte strings require an aggregate bytes expression"
+          | ⟨.opaqueBytes, _⟩ => throw "OpaqueBytes require a qualified ledger scalar expression"
+          | ⟨.opaqueString, _⟩ => throw "OpaqueString requires a qualified ledger scalar expression"
+          | ⟨.jubjubScalar, expression⟩ => Noctium.Expr.eval (ty := .jubjubScalar) context environment expression
+          | ⟨.jubjubPoint, _⟩ | ⟨.foreign (.point _), _⟩ => throw "unreachable aggregate point expression"
+          | ⟨.foreign (.base curve), expression⟩ =>
+            Noctium.Expr.eval (ty := .foreign (.base curve)) context environment expression
+          | ⟨.foreign (.scalar curve), expression⟩ =>
+            Noctium.Expr.eval (ty := .foreign (.scalar curve)) context environment expression
+        pure (.scalar value.type number)
     | .tuple values => pure (.tuple (← values.mapM (evalAux context environment fuel)))
     | .structure id fields => pure (.structure id (← fields.mapM fun (name, value) => do pure (name, ← evalAux context environment fuel value)))
     | .enumeration id variant fields => pure (.enumeration id variant (← fields.mapM fun (name, value) => do pure (name, ← evalAux context environment fuel value)))
@@ -160,7 +193,15 @@ private def boundWhen (active : Expr .bool) (maximum : Nat) (value : Expr .nativ
   let gated := Expr.select active value (.native 0)
   .eq (.cast .native (.cast (.uint maximum) gated)) gated
 
-private def constrainLayout : Nat → Layout → Expr .bool → List (Expr .native) →
+private def curveInactiveFields : (type : Ty) → Except String (List Nat)
+  | .jubjubScalar => pure [0]
+  | .jubjubPoint => pure [0, 1]
+  | .foreign (.base curve) => Foreign.encodeValue (.base curve) 0
+  | .foreign (.scalar curve) => Foreign.encodeValue (.scalar curve) 0
+  | .foreign (.point curve) => Foreign.encodeValue (.point curve) .identity
+  | _ => throw "invalid aggregate curve layout type"
+
+private def constrainLayout (environment : TypeEnv) : Nat → Layout → Expr .bool → List (Expr .native) →
     Except String (List (Expr .bool) × List (Expr .native))
   | 0, _, _, _ => throw "aggregate native layout traversal exhausted checked fuel"
   | fuel + 1, layout, active, leaves => do
@@ -174,11 +215,22 @@ private def constrainLayout : Nat → Layout → Expr .bool → List (Expr .nati
         | .boundedUnsignedField maximum => pure [boundWhen active maximum value]
         | _ => throw "unsupported aggregate native scalar leaf"
       pure (constraints, rest)
+    | .curve type => do
+      let width := type.nativeCallFieldCount
+      let (values, rest) := leaves.splitAt width
+      unless values.length == width do throw "short aggregate native curve input"
+      let defaults ← curveInactiveFields type
+      unless defaults.length == width do throw "aggregate curve default encoding width mismatch"
+      let safeValues := (values.zip defaults).map fun (value, default) =>
+        Expr.select active value (.native default)
+      let canonical ← Wire.curveFieldsCanonical type safeValues
+      canonical.validate Capabilities.crypto environment
+      pure ([canonical], rest)
     | .tuple items =>
       let mut rest := leaves
       let mut constraints := []
       for item in items do
-        let (next, tail) ← constrainLayout fuel item active rest
+        let (next, tail) ← constrainLayout environment fuel item active rest
         constraints := constraints ++ next
         rest := tail
       pure (constraints, rest)
@@ -186,7 +238,7 @@ private def constrainLayout : Nat → Layout → Expr .bool → List (Expr .nati
       let mut rest := leaves
       let mut constraints := []
       for (_, item) in fields do
-        let (next, tail) ← constrainLayout fuel item active rest
+        let (next, tail) ← constrainLayout environment fuel item active rest
         constraints := constraints ++ next
         rest := tail
       pure (constraints, rest)
@@ -194,7 +246,7 @@ private def constrainLayout : Nat → Layout → Expr .bool → List (Expr .nati
       let mut rest := leaves
       let mut constraints := []
       for _ in [:length] do
-        let (next, tail) ← constrainLayout fuel element active rest
+        let (next, tail) ← constrainLayout environment fuel element active rest
         constraints := constraints ++ next
         rest := tail
       pure (constraints, rest)
@@ -211,7 +263,7 @@ private def constrainLayout : Nat → Layout → Expr .bool → List (Expr .nati
         let selected := Expr.select active (.eq tag (.native index)) (.bool false)
         let mut remaining := payload
         for (_, field) in fields do
-          let (next, tail) ← constrainLayout fuel field selected remaining
+          let (next, tail) ← constrainLayout environment fuel field selected remaining
           constraints := constraints ++ next
           remaining := tail
         for padding in remaining do
@@ -223,7 +275,7 @@ def checkNativeExpression (type : CompiledType) (environment : TypeEnv)
     (leaves : List (Expr .native)) : Except String (NativeExpression type) := do
   if count : leaves.length = type.checked.expandedLeaves then
   for leaf in leaves do leaf.validate Capabilities.crypto environment
-    let (constraints, remaining) ← constrainLayout (type.checked.layoutNodes + 1)
+    let (constraints, remaining) ← constrainLayout environment (type.checked.layoutNodes + 1)
       type.checked.value (.bool true) leaves
     unless remaining.isEmpty do throw "trailing aggregate native leaves"
     pure {leaves, count, constraints}

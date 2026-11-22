@@ -8,6 +8,13 @@ namespace Jubjub
 def scalarOrder : Nat :=
   6554484396890773809930967563523245729705921265872317281365359162392183254199
 
+/-- The pinned Jubjub Edwards coefficient, equal to -(10240 / 10241). -/
+private def edwardsCoefficient : Nat :=
+  0x2a9318e74bfa2b48f5fd9207e6bd7fd4292d7f6d37579d2601065fd6d6343eb1
+
+def pointValid (x y : Nat) : Bool :=
+  Foreign.edwardsPrimePoint Field.modulus edwardsCoefficient scalarOrder x y
+
 end Jubjub
 
 structure SourceSpan where
@@ -66,5 +73,11 @@ def Ty.isJubjubPoint : Ty → Bool
 def Ty.isForeign : Ty → Bool
   | .foreign _ => true
   | _ => false
+
+def Ty.nativeCallFieldCount : Ty → Nat
+  | .bytes length => (length + 30) / 31
+  | .jubjubPoint => 2
+  | .foreign kind => kind.encodedFieldCount
+  | _ => 1
 
 end Noctium

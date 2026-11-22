@@ -24,6 +24,7 @@ private partial def wireLeaves : Types.Layout → Except String (List Leaf)
   | .scalar .nativeField => pure [{type := .native}]
   | .scalar .booleanField => pure [{type := .bool}]
   | .scalar (.boundedUnsignedField maximum) => pure [{type := .uint maximum}]
+  | .curve type => pure [{type}]
   | .tuple items => do
     pure (← items.zipIdx.mapM fun (item, index) =>
       atPath (.tupleIndex index) <$> wireLeaves item).flatten

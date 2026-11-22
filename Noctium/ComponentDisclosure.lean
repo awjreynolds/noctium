@@ -41,6 +41,7 @@ private partial def paths (layout : Types.Layout) (pathPrefix : String := "") : 
   match layout with
   | .unit => []
   | .scalar _ => [pathPrefix]
+  | .curve type => List.replicate type.nativeCallFieldCount pathPrefix
   | .tuple items => items.zipIdx.flatMap fun (item, index) => paths item (pathPrefix ++ s!".{index}")
   | .structure _ fields => fields.flatMap fun (name, item) => paths item (pathPrefix ++ s!".{name}")
   | .vector length element => (List.range length).flatMap fun index => paths element (pathPrefix ++ s!".{index}")
@@ -269,7 +270,13 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
   | .composite type leaves => do
     let values ← leaves.mapM (analyzeTerm fuel program prepared scope env span)
     let compiled ← compileType program span type
-    let components := values.flatMap (·.components)
+    let components := values.flatMap fun value =>
+      match value.type with
+      | .scalar type =>
+        if type.isJubjub || type.isForeign then
+          List.replicate type.nativeCallFieldCount (payloadOrigins value)
+        else value.components
+      | _ => value.components
     unless components.length == compiled.checked.expandedLeaves do
       throw {span, message := "aggregate source origin count mismatch"}
     pure (makeValue info.ty components (mergeMany (values.map (·.indexOrigins)))
@@ -284,7 +291,10 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
     let tagOrigins := match projection with
       | .enumField _ _ => merge parent.tagOrigins (parent.components.headD [])
       | _ => parent.tagOrigins
-    pure (makeValue info.ty selected parent.indexOrigins tagOrigins parent.controlOrigins)
+    let components := match info.ty with
+      | .scalar _ => [mergeMany selected]
+      | _ => selected
+    pure (makeValue info.ty components parent.indexOrigins tagOrigins parent.controlOrigins)
   | .index value index => do
     let parent ← analyzeTerm fuel program prepared scope env span value
     let indexValue ← analyzeTerm fuel program prepared scope env span index
@@ -295,6 +305,9 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
     let components := (List.range width).map fun offset =>
       mergeMany ((List.range length).map fun position =>
         (parent.components[position * width + offset]?).getD [])
+    let components := match info.ty with
+      | .scalar _ => [mergeMany components]
+      | _ => components
     pure (makeValue info.ty components
       (mergeMany [parent.indexOrigins, payloadOrigins indexValue, indexValue.indexOrigins])
       (merge parent.tagOrigins indexValue.tagOrigins)

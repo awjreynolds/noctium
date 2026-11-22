@@ -1015,7 +1015,7 @@ private def zeroScalarTerm (site : Syntax) (type : Ty) : ExprM Helpers.Term := d
 
 private def zeroPayloadLeaves (site : Syntax) (compiled : Types.CompiledType) :
     ExprM (List Helpers.Term) :=
-  (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroSourceLeaf site)
+  (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroScalarTerm site)
 
 private def compositeMaybeType (programName : String) (site : Syntax)
     (payload : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
@@ -3352,6 +3352,11 @@ private partial def lowerReadableStatement (programName path : String)
           | .scalar ty =>
             let value ← match ty with
               | .bytes _ => quoteByteLeaves fields
+              | .jubjubScalar | .jubjubPoint | .foreign _ => do
+                let inputs ← fields.toArray.mapM fun field =>
+                  `(@Noctium.Expr.ref Noctium.Ty.native $(stringTerm field))
+                let type ← tyTerm ty
+                `((Noctium.Wire.decodeCurveFields $type [$inputs,*]).toOption.get (by decide))
               | _ => do
                 let [field] := fields | throwErrorAt stx "expected one Native field for a scalar output"
                 let ref ← `(@Noctium.Expr.ref Noctium.Ty.native $(stringTerm field))

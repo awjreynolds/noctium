@@ -385,7 +385,7 @@
       "layer": "language",
       "surface": "Tuple and unit []",
       "noctiumStatus": "subset",
-      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Readable tuple construction supports direct elements and tuple, vector, fixed Bytes and Unit spreads. The paired Compact 0.36.1 case preserves nested tuple values, UInt8 byte order and the zero-width witness callback. Constant slices select checked field types and run the source witness once even when the slice is empty. The pinned Compact case and native relation agree on both tuple slices. Broader constructor and unit-return equivalence remains open. Matching tuple shapes with UInt8 and UInt16 leaves compare through checked widening, as in the pinned Compact reference.",
+      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Readable tuple construction supports direct elements and tuple, vector, fixed Bytes and Unit spreads. The paired Compact 0.36.1 case preserves nested tuple values, UInt8 byte order and the zero-width witness callback. Constant slices select checked field types and run the source witness once even when the slice is empty. The pinned Compact case and native relation agree on both tuple slices. Broader constructor and unit-return equivalence remains open. Matching tuple shapes with UInt8 and UInt16 leaves compare through checked widening, as in the pinned Compact reference. A nested tuple preserves the logical Jubjub scalar and Secp256k1 point through Native field encoding and typed Rust reconstruction.",
       "source": [
         "reference"
       ],
@@ -403,7 +403,9 @@
         "SEM",
         "tests/ReadableBindPatterns.lean",
         "tests/compact/readable-bind-patterns.mjs",
-        "runtime/tests/readable_bind_patterns.rs"
+        "runtime/tests/readable_bind_patterns.rs",
+        "tests/CurveAggregateContract.lean",
+        "runtime/tests/curve_aggregate.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
@@ -429,7 +431,7 @@
       "layer": "language",
       "surface": "Struct",
       "noctiumStatus": "subset",
-      "notes": "Readable circuits accept nominal record payloads, construct them in declaration order and preserve private origins through projections. A leading same-type spread evaluates once, followed by named overrides in declaration order. The pinned Compact 0.36.1 and native cases agree on the returned record and provider order, including an entirely overridden spread. Equality compares the canonical leaves of matching checked aggregate types. The nested Compact and native fixtures check equal records and nine changes across scalars, nested records, tuples, vectors, fixed bytes and enum fields. Different nominal types and implicit publication of a private comparison are rejected. Broader generic struct equivalence remains open.",
+      "notes": "Readable circuits accept nominal record payloads, construct them in declaration order and preserve private origins through projections. A leading same-type spread evaluates once, followed by named overrides in declaration order. The pinned Compact 0.36.1 and native cases agree on the returned record and provider order, including an entirely overridden spread. Equality compares the canonical leaves of matching checked aggregate types. The nested Compact and native fixtures check equal records and nine changes across scalars, nested records, tuples, vectors, fixed bytes and enum fields. Different nominal types and implicit publication of a private comparison are rejected. Broader generic struct equivalence remains open. The nested curve Payload retains its nominal schema and ordered Native return fields through the finalized Ledger 9.1.0.1 call recorded in PR #531.",
       "source": [
         "reference"
       ],
@@ -450,7 +452,9 @@
         "runtime/tests/readable_record_construction.rs",
         "tests/NestedAggregateEquality.lean",
         "tests/compact/nested-aggregate-equality.mjs",
-        "runtime/tests/nested_aggregate_equality.rs"
+        "runtime/tests/nested_aggregate_equality.rs",
+        "tests/CurveAggregateContract.lean",
+        "runtime/tests/curve_aggregate.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
@@ -648,7 +652,7 @@
       "layer": "language",
       "surface": "Type defaults",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits accept default expressions for Native, Bool, bounded UInt and fixed Bytes, alongside checked Payload layout defaults. The matched Compact 0.36.1 fixture covers zero scalars and fixed bytes at widths 0, 3 and 32, and vectors at lengths 0 and 2. Ordinary and readable expressions also support zero and identity defaults for Jubjub, Secp256k1, Secp256r1 and Curve25519. The pinned Compact and ordinary native cases agree on all eleven typed values. Curve values in grouped Payload layouts still require schema support.",
+      "notes": "Readable witness circuits accept default expressions for Native, Bool, bounded UInt and fixed Bytes, alongside checked Payload layout defaults. The matched Compact 0.36.1 fixture covers zero scalars and fixed bytes at widths 0, 3 and 32, and vectors at lengths 0 and 2. Ordinary and readable expressions also support zero and identity defaults for Jubjub, Secp256k1, Secp256r1 and Curve25519. The pinned Compact and ordinary native cases agree on all eleven typed values. The selected grouped curve Payload default elaborates. The native fixture exercises explicit identity and generator inputs through the same checked schema.",
       "source": [
         "reference"
       ],
@@ -669,7 +673,9 @@
         "tests/ReadableDefaults.lean",
         "tests/CurveDefaults.lean",
         "tests/compact/curve-defaults.mjs",
-        "runtime/tests/curve_defaults.rs"
+        "runtime/tests/curve_defaults.rs",
+        "tests/CurveAggregateContract.lean",
+        "runtime/tests/curve_aggregate.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
@@ -1328,7 +1334,7 @@
       "layer": "language",
       "surface": "Explicit and indirect disclosure analysis",
       "noctiumStatus": "subset",
-      "notes": "Track private values through data/control flow, outputs, ledger writes, events, cross-calls and declassifying commitments.",
+      "notes": "Track private values through data/control flow, outputs, ledger writes, events, cross-calls and declassifying commitments. The nested curve fixture rejects returning an undisclosed private payload. A focused probe accepts release of a selected Jubjub field and rejects implicit release of a Secp256k1 point projection.",
       "source": [
         "disclosure",
         "release0360"
@@ -1337,7 +1343,10 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/CurveAggregateContract.lean",
+        "runtime/tests/curve_aggregate.rs"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-19",

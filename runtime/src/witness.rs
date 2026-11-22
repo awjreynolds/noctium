@@ -250,6 +250,22 @@ impl Registry {
         }
     }
 
+    pub fn source_leaf_types(&self, token: &str) -> Result<Vec<String>> {
+        match Type::parse(token, self)? {
+            Type::Unit => Ok(vec![]),
+            Type::Scalar(ty) => Ok(vec![Type::Scalar(ty).token()]),
+            Type::Aggregate(token) => self.schemas[&token].source_leaf_types(),
+        }
+    }
+
+    pub fn source_leaf_widths(&self, token: &str) -> Result<Vec<usize>> {
+        match Type::parse(token, self)? {
+            Type::Unit => Ok(vec![]),
+            Type::Scalar(_) => Ok(vec![1]),
+            Type::Aggregate(token) => self.schemas[&token].source_leaf_widths(),
+        }
+    }
+
     pub fn flatten_leaves(&self, token: &str, value: &Json) -> Result<Vec<Json>> {
         self.validate(token, value)?;
         match Type::parse(token, self)? {
@@ -267,6 +283,18 @@ impl Registry {
             bail!("aggregate leaves require an aggregate type")
         };
         let bytes = Zeroizing::new(self.schemas[&token].from_leaf_json(leaves)?);
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    pub fn from_source_leaves(&self, token: &str, leaves: &[Json]) -> Result<Json> {
+        let Type::Aggregate(token) = Type::parse(token, self)? else {
+            bail!("aggregate source leaves require an aggregate type")
+        };
+        let schema = &self.schemas[&token];
+        let mut physical_leaves = schema.expand_source_leaves_json(leaves)?;
+        let encoded = schema.from_leaf_json(&physical_leaves);
+        physical_leaves.iter_mut().for_each(wipe_json);
+        let bytes = Zeroizing::new(encoded?);
         Ok(serde_json::from_slice(&bytes)?)
     }
 
@@ -407,13 +435,10 @@ impl Registry {
                 | ScalarType::OpaqueString => {
                     bail!("byte projections require an aggregate schema")
                 }
-                ScalarType::JubjubScalar | ScalarType::JubjubPoint => {
-                    bail!("Jubjub projections require a typed curve schema")
-                }
+                ScalarType::JubjubScalar => "jubjubScalar",
+                ScalarType::JubjubPoint => "jubjubPoint",
                 #[cfg(feature = "zkir-321")]
-                ScalarType::Foreign(_) => {
-                    bail!("foreign values require typed foreign projections")
-                }
+                ScalarType::Foreign(_) => "foreign",
             };
             ensure!(
                 projected_value.get("kind").and_then(Json::as_str) == Some(expected_kind),
@@ -447,13 +472,9 @@ impl Registry {
                 | ScalarType::OpaqueString => {
                     bail!("byte projections require an aggregate schema")
                 }
-                ScalarType::JubjubScalar | ScalarType::JubjubPoint => {
-                    bail!("Jubjub projections require a typed curve schema")
-                }
+                ScalarType::JubjubScalar | ScalarType::JubjubPoint => projected_value.clone(),
                 #[cfg(feature = "zkir-321")]
-                ScalarType::Foreign(_) => {
-                    bail!("foreign values require typed foreign projections")
-                }
+                ScalarType::Foreign(_) => projected_value.clone(),
             };
             wipe_json(&mut projected_value);
             projected_value = canonical;
@@ -468,8 +489,18 @@ fn scalar_token_from_key(key: &str) -> Option<String> {
         "u" => Some("Unit".to_owned()),
         "sN" => Some("Native".to_owned()),
         "sB" => Some("Bool".to_owned()),
+        "jubjubScalar" => Some("JubjubScalar".to_owned()),
+        "jubjubPoint" => Some("JubjubPoint".to_owned()),
         "opaqueBytes" => Some("OpaqueBytes".to_owned()),
         "opaqueString" => Some("OpaqueString".to_owned()),
+        #[cfg(feature = "zkir-321")]
+        _ if key.starts_with("foreign:") => {
+            let source_name = key.strip_prefix("foreign:")?;
+            let ScalarType::Foreign(_) = ScalarType::parse(source_name).ok()? else {
+                return None;
+            };
+            Some(source_name.to_owned())
+        }
         _ => {
             let maximum = key.strip_prefix("sU")?.strip_suffix(';')?;
             let value = BigUint::parse_bytes(maximum.as_bytes(), 10)?;
