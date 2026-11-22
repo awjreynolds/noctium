@@ -63,6 +63,13 @@ Use `some(record)` to retain the checked payload and set `is_some`. Use
 defaults. A public return containing a private payload requires explicit
 disclosure. [Composite Maybe fixture](../../tests/CompositeMaybe.lean)
 
+`Helpers.Wire.maybe` builds a named Maybe codec from the payload codec.
+Use the resulting codec for a `Payload` argument. The host and circuit
+check the tag and every field against the declared types. A supplied
+false tag retains the supplied payload, matching the Compact call ABI.
+The fixture returns the exact record and writes its tag to a Bool cell.
+[Lean fixture](../../tests/CompositeMaybeInput.lean) · [Compact fixture](../../tests/compact/composite-maybe-input.mjs)
+
 `either(isLeft, leftValue, rightValue)` evaluates the three arguments once
 in order. A true tag retains the left payload and supplies the right
 payload's typed default. A false tag retains the right payload and
