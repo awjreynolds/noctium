@@ -4740,7 +4740,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. Broader layout and host equivalence remain open.",
+      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4763,6 +4763,7 @@
         "tests/Sha512Fab.lean",
         "tests/compact/sha512-fab.mjs",
         "runtime/tests/sha512_fab.rs",
+        "runtime/tests/witness_control.rs",
         "docs/development/byte-hashes.md"
       ],
       "equivalence": "unverified"
@@ -4772,7 +4773,7 @@
       "layer": "standard-library",
       "surface": "sha512",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust check rejects a mismatched byte wrapper. Further layout and host qualification remain open.",
+      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4790,6 +4791,7 @@
         "runtime/tests/byte_hashes.rs",
         "tests/Sha512Fab.lean",
         "runtime/tests/sha512_fab.rs",
+        "runtime/tests/witness_control.rs",
         "tests/compact/sha512-fab.mjs",
         "tests/CurveFabHashes.lean",
         "runtime/tests/curve_fab_hashes.rs"
