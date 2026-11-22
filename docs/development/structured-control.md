@@ -11,6 +11,27 @@ General structured witness/state effects and their complete proof/ledger path
 remain under CF-02. The old eager scalar `select` keeps its existing semantics. Host
 execution establishes no theorem about native guarded proof soundness.
 
+## Readable witness conditionals
+
+In a `noctium_witness_circuit`, `if … then … else …` and `ite(condition, yes, no)`
+choose one arm. Both arms must have a common checked type. In this example
+`loadLeft` and `loadRight` return the same declared payload type.
+
+```lean
+let selected := if choice then
+  let value := witness loadLeft() in value
+else
+  let value := witness loadRight() in value
+output amount : Native := disclose(field(selected, amount))
+```
+
+Only the selected provider runs. The compiler keeps each arm's local bindings
+and assertions under its guard. It tracks disclosure on each selected component
+and carries private control dependencies into the result. The focused source and
+Rust tests check both arms, inactive callback suppression, and rejection of a
+failed selected assertion on the host and in the native ZKIR 3.2.1 checker.
+Guard-aware recording and replay proofs remain outside this checked slice.
+
 ## Bounded native write guards
 
 Issue 43 now has a narrow source-to-checker slice for scalar state writes:

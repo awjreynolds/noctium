@@ -669,7 +669,7 @@
       "layer": "language",
       "surface": "Conditional expressions and branches",
       "noctiumStatus": "subset",
-      "notes": "Eager select evaluates both arms. Structured nested branches skip inactive effects and typed callbacks. One scalar guarded workload matches the pinned Compact oracle and finalized on Ledger 9.",
+      "notes": "Eager select evaluates both arms. Structured nested branches skip inactive effects and typed callbacks. Readable if and ite expressions select a common checked scalar or aggregate type. One scalar guarded workload matches the pinned Compact oracle and finalized on Ledger 9.",
       "source": [
         "reference"
       ],
@@ -680,7 +680,10 @@
       "observedEvidence": [
         "Noctium/Semantics.lean",
         "scripts/zkir/native-runtime.mjs",
-        "docs/development/guarded-ledger-localnet-receipts.json"
+        "docs/development/guarded-ledger-localnet-receipts.json",
+        "tests/ReadableLazyConditional.lean",
+        "runtime/tests/readable_lazy_conditional.rs",
+        "docs/development/structured-control.md"
       ],
       "equivalence": "unverified",
       "nativeBranchUpdate": {
