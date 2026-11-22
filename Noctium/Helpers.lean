@@ -2178,6 +2178,19 @@ private def andGuard (left right : Expr .bool) : Expr .bool := .boolAnd left rig
 private def guardedBranch (guard condition : Expr .bool) (active : Bool) : Expr .bool :=
   andGuard guard (if active then condition else .eq condition (.bool false))
 
+private structure ProjectionLowering where
+  selectedType : Types.CompositeType
+  values : List Scalar
+  parentConstraints : List (Expr .bool)
+  projectionConstraints : List (Expr .bool)
+
+private instance : Nonempty ProjectionLowering := ⟨{
+  selectedType := .scalar .bool,
+  values := [],
+  parentConstraints := [],
+  projectionConstraints := []
+}⟩
+
 def projectionSlice (layout : Types.Layout) (projection : Types.Projection) :
     Except String (Nat × Nat) := do
   match layout, projection with
@@ -2220,6 +2233,56 @@ private def scalarEquality : {ty : Ty} → Expr ty → Expr ty → LowerM (Expr 
   | _, left, right => pure (.eq left right)
 
 mutual
+  private partial def lowerProjectionData (program : Program) (scope : Nat)
+      (env : LowerEnv) (span : SourceSpan) (value : Term)
+      (projection : Types.Projection) : LowerM ProjectionLowering := do
+    let parent ← lowerTerm program scope env span value
+    let .composite parentType := parent.ty
+      | liftD (fail span "aggregate projection requires a composite value")
+    let selectedType ← liftD (projectedType program.composites span parentType projection)
+    let parentLayout := (← liftD (checkedComposite program span parentType)).checked.value
+    let childType ← liftD (checkedComposite program span selectedType)
+    let (offset, count) ← liftD
+      ((projectionSlice parentLayout projection).mapError fun message => {span, message})
+    let values := (components parent).drop offset |>.take count
+    unless values.length == childType.checked.expandedLeaves do
+      liftD (fail span "aggregate projection leaf count mismatch")
+    let projectionConstraints ← if let .enumField variant _ := projection then
+      match parentLayout with
+      | .enumeration _ _ _ _ _ variants => do
+        let some variantIndex := variants.findIdx? (·.1 == variant)
+          | liftD (fail span "unknown aggregate enum variant")
+        let some tag := (components parent).head?
+          | liftD (fail span "aggregate enum projection has no tag")
+        pure [Expr.eq (← liftD (nativeOfScalar span tag)) (.native variantIndex)]
+      | _ => liftD (fail span "enum projection requires an enum layout")
+    else pure []
+    pure {
+      selectedType,
+      values,
+      parentConstraints := parent.constraints,
+      projectionConstraints
+    }
+
+  /-- Reuse the already-checked physical fields when a curve projection flows
+  directly into composite construction. General projections still decode the
+  logical curve and retain Wire's exact round-trip assertion. -/
+  private partial def lowerCurveProjectionFields (program : Program) (scope : Nat)
+      (env : LowerEnv) (span : SourceSpan) (expectedType : Ty) (term : Term) :
+      LowerM (Option (List (Expr .native) × List (Expr .bool))) := do
+    unless expectedType.isJubjub || expectedType.isForeign do return none
+    if (← get).ledgerMode then return none
+    let .project parentTerm projection := term | return none
+    spendLower span
+    let projected ← lowerProjectionData program scope env span parentTerm projection
+    unless projected.selectedType == .scalar expectedType do
+      liftD (fail span "aggregate source leaf type mismatch")
+    unless projected.values.length == expectedType.nativeCallFieldCount do
+      liftD (fail span "qualified curve ABI field count mismatch")
+    let nativeFields ← projected.values.mapM fun field => liftD (nativeOfScalar span field)
+    pure (some (nativeFields,
+      projected.parentConstraints ++ projected.projectionConstraints))
+
   private partial def lowerTerm (program : Program) (scope : Nat) (env : LowerEnv)
       (span : SourceSpan) (term : Term) : LowerM Lowered := do
     let value ← lowerTermCore program scope env span term
@@ -2596,43 +2659,34 @@ mutual
       lowerCall program declaration values span
     | .composite type leaves => do
       let compiled ← liftD (checkedComposite program span type)
-      let values ← leaves.mapM (lowerTerm program scope env span)
       let expected := sourceLeafTypes compiled.checked.value
-      unless values.length == expected.length do liftD (fail span "aggregate source leaf count mismatch")
-      let nativeLeaves ← liftD
-        (lowerSourceLeaves span expected (values.map (·.scalar)))
+      unless leaves.length == expected.length do liftD (fail span "aggregate source leaf count mismatch")
+      let mut nativeLeaves := []
+      let mut sourceConstraints := []
+      for (expectedType, leaf) in expected.zip leaves do
+        if let some (projectedFields, constraints) ←
+            lowerCurveProjectionFields program scope env span expectedType leaf then
+          nativeLeaves := nativeLeaves ++ projectedFields
+          sourceConstraints := sourceConstraints ++ constraints
+        else
+          let value ← lowerTerm program scope env span leaf
+          let fields ← liftD (lowerSourceLeaves span [expectedType] [value.scalar])
+          nativeLeaves := nativeLeaves ++ fields
+          sourceConstraints := sourceConstraints ++ value.constraints
       let state ← get
       let checked ← liftD ((Types.checkNativeExpression compiled state.types nativeLeaves).mapError
         fun message => {span, message})
       pure (aggregateValue type (nativeLeaves.map fun leaf => ⟨.native, leaf⟩)
-        (values.flatMap (·.constraints) ++ checked.constraints))
+        (sourceConstraints ++ checked.constraints))
     | .project value projection => do
-      let parent ← lowerTerm program scope env span value
-      let .composite parentType := parent.ty
-        | liftD (fail span "aggregate projection requires a composite value")
-      let selectedType ← liftD (projectedType program.composites span parentType projection)
-      let parentLayout := (← liftD (checkedComposite program span parentType)).checked.value
-      let childType ← liftD (checkedComposite program span selectedType)
-      let (offset, count) ← liftD ((projectionSlice parentLayout projection).mapError fun message => {span, message})
-      let values := (components parent).drop offset |>.take count
-      unless values.length == childType.checked.expandedLeaves do
-        liftD (fail span "aggregate projection leaf count mismatch")
-      let projectionConstraints ← if let .enumField variant _ := projection then
-        match parentLayout with
-        | .enumeration _ _ _ _ _ variants => do
-          let some variantIndex := variants.findIdx? (·.1 == variant)
-            | liftD (fail span "unknown aggregate enum variant")
-          let some tag := (components parent).head?
-            | liftD (fail span "aggregate enum projection has no tag")
-          pure [Expr.eq (← liftD (nativeOfScalar span tag)) (.native variantIndex)]
-        | _ => liftD (fail span "enum projection requires an enum layout")
-      else pure []
-      let constraints := parent.constraints ++ projectionConstraints
-      match resultTypeOfComposite selectedType with
+      let projected ← lowerProjectionData program scope env span value projection
+      let constraints := projected.parentConstraints ++ projected.projectionConstraints
+      match resultTypeOfComposite projected.selectedType with
       | .unit => pure {unitValue with constraints}
       | .scalar ty =>
-        pure {scalarValue (← liftD (restoreLayoutScalar span ty values)) with constraints}
-      | .composite type => pure (aggregateValue type values constraints)
+        let scalar ← liftD (restoreLayoutScalar span ty projected.values)
+        pure {scalarValue scalar with constraints}
+      | .composite type => pure (aggregateValue type projected.values constraints)
     | .index value index => do
       let parent ← lowerTerm program scope env span value
       let indexValue ← lowerTerm program scope env span index
