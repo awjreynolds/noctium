@@ -1092,7 +1092,7 @@
       "layer": "language",
       "surface": "Assertions",
       "noctiumStatus": "subset",
-      "notes": "Boolean constraints exist. Failure attribution and unit-valued assertions need equivalence cases.",
+      "notes": "An explicit readable prove statement can bind its successful Unit result. The native checker and Compact 0.36.1 agree on zero-field success and false rejection for the matched assertion case. The Unit binding and alias add no private inputs or returned fields. General expression placement and failure diagnostics remain unverified.",
       "source": [
         "reference",
         "release0360"
@@ -1103,7 +1103,10 @@
       ],
       "observedEvidence": [
         "Noctium/IR.lean",
-        "tests/IR.lean"
+        "tests/IR.lean",
+        "tests/NamedProofUnit.lean",
+        "tests/compact/named-proof-unit.mjs",
+        "runtime/tests/named_proof_unit.rs"
       ],
       "equivalence": "unverified"
     },
