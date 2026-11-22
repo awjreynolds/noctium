@@ -1,0 +1,33 @@
+{
+  "bundleManifestSha256": "42152f26f9986344a82d945687f1510756a286abbfa87d050dd6f0cef6df822c",
+  "call": {
+    "blockHash": "c4ae7031ca2fc45dac820ba6ddacf5107e2aa092d9fa4858506722e5724c842b",
+    "height": 58248,
+    "transactionId": "d6d9d943c0cc35296acb922a5f6458668074ea52880b44acccbae1118b084e55"
+  },
+  "compilerRevision": "fda280a8bd3fe72868fc62098ece07aecc1c3f55",
+  "contractAddress": "19e82267efb30684c02705193576b0c23b91a8469ac5341fe1157a2fd965ac06",
+  "deployment": {
+    "blockHash": "38c95eb259e5c22df0ec292b3f59b611d576778bd4baeb3075692e8ebf2fecdf",
+    "height": 58245,
+    "transactionId": "f3e3834d16b612f9207d0a8f333d44f86b5582c6b2d942dfeaf26899bc980a74"
+  },
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "impactSha256": "1ed223a85970ecd2f80d0ead88f14e5d008596aae9abd705a72fd8d619e56da0",
+  "k": 8,
+  "ledger": "9.1.0.1",
+  "operation": "NativeBlockTime.checkTime",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "publicInputs": {
+    "cutoff": "0",
+    "enabled": true
+  },
+  "rows": 230,
+  "scope": "One active inclusive comparison call. Equality and inactive routes were exercised with explicit native block contexts.",
+  "state": {
+    "bytes": 1463,
+    "sha256": "77c9fbaffa80c969c74fc235991564a71d9cb2725811a0304f54e98bf71b66ad"
+  },
+  "verifierKeySha256": "2672a208da34e0bdb2e38f9e1389026c5dbfdd70379f29067d7625b0a8d68f10",
+  "zkirSha256": "37caead1bb15f831a62e17e78cfb7c5c607529234e594b5a10a2392142ab112a"
+}

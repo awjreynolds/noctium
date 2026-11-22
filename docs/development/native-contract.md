@@ -434,7 +434,9 @@ operands and activity. [Midnight kernel reference](https://docs.midnight.network
 
 `blockTimeAtOrAfter(deadline) as reached` and
 `blockTimeAtOrBefore(deadline) as within` include equality. Each uses one native
-strict comparison and complements the result only when the read is active.
+strict comparison and complements the result only when the read is active. The
+[inclusive localnet receipt](native-block-time-inclusive-receipt.json) records
+one active call at cutoff zero.
 
 The compiler emits native Impact operations to fetch the block time and
 bind the Boolean result to the ZKIR statement. The native VM re-evaluates
