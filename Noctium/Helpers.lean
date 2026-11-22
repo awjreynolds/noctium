@@ -236,8 +236,9 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
     let emptyRootVector := match type with
       | .vector 0 _ => true
       | _ => false
+    let fieldLimit := Types.defaultLimits.maxExpandedNodes
     unless (argumentCount > 0 || emptyRootVector) &&
-        argumentCount ≤ 32 && argumentCount == parameters.length do
+        argumentCount ≤ fieldLimit && argumentCount == parameters.length do
       throw "FAB digest operand count differs from the checked layout"
     pure (parameters, algorithm.resultType)
   | .reverseBytes32 =>
@@ -2761,7 +2762,8 @@ mutual
         | .fabDigest algorithm type parameters, values => do
           let operands ← (parameters.zip values).mapM fun (ty, value) => do
             pure (Sigma.mk ty (← liftD (fabDigestInput span ty value)))
-          discard (liftD (liftError span (validateFabHashLayout program.composites type operands)))
+          let checkedLayout := validateFabHashLayout program.composites type operands
+          discard (liftD (liftError span checkedLayout))
           match algorithm with
           | .persistentHash => pure (scalarValue (Expr.persistentHashFab program.composites type operands))
           | .sha512 => pure (scalarValue (Expr.sha512Fab program.composites type operands))

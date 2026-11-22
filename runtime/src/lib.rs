@@ -894,10 +894,11 @@ fn aligned_fab_payload(
     schema_json: &Json,
     values: &[FabHashInput],
     env: &Environment,
+    operand_limit: usize,
 ) -> Result<AlignedValue> {
     let schema_bytes = serde_json::to_vec(schema_json)?;
     let schema = Schema::from_json(&schema_bytes)?;
-    let fields = schema.fab_hash_nested_fields()?;
+    let fields = schema.fab_hash_nested_fields(operand_limit)?;
     aligned_fab_values(&fields, values, env)
 }
 
@@ -906,7 +907,7 @@ fn hash_to_curve_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, MAX_HASH_TO_CURVE_FIELDS)?;
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
@@ -923,7 +924,12 @@ fn persistent_hash_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    persistent_hash(aligned_fab_payload(schema_json, values, env)?)
+    persistent_hash(aligned_fab_payload(
+        schema_json,
+        values,
+        env,
+        aggregates::MAX_FAB_OPERANDS,
+    )?)
 }
 
 fn persistent_commit_fab(
@@ -933,7 +939,7 @@ fn persistent_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = claim_hash_output(evaluate(opening, env)?, "FAB persistent commitment opening")?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, aggregates::MAX_FAB_OPERANDS - 2)?;
     let commitment = base_crypto::hash::persistent_commit(&ValueReprAlignedValue(payload), opening);
     Ok(Value::Bytes(commitment.0.to_vec()))
 }
@@ -945,7 +951,7 @@ fn transient_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = evaluate(opening, env)?.field()?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, MAX_TRANSIENT_HASH_FIELDS - 1)?;
     Ok(Value::Native(transient_crypto::hash::transient_commit(
         &ValueReprAlignedValue(payload),
         opening,
@@ -1253,13 +1259,25 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::Sha512Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(
+                    schema,
+                    values,
+                    env,
+                    aggregates::MAX_FAB_OPERANDS,
+                )?)
+                .binary_vec(),
             );
             Value::Bytes(sha2::Sha512::digest(preimage.as_slice()).to_vec())
         }
         Expr::Keccak256Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(
+                    schema,
+                    values,
+                    env,
+                    aggregates::MAX_FAB_OPERANDS,
+                )?)
+                .binary_vec(),
             );
             Value::Bytes(sha3::Keccak256::digest(preimage.as_slice()).to_vec())
         }

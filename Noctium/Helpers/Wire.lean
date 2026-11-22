@@ -51,8 +51,11 @@ def fabDigestOperands (compiled : Types.CompiledType) (value : Term) :
   let emptyRootVector := match layout with
     | .vector 0 _ => true
     | _ => false
-  unless ( !fields.isEmpty || emptyRootVector) && atoms.flatten.length ≤ 32 do
-    throw "FAB digest alignment must contain 1 to 32 atoms, or be an empty root vector"
+  unless ( !fields.isEmpty || emptyRootVector) &&
+      atoms.flatten.length ≤ compiled.checked.expandedNodes do
+    throw "FAB digest alignment exceeds the checked layout-node budget"
+  unless fabHashEncodedFieldCount fields ≤ fabHashNativeOperandLimit do
+    throw "FAB digest encoded operand count exceeds the native vector budget"
   visit (layout.nodeCount + 1) value layout
 where
   visit : Nat → Term → Types.Layout → Except String (List (Ty × Term))

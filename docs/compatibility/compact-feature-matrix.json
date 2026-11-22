@@ -4657,7 +4657,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open.",
+      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open. The native runtime matches pinned Compact digests for 33- and 64-lane UInt16 vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4671,6 +4671,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/FlatFabTuple.lean",
         "runtime/tests/flat_fab_tuple.rs",
         "tests/compact/flat-fab-tuple.mjs",
@@ -4774,7 +4775,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open.",
+      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4788,6 +4789,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/ByteHashes.lean",
         "runtime/tests/byte_hashes.rs",
         "tests/TypedPointKeccak.lean",
@@ -4807,7 +4809,7 @@
       "layer": "standard-library",
       "surface": "sha512",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open.",
+      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4821,6 +4823,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/ByteHashes.lean",
         "runtime/tests/byte_hashes.rs",
         "tests/Sha512Fab.lean",

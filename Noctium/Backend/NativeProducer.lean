@@ -8,7 +8,7 @@ open Lean
 def maxInstructions : Nat := 8192
 -- Keep the bytewise Source Bytes1024 ABI within a bounded aggregate input budget.
 def maxInputs : Nat := 2048
-def maxVectorLength : Nat := 4096
+def maxVectorLength : Nat := Noctium.fabHashNativeOperandLimit
 def maxSymbolicNodes : Nat := 65536
 def maxSymbolicDepth : Nat := 256
 
@@ -289,18 +289,20 @@ private def fabAlignmentDescriptor (atom : Json) : Except String String := do
 private def checkedFabHashOperands (alignment : Json) (values : List Fact) :
     Except String (List String × List Term) := do
   let atoms ← alignment.getArr?
-  ensure (atoms.size > 0 && (atoms.size ≤ 32 ||
-    (atoms.size == 33 && atoms[0]? == some bytes32Atom)))
-    "mixed FAB alignment must contain 1 to 32 payload atoms, with an optional opening"
+  let hasOpening := atoms.size == Types.defaultLimits.maxExpandedNodes + 1 &&
+    atoms[0]? == some bytes32Atom
+  ensure (atoms.size > 0 &&
+    (atoms.size ≤ Types.defaultLimits.maxExpandedNodes || hasOpening))
+    "mixed FAB alignment exceeds the checked layout-node budget"
   let descriptors ← atoms.toList.mapM fabAlignmentDescriptor
   let mut remaining := values
-  let mut terms := []
+  let mut terms : Array Term := #[]
   for descriptor in descriptors do
     match descriptor with
     | "field" =>
       let some value := remaining.head? | throw "mixed FAB field atom lacks an operand"
       remaining := remaining.drop 1
-      terms := terms ++ [value.term]
+      terms := terms.push value.term
     | descriptor =>
       let some width := (descriptor.drop 6).toNat? | throw "mixed FAB byte atom width is malformed"
       if width == 0 then
@@ -311,7 +313,8 @@ private def checkedFabHashOperands (alignment : Json) (values : List Fact) :
         ensure (highByte.maximum ≤ 255 && low31.maximum ≤ 2 ^ (31 * 8) - 1)
           "mixed FAB Bytes32 operands lack canonical byte ranges"
         remaining := remaining.drop 2
-        terms := terms ++ [highByte.term, low31.term]
+        terms := terms.push highByte.term
+        terms := terms.push low31.term
       else do
         let count := bytesChunkCount width
         let chunks := remaining.take count
@@ -321,9 +324,10 @@ private def checkedFabHashOperands (alignment : Json) (values : List Fact) :
           ensure (value.maximum ≤ 2 ^ (8 * chunkWidth) - 1)
             "mixed FAB byte operand lacks its exact chunk range"
         remaining := remaining.drop count
-        terms := terms ++ (chunks.map (·.term))
+        for value in chunks do
+          terms := terms.push value.term
   ensure remaining.isEmpty "mixed FAB alignment and operand counts differ"
-  pure (descriptors, terms)
+  pure (descriptors, terms.toList)
 
 private def equalityPairMatches (left right : Term) (pair : Term × Term) : Bool :=
   (left == pair.1 && right == pair.2) || (left == pair.2 && right == pair.1)
@@ -546,7 +550,8 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
     let values ← nativeArguments state instruction "inputs"
     let alignment ← instruction.getObjVal? "alignment"
     let atoms ← alignment.getArr?
-    ensure (atoms.size ≤ 32) "FAB byte hash alignment exceeds 32 atoms"
+    ensure (atoms.size ≤ Types.defaultLimits.maxExpandedNodes)
+      "FAB byte hash alignment exceeds the checked layout-node budget"
     let singleByteAtom := if atoms.size == 1 then
       match atoms[0]!.getObjVal? "value" with
       | .ok value => (stringField value "tag").toOption == some "bytes"
@@ -573,7 +578,8 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
         | _ => throw "Native persistent_hash requires exactly one field operand"
       else do
         let atoms ← alignment.getArr?
-        if atoms.size ≥ 1 && atoms.size ≤ 32 && atoms.all (· == nativeFieldAtom) then do
+        if atoms.size ≥ 1 && atoms.size ≤ Types.defaultLimits.maxExpandedNodes &&
+            atoms.all (· == nativeFieldAtom) then do
           ensure (values.length == atoms.size)
             "Native vector persistent_hash field count differs from its alignment"
           pure (persistentHashNativeVectorTerm (values.map (·.term)))
@@ -600,7 +606,11 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
           let (descriptors, operands) ← checkedFabHashOperands alignment values
           pure (persistentHashFabTerm descriptors operands)
         else do
-          ensure (atoms.size ≥ 1 && atoms.size ≤ 33 && atoms.all (· == bytes32Atom))
+          let hasOpening := atoms.size == Types.defaultLimits.maxExpandedNodes + 1 &&
+            atoms[0]? == some bytes32Atom
+          ensure (atoms.size ≥ 1 &&
+            (atoms.size ≤ Types.defaultLimits.maxExpandedNodes || hasOpening) &&
+            atoms.all (· == bytes32Atom))
             "persistent_hash supports only bounded Bytes32 or Native field vectors"
           ensure (values.length == atoms.size * 2)
             "Bytes32 vector persistent_hash requires two fields per aligned value"

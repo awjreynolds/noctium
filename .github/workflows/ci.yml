@@ -77,6 +77,7 @@ jobs:
           lake env lean tests/EmptyFabBytes.lean
           lake env lean tests/WideFabBytes.lean
           lake env lean tests/RootFabVector.lean
+          lake env lean tests/WideFabVectors.lean
           lake env lean tests/MixedFabCommitments.lean
           lake env lean tests/FlatFabTuple.lean
           lake env lean tests/Sha512Fab.lean

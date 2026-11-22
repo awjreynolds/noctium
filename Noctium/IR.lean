@@ -213,6 +213,9 @@ def fabHashEncodedFieldCount (fields : List (String × Types.Layout)) : Nat :=
     | .curve type => type.nativeCallFieldCount
     | _ => 1) 0
 
+/-- Native ZKIR operand arrays share this checked FAB preimage budget. -/
+def fabHashNativeOperandLimit : Nat := 4096
+
 private def fabHashUnsignedByteWidth (maximum : Nat) : Nat := Id.run do
   for width in List.range 32 do
     let width := width + 1
@@ -315,18 +318,26 @@ private def validateFabHashFields (fields : List (String × Types.Layout))
     | _ => pure ()
 
 /-- Check the flat mixed-FAB subset for the other hash and commitment operations. -/
-def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
-    (values : List (Sigma Expr)) : Except String Types.Layout := do
+def validateFabHashLayoutWithLimit (fieldLimit : Nat) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (values : List (Sigma Expr)) : Except String Types.Layout := do
   let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
   let fields ← fabHashLayoutFields checked.value
   let emptyRootVector := match checked.value with
     | .vector 0 _ => true
     | _ => false
   unless (fields.length > 0 || emptyRootVector) &&
-      fields.length ≤ 32 && values.length == fields.length do
+      fields.length ≤ fieldLimit && fields.length ≤ checked.expandedNodes &&
+      values.length == fields.length do
     throw "mixed FAB field count is outside the source limit or differs from its layout"
+  unless fabHashEncodedFieldCount fields ≤ fabHashNativeOperandLimit do
+    throw "mixed FAB encoded operand count exceeds the native vector budget"
   validateFabHashFields fields values
   pure checked.value
+
+/-- General checked FAB preimages use the checked layout-node budget. -/
+def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (values : List (Sigma Expr)) : Except String Types.Layout :=
+  validateFabHashLayoutWithLimit Types.defaultLimits.maxExpandedNodes environment type values
 
 def validateTransientFabHashFields (environment : Types.CompositeEnv) (type : Types.CompositeType)
     (values : List (Sigma Expr)) : Except String (List (String × Types.Layout)) := do
@@ -1213,12 +1224,18 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     validateFabHashValues caps env values
   | .persistentCommitFab compositeEnv type opening values => do
     unless caps.persistentHash32 do throw "target lacks qualified FAB persistent-commit support"
-    discard (validateFabHashLayout compositeEnv type values)
+    let layout ← validateFabHashLayout compositeEnv type values
+    let fields ← fabHashLayoutFields layout
+    unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
+      throw "mixed FAB persistent commitment exceeds the native operand-vector budget"
     opening.validate caps env
     validateFabHashValues caps env values
   | .transientCommitFab compositeEnv type opening values => do
     unless caps.poseidon2 do throw "target lacks qualified FAB transient-commit support"
-    discard (validateFabHashLayout compositeEnv type values)
+    let layout ← validateFabHashLayout compositeEnv type values
+    let fields ← fabHashLayoutFields layout
+    unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
+      throw "mixed FAB transient commitment exceeds the native field-vector budget"
     opening.validate caps env
     validateFabHashValues caps env values
   | .transientHashFab compositeEnv type values => do

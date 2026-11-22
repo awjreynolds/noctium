@@ -692,6 +692,8 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
   | .persistentCommitFab compositeEnv compositeType opening values => do
     let compiled ← validateFabHashLayout compositeEnv compositeType values
     let fields ← fabHashLayoutFields compiled
+    unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
+      throw "mixed FAB persistent commitment exceeds the native operand-vector budget"
     let normalizedOpening ← normalize env opening
     let (highByte, low31) ← alignedBytes32Value opening normalizedOpening
     let normalizedValues ← normalizeFabValues env values
@@ -705,6 +707,8 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
   | .transientCommitFab compositeEnv compositeType opening values => do
     let compiled ← validateFabHashLayout compositeEnv compositeType values
     let fields ← fabHashLayoutFields compiled
+    unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
+      throw "mixed FAB transient commitment exceeds the native field-vector budget"
     let opening ← normalize env opening
     let normalizedValues ← normalizeFabValues env values
     let payload ← alignedFabPayload fields normalizedValues

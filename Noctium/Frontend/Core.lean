@@ -1194,8 +1194,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "sha512Fab requires 1 to 32 values"
+    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"sha512Fab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1208,8 +1208,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "keccak256Fab requires 1 to 32 values"
+    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"keccak256Fab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1340,8 +1340,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let sourceValues := values.getElems.toList
-    unless sourceValues.length ≤ 32 do
-      throwErrorAt stx "persistentHashFab accepts at most 32 values"
+    unless sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"persistentHashFab accepts at most {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1369,8 +1369,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let opening ← expected env opening (.bytes 32)
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "persistentCommitFab requires 1 to 32 values"
+    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"persistentCommitFab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1384,8 +1384,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let opening ← expected env opening .native
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "transientCommitFab requires 1 to 32 values"
+    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"transientCommitFab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1632,8 +1632,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
-      throwErrorAt stx "hashToCurveFab requires 1 to 32 values"
+    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"hashToCurveFab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType

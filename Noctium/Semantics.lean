@@ -850,6 +850,8 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
   | .persistentCommitFab compositeEnv type opening values => do
     let layout ← validateFabHashLayout compositeEnv type values
     let fields ← fabHashLayoutFields layout
+    unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
+      throw "mixed FAB persistent commitment exceeds the native operand-vector budget"
     let opening ← opening.eval ctx env
     unless opening.length == 32 && opening.all (· ≤ 255) do
       throw "mixed FAB persistent commitment opening is not canonical Bytes32"
@@ -858,6 +860,8 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
   | .transientCommitFab compositeEnv type opening values => do
     let layout ← validateFabHashLayout compositeEnv type values
     let fields ← fabHashLayoutFields layout
+    unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
+      throw "mixed FAB transient commitment exceeds the native field-vector budget"
     let opening ← opening.eval ctx env
     if opening >= ctx.modulus then throw "noncanonical transient commitment opening"
     let payload ← fabAlignedFieldSequence ctx env (fields.map Prod.snd) values
