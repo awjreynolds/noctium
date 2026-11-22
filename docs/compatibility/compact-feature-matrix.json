@@ -617,7 +617,7 @@
       "layer": "language",
       "surface": "Type conversions",
       "noctiumStatus": "subset",
-      "notes": "Ordinary and readable scalar casts reject fixed Bytes at the source boundary. Checked byte projection followed by widening to Native gives the same numeric value as Compact 0.36.1. Noctium uses explicit byte decoding for whole Bytes values. Short-width numeric encoding with a fit check is tracked in #512.",
+      "notes": "Ordinary and readable scalar casts reject fixed Bytes at the source boundary. Explicit byte decoding and checked byte projection expose numeric values. The numeric toBytes operation encodes Native and UInt into fixed-width little-endian bytes, checks overflow at short widths, and pads wider values with zeros. The paired fixtures cover widths 1, 31, 32, 33 and 64.",
       "source": [
         "reference"
       ],
@@ -625,11 +625,16 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "tests/ByteCastBoundary.lean",
+        "tests/FixedNumericBytes.lean",
+        "tests/compact/fixed-numeric-bytes.mjs",
+        "runtime/tests/fixed_numeric_bytes.rs"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
-        "checkedOn": "2026-11-16",
-        "scope": "Native/Bool/UInt scalar conversions and narrowing checks are implemented. Bytes, foreign fields, composites and aliases remain open.",
+        "checkedOn": "2026-11-22",
+        "scope": "Native/Bool/UInt scalar conversions and narrowing checks are implemented. Fixed Bytes encode and decode use explicit typed operators. Foreign field, composite and alias conversion coverage remains open.",
         "evidence": [
           "tests/BoundedScalars.lean",
           "runtime/tests/unsigned.rs",

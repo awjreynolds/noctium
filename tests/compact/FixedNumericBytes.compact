@@ -1,0 +1,18 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit fieldOne(value: Field): Bytes<1> {
+  return value as Bytes<1>;
+}
+
+export circuit uintOne(value: Uint<16>): Bytes<1> {
+  return value as Bytes<1>;
+}
+
+export circuit field31(value: Field): Bytes<31> {
+  return value as Bytes<31>;
+}
+
+export circuit fieldWide(value: Field): [Bytes<32>, Bytes<33>, Bytes<64>] {
+  return [value as Bytes<32>, value as Bytes<33>, value as Bytes<64>];
+}

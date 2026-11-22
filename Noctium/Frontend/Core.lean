@@ -297,6 +297,7 @@ scoped syntax "toBytes32(" nlexpr ")" : nlexpr
 scoped syntax "fromBytes32(" nltype "," nlexpr ")" : nlexpr
 scoped syntax "fromBytes(" nltype "," nlexpr ")" : nlexpr
 scoped syntax "serialize(" nlexpr "," num ")" : nlexpr
+scoped syntax "toBytes(" nlexpr "," num ")" : nlexpr
 scoped syntax "deserialize(" nltype "," nlexpr ")" : nlexpr
 scoped syntax "byteAt(" nlexpr "," num ")" : nlexpr
 scoped syntax "degradeToNative(" nlexpr ")" : nlexpr
@@ -829,6 +830,7 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
   | `(nlexpr| fromBytes32($_:nltype, $_:nlexpr))
   | `(nlexpr| deserialize($_:nltype, $_:nlexpr)) => Bool.true
   | `(nlexpr| serialize($value, $_:num)) => hasPartialScalar value
+  | `(nlexpr| toBytes($value, $width:num)) => width.getNat < 32 || hasPartialScalar value
   | `(nlexpr| fromBytes($_:nltype, $value:nlexpr)) => hasPartialScalar value
   | `(nlexpr| assertThen($_:nlexpr, $_:nlexpr)) => Bool.true
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) =>
@@ -1010,6 +1012,17 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     unless width ≤ length && length ≤ maxBytesLength do
       throwErrorAt size s!"serialize requires a byte length from {width} through {maxBytesLength}"
     let codec ← wireCodecTerm ty
+    pure (.bytes length, ← `(Noctium.Wire.ScalarCodec.serialize $codec $value
+      $(natTerm length) (by decide)))
+  | `(nlexpr| toBytes($value, $size:num)) => do
+    let (source, value) ← expression env value
+    let length := size.getNat
+    let target ← match Wire.numericBytesTarget source length with
+      | .ok target => pure target
+      | .error message => throwErrorAt stx message
+    let value ← if target == source then pure value
+      else `(Noctium.Expr.cast $(← tyTerm target) $value)
+    let codec ← wireCodecTerm target
     pure (.bytes length, ← `(Noctium.Wire.ScalarCodec.serialize $codec $value
       $(natTerm length) (by decide)))
   | `(nlexpr| deserialize($target:nltype, $value)) => do

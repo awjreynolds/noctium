@@ -42,6 +42,24 @@ def scalarCodec : (type : Ty) → Option (ScalarCodec type)
 
 def scalarWidth (type : Ty) : Option Nat := (scalarCodec type).map (·.width)
 
+/-- Choose the scalar type used by `toBytes`. Narrow outputs use a checked
+UInt cast so their little-endian encoding rejects values that do not fit.
+Widths of 32 bytes or more keep the source type and serialize with zero
+padding, matching the canonical scalar codec. -/
+def numericBytesTarget (source : Ty) (length : Nat) : Except String Ty := do
+  unless 0 < length && length ≤ maxBytesLength do
+    throw s!"toBytes requires a byte width from 1 through {maxBytesLength}"
+  match source with
+  | .native =>
+    if length ≤ 31 then pure (.uint (2 ^ (length * 8) - 1)) else pure .native
+  | .uint maximum => do
+    ScalarPolicy.validate (.uint maximum)
+    if length ≤ 31 then
+      let byteMaximum := 2 ^ (length * 8) - 1
+      if maximum ≤ byteMaximum then pure source else pure (.uint byteMaximum)
+    else pure source
+  | _ => throw "toBytes requires Native or UInt"
+
 def ScalarCodec.serialize (codec : ScalarCodec type) (value : Expr type)
     (length : Nat) (fits : codec.width ≤ length) : Expr (.bytes length) :=
   if equal : codec.width = length then
