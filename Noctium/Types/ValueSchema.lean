@@ -6,6 +6,12 @@ open Lean
 
 private def commaCount (length : Nat) : Nat := length - 1
 
+private def curveTypeName : Ty → String
+  | .jubjubScalar => "JubjubScalar"
+  | .jubjubPoint => "JubjubPoint"
+  | .foreign kind => kind.sourceName
+  | _ => ""
+
 private def layoutJsonSize : Nat → Layout → Except String Nat
   | 0, _ => throw "aggregate schema traversal exhausted checked fuel"
   | fuel + 1, layout => do
@@ -27,6 +33,9 @@ private def layoutJsonSize : Nat → Layout → Except String Nat
         (toString length).utf8ByteSize + (← layoutJsonSize fuel element))
     | .bytes length .byteField =>
       pure ("{\"kind\":\"bytes\",\"length\":0}".utf8ByteSize - 1 + (toString length).utf8ByteSize)
+    | .curve type =>
+      pure ("{\"kind\":\"curve\",\"type\":\"\"}".utf8ByteSize +
+        (curveTypeName type).utf8ByteSize)
     | .enumeration id _ _ _ _ variants =>
       let sizes ← variants.mapM fun (name, fields, _) => do
         let fields ← fields.mapM fun (name, layout) => do
@@ -56,6 +65,8 @@ private def layoutJson : Nat → Layout → Except String Json
     | .vector length element => pure (Json.mkObj [("kind", toJson ("vector" : String)),
         ("length", toJson length), ("element", ← layoutJson fuel element)])
     | .bytes length .byteField => pure (Json.mkObj [("kind", toJson ("bytes" : String)), ("length", toJson length)])
+    | .curve type => pure (Json.mkObj [("kind", toJson ("curve" : String)),
+        ("type", toJson (curveTypeName type))])
     | .enumeration id _ _ _ _ variants =>
       let variants ← variants.mapM fun (name, fields, _) => do
         let fields ← fields.mapM fun (name, layout) => do
@@ -91,9 +102,26 @@ private def valueJsonAux : Nat → AggregateValue → Except String Json
     | .scalar (.bytes _) _ => throw "byte strings require an aggregate bytes value"
     | .scalar .opaqueBytes _ => throw "OpaqueBytes require a qualified ledger scalar schema"
     | .scalar .opaqueString _ => throw "OpaqueString requires a qualified ledger scalar schema"
-    | .scalar .jubjubScalar _ | .scalar .jubjubPoint _ =>
-      throw "Jubjub values require a qualified curve schema"
-    | .scalar (.foreign _) _ => throw "foreign values require a qualified curve schema"
+    | .scalar .jubjubScalar value => pure (Json.mkObj [
+        ("kind", toJson ("jubjubScalar" : String)), ("value", toJson (toString value))])
+    | .scalar (.foreign (.base curve)) value => do
+      let bytes ← Foreign.canonicalBytes (.base curve) value
+      pure (Json.mkObj [("kind", toJson ("foreign" : String)),
+        ("type", toJson (Foreign.Kind.sourceName (.base curve))), ("bytes", toJson bytes)])
+    | .scalar (.foreign (.scalar curve)) value => do
+      let bytes ← Foreign.canonicalBytes (.scalar curve) value
+      pure (Json.mkObj [("kind", toJson ("foreign" : String)),
+        ("type", toJson (Foreign.Kind.sourceName (.scalar curve))), ("bytes", toJson bytes)])
+    | .scalar (.foreign (.point _)) _ => throw "foreign points require a point aggregate value"
+    | .scalar .jubjubPoint _ => throw "Jubjub points require a point aggregate value"
+    | .jubjubPoint x y => pure (Json.mkObj [
+        ("kind", toJson ("jubjubPoint" : String)),
+        ("x", toJson (toString x)), ("y", toJson (toString y))])
+    | .foreignPoint curve point => do
+      let bytes ← Foreign.canonicalBytes (.point curve) point
+      pure (Json.mkObj [("kind", toJson ("foreign" : String)),
+        ("type", toJson (Foreign.Kind.sourceName (.point curve))),
+        ("bytes", toJson bytes)])
     | .tuple items => pure (Json.mkObj [("kind", toJson ("tuple" : String)), ("items", toJson (← items.mapM (valueJsonAux fuel)))])
     | .structure id fields =>
       let fields ← fields.mapM fun (name, value) => do

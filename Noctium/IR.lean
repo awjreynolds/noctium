@@ -342,13 +342,6 @@ def Expr.nativeCallFields : Expr ty → List (Expr .native) :=
 def Output.nativeReturnFields (output : Output) : Except String (List (Expr .native)) :=
   pure (output.value.nativeCallFields)
 
-def Ty.nativeCallFieldCount (ty : Ty) : Nat :=
-  match ty with
-  | .bytes length => (length + 30) / 31
-  | .jubjubPoint => 2
-  | .foreign kind => kind.encodedFieldCount
-  | _ => 1
-
 def Output.nativeReturnFieldCount (output : Output) : Nat := output.ty.nativeCallFieldCount
 
 def maxEntrypointReturnFields : Nat := 256

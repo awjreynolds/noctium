@@ -225,6 +225,7 @@ jobs:
           lake env lean tests/FixedBytesDefaults.lean
           lake env lean tests/CompositeDefaults.lean
           lake env lean tests/ReadableDefaults.lean
+          lake env lean tests/CurveDefaults.lean
           lake env lean tests/CompositeMaybe.lean
           lake env lean tests/CompositeMaybeInput.lean
           lake env lean tests/CompositeEither.lean
@@ -307,6 +308,12 @@ jobs:
           .lake/build/bin/noctium compile tests/NominalRecordEquality.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/nominal-record-equality"
+          .lake/build/bin/noctium compile tests/CurveDefaults.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/curve-defaults"
+          .lake/build/bin/noctium compile tests/ReadableDefaults.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/curve-defaults/readable"
           .lake/build/bin/noctium compile tests/ReadableUnitBindings.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-unit-bindings"
@@ -340,6 +347,7 @@ jobs:
             NOCTIUM_READABLE_ITERATION_DIR="$artifacts/readable-iteration" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
+            NOCTIUM_CURVE_DEFAULTS_DIR="$artifacts/curve-defaults" \
             NOCTIUM_UNIT_BINDINGS_DIR="$artifacts/readable-unit-bindings" \
             NOCTIUM_NAMED_PROOF_UNIT_DIR="$artifacts/named-proof-unit" \
             NOCTIUM_FIXED_NUMERIC_BYTES_DIR="$artifacts/fixed-numeric-bytes" \
@@ -352,6 +360,7 @@ jobs:
               --test scalar_transient_hash \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
+              --test curve_defaults \
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \
               --test named_enum_members --test nested_aggregate_equality \
               --test structural_equality_widening \

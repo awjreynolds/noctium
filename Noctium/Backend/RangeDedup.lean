@@ -32,6 +32,133 @@ the same immutable SSA operand. Retain earlier checks before any narrowing. -/
 def run (instructions : Array Json) : Array Json :=
   (instructions.foldl step {}).retained
 
+private def assertionOperand? (instruction : Json) : Option String := do
+  let object ← instruction.getObj?.toOption
+  guard (object.size == 2)
+  guard ((← (instruction.getObjVal? "op" >>= Json.getStr?).toOption) == "assert")
+  let operand ← (instruction.getObjVal? "cond" >>= Json.getStr?).toOption
+  guard (operand.startsWith '%' && operand.length > 1 && operand.utf8ByteSize ≤ 1024)
+  pure operand
+
+private structure AssertionState where
+  seen : Std.HashMap String Unit := {}
+  retained : Array Json := #[]
+
+private def assertionStep (state : AssertionState) (instruction : Json) : AssertionState :=
+  match assertionOperand? instruction with
+  | none => {state with retained := state.retained.push instruction}
+  | some operand =>
+    if (state.seen[operand]?).isSome then state
+    else {
+      seen := state.seen.insert operand ()
+      retained := state.retained.push instruction
+    }
+
+/-- Remove later exact assertions on the same SSA condition. Guarded, malformed,
+immediate and non-assert instructions pass through unchanged. -/
+def removeDuplicateAssertions (instructions : Array Json) : Array Json :=
+  (instructions.foldl assertionStep {}).retained
+
+private def AssertionTracks (state : AssertionState) : Prop :=
+  ∀ operand, (state.seen[operand]?).isSome = true →
+    ∃ item ∈ state.retained.toList, assertionOperand? item = some operand
+
+private theorem assertionStep_tracks (state : AssertionState) (instruction : Json)
+    (tracks : AssertionTracks state) : AssertionTracks (assertionStep state instruction) := by
+  unfold assertionStep
+  split
+  · intro operand found
+    obtain ⟨earlier, member, key⟩ := tracks operand found
+    exact ⟨earlier, by simp [member], key⟩
+  · next operand key =>
+    split
+    · exact tracks
+    · intro name found
+      by_cases same : operand = name
+      · subst name
+        change ((state.seen.insert operand ())[operand]?).isSome = true at found
+        simp at found
+        exact ⟨instruction, by simp, key⟩
+      · obtain ⟨earlier, member, earlierKey⟩ := tracks name (by
+          simpa [Std.HashMap.getElem?_insert, same] using found)
+        exact ⟨earlier, by simp [member], earlierKey⟩
+
+private theorem assertionStep_tracks_fold (instructions : List Json)
+    (state : AssertionState) (tracks : AssertionTracks state) :
+    AssertionTracks (instructions.foldl assertionStep state) := by
+  induction instructions generalizing state with
+  | nil => simpa using tracks
+  | cons instruction rest ih =>
+    rw [List.foldl_cons]
+    exact ih (assertionStep state instruction) (assertionStep_tracks state instruction tracks)
+
+private theorem assertion_seen_preserved (state : AssertionState) (instruction : Json)
+    (operand : String) (found : (state.seen[operand]?).isSome = true) :
+    ((assertionStep state instruction).seen[operand]?).isSome = true := by
+  unfold assertionStep
+  split
+  · simpa using found
+  · next other key =>
+    split
+    · simpa using found
+    · by_cases same : other = operand
+      · subst other
+        simp
+      · simpa [Std.HashMap.getElem?_insert, same] using found
+
+private theorem assertion_seen_preserved_fold (instructions : List Json)
+    (state : AssertionState) (operand : String)
+    (found : (state.seen[operand]?).isSome = true) :
+    ((instructions.foldl assertionStep state).seen[operand]?).isSome = true := by
+  induction instructions generalizing state with
+  | nil => simpa using found
+  | cons instruction rest ih =>
+    rw [List.foldl_cons]
+    exact ih (assertionStep state instruction)
+      (assertion_seen_preserved state instruction operand found)
+
+private theorem assertion_seen_fold_member (instructions : List Json)
+    (state : AssertionState) (instruction : Json) (member : instruction ∈ instructions)
+    (key : assertionOperand? instruction = some operand) :
+    ((instructions.foldl assertionStep state).seen[operand]?).isSome = true := by
+  induction instructions generalizing state with
+  | nil => simp at member
+  | cons first rest ih =>
+    simp only [List.mem_cons] at member
+    rw [List.foldl_cons]
+    rcases member with same | member
+    · subst first
+      have headSeen : ((assertionStep state instruction).seen[operand]?).isSome = true := by
+        unfold assertionStep
+        rw [key]
+        by_cases already : operand ∈ state.seen <;> simp [already]
+      exact assertion_seen_preserved_fold rest (assertionStep state instruction) operand headSeen
+    · exact ih (assertionStep state first) member
+
+/-- An exact repeated assertion on one immutable SSA operand adds the same
+nonzero condition twice, which is equivalent to asserting it once. -/
+theorem duplicateAssertion_preserves (read : String → Nat) (operand : String) :
+    (read operand ≠ 0 ∧ read operand ≠ 0) ↔ read operand ≠ 0 := by
+  constructor
+  · exact And.left
+  · intro holds
+    exact ⟨holds, holds⟩
+
+/-- Every recognized assertion operand in the input remains represented by a
+retained assertion with the same condition. -/
+theorem removeDuplicateAssertions_retains_operand (instructions : Array Json)
+    (item : Json) (member : item ∈ instructions.toList)
+    (recognized : assertionOperand? item = some operand) :
+    ∃ retained ∈ (removeDuplicateAssertions instructions).toList,
+      assertionOperand? retained = some operand := by
+  have seen : ((instructions.toList.foldl assertionStep {}).seen[operand]?).isSome = true :=
+    assertion_seen_fold_member instructions.toList {} item member recognized
+  have tracks : AssertionTracks (instructions.foldl assertionStep {}) := by
+    simpa only [Array.foldl_toList] using
+      assertionStep_tracks_fold instructions.toList {}
+        (by intro name found; simp at found)
+  exact tracks operand (by simpa only [Array.foldl_toList] using seen)
+
 private def comparison? (item : Json) : Option ((String × String × Nat) × String) := do
   let object ← item.getObj?.toOption
   guard (object.size == 5)

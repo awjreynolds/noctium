@@ -1333,7 +1333,9 @@ impl Parser<'_> {
                                 );
                                 Type::parse(left, &self.registry)?
                             }
-                            _ => bail!("control equality requires scalar or matching aggregate operands"),
+                            _ => bail!(
+                                "control equality requires scalar or matching aggregate operands"
+                            ),
                         };
                         (Type::Scalar(ScalarType::Bool), ExprKind::Eq(t, a, b))
                     }
@@ -1756,7 +1758,7 @@ impl Parser<'_> {
                     bail!("composite expression requires aggregate type")
                 };
                 let raw = list(v, "leaves")?;
-                let leaf_types = self.registry.leaf_types(&token)?;
+                let leaf_types = self.registry.source_leaf_types(&token)?;
                 ensure!(
                     raw.len() == leaf_types.len(),
                     "control aggregate leaf count"
@@ -6421,8 +6423,7 @@ impl Session {
                     }
                     Type::Unit => bail!("control equality requires scalar or flat record operands"),
                 };
-                self.values
-                    .push(Tracked::scalar(Value::Bool(equal), taint));
+                self.values.push(Tracked::scalar(Value::Bool(equal), taint));
             }
             Task::Curve(operation, count) => {
                 ensure!(self.values.len() >= count, "control curve argument stack");
@@ -6687,20 +6688,30 @@ impl Session {
                     ));
                     self.tasks.push(Task::Eval(leaves[index].clone(), env));
                 } else {
+                    let leaf_types = self.plan.registry.source_leaf_types(&token)?;
                     let leaf_json = values
                         .iter()
-                        .zip(self.plan.registry.leaf_types(&token)?)
+                        .zip(&leaf_types)
                         .map(|(value, expected)| {
                             ensure!(
                                 value.aggregate.is_none(),
                                 "nested aggregate leaf unsupported by control composite"
                             );
-                            let ty = parse_type(&expected, &self.plan.registry)?;
+                            let ty = parse_type(expected, &self.plan.registry)?;
                             value.canonical_json(&ty)
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    let value = self.plan.registry.from_leaves(&token, &leaf_json)?;
-                    let taints = values.iter().map(Tracked::is_tainted).collect::<Vec<_>>();
+                    let value = self.plan.registry.from_source_leaves(&token, &leaf_json)?;
+                    let widths = self.plan.registry.source_leaf_widths(&token)?;
+                    ensure!(
+                        widths.len() == values.len(),
+                        "control aggregate source leaf width mismatch"
+                    );
+                    let taints = values
+                        .iter()
+                        .zip(widths)
+                        .flat_map(|(value, width)| std::iter::repeat_n(value.is_tainted(), width))
+                        .collect::<Vec<_>>();
                     let control_taint = values.is_empty() && self.continuation_taint;
                     let payload = AggregatePayload::from_owned(value, &self.aggregate_budget)?;
                     self.values

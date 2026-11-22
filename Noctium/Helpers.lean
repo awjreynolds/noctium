@@ -683,6 +683,7 @@ partial def sourceLeafTypes : Types.Layout → List Ty
   | .scalar (.boundedUnsignedField maximum) => [.uint maximum]
   | .scalar (.enumTagField _) => [.native]
   | .scalar .byteField => [.native]
+  | .curve type => [type]
   | .tuple items => items.flatMap sourceLeafTypes
   | .structure _ fields => fields.flatMap (sourceLeafTypes ∘ Prod.snd)
   | .vector length element => (List.range length).flatMap fun _ => sourceLeafTypes element
@@ -699,6 +700,8 @@ def checkedAggregateEquality (program : Program) (span : SourceSpan)
 partial def sourceLeafPaths : Types.Layout → String → List String
   | .unit, _ => []
   | .scalar _, path => [path]
+  | .curve type, path => (List.range type.nativeCallFieldCount).map fun index =>
+      path ++ s!".$curve{index}"
   | .tuple items, path => items.zipIdx.flatMap fun (item, index) =>
       sourceLeafPaths item (path ++ s!".{index}")
   | .structure _ fields, path => fields.flatMap fun (name, item) =>
@@ -1878,6 +1881,45 @@ private def nativeOfScalar (span : SourceSpan) (value : Scalar) : Except Diagnos
     fail span "Jubjub values require a qualified curve operation"
   | ⟨.foreign _, _⟩ => fail span "foreign values require a qualified curve operation"
 
+private def lowerSourceLeaves (span : SourceSpan) (expected : List Ty)
+    (values : List Scalar) : Except Diagnostic (List (Expr .native)) := do
+  unless expected.length == values.length do fail span "aggregate source leaf count mismatch"
+  let mut fields := []
+  for (expectedType, value) in expected.zip values do
+    if expectedType.isJubjub || expectedType.isForeign then
+      unless expectedType.nativeCallFieldCount > 0 do
+        fail span "invalid qualified curve layout leaf"
+      let encoded ← match value with
+        | ⟨actual, expression⟩ =>
+          if h : actual = expectedType then
+            let encoded := (h ▸ expression).nativeCallFields
+            if encoded.length == expectedType.nativeCallFieldCount then pure encoded
+            else fail span "qualified curve ABI field count mismatch"
+          else fail span "aggregate source leaf type mismatch"
+      fields := fields ++ encoded
+    else
+      fields := fields ++ [← nativeOfScalar span value]
+  pure fields
+
+private def decodeCurveFields (span : SourceSpan) (type : Ty)
+    (fields : List Scalar) : Except Diagnostic (Expr type) := do
+  unless type.isJubjub || type.isForeign do
+    fail span "invalid qualified curve layout leaf"
+  unless fields.length == type.nativeCallFieldCount do
+    fail span "qualified curve ABI field count mismatch"
+  let nativeFields ← fields.mapM (nativeOfScalar span)
+  let expression ← (Wire.decodeCurveFields type nativeFields).mapError fun message => {span, message}
+  pure expression
+
+private def restoreLayoutScalar (span : SourceSpan) (type : Ty)
+    (fields : List Scalar) : Except Diagnostic (Expr type) := do
+  if type.isJubjub || type.isForeign then
+    decodeCurveFields span type fields
+  else
+    unless fields.length == 1 do fail span "aggregate scalar projection field count mismatch"
+    let some field := fields.head? | fail span "aggregate scalar projection has no field"
+    pure (.cast type (← nativeOfScalar span field))
+
 private def coerce (span : SourceSpan) (value : Lowered) (target : ResultType) : Except Diagnostic Lowered := do
   unless subtype value.ty target do fail span "helper lowering type mismatch"
   match target with
@@ -2578,7 +2620,8 @@ mutual
       let values ← leaves.mapM (lowerTerm program scope env span)
       let expected := sourceLeafTypes compiled.checked.value
       unless values.length == expected.length do liftD (fail span "aggregate source leaf count mismatch")
-      let nativeLeaves ← values.mapM fun value => liftD (nativeOfScalar span value.scalar)
+      let nativeLeaves ← liftD
+        (lowerSourceLeaves span expected (values.map (·.scalar)))
       let state ← get
       let checked ← liftD ((Types.checkNativeExpression compiled state.types nativeLeaves).mapError
         fun message => {span, message})
@@ -2609,8 +2652,7 @@ mutual
       match resultTypeOfComposite selectedType with
       | .unit => pure {unitValue with constraints}
       | .scalar ty =>
-        let some selected := values.head? | liftD (fail span "aggregate scalar projection has no leaf")
-        pure {scalarValue (.cast ty (← liftD (nativeOfScalar span selected))) with constraints}
+        pure {scalarValue (← liftD (restoreLayoutScalar span ty values)) with constraints}
       | .composite type => pure (aggregateValue type values constraints)
     | .index value index => do
       let parent ← lowerTerm program scope env span value
@@ -2636,8 +2678,8 @@ mutual
       match resultTypeOfComposite element with
       | .unit => pure {unitValue with constraints}
       | .scalar ty =>
-        let some selected := selected.head? | liftD (fail span "aggregate scalar index has no leaf")
-        pure {scalarValue (.cast ty selected) with constraints}
+        let selected := selected.map fun field => ⟨.native, field⟩
+        pure {scalarValue (← liftD (restoreLayoutScalar span ty selected)) with constraints}
       | .composite type => pure (aggregateValue type (selected.map fun leaf => ⟨.native, leaf⟩) constraints)
     | .effect kind label _ => liftD (fail span s!"native helper capability unavailable: {repr kind} ({label})")
     | .at span value => lowerTerm program scope env span value

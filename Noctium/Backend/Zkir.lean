@@ -26,6 +26,15 @@ theorem validateProduced_ok (span : SourceSpan) (expected : Native.Expected) (pr
   cases checked : Native.validate expected program <;> simp [validateProduced, checked]
   constructor <;> intro equal <;> exact equal.symm
 
+private def optimizedInstructions (enabled : Bool) (instructions : Array Json) : Array Json :=
+  if enabled then
+    RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons (RangeDedup.run instructions))
+  else instructions
+
+private def optimizedExpected (enabled : Bool) (expected : Native.Expected) : Native.Expected :=
+  if enabled then {expected with assertions := expected.assertions.eraseDups}
+  else expected
+
 private theorem bind_ok (first : Except ε α) (next : α → Except ε β) (value : β) :
     Except.bind first next = .ok value ↔ ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
   cases first <;> simp [Except.bind]
@@ -1447,9 +1456,9 @@ def lowerCircuit (c : Circuit) (dedupRangeChecks : Bool := false) : Except Diagn
     ("outputs", Json.arr ((c.outputs.flatMap fun output =>
       List.replicate output.nativeReturnFieldCount nativeType).toArray)),
     ("do_communications_commitment", toJson false),
-    ("instructions", Json.arr (if dedupRangeChecks then
-      RangeDedup.reuseComparisons (RangeDedup.run result.instructions) else result.instructions))]
-  validateProduced c.span (← Native.expectedCircuit c) program
+    ("instructions", Json.arr (optimizedInstructions dedupRangeChecks result.instructions))]
+  let expected ← Native.expectedCircuit c
+  validateProduced c.span (optimizedExpected dedupRangeChecks expected) program
 
 /-- Successful lowering necessarily passes the existing mandatory validation
 against the independently reconstructed statement of the actual pruned source. -/
@@ -1586,9 +1595,9 @@ def lowerPrunedEntrypoint (state : List StateDecl) (entry : Entrypoint)
     -- Ledger ContractCall.public_inputs always includes the commitment after
     -- binding input. Standalone relations above deliberately keep it disabled.
     ("do_communications_commitment", toJson true),
-    ("instructions", Json.arr (if dedupRangeChecks then
-      RangeDedup.reuseComparisons (RangeDedup.run result.instructions) else result.instructions))]
-  let relation ← validateProduced entry.span (← Native.expectedEntrypoint state entry) program
+    ("instructions", Json.arr (optimizedInstructions dedupRangeChecks result.instructions))]
+  let expected ← Native.expectedEntrypoint state entry
+  let relation ← validateProduced entry.span (optimizedExpected dedupRangeChecks expected) program
   pure (plan, relation)
 
 /-- Compile a native ledger transcript relation. Public-input binding includes
