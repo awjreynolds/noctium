@@ -25,6 +25,20 @@ Publishing a verification result derived from private data requires explicit dis
 | `ed25519Verify` | Bytes message, Curve25519Point R, Curve25519Scalar S, Curve25519Point key | Bool |
 | `secp256k1EthereumAddress` | Secp256k1Point key | Bytes20 |
 
+## Portable signature records
+
+Each signature type exposes a `codec`. Use the codec in the readable circuit's
+`using` clause and declare the argument as `Payload codecName`. The checked
+record keeps its nominal identity and curve-specific fields through the host
+witness plan and native return views. Its Noctium wire frame holds two 32-byte
+fields. The field names and order match the pinned Compact signature types.
+
+The focused case echoes all four records through the Rust witness session and
+ZKIR 3.2.1 native checker. It rejects a different signature identity, a scalar
+from a different curve, and a changed native return commitment. Returning a
+private input in the fixture requires explicit disclosure.
+[Lean fixture](../../tests/SignaturePayloads.lean) · [Compact reference](../../tests/compact/SignaturePayloads.compact) · [Native check](../../runtime/tests/signature_helpers.rs)
+
 ## Protocol and failure rules
 
 ECDSA interprets the supplied 32-byte digest as a big-endian integer and reduces it into the curve's scalar field. The equation checks the x-coordinate of `[digest/s]G + [r/s]key`, reduced modulo the scalar order, against r. Both high-s and low-s signatures are accepted. A low-s rule needs an additional application policy. The helper does not hash a message or establish a relationship between the digest and another contract value.

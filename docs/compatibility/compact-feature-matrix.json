@@ -3774,7 +3774,7 @@
       "layer": "standard-library",
       "surface": "JubjubSchnorrSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries JubjubPoint announcement and Native response. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries JubjubPoint announcement and Native response. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3789,7 +3789,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3798,7 +3801,7 @@
       "layer": "standard-library",
       "surface": "Secp256k1EcdsaSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries two Secp256k1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries two Secp256k1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3813,7 +3816,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3822,7 +3828,7 @@
       "layer": "standard-library",
       "surface": "Secp256r1EcdsaSignature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries two Secp256r1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries two Secp256r1 Scalar fields. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3837,7 +3843,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },
@@ -3846,7 +3855,7 @@
       "layer": "standard-library",
       "surface": "Ed25519Signature",
       "noctiumStatus": "subset",
-      "notes": "The Lean signature record carries a Curve25519 Point and Scalar. Its verifier call emits the same native relation as passing the typed components individually. Portable aggregate signature input and output remain unverified.",
+      "notes": "The Lean signature record carries a Curve25519 Point and Scalar. Its verifier call emits the same native relation as passing the typed components individually. The named Payload codec round-trips the checked record through the SDK witness plan and native return view. The focused case rejects a wrong signature identity, wrong curve field and changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3861,7 +3870,10 @@
       ],
       "observedEvidence": [
         "Noctium/Crypto/Signatures.lean",
-        "tests/SignatureChecks.lean"
+        "tests/SignatureChecks.lean",
+        "tests/SignaturePayloads.lean",
+        "tests/compact/SignaturePayloads.compact",
+        "runtime/tests/signature_helpers.rs"
       ],
       "equivalence": "unverified"
     },

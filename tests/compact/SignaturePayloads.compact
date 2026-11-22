@@ -1,0 +1,9 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit echo(schnorr: JubjubSchnorrSignature, k1: Secp256k1EcdsaSignature,
+                         r1: Secp256r1EcdsaSignature, ed: Ed25519Signature): [
+  JubjubSchnorrSignature, Secp256k1EcdsaSignature, Secp256r1EcdsaSignature, Ed25519Signature
+] {
+  return [schnorr, k1, r1, ed];
+}

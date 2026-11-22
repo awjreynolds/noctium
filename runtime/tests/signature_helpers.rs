@@ -1,9 +1,17 @@
 #![cfg(feature = "zkir-321")]
 
-use noctium_runtime::{Plan, check, create_state, field_decimal, prepare, zkir::IrSource};
+use noctium_runtime::{
+    Plan, check,
+    control::{InvocationTarget, Session},
+    create_state, field_decimal,
+    host::{self, Capability, Context, Limits},
+    prepare,
+    zkir::IrSource,
+};
 use num_bigint::BigUint;
 use serde_json::{Value as Json, json};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 use transient_crypto::curve::{EmbeddedFr, EmbeddedGroupAffine, Fr};
 use transient_crypto::hash::transient_hash;
 
@@ -207,6 +215,122 @@ fn returns(k: bool, p: bool, schnorr: bool) -> BTreeMap<String, Json> {
             bytes(&hex::decode("7e5f4552091a69125d5dfcb7b8c2659029395bdf").unwrap()),
         ),
     ])
+}
+
+fn signature_record(name: &str, fields: [(&str, Json); 2]) -> Json {
+    json!({
+        "kind": "struct",
+        "id": format!("Noctium.Crypto.{name}"),
+        "fields": fields.map(|(name, value)| json!({ "name": name, "value": value }))
+    })
+}
+
+#[test]
+#[ignore = "requires fresh SignaturePayloads artifacts in NOCTIUM_SIGNATURE_PAYLOADS_DIR"]
+fn portable_signature_records_roundtrip_and_reject_wrong_identity() -> anyhow::Result<()> {
+    let dir = PathBuf::from(std::env::var_os("NOCTIUM_SIGNATURE_PAYLOADS_DIR").unwrap());
+    let stem = "SignaturePayloads.echo";
+    let control: Json = serde_json::from_reader(fs::File::open(
+        dir.join(format!("{stem}.witness.control.json")),
+    )?)?;
+    let binding_text = control["binding"].as_str().expect("embedded binding");
+    let pin = hex::encode(Sha256::digest(binding_text.as_bytes()));
+    let binding: Json = serde_json::from_str(binding_text)?;
+    let values = inputs();
+    let signatures = BTreeMap::from([
+        (
+            "schnorr".into(),
+            signature_record(
+                "JubjubSchnorrSignature",
+                [
+                    ("announcement", values["jAnnouncement"].clone()),
+                    (
+                        "response",
+                        json!({"kind": "native", "value": values["jResponse"]}),
+                    ),
+                ],
+            ),
+        ),
+        (
+            "k1".into(),
+            signature_record(
+                "Secp256k1EcdsaSignature",
+                [("r", values["kR"].clone()), ("s", values["kS"].clone())],
+            ),
+        ),
+        (
+            "r1".into(),
+            signature_record(
+                "Secp256r1EcdsaSignature",
+                [("r", values["pR"].clone()), ("s", values["pS"].clone())],
+            ),
+        ),
+        (
+            "ed".into(),
+            signature_record(
+                "Ed25519Signature",
+                [("r", values["edR"].clone()), ("s", values["edS"].clone())],
+            ),
+        ),
+    ]);
+    let start = |inputs| {
+        Session::from_json_with_invocation_target(
+            control.clone(),
+            inputs,
+            Context {
+                protocol_version: 1,
+                namespace: "noctium".into(),
+                base_revision: "r0".into(),
+                attempt_id: "b".repeat(64),
+                operations: vec![],
+                providers: vec![],
+                commit_capability: "commit".into(),
+                limits: Limits::default(),
+                capabilities: vec![Capability {
+                    id: "commit".into(),
+                    namespace: "noctium".into(),
+                    key_prefix: "noctium/".into(),
+                    operations: vec![host::CAS.into()],
+                }],
+            },
+            Some(&pin),
+            Some(InvocationTarget {
+                contract_address: "a".repeat(64),
+                entrypoint: "echo".into(),
+            }),
+        )
+    };
+    let mut wrong_identity = signatures.clone();
+    wrong_identity.get_mut("k1").unwrap()["id"] = signatures["r1"]["id"].clone();
+    assert!(start(wrong_identity).is_err());
+    let mut wrong_curve = signatures.clone();
+    wrong_curve.get_mut("k1").unwrap()["fields"][0]["value"] = values["pR"].clone();
+    assert!(start(wrong_curve).is_err());
+
+    let mut session = start(signatures.clone())?;
+    assert_eq!(session.advance()?["status"], "completed");
+    let completion = session.private_completion(&binding["nativeRelation"])?;
+    let plan: Plan =
+        serde_json::from_reader(fs::File::open(dir.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(dir.join(format!("{stem}.zkir")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let mut execution = prepare(
+        &plan,
+        &serde_json::from_value(completion["inputs"].clone())?,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    let expected = signatures
+        .into_iter()
+        .map(|(name, value)| (format!("{name}Result"), value))
+        .collect();
+    assert_eq!(execution.returns_json(), expected);
+    let (commitment, randomness) = execution.preimage.communications_commitment.unwrap();
+    execution.preimage.communications_commitment = Some((commitment + Fr::from(1u64), randomness));
+    assert!(check(&execution, &circuit).is_err());
+    Ok(())
 }
 
 #[test]
