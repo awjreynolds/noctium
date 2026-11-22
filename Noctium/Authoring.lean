@@ -191,6 +191,8 @@ scoped syntax "witness" ident "(" nlexpr,* ")" : noctium_witness_statement
 scoped syntax "prove" nlexpr ("as" ident)? : noctium_witness_statement
 scoped syntax "stage" ident ":=" nlexpr : noctium_witness_statement
 scoped syntax "output" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
+scoped syntax "if" nlexpr "then" noctium_witness_statement*
+  ("else" noctium_witness_statement*)? "end" : noctium_witness_statement
 scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "end" :
   noctium_witness_statement
 scoped syntax "for" ident (":" nltype)? "in" nlexpr "do" noctium_witness_statement* "end" :
@@ -2469,7 +2471,10 @@ private partial def statementTerm : Statement → CommandElabM (TSyntax `term)
     throwError "readable witness source does not support ledger map reads"
   | .writeMap .. => throwError "readable witness source does not support ledger map writes"
   | .emitEvent .. => throwError "readable witness source does not support ledger events"
-  | .branch .. => throwError "readable witness source does not support branch statements yet"
+  | .branch condition yes no => do
+    let yes ← yes.toArray.mapM statementTerm
+    let no ← no.toArray.mapM statementTerm
+    `(Noctium.Helpers.Statement.branch $(← termTerm condition) [$yes,*] [$no,*])
   | .forRange index start stop body => do
     let body ← body.toArray.mapM statementTerm
     `(Noctium.Helpers.Statement.forRange $(stringTerm index) $(natTerm start) $(natTerm stop)
@@ -2866,6 +2871,35 @@ private partial def lowerReadableStatement (programName path : String)
       statements := body.statements ++ value.before ++ [.stage field.capability field.key ty (.at (← spanValue statement) value.term)]
       observation := {body.observation with
         privateStages := (body.observation.privateStages ++ [field.key]).eraseDups}}
+  | `(noctium_witness_statement| if $condition:nlexpr then $yes:noctium_witness_statement*
+      $[else $no:noctium_witness_statement*]? end) => do
+    let (conditionValue, body) ← body.lower programName path exprState condition
+    let conditionValue ← coerce condition conditionValue .bool
+    let body := body.observe conditionValue [condition]
+    let mut yesBody := {body with statements := [], logicalAliases := []}
+    for (child, ordinal) in yes.toList.zipIdx do
+      yesBody ← lowerReadableStatement programName s!"{path}.0.{ordinal}" exprState codecTerms yesBody child
+    let mut noBody := {yesBody with env := body.env, statements := [], logicalAliases := []}
+    for (child, ordinal) in (no.getD #[]).toList.zipIdx do
+      noBody ← lowerReadableStatement programName s!"{path}.1.{ordinal}" exprState codecTerms noBody child
+    let span ← spanValue statement
+    let arm : Lowered := {
+      type := .unit
+      term := .unit
+      before := [.branch (.at span conditionValue.term) yesBody.statements noBody.statements]
+      signatures := noBody.witnesses}
+    -- Keep the continuation outside the branch so subsequent effects lower once.
+    let (term, lowered) ← (lowerConditionalArm statement programName body.env arm).run {
+      exprState with
+      composites := noBody.composites
+      iterationProgram := noBody.helperProgram
+      iterationWitnesses := noBody.witnesses
+      iterationParameters := noBody.iterationParameters}
+    pure {noBody with
+      env := body.env
+      logicalAliases := body.logicalAliases
+      statements := body.statements ++ conditionValue.before ++ [.evaluate term]
+      helperProgram := lowered.iterationProgram}
   | `(noctium_witness_statement| for $index:ident in $start:num ..< $stop:num do
       $nested:noctium_witness_statement* end) => do
     let indexName := index.getId.toString
@@ -2964,7 +2998,7 @@ private partial def lowerReadableStatement (programName path : String)
       helperProgram := some compiledProgram
       requiresOutputViews := loop.requiresOutputViews
       iterationParameters := retainedParameters}
-  | _ => throwErrorAt statement "finite range bodies accept let, prove, witness, private read and stage, and nested for statements"
+  | _ => throwErrorAt statement "nested bodies accept let, prove, witness, private read and stage, if, and for statements"
 
 @[command_elab noctiumAuthoredWitnessCircuitCommand] unsafe def elabAuthoredWitnessCircuit : CommandElab := fun stx => do
   match stx with
