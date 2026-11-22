@@ -140,6 +140,21 @@ includes the composed mint. The caller was
 and the token was
 `7fa59ac1f5dd9bfa9e8bcf5f87dcdb6c0d5132da034e4afc732daa9845ea3be9`.
 
+The separate-owner replay runs a caller child and a callee child on the same
+development host. The callee prepares the private registration and mint
+witnesses. Each child keeps its call preimage and proves its slot against the
+same frozen draft. The coordinator receives public offers, expected public
+post-states and detached proofs. The test supplies both children an agreed
+synthetic opening outside the public exchange. Swapping the proof slots fails
+before submission.
+
+Block 61787
+(`c1b69eb69ff24419c05c3b2653bf5e97d5c53a304016a5cd3fc9944688f31ae1`)
+finalized this replay at extrinsic index 4, with Blake2b-256
+`38daa915e845fc792432196836efb3737c765d518f97271e8664234948192840`.
+Both finalized states match the proof owners' checked transitions. The reusable
+composition theorem and independent certification remain in [issue 105](https://github.com/awjreynolds/noctium/issues/105).
+
 For a fresh run, use the compiler commands above, generate each entrypoint's
 keys with the pinned native ZKIR tool, and assemble `caller-bundle`,
 `register-bundle` and `mint-bundle`. Set `NOCTIUM_CONFIDENTIAL_MINT_BUNDLES` to

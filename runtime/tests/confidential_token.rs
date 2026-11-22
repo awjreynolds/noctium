@@ -1136,20 +1136,23 @@ fn confidential_token_mint_binds_recipient_and_amount_across_calls() -> anyhow::
 
 #[cfg(feature = "localnet")]
 #[test]
-#[ignore = "uses the pinned confidential mint bundles and the isolated development wallet"]
+#[ignore = "uses the pinned mint bundles, isolated localnet and two proof-owner processes"]
 fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() -> anyhow::Result<()>
 {
     use base_crypto::time::Timestamp;
-    use futures::{executor::block_on, future::pending};
+    use futures::executor::block_on;
     use ledger::structure::ContractDeploy;
     use noctium_runtime::{
         artifacts::{self, Role, VerifiedBundle},
-        assembly::{CheckedNativeCall, NativeIntent, assemble_checked_calls},
+        assembly::{CheckedNativeCall, CompositionOffer, NativeIntent},
         client::{BoundTransaction, ChainAdapter, NetworkPolicy, Submission},
         create_state,
         funding::{CONTRACT_SEGMENT, FeePolicy, UnsealedTransaction},
         localnet::{DevelopmentFunding, ExplicitSeal, Node, ProofCache},
-        proof::{CompositionMaterial, PreparedComposition, TrustedParameters},
+        proof::{
+            CompositionDraft, CompositionMaterial, Error as CompositionError,
+            IndependentComposition, TrustedParameters,
+        },
         zkir::IrSource,
     };
     use onchain_runtime::{
@@ -1160,13 +1163,21 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
     use serialize::tagged_deserialize;
     use std::{
         env, fs,
+        io::{BufRead, BufReader, Write},
         path::Path,
+        process::{Child, ChildStdin, ChildStdout, Command, Stdio},
         time::{Duration, Instant},
     };
     use transient_crypto::{
         curve::Fr,
         proofs::{VerifierKey, Zkir},
     };
+
+    const OWNER_ROLE: &str = "NOCTIUM_CONFIDENTIAL_MINT_OWNER_ROLE";
+    // Shared at owner startup only, outside the public offer, draft and proof frames.
+    const OWNER_OPENING_FIXTURE: &str = "NOCTIUM_CONFIDENTIAL_MINT_OPENING_FIXTURE";
+    const OWNER_REPLY: &str = "NOCTIUM_CONFIDENTIAL_MINT_OWNER ";
+    const TEST_OPENING: &str = "113";
 
     struct Material {
         bundle: VerifiedBundle,
@@ -1236,20 +1247,111 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
         Ok(state)
     }
 
-    fn assert_exact_state_transition(
+    fn expected_contract_state(
         initial: &ContractState<Db>,
-        receipt_bytes: &[u8],
         expected_data: &ChargedState<Db>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<u8>> {
         let mut expected = initial.clone();
         expected.data = expected_data.clone();
-        let mut expected_bytes = Vec::new();
-        serialize::tagged_serialize(&expected, &mut expected_bytes)?;
-        anyhow::ensure!(
-            expected_bytes == receipt_bytes,
-            "finalized contract state differs from the checked full-state transition"
-        );
+        let mut bytes = Vec::new();
+        serialize::tagged_serialize(&expected, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn receive_owner_message(reader: &mut impl BufRead) -> anyhow::Result<Json> {
+        loop {
+            let mut line = String::new();
+            anyhow::ensure!(
+                reader.read_line(&mut line)? != 0,
+                "confidential-mint proof owner stopped before replying"
+            );
+            anyhow::ensure!(line.len() <= 34 * 1024 * 1024, "owner frame exceeds limit");
+            if let Some((_, message)) = line.split_once(OWNER_REPLY) {
+                return Ok(serde_json::from_str(message)?);
+            }
+        }
+    }
+
+    fn send_owner_message(writer: &mut impl Write, message: &Json) -> anyhow::Result<()> {
+        writeln!(writer, "{OWNER_REPLY}{message}")?;
+        writer.flush()?;
         Ok(())
+    }
+
+    fn owner_payload(message: &Json, field: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(hex::decode(message[field].as_str().ok_or_else(|| {
+            anyhow::anyhow!("owner omitted {field}")
+        })?)?)
+    }
+
+    fn owner_address(
+        message: &Json,
+        field: &str,
+    ) -> anyhow::Result<coin_structure::contract::ContractAddress> {
+        let bytes: [u8; 32] = owner_payload(message, field)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("owner address has the wrong length"))?;
+        Ok(coin_structure::contract::ContractAddress(
+            base_crypto::hash::HashOutput(bytes),
+        ))
+    }
+
+    struct OwnerProcess {
+        child: Child,
+        input: ChildStdin,
+        output: BufReader<ChildStdout>,
+    }
+
+    impl OwnerProcess {
+        fn spawn(role: &str) -> anyhow::Result<Self> {
+            let mut child = Command::new(env::current_exe()?)
+                .args([
+                    "--exact",
+                    "confidential_token_funded_mint_finalizes_registered_key_and_checked_pair",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(OWNER_ROLE, role)
+                .env(OWNER_OPENING_FIXTURE, TEST_OPENING)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            Ok(Self {
+                input: child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| anyhow::anyhow!("owner stdin unavailable"))?,
+                output: BufReader::new(
+                    child
+                        .stdout
+                        .take()
+                        .ok_or_else(|| anyhow::anyhow!("owner stdout unavailable"))?,
+                ),
+                child,
+            })
+        }
+
+        fn send(&mut self, message: &Json) -> anyhow::Result<()> {
+            send_owner_message(&mut self.input, message)
+        }
+
+        fn receive(&mut self) -> anyhow::Result<Json> {
+            receive_owner_message(&mut self.output)
+        }
+
+        fn finish(&mut self) -> anyhow::Result<()> {
+            anyhow::ensure!(self.child.wait()?.success(), "proof owner process failed");
+            Ok(())
+        }
+    }
+
+    impl Drop for OwnerProcess {
+        fn drop(&mut self) {
+            if self.child.try_wait().ok().flatten().is_none() {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+        }
     }
 
     async fn prove_deployment(
@@ -1322,7 +1424,372 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
         }
     }
 
+    async fn owner_worker() -> anyhow::Result<()> {
+        use transient_crypto::curve::EmbeddedGroupAffine;
+
+        let role = env::var(OWNER_ROLE)?;
+        let bundles_root = Path::new(&env::var("NOCTIUM_CONFIDENTIAL_MINT_BUNDLES")?).to_path_buf();
+        let srs_dir = Path::new(&env::var("NOCTIUM_CONFIDENTIAL_MINT_SRS")?).to_path_buf();
+        let endpoint = env::var("NOCTIUM_CONFIDENTIAL_MINT_NODE")?;
+        anyhow::ensure!(
+            endpoint == "http://127.0.0.1:19944",
+            "proof owner only permits the isolated development localnet"
+        );
+        let opening = Fr::from(env::var(OWNER_OPENING_FIXTURE)?.parse::<u64>()?);
+        let policy = NetworkPolicy {
+            network_id: "undeployed".into(),
+            genesis: "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d".into(),
+            spec_version: 2_001_100,
+            transaction_version: 4,
+            profile: noctium_runtime::profile::NAME.into(),
+            max_dust: 10u128.pow(22),
+        };
+        let node = Node::connect(
+            &endpoint,
+            policy,
+            Duration::from_secs(30),
+            64 * 1024 * 1024,
+            100_000,
+        )?;
+        let mut input = BufReader::new(std::io::stdin());
+        let mut output = std::io::stdout();
+
+        match role.as_str() {
+            "caller" => {
+                let caller = load_material(&bundles_root, &srs_dir, "caller")?;
+                anyhow::ensure!(
+                    caller.control.is_none(),
+                    "caller must use an ordinary circuit"
+                );
+                anyhow::ensure!(
+                    caller.plan.entrypoint == "claimMint",
+                    "unexpected caller entrypoint"
+                );
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(request["kind"] == "mint", "caller expected mint request");
+                let address = owner_address(&request, "address")?;
+                let recipient: [u8; 32] = hex::decode(
+                    request["recipient"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("caller request omitted recipient"))?,
+                )?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("caller recipient has the wrong length"))?;
+                let amount = 12u64;
+                let ttl = request["ttl"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("caller request omitted TTL"))?;
+                let snapshot = node.sync()?;
+                let initial = snapshot
+                    .state
+                    .contract
+                    .get(&address)
+                    .ok_or_else(|| anyhow::anyhow!("caller contract missing from owner snapshot"))?
+                    .clone();
+                let execution = prepare(
+                    &caller.plan,
+                    &BTreeMap::from([
+                        ("opening".into(), json!(field_decimal(opening))),
+                        ("recipient".into(), bytes(&recipient)),
+                        ("value".into(), json!(amount.to_string())),
+                    ]),
+                    &initial.data,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                check(&execution, &caller.circuit)?;
+                anyhow::ensure!(
+                    state_cell(&caller.plan, &execution.after.state, "issuanceCount")
+                        == &AlignedValue::from(1u64),
+                    "caller source transition did not increment issuanceCount"
+                );
+                let call = CheckedNativeCall {
+                    execution: &execution,
+                    circuit: &caller.circuit,
+                    initial_context: QueryContext::new(initial.data.clone(), address),
+                    entry_point: EntryPointBuf(b"claimMint".to_vec()),
+                    communication_commitment_rand: Fr::from(53u64),
+                };
+                let offer = call.composition_offer(&snapshot.state.parameters)?;
+                let expected_state = expected_contract_state(&initial, &execution.after.state)?;
+                send_owner_message(
+                    &mut output,
+                    &json!({
+                        "kind":"offer",
+                        "offer":hex::encode(offer.public_bytes()?),
+                        "expectedState":hex::encode(expected_state),
+                    }),
+                )?;
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(
+                    request["kind"] == "draft",
+                    "caller expected composition draft"
+                );
+                let draft = CompositionDraft::from_public_bytes(
+                    &owner_payload(&request, "draft")?,
+                    &snapshot.state,
+                )?;
+                anyhow::ensure!(draft.ttl() == ttl, "caller draft TTL changed");
+                let proof = draft
+                    .prove_call(
+                        0,
+                        &call,
+                        &snapshot.state,
+                        &CompositionMaterial {
+                            bundle: &caller.bundle,
+                            parameters: &caller.parameters,
+                        },
+                        rand::rngs::OsRng,
+                    )
+                    .await?;
+                send_owner_message(
+                    &mut output,
+                    &json!({"kind":"proof", "proof":hex::encode(proof)}),
+                )?;
+            }
+            "callee" => {
+                let register = load_material(&bundles_root, &srs_dir, "register")?;
+                let mint = load_material(&bundles_root, &srs_dir, "mint")?;
+                anyhow::ensure!(
+                    register.plan.entrypoint == "registerWithKey" && mint.plan.entrypoint == "mint",
+                    "unexpected callee entrypoint"
+                );
+                let account_secret = [17; 32];
+                let encryption_secret = [7; 32];
+                let recipient = account_id(&account_secret);
+                let recipient_key =
+                    EmbeddedGroupAffine::generator() * encryption_scalar(&encryption_secret);
+                let seed = [0x31; 32];
+
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(
+                    request["kind"] == "register",
+                    "callee expected registration setup"
+                );
+                let address = owner_address(&request, "address")?;
+                let ttl = request["ttl"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("registration request omitted TTL"))?;
+                let snapshot = node.sync()?;
+                let initial = snapshot
+                    .state
+                    .contract
+                    .get(&address)
+                    .ok_or_else(|| anyhow::anyhow!("token contract missing from owner snapshot"))?
+                    .clone();
+                let registration_inputs = collect_native_inputs(
+                    "registerWithKey",
+                    register.control.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("registration bundle has no witness control")
+                    })?,
+                    BTreeMap::from([
+                        ("accountId".into(), bytes(&recipient)),
+                        ("pk".into(), point_json(recipient_key)),
+                    ]),
+                    &account_secret,
+                    &encryption_secret,
+                    &[],
+                    None,
+                    1,
+                );
+                let execution = prepare(
+                    &register.plan,
+                    &registration_inputs,
+                    &initial.data,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                check(&execution, &register.circuit)?;
+                assert_record(
+                    &register.plan,
+                    &execution.after.state,
+                    "encryptionKeys",
+                    &recipient,
+                    &coordinates(recipient_key),
+                );
+                let call = CheckedNativeCall {
+                    execution: &execution,
+                    circuit: &register.circuit,
+                    initial_context: QueryContext::new(initial.data.clone(), address),
+                    entry_point: EntryPointBuf(b"registerWithKey".to_vec()),
+                    communication_commitment_rand: Fr::from(41u64),
+                };
+                let offer = call.composition_offer(&snapshot.state.parameters)?;
+                let expected_state = expected_contract_state(&initial, &execution.after.state)?;
+                send_owner_message(
+                    &mut output,
+                    &json!({
+                        "kind":"registration-offer",
+                        "offer":hex::encode(offer.public_bytes()?),
+                        "recipient":hex::encode(recipient),
+                        "recipientKey":point_json(recipient_key),
+                        "expectedState":hex::encode(expected_state),
+                    }),
+                )?;
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(
+                    request["kind"] == "draft",
+                    "callee expected registration draft"
+                );
+                let draft = CompositionDraft::from_public_bytes(
+                    &owner_payload(&request, "draft")?,
+                    &snapshot.state,
+                )?;
+                anyhow::ensure!(draft.ttl() == ttl, "registration draft TTL changed");
+                let proof = draft
+                    .prove_call(
+                        0,
+                        &call,
+                        &snapshot.state,
+                        &CompositionMaterial {
+                            bundle: &register.bundle,
+                            parameters: &register.parameters,
+                        },
+                        rand::rngs::OsRng,
+                    )
+                    .await?;
+                send_owner_message(
+                    &mut output,
+                    &json!({"kind":"registration-proof", "proof":hex::encode(proof)}),
+                )?;
+
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(request["kind"] == "mint", "callee expected mint request");
+                anyhow::ensure!(
+                    request["recipient"] == hex::encode(recipient),
+                    "callee mint request changed the registered recipient"
+                );
+                let amount = 12u64;
+                let mint_ttl = request["ttl"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("mint request omitted TTL"))?;
+                let snapshot = node.sync()?;
+                let initial = snapshot
+                    .state
+                    .contract
+                    .get(&address)
+                    .ok_or_else(|| anyhow::anyhow!("registered token missing from owner snapshot"))?
+                    .clone();
+                let mut mint_values = BTreeMap::from([
+                    ("recipient".into(), bytes(&recipient)),
+                    ("value".into(), json!(amount.to_string())),
+                    ("recipientPk".into(), point_json(recipient_key)),
+                    ("epoch".into(), json!("1")),
+                ]);
+                for (name, field) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
+                    .into_iter()
+                    .zip(map_record(&mint.plan, &initial.data, "pending", &recipient))
+                {
+                    mint_values.insert(name.into(), json!(field_decimal(field)));
+                }
+                let mint_inputs = collect_native_inputs(
+                    "mint",
+                    mint.control
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("mint bundle has no witness control"))?,
+                    mint_values,
+                    &account_secret,
+                    &encryption_secret,
+                    &[seed],
+                    None,
+                    3,
+                );
+                let execution = prepare(
+                    &mint.plan,
+                    &mint_inputs,
+                    &initial.data,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                check(&execution, &mint.circuit)?;
+                anyhow::ensure!(
+                    state_cell(&mint.plan, &execution.after.state, "totalSupply")
+                        == &field_value(Fr::from(amount)),
+                    "mint did not update totalSupply"
+                );
+                anyhow::ensure!(
+                    map_record(
+                        &mint.plan,
+                        &execution.after.state,
+                        "creditEpochs",
+                        &recipient
+                    ) == vec![Fr::from(1u64)],
+                    "mint did not set recipient credit epoch"
+                );
+                let (pending_ciphertext, memo) =
+                    expected_credit(&seed, &recipient, recipient_key, 1, amount);
+                assert_ciphertext(
+                    &mint.plan,
+                    &execution.after.state,
+                    "pending",
+                    &recipient,
+                    pending_ciphertext,
+                );
+                anyhow::ensure!(
+                    memo_records(&mint.plan, &execution.after.state, &recipient)
+                        == (
+                            1,
+                            vec![vec![
+                                memo.ephemeral.x().unwrap(),
+                                memo.ephemeral.y().unwrap(),
+                                memo.amount,
+                            ]],
+                        ),
+                    "mint did not store the expected memo"
+                );
+                let call = CheckedNativeCall {
+                    execution: &execution,
+                    circuit: &mint.circuit,
+                    initial_context: QueryContext::new(initial.data.clone(), address),
+                    entry_point: EntryPointBuf(b"mint".to_vec()),
+                    communication_commitment_rand: opening,
+                };
+                let offer = call.composition_offer(&snapshot.state.parameters)?;
+                let expected_state = expected_contract_state(&initial, &execution.after.state)?;
+                send_owner_message(
+                    &mut output,
+                    &json!({
+                        "kind":"offer",
+                        "offer":hex::encode(offer.public_bytes()?),
+                        "expectedState":hex::encode(expected_state),
+                    }),
+                )?;
+                let request = receive_owner_message(&mut input)?;
+                anyhow::ensure!(
+                    request["kind"] == "draft",
+                    "callee expected composition draft"
+                );
+                let draft = CompositionDraft::from_public_bytes(
+                    &owner_payload(&request, "draft")?,
+                    &snapshot.state,
+                )?;
+                anyhow::ensure!(draft.ttl() == mint_ttl, "mint draft TTL changed");
+                let proof = draft
+                    .prove_call(
+                        1,
+                        &call,
+                        &snapshot.state,
+                        &CompositionMaterial {
+                            bundle: &mint.bundle,
+                            parameters: &mint.parameters,
+                        },
+                        rand::rngs::OsRng,
+                    )
+                    .await?;
+                send_owner_message(
+                    &mut output,
+                    &json!({"kind":"proof", "proof":hex::encode(proof)}),
+                )?;
+            }
+            other => anyhow::bail!("unknown confidential-mint owner role {other}"),
+        }
+        Ok(())
+    }
+
     block_on(async {
+        if env::var_os(OWNER_ROLE).is_some() {
+            return owner_worker().await;
+        }
         let setting = |name: &str| env::var(name).map_err(anyhow::Error::from);
         let endpoint = setting("NOCTIUM_CONFIDENTIAL_MINT_NODE")?;
         anyhow::ensure!(
@@ -1420,69 +1887,55 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
             "minter deployment finalized with an unexpected initial state"
         );
 
-        let account_secret = [17; 32];
-        let encryption_secret = [7; 32];
-        let recipient = account_id(&account_secret);
-        let recipient_key =
-            EmbeddedGroupAffine::generator() * encryption_scalar(&encryption_secret);
-
+        let mut callee_owner = OwnerProcess::spawn("callee")?;
         let registration_snapshot = node.sync()?;
-        let registration_contract_state = registration_snapshot
-            .state
-            .contract
-            .get(&callee)
-            .ok_or_else(|| anyhow::anyhow!("deployed token contract is absent from snapshot"))?
-            .clone();
-        let registration_state = registration_contract_state.data.clone();
-        let registration_inputs = collect_native_inputs(
-            "registerWithKey",
-            register
-                .control
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("register bundle has no witness control"))?,
-            BTreeMap::from([
-                ("accountId".into(), bytes(&recipient)),
-                ("pk".into(), point_json(recipient_key)),
-            ]),
-            &account_secret,
-            &encryption_secret,
-            &[],
-            None,
-            1,
+        let registration_ttl = registration_snapshot.block.tblock.to_secs() + 1800;
+        callee_owner.send(&json!({
+            "kind":"register",
+            "address":hex::encode(callee.0.0),
+            "ttl":registration_ttl,
+        }))?;
+        let registration_message = callee_owner.receive()?;
+        anyhow::ensure!(
+            registration_message["kind"] == "registration-offer",
+            "callee owner returned no registration offer"
         );
-        let registration_execution = prepare(
-            &register.plan,
-            &registration_inputs,
-            &registration_state,
-            &registration_snapshot.state.parameters,
-            callee,
-        )?;
-        check(&registration_execution, &register.circuit)?;
-        let registration_call = CheckedNativeCall {
-            execution: &registration_execution,
-            circuit: &register.circuit,
-            initial_context: QueryContext::new(registration_state, callee),
-            entry_point: EntryPointBuf(b"registerWithKey".to_vec()),
-            communication_commitment_rand: Fr::from(41u64),
-        };
-        let registration_intent = assemble_checked_calls(
-            &[registration_call],
-            &registration_snapshot.state.parameters,
-            registration_snapshot.block.tblock.to_secs() + 1800,
-            &mut StdRng::from_entropy(),
-        )?;
+        let recipient: [u8; 32] = hex::decode(
+            registration_message["recipient"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("registration offer omitted recipient"))?,
+        )?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("registration recipient has the wrong length"))?;
+        let registration_expected_state = owner_payload(&registration_message, "expectedState")?;
+        let registration_offer =
+            CompositionOffer::from_public_bytes(&owner_payload(&registration_message, "offer")?)?;
         let registration_material = [CompositionMaterial {
             bundle: &register.bundle,
             parameters: &register.parameters,
         }];
-        let registration_prepared = PreparedComposition::from_intent(
-            registration_intent,
+        let registration_coordinator = IndependentComposition::freeze(
+            &[registration_offer],
+            &registration_snapshot.state,
+            registration_ttl,
+            &mut StdRng::from_entropy(),
+        )?;
+        let registration_draft = registration_coordinator.draft().public_bytes()?;
+        callee_owner.send(&json!({
+            "kind":"draft",
+            "draft":hex::encode(registration_draft),
+        }))?;
+        let registration_proof_message = callee_owner.receive()?;
+        anyhow::ensure!(
+            registration_proof_message["kind"] == "registration-proof",
+            "callee owner returned no registration proof"
+        );
+        let registration_proof = owner_payload(&registration_proof_message, "proof")?;
+        let registration_proved = registration_coordinator.attach(
+            &[registration_proof],
             &registration_snapshot.state,
             &registration_material,
         )?;
-        let registration_proved = registration_prepared
-            .prove_locally(StdRng::from_entropy(), pending())
-            .await?;
         let registration_receipt = finalize(
             &node,
             &policy,
@@ -1496,145 +1949,84 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
             "registration finalized at another contract address"
         );
         let registration_final = contract_state(&registration_receipt.contract_state)?;
-        assert_exact_state_transition(
-            &registration_contract_state,
-            &registration_receipt.contract_state,
-            &registration_execution.after.state,
-        )?;
-        assert_record(
+        anyhow::ensure!(
+            registration_expected_state == registration_receipt.contract_state,
+            "registered key state differs from the callee owner's checked transition"
+        );
+        let actual_key = map_record(
             &register.plan,
             &registration_final.data,
             "encryptionKeys",
             &recipient,
-            &coordinates(recipient_key),
+        );
+        anyhow::ensure!(
+            actual_key.len() == 2,
+            "registered encryption key has the wrong shape"
+        );
+        anyhow::ensure!(
+            point_json_from_coordinates([actual_key[0], actual_key[1]])
+                == registration_message["recipientKey"],
+            "registered key differs from the callee owner's public key"
         );
 
         let amount = 12u64;
-        let opening = Fr::from(113u64);
-        let seed = [0x31; 32];
+        let mut caller_owner = OwnerProcess::spawn("caller")?;
+        anyhow::ensure!(
+            caller_owner.child.id() != callee_owner.child.id(),
+            "caller and callee proofs must come from distinct processes"
+        );
         let snapshot = node.sync()?;
-        let caller_contract_initial = snapshot
-            .state
-            .contract
-            .get(&caller_address)
-            .ok_or_else(|| anyhow::anyhow!("deployed minter contract is absent from snapshot"))?
-            .clone();
-        let mint_contract_initial = snapshot
-            .state
-            .contract
-            .get(&callee)
-            .ok_or_else(|| anyhow::anyhow!("registered token contract is absent from snapshot"))?
-            .clone();
-        let caller_state = caller_contract_initial.data.clone();
-        let mint_state = mint_contract_initial.data.clone();
-        let caller_native_inputs = BTreeMap::from([
-            ("opening".into(), json!(field_decimal(opening))),
-            ("recipient".into(), bytes(&recipient)),
-            ("value".into(), json!(amount.to_string())),
-        ]);
-        let caller_execution = prepare(
-            &caller.plan,
-            &caller_native_inputs,
-            &caller_state,
-            &snapshot.state.parameters,
-            caller_address,
-        )?;
-        check(&caller_execution, &caller.circuit)?;
+        let mint_ttl = snapshot.block.tblock.to_secs() + 1800;
+        caller_owner.send(&json!({
+            "kind":"mint",
+            "address":hex::encode(caller_address.0.0),
+            "recipient":hex::encode(recipient),
+            "ttl":mint_ttl,
+        }))?;
+        callee_owner.send(&json!({
+            "kind":"mint",
+            "recipient":hex::encode(recipient),
+            "ttl":mint_ttl,
+        }))?;
+        let caller_message = caller_owner.receive()?;
+        let mint_message = callee_owner.receive()?;
         anyhow::ensure!(
-            state_cell(&caller.plan, &caller_execution.after.state, "issuanceCount")
-                == &AlignedValue::from(1u64),
-            "TokenMinter did not increment issuanceCount"
+            caller_message["kind"] == "offer",
+            "caller owner returned no offer"
         );
-
-        let mut mint_values = BTreeMap::from([
-            ("recipient".into(), bytes(&recipient)),
-            ("value".into(), json!(amount.to_string())),
-            ("recipientPk".into(), point_json(recipient_key)),
-            ("epoch".into(), json!("1")),
-        ]);
-        for (name, field) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
-            .into_iter()
-            .zip(map_record(&mint.plan, &mint_state, "pending", &recipient))
-        {
-            mint_values.insert(name.into(), json!(field_decimal(field)));
-        }
-        let mint_native_inputs = collect_native_inputs(
-            "mint",
-            mint.control
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("mint bundle has no witness control"))?,
-            mint_values,
-            &account_secret,
-            &encryption_secret,
-            &[seed],
-            None,
-            3,
-        );
-        let mint_execution = prepare(
-            &mint.plan,
-            &mint_native_inputs,
-            &mint_state,
-            &snapshot.state.parameters,
-            callee,
-        )?;
-        check(&mint_execution, &mint.circuit)?;
         anyhow::ensure!(
-            state_cell(&mint.plan, &mint_execution.after.state, "totalSupply")
-                == &field_value(Fr::from(amount)),
-            "mint did not update totalSupply"
+            mint_message["kind"] == "offer",
+            "callee owner returned no offer"
         );
-        assert_eq!(
-            map_record(
-                &mint.plan,
-                &mint_execution.after.state,
-                "creditEpochs",
-                &recipient
-            ),
-            vec![Fr::from(1u64)]
-        );
-        let (pending_ciphertext, memo) =
-            expected_credit(&seed, &recipient, recipient_key, 1, amount);
-        assert_ciphertext(
-            &mint.plan,
-            &mint_execution.after.state,
-            "pending",
-            &recipient,
-            pending_ciphertext,
-        );
-        assert_eq!(
-            memo_records(&mint.plan, &mint_execution.after.state, &recipient),
-            (
-                1,
-                vec![vec![
-                    memo.ephemeral.x().unwrap(),
-                    memo.ephemeral.y().unwrap(),
-                    memo.amount
-                ]]
-            )
-        );
-
-        let calls = [
-            CheckedNativeCall {
-                execution: &caller_execution,
-                circuit: &caller.circuit,
-                initial_context: QueryContext::new(caller_state, caller_address),
-                entry_point: EntryPointBuf(b"claimMint".to_vec()),
-                communication_commitment_rand: Fr::from(53u64),
-            },
-            CheckedNativeCall {
-                execution: &mint_execution,
-                circuit: &mint.circuit,
-                initial_context: QueryContext::new(mint_state, callee),
-                entry_point: EntryPointBuf(b"mint".to_vec()),
-                communication_commitment_rand: opening,
-            },
-        ];
-        let intent = assemble_checked_calls(
-            &calls,
-            &snapshot.state.parameters,
-            snapshot.block.tblock.to_secs() + 1800,
+        let caller_expected_state = owner_payload(&caller_message, "expectedState")?;
+        let mint_expected_state = owner_payload(&mint_message, "expectedState")?;
+        let caller_offer =
+            CompositionOffer::from_public_bytes(&owner_payload(&caller_message, "offer")?)?;
+        let mint_offer =
+            CompositionOffer::from_public_bytes(&owner_payload(&mint_message, "offer")?)?;
+        let offers = [caller_offer, mint_offer];
+        let coordinator = IndependentComposition::freeze(
+            &offers,
+            &snapshot.state,
+            mint_ttl,
             &mut StdRng::from_entropy(),
         )?;
+        let draft = coordinator.draft().public_bytes()?;
+        let draft_request = json!({"kind":"draft", "draft":hex::encode(draft)});
+        caller_owner.send(&draft_request)?;
+        callee_owner.send(&draft_request)?;
+        let caller_proof_message = caller_owner.receive()?;
+        let mint_proof_message = callee_owner.receive()?;
+        anyhow::ensure!(
+            caller_proof_message["kind"] == "proof",
+            "caller owner returned no proof"
+        );
+        anyhow::ensure!(
+            mint_proof_message["kind"] == "proof",
+            "callee owner returned no proof"
+        );
+        let caller_proof = owner_payload(&caller_proof_message, "proof")?;
+        let mint_proof = owner_payload(&mint_proof_message, "proof")?;
         let materials = [
             CompositionMaterial {
                 bundle: &caller.bundle,
@@ -1645,10 +2037,21 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
                 parameters: &mint.parameters,
             },
         ];
-        let prepared = PreparedComposition::from_intent(intent, &snapshot.state, &materials)?;
-        let proved = prepared
-            .prove_locally(StdRng::from_entropy(), pending())
-            .await?;
+        anyhow::ensure!(
+            matches!(
+                coordinator.attach(
+                    &[mint_proof.clone(), caller_proof.clone()],
+                    &snapshot.state,
+                    &materials,
+                ),
+                Err(CompositionError::InvalidProof)
+            ),
+            "crossed caller and mint proof slots were accepted"
+        );
+        let proved =
+            coordinator.attach(&[caller_proof, mint_proof], &snapshot.state, &materials)?;
+        caller_owner.finish()?;
+        callee_owner.finish()?;
         let receipt = finalize(&node, &policy, &dust, &dust_parameters, proved.native()).await?;
         anyhow::ensure!(
             receipt.contract_address == hex::encode(caller_address.0.0),
@@ -1663,11 +2066,10 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
             "checked pair receipt has unexpected secondary states"
         );
         let finalized_caller = contract_state(&receipt.contract_state)?;
-        assert_exact_state_transition(
-            &caller_contract_initial,
-            &receipt.contract_state,
-            &caller_execution.after.state,
-        )?;
+        anyhow::ensure!(
+            caller_expected_state == receipt.contract_state,
+            "finalized caller state differs from its owner's checked transition"
+        );
         anyhow::ensure!(
             state_cell(&caller.plan, &finalized_caller.data, "issuanceCount")
                 == &AlignedValue::from(1u64),
@@ -1679,22 +2081,14 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
             .get(&callee_key)
             .ok_or_else(|| anyhow::anyhow!("checked pair receipt omitted the token post-state"))?;
         let finalized_callee = contract_state(callee_bytes)?;
-        assert_exact_state_transition(
-            &mint_contract_initial,
-            callee_bytes,
-            &mint_execution.after.state,
-        )?;
+        anyhow::ensure!(
+            mint_expected_state == *callee_bytes,
+            "finalized token state differs from its owner's checked transition"
+        );
         anyhow::ensure!(
             state_cell(&mint.plan, &finalized_callee.data, "totalSupply")
                 == &field_value(Fr::from(amount)),
             "finalized token state has the wrong totalSupply"
-        );
-        assert_ciphertext(
-            &mint.plan,
-            &finalized_callee.data,
-            "pending",
-            &recipient,
-            pending_ciphertext,
         );
         assert_eq!(
             map_record(
@@ -1705,16 +2099,9 @@ fn confidential_token_funded_mint_finalizes_registered_key_and_checked_pair() ->
             ),
             vec![Fr::from(1u64)]
         );
-        assert_eq!(
-            memo_records(&mint.plan, &finalized_callee.data, &recipient),
-            (
-                1,
-                vec![vec![
-                    memo.ephemeral.x().unwrap(),
-                    memo.ephemeral.y().unwrap(),
-                    memo.amount
-                ]]
-            )
+        anyhow::ensure!(
+            memo_records(&mint.plan, &finalized_callee.data, &recipient).0 == 1,
+            "finalized token state has the wrong memo count"
         );
 
         eprintln!(
