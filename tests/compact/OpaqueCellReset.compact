@@ -1,0 +1,18 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger text: Opaque<"string">;
+export ledger bytes: Opaque<"Uint8Array">;
+
+export circuit seed(nextText: Opaque<"string">, nextBytes: Opaque<"Uint8Array">): [] {
+  text = disclose(nextText);
+  bytes = disclose(nextBytes);
+}
+
+export circuit clear(enabled: Boolean): [Opaque<"string">, Opaque<"Uint8Array">] {
+  if (disclose(enabled)) {
+    text.resetToDefault();
+    bytes.resetToDefault();
+  }
+  return [text, bytes];
+}

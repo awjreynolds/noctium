@@ -1471,7 +1471,8 @@ private def merkleTreeResetHistoryAtOp (state : List StateDecl) (name : String)
 
 mutual
 private def expressionNames : Expr ty → List String
-  | .native _ | .bool _ | .uint _ _ | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ => []
+  | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty
+  | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ => []
   | .opaqueBytesProjection value => expressionNames value
   | .opaqueStringProjection value => expressionNames value
   | .foreignEncodedField value _ | .foreignUnary _ value | .foreignToBytes value

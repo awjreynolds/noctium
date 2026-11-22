@@ -8,8 +8,8 @@ def zeroValue : (ty : Ty) → Expr ty
   | .uint maximum => .uint maximum 0
   | .bytes 32 => .bytes32Literal (List.replicate 32 0)
   | .bytes length => .bytesLiteral length (List.replicate length 0)
-  | .opaqueBytes => .ref "_noctium_unsupported_opaque_default"
-  | .opaqueString => .ref "_noctium_unsupported_string_default"
+  | .opaqueBytes => .opaqueBytesEmpty
+  | .opaqueString => .opaqueStringEmpty
   | .jubjubScalar => .jubjubScalarFromNative (.native 0)
   | .jubjubPoint => .jubjubFromCoordinates (.native 0) (.native 1)
   | .foreign (.base curve) => .foreignBase curve 0
@@ -88,6 +88,8 @@ def totalize (guard : Expr .bool) : Expr ty → Expr ty
   | .bytesAt value index => .bytesAt (totalize guard value) index
   | .opaqueBytesProjection value => .opaqueBytesProjection (totalize guard value)
   | .opaqueStringProjection value => .opaqueStringProjection (totalize guard value)
+  | .opaqueBytesEmpty => .opaqueBytesEmpty
+  | .opaqueStringEmpty => .opaqueStringEmpty
   | .sha256 value => .sha256 (totalize guard value)
   | .sha512 value => .sha512 (totalize guard value)
   | .keccak256 value => .keccak256 (totalize guard value)

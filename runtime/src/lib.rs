@@ -366,6 +366,11 @@ pub enum Expr {
     Bool {
         value: bool,
     },
+    #[serde(rename = "opaqueEmpty")]
+    OpaqueEmpty {
+        #[serde(rename = "type")]
+        ty: String,
+    },
     Uint {
         maximum: String,
         value: String,
@@ -958,6 +963,11 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             Value::Foreign(foreign::ForeignValue::from_bytes_reducing(ty, &bytes)?)
         }
         Expr::Bool { value } => Value::Bool(*value),
+        Expr::OpaqueEmpty { ty } => match ScalarType::parse(ty)? {
+            ScalarType::OpaqueBytes => Value::OpaqueBytes(Vec::new()),
+            ScalarType::OpaqueString => Value::OpaqueString(String::new()),
+            _ => bail!("opaqueEmpty requires OpaqueBytes or OpaqueString"),
+        },
         Expr::Reference { name } => env
             .get(name)
             .cloned()

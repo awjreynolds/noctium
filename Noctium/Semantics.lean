@@ -608,15 +608,17 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
     unless bytes.length ≤ maxBytesLength && bytes.all (· ≤ 255) &&
         (bytes.isEmpty || bytes.getLast! != 0) do
       throw "opaque byte input is not in canonical Compress form"
-    let projected ← ctx.opaqueBytesCompress bytes
+    let projected ← if bytes.isEmpty then pure 0 else ctx.opaqueBytesCompress bytes
     if projected < ctx.modulus then pure projected
     else throw "FAB Compress oracle returned a noncanonical field"
+  | .opaqueBytesEmpty => pure []
+  | .opaqueStringEmpty => pure ""
   | .opaqueStringProjection value => do
     let text ← value.eval ctx env
     let bytes := text.toUTF8.data.toList.map UInt8.toNat
     unless bytes.length ≤ maxOpaqueStringBytes && (bytes.isEmpty || bytes.getLast! != 0) do
       throw "opaque string is not in canonical UTF-8 Compress form"
-    let projected ← ctx.opaqueBytesCompress bytes
+    let projected ← if bytes.isEmpty then pure 0 else ctx.opaqueBytesCompress bytes
     if projected < ctx.modulus then pure projected
     else throw "FAB Compress oracle returned a noncanonical field"
   | .bytes32Literal values =>

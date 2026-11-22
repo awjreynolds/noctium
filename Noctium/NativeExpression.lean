@@ -57,6 +57,10 @@ private def nativeExpressionJson : Expr ty → Json
       ("value", nativeExpressionJson value), ("index", toJson index)]
   | .opaqueBytesProjection value => nativeExpressionJson value
   | .opaqueStringProjection value => nativeExpressionJson value
+  | .opaqueBytesEmpty => Json.mkObj [
+      ("tag", toJson ("opaqueEmpty" : String)), ("type", toJson ("OpaqueBytes" : String))]
+  | .opaqueStringEmpty => Json.mkObj [
+      ("tag", toJson ("opaqueEmpty" : String)), ("type", toJson ("OpaqueString" : String))]
   | .bytesAt value index => Json.mkObj [("tag", toJson ("byteAt" : String)),
       ("value", nativeExpressionJson value), ("index", toJson index)]
   | .bytesLiteral length values => Json.mkObj [("tag", toJson ("bytesLiteral" : String)),

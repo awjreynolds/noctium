@@ -34,6 +34,19 @@ proof-bound reads finalized at 51210 and 51213 and preserved the full
 state bytes. The store circuit used K7 and 66 rows. Each read used K6
 and 34 rows. [Finalized receipts](opaque-cells-localnet-receipt.json)
 
+Use `when enabled reset text` or `when enabled reset bytes` to clear a
+mutable root Cell. The active write stores a canonical empty Compress atom.
+The inactive call preserves the existing value. The fixture reads both
+Cells in the same call and binds both opaque returns to the proof. Compact
+0.36.1 and the native checker agree on both guard outcomes.
+
+On Ledger 9.1.0.1, the inactive call at height 51583 preserved the seeded
+state bytes. The active call at 51586 restored the exact deployed empty
+state. The clear relation used K7 and 98 rows.
+[Lean fixture](../../tests/OpaqueCellReset.lean) ·
+[Compact oracle](../../tests/compact/opaque-cell-reset.mjs) ·
+[Finalized receipts](opaque-cell-reset-localnet-receipt.json)
+
 ```sh
 lake exe noctium compile tests/OpaqueByteMap.lean \
   --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \

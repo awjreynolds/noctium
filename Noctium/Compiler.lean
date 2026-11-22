@@ -24,6 +24,10 @@ private def expressionJson : Expr ty → Json
       ("value", expressionJson value), ("index", toJson index)])]
   | .opaqueBytesProjection value => expressionJson value
   | .opaqueStringProjection value => expressionJson value
+  | .opaqueBytesEmpty => Json.mkObj [
+      ("tag", toJson ("opaqueEmpty" : String)), ("type", toJson ("OpaqueBytes" : String))]
+  | .opaqueStringEmpty => Json.mkObj [
+      ("tag", toJson ("opaqueEmpty" : String)), ("type", toJson ("OpaqueString" : String))]
   | .bytesAt value index => Json.mkObj [("byteAt", Json.mkObj [
       ("value", expressionJson value), ("index", toJson index)])]
   | .bytesLiteral length values => Json.mkObj [("tag", toJson ("bytesLiteral" : String)),
