@@ -285,6 +285,7 @@ final class WitnessSessionTests: XCTestCase {
     }
 
     private func complete(_ session: WitnessSession, attemptID: String) throws {
+        var previousReply: Data?
         for (index, name) in ["cache", "cache", "lookup", "cache", "lookup"].enumerated() {
             let pending = try session.advance()
             let step = try decode(pending)
@@ -292,7 +293,8 @@ final class WitnessSessionTests: XCTestCase {
             let request = try XCTUnwrap(step["request"] as? [String: Any])
             XCTAssertEqual(request["name"] as? String, name)
             XCTAssertNil(request["invocationWrites"])
-            let privateRequest = try decode(session.privateRequest())
+            let privateRequestBytes = try session.privateRequest()
+            let privateRequest = try decode(privateRequestBytes)
             let writes = try XCTUnwrap(privateRequest["invocationWrites"] as? [String: [String: String]])
             XCTAssertEqual(writes["cache/last"]?["value"], "1")
 
@@ -302,14 +304,45 @@ final class WitnessSessionTests: XCTestCase {
             reply["outcome"] = "value"
             reply["value"] = name == "cache" ? "1" : "14"
             if index == 0 {
-                var crossed = reply
-                crossed["attemptId"] = String(repeating: "c", count: 64)
-                XCTAssertThrowsError(try session.resume(encode(crossed), typed: true)) {
-                    XCTAssertEqual($0 as? WitnessSession.Failure, .nativeStatus(4))
+                let requestID = try XCTUnwrap(reply["requestId"] as? String)
+                let mismatchedID = requestID == "999" ? "998" : "999"
+                let rejectedReplies: [(String, String, Any)] = [
+                    ("protocol version", "protocolVersion", 1),
+                    ("mismatched request ID", "requestId", mismatchedID),
+                    ("noncanonical request ID", "requestId", "0" + requestID),
+                    ("attempt ID", "attemptId", String(repeating: "c", count: 64)),
+                    ("operation", "operation", "noctium.other.v1"),
+                    ("capability", "capability", "lookup"),
+                    ("schema", "schema", "UIntRange<255>"),
+                ]
+                for (label, field, value) in rejectedReplies {
+                    var invalid = reply
+                    invalid[field] = value
+                    XCTAssertThrowsError(
+                        try session.resume(encode(invalid), typed: true), label
+                    ) {
+                        XCTAssertEqual(
+                            $0 as? WitnessSession.Failure, .nativeStatus(4), label
+                        )
+                    }
+                    XCTAssertEqual(try session.advance(), pending, label)
+                    XCTAssertEqual(try session.privateRequest(), privateRequestBytes, label)
                 }
-                XCTAssertEqual(try session.advance(), pending)
             }
-            _ = try session.resume(encode(reply), typed: true)
+            if index == 1, let previousReply {
+                XCTAssertThrowsError(
+                    try session.resume(previousReply, typed: true), "stale replay"
+                ) {
+                    XCTAssertEqual(
+                        $0 as? WitnessSession.Failure, .nativeStatus(4), "stale replay"
+                    )
+                }
+                XCTAssertEqual(try session.advance(), pending, "stale replay")
+                XCTAssertEqual(try session.privateRequest(), privateRequestBytes, "stale replay")
+            }
+            let validReply = try encode(reply)
+            _ = try session.resume(validReply, typed: true)
+            previousReply = validReply
         }
         let finished = try decode(session.advance())
         XCTAssertEqual(finished["status"] as? String, "completed")
