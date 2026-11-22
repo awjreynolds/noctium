@@ -556,6 +556,7 @@ structure ReplayReport where
 
 private def runtimeTy : RuntimeValue → Option Ty
   | .unit => none
+  | .scalar (.record _) => none
   | .scalar (.native _) => some .native
   | .scalar (.bool _) => some .bool
   | .scalar (.uint maximum _) => some (.uint maximum)
@@ -571,6 +572,7 @@ private def runtimeTy : RuntimeValue → Option Ty
 
 private def resultTypeOfRuntime : RuntimeValue → ResultType
   | .unit => .unit
+  | .scalar (.record _) => .composite .unit
   | .scalar (.native _) => .scalar .native
   | .scalar (.bool _) => .scalar .bool
   | .scalar (.uint maximum _) => .scalar (.uint maximum)
@@ -591,7 +593,7 @@ private def canonicalScalar (context : EvalContext) (value : Noctium.Value) : Bo
   | .uint maximum number =>
       maximum ≤ ScalarPolicy.maxUint && number ≤ maximum && number < context.modulus
   | .bytes .. | .opaqueBytes .. | .opaqueString .. | .jubjubScalar .. | .jubjubPoint ..
-  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. => false
+  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. | .record _ => false
 
 private def runtimeMatches (program : Program) (context : EvalContext)
     (expected : ResultType) (value : RuntimeValue) : Bool := Id.run do
@@ -619,7 +621,7 @@ private def scalarPolicyValue (value : Noctium.Value) : Except String ScalarPoli
   | .bool boolean => pure ⟨.bool, if boolean then 1 else 0⟩
   | .uint maximum number => pure ⟨.uint maximum, number⟩
   | .bytes .. | .opaqueBytes .. | .opaqueString .. | .jubjubScalar .. | .jubjubPoint ..
-  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. =>
+  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. | .record _ =>
       .error "native witness arithmetic requires a Native, Bool or UInt scalar"
 
 private def runtimeScalarOfPolicy (value : ScalarPolicy.Value) : RuntimeValue :=
@@ -742,7 +744,7 @@ private def scalarNumber : Noctium.Value → Except String Nat
   | .native number | .uint _ number => pure number
   | .bool value => pure (if value then 1 else 0)
   | .bytes .. | .opaqueBytes .. | .opaqueString .. | .jubjubScalar .. | .jubjubPoint ..
-  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. =>
+  | .foreignBase .. | .foreignScalar .. | .foreignPoint .. | .record _ =>
       .error "native witness index or composite leaf is not numeric"
 
 private def commonScalarType (left right : Ty) : Except String Ty := do
@@ -1672,11 +1674,11 @@ private theorem recordSafe_poseidonTail (context : EvalContext) (domain : Nat)
               | bool _ => exact recordSafe_fail _
               | uint _ _ => exact recordSafe_fail _
               | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
           | bool _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
 
 private theorem statePreserving_listForIn {α β : Type}
     (values : List α) (initial : β)
@@ -2001,7 +2003,7 @@ private theorem body_recordSafe_step (fuel : Nat)
           | native _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
     | «return» term =>
       cases term with
       | none => simp only [evalBody]; exact recordSafe_liftResult _
@@ -2154,7 +2156,7 @@ private theorem evaluator_recordSafe (fuel : Nat) :
                       | native _ => exact recordSafe_fail _
                       | uint _ _ => exact recordSafe_fail _
                       | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-                      | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+                      | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
         | boolAnd _ _ | boolOr _ _ | boolXor _ _ =>
             simp only [evalTerm]; exact recordSafe_fail _
         | curve _ _ | bytes _ _ | bytes32Literal _ | foreignConstant _ _ | bytesAt _ _ =>
@@ -3453,11 +3455,11 @@ private theorem poseidonPost_frame (context : EvalContext) (domain : Nat)
                   | bool _ => exact statePreserving_fail _
                   | uint _ _ => exact statePreserving_fail _
                   | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-                  | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact statePreserving_fail _
+                  | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact statePreserving_fail _
               | bool _ => exact statePreserving_fail _
               | uint _ _ => exact statePreserving_fail _
               | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact statePreserving_fail _
+              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact statePreserving_fail _
 
 private theorem poseidonPost_resultStable (context : EvalContext) (domain : Nat)
     (values : List RuntimeValue) : ResultStable (poseidonPost context domain values) := by
@@ -3489,11 +3491,11 @@ private theorem poseidonPost_resultStable (context : EvalContext) (domain : Nat)
                   | bool _ => exact resultStable_fail _
                   | uint _ _ => exact resultStable_fail _
                   | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-                  | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact resultStable_fail _
+                  | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact resultStable_fail _
               | bool _ => exact resultStable_fail _
               | uint _ _ => exact resultStable_fail _
               | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact resultStable_fail _
+              | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact resultStable_fail _
 
 private theorem poseidonPost_successSim (context : EvalContext) (domain : Nat)
     (values : List RuntimeValue) : SuccessSim (poseidonPost context domain values) (poseidonPost context domain values) := by
@@ -3944,7 +3946,7 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
           | native _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
       · exact termSim declaration.id.scope environment term
       · intro value
         apply successSim_bind
@@ -3957,7 +3959,7 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
           | native _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
         · exact successSim_liftResult _
         · intro scalar
           cases scalar with
@@ -3967,7 +3969,7 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
           | native _ => exact successSim_fail _
           | uint _ _ => exact successSim_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact successSim_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact successSim_fail _
     | «return» term =>
       cases term with
       | none =>
@@ -4709,7 +4711,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
           | native _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
       · exact termFailure declaration.id.scope environment term
       · exact termSuccess declaration.id.scope environment term
       · intro value
@@ -4723,7 +4725,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
           | native _ => exact recordSafe_fail _
           | uint _ _ => exact recordSafe_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact recordSafe_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
         · exact failureSim_liftResult (runtimeScalar value)
         · exact successSim_liftResult (runtimeScalar value)
         · intro scalar
@@ -4734,7 +4736,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
           | native _ => exact failureSim_fail _
           | uint _ _ => exact failureSim_fail _
           | bytes _ _ | opaqueBytes _ | opaqueString _ | jubjubScalar _ | jubjubPoint _ _
-          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ => exact failureSim_fail _
+          | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact failureSim_fail _
     | «return» term =>
       cases term with
       | none =>
