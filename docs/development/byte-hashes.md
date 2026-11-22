@@ -64,3 +64,11 @@ the Rust witness session and the native ZKIR checker. The session rejects a
 reply with a different record identity. Returning a digest derived from a
 private witness requires `disclose`.
 [Hosted case](../../runtime/tests/witness_control.rs)
+
+Named Lean helpers accept persistent hashing of checked FAB layouts through
+`Helpers.BytesOp.fabDigest .persistentHash`. The helper and direct typed
+expression use the same layout and return `Bytes32`. In the focused fixture,
+a provider supplies a nested record containing Bytes2, Bool, UInt16 and Native
+fields. The Rust witness session and ZKIR 3.2.1 checker match the digest of its
+canonical preimage. The source guard rejects a public return without `disclose`.
+[Lean fixture](../../tests/HelperPersistentFab.lean) · [Native check](../../runtime/tests/witness_control.rs)

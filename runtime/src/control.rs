@@ -472,6 +472,11 @@ fn fab_digest_operation(
         .map(|(index, field)| fab_digest_input(field, index))
         .collect::<Result<Vec<_>>>()?;
     match operation {
+        "persistentHash" => Ok((
+            parameters,
+            ScalarType::Bytes32,
+            crate::Expr::PersistentHashFab { schema, values },
+        )),
         "sha512" => Ok((
             parameters,
             ScalarType::Bytes(64),
@@ -1823,7 +1828,7 @@ impl Parser<'_> {
                 shape(v, &["tag", "operation", "type", "arguments"], true)?;
                 let operation = text(v, "operation")?.to_owned();
                 ensure!(
-                    matches!(operation.as_str(), "sha512" | "keccak256"),
+                    matches!(operation.as_str(), "persistentHash" | "sha512" | "keccak256"),
                     "unsupported control FAB digest operation"
                 );
                 let token = text(v, "type")?.to_owned();

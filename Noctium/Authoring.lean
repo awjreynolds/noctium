@@ -2658,6 +2658,7 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
       | .keccak256Secp256k1Point => `(Noctium.Helpers.BytesOp.keccak256Secp256k1Point)
       | .fabDigest algorithm type parameters => do
         let algorithm ← match algorithm with
+          | .persistentHash => `(Noctium.Helpers.FabDigest.persistentHash)
           | .sha512 => `(Noctium.Helpers.FabDigest.sha512)
           | .keccak256 => `(Noctium.Helpers.FabDigest.keccak256)
         let parameters ← parameters.toArray.mapM tyTerm
