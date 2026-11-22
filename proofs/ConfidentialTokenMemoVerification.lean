@@ -150,6 +150,21 @@ def expectedOutputs : EvalEnv := [
   ("result.keyX", .native 0),
   ("result.keyY", .native 1)]
 
+def memoResetSourceSpan : SourceSpan := {
+  file := "examples/openzeppelin/ConfidentialToken.lean"
+  line := 764
+  column := 17
+}
+
+def memoResetEffect : Effect :=
+  .listReset "memos" [.mk (.bytes 32) (.disclose memoResetSourceSpan (.ref "accountId"))]
+
+def effectInputEnv : EvalEnv := expectedOutputs ++ inputs 5 zero32 zero32
+
+theorem selected_entry_has_memo_reset_last :
+    clearMemosEntry.effects.getLast? = some memoResetEffect := by
+  rfl
+
 theorem canonical_admission_facts :
     canonicalAdmittedState.cells.lookup "initialized" = some (.bool Bool.true) ∧
     canonicalAdmittedState.trees.lookup "memos" = some memoTreeBefore ∧
@@ -171,8 +186,70 @@ theorem expected_state_frame_facts :
   simp [expectedClearedState, canonicalAdmittedState, memoTreeBefore, memoTreeAfter,
     keyRecord, memoKey, otherMemoKey, otherMemoPayload, List.lookup]
 
+/-- The concrete production reset step clears only the selected memo list and
+preserves the sibling account's memo. -/
+theorem selected_memo_reset_step :
+    runEffectWithEnv memoContext memoResetEffect effectInputEnv canonicalAdmittedState =
+      .ok (effectInputEnv, expectedClearedState) := by
+  have memoRoot : canonicalAdmittedState.trees.lookup "memos" = some memoTreeBefore :=
+    canonical_admission_facts.2.1
+  have result := runEffectWithEnv_listReset_bytes32 memoContext effectInputEnv
+    canonicalAdmittedState "memos" memoResetSourceSpan zero32
+    [(memoKey, .list [[.native 11, .native 12, .native 13]]),
+      (otherMemoKey, .list [otherMemoPayload])]
+    (by
+      change List.lookup "accountId" (expectedOutputs ++ inputs 5 zero32 zero32) =
+        some (.bytes 32 zero32)
+      simp [expectedOutputs, inputs, zero32, List.lookup_append, List.lookup_cons])
+    (by simp [zero32])
+    (by intro byte hmem; simp [zero32] at hmem; subst byte; decide)
+    (by simpa [memoTreeBefore, keyRecord, memoKey, otherMemoKey,
+      otherMemoPayload] using memoRoot)
+  have memoMapAfter :
+      updateAssoc memoKey (LedgerValue.list [])
+        [(memoKey, LedgerValue.list [[.native 11, .native 12, .native 13]]),
+          (otherMemoKey, LedgerValue.list [otherMemoPayload])] =
+        [(memoKey, LedgerValue.list []),
+          (otherMemoKey, LedgerValue.list [otherMemoPayload])] := by
+    have sameKey : (memoKey == memoKey) = Bool.true := by decide
+    have otherKey : (otherMemoKey == memoKey) = Bool.false := by decide
+    unfold updateAssoc
+    simp only [List.filter_cons, List.filter_nil]
+    rw [sameKey, otherKey]
+    rfl
+  have memoMapAfterExact :
+      updateAssoc (Value.bytes 32 zero32) (LedgerValue.list [])
+        [(memoKey, LedgerValue.list [[.native 11, .native 12, .native 13]]),
+          (otherMemoKey, LedgerValue.list [otherMemoPayload])] =
+        [(memoKey, LedgerValue.list []), (otherMemoKey, LedgerValue.list [otherMemoPayload])] := by
+    change updateAssoc memoKey (LedgerValue.list [])
+      [(memoKey, LedgerValue.list [[.native 11, .native 12, .native 13]]),
+        (otherMemoKey, LedgerValue.list [otherMemoPayload])] =
+      [(memoKey, LedgerValue.list []), (otherMemoKey, LedgerValue.list [otherMemoPayload])]
+    exact memoMapAfter
+  rw [memoMapAfterExact] at result
+  simpa [memoResetEffect, expectedClearedState, canonicalAdmittedState,
+    memoTreeBefore, memoTreeAfter, keyRecord, memoKey, otherMemoKey,
+    otherMemoPayload, updateAssoc] using result
+
+theorem selected_memo_reset_projections :
+    (runEffectWithEnv memoContext memoResetEffect effectInputEnv canonicalAdmittedState).map
+      (fun frame => frame.1.lookup "result.keyX") = .ok (some (.native 0)) ∧
+    (runEffectWithEnv memoContext memoResetEffect effectInputEnv canonicalAdmittedState).map
+      (fun frame => frame.2.trees.lookup "memos") = .ok (some memoTreeAfter) := by
+  rw [selected_memo_reset_step]
+  constructor <;> rfl
+
 theorem selected_entry_has_no_extra_returns : clearMemosEntry.returns = [] := by
   rfl
+
+/-- Convert a successful `Except` status into its Unit success value without
+requiring an equality decision procedure for the error type. -/
+theorem except_unit_eq_ok_of_isOk {ε : Type} (value : Except ε Unit)
+    (isOk : value.isOk = Bool.true) : value = .ok () := by
+  cases value with
+  | error message => cases isOk
+  | ok unit => cases unit; rfl
 
 /-- Conditional bridge for the evaluator's successful entrypoint run. It keeps
 disclosure validation, circuit execution, effect execution, and return-list
@@ -180,7 +257,7 @@ facts as visible premises. -/
 theorem entrypoint_success_from_checked_steps
     (selected : Entrypoint) (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
     (outputs finalEnv : EvalEnv) (next : LedgerState)
-    (disclosed : Disclosure.entrypoint selected = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint selected).isOk = Bool.true)
     (circuitResult : selected.circuit.run ctx env = .ok outputs)
     (effectsResult : runEffectsWithGuardsAndEnv ctx selected.effects selected.effectGuards
       (outputs ++ env) ({state with
@@ -189,6 +266,7 @@ theorem entrypoint_success_from_checked_steps
         unshieldedSpendClaims := []}) = .ok (finalEnv, next))
     (noReturns : selected.returns = []) :
     selected.run ctx env state = .ok (outputs, next) := by
+  have disclosed := except_unit_eq_ok_of_isOk (Disclosure.entrypoint selected) disclosureIsOk
   unfold Entrypoint.run
   rw [disclosed]
   simp only [Except.bind, Bind.bind, Except.map, Functor.map]
@@ -206,7 +284,7 @@ theorem entrypoint_success_from_checked_steps
   rw [hout]
 
 theorem clear_memos_transition_from_checked_steps
-    (disclosed : Disclosure.entrypoint clearMemosEntry = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitResult : clearMemosEntry.circuit.run memoContext
       (inputs 5 zero32 zero32) = .ok expectedOutputs)
     (effectsResult : ∃ finalEnv,
@@ -221,13 +299,13 @@ theorem clear_memos_transition_from_checked_steps
   rcases effectsResult with ⟨finalEnv, effectsRun⟩
   exact entrypoint_success_from_checked_steps clearMemosEntry memoContext
     (inputs 5 zero32 zero32) canonicalAdmittedState expectedOutputs finalEnv
-    expectedClearedState disclosed circuitResult effectsRun selected_entry_has_no_extra_returns
+    expectedClearedState disclosureIsOk circuitResult effectsRun selected_entry_has_no_extra_returns
 
 /-- Successful result projection through the concrete checked-step bridge.
 This proves the selected key coordinate and target memo lookup without an
 equality decision procedure for all of LedgerState. -/
 theorem successful_projection_from_checked_steps
-    (disclosed : Disclosure.entrypoint clearMemosEntry = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitResult : clearMemosEntry.circuit.run memoContext
       (inputs 5 zero32 zero32) = .ok expectedOutputs)
     (effectsResult : ∃ finalEnv,
@@ -241,13 +319,13 @@ theorem successful_projection_from_checked_steps
       (fun result => result.1.lookup "result.keyX") = .ok (some (.native 0)) ∧
     (clearMemosEntry.run memoContext (inputs 5 zero32 zero32) canonicalAdmittedState).map
       (fun result => result.2.trees.lookup "memos") = .ok (some memoTreeAfter) := by
-  have transition := clear_memos_transition_from_checked_steps disclosed circuitResult effectsResult
+  have transition := clear_memos_transition_from_checked_steps disclosureIsOk circuitResult effectsResult
   constructor <;> rw [transition] <;> rfl
 
 theorem effects_failure_propagates
     (selected : Entrypoint) (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
     (outputs : EvalEnv) (message : String)
-    (disclosed : Disclosure.entrypoint selected = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint selected).isOk = Bool.true)
     (circuitResult : selected.circuit.run ctx env = .ok outputs)
     (effectsFailure : runEffectsWithGuardsAndEnv ctx selected.effects selected.effectGuards
       (outputs ++ env) ({state with
@@ -255,6 +333,7 @@ theorem effects_failure_propagates
         unshieldedOutputs := []
         unshieldedSpendClaims := []}) = .error message) :
     selected.run ctx env state = .error message := by
+  have disclosed := except_unit_eq_ok_of_isOk (Disclosure.entrypoint selected) disclosureIsOk
   unfold Entrypoint.run
   rw [disclosed]
   simp only [Except.bind, Bind.bind, Except.map, Functor.map]
@@ -265,9 +344,10 @@ theorem effects_failure_propagates
 theorem circuit_failure_propagates
     (selected : Entrypoint) (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
     (message : String)
-    (disclosed : Disclosure.entrypoint selected = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint selected).isOk = Bool.true)
     (circuitFailure : selected.circuit.run ctx env = .error message) :
     selected.run ctx env state = .error message := by
+  have disclosed := except_unit_eq_ok_of_isOk (Disclosure.entrypoint selected) disclosureIsOk
   unfold Entrypoint.run
   rw [disclosed]
   simp only [Except.bind, Bind.bind, Except.map, Functor.map]
@@ -276,7 +356,7 @@ theorem circuit_failure_propagates
 /-- Exact stale-epoch conclusion once the selected entry's effects establish
 the epoch guard failure. -/
 theorem stale_epoch_rejection_from_effects
-    (disclosed : Disclosure.entrypoint clearMemosEntry = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitResult : clearMemosEntry.circuit.run memoContext
       (inputs 4 zero32 zero32) = .ok expectedOutputs)
     (effectsFailure : runEffectsWithGuardsAndEnv memoContext clearMemosEntry.effects
@@ -289,7 +369,7 @@ theorem stale_epoch_rejection_from_effects
       .error "state transition guard failed" := by
   exact effects_failure_propagates clearMemosEntry memoContext
     (inputs 4 zero32 zero32) canonicalAdmittedState expectedOutputs
-    "state transition guard failed" disclosed circuitResult effectsFailure
+    "state transition guard failed" disclosureIsOk circuitResult effectsFailure
 
 def publicBindings (environment : EvalEnv) : List (String × Option Value) :=
   (clearMemosEntry.circuit.inputs.filter (·.visibility == .«public»)).map fun input =>
@@ -321,19 +401,19 @@ theorem successful_only_source_privacy_for_pinned_pair
 /-- A wrong account secret rejects if the checked circuit returns the source
 constraint failure. This names the bridge premise without asserting it. -/
 theorem wrong_account_secret_rejection_from_circuit
-    (disclosed : Disclosure.entrypoint clearMemosEntry = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitFailure : clearMemosEntry.circuit.run memoContext
       (inputs 5 one32 zero32) = .error "circuit constraint failed") :
     clearMemosEntry.run memoContext (inputs 5 one32 zero32) canonicalAdmittedState =
       .error "circuit constraint failed" := by
   exact circuit_failure_propagates clearMemosEntry memoContext
     (inputs 5 one32 zero32) canonicalAdmittedState "circuit constraint failed"
-    disclosed circuitFailure
+    disclosureIsOk circuitFailure
 
 /-- A wrong encryption secret rejects if the selected effects fail their key
 coordinate guard after a successful circuit result. -/
 theorem wrong_encryption_secret_rejection_from_effects
-    (disclosed : Disclosure.entrypoint clearMemosEntry = .ok ())
+    (disclosureIsOk : (Disclosure.entrypoint clearMemosEntry).isOk = Bool.true)
     (circuitResult : clearMemosEntry.circuit.run memoContext
       (inputs 5 zero32 one32) = .ok expectedOutputs)
     (effectsFailure : runEffectsWithGuardsAndEnv memoContext clearMemosEntry.effects
@@ -346,7 +426,7 @@ theorem wrong_encryption_secret_rejection_from_effects
       .error "state transition guard failed" := by
   exact effects_failure_propagates clearMemosEntry memoContext
     (inputs 5 zero32 one32) canonicalAdmittedState expectedOutputs
-    "state transition guard failed" disclosed circuitResult effectsFailure
+    "state transition guard failed" disclosureIsOk circuitResult effectsFailure
 
 /-- A failure-status observer separates the accepted account credential from
 the wrong-account case when the named execution premises hold. -/

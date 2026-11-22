@@ -1839,6 +1839,54 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
 
   pure (env, next)
 
+/-- A single Bytes32-keyed List reset updates only that map entry. Keep this
+equation named and explicit so source proofs can project the changed tree
+without expanding the private recursive tree writer globally. -/
+theorem runEffectWithEnv_listReset_bytes32
+    (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
+    (name : String) (span : SourceSpan) (bytes : List Nat)
+    (entries : List (Value × LedgerValue))
+    (accountIdBinding : env.lookup "accountId" = some (.bytes 32 bytes))
+    (bytesLength : bytes.length = 32)
+    (bytesInRange : ∀ byte ∈ bytes, byte ≤ 255)
+    (rootLookup : state.trees.lookup name = some (.map entries)) :
+    runEffectWithEnv ctx (.listReset name
+      [.mk (.bytes 32) (.disclose span (.ref "accountId"))]) env state =
+      .ok (env, {state with trees := updateAssoc name (.map (updateAssoc
+        (.bytes 32 bytes) (.list []) entries)) state.trees}) := by
+  have noOutOfRange : ¬ ∃ byte, byte ∈ bytes ∧ 255 < byte := by
+    rintro ⟨byte, member, tooLarge⟩
+    exact (Nat.not_lt_of_ge (bytesInRange byte member)) tooLarge
+  have allBytes : bytes.all (· ≤ 255) = true := by
+    apply List.all_eq_true.mpr
+    intro byte member
+    simp [bytesInRange byte member]
+  have keyEval : (Expr.disclose span (.ref "accountId") : Expr (.bytes 32)).eval ctx env =
+      .ok bytes := by
+    simp [Expr.eval, Value.as, canonical, accountIdBinding, bytesLength, allBytes]
+    have pureBytes : (pure bytes : Except String (List Nat)) = .ok bytes := rfl
+    exact pureBytes
+  have pathEval : evaluatePath ctx env
+      [.mk (.bytes 32) (.disclose span (.ref "accountId"))] =
+      .ok [.bytes 32 bytes] := by
+    have packed : (pure (Value.pack (.bytes 32) bytes) : Except String Value) =
+        .ok (.bytes 32 bytes) := rfl
+    simp [evaluatePath, keyEval, bytesLength, canonical, noOutOfRange, packed,
+      List.mapM_cons, List.mapM_nil, Except.bind, Bind.bind]
+    have empty : (pure ([] : List Value) : Except String (List Value)) = .ok [] := rfl
+    rw [empty]
+    have one : (pure ([Value.bytes 32 bytes] : List Value) : Except String (List Value)) =
+        .ok [Value.bytes 32 bytes] := rfl
+    change (pure ([Value.bytes 32 bytes] : List Value) : Except String (List Value)) =
+      .ok [Value.bytes 32 bytes]
+    exact one
+  have treeUpdate : treeSet (.map entries) [.bytes 32 bytes] (.list []) =
+      some (.map (updateAssoc (.bytes 32 bytes) (.list []) entries)) := by
+    simp [treeSet, updateAssoc]
+  simp [runEffectWithEnv, pathEval, rootLookup, treeUpdate, updateAssoc,
+    Except.bind, Bind.bind]
+  rfl
+
 /-- Execute ordered effects against a private tentative state and retain the
 ordered read environment for expressions evaluated after the effects. Returning
 an error never exposes that tentative state. -/
