@@ -63,3 +63,11 @@ export circuit sliceSequences(seed: Field): [[Boolean], Vector<1, Uint<8>>, [], 
     slice<1>(loadBytes(seed + 4), 1),
   ]);
 }
+
+export circuit constructVectors(seed: Field): [Vector<3, Uint<8>>, Vector<3, Uint<16>>, Vector<0, Uint<8>>] {
+  const values = loadVector(seed + 2);
+  const narrow = [5 as Uint<8>, ...values];
+  const wide = [5 as Uint<8>, ...values] as Vector<3, Uint<16>>;
+  const empty = [...loadUnit(seed + 4)] as Vector<0, Uint<8>>;
+  return disclose([narrow, wide, empty]);
+}

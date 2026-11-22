@@ -340,3 +340,41 @@ fn sequence_slices_preserve_composite_shapes_and_order() -> anyhow::Result<()> {
         }),
     )
 }
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn vector_construction_preserves_inferred_and_explicit_element_types() -> anyhow::Result<()> {
+    check_case(
+        "constructVectors",
+        [
+            (
+                "loadVector",
+                "9",
+                json!({
+                    "kind":"vector",
+                    "items":[
+                        {"kind":"uint","maximum":"255","value":"17"},
+                        {"kind":"uint","maximum":"255","value":"19"}
+                    ]
+                }),
+            ),
+            ("loadUnit", "11", json!({"kind":"unit"})),
+        ],
+        json!({
+            "kind":"tuple",
+            "items":[
+                {"kind":"vector","items":[
+                    {"kind":"uint","maximum":"255","value":"5"},
+                    {"kind":"uint","maximum":"255","value":"17"},
+                    {"kind":"uint","maximum":"255","value":"19"}
+                ]},
+                {"kind":"vector","items":[
+                    {"kind":"uint","maximum":"65535","value":"5"},
+                    {"kind":"uint","maximum":"65535","value":"17"},
+                    {"kind":"uint","maximum":"65535","value":"19"}
+                ]},
+                {"kind":"vector","items":[]}
+            ]
+        }),
+    )
+}
