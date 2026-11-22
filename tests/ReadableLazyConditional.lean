@@ -21,6 +21,7 @@ private def payloadWire : Helpers.Wire.Codec := {
 
 noctium_witness loadLeft() : Payload payloadWire
 noctium_witness loadRight() : Payload payloadWire
+noctium_witness afterChoice(expected : Native) : Unit
 
 noctium_witness_circuit choose using payloadWire where
   public choice : Bool
@@ -52,6 +53,41 @@ noctium_witness_circuit shortCircuit using payloadWire where
   )
   output selectedAmount : Native := expected
   output selectedEnabled : Bool := disclose(ite(choice, both, either))
+end
+
+noctium_witness_circuit branchChoice using payloadWire where
+  public choice : Bool
+  public expected : Native
+  if choice then
+    let selected := witness loadLeft()
+    prove eq(field(selected, amount), expected)
+    prove field(field(selected, extra), enabled)
+  else
+    let selected := witness loadRight()
+    prove eq(field(selected, amount), expected)
+    prove boolNot(field(field(selected, extra), enabled))
+  end
+  witness afterChoice(expected)
+  output selectedAmount : Native := expected
+  output selectedEnabled : Bool := choice
+end
+
+/- error: readable witness expression type mismatch -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsNonBoolBranch where
+  if 1 then
+    prove true
+  end
+end
+
+/- error: unknown readable witness value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsEscapedBranchBinding where
+  public choice : Bool
+  if choice then
+    let localValue := 7
+  end
+  output value : Native := localValue
 end
 
 /- error: short-circuit operands require Bool -/
@@ -107,6 +143,10 @@ noctium_contract ReadableLazyConditional where
     return enabled : Bool := selectedEnabled
   end
   entry shortCircuit uses ReadableLazyConditional.shortCircuit where
+    return observed : Native := selectedAmount
+    return enabled : Bool := selectedEnabled
+  end
+  entry branchChoice uses ReadableLazyConditional.branchChoice where
     return observed : Native := selectedAmount
     return enabled : Bool := selectedEnabled
   end
