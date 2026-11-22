@@ -6,11 +6,71 @@ private theorem type_validate_state_caps (ty : Ty) :
     ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} =
       ty.validate {poseidon2 := true} := by rfl
 
+private noncomputable def validationTaskSize :
+    (ty : Ty) ×' (_ : TypeEnv) ×' Expr ty ⊕' (_ : TypeEnv) ×' List (Sigma Expr) → Nat
+  | .inl ⟨_, ⟨_, expression⟩⟩ => sizeOf expression
+  | .inr ⟨_, values⟩ => sizeOf values
+
+private theorem validation_task_state_caps
+    (task : (ty : Ty) ×' (_ : TypeEnv) ×' Expr ty ⊕' (_ : TypeEnv) ×' List (Sigma Expr)) :
+    Expr.validate._mutual {poseidon2 := true, stateCells := true, stateMaps := true} task =
+      Expr.validate._mutual {poseidon2 := true} task := by
+  apply WellFounded.induction (measure validationTaskSize).wf task
+  intro task smaller
+  have smaller' (child : (ty : Ty) ×' (_ : TypeEnv) ×' Expr ty ⊕' (_ : TypeEnv) ×' List (Sigma Expr))
+      (bound : validationTaskSize child < validationTaskSize task) :=
+    smaller child (by change validationTaskSize child < validationTaskSize task; exact bound)
+  cases task with
+  | inl input =>
+    cases input with
+    | mk ty input =>
+      cases input with
+      | mk env expression =>
+        cases expression <;>
+          rw [Expr.validate._mutual.eq_1, Expr.validate._mutual.eq_1]
+        all_goals first
+          | rfl
+          | simp (discharger := {
+              try simp [validationTaskSize, WellFoundedRelation.rel, measure]
+              try simp_wf
+              all_goals first
+                | have _h := Noctium.sizeOfSigmaExprMemberLt (by assumption); omega
+                | have _h := Noctium.sizeOfSigmaExprHeadLt _ _; omega
+                | have _h := Noctium.sizeOfMemberListLt (by assumption); omega
+                | omega
+                | skip })
+              [type_validate_state_caps, validationTaskSize, smaller', Except.bind]
+  | inr input =>
+    cases input with
+    | mk env values =>
+      cases values with
+      | nil => rfl
+      | cons head tail =>
+        cases head with
+        | mk ty expression =>
+          rw [Expr.validate._mutual.eq_1, Expr.validate._mutual.eq_1]
+          first
+          | rfl
+          | simp (discharger := {
+              try simp [validationTaskSize, WellFoundedRelation.rel, measure]
+              try simp_wf
+              all_goals first
+                | have _h := Noctium.sizeOfSigmaExprMemberLt (by assumption); omega
+                | have _h := Noctium.sizeOfSigmaExprHeadLt _ _; omega
+                | have _h := Noctium.sizeOfMemberListLt (by assumption); omega
+                | omega
+                | skip })
+              [type_validate_state_caps, validationTaskSize, smaller', Except.bind]
+
 private theorem expr_validate_state_caps (expression : Expr ty) (env : TypeEnv) :
     expression.validate {poseidon2 := true, stateCells := true, stateMaps := true} env =
       expression.validate {poseidon2 := true} env := by
-  induction expression generalizing env <;>
-    simp [Expr.validate, type_validate_state_caps, *]
+  calc
+    _ = Expr.validate._mutual {poseidon2 := true, stateCells := true, stateMaps := true}
+        (PSum.inl ⟨ty, ⟨env, expression⟩⟩) := by with_unfolding_all rfl
+    _ = Expr.validate._mutual {poseidon2 := true} (PSum.inl ⟨ty, ⟨env, expression⟩⟩) :=
+      validation_task_state_caps (PSum.inl ⟨ty, ⟨env, expression⟩⟩)
+    _ = _ := by with_unfolding_all rfl
 
 private theorem constraints_validate_state_caps (env : TypeEnv)
     (span : SourceSpan) (conditions : List (Expr .bool)) :
