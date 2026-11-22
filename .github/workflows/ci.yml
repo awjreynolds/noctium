@@ -149,6 +149,8 @@ jobs:
           lake env lean tests/NestedEscrow.lean
           lake env lean tests/NativeCounter.lean
           lake env lean tests/ByteAlignedUInt128Cell.lean
+          lake build Noctium.Verification.UInt128ReadBound
+          lake env lean tests/UInt128LedgerReadBound.lean
           lake env lean tests/CounterAmounts.lean
           lake env lean tests/CounterCompare.lean
           lake env lean tests/NativeSet.lean
@@ -171,6 +173,7 @@ jobs:
           lake env lean tests/ShieldedBurnAddress.lean
           lake env lean tests/QualifiedCoinCell.lean
           lake env lean tests/ShieldedCoinInfo.lean
+          lake env lean tests/QualifiedShieldedCoinInfo.lean
           lake env lean tests/ShieldedSendResult.lean
           lake env lean tests/QualifiedCoinSet.lean
           lake env lean tests/QualifiedCoinList.lean
@@ -260,6 +263,9 @@ jobs:
           .lake/build/bin/noctium compile tests/CompositeEitherInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-either-input"
+          .lake/build/bin/noctium compile tests/QualifiedShieldedCoinInfo.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/qualified-coin-info"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
@@ -267,9 +273,11 @@ jobs:
               --test collection_reads --test merkle_reads --test counter_snapshot_ffi
           NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
+            NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
-              --test composite_maybe_input --test composite_either_input -- --ignored
+              --test composite_maybe_input --test composite_either_input \
+              --test qualified_shielded_coin_info_abi -- --ignored
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness

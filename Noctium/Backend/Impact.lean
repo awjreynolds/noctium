@@ -969,6 +969,9 @@ structure Read where
   schema : Option Lean.Json := none
   /-- Source guard for a conditionally bound read. Inactive reads use a canonical default. -/
   guard : Option (Expr .bool) := none
+  /-- For byte-aligned UInt128 root-cell reads, retain the source cell, slot,
+  and fields from the same storage-read operation appended to the plan. -/
+  rootCellRead : Option (String × Nat × List Scalar) := none
 
 private def contractCallerReads (start : Nat) : List Read :=
   -- The ledger also puts each Popeq result's value fields in the public input stream.
@@ -1650,10 +1653,13 @@ def appendEffect (state : List StateDecl) (effect : Effect)
   match effect with
   | .readCell name destination ty =>
     let slot ← stateSlot state name
-    let value ← storageReadValueWithAlignment ty destination (stateCellAlignment state name)
+    let alignment := stateCellAlignment state name
+    let value ← storageReadValueWithAlignment ty destination alignment
+    let provenance := if alignment == some .u128 then some (name, slot, value.fields) else none
+    let read : Read := {name := destination, ty, rootCellRead := provenance}
     pure { plan with
       operations := plan.operations ++ [.dup, .index slot, value]
-      reads := plan.reads ++ [{name := destination, ty}] }
+      reads := plan.reads ++ [read] }
   | .merkleTreeIsFull name destination => do
     let operation ← merkleTreeIsFullOp state name destination
     pure {plan with
@@ -2314,10 +2320,13 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
   match effect with
   | .readCell name destination ty =>
     let slot ← stateSlot state name
-    let value ← storageReadValueWithAlignment ty destination (stateCellAlignment state name)
+    let alignment := stateCellAlignment state name
+    let value ← storageReadValueWithAlignment ty destination alignment
+    let provenance := if alignment == some .u128 then some (name, slot, value.fields) else none
+    let read : Read := {name := destination, ty, rootCellRead := provenance}
     plan := { plan with
       operations := plan.operations ++ [.dup, .index slot, value]
-      reads := plan.reads ++ [{name := destination, ty}] }
+      reads := plan.reads ++ [read] }
   | .merkleTreeIsFull name destination => do
     let operation ← merkleTreeIsFullOp state name destination
     plan := {plan with

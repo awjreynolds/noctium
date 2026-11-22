@@ -40,11 +40,23 @@ try {
     assert.equal(coin.value, value);
   }
   assert.throws(() => pureCircuits.shieldedCoinInfoShape(nonce, color, maximum + 1n));
+
+  const maximumIndex = (1n << 64n) - 1n;
+  const echo = pureCircuits.qualifiedShieldedCoinInfoEcho;
+  for (const [value, mt_index] of [[0n, 0n], [maximum, maximumIndex]]) {
+    const coin = { nonce, color, value, mt_index };
+    const echoed = echo(coin);
+    assert.deepEqual(Object.keys(echoed), ['nonce', 'color', 'value', 'mt_index']);
+    assert.deepEqual(echoed, coin);
+  }
+  assert.throws(() => echo({ nonce, color, value: maximum + 1n, mt_index: 0n }));
+  assert.throws(() => echo({ nonce, color, value: 0n, mt_index: maximumIndex + 1n }));
   console.log(JSON.stringify({
     fixture: 'ShieldedCoinInfo',
     compact: compilerVersion,
     fields: ['nonce:Bytes<32>', 'color:Bytes<32>', 'value:Uint<128>'],
     values: cases.map(({ value }) => value.toString()),
+    qualifiedIndexValues: ['0', maximumIndex.toString()],
   }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

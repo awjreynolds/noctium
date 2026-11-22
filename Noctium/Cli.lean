@@ -10,7 +10,7 @@ Usage: noctium --version\n\
        noctium profiles\n\
        noctium check <file> [--target <manifest>]\n\
        noctium compile <file> [--target <manifest>] [--emit <role>]... [--bindings rust]\n\
-                       [--dedup-range-checks] [--output <new-or-empty-directory>]\n\
+                       [--dedup-range-checks | --ledger-read-bound <Contract.entrypoint>] [--output <new-or-empty-directory>]\n\
 Artifact roles: ledger, standalone, witness, control, specialization, observations.\n\
 Omit --emit to generate all applicable roles.\n\
 Default target: profiles/midnight-ledger-9.json\n\
@@ -23,6 +23,7 @@ structure Options where
   emit : List ArtifactRole := []
   rustBindings : Bool := false
   dedupRangeChecks : Bool := false
+  ledgerReadBound : Option String := none
   deriving Repr
 
 private def parseOptions (input : String) (args : List String) (compiling : Bool) :
@@ -57,6 +58,12 @@ where
       unless compiling do throw "--dedup-range-checks is only supported by compile"
       if opts.dedupRangeChecks then throw "duplicate --dedup-range-checks option"
       go { opts with dedupRangeChecks := true } rest hasTarget hasOutput
+    | "--ledger-read-bound" :: value :: rest => do
+      unless compiling do throw "--ledger-read-bound is only supported by compile"
+      if opts.ledgerReadBound.isSome then throw "duplicate --ledger-read-bound option"
+      if value.isEmpty || value.startsWith "--" then throw "--ledger-read-bound requires Contract.entrypoint"
+      go { opts with ledgerReadBound := some value } rest hasTarget hasOutput
+    | ["--ledger-read-bound"] => .error "--ledger-read-bound requires Contract.entrypoint"
     | ["--target"] => .error "--target requires a manifest path"
     | ["--output"] => .error "--output requires a directory"
     | ["--emit"] => .error "--emit requires an artifact role"
@@ -97,8 +104,9 @@ private def compile (opts : Options) (source profileLiteral : String) : IO IO.Pr
     let roles := (Lean.toJson (Lean.toJson (opts.emit.map ArtifactRole.label)).compress).compress
     let bindings := if opts.rustBindings then "\"rust\"" else "\"\""
     let optimization := if opts.dedupRangeChecks then "\"dedup-range-checks\"" else "\"\""
+    let ledgerReadBound := (Lean.toJson (opts.ledgerReadBound.getD "")).compress
     let result ← runFrontend opts.input source
-      s!"#noctium_compile_target {directory} {profileLiteral} {display} {roles} {bindings} {optimization}"
+      s!"#noctium_compile_target {directory} {profileLiteral} {display} {roles} {bindings} {optimization} {ledgerReadBound}"
     if result.exitCode == 0 then
       unless ← (stage / "noctium.json").pathExists do
         throw (IO.userError "Lean exited before producing Noctium artifacts")
