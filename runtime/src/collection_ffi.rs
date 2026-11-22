@@ -354,8 +354,7 @@ enum CollectionSchema {
         value: CollectionValueSchema,
     },
     Set {
-        key_type: ScalarType,
-        key_name: String,
+        key: CollectionValueSchema,
     },
     List {
         element: CollectionValueSchema,
@@ -364,10 +363,25 @@ enum CollectionSchema {
 
 fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
     if let Some(set) = schema.get("set") {
-        let key_name = set.as_str().ok_or(INVALID_ARGUMENT)?.to_owned();
-        let key_type = crate::ledger_key_type(&Json::String(key_name.clone()))
-            .map_err(|_| INVALID_ARGUMENT)?;
-        return Ok(Some(CollectionSchema::Set { key_type, key_name }));
+        let key = if let Some(key_name) = set.as_str() {
+            let key_name = key_name.to_owned();
+            let ty = crate::ledger_key_type(&Json::String(key_name.clone()))
+                .map_err(|_| INVALID_ARGUMENT)?;
+            CollectionValueSchema::Scalar { ty, name: key_name }
+        } else {
+            let record = set
+                .as_object()
+                .filter(|fields| fields.len() == 1)
+                .and_then(|fields| fields.get("composite"))
+                .ok_or(INVALID_ARGUMENT)?;
+            if !crate::is_shielded_coin_record_schema(record) {
+                return Err(INVALID_ARGUMENT);
+            }
+            CollectionValueSchema::Record(
+                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
+            )
+        };
+        return Ok(Some(CollectionSchema::Set { key }));
     }
     if let Some(map) = schema.get("map") {
         let fields = map
@@ -513,6 +527,31 @@ fn key_order(value: &Value) -> Result<Vec<u8>, i32> {
     }
 }
 
+fn qualified_coin_key_order(values: &[Value]) -> Result<Vec<u8>, i32> {
+    let [
+        Value::Bytes(nonce),
+        Value::Bytes(color),
+        Value::UInt { number, .. },
+        Value::UInt {
+            number: mt_index, ..
+        },
+    ] = values
+    else {
+        return Err(INVALID_ARGUMENT);
+    };
+    if nonce.len() != 32 || color.len() != 32 {
+        return Err(INVALID_ARGUMENT);
+    }
+    let mut order = Vec::with_capacity(88);
+    order.extend_from_slice(nonce);
+    order.extend_from_slice(color);
+    let number = u128::try_from(number.clone()).map_err(|_| INVALID_ARGUMENT)?;
+    let mt_index = u64::try_from(mt_index.clone()).map_err(|_| INVALID_ARGUMENT)?;
+    order.extend_from_slice(&number.to_be_bytes());
+    order.extend_from_slice(&mt_index.to_be_bytes());
+    Ok(order)
+}
+
 struct OrderedEntry {
     order: Vec<u8>,
     key: Json,
@@ -528,22 +567,37 @@ fn collection_page(
     let StateValue::Map(map) = state else {
         return Err(INVALID_ARGUMENT);
     };
-    let (key_type, key_name) = match schema {
-        CollectionSchema::Map {
-            key_type, key_name, ..
-        }
-        | CollectionSchema::Set {
-            key_type, key_name, ..
-        } => (key_type, key_name),
-        CollectionSchema::List { .. } => return Err(INVALID_ARGUMENT),
-    };
     let map_size = usize::try_from(map.size()).map_err(|_| INVALID_ARGUMENT)?;
     let mut entries = Vec::with_capacity(map_size);
     for entry in map.iter() {
         let (key, value) = &*entry;
-        let key = crate::decode_state_cell(key, key_name, crate::key_alignment(key_type))
-            .map_err(|_| INVALID_ARGUMENT)?;
-        let order = key_order(&key)?;
+        let (order, key) = match schema {
+            CollectionSchema::Map {
+                key_type, key_name, ..
+            }
+            | CollectionSchema::Set {
+                key:
+                    CollectionValueSchema::Scalar {
+                        ty: key_type,
+                        name: key_name,
+                    },
+            } => {
+                let key = crate::decode_state_cell(key, key_name, crate::key_alignment(key_type))
+                    .map_err(|_| INVALID_ARGUMENT)?;
+                let order = key_order(&key)?;
+                (order, key.public_json())
+            }
+            CollectionSchema::Set {
+                key: CollectionValueSchema::Record(record_schema),
+            } => {
+                let values =
+                    crate::decode_record_value(record_schema, key).map_err(|_| INVALID_ARGUMENT)?;
+                let order = qualified_coin_key_order(&values)?;
+                let key = record_values_json(record_schema, &values)?;
+                (order, key)
+            }
+            CollectionSchema::List { .. } => return Err(INVALID_ARGUMENT),
+        };
         let value = match schema {
             CollectionSchema::Map { .. } => {
                 let StateValue::Cell(value) = &**value else {
@@ -559,11 +613,7 @@ fn collection_page(
             }
             CollectionSchema::List { .. } => return Err(INVALID_ARGUMENT),
         };
-        entries.push(OrderedEntry {
-            order,
-            key: key.public_json(),
-            value,
-        });
+        entries.push(OrderedEntry { order, key, value });
     }
     entries.sort_by(|left, right| left.order.cmp(&right.order));
 

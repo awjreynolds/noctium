@@ -2526,7 +2526,7 @@
       "layer": "host-ledger-view",
       "surface": "Set.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path. The pinned Compact fixture compares exact members at both locations. Additional element types and SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path and decodes qualified shielded coin records from a root Set. Qualified records page deterministically by nonce, color, numeric value and Merkle tree index. Pinned Compact fixtures confirm membership values. General composite Set keys and wider SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -2538,7 +2538,8 @@
         "runtime/tests/collection_reads.rs",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
-        "tests/compact/native-collection-pages.mjs"
+        "tests/compact/native-collection-pages.mjs",
+        "tests/compact/qualified-coin-collections.mjs"
       ],
       "equivalence": "unverified"
     },

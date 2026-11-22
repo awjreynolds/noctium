@@ -1,6 +1,7 @@
 #![cfg(feature = "zkir-321")]
 
-use base_crypto::fab::AlignedValue;
+use base_crypto::{fab::AlignedValue, hash::HashOutput};
+use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
     Db, artifacts,
     collection_ffi::noctium_ledger_collection_page,
@@ -173,6 +174,52 @@ fn map_set_snapshot(reverse: bool) -> Snapshot {
         ]),
         state,
     )
+}
+
+fn qualified_coin_record_schema() -> Value {
+    json!({
+        "id":"QualifiedCoinSet.Coin",
+        "fields":[
+            {"name":"nonce","type":"Bytes<32>"},
+            {"name":"color","type":"Bytes<32>"},
+            {"name":"value","type":"UIntRange<340282366920938463463374607431768211456>"},
+            {"name":"mtIndex","type":"UIntRange<18446744073709551616>"}
+        ]
+    })
+}
+
+fn qualified_coin_info(nonce: u8, value: u128) -> Info {
+    Info {
+        nonce: Nonce(HashOutput([nonce; 32])),
+        type_: ShieldedTokenType(HashOutput([1; 32])),
+        value,
+    }
+}
+
+fn qualified_coin_key(nonce: u8, value: u128, mt_index: u64) -> AlignedValue {
+    AlignedValue::from(qualified_coin_info(nonce, value).qualify(mt_index))
+}
+
+fn qualified_coin_set_snapshot(entries: Vec<(AlignedValue, StateValue<Db>)>) -> Snapshot {
+    let set = entries
+        .into_iter()
+        .fold(HashMap::new(), |set, (key, marker)| set.insert(key, marker));
+    Snapshot::new(
+        plan(vec![json!({
+            "name":"coinSet",
+            "kind":{"tree":{"set":{"composite":qualified_coin_record_schema()}}}
+        })]),
+        ChargedState::new(StateValue::Array(vec![StateValue::Map(set)].into())),
+    )
+}
+
+fn qualified_coin_json(nonce: u8, value: u128, mt_index: u64) -> Value {
+    json!({
+        "nonce":{"kind":"bytes","values":vec![nonce;32]},
+        "color":{"kind":"bytes","values":vec![1u8;32]},
+        "value":value.to_string(),
+        "mtIndex":mt_index.to_string()
+    })
 }
 
 fn scalar_list(values: &[u64]) -> StateValue<Db> {
@@ -387,6 +434,64 @@ fn map_and_set_pages_are_typed_stable_and_bounded() {
 
     assert_eq!(
         snapshot.status("flags", 0, 2, &"0".repeat(64)),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn qualified_coin_set_pages_decode_records_and_validate_all_members() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let first = (qualified_coin_key(2, 5, 17), StateValue::Null);
+    let second = (qualified_coin_key(3, 7, 42), StateValue::Null);
+    let snapshot = qualified_coin_set_snapshot(vec![first, second]);
+    let reverse = qualified_coin_set_snapshot(vec![
+        (qualified_coin_key(3, 7, 42), StateValue::Null),
+        (qualified_coin_key(2, 5, 17), StateValue::Null),
+    ]);
+
+    let first_page = snapshot.page("coinSet", 0, 1);
+    assert_eq!(
+        first_page,
+        json!({
+            "abiVersion": 1,
+            "kind": "set",
+            "entries": [qualified_coin_json(2, 5, 17)],
+            "nextOffset": 1
+        })
+    );
+    let second_page = snapshot.page("coinSet", 1, 1);
+    assert_eq!(
+        second_page,
+        json!({
+            "abiVersion": 1,
+            "kind": "set",
+            "entries": [qualified_coin_json(3, 7, 42)],
+            "nextOffset": null
+        })
+    );
+    assert_eq!(reverse.page("coinSet", 0, 1), first_page);
+    assert_eq!(reverse.page("coinSet", 1, 1), second_page);
+
+    let malformed_key = qualified_coin_set_snapshot(vec![
+        (qualified_coin_key(2, 5, 17), StateValue::Null),
+        (qualified_coin_key(3, 7, 42), StateValue::Null),
+        (AlignedValue::from(1u64), StateValue::Null),
+    ]);
+    assert_eq!(
+        malformed_key.status("coinSet", 0, 1, &artifacts::digest(&malformed_key.state)),
+        INVALID_ARGUMENT
+    );
+
+    let malformed_marker = qualified_coin_set_snapshot(vec![
+        (qualified_coin_key(2, 5, 17), StateValue::Null),
+        (qualified_coin_key(3, 7, 42), StateValue::Null),
+        (
+            qualified_coin_key(4, 9, 63),
+            StateValue::Cell(Sp::new(field_value(Fr::from(1u64)))),
+        ),
+    ]);
+    assert_eq!(
+        malformed_marker.status("coinSet", 0, 1, &artifacts::digest(&malformed_marker.state)),
         INVALID_ARGUMENT
     );
 }
