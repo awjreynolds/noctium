@@ -1,0 +1,10 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit verify(
+  digest: Bytes<32>,
+  signature: Secp256k1EcdsaSignature,
+  key: Secp256k1Point
+): Boolean {
+  return secp256k1EcdsaVerify(digest, signature, key);
+}

@@ -692,6 +692,10 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| curveX($point)) => s!"curveX({renderExpr point})"
   | `(nlexpr| curveY($point)) => s!"curveY({renderExpr point})"
   | `(nlexpr| secp256k1EthereumAddress($key)) => s!"secp256k1EthereumAddress({renderExpr key})"
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key)) =>
+    s!"secp256k1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    s!"secp256r1EcdsaVerify({renderExpr digest}, {renderExpr r}, {renderExpr s}, {renderExpr key})"
   | `(nlexpr| curveFromCoordinates($x, $y)) =>
     s!"curveFromCoordinates({renderExpr x}, {renderExpr y})"
   | `(nlexpr| foreignToBytes($value)) => s!"foreignToBytes({renderExpr value})"
@@ -783,6 +787,9 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
   | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
   | `(nlexpr| secp256k1EthereumAddress($value)) => disclosedValues value
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    [digest, r, s, key].flatMap disclosedValues
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -876,6 +883,9 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| curveMulGenerator($value)) | `(nlexpr| curveX($value))
   | `(nlexpr| curveY($value)) | `(nlexpr| foreignToBytes($value))
   | `(nlexpr| secp256k1EthereumAddress($value)) => inlineAssertions value
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key))
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    [digest, r, s, key].flatMap inlineAssertions
   | `(nlexpr| foreignAdd($left, $right)) | `(nlexpr| foreignSub($left, $right))
   | `(nlexpr| foreignMul($left, $right)) | `(nlexpr| curveMul($left, $right))
   | `(nlexpr| curveFromCoordinates($left, $right)) =>
@@ -2128,6 +2138,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       term := .bytes (.sliceBytes 32 12 32) [.bytes (.keccak256 64) [coordinates]]
       before := key.before ++ [.bind name key.type key.term, .assert (.at span nonIdentity)]
       generatedValidity := s!"non-identity key for {renderExpr stx}" :: key.generatedValidity }
+  | `(nlexpr| secp256k1EcdsaVerify($digest, $r, $s, $key)) =>
+    lowerEcdsa programName callPrefix env stx .secp256k1 digest r s key
+  | `(nlexpr| secp256r1EcdsaVerify($digest, $r, $s, $key)) =>
+    lowerEcdsa programName callPrefix env stx .secp256r1 digest r s key
   | `(nlexpr| foreignAdd($left, $right)) =>
     lowerForeignBinary programName callPrefix env stx "add" left right
   | `(nlexpr| foreignSub($left, $right)) =>
@@ -2251,6 +2265,31 @@ where
     pure { mergeLowered (.scalar result) term values with
       generatedValidity := (values.flatMap (·.generatedValidity) ++
         if operation == .fromCoordinates then ["Jubjub point coordinate validation"] else []).eraseDups }
+
+  lowerEcdsa (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)
+      (curve : Foreign.Curve) (digest r s key : TSyntax `nlexpr) : ExprM Lowered := do
+    let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
+      let value ← lowerExpr programName callPrefix env source
+      unless value.type == .scalar expected do
+        throwErrorAt source "ECDSA requires a Bytes32 digest and matching curve scalars and key"
+      let name ← freshIterationRef "ecdsa-argument"
+      pure (value, name)
+    let (digest, digestName) ← operand digest (.bytes 32)
+    let (r, rName) ← operand r (.foreign (.scalar curve))
+    let (s, sName) ← operand s (.foreign (.scalar curve))
+    let (key, keyName) ← operand key (.foreign (.point curve))
+    let (checks, equation) ← match Crypto.readableEcdsaChecks curve digestName rName sName keyName with
+      | .ok formula => pure formula
+      | .error message => throwErrorAt stx message
+    let span ← liftM (spanValue stx)
+    let bindings := [(digest, digestName), (r, rName), (s, sName), (key, keyName)]
+    let result := mergeLowered (.scalar .bool) equation (bindings.map Prod.fst)
+    pure {result with
+      before := (bindings.flatMap fun (value, name) =>
+        value.before ++ [.bind name value.type value.term]) ++
+        (checks.map fun check => .assert (.at span check))
+      generatedValidity := s!"non-identity key and nonzero signature scalars for {renderExpr stx}" ::
+        result.generatedValidity }
 
   lowerForeignUnary (programName callPrefix : String) (env : SurfaceEnv) (stx : Syntax)
       (operationName : String) (valueStx : TSyntax `nlexpr) : ExprM Lowered := do

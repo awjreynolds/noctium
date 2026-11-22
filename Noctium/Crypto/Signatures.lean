@@ -32,9 +32,9 @@ private def signatureCodec (id : Types.DeclId) (fields : List (String × Ty)) : 
     {name, type := .scalar ty}}]}
 }
 
-private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
+private def ecdsaChecks (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
     (r s : Expr (.foreign (.scalar curve)))
-    (pk : Expr (.foreign (.point curve))) : Expr .bool := Id.run do
+    (pk : Expr (.foreign (.point curve))) : List (Expr .bool) × Expr .bool := Id.run do
   let z : Expr (.foreign (.scalar curve)) :=
     .foreignFromBytes (.scalar curve) (.reverseBytes32 msgHash)
   let w : Expr (.foreign (.scalar curve)) := .foreignUnary (.inv (.scalar curve)) s
@@ -50,7 +50,38 @@ private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
   let nonIdentity := .eq (.eq pk (.foreignIdentity curve)) (.bool false)
   let nonzeroR := .eq (.eq r (.foreignScalar curve 0)) (.bool false)
   let nonzeroS := .eq (.eq s (.foreignScalar curve 0)) (.bool false)
-  return .assertE nonIdentity (.assertE nonzeroR (.assertE nonzeroS (.eq xModN r)))
+  return ([nonIdentity, nonzeroR, nonzeroS], .eq xModN r)
+
+private def ecdsaVerify (curve : Foreign.Curve) (msgHash : Expr (.bytes 32))
+    (r s : Expr (.foreign (.scalar curve)))
+    (pk : Expr (.foreign (.point curve))) : Expr .bool :=
+  let (checks, equation) := ecdsaChecks curve msgHash r s pk
+  checks.foldr (fun check result => .assertE check result) equation
+
+-- Readable circuits schedule these same checks before the equation in the witness plan.
+private partial def readableEcdsaTerm : Expr ty → Except String Helpers.Term
+  | .ref name => pure (.ref name)
+  | .bool value => pure (.bool value)
+  | .eq left right => return .eq (← readableEcdsaTerm left) (← readableEcdsaTerm right)
+  | .foreignPoint curve point =>
+    return .foreignConstant (.point curve) (← Foreign.encodePoint curve point)
+  | .foreignScalar curve value =>
+    return .foreignConstant (.scalar curve) (← Foreign.encodeField (.scalar curve) value)
+  | .foreignUnary operation operand =>
+    return .curve (.foreignUnary operation) [← readableEcdsaTerm operand]
+  | .foreignBinary operation left right =>
+    return .curve (.foreignBinary operation) [← readableEcdsaTerm left, ← readableEcdsaTerm right]
+  | .reverseBytes32 bytes => return .bytes .reverseBytes32 [← readableEcdsaTerm bytes]
+  | .foreignFromBytes (length := length) kind bytes =>
+    return .bytes (.foreignFromBytes kind length) [← readableEcdsaTerm bytes]
+  | .foreignToBytes (kind := kind) operand =>
+    return .bytes (.foreignToBytes kind) [← readableEcdsaTerm operand]
+  | _ => throw "operation in the ECDSA recipe lacks a readable witness representation"
+
+def readableEcdsaChecks (curve : Foreign.Curve) (digest r s key : String) :
+    Except String (List Helpers.Term × Helpers.Term) := do
+  let (checks, equation) := ecdsaChecks curve (.ref digest) (.ref r) (.ref s) (.ref key)
+  return (← checks.mapM readableEcdsaTerm, ← readableEcdsaTerm equation)
 
 def secp256k1EcdsaVerify (msgHash : Expr (.bytes 32))
     (r s : Expr (.foreign (.scalar .secp256k1)))

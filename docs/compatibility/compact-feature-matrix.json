@@ -5561,8 +5561,8 @@
       "id": "C-STDLIB-SECP256K1ECDSAVERIFY",
       "layer": "standard-library",
       "surface": "secp256k1EcdsaVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable circuits share the checked Lean secp256k1 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5575,20 +5575,15 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper consumes a big-endian Bytes32 digest and canonical Secp256k1Scalar r/s. Both high/low s are accepted. Identity keys and zero r/s abort. Explicit r=0 rejection is stricter than pinned Compact. Message binding remains the caller obligation.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableECDSA.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-ecdsa.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256K1ETHEREUMADDRESS",
@@ -5623,8 +5618,8 @@
       "id": "C-STDLIB-SECP256R1ECDSAVERIFY",
       "layer": "standard-library",
       "surface": "secp256r1EcdsaVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ordinary and readable circuits share the checked Lean P-256 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5637,20 +5632,15 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper consumes a big-endian Bytes32 digest and canonical Secp256r1Scalar r/s. Both high/low s are accepted. Identity keys and zero r/s abort. Explicit r=0 rejection is stricter than pinned Compact. Message binding remains the caller obligation.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableECDSA.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-ecdsa.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-ED25519VERIFY",
