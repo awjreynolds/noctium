@@ -1108,20 +1108,21 @@ impl Schema {
         }
     }
 
-    /// Flatten a checked structure or root tuple for FAB cryptographic
-    /// preimages. Nested records, tuples, and fixed vectors retain
-    /// declaration/index order. Unit contributes no logical fields.
+    /// Flatten a checked structure, tuple, or vector in declaration/index order.
+    /// Unit contributes no logical fields.
     pub(crate) fn fab_hash_nested_fields(&self) -> Result<Vec<FabHashField>> {
+        let root = &self.nodes[self.root];
         ensure!(
             matches!(
-                &self.nodes[self.root],
-                LayoutNode::Struct { .. } | LayoutNode::Tuple(_)
+                root,
+                LayoutNode::Struct { .. } | LayoutNode::Tuple(_) | LayoutNode::Vector { .. }
             ),
-            "FAB hash requires a structure or root tuple"
+            "FAB hash requires a structure, tuple, or fixed vector"
         );
         let fields = self.transient_hash_fields()?;
         ensure!(
-            (1..=32).contains(&fields.len()),
+            fields.len() <= 32
+                && (!fields.is_empty() || matches!(root, LayoutNode::Vector { length: 0, .. })),
             "FAB hash field count is outside the supported range"
         );
         Ok(fields)

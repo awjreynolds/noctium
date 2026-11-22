@@ -48,8 +48,11 @@ def fabDigestOperands (compiled : Types.CompiledType) (value : Term) :
   let layout := compiled.checked.value
   let fields ← fabHashLayoutFields layout
   let atoms ← fields.mapM fun field => fabHashLayoutAtoms field.2
-  unless !fields.isEmpty && atoms.flatten.length ≤ 32 do
-    throw "FAB digest alignment must contain 1 to 32 atoms"
+  let emptyRootVector := match layout with
+    | .vector 0 _ => true
+    | _ => false
+  unless ( !fields.isEmpty || emptyRootVector) && atoms.flatten.length ≤ 32 do
+    throw "FAB digest alignment must contain 1 to 32 atoms, or be an empty root vector"
   visit (layout.nodeCount + 1) value layout
 where
   visit : Nat → Term → Types.Layout → Except String (List (Ty × Term))
