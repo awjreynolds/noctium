@@ -953,7 +953,7 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     | .native => pure (.native, ← `(Noctium.Expr.native 0))
     | .bool => pure (.bool, ← `(Noctium.Expr.bool Bool.false))
     | .uint maximum => pure (target, ← `(Noctium.Expr.uint $(natTerm maximum) 0))
-    | .bytes _ => throwErrorAt stx "byte strings have no scalar default expression"
+    | .bytes _ => pure (target, ← `(Noctium.GuardedExpression.zeroValue $(← tyTerm target)))
     | .opaqueBytes => pure (target, ← `(Noctium.Expr.opaqueBytesEmpty))
     | .opaqueString => pure (target, ← `(Noctium.Expr.opaqueStringEmpty))
     | .jubjubScalar | .jubjubPoint => throwErrorAt stx "Jubjub values have no generic default expression"

@@ -215,6 +215,7 @@ jobs:
           lake env lean tests/OpaqueCells.lean
           lake env lean tests/OpaqueCellReset.lean
           lake env lean tests/OpaqueDefaults.lean
+          lake env lean tests/FixedBytesDefaults.lean
           lake env lean tests/ConstructorMetadata.lean
           lake env lean tests/SealedMapConstructor.lean
           lake env lean tests/SealedRootCounterListConstructor.lean
