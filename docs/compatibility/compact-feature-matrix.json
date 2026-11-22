@@ -746,7 +746,7 @@
       "layer": "language",
       "surface": "if, short-circuit logic, return, sequencing",
       "noctiumStatus": "subset",
-      "notes": "Ordinary typed circuits support lazy andThen, orElse and ite. The ZKIR 3.2.1 cases skip inactive UInt narrowing and enforce its bound on the active path. The pinned Compact comparator matches both directions of the typed conditional. Guarded statement and witness evidence covers the scoped cases below. Full control-flow conformance remains open.",
+      "notes": "Ordinary typed and readable witness circuits support lazy andThen, orElse and ite. The ZKIR 3.2.1 cases skip inactive UInt narrowing and enforce its bound on the active path. In readable witness circuits, branch-local bindings, provider requests and assertions execute only on the selected path. Compact 0.36.1 and the native checker agree on the paired cases. Full control-flow conformance remains open.",
       "source": [
         "reference"
       ],
@@ -759,6 +759,8 @@
         "Noctium/GuardedExpression.lean",
         "tests/LazyBoolean.lean",
         "tests/LazyConditional.lean",
+        "tests/ReadableLazyConditional.lean",
+        "runtime/tests/readable_lazy_conditional.rs",
         "tests/compact/LazyConditional.compact",
         "tests/compact/lazy-conditional.mjs",
         "runtime/tests/native_boolean_gates.rs",

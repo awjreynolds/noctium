@@ -574,6 +574,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| eq($left, $right)) => s!"eq({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolAnd($left, $right)) => s!"boolAnd({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolOr($left, $right)) => s!"boolOr({renderExpr left}, {renderExpr right})"
+  | `(nlexpr| andThen($left, $right)) => s!"andThen({renderExpr left}, {renderExpr right})"
+  | `(nlexpr| orElse($left, $right)) => s!"orElse({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolNot($value)) => s!"boolNot({renderExpr value})"
   | `(nlexpr| boolXor($left, $right)) => s!"boolXor({renderExpr left}, {renderExpr right})"
   | `(nlexpr| select($condition, $yes, $no)) =>
@@ -688,6 +690,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
   | `(nlexpr| mul($left, $right)) | `(nlexpr| eq($left, $right))
   | `(nlexpr| boolAnd($left, $right)) | `(nlexpr| boolOr($left, $right))
+  | `(nlexpr| andThen($left, $right)) | `(nlexpr| orElse($left, $right))
   | `(nlexpr| boolXor($left, $right)) =>
     disclosedValues left ++ disclosedValues right
   | `(nlexpr| boolNot($value)) => disclosedValues value
@@ -769,6 +772,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
   | `(nlexpr| mul($left, $right)) | `(nlexpr| eq($left, $right))
   | `(nlexpr| boolAnd($left, $right)) | `(nlexpr| boolOr($left, $right))
+  | `(nlexpr| andThen($left, $right)) | `(nlexpr| orElse($left, $right))
   | `(nlexpr| boolXor($left, $right)) =>
     inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| boolNot($value)) => inlineAssertions value
@@ -1605,6 +1609,18 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     unless left.type == .scalar .bool && right.type == .scalar .bool do
       throwErrorAt stx "boolOr operands require Bool"
     pure (mergeLowered (.scalar .bool) (.boolOr left.term right.term) [left, right])
+  | `(nlexpr| andThen($left, $right)) | `(nlexpr| orElse($left, $right)) => do
+    let leftValue ← lowerExpr programName callPrefix env left
+    let rightValue ← lowerExpr programName callPrefix env right
+    unless leftValue.type == .scalar .bool && rightValue.type == .scalar .bool do
+      throwErrorAt stx "short-circuit operands require Bool"
+    let rightTerm ← lowerConditionalArm right programName env rightValue
+    let term := match stx with
+      | `(nlexpr| andThen($_left, $_right)) => Helpers.Term.andThen leftValue.term rightTerm
+      | _ => Helpers.Term.orElse leftValue.term rightTerm
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    let result := mergeLowered (.scalar .bool) term [leftValue, rightValue]
+    pure {result with before := leftValue.before}
   | `(nlexpr| boolXor($left, $right)) => do
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
@@ -2269,6 +2285,10 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
     `(Noctium.Helpers.Term.disclose $span $(← termTerm value))
   | .ite condition yes no => do
     `(Noctium.Helpers.Term.ite $(← termTerm condition) $(← termTerm yes) $(← termTerm no))
+  | .andThen left right => do
+    `(Noctium.Helpers.Term.andThen $(← termTerm left) $(← termTerm right))
+  | .orElse left right => do
+    `(Noctium.Helpers.Term.orElse $(← termTerm left) $(← termTerm right))
   | .select condition yes no => do
     `(Noctium.Helpers.Term.select $(← termTerm condition) $(← termTerm yes) $(← termTerm no))
   | .witnessCall site name args => do

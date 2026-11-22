@@ -3,14 +3,15 @@
 use anyhow::Result;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    Plan, check,
+    check,
     control::{InvocationTarget, Session, TypedResponse},
     create_state,
     host::{self, Capability, Context, Limits, Operation, Provider},
     prepare,
     zkir::IrSource,
+    Plan,
 };
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -125,6 +126,7 @@ fn typed_reply(request: &Json, attempt_id: &str, value: Json) -> Result<TypedRes
 }
 
 struct Fixture {
+    entrypoint: String,
     binding: Json,
     control: Json,
     plan: Plan,
@@ -132,12 +134,12 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn load() -> Result<Self> {
+    fn load(entrypoint: &str) -> Result<Self> {
         let directory = PathBuf::from(
             std::env::var_os("NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR")
                 .expect("NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR"),
         );
-        let stem = format!("{SOURCE_NAMESPACE}.choose");
+        let stem = format!("{SOURCE_NAMESPACE}.{entrypoint}");
         let binding: Json =
             serde_json::from_slice(&fs::read(directory.join(format!("{stem}.witness.json")))?)?;
         let control: Json = serde_json::from_slice(&fs::read(
@@ -156,6 +158,7 @@ impl Fixture {
         assert_eq!(plan.target.as_deref(), Some(PROFILE));
         let circuit = IrSource::load(fs::File::open(directory.join(format!("{stem}.zkir")))?)?;
         Ok(Self {
+            entrypoint: entrypoint.into(),
             binding,
             control,
             plan,
@@ -176,10 +179,29 @@ impl Fixture {
             Some(&digest),
             Some(InvocationTarget {
                 contract_address: "a".repeat(64),
-                entrypoint: "choose".into(),
+                entrypoint: self.entrypoint.clone(),
             }),
         )?)
     }
+}
+
+fn assert_fixture_shape(fixture: &Fixture) {
+    assert_eq!(fixture.control["inputs"][0]["name"], "choice");
+    assert_eq!(fixture.control["inputs"][0]["visibility"], "public");
+    assert_eq!(fixture.control["inputs"][1]["name"], "expected");
+    assert_eq!(fixture.control["inputs"][1]["visibility"], "public");
+    assert_eq!(
+        fixture.binding["circuitOutputs"].as_array().unwrap().len(),
+        2
+    );
+    assert!(fixture.binding["types"].as_array().is_some_and(|types| {
+        types.iter().any(|ty| {
+            ty["schema"]["layout"]["id"] == PAYLOAD_ID
+                && ty["schema"]["layout"]["fields"]
+                    .as_array()
+                    .is_some_and(|fields| fields.iter().any(|field| field["name"] == "extra"))
+        })
+    }));
 }
 
 fn run_case(
@@ -255,26 +277,23 @@ fn run_case(
 #[test]
 #[ignore = "requires fresh ReadableLazyConditional artifacts in NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR"]
 fn readable_aggregate_conditional_runs_only_the_selected_provider_and_assertion() -> Result<()> {
-    let fixture = Fixture::load()?;
-    assert_eq!(fixture.control["inputs"][0]["name"], "choice");
-    assert_eq!(fixture.control["inputs"][0]["visibility"], "public");
-    assert_eq!(fixture.control["inputs"][1]["name"], "expected");
-    assert_eq!(fixture.control["inputs"][1]["visibility"], "public");
-    assert_eq!(
-        fixture.binding["circuitOutputs"].as_array().unwrap().len(),
-        2
-    );
-    assert!(fixture.binding["types"].as_array().is_some_and(|types| {
-        types.iter().any(|ty| {
-            ty["schema"]["layout"]["id"] == PAYLOAD_ID
-                && ty["schema"]["layout"]["fields"]
-                    .as_array()
-                    .is_some_and(|fields| fields.iter().any(|field| field["name"] == "extra"))
-        })
-    }));
+    let fixture = Fixture::load("choose")?;
+    assert_fixture_shape(&fixture);
 
     run_case(&fixture, true, "7", 1, true)?;
     run_case(&fixture, false, "9", 2, true)?;
     run_case(&fixture, true, "9", 3, false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableLazyConditional artifacts in NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR"]
+fn readable_short_circuit_skips_inactive_provider_and_rejects_wrong_expectation() -> Result<()> {
+    let fixture = Fixture::load("shortCircuit")?;
+    assert_fixture_shape(&fixture);
+
+    run_case(&fixture, true, "7", 4, true)?;
+    run_case(&fixture, false, "9", 5, true)?;
+    run_case(&fixture, true, "9", 6, false)?;
     Ok(())
 }
