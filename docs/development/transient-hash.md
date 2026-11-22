@@ -25,11 +25,24 @@ The pinned fixed-length Poseidon implementation returns zero for an empty vector
 
 Private origins propagate from every operand. Publishing the derived hash requires explicit disclosure. A cached hash result does not skip operand assertions.
 
+## Checked flat FAB payloads
+
+Ordinary circuits use `transientHashFab(environment, type, [fields...])` to hash
+a checked flat record or tuple. The payload supports one through 32 Native,
+Bool, bounded UInt, fixed Bytes of at most 32 bytes, or payload-free enum fields.
+Record fields follow declaration order. FAB encoding packs Bytes32 into a one-byte
+high field and a 31-byte low field. Every input contributes its disclosure origin.
+
+The mixed fixture checks a six-field preimage against Compact 0.36.1. Changing
+the UInt16 field changes the hash. Changing either commitment opening leaves the
+hash unchanged. [Lean fixture](../../tests/MixedFabCommitments.lean) · [Native
+test](../../runtime/tests/mixed_fab_commitments.rs) · [Compact oracle](../../tests/compact/mixed-fab-persistent-hash.mjs)
+
 ## Schnorr reference boundary
 
 The pinned Compact Schnorr message is `Vector<N, Field>`. Its challenge preimage is exactly `[announcement.x, announcement.y, publicKey.x, publicKey.y] ++ messageFields`. Source struct/vector flattening preserves that order and emits no extra operands. [Pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L360), [datatype flattening](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/circuit-passes/flatten-datatypes.ss#L80), [ZKIR lowering](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/zkir-v3-passes/reduce-to-zkir.ss#L255).
 
-This raw field API does not implement a general typed serializer. Generic Bytes/record host-hash equivalence remains separate. The [typed signature helpers](signatures.md) build on this preimage contract, tracked in [issue 82](https://github.com/awjreynolds/noctium/issues/82).
+The [typed signature helpers](signatures.md) build on this field-vector preimage contract, tracked in [issue 82](https://github.com/awjreynolds/noctium/issues/82).
 
 ## Evidence
 

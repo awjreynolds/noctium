@@ -274,6 +274,7 @@ scoped syntax "persistentHashVector32(" "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "persistentHashNative(" nlexpr ")" : nlexpr
 scoped syntax "persistentHashNativeVector(" "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "persistentHashFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
+scoped syntax "transientHashFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "hashToCurveFab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "sha512Fab(" ident "," ident "," "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "persistentCommitFab(" ident "," ident "," nlexpr "," "[" nlexpr,* "]" ")" : nlexpr
@@ -856,7 +857,8 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
   | `(nlexpr| tokenType($domain, $contractAddress)) =>
     hasPartialScalar domain || hasPartialScalar contractAddress
   | `(nlexpr| persistentHashNative($value)) => hasPartialScalar value
-  | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*])) =>
+  | `(nlexpr| persistentHashFab($_:ident, $_:ident, [$values,*]))
+  | `(nlexpr| transientHashFab($_:ident, $_:ident, [$values,*])) =>
     values.getElems.toList.any hasPartialScalar
   | `(nlexpr| hashToCurveFab($_:ident, $_:ident, [$values,*])) =>
     values.getElems.toList.any hasPartialScalar
@@ -1292,6 +1294,20 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       `(Sigma.mk $actualType $value)
     let valueList ← sigmaExprListTerm encodedValues
     pure (.bytes 32, ← `(Noctium.Expr.persistentHashFab $environmentTerm $typeTerm $valueList))
+  | `(nlexpr| transientHashFab($environment:ident, $type:ident, [$values,*])) => do
+    let environmentName ← liftCoreM <| resolveGlobalConstNoOverload environment
+    let typeName ← liftCoreM <| resolveGlobalConstNoOverload type
+    let environmentTerm : TSyntax `term := ⟨mkIdent environmentName⟩
+    let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
+    let sourceValues := values.getElems.toList
+    unless !sourceValues.isEmpty && sourceValues.length ≤ 32 do
+      throwErrorAt stx "transientHashFab requires 1 to 32 values"
+    let encodedValues ← sourceValues.mapM fun sourceValue => do
+      let (actualType, value) ← expression env sourceValue
+      let actualType ← tyTerm actualType
+      `(Sigma.mk $actualType $value)
+    let valueList ← sigmaExprListTerm encodedValues
+    pure (.native, ← `(Noctium.Expr.transientHashFab $environmentTerm $typeTerm $valueList))
   | `(nlexpr| persistentCommitFab($environment:ident, $type:ident, $opening, [$values,*])) => do
     let environmentName ← liftCoreM <| resolveGlobalConstNoOverload environment
     let typeName ← liftCoreM <| resolveGlobalConstNoOverload type

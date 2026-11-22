@@ -701,6 +701,16 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     let terms := opening.term :: operands
     pure (Normalized.mk ((conditionalSwapHash? terms).getD (.hash terms))
       (opening.bounds ++ bounds) (opening.assertions ++ assertions))
+  | .transientHashFab compositeEnv compositeType values => do
+    let compiled ← validateFabHashLayout compositeEnv compositeType values
+    let fields ← fabHashLayoutFields compiled
+    unless fabHashEncodedFieldCount fields ≤ Types.defaultLimits.maxVectorLength do
+      throw s!"transient_hash input count exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
+    let normalizedValues ← normalizeFabValues env values
+    let payload ← alignedFabPayload fields normalizedValues
+    let terms := payload.operands
+    pure (Normalized.mk ((conditionalSwapHash? terms).getD (.hash terms))
+      payload.bounds payload.assertions)
   | .reverseBytes32 value => do
     let normalized ← normalize env value
     let (highByte, low31) ← alignedBytes32Fields normalized

@@ -134,6 +134,9 @@ inductive Expr : Ty → Type where
   | poseidon2 (domain : Nat) (a b : Expr .native) : Expr .native
   /-- Hash the exact ordered Native operands with the pinned transient_hash. -/
   | transientHash (values : List (Expr .native)) : Expr .native
+  /-- Hash the canonical field sequence of a checked flat FAB payload. -/
+  | transientHashFab (environment : Types.CompositeEnv) (type : Types.CompositeType)
+      (values : List (Sigma Expr)) : Expr .native
   /-- Hash a checked, flat Compact composite using its FAB field alignment.
   Values stay logically typed here. Backends derive the alignment from the
   checked layout rather than accepting a caller-provided alignment vector. -/
@@ -1062,6 +1065,10 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     unless caps.poseidon2 do throw "target lacks qualified FAB transient-commit support"
     discard (validateFabHashLayout compositeEnv type values)
     opening.validate caps env
+    validateFabHashValues caps env values
+  | .transientHashFab compositeEnv type values => do
+    unless caps.poseidon2 do throw "target lacks qualified FAB transient-hash support"
+    discard (validateFabHashLayout compositeEnv type values)
     validateFabHashValues caps env values
   | .toBytes32 (source := source) value => do
     unless caps.bytes32Conversions do throw "target lacks qualified Bytes32 conversion support"

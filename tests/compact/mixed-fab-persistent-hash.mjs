@@ -50,6 +50,7 @@ try {
   const persistentHashes = [];
   const persistentCommitments = [];
   const transientCommitments = [];
+  const transientHashes = [];
   async function fabHashes(payload, persistentOpening, transientOpening) {
     const context = runtime.createCircuitContext({
       circuitId: 'fabHashes',
@@ -69,6 +70,7 @@ try {
     const result = await fabHashes(payload, opening, nonce);
     persistentHashes.push(Buffer.from(result[0]).toString('hex'));
     persistentCommitments.push(Buffer.from(result[1]).toString('hex'));
+    transientHashes.push(result[2].toString());
     transientCommitments.push(result[3].toString());
   }
 
@@ -87,11 +89,18 @@ try {
     '26379122738253202444518886441389591496658820157546698964272146379194073575416',
     '52175680914820761057797808711717819206214043408631344658262904895711887709638',
   ]);
+  assert.deepEqual(transientHashes, [
+    '31450192802498090922990245422064529103765978660401260400662966898300129689545',
+    '45341827361802937545085556155854399066079167850897885488099005759856344686712',
+  ]);
+  assert.notEqual(transientHashes[0], transientHashes[1],
+    'transientHash must bind the changed UInt16 field');
 
   const changedPersistentOpening = await fabHashes(
     payloads[0], new Uint8Array(32).fill(10), nonce,
   );
   assert.equal(Buffer.from(changedPersistentOpening[0]).toString('hex'), persistentHashes[0]);
+  assert.equal(changedPersistentOpening[2].toString(), transientHashes[0]);
   assert.equal(
     Buffer.from(changedPersistentOpening[1]).toString('hex'),
     '34f5becb77595f7a8e7eda241d9c187f87e97e5c4af68a14577b668c519030fe',
@@ -103,6 +112,7 @@ try {
   );
   assert.equal(Buffer.from(changedTransientOpening[0]).toString('hex'), persistentHashes[0]);
   assert.equal(Buffer.from(changedTransientOpening[1]).toString('hex'), persistentCommitments[0]);
+  assert.equal(changedTransientOpening[2].toString(), transientHashes[0]);
   assert.equal(
     changedTransientOpening[3].toString(),
     '1245246646047273088008560749436502138436832274864845859888856457488273394968',
@@ -116,6 +126,7 @@ try {
     inputs: payloads.map(({ counter }) => ({ counter: counter.toString() })),
     persistentHashes,
     persistentCommitments,
+    transientHashes,
     transientCommitments,
   }));
 } finally {

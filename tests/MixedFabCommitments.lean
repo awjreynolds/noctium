@@ -35,12 +35,16 @@ noctium_circuit mixedFabCommitmentsInputs where
   output transientCommitment : Native := disclose(transientCommitFab(
     mixedFabCommitmentsEnvironment, mixedFabCommitmentsPayloadType, transientOpening,
     [octets, flag, counterInput, uint(0), anchor]))
+  output transientDigest : Native := disclose(transientHashFab(
+    mixedFabCommitmentsEnvironment, mixedFabCommitmentsPayloadType,
+    [octets, flag, counterInput, uint(0), anchor]))
 end
 
 noctium_contract MixedFabCommitments where
   entry commit uses mixedFabCommitmentsInputs where
     return persistentResult : Bytes32 := persistentCommitment
     return transientResult : Native := transientCommitment
+    return transientHashResult : Native := transientDigest
   end
 end
 

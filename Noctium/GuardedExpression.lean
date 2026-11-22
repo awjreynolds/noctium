@@ -115,6 +115,8 @@ def totalize (guard : Expr .bool) : Expr ty → Expr ty
   | .transientCommitFab environment type opening values =>
     .transientCommitFab environment type (totalize guard opening)
       (totalizeFabValues guard values)
+  | .transientHashFab environment type values =>
+    .transientHashFab environment type (totalizeFabValues guard values)
   | .transientHash values => .transientHash (values.map (totalize guard))
   | .hashToCurve values => .hashToCurve (values.map (totalize guard))
   | .hashToCurveFab environment type values =>
