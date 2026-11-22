@@ -4646,7 +4646,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers also hash checked FAB records supplied by private providers. The nested Bytes2, Bool, UInt16 and Native helper matches the canonical preimage digest in the native checker and requires explicit disclosure for a public return. General overload qualification remains open.",
+      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. General overload qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4664,6 +4664,8 @@
         "runtime/tests/flat_fab_tuple.rs",
         "tests/compact/flat-fab-tuple.mjs",
         "tests/MixedFabPersistentHash.lean",
+        "tests/EmptyFabBytes.lean",
+        "tests/WideFabBytes.lean",
         "tests/compact/mixed-fab-persistent-hash.mjs",
         "runtime/tests/mixed_fab_persistent_hash.rs",
         "tests/CurveFabHashes.lean",

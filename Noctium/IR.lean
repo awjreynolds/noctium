@@ -5,6 +5,12 @@ namespace Noctium
 
 def maxBytesLength : Nat := Types.defaultLimits.maxVectorLength
 
+/-- Number of canonical 31-byte Native chunks needed for a fixed byte value. -/
+def bytesChunkCount (length : Nat) : Nat := (length + 30) / 31
+
+/-- Width of one low-to-high 31-byte chunk, counting from the least significant chunk. -/
+def bytesChunkWidth (length index : Nat) : Nat := min 31 (length - index * 31)
+
 /-- Variable UTF-8 strings use the native Compress codec's byte limit, not the
 fixed-vector limit used by `Bytes`. Keep this aligned with the host scalar codec. -/
 def maxOpaqueStringBytes : Nat := 1_048_576
@@ -164,7 +170,8 @@ def Expr.foreignIdentity (curve : Foreign.Curve) : Expr (.foreign (.point curve)
 
 private def fabHashFieldMatches (layout : Types.Layout) (value : Sigma Expr) : Bool :=
   match layout, value with
-  | .bytes length .byteField, ⟨.bytes actualLength, _⟩ => length == actualLength && length > 0 && length ≤ 32
+  | .bytes length .byteField, ⟨.bytes actualLength, _⟩ =>
+      length == actualLength && length ≤ maxBytesLength
   | .scalar .nativeField, ⟨.native, _⟩ => true
   | .scalar .booleanField, ⟨.bool, _⟩ => true
   | .scalar (.boundedUnsignedField maximum), ⟨.uint actualMaximum, _⟩ => maximum == actualMaximum
@@ -215,7 +222,9 @@ private def fabHashUnsignedByteWidth (maximum : Nat) : Nat := Id.run do
 expand to their canonical Encode atoms while remaining one typed source value. -/
 def fabHashLayoutAtoms : Types.Layout → Except String (List String)
   | .bytes length .byteField => do
-    unless 1 ≤ length && length ≤ 32 do throw "unsupported mixed FAB byte width"
+    unless length ≤ maxBytesLength do throw "unsupported mixed FAB byte width"
+    -- Compact keeps one logical alignment descriptor. Native encoding expands
+    -- positive widths into canonical 31-byte chunks.
     pure [s!"bytes:{length}"]
   | .scalar .nativeField => pure ["field"]
   | .scalar .booleanField => pure ["bytes:1"]

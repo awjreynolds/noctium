@@ -111,11 +111,16 @@ where
           throw "transientHashValue requires a supported UInt width"
         pure [.cast .native value]
       | .bytes length .byteField =>
-        unless 0 < length && length ≤ 32 do
-          throw "transientHashValue requires fixed byte leaves from Bytes1 through Bytes32"
-        let byte := fun index => Term.cast .native (.project value (.byteIndex index))
-        let low := packHashBytes ((List.range (min length 31)).map byte)
-        pure (if length == 32 then [byte 31, low] else [low])
+        unless length ≤ maxBytesLength do
+          throw s!"transientHashValue byte length exceeds the maximum of {maxBytesLength}"
+        if length == 0 then pure [] else do
+          let byte := fun index => Term.cast .native (.project value (.byteIndex index))
+          let count := bytesChunkCount length
+          pure ((List.range count).map fun index =>
+            let lowIndex := count - 1 - index
+            let start := lowIndex * 31
+            packHashBytes ((List.range (bytesChunkWidth length lowIndex)).map fun offset =>
+              byte (start + offset)))
       | .enumeration _ (.enumTagField maximum) _ 0 _ variants =>
         unless maximum < 256 && !variants.isEmpty && variants.all (·.2.1.isEmpty) do
           throw "transientHashValue requires a one-byte fieldless enum"

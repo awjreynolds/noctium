@@ -169,7 +169,7 @@ def fabByteHashTerm (algorithm : String) (alignment : List String) (values : Lis
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if 0 < width && width ≤ 32 && values.length == (width + 30) / 31 then
+        if width ≤ maxBytesLength && values.length == bytesChunkCount width then
           return fixedByteHashTerm algorithm width values
   return .unary (algorithm ++ "_fab:" ++ String.intercalate "," alignment) (.hash values)
 
@@ -184,7 +184,8 @@ def persistentHashFabTerm (alignment : List String) (values : List Term) : Term 
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if 0 < width && width < 32 && values.length == 1 then
+        if width != 32 && width ≤ maxBytesLength &&
+            values.length == bytesChunkCount width then
           return fixedByteHashTerm "persistent_hash" width values
   return .unary ("persistent_hash_fab:" ++ String.intercalate "," alignment) (.hash values)
 
@@ -321,10 +322,6 @@ def bytes32ByteAtTerm (bytes : Term) (index : Nat) : Term :=
 /-- Reversal preserves the typed byte sequence rather than reversing its field chunks. -/
 def reverseBytes32Term (bytes : Term) : Term :=
   .unary "reverse_bytes32" bytes
-
-def bytesChunkCount (length : Nat) : Nat := (length + 30) / 31
-
-def bytesChunkWidth (length index : Nat) : Nat := min 31 (length - index * 31)
 
 def encodedBytesChunkTerm (length : Nat) (bytes : Term) (index : Nat) : Term :=
   if length == 32 then encodedHashChunkTerm bytes index
@@ -488,7 +485,8 @@ private def alignedFabPayload (fields : List (String × Types.Layout))
           | ⟨.bytes 32, expression⟩ => alignedBytes32Value expression normalized
           | _ => throw "Bytes32 FAB source type disagrees with its checked layout"
         pure ([highByte, low31], [])
-      | .bytes length .byteField => pure (← bytesChunksTerm length normalized.term, [])
+      | .bytes length .byteField =>
+        pure ((← bytesChunksTerm length normalized.term).reverse, [])
       | .scalar .nativeField | .scalar .booleanField
       | .scalar (.boundedUnsignedField _) | .enumeration _ (.enumTagField _) _ 0 _ _ =>
         pure ([normalized.term], [])

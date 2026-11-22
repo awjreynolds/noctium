@@ -5,7 +5,9 @@ use noctium_runtime::{
     Expr, FabHashInput, Plan, check, create_state, evaluate, prepare, zkir::IrSource,
 };
 use serde_json::{Value as Json, json};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, path::PathBuf};
+use transient_crypto::curve::Fr;
 
 fn artifacts() -> PathBuf {
     std::env::var_os("NOCTIUM_MIXED_FAB_PERSISTENT_HASH_DIR")
@@ -82,6 +84,130 @@ fn mixed_fab_persistent_hash_matches_compact_and_native_relation() -> anyhow::Re
             execution.returns_json().get("resultHash"),
             Some(&bytes(&expected))
         );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_EMPTY_FAB_BYTES_DIR"]
+fn empty_fab_bytes_preserve_hashes_and_assertions() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_EMPTY_FAB_BYTES_DIR").context("NOCTIUM_EMPTY_FAB_BYTES_DIR")?,
+    );
+    let plan: Plan = serde_json::from_reader(File::open(
+        directory.join("EmptyFabBytes.hash.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(File::open(directory.join("EmptyFabBytes.hash.zkir"))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let mut inputs = BTreeMap::from([
+        ("mustPass".into(), json!(true)),
+        ("value".into(), json!(false)),
+        ("emptyBytes".into(), bytes(&[])),
+    ]);
+
+    let empty_digest =
+        hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")?;
+    for (value, digest) in [
+        (
+            false,
+            "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        ),
+        (
+            true,
+            "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        ),
+    ] {
+        inputs.insert("value".into(), json!(value));
+        let mut execution = prepare(&plan, &inputs, &initial, parameters, address)?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([
+                ("mixedDigestResult".into(), bytes(&hex::decode(digest)?)),
+                ("emptyOnlyDigestResult".into(), bytes(&empty_digest)),
+            ])
+        );
+        assert_eq!(
+            execution.preimage.private_transcript,
+            [Fr::from(1u64), Fr::from(u64::from(value))]
+        );
+        execution.preimage.private_transcript[0] = Fr::from(0u64);
+        assert!(check(&execution, &circuit).is_err());
+    }
+
+    inputs.insert("mustPass".into(), json!(false));
+    assert!(prepare(&plan, &inputs, &initial, parameters, address).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_WIDE_FAB_BYTES_DIR"]
+fn wide_fab_bytes_match_compact_and_bind_native_chunks() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_WIDE_FAB_BYTES_DIR").context("NOCTIUM_WIDE_FAB_BYTES_DIR")?,
+    );
+    let payload: Vec<u8> = (0u8..63)
+        .map(|index| index.wrapping_mul(17).wrapping_add(3))
+        .collect();
+    let count = 197u8;
+    let mixed_63 = [payload.as_slice(), &[count]].concat();
+    let cases = [
+        (
+            "hash33",
+            33,
+            Some(count),
+            "mixedDigestResult",
+            hex::decode("8a68445487c692c11aa5e8fe2f236683ef50eef0cd89643eacaa395733a1e045")?,
+        ),
+        (
+            "hash63",
+            63,
+            Some(count),
+            "threeChunkDigestResult",
+            Sha256::digest(&mixed_63).to_vec(),
+        ),
+        (
+            "hash63Only",
+            63,
+            None,
+            "singletonDigestResult",
+            Sha256::digest(&payload).to_vec(),
+        ),
+    ];
+
+    for (entry, length, value, result_name, digest) in cases {
+        let stem = format!("WideFabBytes.{entry}");
+        let plan: Plan =
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
+        let circuit = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+        let initial = create_state(&plan, &BTreeMap::new())?;
+        let mut supplied = BTreeMap::from([("payload".into(), bytes(&payload[..length]))]);
+        if let Some(value) = value {
+            supplied.insert("value".into(), json!(value.to_string()));
+        }
+        let mut execution = prepare(
+            &plan,
+            &supplied,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )
+        .with_context(|| format!("prepare {entry}"))?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(
+            execution.returns_json().get(result_name),
+            Some(&bytes(&digest)),
+            "digest for {entry}"
+        );
+        if entry == "hash63Only" {
+            assert_eq!(execution.preimage.private_transcript.len(), length);
+            let high_octet = &mut execution.preimage.private_transcript[length - 1];
+            assert_eq!(*high_octet, Fr::from(u64::from(payload[length - 1])));
+            *high_octet = *high_octet + Fr::from(256u64);
+            assert!(check(&execution, &circuit).is_err());
+        }
     }
     Ok(())
 }

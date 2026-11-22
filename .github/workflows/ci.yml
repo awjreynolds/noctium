@@ -23,7 +23,7 @@ jobs:
   lean:
     name: Lean compiler and contract examples
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -74,6 +74,8 @@ jobs:
           lake env lean tests/Issue69CompositeMap.lean
           lake env lean tests/Issue70PersistentHash.lean
           lake env lean tests/MixedFabPersistentHash.lean
+          lake env lean tests/EmptyFabBytes.lean
+          lake env lean tests/WideFabBytes.lean
           lake env lean tests/MixedFabCommitments.lean
           lake env lean tests/FlatFabTuple.lean
           lake env lean tests/Sha512Fab.lean

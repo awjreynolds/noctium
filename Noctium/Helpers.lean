@@ -2032,15 +2032,34 @@ private def packFabOctets : List (Expr .native) → Expr .native
   | [octet] => octet
   | octet :: rest => .add octet (.mul (.native 256) (packFabOctets rest))
 
+private def fabDigestPackedBytes : (length : Nat) → List (Expr .native) → Expr (.bytes length)
+  | 0, _ => .bytesLiteral 0 []
+  | length + 1, octets =>
+    if h : length + 1 ≤ 31 then
+      .sliceBytes (.toBytes32 (packFabOctets (octets.take (length + 1)))) 0 (length + 1)
+    else
+      let restLength := length + 1 - 31
+      let first : Expr (.bytes 31) :=
+        .sliceBytes (.toBytes32 (packFabOctets (octets.take 31))) 0 31
+      let rest : Expr (.bytes restLength) := fabDigestPackedBytes restLength (octets.drop 31)
+      have chunksCoverInput : 31 + restLength = length + 1 := by omega
+      chunksCoverInput ▸ Expr.concatBytes first rest
+termination_by length => length
+decreasing_by
+  all_goals simp_wf
+  omega
+
 private def fabDigestInput (span : SourceSpan) :
     (type : Ty) → Lowered → Except Diagnostic (Expr type)
   | .bytes length, value => do
     if value.ty == .composite (.bytes length) then
-      unless length > 0 && length <= 32 do
-        fail span "FAB byte projection requires 1 to 32 octets"
       let octets ← (components value).mapM (nativeOfScalar span)
       unless octets.length == length do fail span "FAB byte projection width mismatch"
-      if h : length = 32 then
+      if h : length = 0 then
+        pure (h.symm ▸ Expr.bytesLiteral 0 [])
+      else if length > 32 then
+        pure (fabDigestPackedBytes length octets)
+      else if h : length = 32 then
         let low := Expr.toBytes32 (packFabOctets (octets.take 31))
         let high := Expr.toBytes32 (octets.getD 31 (.native 0))
         pure (h.symm ▸ Expr.concatBytes (.sliceBytes low 0 31) (.sliceBytes high 0 1))
