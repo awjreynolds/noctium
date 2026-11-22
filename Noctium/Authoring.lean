@@ -2694,10 +2694,12 @@ private partial def lowerReadableStatement (programName path : String)
       let nominalBytes32Outputs := authoredOutputs.filterMap fun item =>
         item.nominalBytes32.map fun nominal => (item.name, nominal)
       let defineAlias (item : AuthoredOutput) (ty : Ty) (value : TSyntax `term) : CommandElabM Name := do
-        let aliasName := generatedName fullName s!"__logicalOutput_{item.ordinal}_{item.name}"
+        let suffix := s!"__logicalOutput_{item.ordinal}_{item.name}"
+        let aliasName := generatedName fullName suffix
         if (← getEnv).contains aliasName then
           throwErrorAt stx "generated logical output alias name already exists"
-        elabCommand (← `(def $(mkIdent aliasName) : Noctium.Expr $(← tyTerm ty) := $value))
+        let localName := generatedName name.getId suffix
+        elabCommand (← `(def $(mkIdent localName) : Noctium.Expr $(← tyTerm ty) := $value))
         pure aliasName
       for binding in (if grouped && !useOutputViews then sourceBody.logicalAliases else []) do
         if logicalEnv.any (fun alias => alias.1 == binding.name) then

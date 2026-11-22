@@ -37,8 +37,18 @@ noctium_witness_circuit unpack using packetWire where
   output total : Native := disclose(add(measured, amount))
 end
 
+noctium_witness_circuit unpackViews using packetWire where
+  public seed : Native
+  let {measures := [measured, _], reading := {count := amount, active := enabled}} :=
+    witness load(seed)
+  output total : Native := disclose(add(measured, amount))
+  output flag : Bool := disclose(enabled)
+end
+
 #guard (Noctium.Witness.compile unpack.__program
   "noctium.witness-circuit.ReadableBindPatterns.unpack.v1").isOk
+#guard (Noctium.Witness.compile unpackViews.__program
+  "noctium.witness-circuit.ReadableBindPatterns.unpackViews.v1").isOk
 
 /- error: positional pattern requires -/
 #guard_msgs (substring := true) in
@@ -101,5 +111,9 @@ end
 noctium_contract ReadableBindPatterns where
   entry unpack uses ReadableBindPatterns.unpack where
     return totalResult : Native := total
+  end
+  entry unpackViews uses ReadableBindPatterns.unpackViews where
+    return totalResult : Native := total
+    return activeResult : Bool := flag
   end
 end
