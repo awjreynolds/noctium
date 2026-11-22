@@ -52,6 +52,46 @@ theorem convert_eq_mapError (span : SourceSpan) (result : Except String α) :
 theorem inputAliases_eq (inputs : List InputRequirement) :
     inputAliases inputs = inputs.map (fun input => (input.identifier.drop 7 |>.toString, .input input.identifier)) := rfl
 
+theorem readInputRequirement_eq (name : String) (ty : Ty) :
+    readInputRequirement name ty =
+      match ty with
+      | .jubjubScalar =>
+        {identifier := "%input_" ++ name, visibility := .«public», ty := .native,
+          canonicalJubjubScalar := true}
+      | .opaqueBytes | .opaqueString =>
+        {identifier := "%input_" ++ name, visibility := .«public», ty := .native}
+      | _ => {identifier := "%input_" ++ name, visibility := .«public», ty} := rfl
+
+theorem readInputRequirements_eq (reads : List Impact.Read) :
+    (reads.flatMap fun read => read.bindings.map fun (name, ty) => readInputRequirement name ty) =
+      (reads.flatMap fun read => read.bindings.map fun (name, ty) =>
+        match ty with
+        | .jubjubScalar =>
+          {identifier := "%input_" ++ name, visibility := .«public», ty := .native,
+            canonicalJubjubScalar := true}
+        | .opaqueBytes | .opaqueString =>
+          {identifier := "%input_" ++ name, visibility := .«public», ty := .native}
+        | _ => {identifier := "%input_" ++ name, visibility := .«public», ty}) := by
+  simp only [readInputRequirement_eq]
+
+theorem readInputRequirement_identifier (name : String) (ty : Ty) :
+    (readInputRequirement name ty).identifier = "%input_" ++ name := by
+  cases ty <;> rfl
+
+theorem readInputAliases_eq (reads : List Impact.Read) :
+    inputAliases (reads.flatMap fun read =>
+      read.bindings.map fun (name, ty) => readInputRequirement name ty) =
+        reads.flatMap fun read => read.bindings.map fun (name, _) =>
+          (name, Term.input ("%input_" ++ name)) := by
+  have strip (name : String) : (("%input_" ++ name).drop 7).copy = name := by
+    apply String.toList_injective
+    change (("%input_" ++ name).drop 7).copy.toList = name.toList
+    rw [String.toList_copy_drop, String.toList_append]
+    rfl
+  rw [inputAliases_eq]
+  simp only [List.map_flatMap, List.map_map]
+  simp [Function.comp_def, readInputRequirement_identifier, strip]
+
 theorem inputAliases_source (inputs : List Input) :
     inputAliases (inputs.map inputRequirement) =
       inputs.map (fun input => (input.name, Term.input ("%input_" ++ input.name))) := by
