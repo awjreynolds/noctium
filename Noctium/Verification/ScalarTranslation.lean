@@ -54,7 +54,7 @@ theorem lowerCircuit_sound (ctx : EvalContext) (hash : Hash)
       (fun input => [witness ("%input_" ++ input.name)]) ++
         (if result.isEmpty then [] else [result.map (fun pair => scalar (valueNumber pair.2))]) :=
     validated.groups.trans groups
-  obtain ⟨_, _, _, _, _, _, _, _, _, inputShape, _⟩ :=
+  obtain ⟨_, _, _, _, _, _, _, _, _, inputShape, _, _⟩ :=
     expectedCircuit_parts (Passes.pruneCircuit circuit) expected expectedAccepted
   refine ⟨result, ?_, names, hostReturns, ?_, ?_, publicBinding, ?_, ?_⟩
   · simpa only [Passes.pruneCircuit_run] using source
