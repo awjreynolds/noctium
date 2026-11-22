@@ -146,6 +146,9 @@ inductive Expr : Ty → Type where
   composite. The output keeps the standard 64-byte digest type. -/
   | sha512Fab (environment : Types.CompositeEnv) (type : Types.CompositeType)
       (values : List (Sigma Expr)) : Expr (.bytes 64)
+  /-- Keccak-256 over the ordered binary encoding of a checked FAB payload. -/
+  | keccak256Fab (environment : Types.CompositeEnv) (type : Types.CompositeType)
+      (values : List (Sigma Expr)) : Expr (.bytes 32)
   /-- Commit to a checked flat FAB payload using a Bytes32 opening prepended
   to its canonical binary encoding. -/
   | persistentCommitFab (environment : Types.CompositeEnv) (type : Types.CompositeType)
@@ -1097,6 +1100,10 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     value.validate caps env
   | .sha512Fab compositeEnv type values => do
     unless caps.sha512 do throw "target lacks qualified FAB SHA-512 support"
+    discard (validateFabHashLayout compositeEnv type values)
+    validateFabHashValues caps env values
+  | .keccak256Fab compositeEnv type values => do
+    unless caps.keccak256 do throw "target lacks qualified FAB Keccak-256 support"
     discard (validateFabHashLayout compositeEnv type values)
     validateFabHashValues caps env values
   | .keccak256 (length := length) value => do

@@ -4752,7 +4752,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes and typed Secp256k1Point are supported. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte FAB preimage and digest. The native check rejects a changed digest return and an out-of-field point coordinate. Other typed FAB overloads remain open.",
+      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. Broader layout and host equivalence remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4772,6 +4772,9 @@
         "tests/compact/TypedPointKeccak.compact",
         "tests/compact/typed-point-keccak.mjs",
         "runtime/tests/typed_point_keccak.rs",
+        "tests/Sha512Fab.lean",
+        "tests/compact/sha512-fab.mjs",
+        "runtime/tests/sha512_fab.rs",
         "docs/development/byte-hashes.md"
       ],
       "equivalence": "unverified"
