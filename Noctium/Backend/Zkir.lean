@@ -1142,9 +1142,12 @@ def lowerExpr : Expr ty → LowerM String
     let right ← lowerExpr right
     lowerBoolGate "or" left right
   | .boolXor left right => do
-    let left ← lowerExpr left
-    let right ← lowerExpr right
-    lowerBoolGate "xor" left right
+    let leftValue ← lowerExpr left
+    let rightValue ← lowerExpr right
+    match left, right with
+    | .bool true, _ => unary "not" rightValue
+    | _, .bool true => unary "not" leftValue
+    | _, _ => lowerBoolGate "xor" leftValue rightValue
   | .ref name => do
     match ty with
     | .bytes _ | .opaqueBytes | .opaqueString => do

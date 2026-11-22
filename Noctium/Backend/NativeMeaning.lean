@@ -405,9 +405,12 @@ def boolToNativeTerm (value : Term) : Term := .unary "bool_to_native" value
 def typedBoolGateTerm (opcode : String) (values : List Term) : Term :=
   .unary ("typed_bool_" ++ opcode) (.hash values)
 
-private def normalizeBoolGate (opcode : String) (left right : Normalized) : Normalized :=
-  let term := boolToNativeTerm (typedBoolGateTerm opcode
-    [nativeToBoolTerm left.term, nativeToBoolTerm right.term])
+private def normalizeBoolGate (opcode : String) (left right : Normalized)
+    (notOperand : Option Term := none) : Normalized :=
+  let term := match notOperand with
+    | some value => .unary "not" value
+    | none => boolToNativeTerm (typedBoolGateTerm opcode
+      [nativeToBoolTerm left.term, nativeToBoolTerm right.term])
   {term, bounds := left.bounds ++ right.bounds ++ [(term, 1)],
     assertions := left.assertions ++ right.assertions}
 
@@ -805,7 +808,13 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
   | .boolOr left right => do
     pure (normalizeBoolGate "or" (← normalize env left) (← normalize env right))
   | .boolXor left right => do
-    pure (normalizeBoolGate "xor" (← normalize env left) (← normalize env right))
+    let leftNormalized ← normalize env left
+    let rightNormalized ← normalize env right
+    let notOperand := match left, right with
+      | .bool true, _ => some rightNormalized.term
+      | _, .bool true => some leftNormalized.term
+      | _, _ => none
+    pure (normalizeBoolGate "xor" leftNormalized rightNormalized notOperand)
   | .add left right => do pure (arithmetic ty "add" (← normalize env left) (← normalize env right))
   | .mul left right => do pure (arithmetic ty "mul" (← normalize env left) (← normalize env right))
   | .sub left right => do pure (subtraction ty (← normalize env left) (← normalize env right))
