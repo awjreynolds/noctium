@@ -138,6 +138,7 @@ scoped syntax (name := noctiumWitnessDeclarationCommand) "noctium_witness" ident
   "(" noctium_witness_parameter,* ")" ":" noctium_witness_result : command
 
 scoped syntax "witness" ident "(" nlexpr,* ")" : nlexpr
+scoped syntax "if" nlexpr "then" nlexpr "else" nlexpr : nlexpr
 scoped syntax "map(" "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "fold(" nlexpr "," "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
@@ -544,6 +545,9 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| boolXor($left, $right)) => s!"boolXor({renderExpr left}, {renderExpr right})"
   | `(nlexpr| select($condition, $yes, $no)) =>
     s!"select({renderExpr condition}, {renderExpr yes}, {renderExpr no})"
+  | `(nlexpr| ite($condition, $yes, $no))
+  | `(nlexpr| if $condition then $yes else $no) =>
+    s!"if {renderExpr condition} then {renderExpr yes} else {renderExpr no}"
   | `(nlexpr| poseidon2($domain:num, $left, $right)) =>
     s!"poseidon2({domain.getNat}, {renderExpr left}, {renderExpr right})"
   | `(nlexpr| persistentHash32($value)) => s!"persistentHash32({renderExpr value})"
@@ -650,7 +654,9 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
     disclosedValues left ++ disclosedValues right
   | `(nlexpr| boolNot($value)) => disclosedValues value
   | `(nlexpr| cast($_:nltype, $value:nlexpr)) => disclosedValues value
-  | `(nlexpr| select($condition, $yes, $no)) =>
+  | `(nlexpr| select($condition, $yes, $no))
+  | `(nlexpr| ite($condition, $yes, $no))
+  | `(nlexpr| if $condition then $yes else $no) =>
     disclosedValues condition ++ disclosedValues yes ++ disclosedValues no
   | `(nlexpr| poseidon2($_:num, $left, $right)) => disclosedValues left ++ disclosedValues right
   | `(nlexpr| elementAt($value, $index)) => disclosedValues value ++ disclosedValues index
@@ -724,7 +730,9 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
     inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| boolNot($value)) => inlineAssertions value
   | `(nlexpr| cast($_:nltype, $value:nlexpr)) | `(nlexpr| disclose($value)) => inlineAssertions value
-  | `(nlexpr| select($condition, $yes, $no)) =>
+  | `(nlexpr| select($condition, $yes, $no))
+  | `(nlexpr| ite($condition, $yes, $no))
+  | `(nlexpr| if $condition then $yes else $no) =>
     inlineAssertions condition ++ inlineAssertions yes ++ inlineAssertions no
   | `(nlexpr| poseidon2($_:num, $left, $right)) => inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| elementAt($value, $index)) => inlineAssertions value ++ inlineAssertions index
@@ -865,6 +873,21 @@ private def stageIterationValues (callPrefix : String) (env : SurfaceEnv)
     terms := terms ++ [.ref name]
     staged := staged ++ [(name, value.type)]
   pure (statements, terms, staged)
+
+private def lowerConditionalArm (stx : Syntax) (programName : String) (env : SurfaceEnv)
+    (arm : Lowered) : ExprM Helpers.Term := do
+  if arm.before.isEmpty then return arm.term
+  let program ← iterationProgram stx programName arm.signatures
+  let helperEnv := iterationEnvironment env [] (← get).iterationParameters
+  let span ← liftM (spanValue stx)
+  -- Keep the arm's statements inside the call guarded by the conditional.
+  let operator := Iteration.Operator.anonymous [] (some arm.type)
+    (arm.before ++ [.return (some arm.term)])
+  match Iteration.applyWithLimits {} program 0 helperEnv span operator [] with
+  | .ok (program, term) =>
+    modify fun state => {state with iterationProgram := some program}
+    pure term
+  | .error diagnostic => throwErrorAt stx diagnostic.message
 
 private def selectedCodec (name : TSyntax `ident) : ExprM (Helpers.Wire.Codec × String) := do
   let some ((_, codec), index) := (← get).codecs.zipIdx.find? (fun (candidate, _) => candidate.1 == name.getId)
@@ -1394,6 +1417,19 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     unless value.type == .scalar .bool do
       throwErrorAt stx "boolNot operand requires Bool"
     pure (mergeLowered (.scalar .bool) (.boolXor value.term (.bool Bool.true)) [value])
+  | `(nlexpr| ite($condition, $yes, $no))
+  | `(nlexpr| if $condition then $yes else $no) => do
+    let predicate ← lowerExpr programName callPrefix env condition
+    let predicate ← coerce condition predicate .bool
+    let yesValue ← lowerExpr programName callPrefix env yes
+    let noValue ← lowerExpr programName callPrefix env no
+    let some type := Helpers.commonType yesValue.type noValue.type
+      | throwErrorAt stx "conditional branches require a common type"
+    let yesTerm ← lowerConditionalArm yes programName env yesValue
+    let noTerm ← lowerConditionalArm no programName env noValue
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    let result := mergeLowered type (.ite predicate.term yesTerm noTerm) [predicate, yesValue, noValue]
+    pure {result with before := predicate.before}
   | `(nlexpr| select($condition, $yes, $no)) => do
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool

@@ -213,13 +213,16 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
   | .ite condition yes no => do
     let _ ← checkBoolean prepared scope typeEnv span condition
     match knownBoolean condition with
-    | some true => analyzeTerm fuel program prepared scope env span yes
-    | some false => analyzeTerm fuel program prepared scope env span no
+    | some selected =>
+      let value ← analyzeTerm fuel program prepared scope env span (if selected then yes else no)
+      pure {value with type := info.ty}
     | none => do
       let condition ← analyzeTerm fuel program prepared scope env span condition
       let yes ← analyzeTerm fuel program prepared scope env span yes
       let no ← analyzeTerm fuel program prepared scope env span no
-      pure (makeValue info.ty [merge (payloadOrigins yes) (payloadOrigins no)]
+      unless yes.components.length == no.components.length do
+        throw {span, message := "conditional source origin count mismatch"}
+      pure (makeValue info.ty (List.zipWith merge yes.components no.components)
         (mergeMany [yes.indexOrigins, no.indexOrigins, condition.indexOrigins])
         (merge yes.tagOrigins no.tagOrigins)
         (mergeMany [yes.controlOrigins, no.controlOrigins, allOrigins condition]))
