@@ -2656,7 +2656,7 @@
       "layer": "language-ledger",
       "surface": "Map.insert",
       "noctiumStatus": "subset",
-      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open.",
+      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open. A flat Bool/UInt16 Map record stores disclosed fields and rejects UInt16 overflow.",
       "source": [
         "adt"
       ],
@@ -2666,6 +2666,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
         "runtime/tests/bytes32_map.rs",
         "tests/StructuredMaps.lean",
@@ -2769,7 +2770,7 @@
       "layer": "language-ledger",
       "surface": "Map.lookup",
       "noctiumStatus": "subset",
-      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open.",
+      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal.",
       "source": [
         "adt"
       ],
@@ -2779,6 +2780,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
         "runtime/tests/bytes32_map.rs",
         "tests/StructuredMaps.lean",
@@ -2809,7 +2811,7 @@
       "layer": "language-ledger",
       "surface": "Map.member",
       "noctiumStatus": "subset",
-      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified.",
+      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified. The native Bool/UInt16 record case checks membership before and after insertion.",
       "source": [
         "adt"
       ],
@@ -2819,6 +2821,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMap.lean",
+        "runtime/tests/mixed_ledger_record.rs",
         "tests/Issue69Bytes32Map.lean",
         "runtime/tests/bytes32_map.rs",
         "tests/StructuredMaps.lean",
@@ -2849,7 +2853,7 @@
       "layer": "language-ledger",
       "surface": "Map.remove",
       "noctiumStatus": "equivalent",
-      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows.",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal.",
       "source": [
         "adt"
       ],
@@ -2859,6 +2863,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMap.lean",
+        "runtime/tests/mixed_ledger_record.rs",
         "tests/NativeMapRemove.lean",
         "runtime/tests/native_map_remove.rs",
         "tests/compact/native-map-remove.mjs",

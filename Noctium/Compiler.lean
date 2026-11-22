@@ -739,28 +739,29 @@ private def stateJson (state : StateDecl) : Json :=
     (Backend.Impact.recordSchema environment type).toOption.getD Json.null
   let cellCompositeSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) : Json :=
     (Backend.Impact.cellRecordSchema environment type).toOption.getD Json.null
-  let rec treeJson : _root_.Bool → LedgerValueType → Json
-    | _, .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
-    | _, .map keyTy value => Json.mkObj [("map", toJson [toJson (typeName keyTy), treeJson Bool.false value])]
-    | _, .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
-    | _, .recordSet environment type => Json.mkObj [("set", Json.mkObj [
+  let rec treeJson : _root_.Bool → _root_.Bool → LedgerValueType → Json
+    | _, _, .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
+    | _, _, .map keyTy value => Json.mkObj [("map", toJson [toJson (typeName keyTy), treeJson Bool.false Bool.true value])]
+    | _, _, .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
+    | _, _, .recordSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", cellCompositeSchema environment type)])]
-    | _, .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
+    | _, _, .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", compositeSchema environment type)])]
-    | rootCell, .composite environment type => Json.mkObj [("composite",
-        if rootCell then cellCompositeSchema environment type else compositeSchema environment type)]
-    | _, .list environment type => Json.mkObj [("list", match type with
+    | rootCell, mapValue, .composite environment type => Json.mkObj [("composite",
+        if rootCell || mapValue then cellCompositeSchema environment type
+        else compositeSchema environment type)]
+    | _, _, .list environment type => Json.mkObj [("list", match type with
         | .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
         | _ => Json.mkObj [("composite",
           (Backend.Impact.listElementOperationSchema environment type).toOption.getD Json.null)])]
-    | _, .counter => Json.mkObj [("counter", toJson Bool.true)]
-    | _, .merkleTree depth historic => Json.mkObj (
+    | _, _, .counter => Json.mkObj [("counter", toJson Bool.true)]
+    | _, _, .merkleTree depth historic => Json.mkObj (
         [("merkleTree", toJson depth)] ++
         (if historic then [("historic", toJson Bool.true)] else []))
   let kind := match state.kind with
     | .cell ty => Json.mkObj [("cell", toJson (typeName ty))]
     | .map kt vt => Json.mkObj [("map", toJson [typeName kt, typeName vt])]
-    | .tree value => Json.mkObj [("tree", treeJson Bool.true value)]
+    | .tree value => Json.mkObj [("tree", treeJson Bool.true Bool.false value)]
     | .merkleTree depth => Json.mkObj [("merkleTree", toJson depth)]
     | .historicMerkleTree depth => Json.mkObj [
         ("merkleTree", toJson depth), ("historic", toJson Bool.true)]

@@ -36,7 +36,7 @@ private def recordSetCollectionEntry : Entrypoint :=
 
 #guard match RecordSetCollections.state with
   | [{kind := .tree (.recordSet environment type), ..}] =>
-      match LedgerValueType.cellWriteRecordFields environment type with
+      match LedgerValueType.ledgerRecordWriteFields environment type with
       | .ok fields => fields == [("active", .bool), ("amount", .uint 65535)]
       | .error _ => _root_.Bool.false
   | _ => _root_.Bool.false
