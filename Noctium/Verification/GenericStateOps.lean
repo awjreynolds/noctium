@@ -4,14 +4,28 @@ import Noctium.Verification.NativeState
 namespace Noctium.Verification.GenericStateOps
 open Backend NativeRelation NativeState
 
-/-- Interpret a symbolic Impact operation with the same source environment
-used by the ordered effect evaluator. An evaluation error rejects the native
-schedule rather than inventing a field value. -/
+def ScalarAligned : Impact.Aligned → Prop
+  | .field _ | .bit _ => True
+  | _ => False
+
+/-- The independent scalar VM models only the operations represented by
+`NativeState.Op`. Keep the supported fragment explicit so newer ledger and
+cryptographic operations fail closed instead of acquiring placeholder
+semantics. -/
+def ScalarOperation : Impact.Op → Prop
+  | .dup | .index _ _ | .member | .insert _ => True
+  | .push value _ | .popeq value => ScalarAligned value
+  | _ => False
+
 def evalAligned (ctx : EvalContext) (env : EvalEnv) : Impact.Aligned → Except String Cell
   | .field expression => do
     pure (field (scalar (← expression.eval ctx env)))
   | .bit value => pure (boolean value)
+  | _ => .error "unsupported Impact alignment in scalar state interpreter"
 
+/-- Interpret a symbolic Impact operation with the same source environment
+used by the ordered effect evaluator. Evaluation errors reject the native
+schedule instead of inventing a field value. -/
 def evalOp (ctx : EvalContext) (env : EvalEnv) : Impact.Op → Except String Op
   | .dup => pure .dup
   | .index slot path => pure (.index slot path)
@@ -19,9 +33,62 @@ def evalOp (ctx : EvalContext) (env : EvalEnv) : Impact.Op → Except String Op
   | .popeq value => do pure (.popeq (← evalAligned ctx env value))
   | .member => pure .member
   | .insert levels => pure (.insert levels)
+  | _ => .error "unsupported Impact operation in scalar state interpreter"
 
 def evalPlan (ctx : EvalContext) (env : EvalEnv) (plan : Impact.Plan) :
     Except String (List Op) := plan.operations.mapM (evalOp ctx env)
+
+theorem evalOp_supported (ctx : EvalContext) (env : EvalEnv)
+    (operation : Impact.Op) (native : Op)
+    (accepted : evalOp ctx env operation = .ok native) :
+    ScalarOperation operation := by
+  cases operation with
+  | dup | index _ _ | member | insert _ => simp [ScalarOperation]
+  | push aligned _ =>
+    cases aligned with
+    | field _ | bit _ => simp [ScalarOperation, ScalarAligned]
+    | _ =>
+      simp [evalOp, evalAligned] at accepted
+      cases accepted
+  | popeq aligned =>
+    cases aligned with
+    | field _ | bit _ => simp [ScalarOperation, ScalarAligned]
+    | _ =>
+      simp [evalOp, evalAligned] at accepted
+      cases accepted
+  | _ => simp_all [evalOp]
+
+theorem evalOperations_supported (ctx : EvalContext) (env : EvalEnv)
+    (operations : List Impact.Op) (native : List Op)
+    (accepted : operations.mapM (evalOp ctx env) = .ok native) :
+    ∀ operation ∈ operations, ScalarOperation operation := by
+  induction operations generalizing native with
+  | nil => simp
+  | cons operation rest ih =>
+    simp only [List.mapM_cons] at accepted
+    cases head : evalOp ctx env operation with
+    | error message =>
+      simp [head] at accepted
+      contradiction
+    | ok value =>
+      cases tail : rest.mapM (evalOp ctx env) with
+      | error message =>
+        simp [head, tail] at accepted
+        contradiction
+      | ok values =>
+        simp [head, tail] at accepted
+        intro item member
+        rcases List.mem_cons.mp member with same | present
+        · cases same
+          exact evalOp_supported ctx env operation value head
+        · exact ih values tail item present
+
+example (ctx : EvalContext) (env : EvalEnv) :
+    evalOp ctx env .dup = .ok .dup := rfl
+
+example (ctx : EvalContext) (env : EvalEnv) :
+    evalOp ctx env .newMap =
+      .error "unsupported Impact operation in scalar state interpreter" := rfl
 
 def evalFields (ctx : EvalContext) (env : EvalEnv)
     (fields : List Impact.Scalar) : Except String (List Scalar) :=
@@ -50,20 +117,32 @@ private theorem evalFields_single (ctx : EvalContext) (env : EvalEnv)
 
 theorem evalAligned_of_fields (ctx : EvalContext) (env : EvalEnv)
     (aligned : Impact.Aligned) (values : List Scalar)
+    (supported : ScalarAligned aligned)
     (accepted : evalFields ctx env aligned.fields = .ok values) :
     ∃ cell, evalAligned ctx env aligned = .ok cell := by
   cases aligned with
   | bit value => exact ⟨boolean value, rfl⟩
   | field expression =>
+    simp only [ScalarAligned] at supported
     have suffix : ∃ tail, evalFields ctx env [expression] = .ok tail := by
       apply evalFields_suffix ctx env [.native 1, .native (Field.modulus - 2)]
       simpa [Impact.Aligned.fields] using accepted
     obtain ⟨tail, tailEval⟩ := suffix
     obtain ⟨value, evaluated⟩ := evalFields_single ctx env expression tail tailEval
     exact ⟨field (scalar value), by simp [evalAligned, evaluated, Except.map, Functor.map]⟩
+  | foreignKey _ _ => simp [ScalarAligned] at supported
+  | bitExpr _ => simp [ScalarAligned] at supported
+  | bytes32 _ => simp [ScalarAligned] at supported
+  | bytes _ _ => simp [ScalarAligned] at supported
+  | compress _ => simp [ScalarAligned] at supported
+  | compressString _ => simp [ScalarAligned] at supported
+  | nativeFields _ => simp [ScalarAligned] at supported
+  | counter _ => simp [ScalarAligned] at supported
+  | u128 _ => simp [ScalarAligned] at supported
 
 theorem evalOp_of_fields (ctx : EvalContext) (env : EvalEnv)
     (operation : Impact.Op) (values : List Scalar)
+    (supported : ScalarOperation operation)
     (accepted : evalFields ctx env operation.fields = .ok values) :
     ∃ native, evalOp ctx env operation = .ok native := by
   cases operation with
@@ -72,26 +151,38 @@ theorem evalOp_of_fields (ctx : EvalContext) (env : EvalEnv)
   | member => exact ⟨.member, rfl⟩
   | insert levels => exact ⟨.insert levels, rfl⟩
   | push aligned storage =>
+    have alignedSupported : ScalarAligned aligned := by
+      simpa [ScalarOperation] using supported
     obtain ⟨tail, alignedFields⟩ := evalFields_suffix ctx env
       [.native (if storage then 0x11 else 0x10), .native 1]
       aligned.fields values (by simpa [Impact.Op.fields] using accepted)
-    obtain ⟨cell, alignedEval⟩ := evalAligned_of_fields ctx env aligned tail alignedFields
+    obtain ⟨cell, alignedEval⟩ := evalAligned_of_fields ctx env aligned tail
+      alignedSupported alignedFields
     exact ⟨.push cell storage, by simp [evalOp, alignedEval, Except.map, Functor.map]⟩
   | popeq aligned =>
+    have alignedSupported : ScalarAligned aligned := by
+      simpa [ScalarOperation] using supported
     obtain ⟨tail, alignedFields⟩ := evalFields_suffix ctx env
       [.native 0x0c] aligned.fields values
       (by simpa [Impact.Op.fields] using accepted)
-    obtain ⟨cell, alignedEval⟩ := evalAligned_of_fields ctx env aligned tail alignedFields
+    obtain ⟨cell, alignedEval⟩ := evalAligned_of_fields ctx env aligned tail
+      alignedSupported alignedFields
     exact ⟨.popeq cell, by simp [evalOp, alignedEval, Except.map, Functor.map]⟩
+  | _ => simp [ScalarOperation] at supported
 
 theorem evalOperations_of_fields (ctx : EvalContext) (env : EvalEnv)
     (operations : List Impact.Op) (groups : List (List Scalar))
+    (supported : ∀ operation ∈ operations, ScalarOperation operation)
     (accepted : operations.mapM (fun operation =>
       evalFields ctx env operation.fields) = .ok groups) :
     ∃ native, operations.mapM (evalOp ctx env) = .ok native := by
   induction operations generalizing groups with
   | nil => exact ⟨[], rfl⟩
   | cons operation rest ih =>
+    have headSupported : ScalarOperation operation := supported operation (by simp)
+    have tailSupported : ∀ item ∈ rest, ScalarOperation item := by
+      intro item present
+      exact supported item (by simp [present])
     simp only [List.mapM_cons] at accepted
     cases first : evalFields ctx env operation.fields with
     | error message => simp [first, bind, Except.bind] at accepted
@@ -99,8 +190,9 @@ theorem evalOperations_of_fields (ctx : EvalContext) (env : EvalEnv)
       cases later : rest.mapM (fun item => evalFields ctx env item.fields) with
       | error message => simp [first, later, bind, Except.bind] at accepted
       | ok remaining =>
-        obtain ⟨head, headEval⟩ := evalOp_of_fields ctx env operation values first
-        obtain ⟨tail, tailEval⟩ := ih remaining later
+        obtain ⟨head, headEval⟩ := evalOp_of_fields ctx env operation values
+          headSupported first
+        obtain ⟨tail, tailEval⟩ := ih remaining tailSupported later
         refine ⟨head :: tail, ?_⟩
         simp only [List.mapM_cons, headEval, tailEval]
         rfl
@@ -186,6 +278,9 @@ theorem evalAligned_fields (ctx : EvalContext) (env : EvalEnv)
       simp [evalFields, Impact.Aligned.fields, Cell.fields, boolean,
         bit, one, zero, oneEval, zeroEval,
         Except.bind, Except.map, Functor.map, Except.pure] <;> rfl
+  | bitExpr _ => simp [evalAligned] at accepted
+  | foreignKey _ _ | bytes32 _ | bytes _ _ | compress _ | compressString _
+    | nativeFields _ | counter _ | u128 _ => simp [evalAligned] at accepted
 
 theorem evalOp_fields (ctx : EvalContext) (env : EvalEnv)
     (operation : Impact.Op) (native : Op)
@@ -258,6 +353,7 @@ theorem evalOp_fields (ctx : EvalContext) (env : EvalEnv)
         .ok (scalar 0x0c :: cell.fields)
       rw [evalFields_literal_cons ctx env 0x0c _ modulus (by decide), alignedFields]
       rfl
+  | _ => simp [evalOp] at accepted
 
 /-- The interpreted Impact operation fields equal the native VM field groups
 for every accepted operation, with no rearrangement or flattened boundaries. -/
