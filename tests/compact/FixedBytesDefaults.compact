@@ -1,0 +1,6 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit defaults(): [Bytes<0>, Bytes<4>, Bytes<32>] {
+  return [default<Bytes<0>>, default<Bytes<4>>, default<Bytes<32>>];
+}
