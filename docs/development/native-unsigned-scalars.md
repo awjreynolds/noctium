@@ -27,6 +27,12 @@ The bounded ZKIR whitelist now includes `neg`, `not`, `constrain_eq`, `constrain
 
 `runtime/tests/unsigned.rs` covers maximum and maximum-plus-one boundaries, malformed inputs, type confusion, inferred-range limits, subtraction underflow, conversions, output visibility and unsigned state cells. Its checked-in fixture comes from `examples/BoundedScalars.lean`. The native checker accepts private values 255 and 255 with public sum 510, then rejects a wrong sum, out-of-range input and nonzero previous cell.
 
+## Repeated-call state guard
+
+Run [`tests/scalars/replay-bounded-scalars.sh`](../../tests/scalars/replay-bounded-scalars.sh) for a focused replay comparison. The [Lean source runner](../../tests/scalars/BoundedScalarsReplay.lean) accepts two identical zero-sum calls at total zero, then accepts a sum of two. The [native Rust test](../../runtime/tests/bounded_scalars_replay.rs) checks the same three calls through pinned native 3.2.1 `prepare` and ZKIR `check`. A sum of three passes both checks from a fresh zero state. After the accepted sum of two, preparation returns an execution but the native checker rejects it at the state guard. The last accepted decoded total stays two, and the entrypoint has no committed call returns.
+
+The result separates two policies: this state guard rejects a later call after a nonzero write, but it does not enforce at most one successful call. Two zero-sum calls form the shortest counterexample to an at-most-one-success policy. The test output records accepted state totals and an empty return list. It does not print private inputs. The Lean runner checks the source evaluator, while the Rust test checks freshly emitted Impact and ZKIR through the selected native runtime. Neither check is a deployed transaction or a proof of compiler correctness.
+
 The linked C++ harness also executes this source-generated fixture through typed providers. Reuse the qualified native fixture's parameters/address to prepare both public envelopes:
 
 ```sh
