@@ -464,7 +464,7 @@
       "layer": "language",
       "surface": "Enum",
       "noctiumStatus": "subset",
-      "notes": "Readable enumTag selects a checked ordinal as Native. The payment case matches Compact member comparison on a fieldless enum. Payload variant access and full member, cast and default equivalence remain open.",
+      "notes": "Readable enumMember constructs a named member from a checked fieldless enum codec. Equality requires the same nominal enum on both sides. enumTag selects a checked ordinal as Native. A paired Compact and native case checks named Contract construction and comparison with two input members. Payload variant access and full cast and default equivalence remain open.",
       "source": [
         "reference"
       ],
@@ -473,7 +473,10 @@
         "ZK"
       ],
       "observedEvidence": [
-        "SEM"
+        "SEM",
+        "tests/NamedEnumMembers.lean",
+        "runtime/tests/named_enum_members.rs",
+        "tests/compact/named-enum-members.mjs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

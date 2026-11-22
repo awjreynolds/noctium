@@ -1,0 +1,12 @@
+pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+export enum RecipientKind {
+  ShieldedUser,
+  UnshieldedUser,
+  Contract
+}
+
+export pure circuit describe(choice: RecipientKind): [Boolean, RecipientKind] {
+  return [choice == RecipientKind.Contract, RecipientKind.Contract];
+}

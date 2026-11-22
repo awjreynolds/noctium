@@ -153,6 +153,7 @@ scoped syntax "either(" nlexpr "," nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "enumTag(" nlexpr ")" : nlexpr
+scoped syntax "enumMember(" ident "," ident ")" : nlexpr
 
 declare_syntax_cat noctium_bind_pattern
 declare_syntax_cat noctium_bind_field
@@ -534,6 +535,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| field($value, $name:ident)) => s!"field({renderExpr value}, {name.getId})"
   | `(nlexpr| elementAt($value, $index)) => s!"elementAt({renderExpr value}, {renderExpr index})"
   | `(nlexpr| enumTag($value)) => s!"enumTag({renderExpr value})"
+  | `(nlexpr| enumMember($codec:ident, $variantName:ident)) =>
+    s!"enumMember({codec.getId}, {variantName.getId})"
   | `(nlexpr| eq($left, $right)) => s!"eq({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolAnd($left, $right)) => s!"boolAnd({renderExpr left}, {renderExpr right})"
   | `(nlexpr| boolOr($left, $right)) => s!"boolOr({renderExpr left}, {renderExpr right})"
@@ -874,6 +877,15 @@ private def checkedPayloadLayout (site : Syntax) (payload : Types.CompositeType)
   match Types.compileType composites payload with
   | .ok compiled => pure compiled
   | .error diagnostic => throwErrorAt site diagnostic.message
+
+private def checkedFieldlessEnumMembers (site : Syntax) (payload : Types.CompositeType) :
+    ExprM (List String) := do
+  let compiled ← checkedPayloadLayout site payload
+  let .enumeration _ _ _ 0 _ variants := compiled.checked.value
+    | throwErrorAt site "expected a checked fieldless enum"
+  unless variants.all (·.2.1.isEmpty) do
+    throwErrorAt site "expected a checked fieldless enum"
+  pure (variants.map Prod.fst)
 
 private def zeroSourceLeaf (site : Syntax) : Ty → ExprM Helpers.Term
   | .native => pure (.native 0)
@@ -1341,6 +1353,15 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
     match left.type, right.type with
+    | .composite (.enumeration leftId), .composite (.enumeration rightId) => do
+      unless leftId == rightId do
+        throwErrorAt stx "eq enum operands must have the same nominal type"
+      discard (checkedFieldlessEnumMembers stx (.enumeration leftId))
+      modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+      pure (mergeLowered (.scalar .bool)
+        (.eq (.project left.term .enumTag) (.project right.term .enumTag)) [left, right])
+    | .composite (.enumeration _), _ | _, .composite (.enumeration _) =>
+      throwErrorAt stx "eq enum operands must have the same nominal type"
     | .composite (.structure leftId), .composite (.structure rightId) =>
       unless leftId == rightId do
         throwErrorAt stx "eq record operands must have the same nominal type"
@@ -1635,6 +1656,13 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       before := value.before ++ [.bind vector value.type value.term] ++ offset.before}
   | `(nlexpr| enumTag($value)) =>
     lowerProjection stx (← lowerExpr programName callPrefix env value) .enumTag
+  | `(nlexpr| enumMember($codecName:ident, $variantName:ident)) => do
+    let (codec, _) ← selectedCodec codecName
+    let members ← checkedFieldlessEnumMembers codecName codec.payload
+    let some ordinal := members.findIdx? (· == variantName.getId.toString)
+      | throwErrorAt variantName s!"unknown enum member '{variantName.getId}'"
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    pure {type := .composite codec.payload, term := .composite codec.payload [.native ordinal]}
   | `(nlexpr| jubjubScalarFromNative($value)) =>
     lowerCurve programName callPrefix env stx .scalarFromNative [value]
   | `(nlexpr| jubjubScalarToNative($value)) =>
