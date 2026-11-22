@@ -35,9 +35,24 @@ The frontend stores the generated concrete program and its versioned signature
 sidecar. Compiler checks run again over that same program during compilation.
 The additive sidecar uses schema version 1 and writes natural values and source
 or generated identity integers as canonical decimal strings. Existing
-`noctium.json` and aggregate schemas stay unchanged. The sidecar records typed
-witness signatures as compile-time metadata. [General typed witness execution](https://github.com/awjreynolds/noctium/issues/62)
-is separate runtime work.
+`noctium.json` and aggregate schemas stay unchanged.
+
+## Generic witness circuits
+
+```lean
+noctium_witness_circuit specializedCount from generic(genericProgram) entry "countTwice"
+```
+
+This form specializes the selected export and registers the concrete program
+through the typed witness compiler. Generic source bodies use `.witnessCall`
+to call the typed providers declared in the program's base. Each instance keeps
+its own call-site identity. Request `--emit specialization` to record the
+normalized arguments, concrete signatures, and the providers used by each
+declaration.
+
+The paired fixture instantiates the same helper at UInt8 and UInt16, observes
+both callbacks in source order, and returns a checked UInt16 result.
+[Lean fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
 
 Specialization preflights source size and nesting, charges clone costs before
 substitution, caches instances by structural declaration ID and ordered

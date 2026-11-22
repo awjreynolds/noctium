@@ -62,6 +62,39 @@ noctium_witness loadVector(marker : Native) : Payload vectorWire
 noctium_witness loadBytes(marker : Native) : Bytes 2
 noctium_witness loadUnit(marker : Native) : Unit
 
+private def genericCountSource : Noctium.Helpers.Specialization.Program := {
+  base := {witnesses := [observeCount.__witnessSignature]},
+  declarations := [
+    {id := ⟨0, 0⟩, name := "observe",
+      parameters := [{name := "T", kind := .type}],
+      values := [("marker", .native)], result := .parameter "T",
+      body := [.return (some (.cast (.parameter "T")
+        (.witnessCall "count" "ReadableRecordConstruction.observeCount" [.ref "marker"])))]},
+    {id := ⟨0, 1⟩, name := "countTwice",
+      values := [("seed", .native)], result := .uint (.literal 65535),
+      body := [
+        .bind "first" (.uint (.literal 255))
+          (.call ⟨0, 0⟩ [.type (.uint (.literal 255))] [.ref "seed"]),
+        .bind "second" (.uint (.literal 65535))
+          (.call ⟨0, 0⟩ [.type (.uint (.literal 65535))]
+            [.binary .add (.ref "seed") (.native 1)]),
+        .bind "total" (.uint (.literal 65535))
+          (.cast (.uint (.literal 65535))
+            (.binary .add
+              (.cast (.uint (.literal 65535)) (.ref "first"))
+              (.ref "second"))),
+        .return (some (.disclose {} (.ref "total")))
+      ]}
+  ],
+  exports := [{
+    name := "countTwice",
+    target := ⟨0, 1⟩,
+    inputs := [{name := "seed", type := .native, visibility := .public}]
+  }]
+}
+
+noctium_witness_circuit specializedCount from generic(genericCountSource) entry "countTwice"
+
 private def readingHelpers : Helpers.Program := {
   scopes := [{id := 0}, {id := 1, parent := some 0}]
   declarations := [
@@ -356,6 +389,9 @@ noctium_witness_circuit buildsQualifiedCoin using qualifiedCoinWire where
 end
 
 noctium_contract ReadableRecordConstruction where
+  entry genericCount uses ReadableRecordConstruction.specializedCount where
+    return observed : UInt 16 := result
+  end
   entry helperRewrite uses ReadableRecordConstruction.helperRewrite where
     return result
   end

@@ -4566,6 +4566,8 @@ open scoped Noctium
 
 scoped syntax (name := witnessCircuitCommand) "noctium_witness_circuit" ident
   "from" ident "entry" str : command
+scoped syntax (name := genericWitnessCircuitCommand) "noctium_witness_circuit" ident
+  "from" "generic(" ident ")" "entry" str : command
 
 /-- Share checked registration between generated authoring programs and explicit IR sources. -/
 unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportName : String)
@@ -4573,7 +4575,8 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
     (describeOutputs : Helpers.Program → Witness.Compiled →
       CommandElabM (List (String × Ty × Name) × List (String × Name × List String) ×
         List (String × NominalBytes32)) :=
-      fun _ _ => pure ([], [], [])) : CommandElabM Unit := do
+      fun _ _ => pure ([], [], []))
+    (specializationArtifact? : Option String := none) : CommandElabM Unit := do
     let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
     let fullName := (← getCurrNamespace) ++ name.getId
     let compiled ← match Witness.compile program exportName fullName.toString outputName with
@@ -4610,7 +4613,8 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
       aggregateOutputs,
       witnessCallArguments? := some (exported.inputs.map (·.name)),
       aggregateInputs,
-      sourceProgram? := some (sourceName, exportName)}
+      sourceProgram? := some (sourceName, exportName),
+      specializationArtifact?}
     modifyEnv fun env => witnessRegistry.addEntry env {
       circuitName := fullName, sourceName, exportName, outputName, observationArtifact?}
     modifyEnv fun env => checkedWitnesses.modifyState env (·.insert fullName compiled)
@@ -4620,6 +4624,35 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
   | `(noctium_witness_circuit $name:ident from $source:ident entry $exportName:str) =>
     let sourceName ← liftCoreM <| resolveGlobalConstNoOverload source
     registerWitnessCircuit name sourceName exportName.getString
+  | _ => throwUnsupportedSyntax
+
+@[command_elab genericWitnessCircuitCommand] unsafe def elabGenericWitnessCircuit :
+    CommandElab := fun stx => do
+  match stx with
+  | `(noctium_witness_circuit $name:ident from generic($source:ident) entry $exportName:str) => do
+    let sourceName ← liftCoreM <| resolveGlobalConstNoOverload source
+    let sourceProgram ← evalConstCheck Helpers.Specialization.Program
+      ``Helpers.Specialization.Program sourceName
+    let specialized ← match Helpers.Specialization.specialize sourceProgram exportName.getString with
+      | .ok value => pure value
+      | .error diagnostic => throwErrorAt source diagnostic.message
+    let fullName := (← getCurrNamespace) ++ name.getId.eraseMacroScopes
+    let programName := fullName ++ `specializedProgram
+    if (← getEnv).contains programName then
+      throwErrorAt name "generated specialized program name collides with an existing declaration"
+    let programIdent := mkIdent (name.getId.eraseMacroScopes ++ `specializedProgram)
+    let sourceIdent := mkIdent sourceName
+    let envBefore ← getEnv
+    try
+      elabCommand (← `(def $programIdent : Noctium.Helpers.Program :=
+        match Noctium.Helpers.Specialization.specialize $sourceIdent $exportName with
+        | .ok result => result.program
+        | .error _ => {}))
+      registerWitnessCircuit name programName specialized.exportName
+        (specializationArtifact? := some (Lean.toJson specialized.signatureArtifact).pretty)
+    catch error =>
+      modifyEnv fun _ => envBefore
+      throw error
   | _ => throwUnsupportedSyntax
 
 private def moduleProgramDeclName (contractName : Name) (ordinal : Nat) : Name :=
