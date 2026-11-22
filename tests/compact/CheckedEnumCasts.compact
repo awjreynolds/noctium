@@ -1,0 +1,32 @@
+pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+export enum Status {
+  Pending,
+  Review,
+  Done
+}
+
+export pure circuit defaultKind(): Status {
+  return default<Status>;
+}
+
+export pure circuit fromField(value: Field): Status {
+  return value as Status;
+}
+
+export pure circuit fromUint(value: Uint<2>): Status {
+  return value as Status;
+}
+
+export pure circuit toField(value: Status): Field {
+  return value as Field;
+}
+
+export pure circuit toUint(value: Status): Uint<2> {
+  return value as Uint<2>;
+}
+
+export pure circuit narrowKind(value: Status): Uint<1> {
+  return value as Uint<1>;
+}

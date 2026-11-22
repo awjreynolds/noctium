@@ -139,6 +139,7 @@ scoped syntax (name := noctiumWitnessDeclarationCommand) "noctium_witness" ident
 
 scoped syntax "witness" ident "(" nlexpr,* ")" : nlexpr
 scoped syntax "if" nlexpr "then" nlexpr "else" nlexpr : nlexpr
+scoped syntax "cast(" "Payload" ident "," nlexpr ")" : nlexpr
 declare_syntax_cat noctium_callback_step
 scoped syntax "let" ident ":=" nlexpr : noctium_callback_step
 scoped syntax "prove" nlexpr : noctium_callback_step
@@ -556,6 +557,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| uint($n:num)) => s!"uint({n.getNat})"
   | `(nlexpr| cast($ty:nltype, $value:nlexpr)) =>
     s!"cast({renderType ty}, {renderExpr value})"
+  | `(nlexpr| cast(Payload $codec:ident, $value:nlexpr)) =>
+    s!"cast(Payload {codec.getId}, {renderExpr value})"
   | `(nlexpr| disclose($value)) => s!"disclose({renderExpr value})"
   | `(nlexpr| encode($codec:ident, $value)) => s!"encode({codec.getId}, {renderExpr value})"
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
@@ -718,7 +721,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| boolXor($left, $right)) =>
     disclosedValues left ++ disclosedValues right
   | `(nlexpr| boolNot($value)) => disclosedValues value
-  | `(nlexpr| cast($_:nltype, $value:nlexpr)) => disclosedValues value
+  | `(nlexpr| cast($_:nltype, $value:nlexpr))
+  | `(nlexpr| cast(Payload $_:ident, $value:nlexpr)) => disclosedValues value
   | `(nlexpr| select($condition, $yes, $no))
   | `(nlexpr| ite($condition, $yes, $no))
   | `(nlexpr| if $condition then $yes else $no) =>
@@ -807,7 +811,9 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| boolXor($left, $right)) =>
     inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| boolNot($value)) => inlineAssertions value
-  | `(nlexpr| cast($_:nltype, $value:nlexpr)) | `(nlexpr| disclose($value)) => inlineAssertions value
+  | `(nlexpr| cast($_:nltype, $value:nlexpr))
+  | `(nlexpr| cast(Payload $_:ident, $value:nlexpr))
+  | `(nlexpr| disclose($value)) => inlineAssertions value
   | `(nlexpr| select($condition, $yes, $no))
   | `(nlexpr| ite($condition, $yes, $no))
   | `(nlexpr| if $condition then $yes else $no) =>
@@ -1639,19 +1645,46 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         signatures := uniqueWitnesses (condition.signatures ++ body.signatures),
         witnessNames := (condition.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (condition.generatedValidity ++ body.generatedValidity).eraseDups }
+  | `(nlexpr| cast(Payload $target:ident, $source:nlexpr)) => do
+    let (codec, _) ← selectedCodec target
+    let _ ← checkedFieldlessEnumMembers target codec.payload
+    let source ← lowerExpr programName callPrefix env source
+    let tag ← match source.type with
+      | .scalar .native => pure source.term
+      | .scalar (.uint _) => pure (.cast .native source.term)
+      | .scalar _ => throwErrorAt stx "enum casts require a Native or UInt value"
+      | _ => throwErrorAt stx "enum casts require a Native or UInt value"
+    let result := mergeLowered (.composite codec.payload)
+      (.composite codec.payload [tag]) [source]
+    pure {result with
+      generatedValidity := (s!"checked enum cast {renderExpr stx}") :: result.generatedValidity}
   | `(nlexpr| cast($target:nltype, $value:nlexpr)) => do
     let target ← readScalarTy target
     let value ← lowerExpr programName callPrefix env value
-    let .scalar source := value.type | throwErrorAt stx "cannot cast Unit"
-    if source.isJubjub || target.isJubjub then
-      throwErrorAt stx "Jubjub values require an explicitly supported curve route"
-    if source.isBytes || target.isBytes then
-      throwErrorAt stx "byte strings do not support scalar casts"
-    pure {value with
-      type := .scalar target,
-      term := .cast target value.term,
-      generatedValidity := (s!"checked cast {renderExpr stx}") :: value.generatedValidity
-    }
+    match value.type with
+    | .composite (.enumeration id) => do
+      let _ ← checkedFieldlessEnumMembers stx (.enumeration id)
+      let numericTarget := match target with
+        | .native => _root_.Bool.true
+        | .uint _ => _root_.Bool.true
+        | _ => _root_.Bool.false
+      unless numericTarget do
+        throwErrorAt stx "enum casts require a Native or UInt target"
+      let result := mergeLowered (.scalar target)
+        (.cast target (.project value.term .enumTag)) [value]
+      pure {result with
+        generatedValidity := (s!"checked cast {renderExpr stx}") :: result.generatedValidity}
+    | .scalar source => do
+      if source.isJubjub || target.isJubjub then
+        throwErrorAt stx "Jubjub values require an explicitly supported curve route"
+      if source.isBytes || target.isBytes then
+        throwErrorAt stx "byte strings do not support scalar casts"
+      pure {value with
+        type := .scalar target,
+        term := .cast target value.term,
+        generatedValidity := (s!"checked cast {renderExpr stx}") :: value.generatedValidity
+      }
+    | _ => throwErrorAt stx "cannot cast Unit"
   | `(nlexpr| disclose($value)) => do
     let value ← lowerExpr programName callPrefix env value
     pure {value with term := .disclose (← liftM (spanValue stx)) value.term}

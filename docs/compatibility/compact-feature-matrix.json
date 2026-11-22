@@ -621,7 +621,7 @@
       "layer": "language",
       "surface": "Type conversions",
       "noctiumStatus": "subset",
-      "notes": "Ordinary and readable scalar casts reject fixed Bytes at the source boundary. Explicit byte decoding and checked byte projection expose numeric values. The numeric toBytes operation encodes Native and UInt into fixed-width little-endian bytes, checks overflow at short widths, and pads wider values with zeros. The paired fixtures cover widths 1, 31, 32, 33 and 64. Explicit toBytes and fromBytesChecked operations cover checked fixed-width little-endian numeric conversions. The pinned Compact probe and Noctium native fixture agree on the Native modulus, UInt16 overflow and nonzero high-byte failures.",
+      "notes": "Ordinary and readable scalar casts reject fixed Bytes at the source boundary. Explicit byte decoding and checked byte projection expose numeric values. The numeric toBytes operation encodes Native and UInt into fixed-width little-endian bytes, checks overflow at short widths, and pads wider values with zeros. The paired fixtures cover widths 1, 31, 32, 33 and 64. Explicit toBytes and fromBytesChecked operations cover checked fixed-width little-endian numeric conversions. The pinned Compact probe and Noctium native fixture agree on the Native modulus, UInt16 overflow and nonzero high-byte failures. Readable witness circuits support checked conversions between fieldless enums and Native or UInt. The paired fixture covers the default, invalid ordinal and narrowing for a three-member enum.",
       "source": [
         "reference"
       ],
@@ -635,12 +635,15 @@
         "tests/compact/fixed-numeric-bytes.mjs",
         "runtime/tests/fixed_numeric_bytes.rs",
         "tests/CheckedFixedBytesDecode.lean",
-        "runtime/tests/checked_fixed_bytes_decode.rs"
+        "runtime/tests/checked_fixed_bytes_decode.rs",
+        "tests/CheckedEnumCasts.lean",
+        "tests/compact/checked-enum-casts.mjs",
+        "runtime/tests/checked_enum_casts.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-22",
-        "scope": "Native/Bool/UInt scalar conversions and narrowing checks are implemented. Fixed Bytes encode and decode use explicit typed operators. Foreign field, composite and alias conversion coverage remains open.",
+        "scope": "Native/Bool/UInt scalar conversions and narrowing checks are implemented. Fixed Bytes encode and decode use explicit typed operators. Readable numeric casts cover fieldless enums. Foreign field, broader composite and alias conversion coverage remains open.",
         "evidence": [
           "tests/BoundedScalars.lean",
           "runtime/tests/unsigned.rs",
