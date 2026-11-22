@@ -4,7 +4,7 @@ use crate::{
     Config, Db, Plan,
     artifacts::{ContractBundleSet, Role, VerifiedBundle},
     assembly::{BookedComIndices, CheckedNativeCall, NativeIntent},
-    client::{NetworkPolicy, Snapshot},
+    client::{ChainIdentity, NetworkPolicy, Snapshot},
     unshielded_caller::{SnapshotUnshieldedSpendScope, check_snapshot_spends},
     zkir::IrSource,
 };
@@ -247,6 +247,7 @@ pub struct ContractOperationTarget {
 /// Opaque current state admitted by the native client after its receipt and private commit.
 /// The token is moved into one source invocation and cannot be cloned or reconstructed publicly.
 pub struct CurrentStateContext {
+    chain_identity: Option<ChainIdentity>,
     contract_set_identity: String,
     deployment_identity: String,
     state_schema_sha256: String,
@@ -1075,6 +1076,7 @@ impl ContractStateBinding {
             checkpoint_identity.as_bytes(),
         ]);
         Ok(CurrentStateContext {
+            chain_identity: None,
             contract_set_identity: self.contract_set_identity.clone(),
             deployment_identity: self.deployment_identity.clone(),
             state_schema_sha256: self.state_schema_sha256.clone(),
@@ -1083,6 +1085,24 @@ impl ContractStateBinding {
             state_bytes: state_bytes.to_vec(),
             state,
         })
+    }
+
+    pub(crate) fn admit_committed_state_on_chain(
+        &self,
+        state_bytes: &[u8],
+        expected_state: &[u8],
+        checkpoint_identity: &str,
+        deployment: bool,
+        chain_identity: &ChainIdentity,
+    ) -> Result<CurrentStateContext> {
+        let mut context = self.admit_committed_state(
+            state_bytes,
+            expected_state,
+            checkpoint_identity,
+            deployment,
+        )?;
+        context.chain_identity = Some(chain_identity.clone());
+        Ok(context)
     }
 
     pub(crate) fn current_state_bytes(&self) -> Option<&[u8]> {
@@ -2331,7 +2351,7 @@ pub(crate) fn prepare_relay_destination_composition<'target, 'state>(
     Ok((prepared, bindings))
 }
 
-fn ensure_current_state_matches_snapshot(
+pub(crate) fn ensure_current_state_matches_snapshot(
     target: &ContractOperationTarget,
     current: &CurrentStateContext,
     snapshot: &LedgerState<Db>,
@@ -2350,6 +2370,17 @@ fn ensure_current_state_matches_snapshot(
         return Err(Error::BindingMismatch);
     }
     Ok(())
+}
+
+pub(crate) fn ensure_current_state_matches_verified_snapshot(
+    target: &ContractOperationTarget,
+    current: &CurrentStateContext,
+    snapshot: &Snapshot,
+) -> Result<()> {
+    if current.chain_identity.as_ref() != Some(&snapshot.chain) {
+        return Err(Error::BindingMismatch);
+    }
+    ensure_current_state_matches_snapshot(target, current, &snapshot.state)
 }
 
 fn ensure_target_parameters(
@@ -2967,6 +2998,7 @@ mod tests {
         );
 
         let unbound = CurrentStateContext {
+            chain_identity: None,
             contract_set_identity: "different contract set".into(),
             deployment_identity: rotated.deployment_identity.clone(),
             state_schema_sha256: rotated.state_schema_sha256.clone(),

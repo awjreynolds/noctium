@@ -1203,11 +1203,12 @@ impl Driver {
             serde_json::to_vec(&(receipt, journal_identity, cas, binding.context_identity()))
                 .map_err(|_| client::Error::Identity)?;
         let context = binding
-            .admit_committed_state(
+            .admit_committed_state_on_chain(
                 &receipt.contract_state,
                 transaction.expected_state(),
                 &crate::artifacts::digest(&checkpoint),
                 deployment,
+                &receipt.chain,
             )
             .map_err(|_| client::Error::Receipt)?;
         state.context_issued = true;

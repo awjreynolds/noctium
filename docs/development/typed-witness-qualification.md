@@ -49,6 +49,27 @@ NOCTIUM_TYPED_WITNESS_JOURNAL=PATH_TO_OWNER_ONLY_JOURNAL \
   rust_typed_witness_k7_finalizes_and_commits -- --ignored --exact --nocapture
 ```
 
+## Rust block-time witness on localnet
+
+After the typed provider completes, `Node::prepare_contract_witness_proof` fetches the verified finalized snapshot. It checks the chain identity and exact contract state against the invocation's checkpoint before using the snapshot's clock. A rejected preparation preserves the completed invocation for retry.
+
+The focused guard test rejects missing block context, a mismatched policy, an independently valid snapshot from a different chain, and mismatched contract state. The same completed invocation then prepares successfully with the matching snapshot.
+
+`TypedWitnessBlockTime.checkTime` deployed at block 58815 on Ledger 9.1.0.1 and finalized its call at block 58818. Its provider and Rust proof used the ZKIR 3.2.1 K7 circuit. The call wrote `total = 14`. The finalized state SHA-256 was `f6f7cf934b3c52fb4833bef3ef023f659e993031a97238c238a5319991e67c43`.
+
+Compile `tests/TypedWitnessBlockTime.lean` with `--emit ledger --emit witness` for the 3.2.1 profile. Assemble the `checkTime` bundle and use the same parameter cache, localnet and owner-only journal setup as above. The pinned manifest digest comes from your assembled bundle. [Bundle workflow](portable-artifacts.md)
+
+```sh
+NOCTIUM_BLOCK_TIME_WITNESS_BUNDLE=PATH_TO_BUNDLE \
+NOCTIUM_BLOCK_TIME_WITNESS_MANIFEST_SHA256=TRUSTED_MANIFEST_DIGEST \
+NOCTIUM_BLOCK_TIME_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_BLOCK_TIME_WITNESS_NODE=http://127.0.0.1:19944 \
+NOCTIUM_BLOCK_TIME_WITNESS_JOURNAL=PATH_TO_OWNER_ONLY_JOURNAL \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321,localnet --test typed_witness_localnet \
+  rust_typed_witness_block_time_uses_finalized_node_context -- --ignored --exact --nocapture
+```
+
 ## Limits and reproduction
 
 To reproduce the source suite, check out the exact commit, use its pinned Lean toolchain, and run:

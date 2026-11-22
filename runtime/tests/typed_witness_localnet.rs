@@ -130,6 +130,28 @@ impl Host<'_> {
         Ok(context)
     }
 
+    fn block_time_context(&self, attempt: &str) -> Result<host::Context> {
+        let mut context = self.context(attempt, false)?;
+        context.capabilities.push(host::Capability {
+            id: "lookup".into(),
+            namespace: self.namespace.into(),
+            key_prefix: "lookup/".into(),
+            operations: vec![LOOKUP.into()],
+        });
+        context.operations = vec![host::Operation {
+            operation: LOOKUP.into(),
+            argument_schema: BTreeMap::from([("seed".into(), "UIntRange<256>".into())]),
+            result_schema: "UIntRange<256>".into(),
+        }];
+        context.providers = vec![host::Provider {
+            input: "lookup".into(),
+            operation: LOOKUP.into(),
+            capability: "lookup".into(),
+            arguments: BTreeMap::new(),
+        }];
+        Ok(context)
+    }
+
     async fn finalize(
         &self,
         mut client: WitnessClient,
@@ -363,6 +385,32 @@ fn run_source(execution: &mut WitnessExecution, attempt: &str) -> Result<Vec<Str
     bail!("typed witness exceeded the request bound")
 }
 
+fn run_block_time_source(execution: &mut WitnessExecution, attempt: &str) -> Result<()> {
+    for _ in 0..8 {
+        let status = execution.advance()?;
+        match status["status"].as_str().unwrap_or_default() {
+            "completed" => {
+                ensure!(status["result"] == "14", "wrong block-time witness result");
+                return Ok(());
+            }
+            "need_host" => {
+                let request = &status["request"];
+                ensure!(request["name"] == "lookup", "unexpected provider request");
+                let private = execution.private_request()?;
+                ensure!(private["arguments"]["seed"] == "7", "wrong lookup seed");
+                execution.resume_typed(GeneratedBinding::reply(
+                    request,
+                    attempt,
+                    ("lookup", LOOKUP, "lookup", "UIntRange<256>"),
+                    json!("14"),
+                )?)?;
+            }
+            other => bail!("unexpected block-time source status {other}"),
+        }
+    }
+    bail!("block-time witness exceeded the request bound")
+}
+
 fn required_env(name: &str) -> Result<String> {
     env::var(name).with_context(|| format!("missing {name}"))
 }
@@ -545,11 +593,169 @@ async fn run() -> Result<Json> {
     }))
 }
 
+async fn run_block_time() -> Result<Json> {
+    let bundle_pin = required_env("NOCTIUM_BLOCK_TIME_WITNESS_MANIFEST_SHA256")?;
+    let bundle = artifacts::verify(
+        Path::new(&required_env("NOCTIUM_BLOCK_TIME_WITNESS_BUNDLE")?),
+        Some(&bundle_pin),
+    )?;
+    let plan: Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+    let cache = ProofCache::new(
+        required_env("NOCTIUM_BLOCK_TIME_PARAMETER_CACHE")?.into(),
+        "https://srs.midnight.network/".parse()?,
+    )?;
+    let parameters = cache.parameters(7).await?;
+    ensure!(
+        parameters.sha256() == EXPECTED_PARAMETERS_SHA256,
+        "unexpected trusted K7 parameter digest"
+    );
+    let policy = NetworkPolicy {
+        network_id: "undeployed".into(),
+        genesis: DEVELOPMENT_GENESIS.into(),
+        spec_version: 2_001_100,
+        transaction_version: 4,
+        profile: noctium_runtime::profile::NAME.into(),
+        max_dust: 10u128.pow(22),
+    };
+    let node = Node::connect(
+        &required_env("NOCTIUM_BLOCK_TIME_WITNESS_NODE")?,
+        policy.clone(),
+        Duration::from_secs(30),
+        64 * 1024 * 1024,
+        100_000,
+    )?;
+    let mut seed = [0u8; 32];
+    seed[31] = 1;
+    node.attach_dust_seed(&seed)?;
+    let dust = cache.dust().await?;
+    let dust_parameters = cache.parameters(dust.k()).await?;
+    let initial_block = node.sync()?.block;
+    let now = initial_block.tblock.to_secs();
+    let ttl = now + 3_600;
+    let cutoff = now + 3_000;
+    let target = WitnessContractTarget::from_state_config(
+        ContractBundleSet::new(vec![bundle])?,
+        br#"{"state":{"total":"0"}}"#,
+        ttl,
+        &mut OsRng,
+    )?;
+    let namespace = format!("rust-block-time-witness-{}", target.contract_address());
+    let store = DirectoryJournal::new(
+        Path::new(&required_env("NOCTIUM_BLOCK_TIME_WITNESS_JOURNAL")?),
+        Duration::from_secs(2),
+    )
+    .map_err(|_| anyhow!("block-time witness journal unavailable"))?;
+    let host = Host {
+        node: &node,
+        policy: &policy,
+        dust: &dust,
+        dust_parameters: &dust_parameters,
+        store: &store,
+        namespace: &namespace,
+    };
+    ensure!(host.private_value()?.is_none(), "block-time journal is not fresh");
+    let descriptor = serde_json::to_vec(&json!({
+        "abiVersion": 1,
+        "policy": {
+            "networkId": policy.network_id,
+            "genesis": policy.genesis,
+            "specVersion": policy.spec_version,
+            "transactionVersion": policy.transaction_version,
+            "profile": policy.profile,
+            "maxDust": policy.max_dust.to_string()
+        },
+        "capabilities": {"chain":"chain", "funding":"wallet", "signing":"signer", "journal":"store"}
+    }))?;
+    let deployment_setup = serde_json::to_vec(&json!({
+        "hostContext": host.context(&attempt_id(), false)?,
+        "stages": []
+    }))?;
+    let deployment = target.start_deployment_client("checkTime", &descriptor, &deployment_setup)?;
+    let expected_state =
+        |total: &str| create_state(&plan, &BTreeMap::from([("total".into(), json!(total))]));
+    let (initial, deployment_receipt) = host
+        .finalize(deployment, &expected_state("0")?, false)
+        .await?;
+    ensure!(deployment_receipt["event"] == "Deploy", "wrong deployment receipt");
+
+    let operation = target.operation("checkTime", &parameters, ttl)?;
+    let attempt = attempt_id();
+    let mut current = Some(initial);
+    let mut execution = WitnessExecution::begin_contract_operation(
+        &operation,
+        &mut current,
+        BTreeMap::from([
+            ("expected".into(), json!("14")),
+            ("seed".into(), json!("7")),
+            ("cutoff".into(), json!(cutoff.to_string())),
+            ("enabled".into(), json!(true)),
+        ]),
+        host.block_time_context(&attempt)?,
+        &parameters,
+    )?;
+    run_block_time_source(&mut execution, &attempt)?;
+    ensure!(
+        execution.prepare_contract_proof(&mut OsRng).is_err(),
+        "block-time proof prepared without authenticated block context"
+    );
+    let mut proof = node.prepare_contract_witness_proof(&mut execution, &mut OsRng)?;
+    let mut proved = proof
+        .prove(
+            &LocalProver::new(StdRng::from_entropy()),
+            &parameters,
+            1_048_576,
+            pending(),
+        )
+        .await?;
+    let (finalized_state, receipt) = host
+        .finalize(
+            proved.start_call_client(&descriptor)?,
+            &expected_state("14")?,
+            false,
+        )
+        .await?;
+    ensure!(receipt["event"] == "Call", "wrong block-time call receipt");
+    ensure!(
+        receipt["contractAddress"] == target.contract_address(),
+        "block-time call changed contract address"
+    );
+    let finalized = node.finalized_contract_state(target.contract_address())?;
+    ensure!(
+        decode::<ContractState<Db>>(&finalized.bytes)?.data.get_ref()
+            == expected_state("14")?.get_ref(),
+        "wrong finalized block-time state"
+    );
+    ensure!(
+        receipt["contractStateSha256"] == artifacts::digest(&finalized.bytes),
+        "receipt state hash differs from finalized bytes"
+    );
+    let _ = finalized_state;
+    Ok(json!({
+        "entrypoint": "TypedWitnessBlockTime.checkTime",
+        "manifestSha256": bundle_pin,
+        "parametersSha256": parameters.sha256(),
+        "sourceResult": "14",
+        "deployment": deployment_receipt,
+        "receipt": receipt,
+        "exactStateSha256": artifacts::digest(&finalized.bytes),
+        "blockTimeBound": true
+    }))
+}
+
 #[test]
 #[ignore = "requires the pinned K7 bundle, SRS/dust cache, and funded Ledger 9 development node"]
 fn rust_typed_witness_k7_finalizes_and_commits() {
     println!(
         "{}",
         block_on(run()).expect("Rust K7 typed-witness localnet qualification")
+    );
+}
+
+#[test]
+#[ignore = "requires the pinned block-time witness bundle, SRS/dust cache, and funded Ledger 9 development node"]
+fn rust_typed_witness_block_time_uses_finalized_node_context() {
+    println!(
+        "{}",
+        block_on(run_block_time()).expect("Rust block-time typed-witness localnet qualification")
     );
 }
