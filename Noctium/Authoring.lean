@@ -163,8 +163,10 @@ scoped syntax "{" noctium_bind_field,* "}" : noctium_bind_pattern
 scoped syntax ident (":=" noctium_bind_pattern)? : noctium_bind_field
 
 declare_syntax_cat noctium_witness_statement
-scoped syntax "public" ident ":" noctium_witness_input_type : noctium_witness_statement
-scoped syntax "private" ident ":" noctium_witness_input_type : noctium_witness_statement
+scoped syntax "public" ident ":" noctium_witness_input_type ("as" noctium_bind_pattern)? :
+  noctium_witness_statement
+scoped syntax "private" ident ":" noctium_witness_input_type ("as" noctium_bind_pattern)? :
+  noctium_witness_statement
 scoped syntax "let" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
 scoped syntax "let" "[" noctium_bind_pattern,* "]" ":=" nlexpr : noctium_witness_statement
 scoped syntax "let" "{" noctium_bind_field,* "}" ":=" nlexpr : noctium_witness_statement
@@ -2291,10 +2293,11 @@ private def lookupPrivateField (fieldPath : TSyntax `ident) : CommandElabM Priva
     | throwErrorAt fieldPath "schema '{schema.name}' has no field '{fieldName}'"
   pure field
 
+private abbrev PatternBinding := TSyntax `ident × ResultType × (Helpers.Term → Helpers.Term)
+
 private partial def patternBindings (composites : Types.CompositeEnv)
     (pattern : TSyntax `noctium_bind_pattern) (type : ResultType)
-    (select : Helpers.Term → Helpers.Term) :
-    CommandElabM (List (TSyntax `ident × ResultType × (Helpers.Term → Helpers.Term))) := do
+    (select : Helpers.Term → Helpers.Term) : CommandElabM (List PatternBinding) := do
   match pattern with
   | `(noctium_bind_pattern| $id:ident) => pure [(id, type, select)]
   | `(noctium_bind_pattern| _) => pure []
@@ -2337,22 +2340,31 @@ private partial def patternBindings (composites : Types.CompositeEnv)
     pure bindings
   | _ => throwErrorAt pattern "unsupported readable binding pattern"
 
+private def extendPatternEnvironment (initial : SurfaceEnv) (bindings : List PatternBinding) :
+    CommandElabM SurfaceEnv := do
+  let mut env := initial
+  for (id, type, _) in bindings do
+    let name := id.getId.toString
+    if env.any (·.1 == name) then throwErrorAt id s!"duplicate readable witness value '{name}'"
+    env := (name, type, .ref name) :: env
+  pure env
+
+private def patternStatements (bindings : List PatternBinding) (source : Helpers.Term) :
+    CommandElabM (List Statement) :=
+  bindings.mapM fun (id, type, project) => do
+    pure (.bind id.getId.toString type (.at (← spanValue id) (project source)))
+
 private def lowerReadablePattern (programName path : String) (exprState : AuthoringExprState)
     (body : ReadableBody) (statement : Syntax) (pattern : TSyntax `noctium_bind_pattern)
     (source : TSyntax `nlexpr) : CommandElabM ReadableBody := do
   let (value, body) ← body.lower programName path exprState source
   let bindings ← patternBindings body.composites pattern value.type id
-  let mut env := body.env
-  for (id, type, _) in bindings do
-    let name := id.getId.toString
-    if env.any (·.1 == name) then throwErrorAt id s!"duplicate readable witness value '{name}'"
-    env := (name, type, .ref name) :: env
+  let env ← extendPatternEnvironment body.env bindings
   let span ← spanValue statement
   let ((before, terms, _), state) ← (stageIterationValues ("s" ++ path) env span [value]).run
     {exprState with nextLet := body.nextLet, iterationProgram := body.helperProgram}
   let [staged] := terms | throwErrorAt statement "binding pattern must stage one source value"
-  let projected ← bindings.mapM fun (id, type, project) => do
-    pure (Statement.bind id.getId.toString type (.at (← spanValue id) (project staged)))
+  let projected ← patternStatements bindings staged
   let body := body.observe value [source]
   pure {body with
     env := env
@@ -2593,31 +2605,38 @@ private partial def lowerReadableStatement (programName path : String)
       if !authoredOutputs.isEmpty && !isOutput then
         throwErrorAt statement "no statements may follow the circuit outputs"
       match statement with
-      | `(noctium_witness_statement| public $id:ident : $type:noctium_witness_input_type)
-      | `(noctium_witness_statement| private $id:ident : $type:noctium_witness_input_type) => do
+      | `(noctium_witness_statement| public $id:ident : $type:noctium_witness_input_type $[as $pattern:noctium_bind_pattern]?)
+      | `(noctium_witness_statement| private $id:ident : $type:noctium_witness_input_type $[as $pattern:noctium_bind_pattern]?) => do
         let valueName := id.getId.toString
         if sourceBody.env.any (·.1 == valueName) then throwErrorAt id s!"duplicate readable witness value '{valueName}'"
         let visibility := if statement.raw[0].getAtomVal == "public" then Noctium.Visibility.public else Noctium.Visibility.private
         let span ← spanValue statement
-        match type with
-        | `(noctium_witness_input_type| $scalar:nltype) =>
-          let ty ← readScalarTy scalar
-          parameters := parameters ++ [{name := valueName, ty}]
-          inputs := inputs ++ [{name := valueName, ty, visibility, span}]
-          let input : ObservationInput := {name := valueName, type := typeName ty, visibility}
+        let (inputType, inputLabel) : ResultType × String ← match type with
+          | `(noctium_witness_input_type| $scalar:nltype) => do
+            let ty ← readScalarTy scalar
+            parameters := parameters ++ [{name := valueName, ty}]
+            inputs := inputs ++ [{name := valueName, ty, visibility, span}]
+            pure (.scalar ty, typeName ty)
+          | `(noctium_witness_input_type| Payload $codecName:ident) => do
+            let (codec, _) ← (selectedCodec codecName).run' exprState
+            let result := if codec.payload == .unit then .unit else .composite codec.payload
+            parameters := parameters ++ [{name := valueName, ty := .native}]
+            aggregateInputs := aggregateInputs ++ [{name := valueName, type := codec.payload, visibility, span}]
+            pure (result, s!"Payload {codecName.getId}")
+          | _ => throwErrorAt type "unsupported readable witness input type"
+        let input : ObservationInput := {name := valueName, type := inputLabel, visibility}
+        let source := Helpers.Term.ref valueName
+        sourceBody := {sourceBody with
+          env := (valueName, inputType, source) :: sourceBody.env
+          observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
+        if let some pattern := pattern then
+          let bindings ← patternBindings sourceBody.composites pattern inputType _root_.id
+          let env ← extendPatternEnvironment sourceBody.env bindings
+          let projected ← patternStatements bindings source
           sourceBody := {sourceBody with
-            env := (valueName, .scalar ty, .ref valueName) :: sourceBody.env
-            observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
-        | `(noctium_witness_input_type| Payload $codecName:ident) =>
-          let (codec, _) ← (selectedCodec codecName).run' exprState
-          let result := if codec.payload == .unit then .unit else .composite codec.payload
-          parameters := parameters ++ [{name := valueName, ty := .native}]
-          aggregateInputs := aggregateInputs ++ [{name := valueName, type := codec.payload, visibility, span}]
-          let input : ObservationInput := {name := valueName, type := s!"Payload {codecName.getId}", visibility}
-          sourceBody := {sourceBody with
-            env := (valueName, result, .ref valueName) :: sourceBody.env
-            observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
-        | _ => throwErrorAt type "unsupported readable witness input type"
+            env := env
+            statements := sourceBody.statements ++ projected
+            requiresOutputViews := _root_.Bool.true}
       | `(noctium_witness_statement| output $id:ident $[: $type:nltype]? := $value:nlexpr) => do
         let valueName := id.getId.toString
         if sourceBody.env.any (·.1 == valueName) || authoredOutputs.any (·.name == valueName) then

@@ -37,6 +37,14 @@ noctium_witness_circuit unpack using packetWire where
   output total : Native := disclose(add(measured, amount))
 end
 
+noctium_witness_circuit summarize using packetWire where
+  public packet : Payload packetWire as {
+    measures := [measured, _], reading := {count := amount, active := enabled}
+  }
+  output total : Native := add(measured, amount)
+  output flag : Bool := enabled
+end
+
 noctium_witness_circuit unpackViews using packetWire where
   public seed : Native
   let {measures := [measured, _], reading := {count := amount, active := enabled}} :=
@@ -47,6 +55,8 @@ end
 
 #guard (Noctium.Witness.compile unpack.__program
   "noctium.witness-circuit.ReadableBindPatterns.unpack.v1").isOk
+#guard (Noctium.Witness.compile summarize.__program
+  "noctium.witness-circuit.ReadableBindPatterns.summarize.v1").isOk
 #guard (Noctium.Witness.compile unpackViews.__program
   "noctium.witness-circuit.ReadableBindPatterns.unpackViews.v1").isOk
 
@@ -92,6 +102,24 @@ noctium_witness_circuit rejectsUndisclosedPrivate using packetWire where
   output total : Native := add(measured, amount)
 end
 
+/- error: undisclosed private -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsPrivateInputProjection using packetWire where
+  private packet : Payload packetWire as {
+    measures := [measured, _], reading := {count := amount, active := enabled}
+  }
+  output total : Native := add(measured, amount)
+end
+
+/- error: positional pattern requires -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsInputTupleArity using packetWire where
+  public packet : Payload packetWire as {
+    measures := [measured], reading := {count := amount, active := enabled}
+  }
+  output total : Native := add(measured, amount)
+end
+
 end ReadableBindPatterns
 
 private def vectorWire : Helpers.Wire.Codec := {
@@ -111,6 +139,10 @@ end
 noctium_contract ReadableBindPatterns where
   entry unpack uses ReadableBindPatterns.unpack where
     return totalResult : Native := total
+  end
+  entry summarize uses ReadableBindPatterns.summarize where
+    return totalResult : Native := total
+    return activeResult : Bool := flag
   end
   entry unpackViews uses ReadableBindPatterns.unpackViews where
     return totalResult : Native := total

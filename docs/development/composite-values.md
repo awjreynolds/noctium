@@ -20,6 +20,18 @@ allow aliases and omitted fields. Positional patterns match the full tuple,
 fixed vector or byte length. `_` skips one position. Private values still
 require explicit disclosure at public sinks. [Source fixture](../../tests/ReadableBindPatterns.lean)
 
+Readable inputs also accept a pattern after `as`.
+
+```lean
+public packet : Payload packetWire as {
+  measures := [measured, _], reading := {count := amount, active := enabled}
+}
+```
+
+The ABI receives one `packet` input using `packetWire`. The pattern creates
+local aliases from the decoded value. Aliases of a `private` input retain
+its private origin.
+
 ## WireV1 and host checks
 
 The Noctium wire is `noctium:aggregate:value:v1:`, a u32 little-endian descriptor length, the full canonical type descriptor, a u32 little-endian leaf count, then one fixed 32-byte little-endian canonical Native field per leaf. This format is distinct from ZKIR's minimal-length immediate strings and ledger proof-preimage SCALE encoding. The native fixture converts the same leaves into the upstream relation preimage.
