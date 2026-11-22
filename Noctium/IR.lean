@@ -876,6 +876,20 @@ inductive LedgerFieldExpr where
 def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
   | .mk ty _ => ty
 
+/-- The existing qualified coin reset is the only ordinary effect that may
+write a qualified record without a booked coin. -/
+def LedgerValueType.cellWriteEffectFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (values : List LedgerFieldExpr) :
+    Except String (List (String × Ty)) := do
+  if let .ok fields := LedgerValueType.shieldedCoinRecordFields environment type then
+    let [.mk (.bytes 32) (.bytes32Literal nonce), .mk (.bytes 32) (.bytes32Literal color),
+        .mk (.uint _) (.uint _ 0), .mk (.uint _) (.uint _ 0)] := values
+      | throw "qualified coin Cell writes require a booked coin or a zero reset"
+    unless nonce == List.replicate 32 0 && color == List.replicate 32 0 do
+      throw "qualified coin Cell resets require zero bytes"
+    pure fields
+  else LedgerValueType.cellWriteRecordFields environment type
+
 /-- State effects are ordered transaction instructions, not circuit nodes.
 A read binds a typed name for later guards/writes. Outputs are bound explicitly
 by an entrypoint. The backend must bind these values into the accepted transcript. -/
@@ -2205,7 +2219,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let .tree (.composite compositeEnv foundType) := declaration.kind
             | throw "root composite write must target a checked record Cell"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.cellWriteRecordFields compositeEnv type
+          LedgerValueType.cellWriteEffectFields compositeEnv type values
         else do
           if !caps.stateMaps then throw "target lacks state maps"
           let .composite compositeEnv foundType ← resolveTreeState decls state keys
