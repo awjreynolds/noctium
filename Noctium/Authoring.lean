@@ -139,6 +139,10 @@ scoped syntax (name := noctiumWitnessDeclarationCommand) "noctium_witness" ident
 
 scoped syntax "witness" ident "(" nlexpr,* ")" : nlexpr
 scoped syntax "if" nlexpr "then" nlexpr "else" nlexpr : nlexpr
+declare_syntax_cat noctium_callback_step
+scoped syntax "let" ident ":=" nlexpr : noctium_callback_step
+scoped syntax "prove" nlexpr : noctium_callback_step
+scoped syntax "do" noctium_callback_step* "return" nlexpr "end" : nlexpr
 scoped syntax "map(" "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "fold(" nlexpr "," "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
@@ -522,6 +526,13 @@ private def tupleItem (item : TSyntax `noctium_tuple_item) :
   | `(noctium_tuple_item| $source:nlexpr) => some (_root_.Bool.false, source)
   | _ => none
 
+private def callbackStep (step : TSyntax `noctium_callback_step) :
+    Option (Option Ident × TSyntax `nlexpr) :=
+  match step with
+  | `(noctium_callback_step| let $id:ident := $value:nlexpr) => some (some id, value)
+  | `(noctium_callback_step| prove $value:nlexpr) => some (none, value)
+  | _ => none
+
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   match stx with
   | `(nlexpr| $id:ident) => id.getId.toString
@@ -532,6 +543,11 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"let {id.getId} := {renderExpr value} in {renderExpr body}"
   | `(nlexpr| assertThen($condition, $body)) =>
     s!"assertThen({renderExpr condition}, {renderExpr body})"
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
+    let lines := (steps.toList.filterMap callbackStep).map fun
+      | (some id, value) => s!"let {id.getId} := {renderExpr value}"
+      | (none, condition) => s!"prove {renderExpr condition}"
+    "do " ++ String.intercalate " " (lines ++ [s!"return {renderExpr result} end"])
   | `(nlexpr| add($left, $right)) => s!"add({renderExpr left}, {renderExpr right})"
   | `(nlexpr| sub($left, $right)) => s!"sub({renderExpr left}, {renderExpr right})"
   | `(nlexpr| mul($left, $right)) => s!"mul({renderExpr left}, {renderExpr right})"
@@ -688,6 +704,9 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
     (items.getElems.toList.filterMap tupleItem).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
+    (steps.toList.filterMap callbackStep).flatMap (disclosedValues ∘ Prod.snd) ++
+      disclosedValues result
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
   | `(nlexpr| mul($left, $right)) | `(nlexpr| eq($left, $right))
   | `(nlexpr| boolAnd($left, $right)) | `(nlexpr| boolOr($left, $right))
@@ -768,6 +787,11 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
     (items.getElems.toList.filterMap tupleItem).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
+    ((steps.toList.filterMap callbackStep).flatMap fun
+      | (some _, value) => inlineAssertions value
+      | (none, condition) => renderExpr condition :: inlineAssertions condition) ++
+      inlineAssertions result
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) =>
     inlineAssertions value ++ inlineAssertions body
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
@@ -1193,6 +1217,11 @@ private def lowerForeignPointConstant (stx : Syntax) (curve : Foreign.Curve)
     term := .foreignConstant (.point curve) encoding
   }
 
+private def freshReadableLet (id : Ident) : ExprM String := do
+  let ordinal := (← get).nextLet
+  modify fun state => {state with nextLet := ordinal + 1}
+  pure s!"__noctium_let_{ordinal}_{id.getId}"
+
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
     (stx : TSyntax `nlexpr) : ExprM Lowered := do
   match stx with
@@ -1550,9 +1579,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     }
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
     let value ← lowerExpr programName callPrefix env value
-    let localIndex ← get
-    modify fun state => {state with nextLet := state.nextLet + 1}
-    let internalName := s!"__noctium_let_{localIndex.nextLet}_{id.getId}"
+    let internalName ← freshReadableLet id
     let ref := Noctium.Helpers.Term.ref internalName
     let body ← lowerExpr programName callPrefix ((id.getId.toString, value.type, ref) :: env) body
     pure
@@ -1561,6 +1588,30 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         signatures := uniqueWitnesses (value.signatures ++ body.signatures),
         witnessNames := (value.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (value.generatedValidity ++ body.generatedValidity).eraseDups }
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => do
+    let mut localEnv := env
+    let mut loweredSteps := []
+    for step in steps do
+      let some (binder, source) := callbackStep step
+        | throwErrorAt step "invalid readable callback statement"
+      let span ← liftM (spanValue step)
+      match binder with
+      | some id =>
+        let value ← lowerExpr programName callPrefix localEnv source
+        let name ← freshReadableLet id
+        localEnv := (id.getId.toString, value.type, .ref name) :: localEnv
+        loweredSteps := {value with before := value.before ++
+          [.bind name value.type (.at span value.term)]} :: loweredSteps
+      | none =>
+        let allowAssertThen := (← get).allowAssertThen
+        modify fun state => {state with allowAssertThen := _root_.Bool.true}
+        let value ← lowerExpr programName callPrefix localEnv source
+        modify fun state => {state with allowAssertThen}
+        let value ← coerce source value .bool
+        loweredSteps := {value with before := value.before ++
+          [.assert (.at span value.term)]} :: loweredSteps
+    let result ← lowerExpr programName callPrefix localEnv result
+    pure (mergeLowered result.type result.term (loweredSteps.reverse ++ [result]))
   | `(nlexpr| assertThen($condition, $body)) => do
     unless (← get).allowAssertThen do
       throwErrorAt stx "assertThen is accepted only inside an explicit prove statement"
