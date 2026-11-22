@@ -5554,7 +5554,11 @@ fn validate_map_size_path(plan: &Plan, slot: u32, depth: usize) -> Result<()> {
         }
     };
     if let Some(key) = schema.get("set") {
-        ledger_key_type(key)?;
+        if depth == 0 && let Some(record) = ordinary_record_set_schema(plan, slot) {
+            checked_typed_record_schema(record)?;
+        } else {
+            ledger_key_type(key)?;
+        }
         return Ok(());
     }
     ensure!(
