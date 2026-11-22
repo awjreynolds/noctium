@@ -153,6 +153,7 @@ jobs:
           lake env lean tests/NativeSet.lean
           lake env lean tests/NativeCaller.lean
           lake env lean tests/NativeCallerComposition.lean
+          lake env lean tests/NativeUserCaller.lean
           lake env lean tests/NativeKernelContext.lean
           lake env lean tests/NativeCellReset.lean
           lake env lean tests/FlatRecordCellReset.lean
