@@ -3938,7 +3938,7 @@
       "layer": "standard-library",
       "surface": "MerkleTreePath",
       "noctiumStatus": "subset",
-      "notes": "Lean uses the shared fixed-depth Bytes32 path schema in the native-checked depth-two fixture and the existing depth-20 shielded role case. The former matches the pinned Compact root and rejects malformed witness shapes. Other leaf types and broader host coverage remain open.",
+      "notes": "Lean uses a shared fixed-depth Bytes32 path schema in the native-checked depth-two no-leaf root fixture and the depth-20 shielded role case. The depth-two fixture matches the pinned Compact root and rejects malformed witness shapes. Other leaf types and broader host coverage remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3953,6 +3953,7 @@
       ],
       "observedEvidence": [
         "Noctium/Types/MerklePath.lean",
+        "Noctium/Helpers/MerklePath.lean",
         "tests/MerklePathRootNoLeafHash.lean",
         "runtime/tests/merkle_path_types.rs",
         "tests/compact/merkle-path-root-no-leaf-hash.mjs",
@@ -5697,8 +5698,8 @@
       "id": "C-STDLIB-MERKLETREEPATHROOTNOLEAFHASH",
       "layer": "standard-library",
       "surface": "merkleTreePathRootNoLeafHash",
-      "noctiumStatus": "related-subset",
-      "notes": "Claim example computes a selected fixed-depth path, not this generic library API or standard leaf hash.",
+      "noctiumStatus": "subset",
+      "notes": "A reusable Lean source helper degrades the Bytes32 leaf and folds the canonical path entries at a declared depth. The depth-two native ZKIR 3.2.1 fixture matches the pinned Compact result. Path directions remain private through fixed arithmetic and the source explicitly releases the root. The Lean checker rejects an undisclosed root, and the typed provider rejects malformed directions and path lengths. Broader depth and host coverage remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5712,7 +5713,10 @@
         "ABI"
       ],
       "observedEvidence": [
-        "docs/development/native-localnet.md"
+        "Noctium/Helpers/MerklePath.lean",
+        "tests/MerklePathRootNoLeafHash.lean",
+        "tests/compact/merkle-path-root-no-leaf-hash.mjs",
+        "runtime/tests/merkle_path_types.rs"
       ],
       "equivalence": "unverified"
     },
