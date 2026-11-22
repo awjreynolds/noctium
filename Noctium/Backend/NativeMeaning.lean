@@ -602,8 +602,11 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
         let leftChunks ← bytesChunksTerm leftLength left.term
         let rightChunks ← bytesChunksTerm rightLength right.term
         pure (if leftLength == 0 then right.term else if rightLength == 0 then left.term else
-          concatBytesTerm leftLength rightLength
-            (bytesFromChunksTerm leftLength leftChunks) (bytesFromChunksTerm rightLength rightChunks))
+          if leftLength % 31 == 0 then
+            bytesFromChunksTerm (leftLength + rightLength) (leftChunks ++ rightChunks)
+          else
+            concatBytesTerm leftLength rightLength
+              (bytesFromChunksTerm leftLength leftChunks) (bytesFromChunksTerm rightLength rightChunks))
     pure {term, bounds := left.bounds ++ right.bounds, assertions := left.assertions ++ right.assertions}
   | .sha256 (length := length) value => do
     let normalized ← normalize env value
