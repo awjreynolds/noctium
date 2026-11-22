@@ -47,7 +47,7 @@
         "valueTypeVariants": 3
       },
       "checker": {
-        "instructionVariants": 14,
+        "instructionVariants": 15,
         "valueTypeVariants": 3
       },
       "proof": {
@@ -267,11 +267,40 @@
   },
   "evidenceRegister": {
     "E-NOCTIUM321-COPY": {
-      "description": "Direct Lean source emits Copy in a checked ledger entrypoint. The 3.2.1 native checker accepts valid active and inactive executions and rejects a changed public assertion operand. Source and producer checks reject disclosure and SSA misuse.",
+      "kind": "executed-native-checker-test",
+      "zkirPin": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+      "keygen": false,
+      "checker": true,
+      "proof": false,
+      "ledger": false,
+      "description": "The pinned 3.2.1 runtime test checks a direct Lean contract fixture containing 36 Copy instructions. It accepts two valid witness sets and rejects one changed public assertion operand.",
+      "scope": "Checker-only evidence for the exact NativeCopy.store artifacts and test. It does not establish key generation, proof, ledger execution, or complete Copy overload qualification.",
+      "checkerObservation": {
+        "fixtureInstructionCount": 118,
+        "copyOpcodeCount": 36,
+        "acceptedChecks": 2,
+        "rejectedChecks": 1
+      },
+      "artifacts": {
+        "zkir": {
+          "path": "../../runtime/tests/fixtures/native-copy/321/NativeCopy.store.zkir",
+          "bytes": 10539,
+          "sha256": "d0ac701d3e5c4c1d25f9a2250a952f617ddc6edcd0e639ad3d881e8bdc76a5ff"
+        },
+        "impact": {
+          "path": "../../runtime/tests/fixtures/native-copy/321/NativeCopy.store.impact.json",
+          "bytes": 4518,
+          "sha256": "b89a7ab4cdc7a39bad7dee5545f9e651061c13fbcae86251aa15b8f3a17fbbf5"
+        }
+      },
       "refs": [
         "../../tests/NativeCopy.lean",
         "../../tests/NativeProducer.lean",
         "../../runtime/tests/native_copy.rs",
+        "../../runtime/tests/fixtures/native-copy/321/NativeCopy.store.zkir",
+        "../../runtime/tests/fixtures/native-copy/321/NativeCopy.store.impact.json",
+        "../../runtime/Cargo.toml",
+        "../../runtime/Cargo.lock",
         "../development/native-copy.md"
       ]
     },
