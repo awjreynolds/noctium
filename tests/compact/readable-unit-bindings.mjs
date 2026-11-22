@@ -46,9 +46,12 @@ try {
   }), 7n);
 
   const callbackOrder = result.context.callContext.currentPrivateState;
-  assert.equal(result.result, 10n);
-  assert.deepEqual(callbackOrder, ['7', '8', '9']);
-  console.log(JSON.stringify({ result: result.result.toString(), callbackOrder }));
+  const [value, present, absent] = result.result;
+  assert.equal(value, 10n);
+  assert.deepEqual(present, { is_some: true, value: [] });
+  assert.deepEqual(absent, { is_some: false, value: [] });
+  assert.deepEqual(callbackOrder, ['7', '8', '9', '10']);
+  console.log(JSON.stringify({ value: value.toString(), present, absent, callbackOrder }));
 } finally {
   rmSync(generated, { recursive: true, force: true });
 }

@@ -163,6 +163,7 @@ scoped syntax "vector(" "Payload" ident "," "[" noctium_tuple_item,* "]" ")" : n
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
+scoped syntax "none(" ident ")" : nlexpr
 scoped syntax "either(" nlexpr "," nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
@@ -585,6 +586,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
+  | `(nlexpr| none($type:ident)) => s!"none({type.getId})"
   | `(nlexpr| either($tag, $left, $right)) =>
     s!"either({renderExpr tag}, {renderExpr left}, {renderExpr right})"
   | `(nlexpr| field($value, $name:ident)) => s!"field({renderExpr value}, {name.getId})"
@@ -1318,10 +1320,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {result with before}
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
-    let payload ← match value.type with
-      | .scalar ty => pure (scalarMaybePayload ty)
-      | .composite payload => pure payload
-      | .unit => throwErrorAt stx "some does not accept Unit"
+    let payload := value.layoutType
     let compiled ← checkedPayloadLayout stx payload
     let maybeType ← checkedMaybeType programName stx payload compiled
     if let .scalar ty := value.type then
@@ -1341,6 +1340,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| none($type:nltype)) => do
     let payloadType ← liftM (readScalarTy type)
     lowerAbsentMaybe programName stx (scalarMaybePayload payloadType)
+  | `(nlexpr| none($type:ident)) => do
+    unless type.getId == `Unit do throwErrorAt type "expected Unit or a checked Maybe payload type"
+    lowerAbsentMaybe programName stx .unit
   | `(nlexpr| none(Payload $name:ident)) => do
     let (codec, _) ← selectedCodec name
     lowerAbsentMaybe programName name codec.payload

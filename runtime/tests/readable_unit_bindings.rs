@@ -115,8 +115,9 @@ fn readable_unit_bindings_keep_expression_lets_and_order_host_calls() -> anyhow:
     let unit = json!({"kind":"unit"});
     for (name, argument, value) in [
         ("unitObserve", "7", unit.clone()),
-        ("unitObserve", "8", unit),
+        ("unitObserve", "8", unit.clone()),
         ("unitFinish", "9", json!("10")),
+        ("unitObserve", "10", unit),
     ] {
         let pending = execution.advance()?;
         assert_eq!(pending["status"], "need_host");
@@ -132,21 +133,52 @@ fn readable_unit_bindings_keep_expression_lets_and_order_host_calls() -> anyhow:
         2,
         "only seed and the Native reply occupy fields"
     );
-    let plan: noctium_runtime::Plan = serde_json::from_reader(fs::File::open(
+    let mut plan: noctium_runtime::Plan = serde_json::from_reader(fs::File::open(
         directory.join(format!("{stem}.impact.json")),
     )?)?;
     let circuit = noctium_runtime::zkir::IrSource::load(fs::File::open(
         directory.join(format!("{stem}.zkir")),
     )?)?;
     let initial = noctium_runtime::create_state(&plan, &BTreeMap::new())?;
-    let execution = noctium_runtime::prepare(
-        &plan,
-        &inputs,
-        &initial,
-        &ledger::structure::INITIAL_PARAMETERS,
-        coin_structure::contract::ContractAddress::default(),
-    )?;
+    let prepare = |plan: &noctium_runtime::Plan| {
+        noctium_runtime::prepare(
+            plan,
+            &inputs,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )
+    };
+    let execution = prepare(&plan)?;
     noctium_runtime::check(&execution, &circuit)?;
-    assert_eq!(execution.returns_json()["value"], "10");
+    assert_eq!(
+        execution.returns().len(),
+        3,
+        "Native result and two Maybe tags"
+    );
+    let returns = execution.returns_json();
+    assert_eq!(returns["value"], "10");
+    assert_eq!(returns["presentUnit"]["id"], returns["absentUnit"]["id"]);
+    for (name, tag) in [("presentUnit", true), ("absentUnit", false)] {
+        assert_eq!(
+            returns[name]["fields"],
+            json!([
+                {"name":"is_some", "value":{"kind":"bool", "value":tag}},
+                {"name":"value", "value":{"kind":"unit"}},
+            ])
+        );
+    }
+    let tag = &plan
+        .return_views
+        .iter()
+        .find(|view| view.name == "presentUnit")
+        .expect("present Maybe return view")
+        .fields[0];
+    plan.returns
+        .iter_mut()
+        .find(|output| output.name == *tag)
+        .expect("present Maybe tag")
+        .expression = noctium_runtime::Expr::Constant { value: "0".into() };
+    assert!(noctium_runtime::check(&prepare(&plan)?, &circuit).is_err());
     Ok(())
 }
