@@ -2595,11 +2595,7 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
   let (path, result) ← lowerTreePath state.env treeSchema keys
   let (.composite environment type) := result
     | throwErrorAt payload "composite write must select a composite record"
-  let fields ← if path.isEmpty then
-    match LedgerValueType.ledgerRecordWriteFields environment type with
-    | .ok fields => pure fields
-    | .error message => throwErrorAt payload message
-  else match LedgerValueType.ledgerRecordWriteFields environment type with
+  let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
   let valueList ← elaborateLedgerFieldValues state.env payload fields
