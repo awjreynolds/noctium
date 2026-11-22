@@ -1,0 +1,31 @@
+{
+  "amount": "7",
+  "bundleManifestSha256": "b7b100973874f1ffa3346d772aeb63302f73e88f01103b22f97145cb893076b8",
+  "circuitK": 13,
+  "compilerRevision": "7a4ea4b3fac77b904316c31e60b051d8d8e414e5",
+  "contractAddress": "5dd7a0c398f772c7954640678a123b47063db474ecfd3130c5f767e2e8a97183",
+  "deploymentFinalizedHash": "5e26433803e8c467218d7e8c66252ef9f46828252c2731ada59a83e61b56a9a9",
+  "deploymentHeight": 59306,
+  "domain": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "expectedColor": "b7b0c357d24ec13d2d78c7154f2f931e60949cf0bd75c7e7aedb5b1b019d2121",
+  "nativeProfile": "midnight-ledger-9-zkir-3.2.1",
+  "nativeRows": 4314,
+  "sameBytesUserCall": {
+    "contractBalance": "7",
+    "finalizedHash": "0ca983862045976555c666b60bf5a7dead552e336ab7905855a2f77b1913b1cd",
+    "finalizedUserOutput": {
+      "index": 0,
+      "value": "7"
+    },
+    "height": 59312,
+    "recipientTag": "user",
+    "transactionId": "e717c2d122f195fa74f7fd488ce3e062d4cf6151fde019ac23aec5436dd6d3a1"
+  },
+  "selfCall": {
+    "contractBalance": "7",
+    "finalizedHash": "5534827dc402deb86c531c0419ad46923188489bd2c146ae8be71cb5303d763b",
+    "height": 59309,
+    "recipientTag": "contract",
+    "transactionId": "c7e3d7c9a3630c348ff5e476bb95815c6d129154c6cace4b02933b5dfe3e7027"
+  }
+}

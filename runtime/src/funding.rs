@@ -208,6 +208,35 @@ impl DustFunding {
     }
 
     #[cfg(feature = "localnet")]
+    pub(crate) async fn fund_unshielded_mint(
+        &self,
+        contract: &ProvedNativeIntent,
+        network_id: &str,
+        parameters: &LedgerParameters,
+        material: &DustMaterial,
+        srs: &TrustedParameters,
+        now: Timestamp,
+        policy: FeePolicy,
+        rng: StdRng,
+    ) -> Result<FundedTransaction> {
+        crate::unshielded_mint::validate_user_output_offer(contract)
+            .map_err(|_| Error::Intent)?;
+        self.fund_base_inner(
+            contract,
+            one_intent(network_id, CONTRACT_SEGMENT, contract.clone()),
+            network_id,
+            parameters,
+            material,
+            srs,
+            now,
+            policy,
+            true,
+            rng,
+        )
+        .await
+    }
+
+    #[cfg(feature = "localnet")]
     pub(crate) async fn fund_shielded_receive(
         &self,
         contract: &ProvedNativeIntent,
@@ -694,7 +723,7 @@ impl DustFunding {
         srs: &TrustedParameters,
         now: Timestamp,
         policy: FeePolicy,
-        allow_guaranteed_caller_offer: bool,
+        allow_guaranteed_unshielded_offer: bool,
         mut rng: StdRng,
     ) -> Result<FundedTransaction> {
         policy.validate()?;
@@ -705,7 +734,7 @@ impl DustFunding {
             return Err(Error::Parameters);
         }
         if !admissible_actions(contract)
-            || contract.guaranteed_unshielded_offer.is_some() != allow_guaranteed_caller_offer
+            || contract.guaranteed_unshielded_offer.is_some() != allow_guaranteed_unshielded_offer
             || contract.fallible_unshielded_offer.is_some()
             || contract.dust_actions.is_some()
             || contract.ttl <= now
@@ -714,6 +743,8 @@ impl DustFunding {
         {
             return Err(Error::Intent);
         }
+        let has_caller_inputs = contract.guaranteed_unshielded_offer.as_ref()
+            .is_some_and(|offer| !offer.inputs.is_empty());
         let mut needed = 0u128;
         for _ in 0..10 {
             if needed > policy.max_dust {
@@ -781,7 +812,7 @@ impl DustFunding {
             };
             // Binding seals have a fixed encoded size. Estimate from a real seal, without
             // binding a durable transaction identity or changing the retained contract intent.
-            let signature_candidate = allow_guaranteed_caller_offer
+            let signature_candidate = has_caller_inputs
                 .then(|| caller_signature_fee_candidate(&candidate))
                 .transpose()?;
             let fee_candidate = signature_candidate.as_ref().unwrap_or(&candidate);

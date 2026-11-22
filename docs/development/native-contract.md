@@ -339,6 +339,21 @@ and [native checker](../../runtime/tests/native_unshielded_mint_recipient.rs)
 cover self-contract, other-contract, same-bytes user and inactive calls.
 The native checker also rejects a changed recipient tag.
 
+For a proved user-tagged mint, Rust callers use
+`BoundTransaction::prepare_unshielded_mint` with their chain, funding and
+signing adapters. It derives the exact recipient, amount and custom token
+from one guaranteed call transcript. The funding adapter receives the
+resulting output-only offer, and signing preserves it. Native ledger validation
+checks the proof and matching output before submission. Self-credit uses
+ordinary transaction preparation.
+
+On Ledger 9.1.0.1 with ZKIR 3.2.1, the Rust fixture deployed at block 59306.
+At 59309, the contract-tagged mint credited 7 tokens to the contract. At
+59312, the user-tagged mint used the same recipient bytes, left the contract
+balance at 7, and created a separate 7-token output. The test found that exact
+output in a replayed ledger state whose root matched the finalized node.
+[Finalized receipt](native-unshielded-recipient-mint-localnet-receipt.json)
+
 ## Read the current contract address
 
 `readSelf as own` binds the executing contract's `Bytes32` address.

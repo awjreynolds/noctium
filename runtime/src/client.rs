@@ -18,7 +18,7 @@ use ledger::{
     semantics::{TransactionContext, TransactionResult},
     structure::{
         ContractAction, Intent, LedgerState, PedersenDowngradeable, ProofMarker, Signature,
-        Transaction,
+        Transaction, UnshieldedOffer,
     },
     verify::WellFormedStrictness,
 };
@@ -555,6 +555,7 @@ enum ContractFunding {
     #[cfg(feature = "localnet")]
     Shielded(Vec<u8>),
     UnshieldedCaller,
+    UnshieldedMint,
 }
 
 impl BoundTransaction {
@@ -579,6 +580,28 @@ impl BoundTransaction {
         signer: &impl SigningAdapter,
     ) -> Result<Self> {
         Self::prepare_inner(contract, policy, chain, funding, signer, ContractFunding::UnshieldedCaller)
+            .await
+    }
+
+    /// Fund a single guaranteed custom-token mint to the user named by its proved transcript.
+    /// The transaction pays the exact derived output and takes no unshielded inputs.
+    pub async fn prepare_unshielded_mint(
+        contract: &ProvedNativeIntent,
+        policy: NetworkPolicy,
+        chain: &impl ChainAdapter,
+        funding: &impl FundingAdapter,
+        signer: &impl SigningAdapter,
+    ) -> Result<Self> {
+        require(contract.guaranteed_unshielded_offer.is_none(), Error::InvalidTransaction)?;
+        let output = crate::unshielded_mint::derive_user_output(contract)
+            .map_err(|_| Error::InvalidTransaction)?;
+        let mut contract = contract.clone();
+        contract.guaranteed_unshielded_offer = Some(storage::arena::Sp::new(UnshieldedOffer {
+            inputs: Default::default(),
+            outputs: vec![output].into(),
+            signatures: Default::default(),
+        }));
+        Self::prepare_inner(&contract, policy, chain, funding, signer, ContractFunding::UnshieldedMint)
             .await
     }
 
@@ -885,6 +908,11 @@ impl BoundTransaction {
                 crate::unshielded_caller::validate_guaranteed_caller_offer(&snapshot, contract)
                     .map_err(|_| Error::InvalidTransaction)?;
                 funding.fund_unshielded_caller(contract, &snapshot, &policy).await
+            }
+            ContractFunding::UnshieldedMint => {
+                crate::unshielded_mint::validate_user_output_offer(contract)
+                    .map_err(|_| Error::InvalidTransaction)?;
+                funding.fund(contract, &snapshot, &policy).await
             }
             _ => {
                 require(contract.guaranteed_unshielded_offer.is_none(), Error::InvalidTransaction)?;
