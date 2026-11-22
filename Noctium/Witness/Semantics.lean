@@ -750,6 +750,39 @@ private def commonScalarType (left right : Ty) : Except String Ty := do
   else if Helpers.subtype (.scalar right) (.scalar left) then pure left
   else .error "native witness execution found incompatible scalar types"
 
+private def runtimeEquality (composites : Types.CompositeEnv) (context : EvalContext)
+    (left right : RuntimeValue) : Except String Bool := do
+  match left, right with
+  | .aggregate leftType leftFingerprint leftLeaves,
+    .aggregate rightType rightFingerprint rightLeaves => do
+      unless leftType == rightType do
+        throw "native witness equality found incompatible aggregate types"
+      let .structure _ := leftType | throw "native witness record equality requires a flat record"
+      let program : Program := {composites}
+      discard ((Helpers.nominalFlatStructureLeafTypes program {} leftType).mapError (·.message))
+      let compiled ← (Types.compileType composites leftType).mapError (·.message)
+      unless leftFingerprint == compiled.fingerprint && rightFingerprint == compiled.fingerprint do
+        throw "native witness equality found a noncanonical aggregate fingerprint"
+      let leftChecked ← (Types.unflattenChecked compiled leftLeaves).mapError id
+      let rightChecked ← (Types.unflattenChecked compiled rightLeaves).mapError id
+      pure (leftChecked.leaves == rightChecked.leaves)
+  | _, _ => do
+      let left ← runtimeScalar left
+      let right ← runtimeScalar right
+      let leftTy := (runtimeTy (.scalar left)).getD .native
+      let rightTy := (runtimeTy (.scalar right)).getD .native
+      let ty ← commonScalarType leftTy rightTy
+      let left ← castRuntime context ty (.scalar left)
+      let right ← castRuntime context ty (.scalar right)
+      pure (left == right)
+
+private def equalityPost (composites : Types.CompositeEnv) (context : EvalContext)
+    (values : List RuntimeValue) : MachineM RuntimeValue := do
+  let some left := values[0]? | fail "equality left operand missing"
+  let some right := values[1]? | fail "equality right operand missing"
+  let equal ← liftResult (runtimeEquality composites context left right)
+  pure (.scalar (.bool equal))
+
 private def makeAggregateRuntime (program : Program) (type : Types.CompositeType)
     (leaves : List Nat) : Except String RuntimeValue := do
   let compiled ← (Types.compileType program.composites type).mapError (·.message)
@@ -1290,16 +1323,7 @@ mutual
           | _ => fail "invalid arithmetic result"
       | .eq left right => do
           let values ← evalTerms fuel program context grants provider scope environment [left, right]
-          let some left := values[0]? | fail "equality left operand missing"
-          let some right := values[1]? | fail "equality right operand missing"
-          let left ← liftResult (runtimeScalar left)
-          let right ← liftResult (runtimeScalar right)
-          let leftTy := (runtimeTy (.scalar left)).getD .native
-          let rightTy := (runtimeTy (.scalar right)).getD .native
-          let ty ← liftResult (commonScalarType leftTy rightTy)
-          let left ← liftResult (castRuntime context ty (.scalar left))
-          let right ← liftResult (castRuntime context ty (.scalar right))
-          pure (.scalar (.bool (left == right)))
+          equalityPost program.composites context values
       | .cast target value => do
           let value ← evalTerm fuel program context grants provider scope environment value
           liftResult (castRuntime context target value)
@@ -1913,6 +1937,19 @@ macro "state_preserving" : tactic => `(tactic|
   | split
   | simp [fail, machineMMonad, runtimeScalarOfPolicy])
 
+private theorem equalityPost_frame (composites : Types.CompositeEnv) (context : EvalContext)
+    (values : List RuntimeValue) : StatePreserving (equalityPost composites context values) := by
+  intro state
+  unfold equalityPost
+  cases hleft : values[0]? with
+  | none => simp [hleft, fail]
+  | some left =>
+    cases hright : values[1]? with
+    | none => simp [hleft, hright, fail]
+    | some right =>
+      simp only [hleft, hright]
+      state_preserving
+
 private theorem body_recordSafe_step (fuel : Nat)
     (termSafe : ∀ program context grants provider scope environment term,
       RecordSafe (evalTerm fuel program context grants provider scope environment term))
@@ -2078,15 +2115,7 @@ private theorem evaluator_recordSafe (fuel : Nat) :
             apply recordSafe_bind
             · exact termsSafe [left, right]
             · intro values
-              cases hleft : values[0]? with
-              | none => simp only [hleft]; exact recordSafe_fail _
-              | some leftValue =>
-                  cases hright : values[1]? with
-                  | none => simp only [hleft, hright]; exact recordSafe_fail _
-                  | some rightValue =>
-                      simp only [hleft, hright]
-                      apply recordSafe_ofStatePreserving
-                      state_preserving
+              exact recordSafe_ofStatePreserving _ (equalityPost_frame program.composites context values)
         | cast target value =>
             simp only [evalTerm]
             apply recordSafe_bind
@@ -3208,33 +3237,8 @@ private theorem evalTerm_binary_successSim_step (fuel : Nat) (program : Program)
     · exact binaryPost_frame context operation values
     · exact binaryPost_stable context operation values
 
-private def equalityPost (context : EvalContext) (values : List RuntimeValue) : MachineM RuntimeValue := do
-  let some left := values[0]? | fail "equality left operand missing"
-  let some right := values[1]? | fail "equality right operand missing"
-  let left ← liftResult (runtimeScalar left)
-  let right ← liftResult (runtimeScalar right)
-  let leftTy := (runtimeTy (.scalar left)).getD .native
-  let rightTy := (runtimeTy (.scalar right)).getD .native
-  let ty ← liftResult (commonScalarType leftTy rightTy)
-  let left ← liftResult (castRuntime context ty (.scalar left))
-  let right ← liftResult (castRuntime context ty (.scalar right))
-  pure (.scalar (.bool (left == right)))
-
-private theorem equalityPost_frame (context : EvalContext) (values : List RuntimeValue) :
-    StatePreserving (equalityPost context values) := by
-  intro state
-  unfold equalityPost
-  cases hleft : values[0]? with
-  | none => simp [hleft, fail]
-  | some left =>
-    cases hright : values[1]? with
-    | none => simp [hleft, hright, fail]
-    | some right =>
-      simp only [hleft, hright]
-      state_preserving
-
-private theorem equalityPost_resultStable (context : EvalContext) (values : List RuntimeValue) :
-    ResultStable (equalityPost context values) := by
+private theorem equalityPost_resultStable (composites : Types.CompositeEnv) (context : EvalContext)
+    (values : List RuntimeValue) : ResultStable (equalityPost composites context values) := by
   intro left right
   unfold equalityPost
   cases hleft : values[0]? with
@@ -3246,11 +3250,12 @@ private theorem equalityPost_resultStable (context : EvalContext) (values : List
       simp only [hleft, hright]
       result_stable
 
-private theorem equalityPost_successSim (context : EvalContext) (values : List RuntimeValue) :
-    SuccessSim (equalityPost context values) (equalityPost context values) := by
+private theorem equalityPost_successSim (composites : Types.CompositeEnv) (context : EvalContext)
+    (values : List RuntimeValue) :
+    SuccessSim (equalityPost composites context values) (equalityPost composites context values) := by
   apply successSim_of_frameResultStable
-  · exact equalityPost_frame context values
-  · exact equalityPost_resultStable context values
+  · exact equalityPost_frame composites context values
+  · exact equalityPost_resultStable composites context values
 
 private def selectPost (context : EvalContext) (values : List RuntimeValue) : MachineM RuntimeValue := do
   let some condition := values[0]? | fail "selection condition missing"
@@ -3313,15 +3318,18 @@ private theorem evalTerm_eq_successSim_step (fuel : Nat) (program : Program)
       (evalTerms fuel (Noctium.Witness.eraseProgram program) context grants replayProvider scope environment terms)) :
     SuccessSim (evalTerm (fuel + 1) program context grants sourceProvider scope environment (.eq left right))
       (evalTerm (fuel + 1) (Noctium.Witness.eraseProgram program) context grants replayProvider scope environment (.eq left right)) := by
+  have compositesEq : (Noctium.Witness.eraseProgram program).composites = program.composites := rfl
   simp only [evalTerm]
   apply successSim_bind
   · exact termsSafe [left, right]
   · intro values
-    exact recordSafe_ofStatePreserving _ (equalityPost_frame context values)
+    exact recordSafe_ofStatePreserving _ (equalityPost_frame program.composites context values)
   · exact termsSim [left, right]
   · intro values
-    change SuccessSim (equalityPost context values) (equalityPost context values)
-    exact equalityPost_successSim context values
+    change SuccessSim (equalityPost program.composites context values)
+      (equalityPost (Noctium.Witness.eraseProgram program).composites context values)
+    rw [compositesEq]
+    exact equalityPost_successSim program.composites context values
 
 private theorem evalTerm_select_successSim_step (fuel : Nat) (program : Program)
     (context : EvalContext) (grants : HostGrants) (sourceProvider replayProvider : Provider)
@@ -5402,20 +5410,24 @@ private theorem evalTerm_failureSim_step (fuel : Nat) (program : Program)
           (binaryPost context operation values) (binaryPost_frame context operation values)
           (binaryPost_frame context operation values) stable
   | eq left right =>
+      have compositesEq : (Noctium.Witness.eraseProgram program).composites = program.composites := rfl
       simp only [evalTerm]
       apply failureSim_bind
       · exact termsSafe scope environment [left, right]
       · intro values
-        exact recordSafe_ofStatePreserving _ (equalityPost_frame context values)
+        exact recordSafe_ofStatePreserving _ (equalityPost_frame program.composites context values)
       · exact termsFailure scope environment [left, right]
       · exact termsSuccess scope environment [left, right]
       · intro values
-        have stable : ResultsStableTogether (equalityPost context values)
-            (equalityPost context values) := by
+        have stable : ResultsStableTogether (equalityPost program.composites context values)
+            (equalityPost (Noctium.Witness.eraseProgram program).composites context values) := by
           intro sourceState replayState
-          exact equalityPost_resultStable context values sourceState replayState
-        exact failureSim_of_frames (equalityPost context values) (equalityPost context values)
-          (equalityPost_frame context values) (equalityPost_frame context values) stable
+          rw [compositesEq]
+          exact equalityPost_resultStable program.composites context values sourceState replayState
+        exact failureSim_of_frames (equalityPost program.composites context values)
+          (equalityPost (Noctium.Witness.eraseProgram program).composites context values)
+          (equalityPost_frame program.composites context values)
+          (by rw [compositesEq]; exact equalityPost_frame program.composites context values) stable
   | cast target value =>
       simp only [evalTerm]
       apply failureSim_bind

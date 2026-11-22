@@ -1263,12 +1263,18 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| eq($left, $right)) => do
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
-    let .scalar leftTy := left.type | throwErrorAt stx "eq does not accept Unit"
-    let .scalar rightTy := right.type | throwErrorAt stx "eq does not accept Unit"
-    let ty ← commonType stx leftTy rightTy
-    let left ← coerce stx left ty
-    let right ← coerce stx right ty
-    pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
+    match left.type, right.type with
+    | .composite (.structure leftId), .composite (.structure rightId) =>
+      unless leftId == rightId do
+        throwErrorAt stx "eq record operands must have the same nominal type"
+      pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
+    | _, _ => do
+      let .scalar leftTy := left.type | throwErrorAt stx "eq does not accept Unit"
+      let .scalar rightTy := right.type | throwErrorAt stx "eq does not accept Unit"
+      let ty ← commonType stx leftTy rightTy
+      let left ← coerce stx left ty
+      let right ← coerce stx right ty
+      pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
   | `(nlexpr| boolAnd($left, $right)) => do
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
