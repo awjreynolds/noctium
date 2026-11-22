@@ -1,0 +1,12 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+export circuit options(value: Limits): [Maybe<Limits>, Maybe<Limits>] {
+  return [some<Limits>(value), none<Limits>()];
+}

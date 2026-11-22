@@ -127,6 +127,7 @@ scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "decode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "default(" "Payload" ident ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
+scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
@@ -478,7 +479,9 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| disclose($value)) => s!"disclose({renderExpr value})"
   | `(nlexpr| encode($codec:ident, $value)) => s!"encode({codec.getId}, {renderExpr value})"
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
+  | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
+  | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
   | `(nlexpr| field($value, $name:ident)) => s!"field({renderExpr value}, {name.getId})"
   | `(nlexpr| elementAt($value, $index)) => s!"elementAt({renderExpr value}, {renderExpr index})"
@@ -803,11 +806,47 @@ private def selectedCodec (name : TSyntax `ident) : ExprM (Helpers.Wire.Codec ×
     | throwErrorAt name s!"add codec '{name.getId}' to the circuit's using clause"
   pure (codec, Helpers.Wire.codecName index)
 
-private def zeroSourceLeaf (name : TSyntax `ident) : Ty → ExprM Helpers.Term
+private def checkedPayloadLayout (site : Syntax) (payload : Types.CompositeType) :
+    ExprM Types.CompiledType := do
+  let composites := (← get).composites
+  match Types.compileType composites payload with
+  | .ok compiled => pure compiled
+  | .error diagnostic => throwErrorAt site diagnostic.message
+
+private def zeroSourceLeaf (site : Syntax) : Ty → ExprM Helpers.Term
   | .native => pure (.native 0)
   | .bool => pure (.bool _root_.Bool.false)
   | .uint maximum => pure (.uint maximum 0)
-  | type => throwErrorAt name s!"default(Payload ...) does not support source leaf type '{typeName type}'"
+  | type => throwErrorAt site s!"typed composite zero does not support source leaf type '{typeName type}'"
+
+private def zeroPayloadLeaves (site : Syntax) (compiled : Types.CompiledType) :
+    ExprM (List Helpers.Term) :=
+  (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroSourceLeaf site)
+
+private def compositeMaybeType (programName : String) (site : Syntax)
+    (payload : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
+  let typeId := s!"{programName}.MaybeComposite{hash fingerprint}"
+  unless Types.validDeclId typeId do
+    throwErrorAt site "generated composite Maybe type id is invalid"
+  let expectedFields : List (String × Types.CompositeType) := [
+    ("is_some", .scalar .bool),
+    ("value", payload)
+  ]
+  let state ← get
+  if state.composites.enumerations.any (·.id == typeId) then
+    throwErrorAt site s!"composite Maybe type id '{typeId}' collides with an enum"
+  match state.composites.structures.find? (·.id == typeId) with
+  | some existing =>
+    unless existing.fields.map (fun field => (field.name, field.type)) == expectedFields do
+      throwErrorAt site s!"composite Maybe type id '{typeId}' collides with another structure"
+  | none =>
+    modify fun state => {state with composites := {
+      state.composites with
+      structures := state.composites.structures ++ [{
+        id := typeId
+        fields := expectedFields.map fun (name, type) => {name, type}
+      }]}}
+  pure (.structure typeId)
 
 private def scalarMaybeType (programName : String) (stx : Syntax) (payloadType : Ty) :
     ExprM Types.CompositeType := do
@@ -909,11 +948,26 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| false) => pure {type := .scalar .bool, term := .bool _root_.Bool.false}
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
-    let .scalar payloadType := value.type
-      | throwErrorAt stx "some requires a Native, Bool, or UInt scalar"
-    let maybeType ← scalarMaybeType programName stx payloadType
-    pure (mergeLowered (.composite maybeType)
-      (.composite maybeType [.bool _root_.Bool.true, value.term]) [value])
+    match value.type with
+    | .scalar payloadType => do
+      let maybeType ← scalarMaybeType programName stx payloadType
+      pure (mergeLowered (.composite maybeType)
+        (.composite maybeType [.bool _root_.Bool.true, value.term]) [value])
+    | .composite payloadType => do
+      let compiled ← checkedPayloadLayout stx payloadType
+      let maybeType ← compositeMaybeType programName stx payloadType compiled.fingerprint
+      let span ← liftM (spanValue stx)
+      let (before, terms, _) ← stageIterationValues callPrefix env span [value]
+      let some stagedPayload := terms.head?
+        | throwErrorAt stx "composite some payload staging failed"
+      let payloadLeaves ← match Helpers.Iteration.flattenResult span value.type
+          compiled.checked.value stagedPayload with
+        | .ok leaves => pure leaves
+        | .error diagnostic => throwErrorAt stx diagnostic.message
+      let stagedValue := {value with before}
+      pure (mergeLowered (.composite maybeType)
+        (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [stagedValue])
+    | .unit => throwErrorAt stx "some does not accept Unit"
   | `(nlexpr| none($type:nltype)) => do
     let payloadType ← liftM (readScalarTy type)
     let maybeType ← scalarMaybeType programName stx payloadType
@@ -922,13 +976,30 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | none => throwErrorAt type "none requires a Native, Bool, or UInt scalar"
     pure (mergeLowered (.composite maybeType)
       (.composite maybeType [.bool _root_.Bool.false, zero]) [])
+  | `(nlexpr| none(Payload $name:ident)) => do
+    let (codec, _) ← selectedCodec name
+    let compiled ← checkedPayloadLayout name codec.payload
+    match codec.payload with
+    | .scalar payloadType => do
+      let maybeType ← scalarMaybeType programName name payloadType
+      let zero ← match scalarMaybeZero payloadType with
+        | some zero => pure zero
+        | none => throwErrorAt name "none requires a Native, Bool, or UInt scalar payload"
+      pure (mergeLowered (.composite maybeType)
+        (.composite maybeType [.bool _root_.Bool.false, zero]) [])
+    | .unit => do
+      let maybeType ← compositeMaybeType programName name .unit compiled.fingerprint
+      pure (mergeLowered (.composite maybeType)
+        (.composite maybeType [.bool _root_.Bool.false]) [])
+    | payloadType => do
+      let zeros ← zeroPayloadLeaves name compiled
+      let maybeType ← compositeMaybeType programName name payloadType compiled.fingerprint
+      pure (mergeLowered (.composite maybeType)
+        (.composite maybeType (.bool _root_.Bool.false :: zeros)) [])
   | `(nlexpr| default(Payload $name:ident)) => do
     let (codec, _) ← selectedCodec name
-    let composites := (← get).composites
-    let compiled ← match Types.compileType composites codec.payload with
-      | .ok value => pure value
-      | .error diagnostic => throwErrorAt name diagnostic.message
-    let zeros ← (Helpers.sourceLeafTypes compiled.checked.value).mapM (zeroSourceLeaf name)
+    let compiled ← checkedPayloadLayout name codec.payload
+    let zeros ← zeroPayloadLeaves name compiled
     let resultType := Helpers.resultTypeOfComposite codec.payload
     let term := Helpers.Term.composite codec.payload zeros
     pure {type := resultType, term}
