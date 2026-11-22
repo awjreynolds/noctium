@@ -298,3 +298,45 @@ fn byte_spread_packs_and_reverses_in_order() -> anyhow::Result<()> {
         json!({"kind":"bytes","values":[23,60,165,19,17,7]}),
     )
 }
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn sequence_slices_preserve_composite_shapes_and_order() -> anyhow::Result<()> {
+    let pair = json!({
+        "kind":"tuple",
+        "items":[
+            {"kind":"native","value":"11"},
+            {"kind":"bool","value":true}
+        ]
+    });
+    check_case(
+        "sliceSequences",
+        [
+            ("loadPair", "8", pair.clone()),
+            (
+                "loadVector",
+                "9",
+                json!({
+                    "kind":"vector",
+                    "items":[
+                        {"kind":"uint","maximum":"255","value":"17"},
+                        {"kind":"uint","maximum":"255","value":"19"}
+                    ]
+                }),
+            ),
+            ("loadPair", "10", pair),
+            ("loadBytes", "11", json!({"kind":"bytes","values":[165,60]})),
+        ],
+        json!({
+            "kind":"tuple",
+            "items":[
+                {"kind":"tuple","items":[{"kind":"bool","value":true}]},
+                {"kind":"vector","items":[
+                    {"kind":"uint","maximum":"255","value":"19"}
+                ]},
+                {"kind":"tuple","items":[]},
+                {"kind":"bytes","values":[60]}
+            ]
+        }),
+    )
+}

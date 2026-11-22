@@ -94,6 +94,10 @@ try {
   assert.deepEqual(calls, [['vector', 9n], ['bytes', 10n], ['unit', 11n]]);
   assert.deepEqual([...packedOctets], [23, 60, 165, 19, 17, 7]);
   const packCalls = calls.splice(0);
+  const { result: slicedSequences } = await contract.circuits.sliceSequences(context('sliceSequences'), 7n);
+  assert.deepEqual(calls, [['pair', 8n], ['vector', 9n], ['pair', 10n], ['bytes', 11n]]);
+  assert.deepEqual(slicedSequences, [[true], [19n], [], new Uint8Array([60])]);
+  const sequenceSliceCalls = calls.splice(0);
   console.log(JSON.stringify({
     calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
@@ -103,6 +107,10 @@ try {
     },
     tupleSpread: { calls: tupleSpreadCalls, result: tuple },
     packedOctets: { calls: packCalls, result: [...packedOctets] },
+    sequenceSlice: {
+      calls: sequenceSliceCalls,
+      result: [[true], slicedSequences[1], slicedSequences[2], [...slicedSequences[3]]],
+    },
   }, (_, value) => typeof value === 'bigint' ? value.toString() : value));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

@@ -128,6 +128,25 @@ end
 #guard (Noctium.Witness.compile packOctets.__program
   "noctium.witness-circuit.ReadableRecordConstruction.packOctets.v1").isOk
 
+noctium_witness_circuit sliceSequences using pairWire, vectorWire where
+  public seed : Native
+  let suffix := slice(witness loadPair(add(seed, 1)), 1, 2)
+  let values := slice(witness loadVector(add(seed, 2)), 1, 2)
+  let empty := slice(witness loadPair(add(seed, 3)), 2, 2)
+  let octet := slice(witness loadBytes(add(seed, 4)), 1, 2)
+  output result := disclose(tuple(suffix, values, empty, octet))
+end
+
+#guard (Noctium.Witness.compile sliceSequences.__program
+  "noctium.witness-circuit.ReadableRecordConstruction.sliceSequences.v1").isOk
+
+/- error: slice requires start ≤ stop ≤ sequence length -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsOutOfBoundsVectorSlice using vectorWire where
+  public seed : Native
+  output result := disclose(slice(witness loadVector(seed), 1, 3))
+end
+
 /- error: packBytes element requires an unsigned type within UInt8 -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsWidePackByte where
@@ -135,7 +154,7 @@ noctium_witness_circuit rejectsWidePackByte where
   output result : Bytes 1 := disclose(packBytes(wide))
 end
 
-/- error: tuple spread requires a tuple, vector, fixed Bytes or Unit -/
+/- error: expected a tuple, vector, fixed Bytes or Unit -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsScalarSpread where
   public seed : Native
@@ -256,5 +275,8 @@ noctium_contract ReadableRecordConstruction where
   end
   entry packOctets uses ReadableRecordConstruction.packOctets where
     return result : Bytes 6 := revealed
+  end
+  entry sliceSequences uses ReadableRecordConstruction.sliceSequences where
+    return result
   end
 end
