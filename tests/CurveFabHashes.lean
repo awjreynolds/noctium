@@ -43,13 +43,40 @@ noctium_circuit curveFabHashInputs where
   output curveDigest : JubjubPoint := disclose(hashToCurveFab(
     curveFabEnvironment, curveFabPayloadType,
     [jubjubScalar, jubjubPoint, secpBase, secpPoint, pairJubjubPoint, pairSecpPoint]))
+  -- Thirty-two tab bytes encode the oracle opening [9;32].
+  output persistentCommitResult : Bytes32 := disclose(persistentCommitFab(
+    curveFabEnvironment, curveFabPayloadType,
+    bytes32("\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"),
+    [jubjubScalar, jubjubPoint, secpBase, secpPoint, pairJubjubPoint, pairSecpPoint]))
+  output transientCommitResult : Native := disclose(transientCommitFab(
+    curveFabEnvironment, curveFabPayloadType, 77,
+    [jubjubScalar, jubjubPoint, secpBase, secpPoint, pairJubjubPoint, pairSecpPoint]))
+  output sha512Result : Bytes 64 := disclose(sha512Fab(
+    curveFabEnvironment, curveFabPayloadType,
+    [jubjubScalar, jubjubPoint, secpBase, secpPoint, pairJubjubPoint, pairSecpPoint]))
 end
+
+private def persistentOpeningIsNine : _root_.Bool :=
+  match curveFabHashInputs.outputs.find? (·.name == "persistentCommitResult") with
+  | some found =>
+    if h : found.ty = .bytes 32 then
+      match h ▸ found.value with
+      | .disclose _ (.persistentCommitFab _ _ (.bytes32Literal values) _) =>
+        values == List.replicate 32 9
+      | _ => _root_.Bool.false
+    else _root_.Bool.false
+  | none => _root_.Bool.false
+
+#guard persistentOpeningIsNine
 
 noctium_contract CurveFabHashes where
   entry hash uses curveFabHashInputs where
     return persistentResult : Bytes32 := persistentDigest
     return transientResult : Native := transientDigest
     return curveResult : JubjubPoint := curveDigest
+    return persistentCommitOutput : Bytes32 := persistentCommitResult
+    return transientCommitOutput : Native := transientCommitResult
+    return sha512Output : Bytes 64 := sha512Result
   end
 end
 

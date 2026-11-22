@@ -1070,7 +1070,7 @@ impl Schema {
         self.measures[self.root]
     }
 
-    fn fab_hash_field(&self, layout: usize, include_curves: bool) -> Result<FabHashField> {
+    fn fab_hash_field(&self, layout: usize) -> Result<FabHashField> {
         match &self.nodes[layout] {
             LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),
             LayoutNode::Scalar(Leaf::Bool) => Ok(FabHashField::Bool),
@@ -1103,33 +1103,13 @@ impl Schema {
                     maximum: BigUint::from(variants.len() - 1),
                 })
             }
-            LayoutNode::Curve(ty) if include_curves => Ok(FabHashField::Curve(ty.clone())),
-            _ => bail!("FAB hash supports only flat scalar and byte fields"),
+            LayoutNode::Curve(ty) => Ok(FabHashField::Curve(ty.clone())),
+            _ => bail!("unsupported FAB hash field layout"),
         }
     }
 
-    /// Return fields for the bounded flat-structure or flat-tuple FAB subset.
-    /// Enum payloads need branch-dependent field expressions, so this helper
-    /// accepts only one-byte fieldless enums and exposes their tag as a field.
-    pub(crate) fn fab_hash_fields(&self) -> Result<Vec<FabHashField>> {
-        let layouts: Vec<_> = match &self.nodes[self.root] {
-            LayoutNode::Struct { fields, .. } => fields.iter().map(|field| field.layout).collect(),
-            LayoutNode::Tuple(items) => items.clone(),
-            _ => bail!("FAB hash requires a flat structure or tuple"),
-        };
-        ensure!(
-            (1..=32).contains(&layouts.len()),
-            "FAB hash field count is outside the supported range"
-        );
-
-        layouts
-            .iter()
-            .map(|layout| self.fab_hash_field(*layout, false))
-            .collect()
-    }
-
-    /// Flatten a checked structure or root tuple for persistent FAB hashing
-    /// and hash-to-curve. Nested records, tuples, and fixed vectors retain
+    /// Flatten a checked structure or root tuple for FAB cryptographic
+    /// preimages. Nested records, tuples, and fixed vectors retain
     /// declaration/index order. Unit contributes no logical fields.
     pub(crate) fn fab_hash_nested_fields(&self) -> Result<Vec<FabHashField>> {
         ensure!(
@@ -1171,7 +1151,7 @@ impl Schema {
                     pending.extend(std::iter::repeat_n(*element, *length));
                 }
                 _ => {
-                    let field = self.fab_hash_field(layout, true)?;
+                    let field = self.fab_hash_field(layout)?;
                     encoded_fields = add(encoded_fields, field.encoded_field_count())?;
                     ensure!(
                         encoded_fields <= crate::MAX_TRANSIENT_HASH_FIELDS,

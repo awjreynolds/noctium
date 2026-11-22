@@ -4568,7 +4568,7 @@
       "layer": "standard-library",
       "surface": "transientCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields of a checked flat named record. The paired 3.2.1 check matches pinned Compact under independent changes to payload and opening. Recursive types and general overloads remain open. Flat positional tuples match the same native preimage and output when their leaf types and order match.",
+      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4587,7 +4587,9 @@
         "tests/compact/flat-fab-tuple.mjs",
         "tests/MixedFabCommitments.lean",
         "runtime/tests/mixed_fab_commitments.rs",
-        "tests/compact/mixed-fab-persistent-hash.mjs"
+        "tests/compact/mixed-fab-persistent-hash.mjs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4626,7 +4628,7 @@
       "layer": "standard-library",
       "surface": "persistentCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes of a checked flat named record. The paired 3.2.1 check matches pinned Compact under independent changes to payload and opening. Recursive types and general overloads remain open. Flat positional tuples match the same native preimage and output when their leaf types and order match.",
+      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4645,7 +4647,9 @@
         "tests/compact/flat-fab-tuple.mjs",
         "tests/MixedFabCommitments.lean",
         "runtime/tests/mixed_fab_commitments.rs",
-        "tests/compact/mixed-fab-persistent-hash.mjs"
+        "tests/compact/mixed-fab-persistent-hash.mjs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4735,7 +4739,7 @@
       "layer": "standard-library",
       "surface": "sha512",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed-byte SHA-512 and checked flat FAB values through the native instruction. A matched flat named record checks the canonical FAB bytes and two digests against Compact, and the Rust check rejects a mismatched byte wrapper. Recursive layouts and further host qualification remain open.",
+      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust check rejects a mismatched byte wrapper. Further layout and host qualification remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4753,7 +4757,9 @@
         "runtime/tests/byte_hashes.rs",
         "tests/Sha512Fab.lean",
         "runtime/tests/sha512_fab.rs",
-        "tests/compact/sha512-fab.mjs"
+        "tests/compact/sha512-fab.mjs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },
