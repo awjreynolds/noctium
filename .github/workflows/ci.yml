@@ -278,6 +278,8 @@ jobs:
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-unit-bindings"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+            --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
@@ -291,7 +293,6 @@ jobs:
               --no-default-features --features zkir-321 \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
-              --test readable_bind_patterns \
               --test readable_unit_bindings -- --ignored
       - name: Check source proof registration
         run: |
