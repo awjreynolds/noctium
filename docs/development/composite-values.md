@@ -8,6 +8,18 @@
 
 Dynamic fixed-vector selection emits a UInt constraint on the Native index with maximum `length - 1`. Empty vectors reject selection. The bound persists when the selected element has zero leaves. Component origins, index origins and control origins occupy separate fields. Enum projections also retain tag origins. These fields supply bookkeeping for DF-01. They do not authorize disclosure or enable aggregate source syntax.
 
+## Bind fields and positions in a readable circuit
+
+```lean
+let {measures := [measured, _], reading := {count := amount}} := witness load(seed)
+```
+
+The statement evaluates the witness once. It binds `measured` to the first
+tuple item and `amount` to the nested record's `count`. Named record patterns
+allow aliases and omitted fields. Positional patterns match the full tuple,
+fixed vector or byte length. `_` skips one position. Private values still
+require explicit disclosure at public sinks. [Source fixture](../../tests/ReadableBindPatterns.lean)
+
 ## WireV1 and host checks
 
 The Noctium wire is `noctium:aggregate:value:v1:`, a u32 little-endian descriptor length, the full canonical type descriptor, a u32 little-endian leaf count, then one fixed 32-byte little-endian canonical Native field per leaf. This format is distinct from ZKIR's minimal-length immediate strings and ledger proof-preimage SCALE encoding. The native fixture converts the same leaves into the upstream relation preimage.

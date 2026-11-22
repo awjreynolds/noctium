@@ -376,7 +376,7 @@
       "layer": "language",
       "surface": "Tuple and unit []",
       "noctiumStatus": "subset",
-      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Full destructuring, spread and unit-return equivalence remain open.",
+      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement patterns support nested positional bindings, ignored positions and exact arity checks. The selected nested witness case matches Compact 0.36.1 for one callback and the returned value. Parameter patterns, spread and broader unit-return equivalence remain open.",
       "source": [
         "reference"
       ],
@@ -385,7 +385,10 @@
         "ZK"
       ],
       "observedEvidence": [
-        "SEM"
+        "SEM",
+        "tests/ReadableBindPatterns.lean",
+        "tests/compact/readable-bind-patterns.mjs",
+        "runtime/tests/readable_bind_patterns.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
@@ -1040,7 +1043,7 @@
       "layer": "language",
       "surface": "Bindings, patterns and lexical scope",
       "noctiumStatus": "subset",
-      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. The native session and Compact 0.36.1 fixture agree on three ordered callback arguments and the scalar return. Broader binding, shadowing and destructuring evidence remains open.",
+      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements destructure records by name and tuples, fixed vectors and bytes by position. Nested named and positional patterns evaluate the source once and preserve private origins. One native fixture matches Compact 0.36.1 for nested patterns. Parameter patterns and broader shadowing and expression binding remain open.",
       "source": [
         "reference"
       ],
@@ -1051,7 +1054,10 @@
       "observedEvidence": [
         "tests/ReadableUnitBindings.lean",
         "tests/compact/readable-unit-bindings.mjs",
-        "runtime/tests/readable_unit_bindings.rs"
+        "runtime/tests/readable_unit_bindings.rs",
+        "tests/ReadableBindPatterns.lean",
+        "tests/compact/readable-bind-patterns.mjs",
+        "runtime/tests/readable_bind_patterns.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

@@ -252,6 +252,10 @@ jobs:
         run: |
           artifacts=$(mktemp -d)
           trap 'rm -rf "$artifacts"' EXIT
+          .lake/build/bin/noctium compile tests/ReadableBindPatterns.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/readable-bind-patterns"
+          export NOCTIUM_BIND_PATTERNS_DIR="$artifacts/readable-bind-patterns"
           .lake/build/bin/noctium compile tests/Issue43EffectBlocks.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/default"
@@ -287,6 +291,7 @@ jobs:
               --no-default-features --features zkir-321 \
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
+              --test readable_bind_patterns \
               --test readable_unit_bindings -- --ignored
       - name: Check source proof registration
         run: |
