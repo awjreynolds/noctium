@@ -34,7 +34,7 @@ theorem effects_reject_existing (ctx : EvalContext) (input : InputValues)
   have hr := Nat.not_le.mpr canonical.root
   have hc := Nat.not_le.mpr canonical.campaign
   have hn := Nat.not_le.mpr canonical.nullifier
-  simp! [runEffectsWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
+  simp! [runEffectsWithEnv, runEffectWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
     inputEnvironment, canonical.root, canonical.campaign, canonical.nullifier,
     hr, hc, hn, present, Except.pure, Except.bind, Except.map]
   rfl
