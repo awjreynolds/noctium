@@ -2114,7 +2114,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open.",
       "source": [
         "adt"
       ],
@@ -2136,7 +2136,11 @@
         "tests/compact/qualified-coin-cell-reset.mjs",
         "tests/FlatRecordCellReset.lean",
         "tests/compact/flat-record-cell-reset.mjs",
-        "runtime/tests/flat_record_cell.rs"
+        "runtime/tests/flat_record_cell.rs",
+        "tests/OpaqueCellReset.lean",
+        "tests/compact/opaque-cell-reset.mjs",
+        "runtime/tests/opaque_cell_reset.rs",
+        "docs/development/opaque-cell-reset-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },

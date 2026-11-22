@@ -46,15 +46,16 @@ fn guarded_opaque_reset_clears_canonical_cells_and_binds_returns() -> anyhow::Re
             execution.returns_json(),
             BTreeMap::from([("textAfter".into(), text), ("bytesAfter".into(), bytes)])
         );
-        assert_eq!(execution.preimage.public_transcript_outputs.len(), 2);
+        let [guard, text_output, bytes_output] =
+            execution.preimage.public_transcript_outputs.as_mut_slice()
+        else {
+            anyhow::bail!("expected guard followed by two opaque transcript outputs");
+        };
+        assert_eq!(*guard, Fr::from(u64::from(enabled)));
         if enabled {
-            assert_eq!(
-                execution.preimage.public_transcript_outputs,
-                vec![Fr::from(0u64); 2]
-            );
+            assert_eq!([*text_output, *bytes_output], [Fr::from(0u64); 2]);
         }
-        let first_output = &mut execution.preimage.public_transcript_outputs[0];
-        *first_output = *first_output + Fr::from(1u64);
+        *text_output = *text_output + Fr::from(1u64);
         assert!(check(&execution, &relation).is_err());
     }
 

@@ -1,0 +1,46 @@
+{
+  "activeRestoredExactEmptyState": true,
+  "bothReturnsBoundPerGuard": true,
+  "bundleManifestSha256": {
+    "clear": "d53d1ae7e41cbc5f0de732bfc627d5b8b7ce2d81298190becc95a54e3ffbabc5",
+    "seed": "c8c6bd28b238d1b976e4c14623b447b22682b32af252d2ea00951d6f417aa29d"
+  },
+  "contractAddress": "89d4f71e7b382dd1ed6f15fc60d705be43acda772335f7fb71b7bb45bff63eb8",
+  "deployment": {
+    "finalizedHash": "52da82ef349cc89b3fee4d781bdd7cd486d6e571f133e5035c41a7ab1238d651",
+    "height": 51577,
+    "transactionId": "2a27508e6c2362b833348fff904a5e9b274d7ed307069d6535bd1c8399436975"
+  },
+  "inactivePreservedExactSeededState": true,
+  "k": {
+    "clear": 7,
+    "seed": 7
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "resets": {
+    "active": {
+      "finalizedHash": "df915401e5b7aa5dee6f8b59ac45549624ffa5bd8f485c34c7e9f85da14e4d1a",
+      "height": 51586,
+      "transactionId": "3cdd754a55699bb6c5af29387d718a5a0a410f2384b58293d97514f7c0a60ff5"
+    },
+    "inactive": {
+      "finalizedHash": "ceb50cff226e073c1c73eb8627c44a8310f4cbdbf86004df73201952ac53ed1e",
+      "height": 51583,
+      "transactionId": "bf9c24abd943a8929c88b637dfa3a724be49d4de8e5c2c95f006610fe0913556"
+    }
+  },
+  "rows": {
+    "clear": 98,
+    "seed": 66
+  },
+  "seed": {
+    "finalizedHash": "2141a8f5286b5d9ac2fadaf6cc8d2975affd7a7d86b0a289dfe1ff6c905ae168",
+    "height": 51580,
+    "transactionId": "6ef6a4daf895c200cd062dd8774b0112a7d02ef56de4e38f5c5b9e0bf7eb07bf"
+  },
+  "sourceCompilerRevision": "0953d3d14d4dbb8a2a3322563d41573ef826c92b",
+  "sourceSha256": "bfd2c86a1c4aa15260e081441168638b9490656daba2a7bfcbfdd3e28d3f5c19",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

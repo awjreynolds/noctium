@@ -5230,7 +5230,7 @@ mod tests {
         use onchain_runtime::state::ContractState;
         use rand::{SeedableRng, rngs::StdRng};
         use std::{collections::BTreeMap, env, path::Path};
-        use transient_crypto::{fab::AlignedValueExt, proofs::Zkir};
+        use transient_crypto::{curve::Fr, fab::AlignedValueExt, proofs::Zkir};
 
         futures::executor::block_on(async {
             let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
@@ -5345,7 +5345,7 @@ mod tests {
                 let ProofPreimageVersioned::V2(preimage) = &call.proof else {
                     anyhow::bail!("unexpected opaque reset proof version");
                 };
-                let mut projection = Vec::new();
+                let mut projection = vec![Fr::from(u64::from(enabled))];
                 for value in raw {
                     AlignedValue::new(
                         Value(vec![ValueAtom::from(value)]),
