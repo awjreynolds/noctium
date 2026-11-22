@@ -10,6 +10,7 @@ import Noctium.Backend.Impact
 import Noctium.Types.Maybe
 import Noctium.Types.Either
 import Noctium.EntryPointHash
+import Noctium.Authoring.QuoteCircuit
 import Noctium.Wire
 import Noctium.ShieldedBurn
 import Lean
@@ -4625,7 +4626,8 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
       CommandElabM (List (String × Ty × Name) × List (String × Name × List String) ×
         List (String × NominalBytes32)) :=
       fun _ _ => pure ([], [], []))
-    (specializationArtifact? : Option String := none) : CommandElabM Unit := do
+    (specializationArtifact? : Option String := none)
+    (useCheckedCircuitValue : _root_.Bool := _root_.Bool.false) : CommandElabM Unit := do
     let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
     let fullName := (← getCurrNamespace) ++ name.getId
     let compiled ← match Witness.compile program exportName fullName.toString outputName with
@@ -4637,10 +4639,24 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
     let exportNameTerm := stringTerm exportName
     let outputNameTerm := stringTerm outputName
     let name : TSyntax `ident := ⟨name⟩
-    elabCommand (← `(def $name : Noctium.Circuit :=
-      match Noctium.Witness.compile $sourceTerm $exportNameTerm $fullNameTerm $outputNameTerm with
-      | .ok value => value.circuit
-      | .error _ => {name := $fullNameTerm, inputs := [], outputs := [], constraints := []}))
+    if useCheckedCircuitValue then do
+      let circuitValue := Authoring.QuoteCircuit.circuitValueExpr compiled.circuit
+      let hints := ReducibilityHints.regular (getMaxHeight (← getEnv) circuitValue + 1)
+      liftCoreM <| Lean.addAndCompile <| Declaration.defnDecl {
+        name := fullName
+        levelParams := []
+        type := Authoring.QuoteCircuit.circuitTypeExpr
+        value := circuitValue
+        hints
+        safety := .safe
+      }
+      Lean.Elab.addDeclarationRangesFromSyntax fullName name.raw
+    else do
+      let circuitDefinition ← `(def $name : Noctium.Circuit :=
+        match Noctium.Witness.compile $sourceTerm $exportNameTerm $fullNameTerm $outputNameTerm with
+        | .ok value => value.circuit
+        | .error _ => {name := $fullNameTerm, inputs := [], outputs := [], constraints := []})
+      elabCommand circuitDefinition
     match Disclosure.circuit compiled.circuit with
     | .ok _ => pure ()
     | .error diagnostic => failDisclosure diagnostic

@@ -490,7 +490,7 @@ noctium_witness_circuit burnFromEscrow where
   output ownerMemoAmount : Native := disclose(ownerMemoCiphertext)
 end
 
-noctium_witness_circuit clearMemoInput where
+noctium_witness_circuit clearMemoInput expose checkedCircuit where
   read private Wallet.accountSecret as accountSecret
   read private Wallet.encryptionSecret as encryptionSecret
   public accountId : Bytes32
@@ -1009,5 +1009,65 @@ noctium_contract ConfidentialToken where
     return caller : Bytes32 := spenderId
   end
 end
+
+end OpenZeppelinPort
+
+namespace OpenZeppelinPort
+
+open Noctium
+
+private def privateByteInputNames (name : String) : List String :=
+  (List.range 32).map fun index => s!"%input_{name}_byte_{index}"
+
+private def clearMemoPhysicalInputNames : List String :=
+  ["%input__noctium_bytes32_accountId_high", "%input__noctium_bytes32_accountId_low31",
+    "%input_expectedEpoch"] ++ privateByteInputNames "$helper2" ++
+      privateByteInputNames "$helper4"
+
+private def hasGuardedAccountIdEquality : Nat → Noctium.Expr .bool → _root_.Bool
+  | 0, _ => Bool.false
+  | fuel + 1, .letE _ _ body => hasGuardedAccountIdEquality fuel body
+  | _ + 1,
+      .eq
+        (.select
+          (.eq (.bytesField (.ref _) 0) (.bytesField (.ref _) 0))
+          (.eq (.bytesField (.ref _) 1) (.bytesField (.ref _) 1))
+        (.bool Bool.false))
+        (.bool Bool.true) => Bool.true
+  | _, _ => Bool.false
+
+private def outputReference : Nat → Noctium.Expr .native → Option String
+  | 0, _ => none
+  | fuel + 1, .letE _ _ body => outputReference fuel body
+  | _ + 1, .ref name => some name
+  | _, _ => none
+
+private def disclosesCoordinate : Nat → Nat → Sigma Noctium.Expr → _root_.Bool
+  | 0, _, _ => Bool.false
+  | fuel + 1, coordinate, ⟨_, .letE _ value body⟩ =>
+      disclosesCoordinate fuel coordinate ⟨_, value⟩ ||
+        disclosesCoordinate fuel coordinate ⟨_, body⟩
+  | _ + 1, coordinate, ⟨.native, .disclose _ (.jubjubCoordinate _ index)⟩ =>
+      index == coordinate
+  | _, _, _ => Bool.false
+
+private def outputInfo (item : Noctium.Output) :
+    String × Option String × _root_.Bool × _root_.Bool :=
+  match item with
+  | ⟨name, .native, value, _⟩ =>
+      (name, outputReference 32 value,
+        disclosesCoordinate 32 0 ⟨.native, value⟩,
+        disclosesCoordinate 32 1 ⟨.native, value⟩)
+  | ⟨name, _, _, _⟩ => (name, none, Bool.false, Bool.false)
+
+theorem clearMemoInput_exposes_checked_circuit :
+    clearMemoInput.inputs.flatMap Noctium.Input.nativeIdentifiers = clearMemoPhysicalInputNames ∧
+    clearMemoInput.constraints.map (hasGuardedAccountIdEquality 32) = [Bool.true] ∧
+    clearMemoInput.outputs.map outputInfo =
+      [("result.keyX", some "$helper9", Bool.true, Bool.true),
+        ("result.keyY", some "$helper10", Bool.true, Bool.true)] := by
+  decide
+
+#guard registerAccount.name == "OpenZeppelinPort.registerAccount"
 
 end OpenZeppelinPort
