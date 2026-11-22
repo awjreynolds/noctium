@@ -19,6 +19,13 @@ callback results. Typed callbacks and private cells also support `JubjubScalar`
 and `JubjubPoint`. The `.observations.json` records authored proof conditions
 separately from generated validity checks for source review. Composite curve
 schemas and structured source branches remain separate work.
+
+On the ZKIR 3.2.1 profile, a provider can return a private `Secp256k1Point`
+to a readable circuit. `keccak256(point)` executes inside the Rust witness
+session. The native checker binds the same digest to the entrypoint return.
+A reply tagged with a different curve leaves the request pending for a
+corrected reply. [Typed point example](../../tests/TypedPointKeccak.lean) · [Native check](../../runtime/tests/witness_control.rs)
+
 One circuit can read private cells of different supported scalar types. To opt
 in, register `private_state.read.v1` with `argumentSchema` set to `{"key":"Key"}`
 and `resultSchema` set to `"SourceCellType"`. Use the authenticated witness

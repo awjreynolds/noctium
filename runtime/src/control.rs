@@ -672,6 +672,16 @@ fn bytes_operation(
             },
         ));
     }
+    #[cfg(feature = "zkir-321")]
+    if operation == "keccak256:Secp256k1Point" {
+        ensure!(count == 1, "typed Keccak point argument count");
+        let point = crate::foreign::ForeignType::parse_source_name("Secp256k1Point")?;
+        return Ok((
+            vec![ScalarType::Foreign(point)],
+            Bytes32,
+            crate::Expr::Keccak256Secp256k1Point { value: argument(0) },
+        ));
+    }
     if let Some(encoded_length) = operation.strip_prefix("keccak256:") {
         let length = canonical_byte_length(encoded_length)?;
         ensure!(count == 1, "keccak256 argument count");

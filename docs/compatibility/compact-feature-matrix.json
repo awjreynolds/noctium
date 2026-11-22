@@ -1218,7 +1218,7 @@
       "layer": "private-runtime",
       "surface": "Witness declarations and callbacks",
       "noctiumStatus": "subset",
-      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. The native checker exercises the emitted relation.",
+      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. A private Secp256k1Point provider feeds Keccak in the emitted witness plan. A wrong-curve reply leaves the request pending, and the native checker binds the same digest as the Compact reference.",
       "source": [
         "reference"
       ],
@@ -1234,7 +1234,9 @@
         "docs/development/guarded-ledger-localnet-receipts.json",
         "tests/CompositeWitnessArguments.lean",
         "tests/compact/composite-witness-arguments.mjs",
-        "runtime/tests/composite_witness_arguments.rs"
+        "runtime/tests/composite_witness_arguments.rs",
+        "tests/TypedPointKeccak.lean",
+        "runtime/tests/witness_control.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
