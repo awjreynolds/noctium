@@ -41,17 +41,28 @@ try {
   );
 
   let derivedColor;
-  for (const [isContract, recipientByte, credited] of [[true, 9, true], [true, 23, false], [false, 9, false]]) {
+  for (const [enabled, isContract, recipientByte, credited] of [
+    [true, true, 9, true], [true, true, 23, false], [true, false, 9, false],
+    [false, true, 9, false],
+  ]) {
     const recipient = new Uint8Array(32).fill(recipientByte);
     const context = runtime.createCircuitContext({
       circuitId: 'mint', contractAddress: own, coinPublicKeyOrZswapState: wallet,
       contractState: currentContractState.data, privateState: null,
     });
     const { result, context: after } = await contract.circuits.mint(
-      context, domain, amount, isContract, recipient,
+      context, domain, amount, isContract, recipient, enabled,
     );
     const effects = after.callContext.currentQueryContext.effects;
     const color = Buffer.from(result).toString('hex');
+    if (!enabled) {
+      assert.equal(color, '00'.repeat(32));
+      assert.deepEqual([...effects.unshieldedMints], []);
+      assert.deepEqual([...effects.unshieldedInputs], []);
+      assert.deepEqual([...effects.unshieldedOutputs], []);
+      assert.deepEqual([...effects.claimedUnshieldedSpends], []);
+      continue;
+    }
     derivedColor ??= color;
     assert.equal(color, derivedColor, 'recipient selection does not change the token color');
     const token = { tag: 'unshielded', raw: color };
@@ -65,7 +76,7 @@ try {
   }
   console.log(JSON.stringify({
     fixture: 'unshielded-mint-recipient', derivedColor,
-    cases: ['contract-self', 'contract-other', 'user-same-bytes'],
+    cases: ['contract-self', 'contract-other', 'user-same-bytes', 'inactive'],
     exactMintSpend: true, selfOnlyCredit: true, outputs: 0,
   }));
 } finally {

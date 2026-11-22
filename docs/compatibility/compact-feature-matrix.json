@@ -6029,8 +6029,8 @@
       "id": "C-STDLIB-MINTUNSHIELDEDTOKEN",
       "layer": "standard-library",
       "surface": "mintUnshieldedToken",
-      "noctiumStatus": "related-subset",
-      "notes": "No direct mintUnshieldedToken frontend form. Existing Noctium effects reproduce the tested recipient-aware flow through composition: derive the color from the contract address and domain, record the mint and tagged spend, and credit unshielded input only when the contract recipient is self. Other mint shapes and full helper equivalence remain unverified.",
+      "noctiumStatus": "subset",
+      "notes": "The mintUnshieldedTo source form composes the native UInt64 mint, token color and tagged spend. Compact 0.36.1 and the native checker match self-contract, other-contract, same-bytes user and inactive calls. The inactive call returns zero bytes and leaves all settlement effects empty. The native checker rejects a changed recipient tag. Finalized calls using this source form remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6047,7 +6047,8 @@
         "tests/NativeUnshieldedMintRecipient.lean",
         "tests/compact/UnshieldedMintRecipient.compact",
         "tests/compact/unshielded-mint-recipient.mjs",
-        "runtime/tests/native_unshielded_mint_recipient.rs"
+        "runtime/tests/native_unshielded_mint_recipient.rs",
+        "docs/development/native-contract.md#mint-an-unshielded-token-to-a-tagged-recipient"
       ],
       "equivalence": "unverified"
     },

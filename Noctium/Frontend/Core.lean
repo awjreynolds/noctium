@@ -461,6 +461,8 @@ scoped syntax "when" nlexpr "headOrDefault" nlpath "as" "(" ident "," ident ")" 
 scoped syntax ident nlpath "as" ident : nleffect
 scoped syntax "readCaller" "as" "(" ident "," ident "," ident "," ident ")" : nleffect
 scoped syntax "when" nlexpr "readCaller" "as" "(" ident "," ident "," ident "," ident ")" : nleffect
+scoped syntax "mintUnshieldedTo(" nlexpr "," nlexpr "," nlexpr "," nlexpr ")" "as" ident : nleffect
+scoped syntax "when" nlexpr "mintUnshieldedTo(" nlexpr "," nlexpr "," nlexpr "," nlexpr ")" "as" ident : nleffect
 scoped syntax "increment" nlpath "by" nlexpr : nleffect
 scoped syntax "decrement" nlpath "by" nlexpr : nleffect
 scoped syntax "reset" nlpath : nleffect
@@ -2022,6 +2024,8 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr require $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr read $_path:nlpath as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr readSelf as $_dest:ident) => some condition
+  | `(nleffect| when $condition:nlexpr mintUnshieldedTo($_:nlexpr, $_:nlexpr, $_:nlexpr, $_:nlexpr) as $_:ident) =>
+    some condition
   | `(nleffect| when $condition:nlexpr member $_path:nlpath as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr checkRoot $_path:nlpath against $_expected:nlexpr as $_dest:ident) =>
     some condition
@@ -2250,6 +2254,49 @@ private def elaborateBlockTimeRead (state : EntryEffects) (depth : Nat)
     | none => $complemented
     | some active => Noctium.Expr.select active $complemented (Noctium.Expr.bool Bool.false))
   pure {updated with env := (sourceName, .bool, result) :: updated.env}
+
+private def elaborateUnshieldedMintTo (state : EntryEffects)
+    (domain amount isContract recipient : TSyntax `nlexpr) (destination : TSyntax `ident)
+    (guard span : TSyntax `term) : CommandElabM EntryEffects := do
+  ensureFresh state.env destination
+  checkUnshieldedRecipientTag state isContract recipient
+  let destinationName := destination.getId.toString
+  let (selfName, nextLocal) := chooseBranchLocalName state.env
+    (destinationName :: state.usedLocalNames) state.nextLocal "noctium_mint_self_"
+  let selfIdent := mkIdent (Name.mkSimple selfName)
+  let selfRef ← `(Noctium.Expr.ref (ty := Noctium.Ty.bytes 32) $(stringTerm selfName))
+  let addressEnv := (selfName, Ty.bytes 32, selfRef) :: state.env
+  let colorSource ← `(nlexpr| tokenType($domain, $selfIdent:ident))
+  let selfSource ← `(nlexpr| eq($recipient, $selfIdent:ident))
+  let color ← checkedExpression addressEnv colorSource (.bytes 32)
+  let isSelf ← checkedExpression addressEnv selfSource .bool
+  let domain ← checkedExpression state.env domain (.bytes 32)
+  let mintAmount ← checkedExpression state.env amount (.uint (2 ^ 64 - 1))
+  let wideAmount ← `(Noctium.Expr.cast (Noctium.Ty.uint $(natTerm balanceMaximum)) $mintAmount)
+  let isContract ← checkedExpression state.env isContract .bool
+  let recipient ← checkedExpression state.env recipient (.bytes 32)
+  let mint ← `(Noctium.Effect.mintUnshielded $domain $mintAmount)
+  let addressRead ← `(Noctium.Effect.readContractAddress $(stringTerm selfName))
+  let claim ← `(Noctium.Effect.claimUnshieldedCoinSpend
+    $color $wideAmount (Noctium.Expr.bool Bool.true) $isContract $recipient)
+  let credit ← `(Noctium.Effect.incUnshieldedInputs $color $wideAmount (Noctium.Expr.bool Bool.true))
+  let creditSelf ← `(Noctium.Backend.Impact.activityGuardWithin
+    $isContract $isSelf)
+  let (creditGuard, result) ← match guard with
+    | `(term| none) => pure (← `(some $creditSelf), color)
+    | `(term| some $active) => do
+      let creditGuard ← `(some (Noctium.Backend.Impact.activityGuardWithin $active $creditSelf))
+      let result ← `(Noctium.Expr.select $active (Noctium.GuardedExpression.totalize $active $color)
+        (Noctium.GuardedExpression.zeroValue (Noctium.Ty.bytes 32)))
+      pure (creditGuard, result)
+    | _ => throwError "invalid unshielded mint activity guard"
+  pure {state with
+    terms := state.terms.push mint |>.push addressRead |>.push claim |>.push credit
+    spans := state.spans.push span |>.push span |>.push span
+    guards := state.guards.push guard |>.push guard |>.push creditGuard
+    env := (destinationName, .bytes 32, result) :: state.env
+    nextLocal
+    usedLocalNames := selfName :: state.usedLocalNames}
 
 private def elaborateCounterLessThan (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (threshold : TSyntax `nlexpr)
@@ -3350,6 +3397,9 @@ private def elaborateEffect (schema : List (String × StateKind))
     let updated ← bindReadName {updated with terms := updated.terms.push term}
       destination.getId.toString readName (.bytes 32)
     state := addNominalBytes32Binding updated destination.getId.toString .contractAddress
+  | `(nleffect| mintUnshieldedTo($domain, $amount, $isContract, $recipient) as $destination:ident)
+  | `(nleffect| when $_:nlexpr mintUnshieldedTo($domain, $amount, $isContract, $recipient) as $destination:ident) =>
+    state := ← elaborateUnshieldedMintTo state domain amount isContract recipient destination guard span
   | `(nleffect| member $path:nlpath as $destination:ident)
   | `(nleffect| when $_:nlexpr member $path:nlpath as $destination:ident) =>
     state := ← elaborateNamedPathRead schema "member" path destination depth guard state
