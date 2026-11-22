@@ -199,7 +199,8 @@ scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "en
 scoped syntax "for" ident (":" nltype)? "in" nlexpr "do" noctium_witness_statement* "end" :
   noctium_witness_statement
 scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_circuit" ident
-  ("using" ident,+)? ("with" ident)? "where" noctium_witness_statement* "end" : command
+  ("using" ident,+)? ("with" ident)? ("expose" ident)? "where"
+  noctium_witness_statement* "end" : command
 
 private abbrev SurfaceEnv := List (String × ResultType × Noctium.Helpers.Term)
 
@@ -3089,7 +3090,14 @@ private partial def lowerReadableStatement (programName path : String)
 @[command_elab noctiumAuthoredWitnessCircuitCommand] unsafe def elabAuthoredWitnessCircuit : CommandElab := fun stx => do
   match stx with
   | `(noctium_witness_circuit $name:ident $[using $usingCodecs:ident,*]?
-      $[with $librarySource:ident]? where $statements:noctium_witness_statement* end) => do
+      $[with $librarySource:ident]? $[expose $exposure:ident]?
+      where $statements:noctium_witness_statement* end) => do
+    let quoteCheckedCircuit ← match exposure with
+      | none => pure Bool.false
+      | some option => do
+        unless option.getId == `checkedCircuit do
+          throwErrorAt option "expected 'checkedCircuit' after 'expose'"
+        pure Bool.true
     let fullName := (← getCurrNamespace) ++ name.getId
     let programName := generatedName fullName "__program"
     let observationName := generatedName fullName "__observation"
@@ -3513,6 +3521,7 @@ private partial def lowerReadableStatement (programName path : String)
       elabCommand (← `(def $(mkIdent observationSyntaxName) : Noctium.Authoring.ObservationMetadata := $metadataTerm))
       Noctium.registerWitnessCircuit name.raw programName exportName outputName
         (some observation.toJson.compress) describeOutputs
+        (useCheckedCircuitValue := quoteCheckedCircuit)
     catch error =>
       modifyEnv fun _ => envBefore
       throw error
