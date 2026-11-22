@@ -1276,7 +1276,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, and ordered root scalar List pushes. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. Other layouts, helper initialization, and private constructor callbacks remain open.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open.",
       "source": [
         "reference"
       ],
@@ -1300,6 +1300,10 @@
         "tests/compact/sealed-counter-list-constructor.mjs",
         "runtime/tests/sealed_counter_list_constructor.rs",
         "docs/development/sealed-counter-list-localnet-receipt.json",
+        "tests/SealedRootSetConstructor.lean",
+        "tests/compact/sealed-set-constructor.mjs",
+        "runtime/tests/sealed_set_constructor.rs",
+        "docs/development/sealed-set-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"
@@ -1309,7 +1313,7 @@
       "layer": "language-ledger",
       "surface": "Sealed ledger fields",
       "noctiumStatus": "subset",
-      "notes": "Noctium supports sealed scalar and OpaqueString Cells, flat scalar Maps, root Counters, and root scalar Lists. Source checks reject entrypoint writes and supported helper writes. A funded lookup preserved two sealed Maps at localnet height 50649. The Counter and Native List fixtures match Compact 0.36.1. A proof-bound read finalized at height 51065 and preserved the deployed state bytes. Additional ledger types and layouts remain open.",
+      "notes": "Noctium supports sealed scalar and OpaqueString Cells, flat scalar Maps, root Counters, root scalar Lists, and root scalar Sets. Source checks reject entrypoint writes and supported helper writes. A funded lookup preserved two sealed Maps at localnet height 50649. The Counter and Native List fixtures match Compact 0.36.1. A proof-bound read finalized at height 51065 and preserved the deployed state bytes. A sealed Set fixture matches the Compact duplicate-insert behavior, and a funded read preserved both Sets at height 51346. Additional ledger types and layouts remain open.",
       "source": [
         "reference"
       ],
@@ -1333,6 +1337,10 @@
         "tests/compact/sealed-counter-list-constructor.mjs",
         "runtime/tests/sealed_counter_list_constructor.rs",
         "docs/development/sealed-counter-list-localnet-receipt.json",
+        "tests/SealedRootSetConstructor.lean",
+        "tests/compact/sealed-set-constructor.mjs",
+        "runtime/tests/sealed_set_constructor.rs",
+        "docs/development/sealed-set-localnet-receipt.json",
         "docs/development/constructors.md"
       ],
       "equivalence": "unverified"

@@ -83,6 +83,31 @@ matched the native constructor output. The `inspect` call finalized at
 height 51065 and preserved the exact deployed state bytes.
 [Finalized receipt](sealed-counter-list-localnet-receipt.json)
 
+## Seed a Set
+
+```lean
+sealed set registered : Native
+sealed set emptySet : Native
+constructor(key : Native) where
+  insert registered[disclose(key)]
+end
+```
+
+Root scalar Sets start empty and accept typed keys in constructors. Duplicate
+inserts leave a single member. Sealed Sets allow membership and size reads and
+reject entrypoint mutations. Ordinary Sets share the same constructor syntax.
+
+The Lean artifact and Compact reference cover two inserts of key 17, a read
+confirming size 1, and an adjacent empty sealed Set. The Compact reference also
+checks an absent key. The native relation uses K7 and 120 rows.
+[Lean fixture](../../tests/SealedRootSetConstructor.lean) ·
+[Compact oracle](../../tests/compact/sealed-set-constructor.mjs) ·
+[Native checker](../../runtime/tests/sealed_set_constructor.rs)
+
+Ledger 9.1.0.1 finalized deployment at localnet height 51343. The state
+matched the native constructor output. The read at 51346 preserved the full
+deployed state bytes. [Finalized receipt](sealed-set-localnet-receipt.json)
+
 ## Initialize an opaque string
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one

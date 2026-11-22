@@ -1,0 +1,19 @@
+{
+  "bundleManifestSha256": "59f5411006d3a6732817e1e050dd01b7a27d9c877599fb120f65923b67f99431",
+  "constructStateMatchedDeployment": true,
+  "contractAddress": "da603900d840d40775f8593d52535a0c798b4fe7e69fb2220bd1b02d97eb722e",
+  "deploymentHeight": 51343,
+  "deploymentTransactionId": "98e7ba8a703dddac27057b860cb4731cb3628b7613d6958a9915afb0c8c06d9c",
+  "finalizedHash": "d12c75139f16b53515c7dbb4598710f039e609555e8ccb4fe05bfca7fb4159e7",
+  "finalizedHeight": 51346,
+  "inspectPreservedExactStateBytes": true,
+  "k": 7,
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "rows": 120,
+  "sourceCompilerRevision": "f49041b5bedfa33d9abb666dd0ef62bfe1532fa8",
+  "sourceSha256": "8e509b84bef75de8bd2eeff59e37c6c5b27840e0c7062d6d72662aa9fd8cf64f",
+  "transactionId": "7fc3a1cab98c4adf1439c59db6dab49604a935a8dd94e9795ad161cafc4ed73d",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}
