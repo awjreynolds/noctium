@@ -139,6 +139,7 @@ inductive BytesOp where
   | toBytes32 (source : Ty)
   | serialize (source : Ty) (length : Nat)
   | deserialize (target : Ty) (length : Nat)
+  | fromBytesChecked (target : Ty) (length : Nat)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 def BytesOp.operationName : BytesOp → String
@@ -166,6 +167,8 @@ def BytesOp.operationName : BytesOp → String
   | .toBytes32 _ => "unsupportedToBytes32"
   | .serialize source length => s!"serialize:{NativeExpression.typeName source}:{length}"
   | .deserialize target length => s!"deserialize:{NativeExpression.typeName target}:{length}"
+  | .fromBytesChecked target length =>
+    s!"fromBytesChecked:{NativeExpression.typeName target}:{length}"
 
 def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except String (List Ty × Ty) := do
   match operation with
@@ -257,6 +260,16 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
     match operation with
     | .serialize .. => pure ([type], .bytes length)
     | _ => pure ([.bytes length], type)
+  | .fromBytesChecked target length => do
+    unless argumentCount == 1 do throw "fromBytesChecked requires one argument"
+    unless 0 < length && length ≤ maxBytesLength do
+      throw s!"fromBytesChecked requires a byte length from 1 through {maxBytesLength}"
+    match target with
+    | .native => pure ([.bytes length], .native)
+    | .uint maximum => do
+      ScalarPolicy.validate (.uint maximum)
+      pure ([.bytes length], .uint maximum)
+    | _ => throw "fromBytesChecked supports only Native and UInt"
 
 inductive Term where
   | unit
@@ -2658,6 +2671,13 @@ mutual
           let some codec := Wire.scalarCodec type | liftD (fail span "unsupported deserialization type")
           let value ← liftD (typedExpr span (.bytes length) value)
           pure (scalarValue (codec.deserialize value))
+        | .fromBytesChecked target length, [value] => do
+          let value ← liftD (typedExpr span (.bytes length) value)
+          match target with
+          | .native => pure (scalarValue (Wire.checkedNativeFromBytes value))
+          | .uint maximum =>
+            pure (scalarValue (Wire.checkedUIntFromBytes maximum value))
+          | _ => liftD (fail span "fromBytesChecked supports only Native and UInt")
         | .degradeToNative, [value] => do
           let value ← liftD (typedExpr span (.bytes 32) value)
           pure (scalarValue (Expr.bytesField value 1))

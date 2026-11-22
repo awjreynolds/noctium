@@ -18,6 +18,31 @@ private def decodeNative (frame : Expr (.bytes 32)) : Expr .native :=
         (.assertE (.eq (.bytesField encoded 0) (.bytesField input 0))
           (.assertE (.eq (.bytesField encoded 1) (.bytesField input 1)) result))))
 
+/-- Check that every byte after the low 32 bytes is zero. Each chunk is at most
+31 bytes, so its field projection cannot wrap modulo the field. -/
+private def assertZeroTail {length : Nat} (value : Expr (.bytes length))
+    (offset : Nat) (body : Expr .native) : Expr .native :=
+  if _beforeEnd : offset < length then
+    let chunkLength := min 31 (length - offset)
+    have positive : 0 < chunkLength := by simp [chunkLength]; omega
+    if _singleton : chunkLength = 1 then
+      .assertE (.eq (.bytesAt value offset) (.uint 255 0))
+        (assertZeroTail value (offset + chunkLength) body)
+    else
+      .assertE
+        (.eq
+          (.bytesField (.sliceBytes value offset (offset + chunkLength)) 0)
+          (.native 0))
+        (assertZeroTail value (offset + chunkLength) body)
+  else body
+termination_by length - offset
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    have chunkLe : min 31 (length - offset) ≤ length - offset := Nat.min_le_right _ _
+    have nextLe : offset + min 31 (length - offset) ≤ length := by omega
+    omega
+
 private def curveEncodingMatches (value : Expr ty) (fields : List (Expr .native)) : Expr .bool :=
   let comparisons := (value.nativeCallFields.zip fields).map fun (encoded, input) =>
     Expr.eq encoded input
@@ -105,6 +130,31 @@ def scalarCodec : (type : Ty) → Option (ScalarCodec type)
     some ⟨kind.byteLength, Expr.foreignToBytes,
       fun value => .foreignFromBytes kind (leading kind.byteLength value)⟩
   | _ => none
+
+/-- Decode little-endian fixed bytes as a canonical Native. Short inputs fit in
+the field by width and use the Native wire codec. Wider inputs require a zero
+high tail and a successful low-32-byte round trip. -/
+def checkedNativeFromBytes {length : Nat} (value : Expr (.bytes length)) : Expr .native :=
+  let input : Expr (.bytes length) := .ref "$checkedFromBytesInput"
+  let low32 := leading 32 input
+  .letE "$checkedFromBytesInput" value <|
+    if length < 32 then
+      .fromBytes (target := .native) input
+    else if length = 32 then
+      decodeNative low32
+    else
+      let result : Expr .native := .ref "$checkedFromBytesWideResult"
+      let encoded : Expr (.bytes 32) := .ref "$checkedFromBytesWideEncoded"
+      assertZeroTail input 32 <|
+        .letE "$checkedFromBytesWideResult" (.fromBytes (target := .native) input)
+          (.letE "$checkedFromBytesWideEncoded" (.toBytes32 result)
+            (.assertE (.eq (.bytesField encoded 0) (.bytesField low32 0))
+              (.assertE (.eq (.bytesField encoded 1) (.bytesField low32 1)) result)))
+
+/-- Decode fixed bytes as a checked bounded unsigned integer. -/
+def checkedUIntFromBytes (maximum : Nat) {length : Nat}
+    (value : Expr (.bytes length)) : Expr (.uint maximum) :=
+  .cast (.uint maximum) (checkedNativeFromBytes value)
 
 def scalarWidth (type : Ty) : Option Nat := (scalarCodec type).map (·.width)
 

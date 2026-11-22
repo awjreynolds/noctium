@@ -297,6 +297,7 @@ scoped syntax "hashToCurve(" "[" nlexpr,* "]" ")" : nlexpr
 scoped syntax "toBytes32(" nlexpr ")" : nlexpr
 scoped syntax "fromBytes32(" nltype "," nlexpr ")" : nlexpr
 scoped syntax "fromBytes(" nltype "," nlexpr ")" : nlexpr
+scoped syntax "fromBytesChecked(" nltype "," nlexpr ")" : nlexpr
 scoped syntax "serialize(" nlexpr "," num ")" : nlexpr
 scoped syntax "toBytes(" nlexpr "," num ")" : nlexpr
 scoped syntax "deserialize(" nltype "," nlexpr ")" : nlexpr
@@ -830,6 +831,7 @@ private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
   | `(nlexpr| inv($_:nlexpr)) => Bool.true
   | `(nlexpr| fromBytes32($_:nltype, $_:nlexpr))
   | `(nlexpr| deserialize($_:nltype, $_:nlexpr)) => Bool.true
+  | `(nlexpr| fromBytesChecked($_:nltype, $_:nlexpr)) => Bool.true
   | `(nlexpr| serialize($value, $_:num)) => hasPartialScalar value
   | `(nlexpr| toBytes($value, $width:num)) => width.getNat < 32 || hasPartialScalar value
   | `(nlexpr| fromBytes($_:nltype, $value:nlexpr)) => hasPartialScalar value
@@ -997,6 +999,24 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     if length > maxBytesLength then
       throwErrorAt stx s!"byte string length exceeds the maximum of {maxBytesLength}"
     pure (target, ← `(Noctium.Expr.fromBytes (target := $(← tyTerm target)) $value))
+  | `(nlexpr| fromBytesChecked($target:nltype, $value)) => do
+    let target ← readTy target
+    let (valueTy, value) ← expression env value
+    let .bytes length := valueTy
+      | throwErrorAt stx "fromBytesChecked requires a Bytes expression"
+    unless 0 < length do
+      throwErrorAt stx "fromBytesChecked requires at least one byte"
+    if length > maxBytesLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {maxBytesLength}"
+    match target with
+    | .native =>
+      pure (.native, ← `(Noctium.Wire.checkedNativeFromBytes $value))
+    | .uint maximum =>
+      match ScalarPolicy.validate (.uint maximum) with
+      | .error message => throwErrorAt stx "{message}"
+      | .ok _ =>
+        pure (target, ← `(Noctium.Wire.checkedUIntFromBytes $(natTerm maximum) $value))
+    | _ => throwErrorAt stx "fromBytesChecked supports only Native and UInt"
   | `(nlexpr| serialize($value, $size:num)) => do
     let (ty, value) ← expression env value
     let some width := Wire.scalarWidth ty
