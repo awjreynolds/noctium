@@ -84,3 +84,15 @@ The callee plan changed from `aa17a5cf…e5f6de7` to
 I also appended one newline byte to a copy of the caller relation. Strict JSON
 parsing still succeeded, but its digest no longer matched the receipt pin. This
 confirms the byte check rejects a semantically harmless file change.
+
+The focused selection check accepts the pinned output directory and rejects a
+wrong caller pair, crossed caller/callee relations, and an output copy missing
+the callee relation:
+
+```sh
+python3 scripts/proofs/check-historical-composition-selection.py \
+  build/experiments/469-selection-check/output
+```
+
+The command uses the existing strict JSON parser and hash helpers. It does not
+build artifacts, generate keys or proofs, or contact a node.
