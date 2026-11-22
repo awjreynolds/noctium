@@ -346,10 +346,17 @@ struct Variant {
     fields: Vec<Field>,
     leaves: usize,
 }
+#[derive(Clone, Debug)]
+struct SourceLeaf {
+    type_name: String,
+    physical_width: usize,
+    curve_type: Option<crate::ScalarType>,
+}
 #[derive(Debug)]
 enum LayoutNode {
     Unit,
     Scalar(Leaf),
+    Curve(crate::ScalarType),
     Tuple(Vec<usize>),
     Struct {
         id: String,
@@ -449,6 +456,115 @@ fn add(a: usize, b: usize) -> Result<usize> {
     a.checked_add(b)
         .ok_or_else(|| anyhow!("aggregate count overflow"))
 }
+fn curve_width(ty: &crate::ScalarType) -> Result<usize> {
+    Ok(match ty {
+        crate::ScalarType::JubjubScalar => 1,
+        crate::ScalarType::JubjubPoint => 2,
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(ty) => ty.native_type().encoded_len(),
+        _ => bail!("unsupported aggregate curve type"),
+    })
+}
+fn curve_source_name(ty: &crate::ScalarType) -> Result<String> {
+    Ok(match ty {
+        crate::ScalarType::JubjubScalar => "JubjubScalar".to_owned(),
+        crate::ScalarType::JubjubPoint => "JubjubPoint".to_owned(),
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(ty) => ty.source_name().to_owned(),
+        _ => bail!("unsupported aggregate curve type"),
+    })
+}
+fn curve_type_encoding(ty: &crate::ScalarType) -> Result<String> {
+    Ok(match ty {
+        crate::ScalarType::JubjubScalar => "sJS".to_owned(),
+        crate::ScalarType::JubjubPoint => "sJP".to_owned(),
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(ty) => {
+            format!("sF{}:{}", ty.source_name().len(), ty.source_name())
+        }
+        _ => bail!("unsupported aggregate curve type"),
+    })
+}
+fn curve_type_key(ty: &crate::ScalarType) -> Result<String> {
+    Ok(match ty {
+        crate::ScalarType::JubjubScalar => "jubjubScalar".to_owned(),
+        crate::ScalarType::JubjubPoint => "jubjubPoint".to_owned(),
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(ty) => format!("foreign:{}", ty.source_name()),
+        _ => bail!("unsupported aggregate curve type"),
+    })
+}
+fn curve_from_tree(tree: &JsonTree, raw: usize, ty: &crate::ScalarType) -> Result<Vec<BigUint>> {
+    let value = match ty {
+        crate::ScalarType::JubjubScalar => {
+            tree.exact(raw, &["kind", "value"])?;
+            ensure!(
+                tree.text(raw, "kind")? == "jubjubScalar",
+                "aggregate curve value type mismatch"
+            );
+            serde_json::json!({"kind":"jubjubScalar","value":tree.text(raw, "value")?})
+        }
+        crate::ScalarType::JubjubPoint => {
+            tree.exact(raw, &["kind", "x", "y"])?;
+            ensure!(
+                tree.text(raw, "kind")? == "jubjubPoint",
+                "aggregate curve value type mismatch"
+            );
+            serde_json::json!({
+                "kind":"jubjubPoint",
+                "x":tree.text(raw, "x")?,
+                "y":tree.text(raw, "y")?
+            })
+        }
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(foreign_ty) => {
+            tree.exact(raw, &["kind", "type", "bytes"])?;
+            ensure!(
+                tree.text(raw, "kind")? == "foreign"
+                    && tree.text(raw, "type")? == foreign_ty.source_name(),
+                "aggregate curve value type mismatch"
+            );
+            let bytes = tree
+                .items(raw, "bytes")?
+                .iter()
+                .map(|index| {
+                    let byte = tree.number(*index)?;
+                    ensure!(byte <= 255, "aggregate foreign byte out of range");
+                    Ok(byte)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            serde_json::json!({"kind":"foreign","type":foreign_ty.source_name(),"bytes":bytes})
+        }
+        _ => bail!("unsupported aggregate curve type"),
+    };
+    let value = crate::input_value(&curve_source_name(ty)?, &value)?;
+    let fields = crate::typed_scalar_fields(&value)?;
+    ensure!(
+        fields.len() == curve_width(ty)?,
+        "aggregate curve encoding width mismatch"
+    );
+    Ok(fields
+        .iter()
+        .map(|field| BigUint::from_bytes_le(&field.as_le_bytes()))
+        .collect())
+}
+fn curve_merkle_widths(ty: &crate::ScalarType) -> Result<Vec<usize>> {
+    Ok(match ty {
+        crate::ScalarType::JubjubScalar => vec![32],
+        crate::ScalarType::JubjubPoint => vec![32, 32],
+        #[cfg(feature = "zkir-321")]
+        crate::ScalarType::Foreign(ty) => {
+            use crate::foreign::{ForeignFamily, ForeignRole};
+            match (ty.family(), ty.role()) {
+                (ForeignFamily::Curve25519, ForeignRole::Scalar) => vec![26, 7],
+                (ForeignFamily::Curve25519, ForeignRole::Point) => vec![24, 8, 24, 8],
+                (_, ForeignRole::Point) => vec![24, 8, 24, 8, 32],
+                _ => vec![24, 8],
+            }
+        }
+        _ => bail!("unsupported aggregate curve type"),
+    })
+}
 fn mul(a: usize, b: usize) -> Result<usize> {
     a.checked_mul(b)
         .ok_or_else(|| anyhow!("aggregate count overflow"))
@@ -490,6 +606,10 @@ fn layout_children(tree: &JsonTree, index: usize) -> Result<Vec<usize>> {
         }
         "scalar" => {
             tree.exact(index, &["kind", "leaf"])?;
+            vec![]
+        }
+        "curve" => {
+            tree.exact(index, &["kind", "type"])?;
             vec![]
         }
         "tuple" => {
@@ -569,6 +689,7 @@ fn type_encoding(nodes: &[LayoutNode], root: usize) -> Result<String> {
                 LayoutNode::Scalar(Leaf::UInt(max)) => {
                     output.push_str(&format!("sU{};", max.to_str_radix(10)))
                 }
+                LayoutNode::Curve(ty) => output.push_str(&curve_type_encoding(ty)?),
                 LayoutNode::Struct { id, .. } => output.push_str(&format!("r{}", encoded_text(id))),
                 LayoutNode::Enum { id, .. } => output.push_str(&format!("e{}", encoded_text(id))),
                 LayoutNode::Vector { length, element } => {
@@ -753,6 +874,18 @@ impl Schema {
                         Counts {
                             leaves: 1,
                             expanded_nodes: 1,
+                            layout_nodes: 1,
+                        },
+                    )
+                }
+                "curve" => {
+                    let ty = crate::ScalarType::parse(tree.text(raw, "type")?)?;
+                    let width = curve_width(&ty)?;
+                    (
+                        LayoutNode::Curve(ty),
+                        Counts {
+                            leaves: width,
+                            expanded_nodes: add(1, width)?,
                             layout_nodes: 1,
                         },
                     )
@@ -1081,6 +1214,7 @@ impl Schema {
                         );
                         leaves.push(number);
                     }
+                    LayoutNode::Curve(ty) => leaves.extend(curve_from_tree(&tree, raw, ty)?),
                     LayoutNode::Tuple(items) => {
                         tree.exact(raw, &["kind", "items"])?;
                         ensure!(
@@ -1221,6 +1355,16 @@ impl Schema {
                 LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                     append(maximum.bits().div_ceil(8).max(1) as usize)?;
                 }
+                LayoutNode::Curve(ty) => {
+                    let widths = curve_merkle_widths(ty)?;
+                    ensure!(
+                        widths.len() == curve_width(ty)?,
+                        "aggregate curve Merkle alignment width mismatch"
+                    );
+                    for width in widths {
+                        append(width)?;
+                    }
+                }
                 LayoutNode::Tuple(items) => pending.extend(items.iter().rev().copied()),
                 LayoutNode::Struct { fields, .. } => {
                     pending.extend(fields.iter().rev().map(|field| field.layout));
@@ -1278,6 +1422,9 @@ impl Schema {
                 LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                     result.push(format!("UIntRange<{}>", maximum + BigUint::from(1u8)))
                 }
+                LayoutNode::Curve(ty) => {
+                    result.extend(std::iter::repeat_n("Native".to_owned(), curve_width(ty)?));
+                }
                 LayoutNode::Tuple(items) => pending.extend(items.iter().rev().copied()),
                 LayoutNode::Struct { fields, .. } => {
                     pending.extend(fields.iter().rev().map(|field| field.layout));
@@ -1322,6 +1469,133 @@ impl Schema {
             "aggregate leaf type count mismatch"
         );
         Ok(result)
+    }
+
+    fn source_leaf_specs(&self) -> Result<Vec<SourceLeaf>> {
+        let mut pending = vec![self.root];
+        let mut result = Vec::new();
+        let mut physical_leaves = 0usize;
+        let mut append = |type_name: String,
+                          physical_width: usize,
+                          curve_type: Option<crate::ScalarType>|
+         -> Result<()> {
+            ensure!(
+                result.len() < MAX_LEAVES,
+                "aggregate source leaf type limit exceeded"
+            );
+            physical_leaves = add(physical_leaves, physical_width)?;
+            ensure!(
+                physical_leaves <= MAX_LEAVES,
+                "aggregate leaf type limit exceeded"
+            );
+            result.push(SourceLeaf {
+                type_name,
+                physical_width,
+                curve_type,
+            });
+            Ok(())
+        };
+        while let Some(index) = pending.pop() {
+            ensure!(
+                pending.len() <= MAX_NODES * 2,
+                "aggregate source leaf traversal limit exceeded"
+            );
+            match &self.nodes[index] {
+                LayoutNode::Unit => {}
+                LayoutNode::Scalar(Leaf::Native) => append("Native".into(), 1, None)?,
+                LayoutNode::Scalar(Leaf::Bool) => append("Bool".into(), 1, None)?,
+                LayoutNode::Scalar(Leaf::UInt(maximum)) => append(
+                    format!("UIntRange<{}>", maximum + BigUint::from(1u8)),
+                    1,
+                    None,
+                )?,
+                LayoutNode::Curve(ty) => {
+                    append(curve_source_name(ty)?, curve_width(ty)?, Some(ty.clone()))?;
+                }
+                LayoutNode::Tuple(items) => pending.extend(items.iter().rev().copied()),
+                LayoutNode::Struct { fields, .. } => {
+                    pending.extend(fields.iter().rev().map(|field| field.layout));
+                }
+                LayoutNode::Vector { length, element } => {
+                    for _ in 0..*length {
+                        pending.push(*element);
+                    }
+                }
+                LayoutNode::Bytes { length } => {
+                    for _ in 0..*length {
+                        append("Native".into(), 1, None)?;
+                    }
+                }
+                LayoutNode::Enum { payload, .. } => {
+                    for _ in 0..=*payload {
+                        append("Native".into(), 1, None)?;
+                    }
+                }
+            }
+        }
+        ensure!(
+            physical_leaves == self.counts().leaves,
+            "aggregate source leaf physical count mismatch"
+        );
+        Ok(result)
+    }
+
+    pub(crate) fn source_leaf_types(&self) -> Result<Vec<String>> {
+        Ok(self
+            .source_leaf_specs()?
+            .into_iter()
+            .map(|leaf| leaf.type_name)
+            .collect())
+    }
+
+    pub(crate) fn source_leaf_widths(&self) -> Result<Vec<usize>> {
+        Ok(self
+            .source_leaf_specs()?
+            .into_iter()
+            .map(|leaf| leaf.physical_width)
+            .collect())
+    }
+
+    pub(crate) fn expand_source_leaves_json(
+        &self,
+        leaves: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>> {
+        let specs = self.source_leaf_specs()?;
+        ensure!(
+            leaves.len() == specs.len(),
+            "aggregate source leaf count mismatch"
+        );
+        let mut expanded = Vec::with_capacity(self.counts().leaves);
+        for (leaf, spec) in leaves.iter().zip(specs) {
+            if let Some(ty) = spec.curve_type {
+                ensure!(
+                    curve_source_name(&ty)? == spec.type_name,
+                    "aggregate curve source type mismatch"
+                );
+                let value = crate::input_value(&spec.type_name, leaf)?;
+                let fields = crate::typed_scalar_fields(&value)?;
+                ensure!(
+                    fields.len() == spec.physical_width,
+                    "aggregate curve encoding width mismatch"
+                );
+                expanded.extend(
+                    fields
+                        .into_iter()
+                        .map(|field| serde_json::Value::String(crate::field_decimal(field))),
+                );
+            } else {
+                ensure!(
+                    spec.physical_width == 1,
+                    "non-curve source leaf width mismatch"
+                );
+                expanded.push(leaf.clone());
+            }
+        }
+        ensure!(
+            expanded.len() == self.counts().leaves,
+            "aggregate expanded source leaf count mismatch"
+        );
+        Ok(expanded)
     }
 
     pub fn flatten_leaves_json(&self, json: &[u8]) -> Result<Vec<serde_json::Value>> {
@@ -1465,6 +1739,7 @@ impl Schema {
                     LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                         output.push_str(&format!("sU{};", maximum.to_str_radix(10)));
                     }
+                    LayoutNode::Curve(ty) => output.push_str(&curve_type_key(ty)?),
                     LayoutNode::Tuple(items) => {
                         output.push_str(&format!("T{}[", items.len()));
                         pending.push(Task::Text("]".to_owned()));
@@ -1722,6 +1997,9 @@ impl Schema {
                 | (LayoutNode::Enum { .. }, LayoutNode::Enum { .. }) => {
                     self.node_type_key(source)? == target.node_type_key(destination)?
                 }
+                (LayoutNode::Curve(source), LayoutNode::Curve(target)) => {
+                    curve_type_key(source)? == curve_type_key(target)?
+                }
                 _ => false,
             };
             if !compatible {
@@ -1929,6 +2207,19 @@ impl Schema {
                             ),
                         };
                         output.extend_from_slice(text.as_bytes());
+                    }
+                    LayoutNode::Curve(ty) => {
+                        let width = curve_width(ty)?;
+                        let end = add(cursor, width)?;
+                        let fields = leaves
+                            .get(cursor..end)
+                            .ok_or_else(|| anyhow!("truncated aggregate curve leaves"))?
+                            .iter()
+                            .map(|number| crate::canonical_field(&number.to_str_radix(10)))
+                            .collect::<Result<Vec<_>>>()?;
+                        let value = crate::decode_typed_scalar(ty, &fields)?;
+                        cursor = end;
+                        output.extend_from_slice(&serde_json::to_vec(&value.public_json())?);
                     }
                     LayoutNode::Tuple(items) => {
                         output.extend_from_slice(b"{\"kind\":\"tuple\",\"items\":[");
@@ -2314,5 +2605,63 @@ mod tests {
             let value: Json = serde_json::from_slice(&rendered).unwrap();
             assert_eq!(value, expected);
         }
+    }
+
+    #[test]
+    fn typed_curves_flatten_reconstruct_and_reject_invalid_encodings() {
+        let schema = Schema::from_json(
+            br#"{"schemaVersion":1,"typeFingerprint":"NoctiumCompositeTypeV1;t2;[sJSsJP]NoctiumCompositeLayoutV1;0;0;","layout":{"kind":"tuple","items":[{"kind":"curve","type":"JubjubScalar"},{"kind":"curve","type":"JubjubPoint"}]},"counts":{"leaves":3,"expandedNodes":6,"layoutNodes":3}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            schema.leaf_types().unwrap(),
+            vec![
+                "Native".to_owned(),
+                "Native".to_owned(),
+                "Native".to_owned()
+            ]
+        );
+        let value = json!({
+            "kind":"tuple",
+            "items":[
+                {"kind":"jubjubScalar","value":"7"},
+                {"kind":"jubjubPoint","x":"0","y":"1"}
+            ]
+        });
+        let json = serde_json::to_vec(&value).unwrap();
+        assert_eq!(
+            schema.flatten_leaves_json(&json).unwrap(),
+            vec![json!("7"), json!("0"), json!("1")]
+        );
+        let wire = schema.encode_json_value(&json).unwrap();
+        let decoded: Json = serde_json::from_slice(&schema.decode_wire(&wire).unwrap()).unwrap();
+        assert_eq!(decoded, value);
+        let from_native: Json = serde_json::from_slice(
+            &schema
+                .from_native_leaves_json(&[json!("7"), json!("0"), json!("1")])
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(from_native, value);
+
+        let invalid_point = json!({
+            "kind":"tuple",
+            "items":[
+                {"kind":"jubjubScalar","value":"7"},
+                {"kind":"jubjubPoint","x":"0","y":"0"}
+            ]
+        });
+        assert!(
+            schema
+                .validate_value_json(&serde_json::to_vec(&invalid_point).unwrap())
+                .is_err()
+        );
+        let mut invalid_wire = wire;
+        let last_field = invalid_wire.len() - 32;
+        invalid_wire[last_field..].fill(0);
+        assert!(schema.decode_wire(&invalid_wire).is_err());
+
+        let wrong_curve_type = br#"{"schemaVersion":1,"typeFingerprint":"NoctiumCompositeTypeV1;sNNoctiumCompositeLayoutV1;0;0;","layout":{"kind":"curve","type":"Native"},"counts":{"leaves":1,"expandedNodes":2,"layoutNodes":1}}"#;
+        assert!(Schema::from_json(wrong_curve_type).is_err());
     }
 }
