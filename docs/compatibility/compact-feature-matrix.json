@@ -5561,7 +5561,7 @@
       "layer": "standard-library",
       "surface": "secp256k1EcdsaVerify",
       "noctiumStatus": "subset",
-      "notes": "Ordinary and readable circuits share the checked Lean secp256k1 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
+      "notes": "Ordinary and readable circuits share the checked Lean secp256k1 ECDSA equation. Native ZKIR 3.2.1 and the pinned Compact reference agree on the selected valid signature, changed digest and false result for zero r. Both abort for the selected zero-s vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5618,7 +5618,7 @@
       "layer": "standard-library",
       "surface": "secp256r1EcdsaVerify",
       "noctiumStatus": "subset",
-      "notes": "Ordinary and readable circuits share the checked Lean P-256 ECDSA equation. A typed signature provider, native ZKIR 3.2.1 checker and pinned Compact reference agree on a valid signature and a changed digest. Noctium rejects zero scalars by aborting. Compact returns false for the exercised zero-scalar vectors.",
+      "notes": "Ordinary and readable circuits share the checked Lean P-256 ECDSA equation. Native ZKIR 3.2.1 and the pinned Compact reference agree on the selected valid signature, changed digest and false result for zero r. Both abort for the selected zero-s vector.",
       "source": [
         "stdlib",
         "stdlibSource",
