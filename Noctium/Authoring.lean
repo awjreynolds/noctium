@@ -2337,7 +2337,7 @@ where
       before := (bindings.flatMap fun (value, name) =>
         value.before ++ [.bind name value.type value.term]) ++
         (checks.map fun check => .assert (.at span check))
-      generatedValidity := s!"non-identity key and nonzero signature scalars for {renderExpr stx}" ::
+      generatedValidity := s!"non-identity key and invertible signature s for {renderExpr stx}" ::
         result.generatedValidity }
 
   lowerJubjubSchnorr (programName callPrefix : String) (env : SurfaceEnv) (stx : TSyntax `nlexpr)

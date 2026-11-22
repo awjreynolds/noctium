@@ -312,7 +312,7 @@ fn signature_provider_response(
 
 #[test]
 #[ignore = "requires fresh ReadableECDSA artifacts in NOCTIUM_READABLE_ECDSA_DIR"]
-fn readable_ecdsa_callbacks_match_vectors_and_reject_zero_s() -> anyhow::Result<()> {
+fn readable_ecdsa_callbacks_match_vectors_and_handle_invalid_scalars() -> anyhow::Result<()> {
     let directory = PathBuf::from(std::env::var_os("NOCTIUM_READABLE_ECDSA_DIR").unwrap());
     let supplied = inputs();
     let cases = [
@@ -412,6 +412,17 @@ fn readable_ecdsa_callbacks_match_vectors_and_reject_zero_s() -> anyhow::Result<
         assert_eq!(status["status"], "completed", "{stem} changed digest");
         check_result(&mut session, &binding, false)?;
 
+        let zero_r = signature_record(
+            signature_type,
+            [
+                ("r", foreign(scalar_type, vec![0; 32])),
+                ("s", supplied[s_name].clone()),
+            ],
+        );
+        let (mut session, status, binding) = run(supplied[digest_name].clone(), zero_r, 'd')?;
+        assert_eq!(status["status"], "completed", "{stem} zero r");
+        check_result(&mut session, &binding, false)?;
+
         let zero_s = signature_record(
             signature_type,
             [
@@ -419,7 +430,7 @@ fn readable_ecdsa_callbacks_match_vectors_and_reject_zero_s() -> anyhow::Result<
                 ("s", foreign(scalar_type, vec![0; 32])),
             ],
         );
-        let (mut session, status, binding) = run(supplied[digest_name].clone(), zero_s, 'd')?;
+        let (mut session, status, binding) = run(supplied[digest_name].clone(), zero_s, 'e')?;
         assert_eq!(status["status"], "failed", "{stem} zero s accepted");
         assert!(session.private_completion(&binding["nativeRelation"]).is_err());
     }
@@ -735,9 +746,16 @@ fn signature_helpers_match_known_vectors_and_reject_invalid_preconditions() {
             "{name} should abort during prepare"
         );
     };
-    let mut zero_r = supplied.clone();
-    zero_r.insert("kR".into(), foreign("Secp256k1Scalar", vec![0; 32]));
-    rejects("zero secp256k1 r", &zero_r);
+    let mut zero_k_r = supplied.clone();
+    zero_k_r.insert("kR".into(), foreign("Secp256k1Scalar", vec![0; 32]));
+    let zero_k_r = prepare(&plan, &zero_k_r, &initial, params, address).unwrap();
+    check(&zero_k_r, &circuit).unwrap();
+    assert_eq!(zero_k_r.returns_json(), returns(false, true, true));
+    let mut zero_p_r = supplied.clone();
+    zero_p_r.insert("pR".into(), foreign("Secp256r1Scalar", vec![0; 32]));
+    let zero_p_r = prepare(&plan, &zero_p_r, &initial, params, address).unwrap();
+    check(&zero_p_r, &circuit).unwrap();
+    assert_eq!(zero_p_r.returns_json(), returns(true, false, true));
     let mut zero_s = supplied.clone();
     zero_s.insert("pS".into(), foreign("Secp256r1Scalar", vec![0; 32]));
     rejects("zero P-256 s", &zero_s);

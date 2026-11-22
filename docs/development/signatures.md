@@ -57,7 +57,7 @@ native ZKIR 3.2.1 checker and pinned Compact reference agree on those cases.
 
 ECDSA interprets the supplied 32-byte digest as a big-endian integer and reduces it into the curve's scalar field. The equation checks the x-coordinate of `[digest/s]G + [r/s]key`, reduced modulo the scalar order, against r. Both high-s and low-s signatures are accepted. A low-s rule needs an additional application policy. The helper does not hash a message or establish a relationship between the digest and another contract value.
 
-Noctium aborts for identity public keys, zero r or s, or an identity point at coordinate extraction. Other equation mismatches return false. The pinned Compact 0.36.1 helpers return false for zero r or s on the two compared vectors.
+Noctium aborts for identity public keys, zero `s`, or an identity point at coordinate extraction. A completed verification with zero `r` returns false. The two pinned Compact 0.36.1 vectors return false for zero `r` and fail inversion for zero `s`.
 
 Jubjub Schnorr hashes exactly `[R.x, R.y, key.x, key.y] ++ messageFields`. It reduces both the resulting Native challenge and Native response modulo the Jubjub scalar order, then checks `[response]G = R + [challenge]key`. The total preimage is limited to 1024 Native fields, leaving 1020 message fields. Identity public keys abort. Identity announcements are permitted. A mismatched equation returns false. A pairwise hash chain or byte-message encoding defines a different protocol.
 
@@ -83,6 +83,6 @@ The Source fixture exercises every helper, explicit disclosure, wrong-curve reje
 
 These checks establish scoped Source/native behavior. They do not establish cryptographic security, complete Compact equivalence or compiler preservation. No new keys, proofs, deployments, K benchmark or web/mobile qualification accompanies this slice. Broader assurance remains tracked in issues [21](https://github.com/awjreynolds/noctium/issues/21) and [23](https://github.com/awjreynolds/noctium/issues/23).
 
-The compiler/Claim build, Source guards and guide snippet pass. The focused native case passes in 0.05 seconds, including a valid identity-announcement Schnorr signature and an ECDSA computed-identity rejection. Re-exported Source artifacts match the retained bytes. The fixture contains 420 native instructions, 105 private transcript fields and six output bindings. These are structural counts, not K or proving-time measurements.
+The focused native cases cover a valid identity-announcement Schnorr signature, ECDSA computed-identity rejection and the distinct zero-`r` and zero-`s` outcomes. The ordinary fixture uses re-exported Source artifacts.
 
 Reproduce the focused runtime case with `cargo test --manifest-path runtime/Cargo.toml --no-default-features --features zkir-321 --test signature_helpers` using the pinned Rust toolchain described in the runtime setup.
