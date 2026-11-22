@@ -143,6 +143,9 @@ scoped syntax "fold(" nlexpr "," "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr "
 scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "decode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "default(" "Payload" ident ")" : nlexpr
+declare_syntax_cat noctium_record_field
+scoped syntax ident ":=" nlexpr : noctium_record_field
+scoped syntax "record(" "Payload" ident "," "{" noctium_record_field,* "}" ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
@@ -167,7 +170,7 @@ scoped syntax "let" "[" noctium_bind_pattern,* "]" ":=" nlexpr : noctium_witness
 scoped syntax "let" "{" noctium_bind_field,* "}" ":=" nlexpr : noctium_witness_statement
 scoped syntax "read" "private" ident "as" ident : noctium_witness_statement
 scoped syntax "witness" ident "(" nlexpr,* ")" : noctium_witness_statement
-scoped syntax "prove" nlexpr : noctium_witness_statement
+scoped syntax "prove" nlexpr ("as" ident)? : noctium_witness_statement
 scoped syntax "stage" ident ":=" nlexpr : noctium_witness_statement
 scoped syntax "output" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
 scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "end" :
@@ -491,6 +494,12 @@ private partial def renderType : TSyntax `nltype → String
   | `(nltype| Curve25519Point) => "Curve25519Point"
   | _ => "?"
 
+private def recordField (field : TSyntax `noctium_record_field) :
+    Option (TSyntax `ident × TSyntax `nlexpr) :=
+  match field with
+  | `(noctium_record_field| $name:ident := $source:nlexpr) => some (name, source)
+  | _ => none
+
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   match stx with
   | `(nlexpr| $id:ident) => id.getId.toString
@@ -511,6 +520,10 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| encode($codec:ident, $value)) => s!"encode({codec.getId}, {renderExpr value})"
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
   | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
+  | `(nlexpr| record(Payload $codec:ident, { $fields,* })) =>
+    let rendered := (fields.getElems.toList.filterMap recordField).map fun (name, value) =>
+      s!"{name.getId} := {renderExpr value}"
+    "record(Payload " ++ codec.getId.toString ++ ", {" ++ String.intercalate ", " rendered ++ "})"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
@@ -620,6 +633,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
 private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   match stx with
   | `(nlexpr| disclose($value)) => renderExpr value :: disclosedValues value
+  | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
+    (fields.getElems.toList.filterMap recordField).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
   | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right))
@@ -689,6 +704,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
 
 private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   match stx with
+  | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
+    (fields.getElems.toList.filterMap recordField).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) =>
@@ -1106,6 +1123,52 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let resultType := Helpers.resultTypeOfComposite codec.payload
     let term := Helpers.Term.composite codec.payload zeros
     pure {type := resultType, term}
+  | `(nlexpr| record(Payload $name:ident, { $fields,* })) => do
+    let (codec, _) ← selectedCodec name
+    let .structure id := codec.payload
+      | throwErrorAt name "record requires a nominal structure Payload codec"
+    let compiled ← checkedPayloadLayout name codec.payload
+    let .structure _ layoutFields := compiled.checked.value
+      | throwErrorAt name "checked record Payload has a non-structure layout"
+    let some declaration := compiled.environment.structures.find? (·.id == id)
+      | throwErrorAt name "checked record Payload has no structure declaration"
+    let mut initializers : List (String × TSyntax `nlexpr) := []
+    for field in fields.getElems do
+      let some (fieldName, source) := recordField field
+        | throwErrorAt field "invalid record field initializer"
+      let key := fieldName.getId.toString
+      if initializers.any (·.1 == key) then
+        throwErrorAt fieldName s!"duplicate record field '{key}'"
+      unless declaration.fields.any (·.name == key) do
+        throwErrorAt fieldName s!"unknown record field '{key}'"
+      initializers := initializers ++ [(key, source)]
+    -- The pinned Compact compiler evaluates named initializers in declaration order.
+    let values ← layoutFields.mapM fun (key, _) => do
+      let some (_, source) := initializers.find? (·.1 == key)
+        | throwErrorAt stx s!"missing record field '{key}'"
+      let some declared := declaration.fields.find? (·.name == key)
+        | throwErrorAt stx s!"checked record field '{key}' has no declaration"
+      let expected := Helpers.resultTypeOfComposite declared.type
+      let value ← match ← lowerExpectedIterationRef env expected source with
+        | some value => pure value
+        | none => lowerExpr programName callPrefix env source
+      match expected with
+      | .scalar target => coerce source value target
+      | _ => do
+        let matchingBytes := match value.type, declared.type with
+          | .scalar (.bytes actual), .bytes wanted => actual == wanted
+          | _, _ => _root_.Bool.false
+        unless value.type == expected || matchingBytes do
+          throwErrorAt source s!"record field '{key}' has the wrong Payload type"
+        pure value
+    let span ← liftM (spanValue stx)
+    let (before, terms, _) ← stageIterationValues callPrefix env span values
+    let leaves ← (layoutFields.zip (values.zip terms)).flatMapM fun ((_, layout), value, reference) => do
+      match Helpers.Iteration.flattenResult span value.type layout reference with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt stx diagnostic.message
+    let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves) values
+    pure {result with before}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message
@@ -2345,15 +2408,25 @@ private partial def lowerReadableStatement (programName path : String)
       env := (valueName, value.type, .ref valueName) :: body.env
       statements := body.statements ++ value.before ++ [.bind valueName value.type (.at (← spanValue statement) value.term)]
       logicalAliases}
-  | `(noctium_witness_statement| prove $source:nlexpr) => do
+  | `(noctium_witness_statement| prove $source:nlexpr $[as $binder:ident]?) => do
+    if let some id := binder then
+      if body.env.any (·.1 == id.getId.toString) then
+        throwErrorAt id s!"duplicate readable witness value '{id.getId}'"
     let (lowered, body) ← body.lower programName path
       {exprState with allowAssertThen := _root_.Bool.true} source
     let value ← coerce source lowered .bool
     let observation := {body.observation with
       authoredProves := (body.observation.authoredProves ++ [renderExpr source]).eraseDups}
     let body := {body with observation}.observe value [source]
-    pure {body with
-      statements := body.statements ++ value.before ++ [.assert (.at (← spanValue statement) value.term)]}
+    let span ← spanValue statement
+    let body := {body with statements := body.statements ++ value.before ++ [.assert (.at span value.term)]}
+    match binder with
+    | none => pure body
+    | some id =>
+      let name := id.getId.toString
+      pure {body with
+        env := (name, .unit, .ref name) :: body.env
+        statements := body.statements ++ [.bind name .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
     let .scalar ty := field.signature.result
