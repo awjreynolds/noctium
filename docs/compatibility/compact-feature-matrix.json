@@ -310,7 +310,7 @@
       "layer": "language",
       "surface": "Bytes<n>",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed byte lengths 0 through 1024, literals with right padding, typed operations and bounded FAB chunks. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open.",
+      "notes": "Lean supports fixed byte lengths 0 through 1024, literals with right padding, typed operations and bounded FAB chunks. Readable packBytes constructs ordinary Bytes from checked octets and sequence spreads. The paired Compact 0.36.1 and native cases match the reversed payload and witness order, including the zero-width callback. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open.",
       "source": [
         "reference"
       ],
@@ -320,6 +320,9 @@
       ],
       "observedEvidence": [
         "docs/development/fixed-bytes.md",
+        "tests/ReadableRecordConstruction.lean",
+        "tests/compact/readable-record-construction.mjs",
+        "runtime/tests/readable_record_construction.rs",
         "docs/development/standard-events.md",
         "runtime/tests/native_bytes.rs",
         "runtime/tests/standard_events.rs"

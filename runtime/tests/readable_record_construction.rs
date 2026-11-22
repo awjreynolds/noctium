@@ -274,3 +274,27 @@ fn tuple_spread_flattens_composite_values_in_order() -> anyhow::Result<()> {
         }),
     )
 }
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn byte_spread_packs_and_reverses_in_order() -> anyhow::Result<()> {
+    check_case(
+        "packOctets",
+        [
+            (
+                "loadVector",
+                "9",
+                json!({
+                    "kind":"vector",
+                    "items":[
+                        {"kind":"uint","maximum":"255","value":"17"},
+                        {"kind":"uint","maximum":"255","value":"19"}
+                    ]
+                }),
+            ),
+            ("loadBytes", "10", json!({"kind":"bytes","values":[165,60]})),
+            ("loadUnit", "11", json!({"kind":"unit"})),
+        ],
+        json!({"kind":"bytes","values":[23,60,165,19,17,7]}),
+    )
+}

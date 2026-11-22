@@ -25,6 +25,20 @@ and pads on the right with zero bytes. Selection requires matching lengths.
 Private inputs keep their private origins through each operation. Publishing
 a derived value requires an explicit `disclose` at the public output or return.
 
+Readable witness circuits also construct Bytes from checked octets.
+
+```lean
+let packed := packBytes(7, ..vector, ..suffix, 23)
+output reversed : Bytes 6 := disclose(reverseBytes(packed))
+```
+
+Each direct item must fit UInt8 by its declared type. A numeric literal in this
+position uses its unsigned range. Tuple and vector spreads contribute one
+octet per element. A fixed Bytes spread keeps its byte order and reuses its
+whole segment. Empty spreads still evaluate their source once. The pinned
+Compact fixture checks payload order and the three witness calls.
+[Lean fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 The host token is `Bytes<n>` and its value is
 `{"kind":"bytes","values":[0,1,2]}`. The array must contain exactly the declared
 number of integer octets. The SDK rejects malformed lengths and non-byte values.
