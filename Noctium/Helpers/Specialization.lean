@@ -853,9 +853,8 @@ mutual
         result := result.push (.forRange index start stop body)
       | .stage capability key type value => do
         let concrete ← normalizeType limits declaration.span types naturals type
-        let .scalar ty := concrete | liftM (fail declaration.span "generic private stage requires a scalar type")
         let value ← convertTerm limits declaration types naturals values value
-        result := result.push (.stage capability key ty value)
+        result := result.push (.stage capability key (resultTypeOfComposite concrete) value)
       | .emitEvent kind payload => do
         let payload ← convertTerm limits declaration types naturals values payload
         result := result.push (.emitEvent kind payload)

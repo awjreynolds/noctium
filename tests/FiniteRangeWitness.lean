@@ -26,7 +26,7 @@ def finiteRangeProgram : Program := {
             (.witnessCall "range-step" "step" [.ref "index", .ref "before"]),
           .writeCell "total" .native
             (.disclose {} (.binary .add (.ref "before") (.ref "delta"))),
-          .stage "private" "loop/last" .native (.ref "delta")]] [],
+          .stage "private" "loop/last" (.scalar .native) (.ref "delta")]] [],
       .readCell "total" "after" .native,
       .assert (.eq (.ref "after") (.ref "expected")),
       .return (some (.ref "after"))]}]

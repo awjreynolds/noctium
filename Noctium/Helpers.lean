@@ -321,7 +321,7 @@ inductive Statement where
   constant-true branches with fresh Native index bindings. A flat pure
   assertion sequence can stay compact until ordered constraint lowering. -/
   | forRange (index : String) (start stop : Nat) (body : List Statement)
-  | stage (capability key : String) (ty : Ty) (value : Term)
+  | stage (capability key : String) (type : ResultType) (value : Term)
   | readCell (state destination : String) (ty : Ty)
   | writeCell (state : String) (ty : Ty) (value : Term)
   | readMap (state destination : String) (keyTy valueTy : Ty) (key : Term)
@@ -1600,10 +1600,11 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           let bodyInfo ← checkBody limits program declaration fuel
             ((index, some (.scalar .native)) :: env) loopBody [index]
           pure {ty := some .unit, calls := bodyInfo.calls, effects := bodyInfo.effects, guarded := bodyInfo.guarded}
-        | .stage _ _ ty value => do
-          liftError span (ty.validate Capabilities.crypto)
+        | .stage _ _ type value => do
+          if type == .unit then fail span "private stage requires a cell value"
+          validateResultType program span type
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value
-          unless partialSubtype info.ty (.scalar ty) do fail span "private stage type mismatch"
+          unless partialSubtype info.ty type do fail span "private stage type mismatch"
           pure {info with effects := (.privateState :: info.effects).eraseDups}
         | .readCell state destination ty => do
           checkedCell program span state ty false

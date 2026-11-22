@@ -7,7 +7,7 @@ def branchWitnessProgram : Program := {
   declarations := [{
     id := ⟨0, 0⟩, name := "branchWitness", parameters := [⟨"active", .bool⟩]
     result := .scalar .native, span := controlSpan, body := [.branch (.ref "active") [
-      .stage "store" "counter/value" .native (.native 1),
+      .stage "store" "counter/value" (.scalar .native) (.native 1),
       .return (some (.disclose controlSpan (.witness "chosen" .native)))]
       [.return (some (.native 7))]]
   }]
@@ -52,7 +52,7 @@ def conditionalProvidersProgram : Program := {
     id := ⟨0, 0⟩, name := "conditionalProviders", parameters := [⟨"active", .bool⟩]
     result := .scalar .native, span := controlSpan, body := [.branch (.andThen (.ref "active") (.disclose controlSpan (.witness "flag" .bool))) [
       .evaluate (.witness "left" .native),
-      .stage "store" "counter/value" .native (.native 1),
+      .stage "store" "counter/value" (.scalar .native) (.native 1),
       .return (some (.disclose controlSpan (.witness "right" .native)))]
       [.return (some (.native 7))]]
   }]

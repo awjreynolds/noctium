@@ -24,11 +24,11 @@ def guardedWitnessProgram : Program := {
         .bind "amount" (.scalar .native) (.witnessCall "yes-amount" "yesAmount" []),
         .assert (.eq (.ref "amount") (.ref "expected")),
         .evaluate (.witnessCall "yes-unit" "unit" []),
-        .stage "private" "guarded/last" .native (.ref "amount")] [
+        .stage "private" "guarded/last" (.scalar .native) (.ref "amount")] [
         .evaluate (.witnessCall "no-empty" "empty" []),
         .bind "amount" (.scalar .native) (.witnessCall "no-amount" "noAmount" []),
         .assert (.eq (.ref "amount") (.ref "expected")),
-        .stage "private" "guarded/last" .native (.ref "amount")],
+        .stage "private" "guarded/last" (.scalar .native) (.ref "amount")],
       .bind "after" (.scalar .native) (.witnessCall "after" "tail" [.ref "expected"]),
       .assert (.eq (.ref "after") (.ref "expected")),
       .return (some (.ref "expected"))]}]

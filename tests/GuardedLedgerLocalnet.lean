@@ -26,7 +26,7 @@ def guardedLedgerProgram : Program := {
           .writeCell "balance" .native (.disclose {} (.binary .add (.ref "before") (.ref "delta"))),
           .readCell "balance" "after" .native,
           .assert (.eq (.ref "after") (.ref "expected")),
-          .stage "private" "ledger/last" .native (.ref "delta")]
+          .stage "private" "ledger/last" (.scalar .native) (.ref "delta")]
         [.writeCell "mark" .native (.native 2)]]
       [.writeCell "mark" .native (.native 3)],
       .readCell "balance" "current" .native,

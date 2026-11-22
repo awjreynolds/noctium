@@ -1,0 +1,18 @@
+pragma language_version >= 0.28;
+
+struct MeterReceipt {
+  amount: Uint<8>;
+  okay: Boolean;
+}
+
+witness readReceipt(): MeterReceipt;
+witness stageReceipt(value: MeterReceipt): [];
+
+export circuit advance(expected: Uint<8>): [Boolean, Uint<8>] {
+  const previous = readReceipt();
+  assert(previous.amount == expected && previous.okay, "invalid receipt");
+  const staged = stageReceipt(MeterReceipt { amount: 3, okay: false });
+  const next = readReceipt();
+  assert(next.amount == 3 && next.okay == false, "stale receipt");
+  return [disclose(previous.okay), expected];
+}
