@@ -51,6 +51,14 @@ Ed25519 checks `[S]G = R + [SHA512(encode(R) || encode(key) || message)]key`, re
 
 Ethereum address derivation applies Keccak-256 to the two 32-byte big-endian affine coordinates `x || y`, without a SEC1 prefix, then returns the final 20 bytes. Identity keys abort.
 
+Readable witness circuits also accept `secp256k1EthereumAddress(point)`. A
+provider expression supplies one checked `Secp256k1Point`, and the circuit
+rejects identity before encoding either coordinate. A result derived
+from a private witness requires `disclose` at a public return. The Rust witness
+session and native ZKIR 3.2.1 checker match the Compact 0.36.1 generator address.
+The Compact and Rust witness cases both reject a canonical identity point.
+[Lean source](../../tests/ReadableEthereumAddress.lean) · [Compact reference](../../tests/compact/readable-ethereum-address.mjs) · [Rust integration](../../runtime/tests/witness_control.rs)
+
 The [pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L354) and [ZKIR v3 helpers](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/zkir-v3-library.compact) serve as semantic references. The MIT implementation does not copy their Apache-2.0 source. Ed25519's published vector and encoding rules come from [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html#section-7.1).
 
 ## Focused evidence
