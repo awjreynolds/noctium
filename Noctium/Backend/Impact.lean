@@ -1233,9 +1233,8 @@ private def checkedRecordFields (environment : Types.CompositeEnv) (type : Types
     | .ok fields => pure fields
     | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
 
-def recordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
-    Except String Lean.Json := do
-  let fields ← checkedRecordFields environment type
+private def recordSchemaForFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (fields : List (String × Ty)) : Except String Lean.Json := do
   if fields.all (fun (_, ty) => ty == .native) then
     let compiled ← (Types.compileType environment type).mapError (·.message)
     Types.schemaJson compiled
@@ -1246,6 +1245,16 @@ def recordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType)
       ("fields", Lean.toJson (fields.map fun (name, ty) => Lean.Json.mkObj [
         ("name", Lean.toJson name),
         ("type", Lean.toJson (Noctium.NativeExpression.typeName ty))]))]
+
+def recordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
+    Except String Lean.Json := do
+  let fields ← checkedRecordFields environment type
+  recordSchemaForFields environment type fields
+
+def cellRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
+    Except String Lean.Json := do
+  let fields ← LedgerValueType.cellRecordFields environment type
+  recordSchemaForFields environment type fields
 
 /-- Produce the record schema shared by List operations and state metadata. -/
 def listElementOperationSchema (environment : Types.CompositeEnv)
@@ -1330,7 +1339,7 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
     let .tree (.composite environment foundType) := declaration.kind
       | throw "root composite write must target a checked record Cell"
     unless foundType == type do throw "nested composite write type mismatch"
-    pure (environment, ← checkedRecordFields environment type)
+    pure (environment, ← LedgerValueType.cellRecordFields environment type)
   else do
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite write must select a composite value"
@@ -1339,7 +1348,7 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "nested composite write field type mismatch"
   let alignedKeys ← nativePathKeys keys
-  let schema ← recordSchema environment type
+  let schema ← recordSchemaForFields environment type fields
   if keys.isEmpty then
     pure [.push (.field (.native slot)), .pushFields schema values true, .insert 1]
   else pathWriteCompositeOps slot alignedKeys schema values
@@ -1924,11 +1933,13 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite read must select a composite value"
     unless foundType == type do throw "nested composite read type mismatch"
-    let fields ← checkedRecordFields environment type
+    let fields ← if keys.isEmpty then LedgerValueType.cellRecordFields environment type
+      else checkedRecordFields environment type
     unless fields.map Prod.snd == destinations.map Prod.snd do
       throw "nested composite read destination type mismatch"
     let alignedKeys ← nativePathKeys keys
-    let schema ← recordSchema environment type
+    let schema ← if keys.isEmpty then cellRecordSchema environment type
+      else recordSchema environment type
     let values := destinations.map fun (name, ty) => refLedgerFieldExpr name ty
     let components := destinations
     pure {plan with
@@ -2585,11 +2596,13 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite read must select a composite value"
     unless foundType == type do throw "nested composite read type mismatch"
-    let fields ← checkedRecordFields environment type
+    let fields ← if keys.isEmpty then LedgerValueType.cellRecordFields environment type
+      else checkedRecordFields environment type
     unless fields.map Prod.snd == destinations.map Prod.snd do
       throw "nested composite read destination type mismatch"
     let alignedKeys ← nativePathKeys keys
-    let schema ← recordSchema environment type
+    let schema ← if keys.isEmpty then cellRecordSchema environment type
+      else recordSchema environment type
     let values := destinations.map fun (name, ty) => refLedgerFieldExpr name ty
     let components := destinations
     plan := {plan with

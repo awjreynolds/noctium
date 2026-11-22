@@ -2269,7 +2269,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
                         )
                     }
                     None => {
-                        let parsed = checked_list_record_schema(schema)?;
+                        let parsed = checked_typed_record_schema(schema)?;
                         ensure!(
                             expressions.len() == parsed.fields.len(),
                             "list record expression count mismatch"
@@ -2445,7 +2445,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         Instruction::PushFields {
             expressions,
             schema,
-            ..
+            storage,
         } => {
             if let Some(name) = typed_scalar_schema_token(schema) {
                 let ty = ScalarType::parse(name)?;
@@ -2455,7 +2455,11 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 3 + 2 * expressions.len()
             } else {
-                let schema = checked_record_schema(schema)?;
+                let schema = if *storage {
+                    checked_typed_record_schema(schema)?
+                } else {
+                    checked_record_schema(schema)?
+                };
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -2475,7 +2479,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 2 + 2 * expressions.len()
             } else {
-                let schema = checked_record_schema(schema)?;
+                let schema = checked_typed_record_schema(schema)?;
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -2862,7 +2866,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             );
             return Ok(());
         }
-        checked_list_record_schema(
+        checked_typed_record_schema(
             parts
                 .get("composite")
                 .ok_or_else(|| anyhow!("List requires a scalar or record element"))?,
@@ -2880,7 +2884,11 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        checked_record_schema(schema)?;
+        if depth == 0 {
+            checked_typed_record_schema(schema)?;
+        } else {
+            checked_record_schema(schema)?;
+        }
         return Ok(());
     }
     if let Some(key) = fields.get("set") {
@@ -3019,6 +3027,7 @@ fn validate_record_cell(plan: &Plan, slot: u32, operation_schema: &Json) -> Resu
         record == operation_schema,
         "record Cell write differs from state schema"
     );
+    checked_typed_record_schema(record)?;
     Ok(())
 }
 
@@ -3236,11 +3245,11 @@ fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, false)
 }
 
-fn checked_list_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+fn checked_typed_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, true)
 }
 
-fn checked_record_schema_fields(json: &Json, list_element: bool) -> Result<CheckedRecordSchema> {
+fn checked_record_schema_fields(json: &Json, allow_typed_scalars: bool) -> Result<CheckedRecordSchema> {
     if is_shielded_coin_record_schema(json) {
         let fields = [
             ("nonce", "Bytes<32>"),
@@ -3331,7 +3340,7 @@ fn checked_record_schema_fields(json: &Json, list_element: bool) -> Result<Check
             (matches!(
                 &ty,
                 ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint
-            ) || list_element && matches!(&ty, ScalarType::Bool | ScalarType::UInt(_)))
+            ) || allow_typed_scalars && matches!(&ty, ScalarType::Bool | ScalarType::UInt(_)))
                 && record_type_name(&ty)?.as_ref() == ty_name,
             "unsupported or noncanonical mixed record field type"
         );
@@ -3798,7 +3807,6 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 schema,
                 ..
             } if is_record_schema(schema) => {
-                checked_record_schema(schema)?;
                 let key_operation = index
                     .checked_sub(1)
                     .and_then(|index| plan.operations.get(index))
@@ -3829,6 +3837,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     validate_record_cell(plan, slot, schema)?;
                     continue;
                 }
+                checked_record_schema(schema)?;
                 let path_operation = index
                     .checked_sub(2)
                     .and_then(|index| plan.operations.get(index))
@@ -3861,7 +3870,6 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 );
             }
             Instruction::PopeqFields { schema, .. } if is_record_schema(schema) => {
-                checked_record_schema(schema)?;
                 let path_operation = index
                     .checked_sub(1)
                     .and_then(|index| plan.operations.get(index))
@@ -3879,6 +3887,11 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 else {
                     bail!("record read has no indexed path")
                 };
+                if keys.is_empty() {
+                    checked_typed_record_schema(schema)?;
+                } else {
+                    checked_record_schema(schema)?;
+                }
                 ensure!(
                     tree_schema_at_path(plan, *slot, keys.len())?.get("composite") == Some(schema),
                     "record read differs from state schema"
@@ -3989,7 +4002,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         "scalar List operation requires one expression"
                     );
                 } else {
-                    checked_list_record_schema(schema)?;
+                    checked_typed_record_schema(schema)?;
                 }
             }
             _ => {}
@@ -4171,7 +4184,7 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
 }
 
 pub(crate) fn default_record_value(schema: &Json) -> Result<Json> {
-    let schema = checked_record_schema(schema)?;
+    let schema = checked_typed_record_schema(schema)?;
     if let Some(aggregate) = schema.aggregate {
         return Ok(serde_json::from_slice(&aggregate.from_leaf_json(
             &vec![Json::String("0".into()); aggregate.counts().leaves],
@@ -5068,7 +5081,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                     &input_value(ty, value)?,
                 )?)));
             } else if let Some(schema) = schema.get("composite") {
-                let schema = checked_record_schema(schema)?;
+                let schema = checked_typed_record_schema(schema)?;
                 let fields = record_values_from_json(&schema, value)?;
                 values.push(StateValue::Cell(Sp::new(aligned_record_value(
                     &schema, &fields,
@@ -5541,7 +5554,7 @@ fn native_list_value(
         let ty = validate_tree_scalar_type(ty_name)?;
         decode_state_cell(head, ty_name, &list_scalar_storage_alignment(&ty))?;
     } else {
-        let checked = checked_list_record_schema(
+        let checked = checked_typed_record_schema(
             schema
                 .get("composite")
                 .ok_or_else(|| anyhow!("List state requires a scalar or record element"))?,
@@ -7293,7 +7306,7 @@ impl PreparationCursor {
                             );
                             event = Some(read_event(read, false, env, vec![read.name.clone()]));
                         } else {
-                            let checked = checked_record_schema(schema)?;
+                            let checked = checked_typed_record_schema(schema)?;
                             record_component_names(read, expressions, schema, &checked)?;
                             let defaults = checked
                                 .fields
@@ -7387,7 +7400,7 @@ impl PreparationCursor {
                                     env,
                                 )?);
                             } else {
-                                let checked = checked_list_record_schema(schema)?;
+                                let checked = checked_typed_record_schema(schema)?;
                                 record_component_names(read, expressions, schema, &checked)?;
                                 let defaults = checked
                                     .fields
@@ -7595,7 +7608,11 @@ impl PreparationCursor {
                             .map_err(|_| anyhow!("invalid typed storage value"))?,
                     }
                 } else {
-                    let schema = checked_record_schema(schema)?;
+                    let schema = if *storage {
+                        checked_typed_record_schema(schema)?
+                    } else {
+                        checked_record_schema(schema)?
+                    };
                     let fields = record_values_from_expressions(&schema, expressions, &env)?;
                     Op::Push {
                         storage: *storage,
@@ -7773,7 +7790,7 @@ impl PreparationCursor {
                         result: value,
                     }
                 } else {
-                    let checked = checked_record_schema(schema)?;
+                    let checked = checked_typed_record_schema(schema)?;
                     record_component_names(read, expressions, schema, &checked)?;
                     let (slot, keys) = previous_index
                         .as_ref()
@@ -8229,7 +8246,7 @@ impl PreparationCursor {
                         env,
                     )?);
                 } else {
-                    let checked = checked_list_record_schema(schema)?;
+                    let checked = checked_typed_record_schema(schema)?;
                     record_component_names(read, expressions, schema, &checked)?;
                     let values = decode_record_value(&checked, &head)?;
                     let produced = bind_record_values(read, &checked, &values, env)?;
@@ -8273,7 +8290,7 @@ impl PreparationCursor {
                     value.validate()?;
                     aligned_storage_cell(&value)?
                 } else {
-                    let checked = checked_list_record_schema(schema)?;
+                    let checked = checked_typed_record_schema(schema)?;
                     let fields = record_values_from_expressions(&checked, expressions, &env)?;
                     aligned_record_value(&checked, &fields)?
                 };

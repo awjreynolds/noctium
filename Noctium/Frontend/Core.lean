@@ -475,6 +475,7 @@ scoped syntax "insertField" nlpath ":=" nlexpr : nleffect
 scoped syntax "require" nlexpr : nleffect
 scoped syntax "absent" ident "[" nlexpr "]" : nleffect
 scoped syntax "write" ident ":=" nlexpr : nleffect
+scoped syntax "write" ident ":=" nlleaves : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" "emptyMap" : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
@@ -2342,7 +2343,11 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
     let updated := {updated with terms := updated.terms.push term}
     bindReadName updated destination.getId.toString readName valueTy
   | .composite environment (.structure typeId) => do
-    let fields ← match LedgerValueType.recordFields environment (.structure typeId) with
+    let fields ← if path.isEmpty then
+      match LedgerValueType.cellRecordFields environment (.structure typeId) with
+      | .ok fields => pure fields
+      | .error message => throwErrorAt destination message
+    else match LedgerValueType.recordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error _ => match LedgerValueType.shieldedCoinRecordFields environment (.structure typeId) with
         | .ok fields => pure fields
@@ -2533,11 +2538,9 @@ private def elaborateReset (schema : List (String × StateKind)) (path : TSyntax
     return {state with terms := state.terms.push term}
   if let some (.tree (.composite environment type)) := schema.lookup storage.getId.toString then
     unless sourceKeys.isEmpty do throwErrorAt path "cell reset does not accept a key path"
-    let fields ← match LedgerValueType.recordFields environment type with
+    let fields ← match LedgerValueType.cellRecordFields environment type with
       | .ok fields => pure fields
-      | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
-        | .ok fields => pure fields
-        | .error message => throwErrorAt path message
+      | .error message => throwErrorAt path message
     let values ← zeroLedgerFieldValues fields
     let typeTerm ← match type with
       | .structure id => `(Noctium.Types.CompositeType.structure $(stringTerm id))
@@ -2594,7 +2597,11 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
   let (path, result) ← lowerTreePath state.env treeSchema keys
   let (.composite environment type) := result
     | throwErrorAt payload "composite write must select a composite record"
-  let fields ← match LedgerValueType.recordFields environment type with
+  let fields ← if path.isEmpty then
+    match LedgerValueType.cellWriteRecordFields environment type with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt payload message
+  else match LedgerValueType.recordFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
   let valueList ← elaborateLedgerFieldValues state.env payload fields
@@ -3518,6 +3525,8 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| insert $storage:ident [ $key:nlexpr ] := $payload:nlleaves)
   | `(nleffect| write $storage:ident [ $key:nlexpr ] := $payload:nlleaves) => do
     state ← elaborateCompositePathWrite schema storage [key] payload state
+  | `(nleffect| write $storage:ident := $payload:nlleaves) => do
+    state ← elaborateCompositePathWrite schema storage [] payload state
   | `(nleffect| insert $storage:ident [ $owner:nlexpr ] [ $spender:nlexpr ] := $payload:nlleaves)
   | `(nleffect| write $storage:ident [ $owner:nlexpr ] [ $spender:nlexpr ] := $payload:nlleaves) => do
     state ← elaborateCompositePathWrite schema storage [owner, spender] payload state
@@ -4199,11 +4208,9 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
             elaborateNamedRecord contractName record recordFields state
-          match LedgerValueType.recordFields environment compositeType with
+          match LedgerValueType.cellRecordFields environment compositeType with
           | .ok _ => pure ()
-          | .error _ => match LedgerValueType.shieldedCoinRecordFields environment compositeType with
-            | .ok _ => pure ()
-            | .error message => throwErrorAt state message
+          | .error message => throwErrorAt state message
           let valueSchema := LedgerValueType.composite environment compositeType
           let valueTerm ← `(Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
