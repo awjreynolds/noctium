@@ -177,7 +177,7 @@ the following changes.
 | `inspectPayment` with range-check removal | 1,194 | 730 | 11 → 10 |
 | `inspectPayment` with comparison reuse added | 730 | 352 | 10 → 9 |
 
-The current `--dedup-range-checks` option applies both range optimizations. The
+At the time of this measurement, `--dedup-range-checks` applied both range optimizations. The
 comparison pass keeps two distinct `less_than` gates and replaces 63 repeated
 gates with copies. It uses the same ordered SSA operands and bit width, and
 keeps the output names and all assertion sites. The independent producer
@@ -191,6 +191,14 @@ it on. `transferFrom` used 63,110 and 61,798 rows respectively at K16. The
 Impact files matched exactly. The token had no repeated bounded comparisons
 for the new pass to remove. These two runs measure one pair, with no
 established compile-time change.
+
+The same option now keeps the first unconditional `assert` on each immutable
+SSA condition. The producer still checks the first occurrence of each
+distinct source assertion in order. The readable iteration fixture emitted
+47 instructions with the range pass and 33 with assertion deduplication
+added. ZKIR 3.2.1 mock compilation reported 108 and 94 rows, both at K7. The
+Impact plan matched byte for byte, and the native runtime test passed with the
+optimized relation. [Issue 503](https://github.com/awjreynolds/noctium/issues/503)
 
 ## Reuse checked Jubjub coordinates
 
