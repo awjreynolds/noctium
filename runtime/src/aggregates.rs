@@ -1086,7 +1086,7 @@ impl Schema {
             }
             LayoutNode::Bytes { length } => {
                 ensure!(
-                    *length <= 32,
+                    *length <= crate::scalars::MAX_BYTES_LENGTH,
                     "FAB byte field length is outside the supported range"
                 );
                 Ok(FabHashField::Bytes(*length))

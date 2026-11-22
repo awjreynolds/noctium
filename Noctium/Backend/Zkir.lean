@@ -519,14 +519,14 @@ private def lowerComputedBytes32ByteAt (values : List String) (index : Nat) : Lo
 
 private def byteChunks (length : Nat) (bytes : ByteOperands) : LowerM (List String) := do
   if bytes.packed then
-    if bytes.values.length != Native.bytesChunkCount length then
+    if bytes.values.length != Noctium.bytesChunkCount length then
       rejectLowering "byte chunk count mismatch"
     pure bytes.values
   else if bytes.values.length != length then
     rejectLowering "byte leaf count mismatch"
     pure []
   else
-    (List.range (Native.bytesChunkCount length)).mapM fun index =>
+    (List.range (Noctium.bytesChunkCount length)).mapM fun index =>
       packBytes ((bytes.values.drop (index * 31)).take 31)
 
 private def lowerFixedBytesFromChunks (length : Nat) (chunks : List String) : LowerM String := do
@@ -544,7 +544,7 @@ private def encodeFixedBytes (length : Nat) (bytes : String) : LowerM ByteOperan
   if length == 32 then
     let (low, high) ← encodeBytes32 bytes
     return {values := [low, high], packed := true}
-  let keys := (List.range (Native.bytesChunkCount length)).map fun index =>
+  let keys := (List.range (Noctium.bytesChunkCount length)).map fun index =>
     (("encode_bytes:" ++ toString length, [bytes], some index) : ExpressionKey)
   -- Lookups are collected before mutation so partial cache hits never reorder outputs.
   let expressions := (← get).expressions
@@ -1054,7 +1054,7 @@ private def lowerFabHashFields : List (String × Types.Layout) → List (Sigma E
             | ⟨.bytes 32, source⟩ => alignedBytes32Value source bytes.values
             | _ => alignedBytes32Fields bytes.values
           pure [highByte, low31]
-        else byteChunks length bytes
+        else do pure ((← byteChunks length bytes).reverse)
       | .scalar .nativeField, ⟨.native, expression⟩ => pure [← lowerExpr expression]
       | .scalar .booleanField, ⟨.bool, expression⟩ => pure [← lowerExpr expression]
       | .scalar (.boundedUnsignedField _), ⟨.uint _, expression⟩ => pure [← lowerExpr expression]
@@ -1161,11 +1161,11 @@ def lowerExpr : Expr ty → LowerM String
     | _ => pure ((← get).aliases.lookup name |>.getD ("%input_" ++ name))
   | .bytesField (length := length) value index => do
     let value ← lowerBytes value
-    if index ≥ Native.bytesChunkCount length then
+    if index ≥ Noctium.bytesChunkCount length then
       rejectLowering "byte field chunk index is out of range"
       return "0x00"
     if value.packed then
-      if value.values.length != Native.bytesChunkCount length then
+      if value.values.length != Noctium.bytesChunkCount length then
         rejectLowering "byte chunk count mismatch"
         return "0x00"
       pure value.values.reverse[index]!
@@ -1173,7 +1173,7 @@ def lowerExpr : Expr ty → LowerM String
       if value.values.length != length then
         rejectLowering "byte leaf count mismatch"
         return "0x00"
-      packBytes ((value.values.drop ((Native.bytesChunkCount length - 1 - index) * 31)).take 31)
+      packBytes ((value.values.drop ((Noctium.bytesChunkCount length - 1 - index) * 31)).take 31)
   | .bytesAt (length := length) value index => do
     lowerFixedByteAt length index (← lowerBytes value)
   | .jubjubScalarFromNative value => do
