@@ -305,7 +305,8 @@ private def splitBytes32Fields : Term → Except String (Term × Term)
 private def alignedBytes32Fields (value : Normalized) : Except String (Term × Term) := do
   splitBytes32Fields value.term
 
-private def alignedBytes32Value (value : Expr (.bytes 32)) (normalized : Normalized) : Except String (Term × Term) := do
+private def alignedBytes32Value (value : Expr (.bytes 32))
+    (normalized : Normalized) : Except String (Term × Term) := do
   match value with
   | .bytes32Literal values =>
     if values.length == 32 && values.all (· ≤ 255) then
@@ -471,16 +472,18 @@ theorem subtraction_eq (ty : Ty) (left right : Normalized) :
         (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions} := rfl
 
 private def alignedFabPayload (fields : List (String × Types.Layout))
-    (values : List Normalized) : Except String NormalizedFabPayload := do
+    (values : List (Sigma Expr × Normalized)) : Except String NormalizedFabPayload := do
   let mut alignment := []
   let mut operands := []
   let mut bounds := []
   let mut assertions := []
-  for (field, normalized) in fields.zip values do
+  for (field, source, normalized) in fields.zip values do
     alignment := alignment ++ (← Noctium.fabHashLayoutAtoms field.2)
     let (aligned, curveBounds) ← match field.2 with
       | .bytes 32 .byteField => do
-        let (highByte, low31) ← alignedBytes32Fields normalized
+        let (highByte, low31) ← match source with
+          | ⟨.bytes 32, expression⟩ => alignedBytes32Value expression normalized
+          | _ => throw "Bytes32 FAB source type disagrees with its checked layout"
         pure ([highByte, low31], [])
       | .bytes length .byteField => pure (← bytesChunksTerm length normalized.term, [])
       | .scalar .nativeField | .scalar .booleanField
@@ -635,12 +638,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     pure {normalized with term := .unary "keccak256_secp256k1_point" normalized.term}
   | .persistentHash32 value => do
     let normalized ← normalize env value
-    let (highByte, low31) ← match value with
-      | .bytes32Literal values =>
-        if values.length == 32 && values.all (· ≤ 255) then
-          pure (.constant values[31]!, .constant (littleEndian (values.take 31)))
-        else alignedBytes32Fields normalized
-      | _ => alignedBytes32Fields normalized
+    let (highByte, low31) ← alignedBytes32Value value normalized
     let term := persistentHash32Term highByte low31
     pure {term, bounds := normalized.bounds, assertions := normalized.assertions}
   | .persistentHashVector32 values => do
@@ -682,16 +680,16 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
   | .persistentCommitFab compositeEnv compositeType opening values => do
     let compiled ← validateFabHashLayout compositeEnv compositeType values
     let fields ← fabHashLayoutFields compiled
-    let opening ← normalize env opening
-    let (highByte, low31) ← alignedBytes32Fields opening
+    let normalizedOpening ← normalize env opening
+    let (highByte, low31) ← alignedBytes32Value opening normalizedOpening
     let normalizedValues ← normalizeFabValues env values
     let payload ← alignedFabPayload fields normalizedValues
     let {alignment := payloadAlignment, operands := payloadOperands, bounds := payloadBounds, assertions := payloadAssertions} := payload
     let alignment := "bytes:32" :: payloadAlignment
     let operands := [highByte, low31] ++ payloadOperands
     let term := persistentHashFabTerm alignment operands
-    pure (Normalized.mk term (opening.bounds ++ payloadBounds)
-      (opening.assertions ++ payloadAssertions))
+    pure (Normalized.mk term (normalizedOpening.bounds ++ payloadBounds)
+      (normalizedOpening.assertions ++ payloadAssertions))
   | .transientCommitFab compositeEnv compositeType opening values => do
     let compiled ← validateFabHashLayout compositeEnv compositeType values
     let fields ← fabHashLayoutFields compiled
@@ -878,10 +876,10 @@ decreasing_by
     | omega
 
 private def normalizeFabValues (env : AliasEnvironment) :
-    List (Sigma Expr) → Except String (List Normalized)
+    List (Sigma Expr) → Except String (List (Sigma Expr × Normalized))
   | [] => pure []
   | ⟨_, value⟩ :: rest => do
-    pure ((← normalize env value) :: (← normalizeFabValues env rest))
+    pure ((⟨_, value⟩, ← normalize env value) :: (← normalizeFabValues env rest))
 termination_by values => sizeOf values
 decreasing_by
   all_goals simp_wf

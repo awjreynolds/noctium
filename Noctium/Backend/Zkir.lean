@@ -767,6 +767,15 @@ private def alignedBytes32Fields (values : List String) : LowerM (String × Stri
     rejectLowering "Bytes32 source has wrong aligned encoding"
     pure ("0x00", "0x00")
 
+private def alignedBytes32Value (source : Expr (.bytes 32))
+    (operands : List String) : LowerM (String × String) :=
+  match source with
+  | .bytes32Literal bytes =>
+    if bytes.length == 32 && bytes.all (· ≤ 255) then
+      pure (fieldImmediate bytes[31]!, fieldImmediate (Native.littleEndian (bytes.take 31)))
+    else alignedBytes32Fields operands
+  | _ => alignedBytes32Fields operands
+
 private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit := do
   let op := if input.visibility == .«public» then "public_input" else "private_input"
   let read (identifier : String) (ty : Json := nativeType) :=
@@ -959,12 +968,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
     encodeFixedBytes 32 digest
   | .persistentHash32 value => do
     let operands ← lowerBytes value
-    let (highByte, low31) ← match value with
-      | .bytes32Literal bytes =>
-        if bytes.length == 32 && bytes.all (· ≤ 255) then
-          pure (operands.values[31]!, fieldImmediate (Native.littleEndian (bytes.take 31)))
-        else alignedBytes32Fields operands.values
-      | _ => alignedBytes32Fields operands.values
+    let (highByte, low31) ← alignedBytes32Value value operands.values
     pure {values := ← lowerPersistentHash "bytes32" bytes32Alignment [highByte, low31], packed := true}
   | .persistentHashVector32 values => do
     let operands ← lowerBytes32VectorFields values
@@ -1012,7 +1016,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
           rejectLowering message
           pure []
       let openingBytes ← lowerBytes opening
-      let (openingHighByte, openingLow31) ← alignedBytes32Fields openingBytes.values
+      let (openingHighByte, openingLow31) ← alignedBytes32Value opening openingBytes.values
       let payloadOperands ← lowerFabHashFields fields values
       let alignment := Json.arr
         (#[bytesAlignmentAtom 32] ++
@@ -1069,7 +1073,9 @@ private def lowerFabHashFields : List (String × Types.Layout) → List (Sigma E
       | .bytes length .byteField, ⟨.bytes _, expression⟩ => do
         let bytes ← lowerBytes expression
         if length == 32 then do
-          let (highByte, low31) ← alignedBytes32Fields bytes.values
+          let (highByte, low31) ← match value with
+            | ⟨.bytes 32, source⟩ => alignedBytes32Value source bytes.values
+            | _ => alignedBytes32Fields bytes.values
           pure [highByte, low31]
         else byteChunks length bytes
       | .scalar .nativeField, ⟨.native, expression⟩ => pure [← lowerExpr expression]
@@ -1102,20 +1108,11 @@ decreasing_by
     | exact sizeOfSigmaExprHeadLt _ _
     | omega
 
-private def bytes32LiteralFields? : Expr (.bytes 32) → Option (String × String)
-  | .bytes32Literal bytes =>
-    if bytes.length == 32 && bytes.all (· ≤ 255) then
-      some (fieldImmediate bytes[31]!, fieldImmediate (Native.littleEndian (bytes.take 31)))
-    else none
-  | _ => none
-
 private def lowerBytes32VectorFields : List (Expr (.bytes 32)) → LowerM (List String)
   | [] => pure []
   | value :: rest => do
     let operands ← lowerBytes value
-    let (highByte, low31) ← match bytes32LiteralFields? value with
-      | some fields => pure fields
-      | none => alignedBytes32Fields operands.values
+    let (highByte, low31) ← alignedBytes32Value value operands.values
     pure ([highByte, low31] ++ (← lowerBytes32VectorFields rest))
 termination_by values => sizeOf values
 decreasing_by
