@@ -4525,7 +4525,7 @@
       "layer": "standard-library",
       "surface": "transientHash",
       "noctiumStatus": "subset",
-      "notes": "The native field vector route and typed transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use ordered typed leaves for checked records, tuples and fixed vectors. Readable circuits accept a single checked composite value. The native and Compact fixtures agree on mixed leaf encodings and empty preimages. The readable fixture accepts a single private aggregate in the host session and rejects a digest published without release. Additional leaf types remain open.",
+      "notes": "The native field vector route and typed transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use ordered typed leaves for checked records, tuples and fixed vectors. Readable circuits accept a single checked composite value. The native and Compact fixtures agree on mixed leaf encodings and empty preimages. The readable fixture accepts a single private aggregate in the host session and rejects a digest published without release. One mixed nested Jubjub and Secp256k1 payload matches the exact Compact 0.36.1 Field output through the native checker.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4550,7 +4550,9 @@
         "tests/compact/nested-transient-hash.mjs",
         "runtime/tests/nested_transient_hash.rs",
         "tests/ReadableFabHash.lean",
-        "runtime/tests/readable_fab_hash.rs"
+        "runtime/tests/readable_fab_hash.rs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4587,7 +4589,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Lean lowers persistent hashing for checked flat named records of bounded bytes, scalars and fieldless enums. Two mixed-record cases match pinned Compact digests through the emitted native relation. The runtime rejects a mismatched byte field wrapper. Recursive layouts and general overloads remain open. Flat positional tuples match the same native preimage and output when their leaf types and order match.",
+      "notes": "Lean lowers persistent hashing for checked flat named records of bounded bytes, scalars and fieldless enums. Two mixed-record cases match pinned Compact digests through the emitted native relation. The runtime rejects a mismatched byte field wrapper. A checked nested Jubjub and Secp256k1 payload matches the exact Compact 0.36.1 Bytes32 output through the native checker. General overload qualification remains open. Flat positional tuples match the same native preimage and output when their leaf types and order match.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4606,7 +4608,9 @@
         "tests/compact/flat-fab-tuple.mjs",
         "tests/MixedFabPersistentHash.lean",
         "tests/compact/mixed-fab-persistent-hash.mjs",
-        "runtime/tests/mixed_fab_persistent_hash.rs"
+        "runtime/tests/mixed_fab_persistent_hash.rs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },
@@ -5438,7 +5442,7 @@
       "layer": "standard-library",
       "surface": "hashToCurve",
       "noctiumStatus": "subset",
-      "notes": "Lean hashToCurveFab lowers checked flat FAB layouts to the native Jubjub hash-to-curve instruction. Two changed private payloads in the mixed named record fixture match Compact 0.36.1, including the Bytes32 field split and enum tag. The native checker rejects a changed private field in the transcript. Recursive layouts and other host paths remain open.",
+      "notes": "Lean hashToCurveFab lowers checked flat FAB layouts to the native Jubjub hash-to-curve instruction. Two changed private payloads in the mixed named record fixture match Compact 0.36.1, including the Bytes32 field split and enum tag. The native checker rejects a changed private field in the transcript. The native checker matches both Jubjub result coordinates from Compact 0.36.1 on one nested curve payload. Broader host coverage remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5454,7 +5458,9 @@
       "observedEvidence": [
         "tests/MixedFabHashToCurve.lean",
         "runtime/tests/hash_to_curve_fab.rs",
-        "tests/compact/mixed-fab-hash-to-curve.mjs"
+        "tests/compact/mixed-fab-hash-to-curve.mjs",
+        "tests/CurveFabHashes.lean",
+        "runtime/tests/curve_fab_hashes.rs"
       ],
       "equivalence": "unverified"
     },

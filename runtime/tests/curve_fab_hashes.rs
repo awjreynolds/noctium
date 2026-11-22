@@ -50,7 +50,7 @@ fn inputs() -> BTreeMap<String, Json> {
 
 #[test]
 #[ignore = "requires fresh Lean outputs in NOCTIUM_CURVE_FAB_HASHES_DIR"]
-fn curve_fab_hashes_match_compact_oracles_and_bind_public_transcript() -> anyhow::Result<()> {
+fn curve_fab_hashes_match_compact_oracles_and_bind_return_commitment() -> anyhow::Result<()> {
     let directory = artifacts();
     let stem = "CurveFabHashes.hash";
     let plan: Plan =
@@ -95,8 +95,11 @@ fn curve_fab_hashes_match_compact_oracles_and_bind_public_transcript() -> anyhow
         ])
     );
 
-    execution.preimage.public_transcript_outputs[0] =
-        execution.preimage.public_transcript_outputs[0] + Fr::from(1u64);
+    let (commitment, randomness) = execution
+        .preimage
+        .communications_commitment
+        .expect("the native return commitment");
+    execution.preimage.communications_commitment = Some((commitment + Fr::from(1u64), randomness));
     assert!(check(&execution, &circuit).is_err());
     Ok(())
 }
