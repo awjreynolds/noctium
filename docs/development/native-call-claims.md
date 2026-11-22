@@ -340,10 +340,15 @@ transaction, and verifies both V3 proofs with the installed keys. Changes to
 the statement, proof order or verifier key reject. SRS substitutions reject at
 the digest and degree check because the universal verifier powers are shared.
 
+The key identity checks also require the requested operation to exist and bind
+lookup to the exact retained state bytes. The test rejects a missing entrypoint
+and a state with an added operation, even though the original `claim` verifier
+key remains present.
+
 ```sh
 NOCTIUM_ARCHIVED_COMPOSITION_DIR=/path/to/block-30432 \
-  cargo test --manifest-path runtime/Cargo.toml --no-default-features \
-  --features zkir-321 --test archived_composition_proofs -- \
+  cargo test --manifest-path runtime/Cargo.toml --locked --offline --no-default-features \
+  --features localnet,zkir-321 --test archived_composition_proofs -- \
   retained_composition_proofs_verify_against_their_installed_keys_and_historical_srs --ignored --exact
 ```
 

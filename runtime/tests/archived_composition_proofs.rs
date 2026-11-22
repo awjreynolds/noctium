@@ -51,12 +51,16 @@ fn read_tagged<T: Deserializable + Tagged>(bytes: &[u8]) -> T {
 
 fn read_state(directory: &PathBuf, name: &str, expected_sha256: &str) -> ContractState<Db> {
     let bytes = fs::read(directory.join(name)).expect("retained public state is readable");
-    assert_eq!(hex::encode(Sha256::digest(&bytes)), expected_sha256);
+    assert!(state_identity_matches(&bytes, expected_sha256));
     let state: ContractState<Db> = read_tagged(&bytes);
     let mut canonical = Vec::new();
     tagged_serialize(&state, &mut canonical).expect("state re-encodes");
     assert_eq!(canonical, bytes, "state encoding is canonical");
     state
+}
+
+fn state_identity_matches(bytes: &[u8], expected_sha256: &str) -> bool {
+    hex::encode(Sha256::digest(bytes)) == expected_sha256
 }
 
 fn pinned_parameters(
@@ -72,19 +76,15 @@ fn pinned_parameters(
     ParamsVerifier::read(bytes.as_slice()).expect("checked SRS decodes for verification")
 }
 
-fn operation(state: &ContractState<Db>, name: &str, key_sha256: &str) -> VerifierKey {
+fn operation(state: &ContractState<Db>, name: &str, key_sha256: &str) -> Option<VerifierKey> {
     let operation = state
         .operations
-        .get(&EntryPointBuf(name.as_bytes().to_vec()))
-        .expect("installed operation exists in retained state");
-    let key = operation
-        .v3_vk()
-        .expect("retained operation has a 3.2.1 verifier key")
-        .clone();
+        .get(&EntryPointBuf(name.as_bytes().to_vec()))?;
+    let key = operation.v3_vk()?.clone();
     let mut encoded = Vec::new();
     tagged_serialize(&key, &mut encoded).expect("verifier key re-encodes");
     assert_eq!(hex::encode(Sha256::digest(&encoded)), key_sha256);
-    key
+    Some(key)
 }
 
 fn verify(key: &VerifierKey, parameters: &ParamsVerifier, proof: &Proof, statement: &[Fr]) -> bool {
@@ -125,8 +125,28 @@ fn retained_composition_proofs_verify_against_their_installed_keys_and_historica
 
     let caller_state = read_state(&directory, "caller.state", CALLER_STATE_SHA256);
     let callee_state = read_state(&directory, "callee.state", CALLEE_STATE_SHA256);
-    let caller_key = operation(&caller_state, "claim", CALLER_KEY_SHA256);
-    let callee_key = operation(&callee_state, "advance", CALLEE_KEY_SHA256);
+    let caller_key = operation(&caller_state, "claim", CALLER_KEY_SHA256)
+        .expect("claim verifier is installed in caller state");
+    let callee_key = operation(&callee_state, "advance", CALLEE_KEY_SHA256)
+        .expect("advance verifier is installed in callee state");
+    assert!(operation(&caller_state, "not-installed", CALLER_KEY_SHA256).is_none());
+
+    let installed_claim = caller_state
+        .operations
+        .get(&EntryPointBuf(b"claim".to_vec()))
+        .expect("claim operation exists before state mutation");
+    let mut changed_state = caller_state.clone();
+    changed_state.operations = changed_state.operations.insert(
+        EntryPointBuf(b"unexpected-operation".to_vec()),
+        (*installed_claim).clone(),
+    );
+    let mut changed_state_bytes = Vec::new();
+    tagged_serialize(&changed_state, &mut changed_state_bytes).unwrap();
+    assert!(!state_identity_matches(
+        &changed_state_bytes,
+        CALLER_STATE_SHA256
+    ));
+    assert!(operation(&changed_state, "claim", CALLER_KEY_SHA256).is_some());
     let caller_parameters = pinned_parameters(&directory, "bls_midnight_2p9", 9, CALLER_SRS_SHA256);
     let callee_parameters = pinned_parameters(&directory, "bls_midnight_2p7", 7, CALLEE_SRS_SHA256);
     let caller_srs = fs::read(directory.join("bls_midnight_2p9")).unwrap();
