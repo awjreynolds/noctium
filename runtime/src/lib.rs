@@ -667,6 +667,11 @@ pub enum FabHashInput {
     Native {
         value: Box<Expr>,
     },
+    Curve {
+        #[serde(rename = "type")]
+        ty: String,
+        value: Box<Expr>,
+    },
 }
 
 pub type Environment = BTreeMap<String, Value>;
@@ -736,6 +741,73 @@ fn aligned_fab_uint(value: &Value, maximum: &BigUint) -> Result<AlignedValue> {
     .ok_or_else(|| anyhow!("invalid FAB unsigned alignment"))
 }
 
+#[derive(Clone, Copy)]
+enum FabCurveAlignment {
+    Field,
+    Bytes(usize),
+}
+
+fn fab_curve_alignments(ty: &ScalarType) -> Result<Vec<FabCurveAlignment>> {
+    use FabCurveAlignment::{Bytes, Field};
+
+    Ok(match ty {
+        ScalarType::JubjubScalar => vec![Field],
+        ScalarType::JubjubPoint => vec![Field, Field],
+        #[cfg(feature = "zkir-321")]
+        ScalarType::Foreign(ty) => {
+            use crate::foreign::{ForeignFamily, ForeignRole};
+            match (ty.family(), ty.role()) {
+                (_, ForeignRole::Base) => vec![Bytes(24), Bytes(8)],
+                (ForeignFamily::Curve25519, ForeignRole::Scalar) => vec![Bytes(26), Bytes(7)],
+                (_, ForeignRole::Scalar) => vec![Bytes(24), Bytes(8)],
+                (ForeignFamily::Curve25519, ForeignRole::Point) => {
+                    vec![Bytes(24), Bytes(8), Bytes(24), Bytes(8)]
+                }
+                (_, ForeignRole::Point) => vec![Bytes(24), Bytes(8), Bytes(24), Bytes(8), Field],
+            }
+        }
+        _ => bail!("unsupported FAB curve alignment"),
+    })
+}
+
+fn aligned_fab_curve_bytes(value: Fr, width: usize) -> Result<AlignedValue> {
+    let bytes = BigUint::from_bytes_le(&value.as_le_bytes()).to_bytes_le();
+    ensure!(
+        bytes.len() <= width,
+        "FAB curve limb exceeds its byte alignment"
+    );
+    AlignedValue::new(
+        FabValue(vec![ValueAtom(bytes).normalize()]),
+        Alignment::singleton(AlignmentAtom::Bytes {
+            length: u32::try_from(width)?,
+        }),
+    )
+    .ok_or_else(|| anyhow!("invalid FAB curve byte alignment"))
+}
+
+fn aligned_fab_curve(value: &Value, expected: &ScalarType) -> Result<AlignedValue> {
+    value.validate()?;
+    ensure!(
+        value.scalar_type() == *expected,
+        "FAB curve value type differs from schema"
+    );
+    let fields = typed_scalar_fields(value)?;
+    let alignments = fab_curve_alignments(expected)?;
+    ensure!(
+        fields.len() == alignments.len(),
+        "FAB curve alignment field count differs from native encoding"
+    );
+    let parts = fields
+        .into_iter()
+        .zip(alignments)
+        .map(|(field, alignment)| match alignment {
+            FabCurveAlignment::Field => Ok(field_value(field)),
+            FabCurveAlignment::Bytes(width) => aligned_fab_curve_bytes(field, width),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(AlignedValue::concat(&parts))
+}
+
 fn aligned_fab_values(
     fields: &[crate::aggregates::FabHashField],
     values: &[FabHashInput],
@@ -797,6 +869,15 @@ fn aligned_fab_values(
                 (crate::aggregates::FabHashField::Native, FabHashInput::Native { value }) => {
                     Ok(field_value(evaluate(value, env)?.field()?))
                 }
+                (
+                    crate::aggregates::FabHashField::Curve(expected),
+                    FabHashInput::Curve { ty, value },
+                ) => {
+                    let actual = ScalarType::parse(ty)?;
+                    ensure!(actual == *expected, "FAB curve type differs from schema");
+                    let value = evaluate(value, env)?;
+                    aligned_fab_curve(&value, &actual)
+                }
                 _ => bail!("FAB hash value type differs from schema"),
             }
         })
@@ -808,10 +889,11 @@ fn aligned_fab_payload(
     schema_json: &Json,
     values: &[FabHashInput],
     env: &Environment,
+    include_curves: bool,
 ) -> Result<AlignedValue> {
     let schema_bytes = serde_json::to_vec(schema_json)?;
     let schema = Schema::from_json(&schema_bytes)?;
-    let fields = schema.fab_hash_fields()?;
+    let fields = schema.fab_hash_fields(include_curves)?;
     aligned_fab_values(&fields, values, env)
 }
 
@@ -820,7 +902,7 @@ fn hash_to_curve_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, true)?;
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
@@ -837,7 +919,7 @@ fn persistent_hash_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    persistent_hash(aligned_fab_payload(schema_json, values, env)?)
+    persistent_hash(aligned_fab_payload(schema_json, values, env, true)?)
 }
 
 fn persistent_commit_fab(
@@ -847,7 +929,7 @@ fn persistent_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = claim_hash_output(evaluate(opening, env)?, "FAB persistent commitment opening")?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, false)?;
     let commitment = base_crypto::hash::persistent_commit(&ValueReprAlignedValue(payload), opening);
     Ok(Value::Bytes(commitment.0.to_vec()))
 }
@@ -859,7 +941,7 @@ fn transient_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = evaluate(opening, env)?.field()?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, false)?;
     Ok(Value::Native(transient_crypto::hash::transient_commit(
         &ValueReprAlignedValue(payload),
         opening,
@@ -1167,7 +1249,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::Sha512Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(schema, values, env, false)?).binary_vec(),
             );
             Value::Bytes(sha2::Sha512::digest(preimage.as_slice()).to_vec())
         }
