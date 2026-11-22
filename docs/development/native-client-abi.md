@@ -133,6 +133,20 @@ in traversal order. The getter returns the UInt64 as a decimal string through
 the native result handle, preserving values above JavaScript’s safe integer
 range. It uses the supplied snapshot for the entire read. [C header](../../runtime/include/noctium_native.h) · [Native tests](../../runtime/tests/counter_snapshot_ffi.rs)
 
+## Read qualified coin Set pages
+
+Pass the emitted plan and tagged contract snapshot to
+`noctium_ledger_collection_page` with the two trusted SHA-256 digests.
+Use the Set name, `keys: []`, and the requested `offset` and `limit`.
+The page returns `kind: "set"` and `nextOffset`. Each entry contains
+`nonce` and `color` as 32-byte values, and `value` and `mtIndex` as
+decimal strings.
+
+Pages sort the records by nonce bytes, color bytes, numeric value, then
+numeric Merkle tree index. Use the same snapshot and plan for every page.
+The reader checks each member's canonical FAB record and null Set marker
+before returning any entries. [C header](../../runtime/include/noctium_native.h) · [Native checks](../../runtime/tests/collection_reads.rs)
+
 ## Read Merkle snapshots
 
 `noctium_ledger_collection_page` reads ordinary and historic Merkle trees

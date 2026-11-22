@@ -7,15 +7,16 @@ const contract = new Contract({});
 const wallet = '00'.repeat(32);
 const own = '09'.repeat(32);
 const coin = { color: new Uint8Array(32).fill(1), nonce: new Uint8Array(32).fill(2), value: 5n };
+const secondCoin = { color: new Uint8Array(32).fill(1), nonce: new Uint8Array(32).fill(3), value: 7n };
 const { currentContractState } = await contract.initialState(createConstructorContext(null, wallet));
 const view = (state) => {
   const { coinSlot, coinSet, coinList } = ledger(state);
   return { coinSlot, coinSet: [...coinSet], coinList: [...coinList] };
 };
 const initial = view(currentContractState.data);
-const contextFor = (entry) => createCircuitContext({
+const contextFor = (entry, contractState = currentContractState.data) => createCircuitContext({
   circuitId: entry, contractAddress: own, coinPublicKeyOrZswapState: wallet,
-  contractState: currentContractState.data, privateState: null,
+  contractState, privateState: null,
 });
 const receipt = { impact: {} };
 
@@ -51,5 +52,36 @@ for (const [entry, field] of [['putInCell', 'coinSlot'], ['putInSet', 'coinSet']
   assert.deepEqual(concatenate.inputs, ['0x17', '0x5b']);
   receipt.impact[entry] = impact;
 }
+
+const firstSet = await contract.circuits.putInSet(contextFor('putInSet'), coin, true);
+const stateWithFirstCoin = firstSet.context.callContext.currentQueryContext.state;
+const secondSet = await contract.circuits.putInSet(
+  contextFor('putInSet', stateWithFirstCoin), secondCoin, true,
+);
+const qualifiedFirst = { ...coin, mt_index: 0n };
+const qualifiedSecond = { ...secondCoin, mt_index: 0n };
+const qualifiedSet = ledger(secondSet.context.callContext.currentQueryContext.state).coinSet;
+assert.equal(qualifiedSet.size().toString(), '2');
+assert.equal(qualifiedSet.member(qualifiedFirst), true);
+assert.equal(qualifiedSet.member(qualifiedSecond), true);
+for (const altered of [
+  { ...qualifiedFirst, color: new Uint8Array(32).fill(2) },
+  { ...qualifiedFirst, nonce: new Uint8Array(32).fill(4) },
+  { ...qualifiedFirst, value: 6n },
+  { ...qualifiedFirst, mt_index: 1n },
+]) {
+  assert.equal(qualifiedSet.member(altered), false);
+}
+const compareBytes = (left, right) => Buffer.compare(left, right);
+const compareQualified = (left, right) =>
+  compareBytes(left.nonce, right.nonce)
+  || compareBytes(left.color, right.color)
+  || (left.value < right.value ? -1 : left.value > right.value ? 1 : 0)
+  || (left.mt_index < right.mt_index ? -1 : left.mt_index > right.mt_index ? 1 : 0);
+// Compact Set iteration order is unspecified. Compare complete records in schema order.
+assert.deepEqual(
+  [...qualifiedSet].sort(compareQualified),
+  [qualifiedFirst, qualifiedSecond],
+);
 
 console.log(JSON.stringify(receipt, null, 2));
