@@ -112,6 +112,7 @@ jobs:
           lake env lean tests/StructuredLedgerWitness.lean
           lake env lean tests/StructuredTypedCells.lean
           lake env lean tests/FiniteRangeWitness.lean
+          lake env lean tests/StaticAssertionRanges.lean
           lake env lean tests/ReadableFiniteRange.lean
           lake env lean tests/ReadableContainerLoop.lean
           lake env lean tests/ReadableIteration.lean
