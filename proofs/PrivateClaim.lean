@@ -88,7 +88,7 @@ theorem effects_accept_unspent (ctx : EvalContext) (env : EvalEnv)
   have hr : ¬ ctx.modulus ≤ root := Nat.not_le.mpr hcRoot
   have hc : ¬ ctx.modulus ≤ campaign := Nat.not_le.mpr hcCampaign
   have hn : ¬ ctx.modulus ≤ nullifier := Nat.not_le.mpr hcNullifier
-  simp! [runEffectsWithEnv, claimEntry, PrivateClaim, state, recorded,
+  simp! [runEffectsWithEnv, runEffectWithEnv, claimEntry, PrivateClaim, state, recorded,
     Expr.eval, Value.as, Value.pack, hRoot, hCampaign, hcRoot, hcCampaign,
     hcNullifier, hr, hc, hn, hAbsent, Except.pure, Except.bind, Except.map]
   dsimp only [Bind.bind, Except.bind]
@@ -199,7 +199,7 @@ theorem effects_reject_recorded (ctx : EvalContext) (env : EvalEnv)
   have hSelf : (Value.native nullifier == Value.native nullifier) = Bool.true := by
     change (nullifier == nullifier) = Bool.true
     simp
-  simp! [runEffectsWithEnv, claimEntry, PrivateClaim, state, recorded,
+  simp! [runEffectsWithEnv, runEffectWithEnv, claimEntry, PrivateClaim, state, recorded,
     Expr.eval, Value.as, Value.pack, hRoot, hCampaign, hcRoot, hcCampaign, hcNullifier,
     hr, hc, hn, Claim.markSpent, hSelf, Except.pure, Except.bind, Except.map]
   rfl
@@ -265,7 +265,7 @@ theorem wrong_root_effects_rejected (ctx : EvalContext) (env : EvalEnv)
       (state storedRoot campaign values) = .error "state transition guard failed" := by
   have hs : ¬ ctx.modulus ≤ storedRoot := Nat.not_le.mpr hcStored
   have hp : ¬ ctx.modulus ≤ publicRoot := Nat.not_le.mpr hcPublic
-  simp! [runEffectsWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
+  simp! [runEffectsWithEnv, runEffectWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
     hRoot, hcStored, hcPublic, hs, hp, hMismatch, Except.pure, Except.bind, Except.map]
   rfl
 
@@ -296,7 +296,7 @@ theorem wrong_campaign_effects_rejected (ctx : EvalContext) (env : EvalEnv)
   have hr : ¬ ctx.modulus ≤ root := Nat.not_le.mpr hcRoot
   have hs : ¬ ctx.modulus ≤ storedCampaign := Nat.not_le.mpr hcStored
   have hp : ¬ ctx.modulus ≤ publicCampaign := Nat.not_le.mpr hcPublic
-  simp! [runEffectsWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
+  simp! [runEffectsWithEnv, runEffectWithEnv, claimEntry, PrivateClaim, state, Expr.eval, Value.as, Value.pack,
     hRoot, hCampaign, hcRoot, hcStored, hcPublic, hr, hs, hp, hMismatch,
     Except.pure, Except.bind, Except.map]
   rfl
