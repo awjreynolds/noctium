@@ -81,10 +81,15 @@ fn operation(state: &ContractState<Db>, name: &str, key_sha256: &str) -> Option<
         .operations
         .get(&EntryPointBuf(name.as_bytes().to_vec()))?;
     let key = operation.v3_vk()?.clone();
-    let mut encoded = Vec::new();
-    tagged_serialize(&key, &mut encoded).expect("verifier key re-encodes");
+    let encoded = tagged_verifier_key(&key);
     assert_eq!(hex::encode(Sha256::digest(&encoded)), key_sha256);
     Some(key)
+}
+
+fn tagged_verifier_key(key: &VerifierKey) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    tagged_serialize(key, &mut encoded).expect("verifier key re-encodes");
+    encoded
 }
 
 fn verify(key: &VerifierKey, parameters: &ParamsVerifier, proof: &Proof, statement: &[Fr]) -> bool {
@@ -130,6 +135,34 @@ fn retained_composition_proofs_verify_against_their_installed_keys_and_historica
     let callee_key = operation(&callee_state, "advance", CALLEE_KEY_SHA256)
         .expect("advance verifier is installed in callee state");
     assert!(operation(&caller_state, "not-installed", CALLER_KEY_SHA256).is_none());
+
+    if let Some(key_directory) = env::var_os("NOCTIUM_ARCHIVED_REGENERATED_KEYS_DIR") {
+        let key_directory = PathBuf::from(key_directory);
+        let regenerated_caller =
+            fs::read(key_directory.join("caller/IndependentCaller.claim.verifier"))
+                .expect("regenerated caller verifier key is readable");
+        let regenerated_callee =
+            fs::read(key_directory.join("callee/IndependentCallee.advance.verifier"))
+                .expect("regenerated callee verifier key is readable");
+        let installed_caller = tagged_verifier_key(&caller_key);
+        let installed_callee = tagged_verifier_key(&callee_key);
+        assert_eq!(
+            regenerated_caller, installed_caller,
+            "K9 caller verifier key matches its installed tagged key byte-for-byte"
+        );
+        assert_eq!(
+            regenerated_callee, installed_callee,
+            "K7 callee verifier key matches its installed tagged key byte-for-byte"
+        );
+        assert_ne!(
+            regenerated_caller, installed_callee,
+            "crossed caller verifier key is rejected for the callee operation"
+        );
+        assert_ne!(
+            regenerated_callee, installed_caller,
+            "crossed callee verifier key is rejected for the caller operation"
+        );
+    }
 
     let installed_claim = caller_state
         .operations
