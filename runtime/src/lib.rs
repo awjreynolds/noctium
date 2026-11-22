@@ -894,10 +894,11 @@ fn aligned_fab_payload(
     schema_json: &Json,
     values: &[FabHashInput],
     env: &Environment,
+    operand_limit: usize,
 ) -> Result<AlignedValue> {
     let schema_bytes = serde_json::to_vec(schema_json)?;
     let schema = Schema::from_json(&schema_bytes)?;
-    let fields = schema.fab_hash_nested_fields()?;
+    let fields = schema.fab_hash_nested_fields(operand_limit)?;
     aligned_fab_values(&fields, values, env)
 }
 
@@ -906,7 +907,7 @@ fn hash_to_curve_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, MAX_HASH_TO_CURVE_FIELDS)?;
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
@@ -923,7 +924,12 @@ fn persistent_hash_fab(
     values: &[FabHashInput],
     env: &Environment,
 ) -> Result<Value> {
-    persistent_hash(aligned_fab_payload(schema_json, values, env)?)
+    persistent_hash(aligned_fab_payload(
+        schema_json,
+        values,
+        env,
+        aggregates::MAX_FAB_OPERANDS,
+    )?)
 }
 
 fn persistent_commit_fab(
@@ -933,7 +939,7 @@ fn persistent_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = claim_hash_output(evaluate(opening, env)?, "FAB persistent commitment opening")?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, aggregates::MAX_FAB_OPERANDS - 2)?;
     let commitment = base_crypto::hash::persistent_commit(&ValueReprAlignedValue(payload), opening);
     Ok(Value::Bytes(commitment.0.to_vec()))
 }
@@ -945,7 +951,7 @@ fn transient_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = evaluate(opening, env)?.field()?;
-    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let payload = aligned_fab_payload(schema_json, values, env, MAX_TRANSIENT_HASH_FIELDS - 1)?;
     Ok(Value::Native(transient_crypto::hash::transient_commit(
         &ValueReprAlignedValue(payload),
         opening,
@@ -1253,13 +1259,25 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::Sha512Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(
+                    schema,
+                    values,
+                    env,
+                    aggregates::MAX_FAB_OPERANDS,
+                )?)
+                .binary_vec(),
             );
             Value::Bytes(sha2::Sha512::digest(preimage.as_slice()).to_vec())
         }
         Expr::Keccak256Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
-                ValueReprAlignedValue(aligned_fab_payload(schema, values, env)?).binary_vec(),
+                ValueReprAlignedValue(aligned_fab_payload(
+                    schema,
+                    values,
+                    env,
+                    aggregates::MAX_FAB_OPERANDS,
+                )?)
+                .binary_vec(),
             );
             Value::Bytes(sha3::Keccak256::digest(preimage.as_slice()).to_vec())
         }
@@ -1612,6 +1630,12 @@ pub enum Instruction {
         #[serde(rename = "pushPath")]
         push_path: bool,
         keys: Vec<PathPart>,
+    },
+    #[serde(rename = "indexRecordPath")]
+    IndexRecordPath {
+        slot: u32,
+        schema: Json,
+        expressions: Vec<Expr>,
     },
     New,
     Push {
@@ -2447,6 +2471,18 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
             4 + ledger_key_aligned_field_count(&key_type)
         }
         Instruction::IndexPath { slot, keys, .. } => path_field_count(plan, *slot, keys)?,
+        Instruction::IndexRecordPath {
+            slot,
+            schema,
+            expressions,
+        } => {
+            let record = checked_typed_record_schema(schema)?;
+            ensure!(
+                expressions.len() == record.fields.len(),
+                "record Map index expression count mismatch"
+            );
+            path_field_count(plan, *slot, &[])? + record.popeq_impact_width() - 1
+        }
         Instruction::ListLength { .. }
         | Instruction::MapSize { .. }
         | Instruction::MapIsEmpty { .. }
@@ -2469,7 +2505,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         Instruction::PushFields {
             expressions,
             schema,
-            ..
+            storage,
         } => {
             if let Some(name) = typed_scalar_schema_token(schema) {
                 let ty = ScalarType::parse(name)?;
@@ -2479,7 +2515,11 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 3 + 2 * expressions.len()
             } else {
-                let schema = checked_typed_record_schema(schema)?;
+                let schema = if *storage {
+                    checked_cell_record_schema(schema)?
+                } else {
+                    checked_typed_record_schema(schema)?
+                };
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -2499,7 +2539,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 2 + 2 * expressions.len()
             } else {
-                let schema = checked_typed_record_schema(schema)?;
+                let schema = checked_cell_record_schema(schema)?;
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -2904,7 +2944,11 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        checked_typed_record_schema(schema)?;
+        if depth == 0 {
+            checked_cell_record_schema(schema)?;
+        } else {
+            checked_typed_record_schema(schema)?;
+        }
         return Ok(());
     }
     if let Some(key) = fields.get("set") {
@@ -2929,6 +2973,19 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         .and_then(Json::as_array)
         .filter(|parts| parts.len() == 2)
         .ok_or_else(|| anyhow!("invalid state tree map schema"))?;
+    if let Some(record) = ordinary_record_key_schema(&parts[0]) {
+        ensure!(depth == 0, "record-key Maps must use a root state slot");
+        let value_type = parts[1]
+            .get("scalar")
+            .and_then(Json::as_str)
+            .ok_or_else(|| anyhow!("record-key Maps require a scalar value"))?;
+        ensure!(
+            !matches!(value_type, "OpaqueBytes" | "OpaqueString"),
+            "opaque Map values require a Bytes32 key"
+        );
+        checked_typed_record_schema(record)?;
+        return validate_tree_schema(&parts[1], depth + 1);
+    }
     let key_type = ledger_key_type(&parts[0])?;
     if parts[1].get("scalar").and_then(Json::as_str) == Some("OpaqueString") {
         ensure!(
@@ -3044,7 +3101,7 @@ fn validate_record_cell(plan: &Plan, slot: u32, operation_schema: &Json) -> Resu
         record == operation_schema,
         "record Cell write differs from state schema"
     );
-    checked_typed_record_schema(record)?;
+    checked_cell_record_schema(record)?;
     Ok(())
 }
 
@@ -3148,10 +3205,7 @@ impl CheckedRecordSchema {
     fn field_values(&self) -> usize {
         self.fields
             .iter()
-            .map(|field| match &field.ty {
-                ScalarType::Bytes32 | ScalarType::JubjubPoint => 2,
-                _ => 1,
-            })
+            .map(|field| scalar_payload_field_count(&field.ty))
             .sum()
     }
 
@@ -3165,8 +3219,10 @@ impl CheckedRecordSchema {
 }
 
 fn record_projection_bindings(name: &str, ty: &ScalarType) -> Result<Vec<(String, String)>> {
+    if let Some(length) = ty.bytes_length() {
+        return byte_projection_bindings(name, length);
+    }
     Ok(match ty {
-        ScalarType::Bytes32 => byte_projection_bindings(name, 32)?,
         ScalarType::JubjubPoint => (0..2)
             .map(|index| {
                 (
@@ -3252,6 +3308,7 @@ fn record_type_name(ty: &ScalarType) -> Result<Cow<'static, str>> {
         ScalarType::Native => "Native".into(),
         ScalarType::Bool => "Bool".into(),
         ScalarType::Bytes32 => "Bytes<32>".into(),
+        ScalarType::Bytes(length) => format!("Bytes<{length}>").into(),
         ScalarType::UInt(maximum) => format!("UIntRange<{}>", maximum + 1u8).into(),
         ScalarType::JubjubPoint => "JubjubPoint".into(),
         _ => bail!("unsupported mixed record field type"),
@@ -3259,14 +3316,24 @@ fn record_type_name(ty: &ScalarType) -> Result<Cow<'static, str>> {
 }
 
 fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
-    checked_record_schema_fields(json, false)
+    checked_record_schema_fields(json, RecordScope::Legacy)
 }
 
 fn checked_typed_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
-    checked_record_schema_fields(json, true)
+    checked_record_schema_fields(json, RecordScope::Typed)
 }
 
-fn checked_record_schema_fields(json: &Json, allow_typed_scalars: bool) -> Result<CheckedRecordSchema> {
+fn checked_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    checked_record_schema_fields(json, RecordScope::Cell)
+}
+
+enum RecordScope {
+    Legacy,
+    Typed,
+    Cell,
+}
+
+fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<CheckedRecordSchema> {
     if is_shielded_coin_record_schema(json) {
         let fields = [
             ("nonce", "Bytes<32>"),
@@ -3353,12 +3420,14 @@ fn checked_record_schema_fields(json: &Json, allow_typed_scalars: bool) -> Resul
             .and_then(Json::as_str)
             .ok_or_else(|| anyhow!("invalid mixed record field type"))?;
         let ty = ScalarType::parse(ty_name)?;
+        let admitted = match &ty {
+            ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint => true,
+            ScalarType::Bool | ScalarType::UInt(_) => !matches!(scope, RecordScope::Legacy),
+            ScalarType::Bytes(_) => matches!(scope, RecordScope::Cell),
+            _ => false,
+        };
         ensure!(
-            (matches!(
-                &ty,
-                ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint
-            ) || allow_typed_scalars && matches!(&ty, ScalarType::Bool | ScalarType::UInt(_)))
-                && record_type_name(&ty)?.as_ref() == ty_name,
+            admitted && record_type_name(&ty)?.as_ref() == ty_name,
             "unsupported or noncanonical mixed record field type"
         );
         checked.push(RecordField {
@@ -3442,6 +3511,7 @@ fn is_shielded_send_read_only(operation: &Instruction) -> bool {
                 push_path: false,
                 ..
             }
+            | Instruction::IndexRecordPath { .. }
             | Instruction::Push { storage: false, .. }
             | Instruction::Popeq { .. }
             | Instruction::PopeqFields { .. }
@@ -3816,12 +3886,28 @@ fn is_record_schema(schema: &Json) -> bool {
             .is_some_and(|object| object.contains_key("id") && object.contains_key("fields"))
 }
 
-fn ordinary_record_set_schema(plan: &Plan, slot: u32) -> Option<&Json> {
-    let record = tree_schema_at_path(plan, slot, 0)
-        .ok()?
-        .get("set")?
-        .get("composite")?;
+fn ordinary_record_key_schema(key: &Json) -> Option<&Json> {
+    let descriptor = key.as_object().filter(|object| object.len() == 1)?;
+    let record = descriptor.get("composite")?;
     (!is_shielded_coin_record_schema(record)).then_some(record)
+}
+
+fn ordinary_record_set_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    ordinary_record_key_schema(tree_schema_at_path(plan, slot, 0).ok()?.get("set")?)
+}
+
+fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    let parts = tree_schema_at_path(plan, slot, 0)
+        .ok()?
+        .get("map")?
+        .as_array()
+        .filter(|parts| parts.len() == 2)?;
+    parts[1].get("scalar")?.as_str()?;
+    ordinary_record_key_schema(&parts[0])
+}
+
+fn record_collection_key_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    ordinary_record_set_schema(plan, slot).or_else(|| ordinary_record_map_schema(plan, slot))
 }
 
 fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
@@ -3833,7 +3919,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 schema,
                 ..
             } if is_record_schema(schema) => {
-                let indexed_set = index.checked_sub(1).and_then(|previous| {
+                let indexed_collection = index.checked_sub(1).and_then(|previous| {
                     let (operation, path_guard) = unguarded_operation(plan.operations.get(previous)?);
                     let Instruction::IndexPath { slot, keys, .. } = operation else {
                         return None;
@@ -3841,12 +3927,12 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     if !keys.is_empty() {
                         return None;
                     }
-                    ordinary_record_set_schema(plan, *slot).map(|expected| (expected, path_guard))
+                    record_collection_key_schema(plan, *slot).map(|expected| (expected, path_guard))
                 });
-                if let Some((expected, path_guard)) = indexed_set {
+                if let Some((expected, path_guard)) = indexed_collection {
                     ensure!(
                         expected == schema && path_guard == guard,
-                        "record Set key differs from its indexed schema or guard"
+                        "record key differs from its indexed schema or guard"
                     );
                     checked_typed_record_schema(schema)?;
                 } else {
@@ -3855,8 +3941,25 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
             }
             Instruction::MapRemoveRecord { slot, schema, .. } => {
                 ensure!(
-                    ordinary_record_set_schema(plan, *slot) == Some(schema),
-                    "record Set removal differs from state schema"
+                    record_collection_key_schema(plan, *slot) == Some(schema),
+                    "record key removal differs from state schema"
+                );
+                checked_typed_record_schema(schema)?;
+            }
+            Instruction::IndexRecordPath { slot, schema, .. } => {
+                ensure!(
+                    ordinary_record_map_schema(plan, *slot) == Some(schema),
+                    "record Map index differs from state schema"
+                );
+                let (read, read_guard) = plan
+                    .operations
+                    .get(index + 1)
+                    .map(unguarded_operation)
+                    .ok_or_else(|| anyhow!("record Map index is missing its read"))?;
+                ensure!(
+                    matches!(read, Instruction::Popeq { .. } | Instruction::PopeqFields { .. })
+                        && read_guard == guard,
+                    "record Map index and read guards differ"
                 );
                 checked_typed_record_schema(schema)?;
             }
@@ -3945,7 +4048,11 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 else {
                     bail!("record read has no indexed path")
                 };
-                checked_typed_record_schema(schema)?;
+                if keys.is_empty() {
+                    checked_cell_record_schema(schema)?;
+                } else {
+                    checked_typed_record_schema(schema)?;
+                }
                 ensure!(
                     tree_schema_at_path(plan, *slot, keys.len())?.get("composite") == Some(schema),
                     "record read differs from state schema"
@@ -4218,15 +4325,10 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
             alignment: template.alignment,
         };
         offset = end;
-        let alignment = if field.ty == ScalarType::Bytes32 {
-            "bytes32"
-        } else {
-            "field"
-        };
         values.push(decode_state_cell(
             &part,
             record_type_name(&field.ty)?.as_ref(),
-            alignment,
+            &scalar_storage_alignment(&field.ty),
         )?);
     }
     ensure!(
@@ -4238,7 +4340,7 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
 }
 
 pub(crate) fn default_record_value(schema: &Json) -> Result<Json> {
-    let schema = checked_typed_record_schema(schema)?;
+    let schema = checked_cell_record_schema(schema)?;
     if let Some(aggregate) = schema.aggregate {
         return Ok(serde_json::from_slice(&aggregate.from_leaf_json(
             &vec![Json::String("0".into()); aggregate.counts().leaves],
@@ -5135,7 +5237,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                     &input_value(ty, value)?,
                 )?)));
             } else if let Some(schema) = schema.get("composite") {
-                let schema = checked_typed_record_schema(schema)?;
+                let schema = checked_cell_record_schema(schema)?;
                 let fields = record_values_from_json(&schema, value)?;
                 values.push(StateValue::Cell(Sp::new(aligned_record_value(
                     &schema, &fields,
@@ -5495,7 +5597,7 @@ fn list_operation_scalar_type(
     Ok(None)
 }
 
-fn list_scalar_storage_alignment(ty: &ScalarType) -> String {
+fn scalar_storage_alignment(ty: &ScalarType) -> String {
     match ty {
         ScalarType::Bytes32 => "bytes32".to_owned(),
         ScalarType::Bytes(length) => format!("bytes:{length}"),
@@ -5513,7 +5615,7 @@ fn list_scalar_atom_count(ty: &ScalarType) -> usize {
     }
 }
 
-fn list_scalar_payload_field_count(ty: &ScalarType) -> usize {
+fn scalar_payload_field_count(ty: &ScalarType) -> usize {
     match ty {
         ScalarType::Bytes32 => 2,
         ScalarType::Bytes(length) => length.div_ceil(31),
@@ -5525,11 +5627,11 @@ fn list_scalar_payload_field_count(ty: &ScalarType) -> usize {
 }
 
 fn list_scalar_popeq_impact_width(ty: &ScalarType) -> usize {
-    2 + list_scalar_atom_count(ty) + list_scalar_payload_field_count(ty)
+    2 + list_scalar_atom_count(ty) + scalar_payload_field_count(ty)
 }
 
 fn list_scalar_push_impact_width(ty: &ScalarType) -> usize {
-    3 + list_scalar_atom_count(ty) + list_scalar_payload_field_count(ty)
+    3 + list_scalar_atom_count(ty) + scalar_payload_field_count(ty)
 }
 
 fn validate_map_size_path(plan: &Plan, slot: u32, depth: usize) -> Result<()> {
@@ -5546,7 +5648,11 @@ fn validate_map_size_path(plan: &Plan, slot: u32, depth: usize) -> Result<()> {
         }
     };
     if let Some(key) = schema.get("set") {
-        ledger_key_type(key)?;
+        if depth == 0 && let Some(record) = ordinary_record_set_schema(plan, slot) {
+            checked_typed_record_schema(record)?;
+        } else {
+            ledger_key_type(key)?;
+        }
         return Ok(());
     }
     ensure!(
@@ -5606,7 +5712,7 @@ fn native_list_value(
     };
     if let Some(ty_name) = schema.get("scalar").and_then(Json::as_str) {
         let ty = validate_tree_scalar_type(ty_name)?;
-        decode_state_cell(head, ty_name, &list_scalar_storage_alignment(&ty))?;
+        decode_state_cell(head, ty_name, &scalar_storage_alignment(&ty))?;
     } else {
         let checked = checked_typed_record_schema(
             schema
@@ -6281,7 +6387,8 @@ fn probe_instruction(
         Instruction::PushFields { expressions, .. } => {
             probe_expressions(expressions, plan, env, deferred_outputs)
         }
-        Instruction::MapRemoveRecord { expressions, .. } => {
+        Instruction::MapRemoveRecord { expressions, .. }
+        | Instruction::IndexRecordPath { expressions, .. } => {
             probe_expressions(expressions, plan, env, deferred_outputs)
         }
         Instruction::ClaimContractCall {
@@ -6835,6 +6942,7 @@ fn validate_guarded_shape(operation: &Instruction) -> Result<()> {
                 | Instruction::Push { .. }
                 | Instruction::Insert { .. }
                 | Instruction::IndexPath { .. }
+                | Instruction::IndexRecordPath { .. }
                 | Instruction::New
                 | Instruction::PushFields { .. }
                 | Instruction::PopeqFields { .. }
@@ -7364,7 +7472,7 @@ impl PreparationCursor {
                             );
                             event = Some(read_event(read, false, env, vec![read.name.clone()]));
                         } else {
-                            let checked = checked_typed_record_schema(schema)?;
+                            let checked = checked_cell_record_schema(schema)?;
                             record_component_names(read, expressions, schema, &checked)?;
                             let defaults = checked
                                 .fields
@@ -7572,6 +7680,33 @@ impl PreparationCursor {
                 current_index = Some((*slot, values));
                 op
             }
+            Instruction::IndexRecordPath {
+                slot,
+                schema,
+                expressions,
+            } => {
+                let record = checked_typed_record_schema(schema)?;
+                let fields = record_values_from_expressions(&record, expressions, &env)?;
+                let key = aligned_record_value(&record, &fields)?;
+                let path = vec![
+                    Key::Value(
+                        field_value(Fr::from(*slot as u64))
+                            .try_into()
+                            .map_err(|_| anyhow!("invalid native index key"))?,
+                    ),
+                    Key::Value(
+                        key.clone()
+                            .try_into()
+                            .map_err(|_| anyhow!("invalid native record Map key"))?,
+                    ),
+                ];
+                current_index = Some((*slot, vec![key]));
+                Op::Idx {
+                    cached: false,
+                    push_path: false,
+                    path: path.into_iter().collect(),
+                }
+            }
             Instruction::New => Op::New,
             Instruction::Push {
                 storage,
@@ -7666,7 +7801,11 @@ impl PreparationCursor {
                             .map_err(|_| anyhow!("invalid typed storage value"))?,
                     }
                 } else {
-                    let schema = checked_typed_record_schema(schema)?;
+                    let schema = if *storage {
+                        checked_cell_record_schema(schema)?
+                    } else {
+                        checked_typed_record_schema(schema)?
+                    };
                     let fields = record_values_from_expressions(&schema, expressions, &env)?;
                     Op::Push {
                         storage: *storage,
@@ -7752,7 +7891,8 @@ impl PreparationCursor {
                             if read_type.bytes_length().is_some() {
                                 validate_byte_read_projections(read, &read_type)?;
                             }
-                            if is_typed_scalar(&read_type)
+                            if (keys.len() == 1 && ordinary_record_map_schema(plan, *slot).is_some())
+                                || is_typed_scalar(&read_type)
                                 || read_type.bytes_length().is_some()
                                 || matches!(
                                     read_type,
@@ -7844,7 +7984,7 @@ impl PreparationCursor {
                         result: value,
                     }
                 } else {
-                    let checked = checked_typed_record_schema(schema)?;
+                    let checked = checked_cell_record_schema(schema)?;
                     record_component_names(read, expressions, schema, &checked)?;
                     let (slot, keys) = previous_index
                         .as_ref()
@@ -8289,7 +8429,7 @@ impl PreparationCursor {
                         .as_str()
                         .ok_or_else(|| anyhow!("invalid scalar List schema"))?;
                     let value =
-                        decode_state_cell(&head, ty_name, &list_scalar_storage_alignment(&ty))?;
+                        decode_state_cell(&head, ty_name, &scalar_storage_alignment(&ty))?;
                     event = Some(bind_list_scalar_read(
                         read,
                         &expressions[0],

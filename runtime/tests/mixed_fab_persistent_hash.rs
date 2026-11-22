@@ -268,3 +268,55 @@ fn root_fab_vectors_match_compact_digests() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_WIDE_FAB_VECTOR_DIR"]
+fn wide_fab_vectors_match_compact_digests() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_WIDE_FAB_VECTOR_DIR").context("NOCTIUM_WIDE_FAB_VECTOR_DIR")?,
+    );
+    for (length, digest) in [
+        (
+            33,
+            "eaa4e04a3b174594a50aadaa01338f6934790a85f6be3d54587937c916d32d89",
+        ),
+        (
+            64,
+            "d9f3c8064105485f0821fb42ba0846faef768a4d1987c65cdb7dfdba1e4a5656",
+        ),
+    ] {
+        let stem = format!("WideFabVectors.hash{length}");
+        let plan: Plan =
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
+        let circuit = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+        let mut inputs = (0..length)
+            .map(|index| (format!("lane{index}"), json!(index.to_string())))
+            .collect::<BTreeMap<_, _>>();
+        let initial = create_state(&plan, &BTreeMap::new())?;
+        let parameters = &ledger::structure::INITIAL_PARAMETERS;
+        let address = coin_structure::contract::ContractAddress::default();
+        let execution = prepare(&plan, &inputs, &initial, parameters, address)
+            .with_context(|| format!("prepare {stem}"))?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        let outputs = execution.returns_json();
+        assert_eq!(
+            outputs.get("digestResult"),
+            Some(&bytes(&hex::decode(digest)?)),
+            "digest for {stem}"
+        );
+        if length == 33 {
+            let preimage: Vec<u8> = (0..length as u16).flat_map(u16::to_le_bytes).collect();
+            assert_eq!(
+                outputs.get("shaDigestResult"),
+                Some(&bytes(&sha2::Sha512::digest(&preimage)))
+            );
+            assert_eq!(
+                outputs.get("keccakDigestResult"),
+                Some(&bytes(&sha3::Keccak256::digest(&preimage)))
+            );
+        }
+        inputs.insert(format!("lane{}", length - 1), json!("65536"));
+        assert!(prepare(&plan, &inputs, &initial, parameters, address).is_err());
+    }
+    Ok(())
+}

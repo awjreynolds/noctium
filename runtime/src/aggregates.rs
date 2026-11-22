@@ -9,6 +9,7 @@ pub const MAX_TRANSPORT_BYTES: usize = 1_048_576;
 pub const MAX_LEAVES: usize = 4096;
 pub const MAX_NODES: usize = 16384;
 pub const MAX_SEQUENCE: usize = 1024;
+pub(crate) const MAX_FAB_OPERANDS: usize = 4096;
 pub const MAX_DECLARATIONS: usize = 1024;
 // Each checked layout/value node has fewer than sixteen JSON metadata nodes.
 // This bounds malformed syntax before semantic layout validation, without a depth cap.
@@ -401,6 +402,13 @@ pub(crate) enum FabHashField {
 }
 
 impl FabHashField {
+    fn alignment_atom_count(&self) -> usize {
+        match self {
+            Self::Curve(_) => self.encoded_field_count(),
+            _ => 1,
+        }
+    }
+
     pub(crate) fn encoded_field_count(&self) -> usize {
         match self {
             Self::Bytes(length) => length.div_ceil(31),
@@ -1110,7 +1118,7 @@ impl Schema {
 
     /// Flatten a checked structure, tuple, or vector in declaration/index order.
     /// Unit contributes no logical fields.
-    pub(crate) fn fab_hash_nested_fields(&self) -> Result<Vec<FabHashField>> {
+    pub(crate) fn fab_hash_nested_fields(&self, operand_limit: usize) -> Result<Vec<FabHashField>> {
         let root = &self.nodes[self.root];
         ensure!(
             matches!(
@@ -1119,11 +1127,10 @@ impl Schema {
             ),
             "FAB hash requires a structure, tuple, or fixed vector"
         );
-        let fields = self.transient_hash_fields()?;
+        let fields = self.collect_fab_hash_fields(operand_limit)?;
         ensure!(
-            fields.len() <= 32
-                && (!fields.is_empty() || matches!(root, LayoutNode::Vector { length: 0, .. })),
-            "FAB hash field count is outside the supported range"
+            !fields.is_empty() || matches!(root, LayoutNode::Vector { length: 0, .. }),
+            "FAB hash needs at least one field or an empty root vector"
         );
         Ok(fields)
     }
@@ -1131,16 +1138,20 @@ impl Schema {
     /// Flatten a checked layout for transient hashing in struct, tuple, and
     /// fixed-vector order. Unit contributes no input fields.
     pub(crate) fn transient_hash_fields(&self) -> Result<Vec<FabHashField>> {
+        self.collect_fab_hash_fields(crate::MAX_TRANSIENT_HASH_FIELDS)
+    }
+
+    fn collect_fab_hash_fields(&self, operand_limit: usize) -> Result<Vec<FabHashField>> {
         let mut pending = vec![self.root];
-        let mut fields =
-            Vec::with_capacity(self.counts().leaves.min(crate::MAX_TRANSIENT_HASH_FIELDS));
+        let mut fields = Vec::with_capacity(self.counts().leaves.min(operand_limit));
         let mut encoded_fields = 0usize;
+        let mut alignment_atoms = 0usize;
         let mut visited = 0usize;
         while let Some(layout) = pending.pop() {
             visited = add(visited, 1)?;
             ensure!(
                 visited <= self.counts().expanded_nodes,
-                "FAB transient hash layout traversal limit exceeded"
+                "FAB hash layout traversal limit exceeded"
             );
             match &self.nodes[layout] {
                 LayoutNode::Unit => {}
@@ -1154,9 +1165,14 @@ impl Schema {
                 _ => {
                     let field = self.fab_hash_field(layout)?;
                     encoded_fields = add(encoded_fields, field.encoded_field_count())?;
+                    alignment_atoms = add(alignment_atoms, field.alignment_atom_count())?;
                     ensure!(
-                        encoded_fields <= crate::MAX_TRANSIENT_HASH_FIELDS,
-                        "FAB transient hash field vector exceeds compiler limit"
+                        encoded_fields <= operand_limit,
+                        "FAB hash field vector exceeds compiler limit"
+                    );
+                    ensure!(
+                        alignment_atoms <= MAX_NODES,
+                        "FAB hash alignment exceeds compiler limit"
                     );
                     fields.push(field);
                 }

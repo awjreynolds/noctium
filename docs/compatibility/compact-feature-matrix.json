@@ -2177,7 +2177,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order. The native checker reads the exact four-byte payload and UInt16 field from a root record Cell.",
       "source": [
         "adt"
       ],
@@ -2187,6 +2187,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedBytesRecordCell.lean",
         "tests/TypedRecordCell.lean",
         "runtime/tests/flat_record_cell.rs",
         "docs/development/opaque-cells-localnet-receipt.json",
@@ -2221,7 +2222,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open. A flat Bool/UInt16 record resets to the exact constructor state and returns its typed defaults.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact and the native checker on both guards, with sealed and mismatched schemas rejected by the native checker. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Funded coverage for ordinary records and equivalence for other aggregate layouts remain open. A flat Bool/UInt16 record resets to the exact constructor state and returns its typed defaults. The native checker restores the exact constructor state of a root Bytes4/UInt16 record Cell.",
       "source": [
         "adt"
       ],
@@ -2231,6 +2232,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedBytesRecordCell.lean",
         "tests/TypedRecordCell.lean",
         "tests/NativeCellReset.lean",
         "tests/compact/cell-reset.mjs",
@@ -2257,7 +2259,7 @@
       "layer": "language-ledger",
       "surface": "Cell.write",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values. The explicit byte-aligned UInt128 type writes one 16-byte FAB atom. Native checking covers max and zero updates, unchanged state under the inactive guard, and malformed field-aligned writes. A flat Bool/UInt16 record writes disclosed private inputs and rejects UInt16 overflow.",
+      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values. The explicit byte-aligned UInt128 type writes one 16-byte FAB atom. Native checking covers max and zero updates, unchanged state under the inactive guard, and malformed field-aligned writes. A flat Bool/UInt16 record writes disclosed private inputs and rejects UInt16 overflow. The native checker preserves the four-byte payload and rejects a write with the wrong width.",
       "source": [
         "adt"
       ],
@@ -2267,6 +2269,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedBytesRecordCell.lean",
         "tests/TypedRecordCell.lean",
         "runtime/tests/flat_record_cell.rs",
         "docs/development/opaque-cells-localnet-receipt.json",
@@ -2503,7 +2506,7 @@
       "layer": "language-ledger",
       "surface": "Set.isEmpty",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit emptiness matches Compact for root and map-nested Sets. An inactive read binds false and skips path access. Ledger 9.1.0.1 finalized the checked root and nested empty reads with exact unchanged state.",
+      "notes": "Circuit emptiness matches Compact for root and map-nested Sets. An inactive read binds false and skips path access. Ledger 9.1.0.1 finalized the checked root and nested empty reads with exact unchanged state. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and returns empty initially, nonempty after inserting (true, 513) and (false, 513), then empty after reset. An inactive guarded reset preserves exact state.",
       "source": [
         "adt"
       ],
@@ -2514,6 +2517,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2581,7 +2585,7 @@
       "layer": "language-ledger",
       "surface": "Set.resetToDefault",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit reset clears root and nested ordinary Sets. The matched Compact and funded Ledger 9.1.0.1 case clears newly inserted Bytes32 members with exact state. The native checker covers sibling preservation and initialization of a previously absent nested Set.",
+      "notes": "Circuit reset clears root and nested ordinary Sets. The matched Compact and funded Ledger 9.1.0.1 case clears newly inserted Bytes32 members with exact state. The native checker covers sibling preservation and initialization of a previously absent nested Set. The root typed-record Set native relation resets Memo { active: Bool, amount: UInt16 } after inserting (true, 513) and (false, 513) to the exact empty root Set. An inactive guarded reset preserves exact state, and a sealed reset is rejected.",
       "source": [
         "adt"
       ],
@@ -2592,6 +2596,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2607,7 +2612,7 @@
       "layer": "language-ledger",
       "surface": "Set.size",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets.",
+      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset.",
       "source": [
         "adt"
       ],
@@ -2618,6 +2623,7 @@
       ],
       "observedEvidence": [
         "tests/NativeSet.lean",
+        "tests/RecordSetCollections.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
         "docs/development/native-contract.md",
@@ -2653,7 +2659,7 @@
       "layer": "language-ledger",
       "surface": "Map.insert",
       "noctiumStatus": "subset",
-      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open. A flat Bool/UInt16 Map record stores disclosed fields and rejects UInt16 overflow.",
+      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open. A flat Bool/UInt16 Map record stores disclosed fields and rejects UInt16 overflow. The checked native relation stores distinct root Bool/UInt16 record keys with UInt16 values.",
       "source": [
         "adt"
       ],
@@ -2663,6 +2669,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
         "runtime/tests/bytes32_map.rs",
@@ -2767,7 +2774,7 @@
       "layer": "language-ledger",
       "surface": "Map.lookup",
       "noctiumStatus": "subset",
-      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal.",
+      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal. The checked native relation reads exact UInt16 values for distinct root Bool/UInt16 record keys and rejects missing keys.",
       "source": [
         "adt"
       ],
@@ -2777,6 +2784,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
         "runtime/tests/bytes32_map.rs",
@@ -2808,7 +2816,7 @@
       "layer": "language-ledger",
       "surface": "Map.member",
       "noctiumStatus": "subset",
-      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified. The native Bool/UInt16 record case checks membership before and after insertion.",
+      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified. The native Bool/UInt16 record case checks membership before and after insertion. The checked native relation distinguishes root Bool/UInt16 record keys. Source disclosure validation rejects an undisclosed private key.",
       "source": [
         "adt"
       ],
@@ -2818,6 +2826,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "runtime/tests/mixed_ledger_record.rs",
         "tests/Issue69Bytes32Map.lean",
@@ -2850,7 +2859,7 @@
       "layer": "language-ledger",
       "surface": "Map.remove",
       "noctiumStatus": "equivalent",
-      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal.",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal. The checked native relation removes one root Bool/UInt16 record key and preserves the other keys and values.",
       "source": [
         "adt"
       ],
@@ -2860,6 +2869,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapKey.lean",
+        "runtime/tests/structured_maps.rs",
         "tests/TypedRecordMap.lean",
         "runtime/tests/mixed_ledger_record.rs",
         "tests/NativeMapRemove.lean",
@@ -4660,7 +4671,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open.",
+      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open. The native runtime matches pinned Compact digests for 33- and 64-lane UInt16 vectors.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4674,6 +4685,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/FlatFabTuple.lean",
         "runtime/tests/flat_fab_tuple.rs",
         "tests/compact/flat-fab-tuple.mjs",
@@ -4777,7 +4789,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open.",
+      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4791,6 +4803,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/ByteHashes.lean",
         "runtime/tests/byte_hashes.rs",
         "tests/TypedPointKeccak.lean",
@@ -4810,7 +4823,7 @@
       "layer": "standard-library",
       "surface": "sha512",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open.",
+      "notes": "Lean supports fixed-byte and FAB SHA-512 through the native instruction. The native checker matches Compact for two flat-record digests and one nested Jubjub and Secp256k1 payload. A Rust witness session matches a pinned flat-record digest and rejects the wrong nominal record identity. Further layout qualification remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4824,6 +4837,7 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/WideFabVectors.lean",
         "tests/ByteHashes.lean",
         "runtime/tests/byte_hashes.rs",
         "tests/Sha512Fab.lean",

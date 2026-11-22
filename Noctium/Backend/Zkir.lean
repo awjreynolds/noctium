@@ -992,6 +992,8 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
         | .error message =>
           rejectLowering message
           pure []
+      unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
+        rejectLowering "mixed FAB persistent commitment exceeds the native operand-vector budget"
       let openingBytes ← lowerBytes opening
       let (openingHighByte, openingLow31) ← alignedBytes32Value opening openingBytes.values
       let payloadOperands ← lowerFabHashFields fields values
@@ -1240,6 +1242,8 @@ def lowerExpr : Expr ty → LowerM String
         | .error message =>
           rejectLowering message
           pure []
+      unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
+        rejectLowering "mixed FAB transient commitment exceeds the native field-vector budget"
       let opening ← lowerExpr opening
       let payload ← lowerFabHashFields fields values
       let operands := opening :: payload

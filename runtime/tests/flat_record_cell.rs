@@ -141,3 +141,64 @@ fn typed_record_cell_defaults_round_trip_and_reset() -> anyhow::Result<()> {
     assert!(prepare(&write, &inputs, &initial, parameters, address).is_err());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_FIXED_BYTES_RECORD_CELL_DIR"]
+fn fixed_bytes_record_cell_preserves_payload_width() -> anyhow::Result<()> {
+    let directory = PathBuf::from(std::env::var("NOCTIUM_FIXED_BYTES_RECORD_CELL_DIR")?);
+    let load = |entry: &str| -> anyhow::Result<(Plan, IrSource)> {
+        let stem = format!("FixedBytesRecordCell.{entry}");
+        Ok((
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?,
+            IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?,
+        ))
+    };
+    let (read, read_relation) = load("inspectMemo")?;
+    let (write, write_relation) = load("storeMemo")?;
+    let (reset, reset_relation) = load("clearMemo")?;
+    let no_inputs = BTreeMap::new();
+    let initial = construct_state(&read, &no_inputs)?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let as_bytes = |values: &[u8]| json!({"kind": "bytes", "values": values});
+    let mut inputs = BTreeMap::from([
+        ("active".into(), json!(true)),
+        ("payload".into(), as_bytes(&[1, 2, 3, 4])),
+        ("amount".into(), json!("513")),
+    ]);
+    let populated = prepare(&write, &inputs, &initial, parameters, address)?;
+    check(&populated, &write_relation)?;
+
+    for (state, active, payload, amount) in [
+        (&initial, false, [0, 0, 0, 0], 0u16),
+        (&populated.after.state, true, [1, 2, 3, 4], 513u16),
+    ] {
+        let result = prepare(&read, &no_inputs, state, parameters, address)?;
+        check(&result, &read_relation)?;
+        let values = result.returns_json();
+        assert_eq!(values["activeResult"], Value::Bool(active).public_json());
+        assert_eq!(values["payloadResult"], as_bytes(&payload));
+        assert_eq!(
+            values["amountResult"],
+            Value::UInt {
+                number: amount.into(),
+                maximum: u16::MAX.into(),
+            }
+            .public_json()
+        );
+    }
+
+    let cleared = prepare(
+        &reset,
+        &no_inputs,
+        &populated.after.state,
+        parameters,
+        address,
+    )?;
+    check(&cleared, &reset_relation)?;
+    assert_eq!(cleared.after.state.get_ref(), initial.get_ref());
+
+    inputs.insert("payload".into(), as_bytes(&[1, 2, 3]));
+    assert!(prepare(&write, &inputs, &initial, parameters, address).is_err());
+    Ok(())
+}

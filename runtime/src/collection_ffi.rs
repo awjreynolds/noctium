@@ -439,7 +439,7 @@ fn validate_collection_value(
 ) -> Result<(), i32> {
     match schema {
         CollectionValueSchema::Scalar { ty, name } => {
-            crate::decode_state_cell(value, name, &crate::list_scalar_storage_alignment(ty))
+            crate::decode_state_cell(value, name, &crate::scalar_storage_alignment(ty))
                 .map(|_| ())
                 .map_err(|_| INVALID_ARGUMENT)
         }
@@ -459,7 +459,7 @@ fn collection_value_json(
 ) -> Result<Json, i32> {
     match schema {
         CollectionValueSchema::Scalar { ty, name } => {
-            crate::decode_state_cell(value, name, &crate::list_scalar_storage_alignment(ty))
+            crate::decode_state_cell(value, name, &crate::scalar_storage_alignment(ty))
                 .map(|value| value.public_json())
                 .map_err(|_| INVALID_ARGUMENT)
         }

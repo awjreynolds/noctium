@@ -1177,20 +1177,7 @@ impl Parser<'_> {
             .ok_or_else(|| anyhow!("unknown control aggregate type"))?;
         let schema_bytes = serde_json::to_vec(&schema_json)?;
         let schema = crate::aggregates::Schema::from_json(&schema_bytes)?;
-        let fields = schema.fab_hash_nested_fields()?;
-        let alignment_atoms = fields.iter().try_fold(0usize, |total, field| {
-            let atoms = match field {
-                crate::aggregates::FabHashField::Curve(_) => field.encoded_field_count(),
-                _ => 1,
-            };
-            total
-                .checked_add(atoms)
-                .ok_or_else(|| anyhow!("FAB digest alignment size overflow"))
-        })?;
-        ensure!(
-            alignment_atoms <= 32,
-            "FAB digest alignment exceeds 32 atoms"
-        );
+        let fields = schema.fab_hash_nested_fields(crate::aggregates::MAX_FAB_OPERANDS)?;
         let layout = (schema_json, fields);
         self.fab_digest_layouts
             .insert(token.to_owned(), layout.clone());
@@ -1832,7 +1819,10 @@ impl Parser<'_> {
                 shape(v, &["tag", "operation", "type", "arguments"], true)?;
                 let operation = text(v, "operation")?.to_owned();
                 ensure!(
-                    matches!(operation.as_str(), "persistentHash" | "sha512" | "keccak256"),
+                    matches!(
+                        operation.as_str(),
+                        "persistentHash" | "sha512" | "keccak256"
+                    ),
                     "unsupported control FAB digest operation"
                 );
                 let token = text(v, "type")?.to_owned();
@@ -4257,6 +4247,7 @@ fn expected_ledger_inputs(
                 let name = name(text(component, "name")?)?;
                 let projections = match ScalarType::parse(text(component, "type")?)? {
                     ScalarType::Bytes32 => crate::byte_projection_bindings(&name, 32)?,
+                    ScalarType::Bytes(length) => crate::byte_projection_bindings(&name, length)?,
                     ScalarType::JubjubPoint => expected_point_projection_bindings(&name),
                     _ => {
                         append_impact_ledger_input(
