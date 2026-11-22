@@ -1,0 +1,59 @@
+{
+  "bundleManifestSha256": {
+    "readBytes": "99b851108f032ac286b67ff19e5eed7e8a8830e350e51dca9faee68c5a2a39fb",
+    "readText": "981a0e028cd8479425faafa9d7a866992ca2eb9560aeb0eb69046fd04363025b",
+    "store": "638897c6d48467486b1af16e8e386588daac9090053039c3cfdd73fe111e3590"
+  },
+  "contractAddress": "558b42a0b8ac3c29f373ca22a276cf330c29aae6bdf67d32ad1d571cc83dd55b",
+  "deployment": {
+    "finalizedHash": "7ff2fdf58ae1af2b1fd09d7742833620052572084af98a0b8716a42a77db19d6",
+    "height": 51204,
+    "transactionId": "ce72dc21f74cebeec02db10e05cac61195d565fbbb4aed68a42414e22b920bc5"
+  },
+  "k": {
+    "readBytes": 6,
+    "readText": 6,
+    "store": 7
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "readStateBytesUnchanged": true,
+  "reads": {
+    "readBytes": {
+      "finalizedHash": "71089d5d8e8877abbc35497ba714980ecfcf3aa83f206b9b78c440907d1bcd50",
+      "height": 51213,
+      "returned": {
+        "kind": "opaqueBytes",
+        "values": [
+          0,
+          1,
+          255
+        ]
+      },
+      "transactionId": "f53513ad821cfc9dbaad36ac70f487cba74eef24cf4d6482e8637bb31fd1b57d"
+    },
+    "readText": {
+      "finalizedHash": "2aa456bfe80f617657db89039af8fb821e4a5bd0c1b6c5b7dd074dae5a9093fb",
+      "height": 51210,
+      "returned": {
+        "kind": "opaqueString",
+        "value": "\u00e9\u0000\u03bb"
+      },
+      "transactionId": "1ed6a1c0502d50d5f3ec9845fa662437491e17e230ab5f37ecd0048e5584dbc7"
+    }
+  },
+  "rows": {
+    "readBytes": 34,
+    "readText": 34,
+    "store": 66
+  },
+  "sourceCompilerRevision": "22bc2d9c26a6b976e37dfb204e20072875a1e3e4",
+  "sourceSha256": "d7e988b4364be01412103f612b836e1f94f479ee90768ccc4bfea5212431de6e",
+  "store": {
+    "finalizedHash": "d6ae6309915828fff9ab2931a35af0c694e3fa9b355f66199c7cc880103c8660",
+    "height": 51207,
+    "transactionId": "95a056c2900e3068e77ecbb7747357b37b9a3906132478c683d6888a9bdab328"
+  },
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}
