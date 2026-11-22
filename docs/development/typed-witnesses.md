@@ -83,6 +83,37 @@ Caller-supplied values retain the tag and both checked arms, matching the
 Compact call ABI. The fixture returns the same ordered record and writes
 its tag to a Bool cell. [Lean fixture](../../tests/CompositeEitherInput.lean) · [Compact fixture](../../tests/compact/composite-either-input.mjs)
 
+The CI artifact check runs both ignored native input tests against fresh
+ledger and witness output. It covers three accepted Maybe values, two rejected
+Maybe inputs, both accepted Either tags, and three rejected Either inputs.
+The optional Compact comparison uses compiler 0.36.1 at source commit
+`7fa3a117c5e7efe9d2c51da04263e5f0b3509144` and
+`@midnight-ntwrk/compact-runtime` 0.21.0. Set the two variables
+to absolute paths for those installed tools. The commands use a temporary
+Maybe output directory and clean the Either runner's fixed generated directory
+after the run.
+
+```sh
+set -eu
+either_generated=build/experiments/either-input/compact/generated
+if [ -e "$either_generated" ]; then
+  printf 'Refusing to overwrite existing Compact output: %s\n' "$either_generated" >&2
+  exit 1
+fi
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch" "$either_generated"' EXIT
+: "${COMPACTC_0361:?set the absolute path to Compact 0.36.1}"
+: "${COMPACT_RUNTIME_0210:?set the absolute path to compact-runtime 0.21.0}"
+"$COMPACTC_0361" --version | grep -E '^0\.36\.1 \(7fa3a117c'
+test "$(node -p 'require(process.argv[1]).version' "$COMPACT_RUNTIME_0210/package.json")" = '0.21.0'
+"$COMPACTC_0361" --skip-zk tests/compact/CompositeMaybeInput.compact "$scratch/maybe"
+mkdir -p "$scratch/maybe/node_modules/@midnight-ntwrk"
+ln -s "$COMPACT_RUNTIME_0210" "$scratch/maybe/node_modules/@midnight-ntwrk/compact-runtime"
+NOCTIUM_COMPACT_RUNTIME_DIR="$COMPACT_RUNTIME_0210" \
+  node tests/compact/composite-maybe-input.mjs "$scratch/maybe"
+node tests/compact/composite-either-input.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
+```
+
 ## Pass a record to a witness
 
 Declare a witness parameter with the codec that defines its layout.
