@@ -211,3 +211,60 @@ fn wide_fab_bytes_match_compact_and_bind_native_chunks() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_ROOT_FAB_VECTOR_DIR"]
+fn root_fab_vectors_match_compact_digests() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_ROOT_FAB_VECTOR_DIR").context("NOCTIUM_ROOT_FAB_VECTOR_DIR")?,
+    );
+    let cases = [
+        (
+            "hashValues",
+            BTreeMap::from([
+                ("first".into(), json!("258")),
+                ("second".into(), json!("772")),
+            ]),
+            "d46e520a777bdd374ce8f8e6d650f1270169dd7eb97361846aac9e20c850d724",
+        ),
+        (
+            "hashEmpty",
+            BTreeMap::new(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+    ];
+    for (entry, inputs, digest) in cases {
+        let stem = format!("RootFabVector.{entry}");
+        let plan: Plan =
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
+        let circuit = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+        let initial = create_state(&plan, &BTreeMap::new())?;
+        let execution = prepare(
+            &plan,
+            &inputs,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )
+        .with_context(|| format!("prepare {entry}"))?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(
+            execution.returns_json().get("digestResult"),
+            Some(&bytes(&hex::decode(digest)?)),
+            "digest for {entry}"
+        );
+
+        if entry == "hashValues" {
+            let Expr::PersistentHashFab { schema, mut values } =
+                plan.circuit.outputs[0].expression.clone()
+            else {
+                anyhow::bail!("expected a checked vector hash");
+            };
+            values.pop().expect("root vector field");
+            let malformed = Expr::PersistentHashFab { schema, values };
+            let error = evaluate(&malformed, &BTreeMap::new()).unwrap_err();
+            assert!(error.to_string().contains("FAB hash value count differs"));
+        }
+    }
+    Ok(())
+}

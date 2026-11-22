@@ -910,7 +910,7 @@ fn hash_to_curve_fab(
     let mut fields = Vec::new();
     payload.value_only_field_repr(&mut fields);
     ensure!(
-        !fields.is_empty() && fields.len() <= MAX_HASH_TO_CURVE_FIELDS,
+        fields.len() <= MAX_HASH_TO_CURVE_FIELDS,
         "FAB hash-to-curve field vector exceeds compiler limit"
     );
     Ok(Value::JubjubPoint(transient_crypto::hash::hash_to_curve(

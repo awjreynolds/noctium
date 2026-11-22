@@ -166,6 +166,8 @@ def fixedByteHashTerm (algorithm : String) (length : Nat) (alignedChunks : List 
 
 /-- Singleton bytes use the same symbolic meaning as a fixed-byte hash. -/
 def fabByteHashTerm (algorithm : String) (alignment : List String) (values : List Term) : Term := Id.run do
+  if alignment.isEmpty && values.isEmpty then
+    return fixedByteHashTerm algorithm 0 []
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
@@ -176,6 +178,8 @@ def fabByteHashTerm (algorithm : String) (alignment : List String) (values : Lis
 /-- Homogeneous FAB roots share the existing native meaning for their canonical
 single/vector encodings. Mixed layouts retain their explicit alignment tag. -/
 def persistentHashFabTerm (alignment : List String) (values : List Term) : Term := Id.run do
+  if alignment.isEmpty && values.isEmpty then
+    return fixedByteHashTerm "persistent_hash" 0 []
   if !alignment.isEmpty && alignment.length == values.length && alignment.all (· == "field") then
     return persistentHashNativeVectorTerm values
   if !alignment.isEmpty && alignment.length * 2 == values.length &&

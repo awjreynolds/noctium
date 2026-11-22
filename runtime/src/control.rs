@@ -1178,14 +1178,18 @@ impl Parser<'_> {
         let schema_bytes = serde_json::to_vec(&schema_json)?;
         let schema = crate::aggregates::Schema::from_json(&schema_bytes)?;
         let fields = schema.fab_hash_nested_fields()?;
-        let encoded_fields = fields.iter().try_fold(0usize, |total, field| {
+        let alignment_atoms = fields.iter().try_fold(0usize, |total, field| {
+            let atoms = match field {
+                crate::aggregates::FabHashField::Curve(_) => field.encoded_field_count(),
+                _ => 1,
+            };
             total
-                .checked_add(field.encoded_field_count())
+                .checked_add(atoms)
                 .ok_or_else(|| anyhow!("FAB digest alignment size overflow"))
         })?;
         ensure!(
-            (1..=32).contains(&encoded_fields),
-            "FAB digest alignment must contain 1 to 32 atoms"
+            alignment_atoms <= 32,
+            "FAB digest alignment exceeds 32 atoms"
         );
         let layout = (schema_json, fields);
         self.fab_digest_layouts

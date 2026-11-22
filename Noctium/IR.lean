@@ -198,12 +198,13 @@ private def flattenFabHashLayoutFields : Nat → String → Types.Layout →
     | _ => pure [(path, layout)]
 
 /-- Preserve the checked root's logical order for mixed-FAB hashing. Named
-structures use declaration order. Anonymous root tuples use tuple item order.
-Nested records, tuples and fixed vectors retain their recursive source order. -/
+structures use declaration order. Root tuples and vectors use item and index
+order. Nested records, tuples and fixed vectors retain their recursive source
+order. -/
 def fabHashLayoutFields (layout : Types.Layout) : Except String (List (String × Types.Layout)) := do
   match layout with
-  | .structure _ _ | .tuple _ => pure ()
-  | _ => throw "mixed FAB hashing requires a structure or root tuple"
+  | .structure _ _ | .tuple _ | .vector _ _ => pure ()
+  | _ => throw "mixed FAB hashing requires a structure, tuple or root vector"
   flattenFabHashLayoutFields (layout.nodeCount + 1) "" layout
 
 def fabHashEncodedFieldCount (fields : List (String × Types.Layout)) : Nat :=
@@ -318,7 +319,11 @@ def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.Compo
     (values : List (Sigma Expr)) : Except String Types.Layout := do
   let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
   let fields ← fabHashLayoutFields checked.value
-  unless fields.length > 0 && fields.length ≤ 32 && values.length == fields.length do
+  let emptyRootVector := match checked.value with
+    | .vector 0 _ => true
+    | _ => false
+  unless (fields.length > 0 || emptyRootVector) &&
+      fields.length ≤ 32 && values.length == fields.length do
     throw "mixed FAB field count is outside the source limit or differs from its layout"
   validateFabHashFields fields values
   pure checked.value
