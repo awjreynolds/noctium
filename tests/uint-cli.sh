@@ -41,12 +41,42 @@ fi
 grep -F 'unsigned width exceeds target maximum' "$scratch/error" > /dev/null
 test ! -e "$scratch/invalid-output"
 
-"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim"
-node --input-type=module - "$scratch/claim/PrivateClaim.claim.zkir" <<'JS'
+"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim-first"
+"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim-second"
+diff -r "$scratch/claim-first" "$scratch/claim-second"
+"$cli" compile examples/PrivateClaim.lean --target profiles/midnight-ledger-9-zkir-3.2.1-target.json --output "$scratch/claim-321"
+node --input-type=module - "$scratch/claim-first" "$scratch/claim-321" "$scratch/first" <<'JS'
 import {readFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
-import {deepStrictEqual} from 'node:assert/strict';
-deepStrictEqual(createHash('sha256').update(readFileSync(process.argv[2])).digest('hex'),
-  'c569dd887fdf6aa3bdd2c8e2358985657ad3612eb72e0eb16f28682bb2b2b81c');
+import {join} from 'node:path';
+import {deepStrictEqual, equal, ok, throws} from 'node:assert/strict';
+const [claimDir, wrongProfileDir, wrongOperationDir] = process.argv.slice(2);
+const readJson = path => JSON.parse(readFileSync(path, 'utf8'));
+const defaultProfile = readJson('profiles/midnight-ledger-9.json');
+function checkClaim(directory) {
+  const metadata = readJson(join(directory, 'noctium.json'));
+  equal(metadata.target, 'midnight-ledger-9', 'expected default profile');
+  deepStrictEqual(metadata.targetProfile, defaultProfile);
+  equal(metadata.targetProfile.zkir, '3.2.0');
+  const contract = metadata.contracts.find(value => value.name === 'PrivateClaim');
+  if (!contract) throw new Error('expected PrivateClaim contract');
+  equal(contract.entrypoints.length, 1);
+  const entrypoint = contract.entrypoints[0];
+  equal(entrypoint.name, 'claim');
+  equal(entrypoint.nativeCircuitFile, 'PrivateClaim.claim.zkir');
+  equal(entrypoint.nativePlanFile, 'PrivateClaim.claim.impact.json');
+  const circuit = readJson(join(directory, entrypoint.nativeCircuitFile));
+  deepStrictEqual(circuit.do_communications_commitment, true);
+  ok(circuit.instructions.some(value => value.op === 'transient_hash'));
+  ok(circuit.instructions.some(value => value.op === 'impact'));
+  const plan = readJson(join(directory, entrypoint.nativePlanFile));
+  equal(plan.contractName, 'PrivateClaim');
+  equal(plan.entrypoint, 'claim');
+  deepStrictEqual(plan.circuit.outputs[0].expression, {tag: 'reference', name: 'suppliedNullifier'});
+  deepStrictEqual(plan.reads.map(value => value.name),
+    ['root', 'campaign', 'suppliedNullifier', 'storedRoot', 'storedCampaign', '_noctium_absence_5']);
+}
+checkClaim(claimDir);
+throws(() => checkClaim(wrongProfileDir), /expected default profile/);
+throws(() => checkClaim(wrongOperationDir), /PrivateClaim/);
 JS
 echo 'Unsigned CLI conformance passed'
