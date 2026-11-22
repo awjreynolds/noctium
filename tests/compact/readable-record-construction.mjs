@@ -89,6 +89,11 @@ try {
   const { result: tuple } = await contract.circuits.spreadTuple(context('spreadTuple'), 7n);
   assert.deepEqual(calls, [['pair', 8n], ['vector', 9n], ['bytes', 10n], ['unit', 11n]]);
   assert.deepEqual(tuple, [[7n, 11n, true], [17n, 19n, 165n, 60n], [true, 1n]]);
+  const tupleSpreadCalls = calls.splice(0);
+  const { result: packedOctets } = await contract.circuits.packOctets(context('packOctets'), 7n);
+  assert.deepEqual(calls, [['vector', 9n], ['bytes', 10n], ['unit', 11n]]);
+  assert.deepEqual([...packedOctets], [23, 60, 165, 19, 17, 7]);
+  const packCalls = calls.splice(0);
   console.log(JSON.stringify({
     calls: constructionCalls.map(([name, value]) => [name, value.toString()]),
     result: { reading: result.reading.toString(), count: result.count.toString(), active: result.active },
@@ -96,7 +101,8 @@ try {
       calls: recordSpreadCalls.map(([name, value]) => [name, value.toString()]),
       result: { reading: spread.reading.toString(), count: spread.count.toString(), active: spread.active },
     },
-    tupleSpread: { calls, result: tuple },
+    tupleSpread: { calls: tupleSpreadCalls, result: tuple },
+    packedOctets: { calls: packCalls, result: [...packedOctets] },
   }, (_, value) => typeof value === 'bigint' ? value.toString() : value));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

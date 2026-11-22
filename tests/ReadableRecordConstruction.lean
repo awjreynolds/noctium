@@ -112,6 +112,29 @@ end
 #guard (Noctium.Witness.compile spreadTuple.__program
   "noctium.witness-circuit.ReadableRecordConstruction.spreadTuple.v1").isOk
 
+noctium_witness_circuit packOctets using vectorWire where
+  public seed : Native
+  let packed := packBytes(
+    7,
+    ..witness loadVector(add(seed, 2)),
+    ..witness loadBytes(add(seed, 3)),
+    ..witness loadUnit(add(seed, 4)),
+    ..tuple(),
+    23
+  )
+  output revealed : Bytes 6 := disclose(reverseBytes(packed))
+end
+
+#guard (Noctium.Witness.compile packOctets.__program
+  "noctium.witness-circuit.ReadableRecordConstruction.packOctets.v1").isOk
+
+/- error: packBytes element requires an unsigned type within UInt8 -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsWidePackByte where
+  public wide : UInt 16
+  output result : Bytes 1 := disclose(packBytes(wide))
+end
+
 /- error: tuple spread requires a tuple, vector, fixed Bytes or Unit -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsScalarSpread where
@@ -230,5 +253,8 @@ noctium_contract ReadableRecordConstruction where
   end
   entry spreadTuple uses ReadableRecordConstruction.spreadTuple where
     return result
+  end
+  entry packOctets uses ReadableRecordConstruction.packOctets where
+    return result : Bytes 6 := revealed
   end
 end

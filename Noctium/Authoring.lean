@@ -151,6 +151,7 @@ declare_syntax_cat noctium_tuple_item
 scoped syntax nlexpr : noctium_tuple_item
 scoped syntax ".." nlexpr : noctium_tuple_item
 scoped syntax "tuple(" noctium_tuple_item,* ")" : nlexpr
+scoped syntax (name := readablePackBytes) "packBytes(" noctium_tuple_item,* ")" : nlexpr
 scoped syntax "some(" nlexpr ")" : nlexpr
 scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
@@ -541,10 +542,11 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
       | (some name, value) => s!"{name.getId} := {renderExpr value}"
       | (none, value) => ".." ++ renderExpr value
     "record(Payload " ++ codec.getId.toString ++ ", {" ++ String.intercalate ", " rendered ++ "})"
-  | `(nlexpr| tuple($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
     let rendered := (items.getElems.toList.filterMap tupleItem).map fun (spread, value) =>
       (if spread then ".." else "") ++ renderExpr value
-    "tuple(" ++ String.intercalate ", " rendered ++ ")"
+    let name := if stx.raw.getKind == ``readablePackBytes then "packBytes" else "tuple"
+    name ++ "(" ++ String.intercalate ", " rendered ++ ")"
   | `(nlexpr| some($value)) => s!"some({renderExpr value})"
   | `(nlexpr| none(Payload $codec:ident)) => s!"none(Payload {codec.getId})"
   | `(nlexpr| none($type:nltype)) => s!"none({renderType type})"
@@ -659,7 +661,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| disclose($value)) => renderExpr value :: disclosedValues value
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (disclosedValues ∘ Prod.snd)
-  | `(nlexpr| tuple($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
     (items.getElems.toList.filterMap tupleItem).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
@@ -733,7 +735,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   match stx with
   | `(nlexpr| record(Payload $_:ident, { $fields,* })) =>
     (fields.getElems.toList.filterMap recordField).flatMap (inlineAssertions ∘ Prod.snd)
-  | `(nlexpr| tuple($items,*)) =>
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) =>
     (items.getElems.toList.filterMap tupleItem).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
@@ -1049,6 +1051,28 @@ private def spreadTupleItems (site : Syntax) (type : ResultType) (source : Helpe
       {type := .scalar (.uint 255), term := .bytesAt source index})
   | _ => throwErrorAt site "tuple spread requires a tuple, vector, fixed Bytes or Unit"
 
+private def byteSegments (site : Syntax) (spread : _root_.Bool) (value : Lowered) :
+    ExprM (List (Nat × Helpers.Term)) := do
+  if spread then
+    if let .scalar (.bytes length) := value.type then
+      return if length == 0 then [] else [(length, value.term)]
+  let items ← if spread then spreadTupleItems site value.type value.term else pure [value]
+  items.mapM fun item => do
+    let .scalar (.uint maximum) := item.type
+      | throwErrorAt site "packBytes element requires an unsigned type within UInt8"
+    unless maximum ≤ 255 do
+      throwErrorAt site "packBytes element requires an unsigned type within UInt8"
+    pure (1, .bytes (.serialize (.uint maximum) 1) [item.term])
+
+private partial def joinByteSegments : List (Nat × Helpers.Term) → Nat × Helpers.Term
+  | [] => (0, .bytes (.bytesLiteral 0 []) [])
+  | [part] => part
+  | parts =>
+    let (left, right) := parts.splitAt (parts.length / 2)
+    let (leftLength, left) := joinByteSegments left
+    let (rightLength, right) := joinByteSegments right
+    (leftLength + rightLength, .bytes (.concatBytes leftLength rightLength) [left, right])
+
 private def lowerForeignFieldConstant (stx : Syntax) (kind : Foreign.Kind) (value : Nat) : ExprM Lowered := do
   let encoding ← match Foreign.encodeField kind value with
     | .ok encoding => pure encoding
@@ -1247,14 +1271,34 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves)
       (base.toList.map Prod.fst ++ values)
     pure {result with before := spreadBefore ++ before}
-  | `(nlexpr| tuple($items,*)) => do
+  | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*)) => do
+    let pack := stx.raw.getKind == ``readablePackBytes
     let arguments ← items.getElems.toList.mapM fun item => do
       let some (spread, source) := tupleItem item
-        | throwErrorAt item "invalid tuple argument"
-      pure (spread, source, ← lowerExpr programName callPrefix env source)
+        | throwErrorAt item "invalid sequence construction argument"
+      let value ← match source with
+        | `(nlexpr| $number:num) =>
+          if pack && !spread then
+            let n := number.getNat
+            pure {type := .scalar (.uint n), term := .uint n n}
+          else lowerExpr programName callPrefix env source
+        | _ => lowerExpr programName callPrefix env source
+      pure (spread, source, value)
     let values := arguments.map fun (_, _, value) => value
     let span ← liftM (spanValue stx)
     let (before, references, _) ← stageIterationValues callPrefix env span values
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    if pack then
+      let mut parts := []
+      let mut length := 0
+      for ((spread, source, value), reference) in arguments.zip references do
+        let segments ← byteSegments source spread {value with term := reference}
+        length := length + (segments.map Prod.fst).sum
+        if length > Types.defaultLimits.maxVectorLength then
+          throwErrorAt source "packBytes exceeds the fixed byte-string length limit"
+        parts := segments :: parts
+      let (_, term) := joinByteSegments parts.reverse.flatten
+      return {mergeLowered (.scalar (.bytes length)) term values with before}
     let mut parts : List (List Lowered) := []
     let mut size := 1
     for ((spread, source, value), reference) in arguments.zip references do
@@ -1273,7 +1317,6 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       match Helpers.Iteration.flattenResult span value.type layout value.term with
       | .ok leaves => pure leaves
       | .error diagnostic => throwErrorAt stx diagnostic.message
-    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
     pure {mergeLowered (.composite payload) (.composite payload leaves) values with before}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
