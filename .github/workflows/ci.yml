@@ -209,6 +209,7 @@ jobs:
           lake env lean tests/NativeMapReset.lean
           lake env lean tests/OptionalListHead.lean
           lake env lean tests/MixedLedgerRecord.lean
+          lake env lean tests/TypedRecordMap.lean
           lake env lean tests/MerkleTree.lean
           lake env lean tests/MerkleIndexed.lean
           lake env lean tests/HistoricMerkle.lean

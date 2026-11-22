@@ -2347,11 +2347,9 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
       match LedgerValueType.cellRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
-    else match LedgerValueType.recordFields environment (.structure typeId) with
+    else match LedgerValueType.cellRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
-      | .error _ => match LedgerValueType.shieldedCoinRecordFields environment (.structure typeId) with
-        | .ok fields => pure fields
-        | .error message => throwErrorAt destination message
+      | .error message => throwErrorAt destination message
     let (readName, updated) ← freshReadName depth state destination
     let (updated, destinations) ← bindLedgerRecordFields updated destination depth fields
     let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
@@ -2597,11 +2595,7 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
   let (path, result) ← lowerTreePath state.env treeSchema keys
   let (.composite environment type) := result
     | throwErrorAt payload "composite write must select a composite record"
-  let fields ← if path.isEmpty then
-    match LedgerValueType.cellWriteRecordFields environment type with
-    | .ok fields => pure fields
-    | .error message => throwErrorAt payload message
-  else match LedgerValueType.recordFields environment type with
+  let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
   let valueList ← elaborateLedgerFieldValues state.env payload fields
