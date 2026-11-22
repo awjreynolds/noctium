@@ -1143,6 +1143,11 @@ impl BoundTransaction {
             Error::StaleReceipt,
         )?;
         require(
+            (receipt.height == receipt.finalized_height)
+                == (receipt.block_hash == receipt.finalized_hash),
+            Error::Receipt,
+        )?;
+        require(
             canonical_hash(&receipt.block_hash)
                 && canonical_hash(&receipt.finalized_hash)
                 && canonical_hash(&receipt.extrinsic_hash)
@@ -2263,6 +2268,31 @@ pub(crate) mod tests {
         let tx = bound();
         let good = receipt(&tx);
         tx.check_receipt(&good).unwrap();
+        let mut same_head = good.clone();
+        same_head.finalized_hash = same_head.block_hash.clone();
+        same_head.finalized_height = same_head.height;
+        tx.check_receipt(&same_head).unwrap();
+        for (block_hash, finalized_hash, height, finalized_height) in [
+            (
+                good.block_hash.clone(),
+                good.block_hash.clone(),
+                good.height,
+                good.finalized_height,
+            ),
+            (
+                good.block_hash.clone(),
+                good.finalized_hash.clone(),
+                good.height,
+                good.height,
+            ),
+        ] {
+            let mut wrong = good.clone();
+            wrong.block_hash = block_hash;
+            wrong.finalized_hash = finalized_hash;
+            wrong.height = height;
+            wrong.finalized_height = finalized_height;
+            assert_eq!(tx.check_receipt(&wrong), Err(Error::Receipt));
+        }
         let mut wrong = good.clone();
         wrong.chain.genesis = "f".repeat(64);
         assert_eq!(tx.check_receipt(&wrong), Err(Error::Network));
@@ -3034,6 +3064,16 @@ pub(crate) mod tests {
         let state = encode(&deploy.initial_state).unwrap();
         let reference =
             PublicTransactionReference::from_bytes(policy(), bound.bytes(), 20, &state).unwrap();
+        let mut retained_receipt = receipt(&bound);
+        retained_receipt.contract_state = state.clone();
+        reference.check_receipt(&retained_receipt).unwrap();
+        retained_receipt
+            .secondary_states
+            .insert("e".repeat(64), vec![4]);
+        assert_eq!(reference.check_receipt(&retained_receipt), Err(Error::Receipt));
+        retained_receipt.secondary_states.clear();
+        retained_receipt.finalized_hash = retained_receipt.block_hash.clone();
+        assert_eq!(reference.check_receipt(&retained_receipt), Err(Error::Receipt));
         assert_eq!(reference.transaction_id(), bound.transaction_id());
         assert_eq!(reference.contract_address(), bound.contract_address());
         assert_eq!(reference.event(), ContractEvent::Deploy);

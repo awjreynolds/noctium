@@ -410,6 +410,7 @@ pub fn observe_record(
             reference.contract_address() == expected_address && reference.event() == event,
             "native_action_identity_mismatch"
         );
+        reference.check_receipt(&item.receipt)?;
         let native: crate::funding::SealedTransaction = decode(&bytes)?;
         if let Transaction::Standard(stx) = native {
             let intent = stx
