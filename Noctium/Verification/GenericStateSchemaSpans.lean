@@ -3,10 +3,16 @@ import Noctium.Verification.GenericStateVM
 namespace Noctium.Verification.GenericStateSchemaSpans
 open GenericStateEncoding NativeState
 
-/-- Source locations affect diagnostics. Native ledger encoding uses the
-declared name and kind, so erasing locations preserves every slot. -/
+/-- Normalize source-only metadata for the legacy scalar proof schema.
+Spans and sealing do not affect slot encoding. Direct cell alignment remains
+intact because it controls whether a cell has a supported scalar encoding. -/
 def eraseSpan (declaration : StateDecl) : StateDecl :=
-  {name := declaration.name, kind := declaration.kind}
+  { declaration with
+    sealed := false
+    span := {}
+    cellAlignment? := match declaration.kind with
+      | .cell _ => declaration.cellAlignment?
+      | _ => none }
 
 def eraseSpans (declarations : List StateDecl) : List StateDecl :=
   declarations.map eraseSpan
@@ -15,7 +21,8 @@ theorem encodeDeclaration_eraseSpan (state : LedgerState) (declaration : StateDe
     encodeDeclaration state (eraseSpan declaration) =
       encodeDeclaration state declaration := by
   cases declaration with
-  | mk name kind span => cases kind <;> rfl
+  | mk name kind sealed span cellAlignment? =>
+    cases kind <;> cases cellAlignment? <;> rfl
 
 theorem encodeState_eraseSpans (declarations : List StateDecl)
     (state : LedgerState) :
@@ -61,15 +68,45 @@ theorem erased_at_cell (declarations : List StateDecl) (slot : Nat)
     (declaration : StateDecl) (name : String) (ty : Ty)
     (found : declarations[slot]? = some declaration)
     (named : declaration.name = name)
-    (kind : declaration.kind = .cell ty) :
+    (kind : declaration.kind = .cell ty)
+    (alignment : declaration.cellAlignment? = none) :
     (eraseSpans declarations)[slot]? = some {name, kind := .cell ty} := by
   rw [eraseSpans_at declarations slot declaration found]
   cases declaration with
-  | mk actual actualKind span =>
-    simp only at named kind
+  | mk actual actualKind sealed span cellAlignment? =>
+    simp only at named kind alignment
     subst actual
     subst actualKind
+    subst cellAlignment?
     rfl
+
+theorem encoded_cell_alignment_none (declarations : List StateDecl)
+    (state : LedgerState) (items : List Slot) (slot : Nat)
+    (declaration : StateDecl) (ty : Ty)
+    (found : declarations[slot]? = some declaration)
+    (kind : declaration.kind = .cell ty)
+    (encoded : encodeState declarations state = some items) :
+    declaration.cellAlignment? = none := by
+  have inRange : slot < declarations.length := by
+    by_cases inside : slot < declarations.length
+    · exact inside
+    · have missing := List.getElem?_eq_none (l := declarations) (i := slot)
+        (Nat.le_of_not_gt inside)
+      rw [missing] at found
+      contradiction
+  have itemRange : slot < items.length := by
+    rw [encodeState_length declarations state items encoded]
+    exact inRange
+  have slotEncoding := encodeState_slot declarations state items slot encoded
+  rw [found] at slotEncoding
+  simp only [Option.bind_some] at slotEncoding
+  cases alignment : declaration.cellAlignment? with
+  | none => rfl
+  | some value =>
+    have absent : items[slot]? = none := by
+      simpa [encodeDeclaration, kind, alignment] using slotEncoding
+    exact False.elim ((Nat.not_le_of_gt itemRange)
+      (List.getElem?_eq_none_iff.mp absent))
 
 theorem erased_at_map (declarations : List StateDecl) (slot : Nat)
     (declaration : StateDecl) (name : String) (keyTy valueTy : Ty)
@@ -80,7 +117,7 @@ theorem erased_at_map (declarations : List StateDecl) (slot : Nat)
       some {name, kind := .map keyTy valueTy} := by
   rw [eraseSpans_at declarations slot declaration found]
   cases declaration with
-  | mk actual actualKind span =>
+  | mk actual actualKind sealed span cellAlignment? =>
     simp only at named kind
     subst actual
     subst actualKind
@@ -101,11 +138,13 @@ theorem readCell_source_typed (declarations : List StateDecl)
     ∃ value,
       state.cells.lookup name = some (Value.pack ty value) ∧
       ScalarNormalization.Canonical ty value ∧
-      expected = field (NativeRelation.scalar (ScalarNormalization.number ty value)) ∧
+      expected = field (NativeRelation.scalar (number ty value)) ∧
       after = ⟨[.vector items], reads ++ [expected]⟩ := by
+  have alignment := encoded_cell_alignment_none declarations state items slot
+    declaration ty found kind encoded
   exact GenericStateVM.readCell_source_typed (eraseSpans declarations)
     state items slot name ty expected reads after
-    (erased_at_cell declarations slot declaration name ty found named kind)
+    (erased_at_cell declarations slot declaration name ty found named kind alignment)
     (by rw [encodeState_eraseSpans]; exact encoded) accepted
 
 /-- A source absence check has the same checked native result for arbitrary
@@ -122,7 +161,7 @@ theorem requireAbsent_source_step (ctx : EvalContext) (env : EvalEnv)
     (keyEval : keyExpr.eval ctx env = .ok key)
     (canonical : ScalarNormalization.Canonical keyTy key)
     (accepted : run (GenericStateVM.requireAbsentOps slot
-      (NativeRelation.scalar (ScalarNormalization.number keyTy key)))
+      (NativeRelation.scalar (number keyTy key)))
       ⟨[.vector items], reads⟩ = some after) :
     SourceEffects.step ctx (.requireAbsent name keyTy keyExpr) (env, state) =
       .ok (env, state) ∧
@@ -153,16 +192,18 @@ theorem writeCell_source_step (ctx : EvalContext) (env : EvalEnv)
         .ok (env, next) ∧
       encodeState declarations next =
         some (items.set slot (.cell (field
-          (NativeRelation.scalar (ScalarNormalization.number ty value))))) ∧
+          (NativeRelation.scalar (number ty value))))) ∧
       run (GenericStateVM.writeCellOps slot
-        (field (NativeRelation.scalar (ScalarNormalization.number ty value))))
+        (field (NativeRelation.scalar (number ty value))))
         ⟨[.vector items], reads⟩ =
         some ⟨[.vector (items.set slot (.cell (field
-          (NativeRelation.scalar (ScalarNormalization.number ty value)))))], reads⟩ := by
+          (NativeRelation.scalar (number ty value)))))], reads⟩ := by
+  have alignment := encoded_cell_alignment_none declarations state items slot
+    declaration ty found kind encoded
   obtain ⟨next, source, successor, native⟩ :=
     GenericStateVM.writeCell_source_step ctx env (eraseSpans declarations)
       state items slot name ty expression value reads
-      (erased_at_cell declarations slot declaration name ty found named kind)
+      (erased_at_cell declarations slot declaration name ty found named kind alignment)
       (eraseSpans_distinct declarations distinct)
       (by rw [encodeState_eraseSpans]; exact encoded)
       (by simpa [eraseSpans_length] using slotBound) evaluated canonical
@@ -194,19 +235,19 @@ theorem writeMap_source_step (ctx : EvalContext) (env : EvalEnv)
         (env, state) = .ok (env, next) ∧
       encodeState declarations next =
         some (items.set slot (.map
-          ((NativeRelation.scalar (ScalarNormalization.number keyTy key),
-            NativeRelation.scalar (ScalarNormalization.number valueTy value)) ::
+          ((NativeRelation.scalar (number keyTy key),
+            NativeRelation.scalar (number valueTy value)) ::
           encodedEntries.filter (fun pair => pair.1 !=
-            NativeRelation.scalar (ScalarNormalization.number keyTy key))))) ∧
+            NativeRelation.scalar (number keyTy key))))) ∧
       run (GenericStateVM.writeMapOps slot
-        (NativeRelation.scalar (ScalarNormalization.number keyTy key))
-        (NativeRelation.scalar (ScalarNormalization.number valueTy value)))
+        (NativeRelation.scalar (number keyTy key))
+        (NativeRelation.scalar (number valueTy value)))
         ⟨[.vector items], reads⟩ =
         some ⟨[.vector (items.set slot (.map
-          ((NativeRelation.scalar (ScalarNormalization.number keyTy key),
-            NativeRelation.scalar (ScalarNormalization.number valueTy value)) ::
+          ((NativeRelation.scalar (number keyTy key),
+            NativeRelation.scalar (number valueTy value)) ::
           encodedEntries.filter (fun pair => pair.1 !=
-            NativeRelation.scalar (ScalarNormalization.number keyTy key)))))], reads⟩ := by
+            NativeRelation.scalar (number keyTy key)))))], reads⟩ := by
   obtain ⟨next, entries, source, successor, native⟩ :=
     GenericStateVM.writeMap_source_step ctx env (eraseSpans declarations)
       state items slot name keyTy valueTy keyExpr valueExpr key value reads
