@@ -432,6 +432,10 @@ without reading the clock. A private deadline or activity condition needs
 an explicit disclosure because the native transcript exposes the comparison
 operands and activity. [Midnight kernel reference](https://docs.midnight.network/compact/reference/ledger-adt#blocktimelessthan)
 
+`blockTimeAtOrAfter(deadline) as reached` and
+`blockTimeAtOrBefore(deadline) as within` include equality. Each uses one native
+strict comparison and complements the result only when the read is active.
+
 The compiler emits native Impact operations to fetch the block time and
 bind the Boolean result to the ZKIR statement. The native VM re-evaluates
 the comparison against its execution context. If the clock crosses the
