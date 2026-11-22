@@ -317,8 +317,9 @@ inductive Statement where
   | assert (condition : Term)
   | «return» (value : Option Term := none)
   | branch (condition : Term) (yes no : List Statement)
-  /-- A half-open source range. Preparation lowers each iteration to a
-  constant-true branch with a fresh Native index binding. -/
+  /-- A half-open source range. Preparation expands general loops to
+  constant-true branches with fresh Native index bindings. A flat pure
+  assertion sequence can stay compact until ordered constraint lowering. -/
   | forRange (index : String) (start stop : Nat) (body : List Statement)
   | stage (capability key : String) (ty : Ty) (value : Term)
   | readCell (state destination : String) (ty : Ty)
@@ -433,16 +434,41 @@ private def validateLimits (limits : Limits) : Except Diagnostic Unit := do
 private def textMetadata (text : String) : Except Diagnostic Unit := do
   if text.utf8ByteSize > 1024 then resource {} "metadata text"
 
-private def validateForRange (span : SourceSpan) (index : String) (start stop : Nat) :
+-- Keep only side-effect-free scalar terms eligible. In particular, disclosures,
+-- external effects, helper calls and witness terms retain ordinary loop expansion.
+private partial def staticAssertionTerm : Term → Bool
+  | .native _ | .bool _ | .uint _ _ | .ref _ => true
+  | .binary _ left right | .boolAnd left right | .boolOr left right
+  | .boolXor left right | .eq left right =>
+    staticAssertionTerm left && staticAssertionTerm right
+  | .cast _ value | .at _ value => staticAssertionTerm value
+  | _ => false
+
+private def flatStaticAssertionSequence : List Statement → Bool
+  | [] => false
+  | body => body.all fun
+    | .assert condition => staticAssertionTerm condition
+    | _ => false
+
+private def validateRangeBounds (span : SourceSpan) (index : String) (start stop : Nat) :
     Except Diagnostic Nat := do
   textMetadata index
   if start > maxForRangeEndpoint || stop > maxForRangeEndpoint then
     resource span "finite range endpoint"
   if start > stop then fail span "finite range start exceeds its stop"
-  let count := stop - start
+  pure (stop - start)
+
+private def validateForRange (span : SourceSpan) (index : String) (start stop : Nat) :
+    Except Diagnostic Nat := do
+  let count ← validateRangeBounds span index start stop
   if count > Types.defaultLimits.maxVectorLength then
     resource span "finite range length"
   pure count
+
+private def validateSourceLoopRange (span : SourceSpan) (index : String)
+    (start stop : Nat) (body : List Statement) : Except Diagnostic Nat :=
+  if flatStaticAssertionSequence body then validateRangeBounds span index start stop
+  else validateForRange span index start stop
 
 def validWitnessIdentifier (name : String) : Bool :=
   !name.isEmpty && name.utf8ByteSize ≤ 128 && name.toList.all (fun c =>
@@ -563,7 +589,7 @@ where
               if yes.length + no.length > fuel then resource span "source nodes"
               pure ((yes ++ no).map SourceNode.statement)
             | .forRange index start stop body => do
-              discard (validateForRange span index start stop)
+              discard (validateSourceLoopRange span index start stop body)
               if body.length > fuel then resource span "source nodes"
               pure (body.map SourceNode.statement)
             | _ => pure []
@@ -851,7 +877,7 @@ where
       | .statement statement =>
         match statement with
         | .forRange index start stop body => do
-          let iterations ← validateForRange {} index start stop
+          let iterations ← validateSourceLoopRange {} index start stop body
           let copies := saturatedMultiply cap multiplier iterations
           let count := saturatedSourceAdd cap count (saturatedMultiply cap copies 4)
           let children := body.map fun child => (SourceNode.statement child, copies)
@@ -867,6 +893,19 @@ where
         let count := saturatedSourceAdd cap count multiplier
         let children := (traversalTermChildren term).map fun child => (SourceNode.term child, multiplier)
         go fuel count (children ++ rest)
+
+private def accountRetainedLoopNodeCounts (limits : Limits) (program : Program)
+    (sizes : List (DeclarationId × SourceSize)) :
+    Except Diagnostic (List (DeclarationId × SourceSize)) := do
+  sizes.mapM fun (id, size) => do
+    let some declaration := program.declarations.find? (·.id == id)
+      | fail {} "unknown retained-loop source size declaration"
+    if bodyHasForRange declaration.body then do
+      let expandedNodes ← expandedSourceNodeCount limits
+        {program with declarations := [declaration]}
+      pure (id, {size with nodes := 3 * (expandedNodes + declaration.parameters.length + 2)})
+    else
+      pure (id, size)
 
 private structure ExpansionState where
   reservedSites : List String
@@ -954,6 +993,8 @@ private partial def expandRangeStatement (statement : Statement) : ExpansionM (L
   | .branch condition yes no =>
     return [.branch condition (← expandRangeBody yes) (← expandRangeBody no)]
   | .forRange index start stop body => do
+    if flatStaticAssertionSequence body then
+      return [.forRange index start stop body]
     let mut reversed := []
     for offset in List.range (stop - start) do
       let body ← expandRangeBody body
@@ -1554,7 +1595,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           result := {result with returned := result.returned || (yes.returned && no.returned)}
           pure {ty := some .unit, calls := condition.calls ++ yes.calls ++ no.calls, effects := (condition.effects ++ yes.effects ++ no.effects).eraseDups, guarded := true}
         | .forRange index start stop loopBody => do
-          discard (validateForRange span index start stop)
+          discard (validateSourceLoopRange span index start stop loopBody)
           rejectLoopReturns span limits.maxSourceNodes loopBody
           let bodyInfo ← checkBody limits program declaration fuel
             ((index, some (.scalar .native)) :: env) loopBody [index]
@@ -1644,12 +1685,13 @@ private def prepareProgramAndSizes (limits : Limits) (program : Program) :
         pure {declaration with body}
     let (declarations, _) := expandDeclarations.run initial
     let prepared := {program with declarations}
-    pure (prepared, ← sourcePreflight limits prepared)
+    let sizes ← sourcePreflight limits prepared
+    pure (prepared, ← accountRetainedLoopNodeCounts limits prepared sizes)
   else pure (program, sizes)
 
-/-- Validate and lower finite ranges into ordinary checked helper syntax.
-Expansion happens only after the weighted source budget and original body
-typing checks pass. -/
+/-- Validate finite ranges. General loops expand into checked helper syntax.
+Flat pure assertion sequences remain compact for ordered circuit-constraint
+lowering. The weighted source budget and original body typing checks run first. -/
 def prepareProgramWithLimits (limits : Limits) (program : Program) :
     Except Diagnostic Program :=
   (prepareProgramAndSizes limits program).map Prod.fst
@@ -2956,7 +2998,49 @@ mutual
         let payload ← liftD (typedExpr declaration.span (.bytes kind.payloadSize) payload)
         appendLedgerEffect declaration.span (.emitEvent kind payload)
         lowerBodyWith program declaration env rest continuation
-      | .forRange .. => liftD (fail declaration.span "unprepared finite range reached helper lowering")
+      | .forRange index start stop loopBody => do
+        unless flatStaticAssertionSequence loopBody do
+          liftD (fail declaration.span "unprepared finite range reached helper lowering")
+        let iterations ← liftD
+          (validateSourceLoopRange declaration.span index start stop loopBody)
+        let originalLocalBindings := (← get).localBindings
+        let mut reversedIndexBindings : List (String × Lowered) := []
+        let mut reversedConstraints : List (Expr .bool) := []
+        for offset in List.range iterations do
+          -- Match the work charged by an expanded branch and its index binding.
+          spendLower declaration.span
+          spendLower declaration.span
+          spendLower declaration.span
+          let indexValue := scalarValue (Expr.native (start + offset))
+          let localName ← freshTyped .native
+          recordLocal localName indexValue.scalar
+          reversedIndexBindings := (localName, indexValue) :: reversedIndexBindings
+          let indexReference : Expr .native := .ref localName
+          let indexValue : Lowered := scalarValue indexReference
+          let loopEnv := (index, indexValue) :: env
+          for loopStatement in loopBody do
+            match loopStatement with
+            | .assert condition => do
+              spendLower declaration.span
+              let condition ← lowerTerm program declaration.id.scope loopEnv declaration.span condition
+              let conditionExpr ← liftD (boolExpr declaration.span condition)
+              if (← get).ledgerMode then do
+                appendLedgerConstraints declaration.span condition.constraints
+                appendLedgerEffect declaration.span (.require conditionExpr)
+              else do
+                for constraint in condition.constraints do
+                  reversedConstraints := constraint :: reversedConstraints
+                reversedConstraints := Expr.eq conditionExpr (.bool true) :: reversedConstraints
+            | _ => liftD (fail declaration.span "unprepared finite range reached helper lowering")
+          modify fun state => {state with localBindings := originalLocalBindings}
+        let body ← lowerBodyWith program declaration env rest continuation
+        if (← get).ledgerMode then
+          pure {body with constraints := []}
+        else do
+          let body := {body with constraints := reversedConstraints.reverse ++ body.constraints}
+          let types := (← get).types
+          pure (reversedIndexBindings.foldl (fun body (localName, value) =>
+            sequence types localName value body) body)
       | .stage .. => liftD (fail declaration.span "native helper capability unavailable: private state")
       | .return _ => liftD (fail declaration.span "invalid helper statement sequence")
 end
@@ -3395,8 +3479,29 @@ mutual
       let condition ← traceTerm program ctx declaration.id.scope env declaration.span condition >>= traceScalar declaration.span
       let result ← traceBlock program ctx declaration env (if condition.number == 0 then no else yes)
       if result.1 then pure result else traceBlock program ctx declaration env rest
-    | .forRange .. :: _ =>
-      liftM (fail declaration.span "unprepared finite range reached helper trace")
+    | .forRange index start stop loopBody :: rest => do
+      unless flatStaticAssertionSequence loopBody do
+        liftM (fail declaration.span "unprepared finite range reached helper trace")
+      let iterations ← liftM
+        (validateSourceLoopRange declaration.span index start stop loopBody)
+      for offset in List.range iterations do
+        spendTrace declaration.span
+        spendTrace declaration.span
+        spendTrace declaration.span
+        let indexValue ← traceTerm program ctx declaration.id.scope env declaration.span
+          (.native (start + offset))
+        let indexValue ← traceCast declaration.span indexValue (.scalar .native)
+        let loopEnv := (index, indexValue) :: env
+        for loopStatement in loopBody do
+          match loopStatement with
+          | .assert condition => do
+            spendTrace declaration.span
+            let condition ← traceTerm program ctx declaration.id.scope loopEnv
+              declaration.span condition >>= traceScalar declaration.span
+            unless condition.number == 1 do
+              liftM (fail declaration.span "helper assertion failed")
+          | _ => liftM (fail declaration.span "unprepared finite range reached helper trace")
+      traceBlock program ctx declaration env rest
     | .readCell .. :: _ =>
       liftM (fail declaration.span "ledger reads require the native contract runtime")
     | .writeCell .. :: _ =>
