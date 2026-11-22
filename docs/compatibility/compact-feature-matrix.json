@@ -4645,7 +4645,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Lean lowers persistent hashing for checked flat named records of bounded bytes, scalars and fieldless enums. Two mixed-record cases match pinned Compact digests through the emitted native relation. The runtime rejects a mismatched byte field wrapper. A checked nested Jubjub and Secp256k1 payload matches the exact Compact 0.36.1 Bytes32 output through the native checker. General overload qualification remains open. Flat positional tuples match the same native preimage and output when their leaf types and order match.",
+      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers also hash checked FAB records supplied by private providers. The nested Bytes2, Bool, UInt16 and Native helper matches the canonical preimage digest in the native checker and requires explicit disclosure for a public return. General overload qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4666,7 +4666,9 @@
         "tests/compact/mixed-fab-persistent-hash.mjs",
         "runtime/tests/mixed_fab_persistent_hash.rs",
         "tests/CurveFabHashes.lean",
-        "runtime/tests/curve_fab_hashes.rs"
+        "runtime/tests/curve_fab_hashes.rs",
+        "tests/HelperPersistentFab.lean",
+        "runtime/tests/witness_control.rs"
       ],
       "equivalence": "unverified"
     },

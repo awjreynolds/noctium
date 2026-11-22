@@ -74,6 +74,54 @@ fn typed_fab_digests_use_the_provider_record_in_host_and_native_execution() -> a
 
 #[cfg(feature = "zkir-321")]
 #[test]
+#[ignore = "requires fresh HelperPersistentFab artifacts"]
+fn named_persistent_fab_hash_matches_direct_hash_with_a_private_provider() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+
+    let root = PathBuf::from(std::env::var("NOCTIUM_HELPER_PERSISTENT_FAB_DIR")?);
+    let stem = "HelperPersistentFab.PersistentFabHelper.hash";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let payload = json!({"kind":"struct", "id":"HelperPersistentFab.Payload", "fields":[
+        {"name":"inner", "value":{"kind":"struct", "id":"HelperPersistentFab.Inner", "fields":[
+            {"name":"label", "value":{"kind":"bytes", "values":[10,11]}},
+            {"name":"active", "value":{"kind":"bool", "value":true}},
+            {"name":"amount", "value":{"kind":"uint", "maximum":"65535", "value":"258"}}
+        ]}},
+        {"name":"anchor", "value":{"kind":"native", "value":"77"}}
+    ]});
+    let attempt = "b".repeat(64);
+    let (mut session, control) = bound_session(&control, BTreeMap::new(), &attempt);
+    let pending = session.advance()?;
+    assert_eq!(pending["status"], "need_host");
+    assert_eq!(pending["request"]["name"], "HelperPersistentFab.nestedPayload");
+    session.resume_typed(reply(&pending["request"], &attempt, "value", Some(payload)))?;
+    assert_eq!(session.advance()?["status"], "completed");
+
+    let completion = session.private_completion(&binding(&control)["nativeRelation"])?;
+    let inputs = serde_json::from_value(completion["inputs"].clone())?;
+    let plan: Plan =
+        serde_json::from_reader(fs::File::open(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(root.join(format!("{stem}.zkir")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    let mut preimage = [0; 37];
+    preimage[..6].copy_from_slice(&[10, 11, 1, 2, 1, 77]);
+    let expected = json!({"kind":"bytes", "values": Sha256::digest(preimage).to_vec()});
+    assert_eq!(execution.returns_json()["result"], expected);
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
 #[ignore = "requires fresh TypedCallArguments Lean artifacts"]
 fn hosted_arguments_move_to_the_native_header_without_changing_provider_inputs() {
     use coin_structure::contract::ContractAddress;
