@@ -17,6 +17,8 @@ pub struct Constructor {
     pub initializers: Vec<Initializer>,
     #[serde(default, rename = "mapInserts")]
     pub map_inserts: Vec<MapInsert>,
+    #[serde(default, rename = "setInserts")]
+    pub set_inserts: Vec<SetInsert>,
     #[serde(default, rename = "counterIncrements")]
     pub counter_increments: Vec<CounterIncrement>,
     #[serde(default, rename = "listPushes")]
@@ -46,6 +48,13 @@ pub struct MapInsert {
     pub state: String,
     pub key: Expr,
     pub value: Expr,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetInsert {
+    pub name: String,
+    pub key: Expr,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -172,6 +181,21 @@ fn flat_map_types(decl: &StateDecl) -> Result<Option<(ScalarType, ScalarType)>> 
     Ok(Some((key, value)))
 }
 
+fn root_scalar_set_type(decl: &StateDecl) -> Result<Option<ScalarType>> {
+    let Some(tree) = decl.kind.get("tree") else {
+        return Ok(None);
+    };
+    let Some(key) = tree.get("set") else {
+        return Ok(None);
+    };
+    ensure!(
+        decl.kind.as_object().is_some_and(|kind| kind.len() == 1)
+            && tree.as_object().is_some_and(|fields| fields.len() == 1),
+        "constructor Set insert requires a root Set"
+    );
+    Ok(Some(crate::ledger_key_type(key)?))
+}
+
 type ConstructorMap = HashMap<AlignedValue, StateValue<Db>, Db>;
 
 fn constructor_counter(decl: &StateDecl) -> bool {
@@ -291,6 +315,48 @@ fn apply_map_inserts(
     Ok(ChargedState::new(StateValue::Array(slots)))
 }
 
+fn apply_set_inserts(
+    plan: &Plan,
+    inserts: &[SetInsert],
+    environment: &BTreeMap<String, Value>,
+    state: ChargedState<Db>,
+) -> Result<ChargedState<Db>> {
+    if inserts.is_empty() {
+        return Ok(state);
+    }
+    let mut sets = BTreeMap::<usize, ConstructorMap>::new();
+    for insert in inserts {
+        let (slot, declaration) = plan
+            .state
+            .iter()
+            .enumerate()
+            .find(|(_, declaration)| declaration.name == insert.name)
+            .ok_or_else(|| anyhow!("unknown constructor Set state"))?;
+        let key_type = root_scalar_set_type(declaration)?
+            .ok_or_else(|| anyhow!("constructor Set insert requires a root scalar Set"))?;
+        let key_value = evaluate(&insert.key, environment)?;
+        ensure!(
+            key_value.scalar_type() == key_type,
+            "constructor Set key type mismatch"
+        );
+        crate::validate_ledger_key_value(&key_type, &key_value)?;
+        let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
+        let set = sets.entry(slot).or_insert_with(HashMap::new);
+        *set = set.insert(key, StateValue::Null);
+    }
+
+    let StateValue::Array(slots) = state.get_ref() else {
+        bail!("constructor Set state requires array storage")
+    };
+    let mut slots = slots.clone();
+    for (slot, set) in sets {
+        slots = slots
+            .insert(slot, StateValue::Map(set))
+            .ok_or_else(|| anyhow!("constructor Set slot is outside state"))?;
+    }
+    Ok(ChargedState::new(StateValue::Array(slots)))
+}
+
 fn apply_list_pushes(
     plan: &Plan,
     pushes: &[ListPush],
@@ -368,6 +434,7 @@ pub fn construct_state(
         .len()
         .checked_add(constructor.counter_increments.len())
         .and_then(|count| count.checked_add(constructor.list_pushes.len()))
+        .and_then(|count| count.checked_add(constructor.set_inserts.len()))
         .ok_or_else(|| anyhow!("too many constructor collection actions"))?;
     ensure!(
         action_count <= 64,
@@ -476,7 +543,9 @@ pub fn construct_state(
     for declaration in &plan.state {
         if declaration.sealed && declaration.kind.get("map").is_none() {
             let collection_default =
-                constructor_counter(declaration) || flat_scalar_list_type(declaration)?.is_some();
+                constructor_counter(declaration)
+                    || flat_scalar_list_type(declaration)?.is_some()
+                    || root_scalar_set_type(declaration)?.is_some();
             if collection_default {
                 continue;
             }
@@ -493,7 +562,8 @@ pub fn construct_state(
     }
     let state = create_state(plan, &config)?;
     let state = apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)?;
-    apply_list_pushes(plan, &constructor.list_pushes, &scalars, state)
+    let state = apply_list_pushes(plan, &constructor.list_pushes, &scalars, state)?;
+    apply_set_inserts(plan, &constructor.set_inserts, &scalars, state)
 }
 
 pub(crate) fn deployment_state(

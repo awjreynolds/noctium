@@ -137,5 +137,5 @@ private def tooManyActionsContract : Noctium.Contract := {
 
 #guard match tooManyActionsContract.validate Capabilities.source with
   | .error diagnostic =>
-      diagnostic.message == "constructor Map, Counter and List action limit exceeded"
+      diagnostic.message == "constructor collection action limit exceeded"
   | .ok _ => _root_.Bool.false

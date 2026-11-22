@@ -354,12 +354,14 @@ declare_syntax_cat nlstate
 scoped syntax "cell" ident ":" nltype : nlstate
 scoped syntax "sealed" "cell" ident ":" nltype : nlstate
 scoped syntax "sealed" "map" ident ":" nltype "=>" nltype : nlstate
+scoped syntax "sealed" "set" ident ":" nltype : nlstate
 declare_syntax_cat nlconstructorparam
 scoped syntax ident ":" nltype : nlconstructorparam
 declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
+scoped syntax "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "increment" ident "by" nlexpr : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "constructor" "(" nlconstructorparam,* ")" "where" nlconstructorinit* "end" : nlstate
@@ -3692,12 +3694,27 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut mapInsertTerms : Array (TSyntax `term) := #[]
   let mut counterIncrementTerms : Array (TSyntax `term) := #[]
   let mut listPushTerms : Array (TSyntax `term) := #[]
+  let mut setInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
   for initializer in initializers do
     match initializer with
+    | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do
+      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      match schema.find? (·.1 == destination) with
+      | some (_, .tree (.set keyTy)) => do
+        let keyExpression ← checkedExpression scalarBindings key keyTy
+        let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
+        setInsertTerms := setInsertTerms.push
+          (← `(Noctium.ConstructorSetInsert.mk $(stringTerm destination) $key))
+      | some _ => throwErrorAt stateName "constructor insert requires a root Set"
+      | none => throwErrorAt stateName s!"constructor inserts into unknown Set '{destination}'"
     | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size >= 64 then
-        throwErrorAt initializer "constructor Map, Counter and List action limit exceeded"
+      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .map keyTy valueTy) => do
@@ -3710,8 +3727,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _ => throwErrorAt stateName "constructor insert requires a Map"
       | none => throwErrorAt stateName s!"constructor inserts into unknown Map '{destination}'"
     | `(nlconstructorinit| increment $stateName:ident by $amount:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size >= 64 then
-        throwErrorAt initializer "constructor Map, Counter and List action limit exceeded"
+      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
       let amountExpression ← match amount with
         | `(nlexpr| $literal:num) => do
@@ -3729,8 +3747,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _ => throwErrorAt stateName "constructor increment requires a root Counter"
       | none => throwErrorAt stateName s!"constructor increments unknown Counter '{destination}'"
     | `(nlconstructorinit| pushFront $stateName:ident := $value:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size >= 64 then
-        throwErrorAt initializer "constructor Map, Counter and List action limit exceeded"
+      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.«list» _ (.scalar valueTy))) => do
@@ -3783,8 +3802,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mapInserts := mapInsertTerms
   let counterIncrements := counterIncrementTerms
   let listPushes := listPushTerms
+  let setInserts := setInsertTerms
   `(some (Noctium.Constructor.mk [$parameters,*] [$initializers,*] [$mapInserts,*]
-    [$counterIncrements,*] [$listPushes,*]))
+    [$counterIncrements,*] [$listPushes,*] [$setInserts,*]))
 
 private def checkMerkleLeafWidth (source : Syntax) (fields : List Ty) : CommandElabM Unit := do
   let widths ← fields.mapM fun ty =>
@@ -3910,6 +3930,10 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
         | `(nlstate| sealed counter $id:ident) =>
           pure (id, StateKind.tree .counter,
             ← `(Noctium.StateKind.tree Noctium.LedgerValueType.counter))
+        | `(nlstate| sealed set $id:ident : $element:nltype) => do
+          let keyTy ← readTy element
+          pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
+            (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
         | `(nlstate| sealed $listKind:ident $id:ident : $element:nltype) => do
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a sealed scalar List declaration"
@@ -4060,7 +4084,8 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
       let isSealed : _root_.Bool := match state with
         | `(nlstate| sealed cell $_:ident : $_:nltype)
         | `(nlstate| sealed map $_:ident : $_:nltype => $_:nltype)
-        | `(nlstate| sealed counter $_:ident) => Bool.true
+        | `(nlstate| sealed counter $_:ident)
+        | `(nlstate| sealed set $_:ident : $_:nltype) => Bool.true
         | `(nlstate| sealed $listKind:ident $_:ident : $_:nltype) =>
             listKind.getId.toString == "list"
         | _ => Bool.false
