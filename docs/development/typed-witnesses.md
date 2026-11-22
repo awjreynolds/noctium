@@ -78,6 +78,11 @@ supplies the left payload's typed default. The return layout orders
 for private inputs that flow into them.
 [Composite Either fixture](../../tests/CompositeEither.lean)
 
+`Helpers.Wire.either` builds a named Either codec from the two arm codecs.
+Caller-supplied values retain the tag and both checked arms, matching the
+Compact call ABI. The fixture returns the same ordered record and writes
+its tag to a Bool cell. [Lean fixture](../../tests/CompositeEitherInput.lean) · [Compact fixture](../../tests/compact/composite-either-input.mjs)
+
 ## Pass a record to a witness
 
 Declare a witness parameter with the codec that defines its layout.

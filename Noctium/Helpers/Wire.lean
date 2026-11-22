@@ -117,6 +117,28 @@ def compositeEnv (base : Types.CompositeEnv) (codecs : List Codec) : Types.Compo
     enumerations := (base.enumerations ++ codecs.flatMap (·.composites.enumerations)).eraseDups
   }
 
+/-- Build a fixed-frame codec for a nominal `Either<L, R>` record. The caller
+owns the nominal identity. The tag precedes both complete arm payloads, and
+normal codec admission checks their combined layout and frame width. -/
+def either (id : Types.DeclId) (left right : Codec) : Codec :=
+  let eitherType : Types.CompositeType := .structure id
+  let declaration : Types.StructDecl := {
+    id
+    fields := [
+      {name := "is_left", type := .scalar .bool},
+      {name := "left", type := left.payload},
+      {name := "right", type := right.payload}
+    ]
+  }
+  let arms := compositeEnv {} [left, right]
+  -- Keep the generated declaration after arm declarations so checked type
+  -- admission sees and rejects a conflicting caller-supplied identity.
+  let composites : Types.CompositeEnv := {
+    structures := arms.structures ++ [declaration]
+    enumerations := arms.enumerations
+  }
+  {payload := eitherType, frameBytes := 1 + left.frameBytes + right.frameBytes, composites}
+
 /-- Add the checked codec helpers to a readable circuit's root scope. -/
 def attach (program : Program) (codecs : List Codec) : Except String Program := do
   let composites := compositeEnv program.composites codecs
