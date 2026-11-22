@@ -755,12 +755,8 @@ private def runtimeEquality (composites : Types.CompositeEnv) (context : EvalCon
   match left, right with
   | .aggregate leftType leftFingerprint leftLeaves,
     .aggregate rightType rightFingerprint rightLeaves => do
-      unless leftType == rightType do
-        throw "native witness equality found incompatible aggregate types"
-      let .structure _ := leftType | throw "native witness record equality requires a flat record"
-      let program : Program := {composites}
-      discard ((Helpers.nominalFlatStructureLeafTypes program {} leftType).mapError (·.message))
-      let compiled ← (Types.compileType composites leftType).mapError (·.message)
+      let compiled ← (Helpers.checkedAggregateEquality {composites} {} leftType rightType).mapError
+        (·.message)
       unless leftFingerprint == compiled.fingerprint && rightFingerprint == compiled.fingerprint do
         throw "native witness equality found a noncanonical aggregate fingerprint"
       let leftChecked ← (Types.unflattenChecked compiled leftLeaves).mapError id

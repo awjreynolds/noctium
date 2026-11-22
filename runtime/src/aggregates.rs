@@ -931,16 +931,6 @@ impl Schema {
         self.measures[self.root]
     }
 
-    pub(crate) fn is_flat_record(&self) -> bool {
-        matches!(
-            &self.nodes[self.root],
-            LayoutNode::Struct { fields, .. }
-                if fields
-                    .iter()
-                    .all(|field| matches!(&self.nodes[field.layout], LayoutNode::Scalar(_)))
-        )
-    }
-
     fn fab_hash_field(&self, layout: usize) -> Result<FabHashField> {
         match &self.nodes[layout] {
             LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),

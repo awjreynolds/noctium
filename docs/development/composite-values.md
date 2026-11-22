@@ -93,16 +93,22 @@ effectful values before the constructor to choose their execution order.
 The result carries the codec's nominal type. Private components still require
 explicit disclosure at public sinks. [Source fixture](../../tests/ReadableRecordConstruction.lean)
 
-## Compare two flat records
+## Compare checked aggregates
 
-In a readable circuit, `eq(left, right)` compares records with the same
-nominal type and direct Native, Bool or bounded UInt fields. The compiler
-evaluates the operands in order. The result inherits private value and control
-origins from both operands, so a public result may need explicit disclosure.
-The fixture checks identical records and a difference in each field against
-the pinned Compact oracle and the native relation. The replay test exercises
-the same typed comparison in Lean.
-[Lean fixture](../../tests/NominalRecordEquality.lean) · [Native check](../../runtime/tests/nominal_record_equality.rs) · [Compact fixture](../../tests/compact/nominal-record-equality.mjs)
+In a readable circuit, `eq(left, right)` compares values of the same checked
+aggregate type. Records keep their nominal identity. Tuple arity, vector length
+and fixed byte lengths must match. The compiler compares canonical leaves,
+including nested fields. The result retains the privacy origins of both operands.
+Compact 0.36.1 also permits mixed unsigned widths within matching tuples and
+vectors. That comparison path remains open.
+
+The nested fixture checks equal inputs and nine independent changes against
+Compact 0.36.1 and the native relation. It covers an inner record, a tuple
+containing a vector, fixed bytes and a fieldless enum.
+[Lean fixture](../../tests/NestedAggregateEquality.lean) · [Native check](../../runtime/tests/nested_aggregate_equality.rs) · [Compact fixture](../../tests/compact/nested-aggregate-equality.mjs)
+
+The flat-record fixture retains its scalar leaf and Lean replay checks.
+[Flat-record fixture](../../tests/NominalRecordEquality.lean)
 
 ## Use named fieldless enum members
 

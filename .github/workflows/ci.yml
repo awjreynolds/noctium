@@ -286,6 +286,9 @@ jobs:
           .lake/build/bin/noctium compile tests/NamedEnumMembers.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-enum-members"
+          .lake/build/bin/noctium compile tests/NestedAggregateEquality.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/nested-aggregate-equality"
           .lake/build/bin/noctium compile tests/QualifiedShieldedCoinInfo.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/qualified-coin-info"
@@ -313,6 +316,7 @@ jobs:
             NOCTIUM_NESTED_TRANSIENT_HASH_DIR="$artifacts/nested-transient-hash" \
             NOCTIUM_READABLE_FAB_HASH_DIR="$artifacts/readable-fab-hash" \
             NOCTIUM_NAMED_ENUM_MEMBERS_DIR="$artifacts/named-enum-members" \
+            NOCTIUM_NESTED_EQUALITY_DIR="$artifacts/nested-aggregate-equality" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
             NOCTIUM_UNIT_BINDINGS_DIR="$artifacts/readable-unit-bindings" \
@@ -324,7 +328,7 @@ jobs:
               --test composite_maybe_input --test composite_either_input \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \
-              --test named_enum_members \
+              --test named_enum_members --test nested_aggregate_equality \
               --test readable_unit_bindings --test named_proof_unit -- --ignored
       - name: Check source proof registration
         run: |

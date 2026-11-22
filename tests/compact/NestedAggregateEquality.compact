@@ -1,0 +1,22 @@
+pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+export enum Kind { A, B, C }
+
+export struct Inner {
+  octets: Bytes<2>;
+  enabled: Boolean;
+  amount: Uint<8>;
+}
+
+export struct Sample {
+  head: Field;
+  inner: Inner;
+  pair: [Field, Vector<2, Field>];
+  bytes: Bytes<2>;
+  kind: Kind;
+}
+
+export pure circuit equal(left: Sample, right: Sample): Boolean {
+  return left == right;
+}

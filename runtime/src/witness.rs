@@ -242,13 +242,6 @@ impl Registry {
         Ok(())
     }
 
-    pub(crate) fn is_flat_record(&self, token: &str) -> Result<bool> {
-        let Type::Aggregate(token) = Type::parse(token, self)? else {
-            bail!("flat record check requires an aggregate type")
-        };
-        Ok(self.schemas[&token].is_flat_record())
-    }
-
     pub fn leaf_types(&self, token: &str) -> Result<Vec<String>> {
         match Type::parse(token, self)? {
             Type::Unit => Ok(vec![]),

@@ -1353,19 +1353,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
     match left.type, right.type with
-    | .composite (.enumeration leftId), .composite (.enumeration rightId) => do
-      unless leftId == rightId do
-        throwErrorAt stx "eq enum operands must have the same nominal type"
-      discard (checkedFieldlessEnumMembers stx (.enumeration leftId))
+    | .composite leftType, .composite rightType => do
+      unless leftType == rightType do
+        let message := match leftType, rightType with
+          | .enumeration _, .enumeration _ => "eq enum operands must have the same nominal type"
+          | .structure _, .structure _ => "eq record operands must have the same nominal type"
+          | _, _ => "eq aggregate operands must have the same checked type"
+        throwErrorAt stx message
       modify fun state => {state with requiresOutputViews := _root_.Bool.true}
-      pure (mergeLowered (.scalar .bool)
-        (.eq (.project left.term .enumTag) (.project right.term .enumTag)) [left, right])
-    | .composite (.enumeration _), _ | _, .composite (.enumeration _) =>
-      throwErrorAt stx "eq enum operands must have the same nominal type"
-    | .composite (.structure leftId), .composite (.structure rightId) =>
-      unless leftId == rightId do
-        throwErrorAt stx "eq record operands must have the same nominal type"
       pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
+    | .composite _, _ | _, .composite _ =>
+      throwErrorAt stx "eq aggregate operands must have the same checked type"
     | _, _ => do
       let .scalar leftTy := left.type | throwErrorAt stx "eq does not accept Unit"
       let .scalar rightTy := right.type | throwErrorAt stx "eq does not accept Unit"

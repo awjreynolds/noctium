@@ -298,7 +298,8 @@ def pairReplay : Bool := Id.run do
 
 #guard pairReplay
 
-private def pairEqualityReplay (amount : Nat) (expected : Bool) : Bool := Id.run do
+private def aggregateEqualityReplay (type : Types.CompositeType) (left right : List Term)
+    (expected : Bool) : Bool := Id.run do
   let program : Program := {
     composites := pairProgram.composites
     declarations := [{
@@ -306,8 +307,7 @@ private def pairEqualityReplay (amount : Nat) (expected : Bool) : Bool := Id.run
       name := "equalPair"
       result := .scalar .bool
       body := [.return (some (.eq
-        (.composite pairType [.uint 255 7, .bool true])
-        (.composite pairType [.uint 255 amount, .bool true])))]
+        (.composite type left) (.composite type right)))]
     }]
     exports := [{name := "equal", target := ⟨0, 0⟩}]
   }
@@ -316,8 +316,17 @@ private def pairEqualityReplay (amount : Nat) (expected : Bool) : Bool := Id.run
   let .ok report ← replayInvocation {} 256 nativeContext source [] | return false
   return report.matchesRecordedSource && report.execution.result == .success (.scalar (.bool expected))
 
-#guard pairEqualityReplay 7 true
-#guard pairEqualityReplay 8 false
+#guard aggregateEqualityReplay pairType [.uint 255 7, .bool true] [.uint 255 7, .bool true] true
+#guard aggregateEqualityReplay pairType [.uint 255 7, .bool true] [.uint 255 8, .bool true] false
+
+private def nestedEqualityType : Types.CompositeType :=
+  .tuple [pairType, .bytes 2, .vector 2 (.scalar .native)]
+
+private def nestedEqualityLeaves (byte : Nat) : List Term :=
+  [.uint 255 7, .bool true, .native 0, .native byte, .native 11, .native 12]
+
+#guard aggregateEqualityReplay nestedEqualityType (nestedEqualityLeaves 2) (nestedEqualityLeaves 2) true
+#guard aggregateEqualityReplay nestedEqualityType (nestedEqualityLeaves 2) (nestedEqualityLeaves 3) false
 
 def unitWitnessProgram : Program := {
   witnesses := [{
