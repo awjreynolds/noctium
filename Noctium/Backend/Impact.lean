@@ -192,6 +192,7 @@ inductive Op where
   | listPopFront (slot : Nat) (keys : List Aligned)
   | listReset (slot : Nat) (keys : List Aligned)
   | mapRemove (slot : Nat) (keys : List Aligned)
+  | mapRemoveRecord (slot : Nat) (schema : Lean.Json) (values : List LedgerFieldExpr)
   | claimContractCall (address entryPointHash : Expr (.bytes 32)) (commitment : Scalar)
   | receiveShieldedToMap (slot : Nat) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
@@ -712,8 +713,8 @@ def Op.fields : Op → List Scalar
         (if isShieldedCoinRecordSchema schema && values.map (·.ty) == shieldedCoinReadTypes then
           shieldedCoinLedgerFieldSequence values
         else ledgerFieldSequence values)
-  | .popeqFields _ values =>
-      if values.map (·.ty) == shieldedCoinReadTypes then
+  | .popeqFields schema values =>
+      if isShieldedCoinRecordSchema schema && values.map (·.ty) == shieldedCoinReadTypes then
         [.native 0x0c] ++ shieldedCoinLedgerFieldSequence values
       else [.native 0x0c] ++ ledgerFieldSequence values
   | .member => [.native 0x18]
@@ -798,6 +799,9 @@ def Op.fields : Op → List Scalar
         let parents := keys.take (keys.length - 1)
         indexPathFields slot true parents ++ [.native 0x10, .native 1] ++
           finalKey.fields ++ [.native 0x19, .native (0x90 + keys.length)]
+  | .mapRemoveRecord slot _schema values =>
+      indexPathFields slot true [] ++ [.native 0x10, .native 1] ++
+        ledgerFieldSequence values ++ [.native 0x19, .native 0x91]
   | .claimContractCall address entryPointHash commitment =>
       (claimContractCallFieldGroups address entryPointHash commitment).flatten
   | .insertShieldedCoinSet slot nonce color amount commitment =>
@@ -922,6 +926,12 @@ def Op.fieldGroups : Op → List (List Scalar)
         [indexPathFields slot true parents,
           [.native 0x10, .native 1] ++ finalKey.fields,
           [.native 0x19], [.native (0x90 + keys.length)]]
+  | .mapRemoveRecord slot _schema values =>
+      [ indexPathFields slot true []
+      , [.native 0x10, .native 1] ++ ledgerFieldSequence values
+      , [.native 0x19]
+      , [.native 0x91]
+      ]
   | .claimContractCall address entryPointHash commitment =>
       claimContractCallFieldGroups address entryPointHash commitment
   | .insertShieldedCoinSet slot nonce color amount commitment =>
@@ -1256,11 +1266,6 @@ def cellRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeT
   let fields ← LedgerValueType.cellRecordFields environment type
   recordSchemaForFields environment type fields
 
-private def ledgerRecordWriteSchema (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) : Except String Lean.Json := do
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
-  recordSchemaForFields environment type fields
-
 /-- Produce the record schema shared by List operations and state metadata. -/
 def listElementOperationSchema (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String Lean.Json :=
@@ -1334,6 +1339,17 @@ private def resolveTreeState (state : List StateDecl) (name : String)
   let .tree schema := declaration.kind | throw s!"state '{name}' is not a recursive tree"
   schema.resolvePath keys
 
+private def recordSetKeySchema (state : List StateDecl) (name : String)
+    (values : List LedgerFieldExpr) : Except String (Nat × Lean.Json) := do
+  let slot ← stateSlot state name
+  let some {kind := .tree (.recordSet environment type), ..} := state[slot]?
+    | throw s!"state '{name}' is not a record Set"
+  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+    throw "record Set key field type mismatch"
+  let schema ← recordSchemaForFields environment type fields
+  pure (slot, schema)
+
 private def compositeWritePathOps (state : List StateDecl) (name : String)
     (keys : List PathKey) (type : Types.CompositeType) (values : List LedgerFieldExpr) :
     Except String (List Op) := do
@@ -1344,7 +1360,7 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
     let .tree (.composite environment foundType) := declaration.kind
       | throw "root composite write must target a checked record Cell"
     unless foundType == type do throw "nested composite write type mismatch"
-    pure (environment, ← LedgerValueType.ledgerRecordWriteFields environment type)
+    pure (environment, ← LedgerValueType.cellRecordFields environment type)
   else do
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite write must select a composite value"
@@ -1353,7 +1369,7 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "nested composite write field type mismatch"
   let alignedKeys ← nativePathKeys keys
-  let schema ← ledgerRecordWriteSchema environment type
+  let schema ← recordSchemaForFields environment type fields
   if keys.isEmpty then
     pure [.push (.field (.native slot)), .pushFields schema values true, .insert 1]
   else pathWriteCompositeOps slot alignedKeys schema values
@@ -1958,6 +1974,22 @@ def appendEffect (state : List StateDecl) (effect : Effect)
         .dup, .indexPath slot false parents, pushKey finalKey, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
+  | .memberRecordSet name destination values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    pure {plan with
+      operations := plan.operations ++ [
+        .dup, .indexPath slot false [], .pushFields schema values false, .member,
+        .popeq (.bitExpr (.ref destination))]
+      reads := plan.reads ++ [{name := destination, ty := .bool}]}
+  | .setInsertRecord name values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    pure {plan with operations := plan.operations ++ [
+      .indexPath slot true [], .pushFields schema values false,
+      .push (.field (.native 1)), .newMap, .insert 2]}
+  | .removeRecordSet name values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    pure {plan with operations := plan.operations ++ [
+      .mapRemoveRecord slot schema values]}
   | .insertPath name keys ty value | .writePath name keys ty value => do
     let slot ← stateSlot state name
     let keys ← nativePathKeys keys
@@ -2073,6 +2105,10 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       pure (.readCompositePath name destination (totalizePathKeys condition keys) type destinations)
     | some condition, .memberPath name destination keys =>
       pure (.memberPath name destination (totalizePathKeys condition keys))
+    | some condition, .memberRecordSet name destination values =>
+      let avoid := ledgerFieldExprNames values
+      pure (.memberRecordSet name destination
+        (values.map (totalizeLedgerFieldExpr condition avoid)))
     | some condition, .counterRead name destination keys =>
       pure (.counterRead name destination (totalizePathKeys condition keys))
     | some condition, .counterLessThan name destination keys threshold =>
@@ -2099,6 +2135,12 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       let avoid := pathExpressionNames keys ++ ledgerFieldExprNames values
       pure (.listPushFront name (totalizePathKeys condition keys) type
         (values.map (totalizeLedgerFieldExpr condition avoid)))
+    | some condition, .setInsertRecord name values =>
+      let avoid := ledgerFieldExprNames values
+      pure (.setInsertRecord name (values.map (totalizeLedgerFieldExpr condition avoid)))
+    | some condition, .removeRecordSet name values =>
+      let avoid := ledgerFieldExprNames values
+      pure (.removeRecordSet name (values.map (totalizeLedgerFieldExpr condition avoid)))
     | some condition, .listPopFront name keys =>
       pure (.listPopFront name (totalizePathKeys condition keys))
     | some condition, .listReset name keys =>
@@ -2173,7 +2215,7 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       reads := reads
       activityGuards := priorGuards ++ List.replicate added (some condition)}
   | some condition, .readContractAddress .. | some condition, .readPath .. | some condition, .readCompositePath .. |
-      some condition, .memberPath .. | some condition, .counterRead .. |
+      some condition, .memberPath .. | some condition, .memberRecordSet .. | some condition, .counterRead .. |
       some condition, .counterLessThan .. |
       some condition, .listLength .. | some condition, .listHead .. |
       some condition, .readTokenBalance .. | some condition, .mapSize .. | some condition, .mapIsEmpty .. |
@@ -2202,7 +2244,8 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       some condition, .counterAdjust .. | some condition, .counterReset .. |
       some condition, .listPushFront .. | some condition, .listPopFront .. |
       some condition, .listReset .. | some condition, .removePath .. |
-      some condition, .setInsert .. |
+      some condition, .setInsert .. | some condition, .setInsertRecord .. |
+      some condition, .removeRecordSet .. |
       some condition, .merkleTreeInsertHash .. | some condition, .merkleTreeReset .. |
       some condition, .merkleTreeInsertHashIndex .. |
       some condition, .merkleTreeResetHistory .. |
@@ -2619,6 +2662,22 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
         .dup, .indexPath slot false parents, pushKey finalKey, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
+  | .memberRecordSet name destination values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    plan := {plan with
+      operations := plan.operations ++ [
+        .dup, .indexPath slot false [], .pushFields schema values false, .member,
+        .popeq (.bitExpr (.ref destination))]
+      reads := plan.reads ++ [{name := destination, ty := .bool}]}
+  | .setInsertRecord name values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    plan := {plan with operations := plan.operations ++ [
+      .indexPath slot true [], .pushFields schema values false,
+      .push (.field (.native 1)), .newMap, .insert 2]}
+  | .removeRecordSet name values => do
+    let (slot, schema) ← recordSetKeySchema state name values
+    plan := {plan with operations := plan.operations ++ [
+      .mapRemoveRecord slot schema values]}
   | .insertPath name keys ty value | .writePath name keys ty value => do
     let slot ← stateSlot state name
     let keys ← nativePathKeys keys
@@ -2882,6 +2941,10 @@ def Op.toJson (ctx : EvalContext) (env : EvalEnv) : Op → Except String Lean.Js
       ("slot", Lean.toJson slot), ("keyCount", Lean.toJson keys.length)])])
   | .mapRemove slot keys => pure (Lean.Json.mkObj [("mapRemove", Lean.Json.mkObj [
       ("slot", Lean.toJson slot), ("keyCount", Lean.toJson keys.length)])])
+  | .mapRemoveRecord slot schema values => do
+      let values ← (values.flatMap ledgerFieldPayloads).mapM (fun value => value.eval ctx env)
+      pure (Lean.Json.mkObj [("mapRemoveRecord", Lean.Json.mkObj [
+        ("slot", Lean.toJson slot), ("schema", schema), ("values", Lean.toJson values)])])
   | .claimContractCall .. => throw "claimContractCall uses its dedicated native-plan operation JSON"
   | .receiveShieldedToMap .. => throw "shielded coin receive uses its dedicated native-plan operation JSON"
   | .insertShieldedCoinSet .. => throw "qualified shielded coin Set insertion uses its dedicated native-plan operation JSON"

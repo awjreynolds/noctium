@@ -27,6 +27,8 @@ inductive Value where
   | foreignBase (curve : Foreign.Curve) (value : Nat)
   | foreignScalar (curve : Foreign.Curve) (value : Nat)
   | foreignPoint (curve : Foreign.Curve) (value : Foreign.Point)
+  /-- One record key in declaration order, with canonical field payloads. -/
+  | record (fields : List (Ty × List Nat))
   deriving Repr, BEq, DecidableEq
 
 def Value.as : (ty : Ty) → Value → Option ty.Denote
@@ -1140,6 +1142,18 @@ private def evalLedgerField (ctx : EvalContext) (env : EvalEnv) :
     unless canonical ctx ty value do throw "noncanonical ledger record field"
     pure (Value.pack ty value)
 
+private def evaluateRecordKey (ctx : EvalContext) (env : EvalEnv)
+    (values : List LedgerFieldExpr) : Except String Value := do
+  let fields ← values.mapM fun value => do
+    let payload ← match ← evalLedgerField ctx env value with
+      | .native n | .uint _ n => pure [n]
+      | .bool b => pure [if b then 1 else 0]
+      | .bytes _ bytes => pure bytes
+      | .jubjubPoint x y => pure [x, y]
+      | _ => throw "unsupported record Set key field"
+    pure (value.ty, payload)
+  pure (.record fields)
+
 private def checkedRecordBindings (ctx : EvalContext) (destinations : List (String × Ty))
     (values : List Value) (typeError canonicalError : String) :
     Except String (List (String × Value)) := do
@@ -1478,6 +1492,10 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let evaluated ← evaluatePath ctx env keys
       let some root := next.trees.lookup name | throw s!"missing recursive state map '{name}'"
       env := (destination, .bool (← treeMember root evaluated)) :: env
+    | .memberRecordSet name destination values => do
+      let some root := next.trees.lookup name | throw s!"missing record Set '{name}'"
+      let key ← evaluateRecordKey ctx env values
+      env := (destination, .bool (← treeMember root [key])) :: env
     | .mapIsEmpty name destination keys => do
       let empty ← mapIsEmptyAt next name (← evaluatePath ctx env keys)
       env := (destination, .bool empty) :: env
@@ -1649,6 +1667,12 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       next ← resetMapAt next name evaluated
     | .setInsert name keys => do
       next ← insertSetAt next name (← evaluatePath ctx env keys)
+    | .setInsertRecord name values => do
+      let key ← evaluateRecordKey ctx env values
+      next ← insertSetAt next name [key]
+    | .removeRecordSet name values => do
+      let key ← evaluateRecordKey ctx env values
+      next ← removeMapAt next name [key]
     | .removePath name keys => do
       next ← removeMapAt next name (← evaluatePath ctx env keys)
 
@@ -1715,6 +1739,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .readTokenBalance .. |
             .readPath .. | .readCompositePath .. | .memberPath .. | .insertPath .. |
             .writePath .. | .writeCompositePath .. | .emptyMapPath .. | .setInsert .. | .counterRead .. |
+            .memberRecordSet .. | .setInsertRecord .. | .removeRecordSet .. |
             .counterLessThan .. |
             .counterAdjust .. | .counterReset .. | .removePath .. |
             .listLength .. | .listHead .. | .listPushFront .. | .listPopFront .. | .listReset .. |
@@ -1960,6 +1985,10 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
           env := updatedEnv
           next := updatedState
+        | .memberRecordSet .. | .setInsertRecord .. | .removeRecordSet .. => do
+          let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
+          env := updatedEnv
+          next := updatedState
         | .insertPath name keys ty value | .writePath name keys ty value => do
           let evaluated ← evaluatePath ctx env keys
           let payload := LedgerValue.scalar (Value.pack ty (← value.eval ctx env))
@@ -2011,6 +2040,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           env := (destination, Value.pack ty zero) :: env
         | .readMember _ destination .. =>
           env := (destination, .bool false) :: env
+        | .memberRecordSet _ destination .. =>
+          env := (destination, .bool false) :: env
         | .readContractAddress destination =>
           env := (destination, .bytes 32 (List.replicate 32 0)) :: env
         | .readTokenBalance destination _ _ query =>
@@ -2025,7 +2056,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .insertPath .. | .writePath .. |
             .writeCompositePath .. | .emptyMapPath .. | .listPushFront .. | .pushFrontCoin .. |
             .insertShieldedCoinSetTo .. | .writeShieldedCoinCellTo .. | .pushFrontCoinTo .. |
-            .listPopFront .. | .listReset .. | .setInsert .. | .removePath .. => pure ()
+            .listPopFront .. | .listReset .. | .setInsert .. | .setInsertRecord .. |
+            .removeRecordSet .. | .removePath .. => pure ()
         | .readPath _ destination _ ty =>
           let zero : ty.Denote := match ty with
             | .native => 0

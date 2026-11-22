@@ -444,8 +444,11 @@ inductive LedgerValueType where
   | scalar (ty : Ty)
   | map (keyTy : Ty) (value : LedgerValueType)
   | set (keyTy : Ty)
-  /-- The fixed QualifiedShieldedCoinInfo Set key supported by the native
-  `insertShieldedCoinSet` operation. General record-keyed Sets stay unsupported. -/
+  /-- A root Set keyed by one checked flat typed record. Field order and types
+  come from the shared record layout. Nested paths still use scalar PathKeys. -/
+  | recordSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
+  /-- The fixed QualifiedShieldedCoinInfo Set key stays on its specialized
+  native coin operations, separate from ordinary typed record Set keys. -/
   | shieldedCoinSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
   | composite (environment : Types.CompositeEnv) (type : Types.CompositeType)
   | list (environment : Types.CompositeEnv) (type : Types.CompositeType)
@@ -477,6 +480,7 @@ def LedgerValueType.resolvePath (schema : LedgerValueType) : List PathKey →
       unless keyTy == expected do throw "nested map key type mismatch"
       value.resolvePath rest
     | .set _ => throw "set members have no readable value"
+    | .recordSet .. => throw "record Set members have no readable value"
     | .shieldedCoinSet .. => throw "qualified shielded coin Set members have no readable value"
     | .composite .. => throw "nested map path continues through a composite value"
     | .list .. => throw "nested map path continues through a list value"
@@ -712,7 +716,8 @@ def StateKind.pathSchema : StateKind → Option LedgerValueType
 /-- Root collections supported as sealed constructor-owned state. Empty state is
 the default, so a constructor action is optional. -/
 def StateKind.isDefaultEmptyRoot : StateKind → Bool
-  | .tree .counter | .tree (.set _) | .tree (.«list» _ (.scalar _)) => true
+  | .tree .counter | .tree (.set _) | .tree (.recordSet _ _) |
+      .tree (.«list» _ (.scalar _)) => true
   | _ => false
 
 def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
@@ -887,6 +892,20 @@ inductive LedgerFieldExpr where
 def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
   | .mk ty _ => ty
 
+/-- The existing qualified coin reset is the only ordinary effect that may
+write a qualified record without a booked coin. -/
+def LedgerValueType.cellWriteEffectFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (values : List LedgerFieldExpr) :
+    Except String (List (String × Ty)) := do
+  if let .ok fields := LedgerValueType.shieldedCoinRecordFields environment type then
+    let [.mk (.bytes 32) (.bytes32Literal nonce), .mk (.bytes 32) (.bytes32Literal color),
+        .mk (.uint _) (.uint _ 0), .mk (.uint _) (.uint _ 0)] := values
+      | throw "qualified coin Cell writes require a booked coin or a zero reset"
+    unless nonce == List.replicate 32 0 && color == List.replicate 32 0 do
+      throw "qualified coin Cell resets require zero bytes"
+    pure fields
+  else LedgerValueType.ledgerRecordWriteFields environment type
+
 /-- State effects are ordered transaction instructions, not circuit nodes.
 A read binds a typed name for later guards/writes. Outputs are bound explicitly
 by an entrypoint. The backend must bind these values into the accepted transcript. -/
@@ -981,6 +1000,7 @@ inductive Effect where
   | emitEvent (kind : EventKind) (payload : Expr (.bytes kind.payloadSize))
   | readPath (state destination : String) (keys : List PathKey) (valueTy : Ty)
   | memberPath (state destination : String) (keys : List PathKey)
+  | memberRecordSet (state destination : String) (values : List LedgerFieldExpr)
   | mapIsEmpty (state destination : String) (keys : List PathKey)
   | mapSize (state destination : String) (keys : List PathKey)
   | counterRead (state destination : String) (keys : List PathKey)
@@ -1020,6 +1040,8 @@ inductive Effect where
   | merkleTreeResetHistoryAt (state : String) (keys : List PathKey)
   | emptyMapPath (state : String) (keys : List PathKey)
   | setInsert (state : String) (keys : List PathKey)
+  | setInsertRecord (state : String) (values : List LedgerFieldExpr)
+  | removeRecordSet (state : String) (values : List LedgerFieldExpr)
   | removePath (state : String) (keys : List PathKey)
   deriving Repr
 
@@ -1457,6 +1479,10 @@ where
     | .set keyTy => do
       validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
+    | .recordSet environment type => do
+      let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+      for (_, ty) in fields do
+        validateStateScalar caps ty
     | .shieldedCoinSet environment type => do
       let fields ← LedgerValueType.shieldedCoinRecordFields environment type
       for (_, ty) in fields do
@@ -1488,6 +1514,17 @@ private def resolveTreeState (decls : List StateDecl) (state : String)
   if keys.isEmpty then throw "nested map path must contain at least one key"
   if keys.length > 14 then throw "nested map path exceeds the native insertion depth"
   schema.resolvePath keys
+
+private def resolveRecordSetFields (decls : List StateDecl) (state : String)
+    (values : List LedgerFieldExpr) : Except String (List (String × Ty)) := do
+  let some declaration := decls.find? (·.name == state)
+    | throw s!"unknown record Set '{state}'"
+  let .tree (.recordSet environment type) := declaration.kind
+    | throw s!"state '{state}' is not a typed record Set"
+  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+    throw "record Set key field type mismatch"
+  pure fields
 
 private def resolveMerkleTreePath (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String (Nat × Bool) := do
@@ -1623,7 +1660,8 @@ private def Effect.writeTarget : Effect → Option String
     .pushFrontCoin state .. | .pushFrontCoinTo state .. |
     .writeCompositePath state .. | .counterAdjust state .. | .counterReset state .. |
     .listPushFront state .. | .listPopFront state .. | .listReset state .. |
-    .emptyMapPath state .. | .setInsert state .. | .removePath state .. |
+    .emptyMapPath state .. | .setInsert state .. | .setInsertRecord state .. |
+    .removeRecordSet state .. | .removePath state .. |
     .merkleTreeInsertHash state .. | .merkleTreeInsertHashIndex state .. |
     .merkleTreeReset state | .merkleTreeResetHistory state |
     .merkleTreeInsertHashAt state .. | .merkleTreeInsertHashIndexAt state .. |
@@ -1756,8 +1794,9 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           .claimContractCall .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
           .readContractAddress .. | .readTokenBalance .. | .mintShielded .. | .mintUnshielded .. |
           .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
-          .readPath .. | .memberPath .. | .mapIsEmpty .. | .mapSize .. |
+          .readPath .. | .memberPath .. | .memberRecordSet .. | .mapIsEmpty .. | .mapSize .. |
           .insertPath .. | .writePath .. | .emptyMapPath .. | .setInsert .. |
+          .setInsertRecord .. | .removeRecordSet .. |
           .readCompositePath .. | .writeCompositePath .. | .counterRead .. | .counterLessThan .. |
           .counterAdjust .. | .counterReset .. | .listLength .. | .listHead .. |
           .listPushFront .. | .listPopFront .. | .listReset .. | .removePath .. |
@@ -2014,6 +2053,16 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"state '{state}' is not a map or set"
         discard (schema.entryParent keys)
         pure [(destination, .bool)]
+      | .memberRecordSet state destination values => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let fields ← resolveRecordSetFields decls state values
+        for (_, ty) in fields do ty.validate caps
+        for value in values do
+          match value with
+          | .mk ty expression => do
+            ty.validate caps
+            expression.validate caps env
+        pure [(destination, .bool)]
       | .mapIsEmpty state destination keys => do
         if !caps.stateMaps then throw "target lacks state maps"
         for key in keys do key.validate caps env
@@ -2218,7 +2267,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let .tree (.composite compositeEnv foundType) := declaration.kind
             | throw "root composite write must target a checked record Cell"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.ledgerRecordWriteFields compositeEnv type
+          LedgerValueType.cellWriteEffectFields compositeEnv type values
         else do
           if !caps.stateMaps then throw "target lacks state maps"
           let .composite compositeEnv foundType ← resolveTreeState decls state keys
@@ -2250,6 +2299,16 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"state '{state}' is not a set"
         let .set _ ← schema.entryParent keys
           | throw "set insertion path must select a Set"
+        pure []
+      | .setInsertRecord state values | .removeRecordSet state values => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        let fields ← resolveRecordSetFields decls state values
+        for (_, ty) in fields do ty.validate caps
+        for value in values do
+          match value with
+          | .mk ty expression => do
+            ty.validate caps
+            expression.validate caps env
         pure []
       | .removePath state keys => do
         if !caps.stateMaps then throw "target lacks state maps"
