@@ -17,3 +17,8 @@ target hash implementation.
 
 The mutant has no source-proof registration. The existing source audit path
 continues to check only the registered baseline policy.
+
+The local replay exported `disabled_policy_not_functional` and
+`baseline_admitted_claim_and_replay` with `leanexport` and re-checked both with
+`leanchecker --from-export`. The export loaded the freshly built test module
+from the first directory on `LEAN_PATH`.
