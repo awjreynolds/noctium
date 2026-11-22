@@ -114,6 +114,15 @@ NOCTIUM_COMPACT_RUNTIME_DIR="$COMPACT_RUNTIME_0210" \
 node tests/compact/composite-either-input.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
 ```
 
+## Pass a qualified shielded coin
+
+Use `Noctium.Midnight.QualifiedShieldedCoinInfo.codec` with a `Payload`
+parameter. The record carries `nonce` and `color` as `Bytes 32`, a `UInt 128`
+`value`, and a `UInt 64` commitment-tree `mt_index`. The fixture checks the
+named public input and return through the native relation. Coin membership
+and assignment of the index belong to the ledger receive flow.
+[Lean fixture](../../tests/QualifiedShieldedCoinInfo.lean) · [Compact fixture](../../tests/compact/shielded-coin-info.mjs) · [Ledger receive flow](compact-shielded-coin-map.md)
+
 ## Pass a record to a witness
 
 Declare a witness parameter with the codec that defines its layout.

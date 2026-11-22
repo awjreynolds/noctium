@@ -3908,8 +3908,8 @@
       "id": "C-STDLIB-QUALIFIEDSHIELDEDCOININFO",
       "layer": "standard-library",
       "surface": "QualifiedShieldedCoinInfo",
-      "noctiumStatus": "related-subset",
-      "notes": "The fixed nonce, color, value and mtIndex record matches finalized state for the minted localnet receive. A general-purpose source type and ABI remain open.",
+      "noctiumStatus": "subset",
+      "notes": "The reusable named codec preserves nonce, color, UInt128 value and UInt64 mt_index through public input admission, the native relation and the logical return. Zero, maximum values and both overflow rejections match the pinned Compact comparator. Existing funded receive evidence covers a ledger-assigned index. The source echo checks representation and bounds.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -3926,7 +3926,11 @@
         "docs/development/shielded-receive-localnet-receipt.json",
         "tests/ShieldedReceive.lean",
         "runtime/tests/shielded_receive.rs",
-        "docs/development/compact-shielded-coin-map.md"
+        "docs/development/compact-shielded-coin-map.md",
+        "Noctium/Midnight/QualifiedShieldedCoinInfo.lean",
+        "tests/QualifiedShieldedCoinInfo.lean",
+        "tests/compact/shielded-coin-info.mjs",
+        "runtime/tests/qualified_shielded_coin_info_abi.rs"
       ],
       "equivalence": "unverified"
     },
