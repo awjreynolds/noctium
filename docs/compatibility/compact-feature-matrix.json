@@ -516,7 +516,7 @@
       "layer": "language",
       "surface": "Opaque string and Uint8Array",
       "noctiumStatus": "subset",
-      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Finalized opaque Cell execution and full host equivalence remain open.",
+      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open.",
       "source": [
         "reference"
       ],
@@ -525,6 +525,7 @@
         "ZK"
       ],
       "observedEvidence": [
+        "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
         "tests/compact/opaque-cells.mjs",
@@ -2065,7 +2066,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Finalized opaque Cell execution remains open.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes.",
       "source": [
         "adt"
       ],
@@ -2075,6 +2076,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
         "tests/compact/opaque-cells.mjs",
@@ -2135,7 +2137,7 @@
       "layer": "language-ledger",
       "surface": "Cell.write",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. Finalized opaque Cell execution remains open.",
+      "notes": "The checked root Cell writes both opaque types in addition to scoped scalar cases. The native checker matches public UTF-8 and byte payloads and rejects altered Compress transcript inputs. The funded store finalized at height 51207 and matched the exact native state for both values.",
       "source": [
         "adt"
       ],
@@ -2145,6 +2147,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
         "tests/compact/opaque-cells.mjs",

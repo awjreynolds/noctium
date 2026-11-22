@@ -28,6 +28,12 @@ matches Compact for the empty, embedded-NUL string and binary payload cases.
 Altering a bound input or output makes the relation check fail.
 [Lean fixture](../../tests/OpaqueCells.lean) · [Native check](../../runtime/tests/opaque_cells.rs) · [Compact fixture](../../tests/compact/OpaqueCells.compact)
 
+Ledger 9.1.0.1 deployed both empty Cells at localnet height 51204. The
+store finalized at 51207 with the exact UTF-8 string and bytes. The
+proof-bound reads finalized at 51210 and 51213 and preserved the full
+state bytes. The store circuit used K7 and 66 rows. Each read used K6
+and 34 rows. [Finalized receipts](opaque-cells-localnet-receipt.json)
+
 ```sh
 lake exe noctium compile tests/OpaqueByteMap.lean \
   --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \

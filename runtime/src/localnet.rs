@@ -4946,4 +4946,196 @@ mod tests {
             Ok(())
         })
     }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires authenticated OpaqueCells bundles and a funded development node"]
+    fn opaque_root_cells_finalize_typed_store_and_reads() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            assembly::NativeIntent,
+            proof::{LocalProver, WitnessContractTarget},
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value, ValueAtom};
+        use ledger::structure::{ContractAction, ProofPreimageVersioned};
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{fab::AlignedValueExt, proofs::Zkir};
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let root = setting("NOCTIUM_OPAQUE_CELLS_FUNDED_BUNDLES")?;
+            let directory = Path::new(&root);
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_OPAQUE_CELLS_FUNDED_MANIFESTS")?)?;
+            let mut bundles = Vec::new();
+            let mut plans = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            for entry in ["store", "readText", "readBytes"] {
+                let pin = pins.get(entry).context("missing entrypoint manifest pin")?;
+                let bundle =
+                    artifacts::verify(&directory.join(format!("{entry}-bundle")), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(
+                    plan.entrypoint == entry,
+                    "unexpected opaque Cell bundle plan"
+                );
+                degrees.insert(entry, IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                plans.insert(entry, plan);
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_OPAQUE_CELLS_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_OPAQUE_CELLS_FUNDED_NODE")?, &cache)
+                    .await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let text = "é\0λ";
+            let bytes = [0u8, 1, 255];
+            let payloads = BTreeMap::from([
+                ("text".into(), json!({"kind":"opaqueString", "value":text})),
+                (
+                    "bytes".into(),
+                    json!({"kind":"opaqueBytes", "values":bytes}),
+                ),
+            ]);
+            let defaults = BTreeMap::from([
+                ("text".into(), json!({"kind":"opaqueString", "value":""})),
+                ("bytes".into(), json!({"kind":"opaqueBytes", "values":[]})),
+            ]);
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &serde_json::to_vec(&json!({"state": &defaults}))?,
+                ttl,
+                &mut rng,
+            )?;
+            let (state, deployment) = funded.deploy(&target, "store").await?;
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed.data.get_ref()
+                    == crate::create_state(&plans["store"], &defaults)?.get_ref(),
+                "deployed opaque Cells differ from canonical empty values"
+            );
+
+            let store_parameters = cache.parameters(degrees["store"]).await?;
+            let store = target.operation("store", &store_parameters, ttl)?;
+            let mut current = Some(state);
+            let stored = funded
+                .call(
+                    &store,
+                    &mut current,
+                    &store_parameters,
+                    BTreeMap::from([
+                        ("nextText".into(), payloads["text"].clone()),
+                        ("nextBytes".into(), payloads["bytes"].clone()),
+                    ]),
+                )
+                .await?;
+            let stored_state: ContractState<Db> = native_decode(&stored.contract_state)?;
+            ensure!(
+                stored_state.data.get_ref()
+                    == crate::create_state(&plans["store"], &payloads)?.get_ref(),
+                "finalized opaque Cells differ from exact stored values"
+            );
+
+            let mut read_receipts = BTreeMap::new();
+            for (entry, name, slot, raw) in [
+                ("readText", "textValue", "text", text.as_bytes()),
+                ("readBytes", "bytesValue", "bytes", bytes.as_slice()),
+            ] {
+                let parameters = cache.parameters(degrees[entry]).await?;
+                let operation = target.operation(entry, &parameters, ttl)?;
+                let prepared =
+                    operation.prepare_call(&mut current, &parameters, BTreeMap::new(), &mut rng)?;
+                let native: NativeIntent = native_decode(&prepared.private_intent_bytes()?)?;
+                let Some(ContractAction::Call(call)) = native.actions.get(0) else {
+                    anyhow::bail!("missing opaque read call");
+                };
+                let ProofPreimageVersioned::V2(preimage) = &call.proof else {
+                    anyhow::bail!("unexpected opaque read proof version");
+                };
+                let aligned = AlignedValue::new(
+                    Value(vec![ValueAtom::from(raw)]),
+                    Alignment::singleton(AlignmentAtom::Compress),
+                )
+                .context("expected canonical Compress atom")?;
+                let mut projection = Vec::new();
+                aligned.value_only_field_repr(&mut projection);
+                ensure!(
+                    projection.len() == 1 && preimage.public_transcript_outputs == projection,
+                    "{entry} proof did not bind exactly the expected Compress field ({} output fields)",
+                    preimage.public_transcript_outputs.len()
+                );
+                let live = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plans[entry],
+                    &BTreeMap::new(),
+                    &stored_state.data,
+                    &live.state.parameters,
+                    call.address,
+                )?;
+                ensure!(
+                    execution.returns_json().get(name) == Some(&payloads[slot]),
+                    "opaque read return differs from the typed payload"
+                );
+                let proved = prepared
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        &parameters,
+                        1_048_576,
+                        futures::future::pending(),
+                    )
+                    .await?;
+                let (bound, receipt) = funded.finalize(proved.native()).await?;
+                ensure!(
+                    receipt.contract_state == stored.contract_state,
+                    "opaque read changed finalized state"
+                );
+                current = Some(
+                    proved
+                        .contract_binding()
+                        .context("missing opaque read binding")?
+                        .admit_committed_state(
+                            &receipt.contract_state,
+                            bound.expected_state(),
+                            &receipt.finalized_hash,
+                            false,
+                        )?,
+                );
+                read_receipts.insert(
+                    entry,
+                    json!({
+                        "height": receipt.height, "finalizedHash": receipt.finalized_hash,
+                        "transactionId": receipt.transaction_id, "returned": payloads[slot],
+                    }),
+                );
+            }
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "deployment": {
+                        "height": deployment.height, "finalizedHash": deployment.finalized_hash,
+                        "transactionId": deployment.transaction_id,
+                    },
+                    "store": {
+                        "height": stored.height, "finalizedHash": stored.finalized_hash,
+                        "transactionId": stored.transaction_id,
+                    },
+                    "reads": read_receipts,
+                    "readStateBytesUnchanged": true,
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                })
+            );
+            Ok(())
+        })
+    }
 }
