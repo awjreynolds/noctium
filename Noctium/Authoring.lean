@@ -971,9 +971,16 @@ private def zeroScalarTerm (site : Syntax) (type : Ty) : ExprM Helpers.Term := d
   | .native | .bool | .uint _ => zeroSourceLeaf site type
   | .bytes 32 => pure (.bytes32Literal (List.replicate 32 0))
   | .bytes length => pure (.bytes (.bytesLiteral length (List.replicate length 0)) [])
-  | .jubjubScalar | .jubjubPoint =>
-    throwErrorAt site "Jubjub values have no generic default expression"
-  | .foreign _ => throwErrorAt site "foreign values have no generic default expression"
+  | .jubjubScalar => pure (.curve .scalarFromNative [.native 0])
+  | .jubjubPoint => pure (.curve .fromCoordinates [.native 0, .native 1])
+  | .foreign kind =>
+    match kind with
+    | .base _ | .scalar _ =>
+      let encoding ← match Foreign.encodeField kind 0 with
+        | .ok encoding => pure encoding
+        | .error message => throwErrorAt site message
+      pure (.foreignConstant kind encoding)
+    | .point curve => pure (.foreignConstant kind (Foreign.identityEncoding curve))
   | _ => throwErrorAt site s!"readable scalar default does not support type '{typeName type}'"
 
 private def zeroPayloadLeaves (site : Syntax) (compiled : Types.CompiledType) :

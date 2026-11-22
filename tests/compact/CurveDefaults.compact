@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit inspect(): [JubjubScalar, JubjubPoint, Secp256k1Base, Secp256k1Scalar,
+  Secp256k1Point, Secp256r1Base, Secp256r1Scalar, Secp256r1Point, Curve25519Base,
+  Curve25519Scalar, Curve25519Point] {
+  return [default<JubjubScalar>, default<JubjubPoint>, default<Secp256k1Base>,
+    default<Secp256k1Scalar>, default<Secp256k1Point>, default<Secp256r1Base>,
+    default<Secp256r1Scalar>, default<Secp256r1Point>, default<Curve25519Base>,
+    default<Curve25519Scalar>, default<Curve25519Point>];
+}
