@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+export circuit choose(isLeft: Boolean, leftValue: Limits, rightValue: Vector<2, Boolean>): Either<Limits, Vector<2, Boolean>> {
+  return isLeft
+    ? Either<Limits, Vector<2, Boolean>> {
+        is_left: true,
+        left: leftValue,
+        right: default<Vector<2, Boolean>>
+      }
+    : Either<Limits, Vector<2, Boolean>> {
+        is_left: false,
+        left: default<Limits>,
+        right: rightValue
+      };
+}
