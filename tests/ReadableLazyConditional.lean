@@ -39,6 +39,35 @@ end
 #guard (Noctium.Witness.compile choose.__program
   "noctium.witness-circuit.ReadableLazyConditional.choose.v1").isOk
 
+noctium_witness_circuit shortCircuit using payloadWire where
+  public choice : Bool
+  public expected : Native
+  let both := andThen(choice,
+    let value := witness loadLeft() in field(field(value, extra), enabled))
+  let either := orElse(choice,
+    let value := witness loadRight() in field(field(value, extra), enabled))
+  prove orElse(
+    andThen(choice, assertThen(eq(expected, 7), true)),
+    assertThen(eq(expected, 9), true)
+  )
+  output selectedAmount : Native := expected
+  output selectedEnabled : Bool := disclose(ite(choice, both, either))
+end
+
+/- error: short-circuit operands require Bool -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsNonBoolShortCircuit where
+  public choice : Bool
+  output invalid : Bool := andThen(choice, 1)
+end
+
+/- error: undisclosed private -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsUndisclosedShortCircuit where
+  private choice : Bool
+  output result : Bool := andThen(choice, true)
+end
+
 /- error: conditional branches require a common type -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsIncompatibleBranches using payloadWire where
@@ -74,6 +103,10 @@ end ReadableLazyConditional
 
 noctium_contract ReadableLazyConditional where
   entry choose uses ReadableLazyConditional.choose where
+    return observed : Native := selectedAmount
+    return enabled : Bool := selectedEnabled
+  end
+  entry shortCircuit uses ReadableLazyConditional.shortCircuit where
     return observed : Native := selectedAmount
     return enabled : Bool := selectedEnabled
   end

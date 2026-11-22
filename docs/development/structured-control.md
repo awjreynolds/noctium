@@ -32,6 +32,17 @@ Rust tests check both arms, inactive callback suppression, and rejection of a
 failed selected assertion on the host and in the native ZKIR 3.2.1 checker.
 Guard-aware recording and replay proofs remain outside this checked slice.
 
+### Short-circuit Boolean expressions
+
+`andThen(left, right)` evaluates the right operand only when the left operand
+is true. `orElse(left, right)` evaluates it only when the left operand is false.
+Both operands require Bool. Any local bindings, witnesses and assertions in
+the right operand stay under its guard. Private values and control dependencies
+still require disclosure at public outputs.
+
+The native fixture covers both callback paths and rejects a failed active
+assertion. [Lean source](../../tests/ReadableLazyConditional.lean) · [Rust check](../../runtime/tests/readable_lazy_conditional.rs)
+
 ## Bounded native write guards
 
 Issue 43 now has a narrow source-to-checker slice for scalar state writes:
