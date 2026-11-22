@@ -169,7 +169,7 @@ def fabByteHashTerm (algorithm : String) (alignment : List String) (values : Lis
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if 0 < width && width ≤ 32 && values.length == (width + 30) / 31 then
+        if width ≤ 32 && values.length == (width + 30) / 31 then
           return fixedByteHashTerm algorithm width values
   return .unary (algorithm ++ "_fab:" ++ String.intercalate "," alignment) (.hash values)
 
@@ -184,7 +184,7 @@ def persistentHashFabTerm (alignment : List String) (values : List Term) : Term 
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if 0 < width && width < 32 && values.length == 1 then
+        if width < 32 && values.length == (width + 30) / 31 then
           return fixedByteHashTerm "persistent_hash" width values
   return .unary ("persistent_hash_fab:" ++ String.intercalate "," alignment) (.hash values)
 

@@ -218,7 +218,7 @@ private def fixedByteHashLength (alignment : Json) : Except String Nat := do
   let atom := atoms[0]!
   let value ← atom.getObjVal? "value"
   let length ← natField value "length"
-  ensure (0 < length && length ≤ Types.defaultLimits.maxVectorLength)
+  ensure (length ≤ Types.defaultLimits.maxVectorLength)
     "byte hash preimage length is unsupported"
   let canonical := Json.arr #[Json.mkObj [
     ("tag", toJson ("atom" : String)),
@@ -281,7 +281,7 @@ private def fabAlignmentDescriptor (atom : Json) : Except String String := do
   | "bytes" => do
     fields value ["tag", "length"]
     let length ← natField value "length"
-    ensure (length > 0 && length ≤ 32) "mixed FAB byte atom width is unsupported"
+    ensure (length ≤ 32) "mixed FAB byte atom width is unsupported"
     pure s!"bytes:{length}"
   | _ => throw "mixed FAB alignment has an unsupported atom"
 
@@ -302,7 +302,9 @@ private def checkedFabHashOperands (alignment : Json) (values : List Fact) :
       terms := terms ++ [value.term]
     | descriptor =>
       let some width := (descriptor.drop 6).toNat? | throw "mixed FAB byte atom width is malformed"
-      if width == 32 then
+      if width == 0 then
+        pure ()
+      else if width == 32 then
         let some highByte := remaining[0]? | throw "mixed FAB Bytes32 atom lacks its high byte"
         let some low31 := remaining[1]? | throw "mixed FAB Bytes32 atom lacks its low 31 bytes"
         ensure (highByte.maximum ≤ 255 && low31.maximum ≤ 2 ^ (31 * 8) - 1)
@@ -586,7 +588,7 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
                 match value.getObjVal? "tag", value.getObjVal? "length" with
                 | .ok tag, .ok length =>
                   match tag.getStr?, length.getNat? with
-                  | .ok "bytes", .ok width => width > 0 && width < 32
+                  | .ok "bytes", .ok width => width < 32
                   | _, _ => false
                 | _, _ => false
               | .error _ => false) then do

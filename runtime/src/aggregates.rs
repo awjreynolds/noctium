@@ -1086,7 +1086,7 @@ impl Schema {
             }
             LayoutNode::Bytes { length } => {
                 ensure!(
-                    (1..=32).contains(length),
+                    *length <= 32,
                     "FAB byte field length is outside the supported range"
                 );
                 Ok(FabHashField::Bytes(*length))
