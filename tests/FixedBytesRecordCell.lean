@@ -113,6 +113,18 @@ private def fixedByteWidthProbeType : Types.CompositeType :=
   | .ok fields => fields == [("empty", .bytes 0), ("wide", .bytes 64)]
   | .error _ => _root_.Bool.false
 
+#guard match LedgerValueType.cellWriteRecordFields fixedByteWidthProbe fixedByteWidthProbeType with
+  | .ok fields => fields == [("empty", .bytes 0), ("wide", .bytes 64)]
+  | .error _ => _root_.Bool.false
+
+#guard match LedgerValueType.ledgerRecordFields fixedByteWidthProbe fixedByteWidthProbeType with
+  | .error _ => _root_.Bool.true
+  | .ok _ => _root_.Bool.false
+
+#guard match LedgerValueType.ledgerRecordWriteFields fixedByteWidthProbe fixedByteWidthProbeType with
+  | .error _ => _root_.Bool.true
+  | .ok _ => _root_.Bool.false
+
 #guard match LedgerValueType.listElementFields fixedByteWidthProbe fixedByteWidthProbeType with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false

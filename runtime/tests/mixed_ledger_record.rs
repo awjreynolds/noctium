@@ -43,6 +43,56 @@ fn fixture(directory: &Path, entry: &str) -> (Plan, IrSource) {
     (plan, circuit)
 }
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_TYPED_RECORD_MAP_DIR"]
+fn typed_map_record_insert_lookup_and_remove() -> anyhow::Result<()> {
+    let directory = PathBuf::from(env::var("NOCTIUM_TYPED_RECORD_MAP_DIR")?);
+    let load = |entry: &str| -> anyhow::Result<(Plan, IrSource)> {
+        let stem = format!("TypedRecordMap.{entry}");
+        Ok((
+            serde_json::from_slice(&std::fs::read(
+                directory.join(format!("{stem}.impact.json")),
+            )?)?,
+            IrSource::load(std::fs::read(directory.join(format!("{stem}.zkir")))?.as_slice())?,
+        ))
+    };
+    let (store, store_relation) = load("storeMemo")?;
+    let (read, read_relation) = load("inspectMemo")?;
+    let (has, has_relation) = load("hasMemo")?;
+    let (remove, remove_relation) = load("removeMemo")?;
+    let initial = create_state(&read, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let key = BTreeMap::from([("key".into(), json!("7"))]);
+    let mut inputs = key.clone();
+    inputs.insert("active".into(), json!(true));
+    inputs.insert("amount".into(), json!("513"));
+
+    let inserted = prepare(&store, &inputs, &initial, params, address)?;
+    check(&inserted, &store_relation)?;
+    for (state, present) in [(&initial, false), (&inserted.after.state, true)] {
+        let result = prepare(&has, &key, state, params, address)?;
+        check(&result, &has_relation)?;
+        assert_eq!(result.returns_json()["presentResult"], json!(present));
+    }
+
+    let result = prepare(&read, &key, &inserted.after.state, params, address)?;
+    check(&result, &read_relation)?;
+    assert_eq!(result.returns_json()["activeResult"], json!(true));
+    assert_eq!(result.returns_json()["amountResult"], json!("513"));
+    assert_eq!(result.after.state.get_ref(), inserted.after.state.get_ref());
+
+    let removed = prepare(&remove, &key, &inserted.after.state, params, address)?;
+    check(&removed, &remove_relation)?;
+    assert_eq!(removed.returns_json()["presentAfterRemove"], json!(false));
+    assert_eq!(removed.after.state.get_ref(), initial.get_ref());
+    assert!(prepare(&read, &key, &removed.after.state, params, address).is_err());
+
+    inputs.insert("amount".into(), json!("65536"));
+    assert!(prepare(&store, &inputs, &initial, params, address).is_err());
+    Ok(())
+}
+
 fn identity() -> (String, String) {
     ("0".into(), "1".into())
 }
