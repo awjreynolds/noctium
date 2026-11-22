@@ -21,6 +21,21 @@ first. Each complete sequence then evaluates once in source order, followed by
 the operator once per element. The staged Helpers API accepts full statement
 bodies and explicit types for empty tuples.
 
+Use `fun item => do ... return value end` for a readable callback with local
+`let` bindings and `prove` assertions. Both `map` and `fold` accept this body.
+Each invocation evaluates its bindings and assertions in order, then evaluates
+the return expression. Bindings stay local to the callback. Native results
+still require `disclose` when they depend on private values.
+
+```lean
+let adjusted := map([values], fun value => do
+  let widened := cast(Native, value)
+  let result := add(widened, offset)
+  prove boolNot(eq(result, 999))
+  return result
+end)
+```
+
 Use `for item in values do ... end` when the body performs effects such as
 private reads, witness calls, assertions, or staging. The body sees the inferred
 element type and captures enclosing values. The sequence expression runs once,

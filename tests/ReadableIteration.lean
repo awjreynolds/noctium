@@ -47,3 +47,43 @@ noctium_witness_circuit decodedIteration using bytePair where
   output mapped := bumped
   output sum : Native := fold(0, [bumped], fun acc value => add(acc, value))
 end
+
+noctium_witness blockItems(seed : Native) : Payload bytePair
+noctium_witness blockOffset(seed : Native) : Native
+
+noctium_witness_circuit blockIteration using bytePair where
+  public seed : Native
+  let items := witness blockItems(seed)
+  let offset := witness blockOffset(add(seed, 1))
+  let mapped := map([items], fun item => do
+    let widened := cast(Native, item)
+    let adjusted := add(widened, offset)
+    prove boolNot(eq(adjusted, 999))
+    return adjusted
+  end)
+  let sum : Native := fold(0, [mapped], fun acc value => do
+    let next := add(acc, value)
+    prove boolNot(eq(next, 85))
+    return next
+  end)
+  output first : Native := disclose(elementAt(mapped, 0))
+  output second : Native := disclose(elementAt(mapped, 1))
+  output total : Native := disclose(sum)
+end
+
+noctium_contract ReadableIterationBlock where
+  entry run uses blockIteration where
+    return mappedFirst : Native := first
+    return mappedSecond : Native := second
+    return sum : Native := total
+  end
+end
+
+/- error: readable witness expression type mismatch -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsNonBooleanStep where
+  output mapped := map([vector(1)], fun item => do
+    prove item
+    return item
+  end)
+end

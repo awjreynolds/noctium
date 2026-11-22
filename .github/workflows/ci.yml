@@ -295,6 +295,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableLazyConditional.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-lazy-conditional"
+          .lake/build/bin/noctium compile tests/ReadableIteration.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/readable-iteration"
           .lake/build/bin/noctium compile tests/QualifiedShieldedCoinInfo.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/qualified-coin-info"
@@ -328,6 +331,7 @@ jobs:
             NOCTIUM_NESTED_EQUALITY_DIR="$artifacts/nested-aggregate-equality" \
             NOCTIUM_STRUCTURAL_EQUALITY_DIR="$artifacts/structural-equality-widening" \
             NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR="$artifacts/readable-lazy-conditional" \
+            NOCTIUM_READABLE_ITERATION_DIR="$artifacts/readable-iteration" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
             NOCTIUM_UNIT_BINDINGS_DIR="$artifacts/readable-unit-bindings" \
@@ -343,7 +347,7 @@ jobs:
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \
               --test named_enum_members --test nested_aggregate_equality \
               --test structural_equality_widening \
-              --test readable_lazy_conditional \
+              --test readable_lazy_conditional --test readable_iteration \
               --test readable_unit_bindings --test named_proof_unit -- --ignored
       - name: Check source proof registration
         run: |

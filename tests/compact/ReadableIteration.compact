@@ -5,6 +5,8 @@ export ledger total: Field;
 witness iterationSeed(): Field;
 witness iterationBytes(): Bytes<2>;
 witness iterationVisit(item: Uint<8>): Field;
+witness blockItems(seed: Field): Vector<2, Uint<8>>;
+witness blockOffset(seed: Field): Field;
 
 export circuit update(offset: Field): Field {
   const sum = fold((acc, value) => (acc + value) + offset,
@@ -12,4 +14,21 @@ export circuit update(offset: Field): Field {
     map((item) => iterationVisit(item), iterationBytes()));
   total = disclose(sum);
   return disclose(sum);
+}
+
+export circuit runBlock(seed: Field): [Field, Field, Field] {
+  const items = blockItems(seed);
+  const offset = blockOffset(seed + 1);
+  const mapped = map((item) => {
+    const widened = item as Field;
+    const adjusted = widened + offset;
+    assert(adjusted != (999 as Field), "map assertion");
+    return adjusted;
+  }, items);
+  const sum = fold((acc, value) => {
+    const next = acc + value;
+    assert(next != (85 as Field), "fold assertion");
+    return next;
+  }, 0 as Field, mapped);
+  return [disclose(mapped[0]), disclose(mapped[1]), disclose(sum)];
 }
