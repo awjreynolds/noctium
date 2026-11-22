@@ -791,6 +791,15 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
     let result ← ctx.transientHash input
     if result >= ctx.modulus then throw "transient commitment oracle returned noncanonical value"
     pure result
+  | .transientHashFab compositeEnv type values => do
+    let layout ← validateFabHashLayout compositeEnv type values
+    let fields ← fabHashLayoutFields layout
+    unless fabHashEncodedFieldCount fields ≤ Types.defaultLimits.maxVectorLength do
+      throw s!"transient_hash input count exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
+    let inputs ← fabAlignedFieldSequence ctx env (fields.map Prod.snd) values
+    let result ← ctx.transientHash inputs
+    if result >= ctx.modulus then throw "transient_hash oracle returned noncanonical value"
+    pure result
   | .toBytes32 (source := .native) value => do
     pure (nativeFieldBytesLE (← value.eval ctx env))
   | .toBytes32 (source := .jubjubScalar) value => do

@@ -49,6 +49,7 @@ fn mixed_fab_commitments_match_compact_and_native_relation() -> anyhow::Result<(
             77,
             "cff69459a493e86a1276354b70bcb77aaac2edaaac6802fda770a68723f3d68d",
             "26379122738253202444518886441389591496658820157546698964272146379194073575416",
+            "31450192802498090922990245422064529103765978660401260400662966898300129689545",
         ),
         (
             258,
@@ -56,6 +57,7 @@ fn mixed_fab_commitments_match_compact_and_native_relation() -> anyhow::Result<(
             77,
             "c24011e4183df55510160926607b3dc3bcae795f70b69db0e370e9bf9669ccdc",
             "52175680914820761057797808711717819206214043408631344658262904895711887709638",
+            "45341827361802937545085556155854399066079167850897885488099005759856344686712",
         ),
         (
             257,
@@ -63,6 +65,7 @@ fn mixed_fab_commitments_match_compact_and_native_relation() -> anyhow::Result<(
             77,
             "34f5becb77595f7a8e7eda241d9c187f87e97e5c4af68a14577b668c519030fe",
             "26379122738253202444518886441389591496658820157546698964272146379194073575416",
+            "31450192802498090922990245422064529103765978660401260400662966898300129689545",
         ),
         (
             257,
@@ -70,11 +73,18 @@ fn mixed_fab_commitments_match_compact_and_native_relation() -> anyhow::Result<(
             78,
             "cff69459a493e86a1276354b70bcb77aaac2edaaac6802fda770a68723f3d68d",
             "1245246646047273088008560749436502138436832274864845859888856457488273394968",
+            "31450192802498090922990245422064529103765978660401260400662966898300129689545",
         ),
     ];
 
-    for (counter, persistent_opening, transient_opening, expected_persistent, expected_transient) in
-        cases
+    for (
+        counter,
+        persistent_opening,
+        transient_opening,
+        expected_persistent,
+        expected_transient,
+        expected_transient_hash,
+    ) in cases
     {
         let execution = prepare(
             &plan,
@@ -97,6 +107,10 @@ fn mixed_fab_commitments_match_compact_and_native_relation() -> anyhow::Result<(
         assert_eq!(
             returns.get("transientResult"),
             Some(&json!(expected_transient))
+        );
+        assert_eq!(
+            returns.get("transientHashResult"),
+            Some(&json!(expected_transient_hash))
         );
     }
 

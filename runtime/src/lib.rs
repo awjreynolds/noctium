@@ -543,6 +543,11 @@ pub enum Expr {
         opening: Box<Expr>,
         values: Vec<FabHashInput>,
     },
+    #[serde(rename = "transientHashFab")]
+    TransientHashFab {
+        schema: Json,
+        values: Vec<FabHashInput>,
+    },
     #[serde(rename = "transientHash")]
     TransientHash {
         values: Vec<Expr>,
@@ -854,6 +859,21 @@ fn transient_commit_fab(
     )))
 }
 
+fn transient_hash_fab(
+    schema_json: &Json,
+    values: &[FabHashInput],
+    env: &Environment,
+) -> Result<Value> {
+    let payload = aligned_fab_payload(schema_json, values, env)?;
+    let mut fields = Vec::new();
+    payload.value_only_field_repr(&mut fields);
+    ensure!(
+        !fields.is_empty() && fields.len() <= MAX_TRANSIENT_HASH_FIELDS,
+        "FAB transient hash field vector exceeds compiler limit"
+    );
+    Ok(Value::Native(transient_hash(&fields)))
+}
+
 pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
     let result = match expr {
         Expr::Uint { maximum, value } => scalars::unsigned_literal(maximum, value)?,
@@ -1072,6 +1092,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             opening,
             values,
         } => transient_commit_fab(schema, opening, values, env)?,
+        Expr::TransientHashFab { schema, values } => transient_hash_fab(schema, values, env)?,
         Expr::TransientHash { values } => {
             ensure!(
                 values.len() <= MAX_TRANSIENT_HASH_FIELDS,

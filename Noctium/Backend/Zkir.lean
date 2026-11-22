@@ -61,7 +61,7 @@ private def checkConstants : Expr ty → Except String Unit
   | .bytes32Literal _ => pure ()
   | .persistentHashVector32 _ => pure ()
   | .persistentHashNative value => checkConstants value
-  | .persistentHashFab _ _ values => checkFabConstants values
+  | .persistentHashFab _ _ values | .transientHashFab _ _ values => checkFabConstants values
   | .sha512Fab _ _ values => checkFabConstants values
   | .persistentCommitFab _ _ opening values => do
     checkConstants opening
@@ -1217,6 +1217,19 @@ def lowerExpr : Expr ty → LowerM String
     emit "transient_hash" [("inputs", toJson operands), ("output", toJson output)]
     modify fun state => {state with expressions := (key, output) :: state.expressions}
     pure output
+  | .transientHashFab environment type values => do
+    match validateFabHashLayout environment type values >>= fabHashLayoutFields with
+    | .error message =>
+      rejectLowering message
+      pure "0x00"
+    | .ok fields => do
+      let operands ← lowerFabHashFields fields values
+      let key : ExpressionKey := ("transient_hash", operands, none)
+      if let some existing := (← get).expressions.lookup key then return existing
+      let output ← fresh
+      emit "transient_hash" [("inputs", toJson operands), ("output", toJson output)]
+      modify fun state => {state with expressions := (key, output) :: state.expressions}
+      pure output
   | .transientCommitFab environment type opening values => do
     match validateFabHashLayout environment type values with
     | .error message =>

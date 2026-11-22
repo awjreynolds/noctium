@@ -67,6 +67,7 @@ def origins (env : Environment) : Expr ty → Except String Origins
     pure (merge (← origins env opening) (← originsFabValues env values))
   | .transientCommitFab _ _ opening values => do
     pure (merge (← origins env opening) (← originsFabValues env values))
+  | .transientHashFab _ _ values => originsFabValues env values
   | .toBytes32 value => origins env value
   | .fromBytes32 value => origins env value
   | .fromBytes value => origins env value
