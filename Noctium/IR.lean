@@ -638,14 +638,14 @@ def LedgerValueType.cellRecordFields (environment : Types.CompositeEnv)
     | .ok fields => pure fields
     | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
 
-/-- Ordinary root Cell writes accept checked Native and typed flat records.
-The shielded coin record remains on its specialized write effects. -/
-def LedgerValueType.cellWriteRecordFields (environment : Types.CompositeEnv)
+/-- Ordinary Cell and Map record writes accept checked Native and typed flat
+records. The shielded coin record remains on its specialized write effects. -/
+def LedgerValueType.ledgerRecordWriteFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   match LedgerValueType.recordFields environment type with
   | .ok fields => pure fields
   | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
-    | .ok _ => .error "shielded coin Cells require their specialized write effect"
+    | .ok _ => .error "shielded coin records require their specialized write effect"
     | .error _ => flatTypedRecordFields environment type
 
 /-- Describe a List element as its typed scalar value or as the fields of its
@@ -668,7 +668,7 @@ def LedgerValueType.compositeSchema (schema : LedgerValueType) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) :=
   match schema with
   | .composite environment type => do
-    let fields ← LedgerValueType.recordFields environment type
+    let fields ← LedgerValueType.cellRecordFields environment type
     pure (environment, type, fields)
   | _ => .error "nested map value is not a composite record"
 
@@ -1445,9 +1445,7 @@ where
       for (_, ty) in fields do
         validateStateScalar caps ty
     | .composite environment type => do
-      let fields ← match LedgerValueType.recordFields environment type with
-        | .ok fields => pure fields
-        | .error _ => LedgerValueType.shieldedCoinRecordFields environment type
+      let fields ← LedgerValueType.cellRecordFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
     | .list environment type => do
@@ -2188,9 +2186,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         unless foundType == type do throw "nested composite read type mismatch"
         let fields ← if keys.isEmpty then
           LedgerValueType.cellRecordFields compositeEnv type
-        else match LedgerValueType.recordFields compositeEnv type with
-          | .ok fields => pure fields
-          | .error _ => LedgerValueType.shieldedCoinRecordFields compositeEnv type
+        else LedgerValueType.cellRecordFields compositeEnv type
         unless fields.map Prod.snd == destinations.map Prod.snd do
           throw "nested composite read destination count mismatch"
         unless uniqueNames (destinations.map Prod.fst) do throw "duplicate nested composite read destination"
@@ -2205,13 +2201,13 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let .tree (.composite compositeEnv foundType) := declaration.kind
             | throw "root composite write must target a checked record Cell"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.cellWriteRecordFields compositeEnv type
+          LedgerValueType.ledgerRecordWriteFields compositeEnv type
         else do
           if !caps.stateMaps then throw "target lacks state maps"
           let .composite compositeEnv foundType ← resolveTreeState decls state keys
             | throw "nested composite write must select a composite value"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.recordFields compositeEnv type
+          LedgerValueType.ledgerRecordWriteFields compositeEnv type
         unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
           throw "nested composite write field type mismatch"
         for (_, ty) in fields do ty.validate caps
