@@ -33,10 +33,24 @@ private def envelopeWire : Helpers.Wire.Codec := {
   }]}
 }
 
+private def pairWire : Helpers.Wire.Codec := {
+  payload := .tuple [.scalar .native, .scalar .bool]
+  frameBytes := 33
+}
+
+private def vectorWire : Helpers.Wire.Codec := {
+  payload := .vector 2 (.scalar (.uint 255))
+  frameBytes := 2
+}
+
 noctium_witness observeActive(marker : Native) : Bool
 noctium_witness observeCount(marker : Native) : UInt 8
 noctium_witness observeReading(marker : Native) : Native
 noctium_witness loadBase(marker : Native) : Payload readingWire
+noctium_witness loadPair(marker : Native) : Payload pairWire
+noctium_witness loadVector(marker : Native) : Payload vectorWire
+noctium_witness loadBytes(marker : Native) : Bytes 2
+noctium_witness loadUnit(marker : Native) : Unit
 
 noctium_witness_circuit build using readingWire where
   public seed : Native
@@ -78,6 +92,39 @@ end
 
 #guard (Noctium.Witness.compile patch.__program
   "noctium.witness-circuit.ReadableRecordConstruction.patch.v1").isOk
+
+noctium_witness_circuit spreadTuple using pairWire, vectorWire where
+  public seed : Native
+  let head := tuple(seed, ..witness loadPair(add(seed, 1)))
+  let octets := tuple(
+    ..witness loadVector(add(seed, 2)),
+    ..witness loadBytes(add(seed, 3))
+  )
+  output result := disclose(tuple(
+    head,
+    octets,
+    ..witness loadUnit(add(seed, 4)),
+    ..tuple(),
+    tuple(true, uint(1))
+  ))
+end
+
+#guard (Noctium.Witness.compile spreadTuple.__program
+  "noctium.witness-circuit.ReadableRecordConstruction.spreadTuple.v1").isOk
+
+/- error: tuple spread requires a tuple, vector, fixed Bytes or Unit -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsScalarSpread where
+  public seed : Native
+  output result := disclose(tuple(..seed))
+end
+
+/- error: undisclosed private -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsUndisclosedTupleSpread using pairWire where
+  private pair : Payload pairWire
+  output result := tuple(..pair)
+end
 
 private def otherReadingWire : Helpers.Wire.Codec := {
   payload := .structure "ReadableRecordConstruction.OtherReading"
@@ -179,6 +226,9 @@ noctium_contract ReadableRecordConstruction where
     return result
   end
   entry patch uses ReadableRecordConstruction.patch where
+    return result
+  end
+  entry spreadTuple uses ReadableRecordConstruction.spreadTuple where
     return result
   end
 end

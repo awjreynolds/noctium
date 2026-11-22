@@ -105,6 +105,24 @@ requirements. Replaced fields take the origins of their new values. The pinned
 Compact 0.36.1 comparison checks the returned value and provider call order.
 [Compact comparison](../../tests/compact/readable-record-construction.mjs)
 
+## Construct a tuple in a readable circuit
+
+```lean
+let header := tuple(seed, ..pair)
+let octets := tuple(..vector, ..bytes)
+let result := tuple(header, octets, ..witness acknowledge(seed))
+```
+
+A direct expression adds one element. A spread adds the top-level elements of
+a tuple or fixed vector, or adds one UInt8 per fixed byte. `tuple()` is an
+empty sequence. Spreading a Unit result adds no element and still evaluates
+the expression. Arguments evaluate once, from left to right. Nested values
+keep their checked layout and their disclosure requirements.
+
+The pinned Compact fixture and native check cover the nested result, byte
+values, and callback order, including the Unit callback.
+[Source fixture](../../tests/ReadableRecordConstruction.lean) · [Compact comparison](../../tests/compact/readable-record-construction.mjs)
+
 ## Compare checked aggregates
 
 In a readable circuit, `eq(left, right)` compares values with compatible

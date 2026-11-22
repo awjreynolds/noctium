@@ -16,6 +16,10 @@ witness observeActive(value: Field): Boolean;
 witness observeCount(value: Field): Uint<8>;
 witness observeReading(value: Field): Field;
 witness loadBase(value: Field): Reading;
+witness loadPair(marker: Field): [Field, Boolean];
+witness loadVector(marker: Field): Vector<2, Uint<8>>;
+witness loadBytes(marker: Field): Bytes<2>;
+witness loadUnit(marker: Field): [];
 
 export circuit build(seed: Field): Reading {
   return disclose(Reading {
@@ -38,4 +42,10 @@ export circuit patch(seed: Field): Reading {
   const wrapped = Envelope { payload: partial, epoch: 0 as Field };
   const patched = Envelope { ...wrapped, epoch: seed };
   return disclose(patched.payload);
+}
+
+export circuit spreadTuple(seed: Field): [[Field, Field, Boolean], [Uint<8>, Uint<8>, Uint<8>, Uint<8>], [Boolean, Uint<0..2>]] {
+  const headFields = [seed, ...loadPair(seed + 1)];
+  const octets = [...loadVector(seed + 2), ...loadBytes(seed + 3)];
+  return disclose([headFields, octets, ...loadUnit(seed + 4), ...[], [true, 1]]);
 }

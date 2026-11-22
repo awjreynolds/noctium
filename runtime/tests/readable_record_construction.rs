@@ -2,14 +2,15 @@
 
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    Plan, check,
+    check,
     control::{InvocationTarget, Session, TypedResponse},
     create_state,
     host::{self, Capability, Context, Limits, Operation, Provider},
     prepare,
     zkir::IrSource,
+    Plan,
 };
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -217,5 +218,59 @@ fn record_spread_evaluates_each_base_once_and_preserves_override_order() -> anyh
             ("loadBase", "10", base),
         ],
         reading_record("13", "17", true),
+    )
+}
+
+#[test]
+#[ignore = "requires fresh ReadableRecordConstruction outputs in NOCTIUM_RECORD_CONSTRUCTION_DIR"]
+fn tuple_spread_flattens_composite_values_in_order() -> anyhow::Result<()> {
+    check_case(
+        "spreadTuple",
+        [
+            (
+                "loadPair",
+                "8",
+                json!({
+                    "kind":"tuple",
+                    "items":[
+                        {"kind":"native","value":"11"},
+                        {"kind":"bool","value":true}
+                    ]
+                }),
+            ),
+            (
+                "loadVector",
+                "9",
+                json!({
+                    "kind":"vector",
+                    "items":[
+                        {"kind":"uint","maximum":"255","value":"17"},
+                        {"kind":"uint","maximum":"255","value":"19"}
+                    ]
+                }),
+            ),
+            ("loadBytes", "10", json!({"kind":"bytes","values":[165,60]})),
+            ("loadUnit", "11", json!({"kind":"unit"})),
+        ],
+        json!({
+            "kind":"tuple",
+            "items":[
+                {"kind":"tuple","items":[
+                    {"kind":"native","value":"7"},
+                    {"kind":"native","value":"11"},
+                    {"kind":"bool","value":true}
+                ]},
+                {"kind":"tuple","items":[
+                    {"kind":"uint","maximum":"255","value":"17"},
+                    {"kind":"uint","maximum":"255","value":"19"},
+                    {"kind":"uint","maximum":"255","value":"165"},
+                    {"kind":"uint","maximum":"255","value":"60"}
+                ]},
+                {"kind":"tuple","items":[
+                    {"kind":"bool","value":true},
+                    {"kind":"uint","maximum":"1","value":"1"}
+                ]}
+            ]
+        }),
     )
 }
