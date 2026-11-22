@@ -4,9 +4,10 @@ import CompactStandardLibrary;
 witness unitObserve(value: Field): [];
 witness unitFinish(value: Field): Field;
 
-export circuit update(seed: Field): Field {
+export circuit update(seed: Field): [Field, Maybe<[]>, Maybe<[]>] {
   const first = unitObserve(seed);
   const second = unitObserve(seed + (1 as Field));
   const result = unitFinish(seed + (2 as Field));
-  return disclose(result);
+  const fourth = unitObserve(seed + (3 as Field));
+  return [disclose(result), disclose(some<[]>(fourth)), none<[]>()];
 }
