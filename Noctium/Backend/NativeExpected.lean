@@ -24,7 +24,7 @@ private def readInputRequirement (name : String) (ty : Ty) : InputRequirement :=
 private def inputAliases (inputs : List InputRequirement) : AliasEnvironment :=
   inputs.map fun input => (input.identifier.drop 7 |>.toString, .input input.identifier)
 
-private def sourceInputAliases (inputs : List Input) : AliasEnvironment :=
+def sourceInputAliases (inputs : List Input) : AliasEnvironment :=
   inputs.map fun input => (input.name, Input.sourceTerm input)
 
 private def convert (span : SourceSpan) (result : Except String α) : Except Diagnostic α :=
@@ -109,6 +109,27 @@ theorem convert_ok (span : SourceSpan) (result : Except String α) (value : α) 
     convert span result = .ok value ↔ result = .ok value := by
   cases result <;> simp [convert]
 
+/-- Normalize the Bytes0 side assertion before the physical return fields. -/
+def normalizeCircuitOutput (aliases : AliasEnvironment) (output : Output) :
+    Except Diagnostic (List Normalized × Option Normalized) := do
+  let emptyOutput ← if output.ty == .bytes 0 then
+      some <$> convert output.span (normalize aliases output.value)
+    else pure none
+  let fields ← convert output.span output.nativeReturnFields
+  let normalizedFields ← fields.mapM fun field => convert output.span (normalize aliases field)
+  pure (normalizedFields, emptyOutput)
+
+/-- Collect native output fields in declaration order and retain Bytes0
+normalizations separately for assertions and bounds. -/
+def collectCircuitOutputs (aliases : AliasEnvironment) (outputs : List Output) :
+    Except Diagnostic (List Normalized × List Normalized) := do
+  match outputs with
+  | [] => pure ([], [])
+  | output :: rest => do
+    let (fields, empty) ← normalizeCircuitOutput aliases output
+    let (tailFields, tailEmpty) ← collectCircuitOutputs aliases rest
+    pure (fields ++ tailFields, empty.toList ++ tailEmpty)
+
 theorem collect_eq (env : AliasEnvironment) (values : List (Expr ty)) :
     collect env values = (do
       let results ← values.mapM (normalize env)
@@ -140,14 +161,7 @@ def expectedCircuit (value : Circuit) : Except Diagnostic Expected := do
   let aliases := sourceInputAliases value.inputs
   let (_, constraints, _) ← convert value.span (collect aliases value.constraints)
   let conditions ← convert value.span (value.constraints.mapM (normalize aliases))
-  let mut outputs := []
-  let mut emptyOutputs := []
-  for output in value.outputs do
-    if output.ty == .bytes 0 then
-      emptyOutputs := emptyOutputs ++ [← convert output.span (normalize aliases output.value)]
-    let fields ← convert output.span output.nativeReturnFields
-    for field in fields do
-      outputs := outputs ++ [← convert output.span (normalize aliases field)]
+  let (outputs, emptyOutputs) ← collectCircuitOutputs aliases value.outputs
   let returns := outputs.map (·.term)
   let groups := (value.inputs.filter (·.visibility == .«public»)).flatMap fun input =>
     match input.ty with
