@@ -1306,7 +1306,7 @@
       "layer": "private-runtime",
       "surface": "Private-state initialization and evolution",
       "noctiumStatus": "subset",
-      "notes": "Source scalar stages and transactional native journals are qualified subsets. A readable circuit reads a nominal record beside UInt8, Bool, JubjubScalar and JubjubPoint cells under the same capability. The focused host/native test verifies request and record schemas, rejects malformed replies, checks staged scalar values, and rejects an altered record or inconsistent key pair. The compiler rejects implicit disclosure of a record field. Whole-composite staging, storage truth and persistence remain separate.",
+      "notes": "The mixed private-state circuit reads a nominal record beside UInt8, Bool, JubjubScalar and JubjubPoint cells, stages a whole replacement record, and reads it back within the same invocation. The host checks the exact staged schema and canonical value and rejects a well-typed substitution. The Compact reference exercises the same tentative record update. The focused check covers in-invocation staging and leaves durable host storage to the separately qualified commit lifecycle.",
       "source": [
         "reference"
       ],
@@ -1320,13 +1320,15 @@
         "docs/development/typed-witness-qualification.md",
         "tests/witness62-public/qualification-evidence.json",
         "tests/PrivateStateMixed.lean",
-        "runtime/tests/witness_control.rs"
+        "runtime/tests/witness_control.rs",
+        "tests/compact/PrivateRecordStage.compact",
+        "tests/compact/private-record-stage.mjs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-17",
         "sourceRevision": "b1afd9f4afa9525a5031820ab7eeaaddbee7e299",
-        "scope": "Source scalar stage statements drive tentative private journals and matching staged READs. An owned invocation flows through source execution, proof/client handoff, finalized acceptance and correlated compare-and-swap on both localnet profiles. Malformed replies retain native suspension for corrected retry. Whole-composite source staging and general private-state language coverage remain open. Private writes are not circuit-proved state transitions.",
+        "scope": "Source scalar stage statements drive tentative private journals and matching staged READs. An owned invocation flows through source execution, proof/client handoff, finalized acceptance and correlated compare-and-swap on both localnet profiles. Malformed replies retain native suspension for corrected retry. The host owns private journal commits.",
         "evidence": [
           "docs/development/typed-witnesses.md",
           "docs/development/typed-witness-qualification.md",

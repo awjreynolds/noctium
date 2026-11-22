@@ -567,10 +567,10 @@ mutual
         | .branch condition yes no => pure (node target.span "if" [
           ("condition", ← emitExpression checked target.id.scope env target.span condition),
           ("yes", toJson (← emitBody checked target env yes)), ("no", toJson (← emitBody checked target env no))])
-        | .stage capability key ty value => do
+        | .stage capability key type value => do
           unless hostName capability && hostKey key do emitLift (fail target.span "invalid private stage capability/key")
           pure (node target.span "stage" [
-          ("capability", toJson capability), ("key", toJson key), ("type", toJson (typeName (.scalar ty))),
+          ("capability", toJson capability), ("key", toJson key), ("type", toJson (← emitType checked target.span type)),
           ("value", ← emitExpression checked target.id.scope env target.span value)])
         | .readCell .. => emitLift (fail target.span "portable control capability unavailable: ledger reads")
         | .readMap .. | .readMember .. =>
@@ -706,13 +706,21 @@ def compileTypedWithLimits (limits : Helpers.Limits) (program : Program) (entryN
   if plan.compress.utf8ByteSize > maxPlanBytes then fail entry.span "control plan byte limit exceeded"
   pure plan
 
+private partial def hasCompositeStage : List Statement → Bool
+  | [] => false
+  | .stage _ _ (.composite _) _ :: _ => true
+  | .branch _ yes no :: rest => hasCompositeStage yes || hasCompositeStage no || hasCompositeStage rest
+  | .forRange _ _ _ body :: rest => hasCompositeStage body || hasCompositeStage rest
+  | _ :: rest => hasCompositeStage rest
+
 def compileWithLimits (limits : Helpers.Limits) (program : Program) (entryName : String)
     (maxPlanBytes : Nat := 1048576) : Except Diagnostic Json :=
   let hasUnitParameters := program.declarations.any fun declaration =>
     declaration.compositeParameters.any (fun (_, type) => type == .unit)
   let hasUnitInputs := program.exports.any fun entry =>
     entry.compositeInputs.any (fun input => input.type == .unit)
-  if program.witnesses.isEmpty && !hasUnitParameters && !hasUnitInputs then
+  if program.witnesses.isEmpty && !hasUnitParameters && !hasUnitInputs &&
+      !program.declarations.any (hasCompositeStage ∘ (·.body)) then
     compileScalarWithLimits limits program entryName maxPlanBytes
   else compileTypedWithLimits limits program entryName maxPlanBytes
 

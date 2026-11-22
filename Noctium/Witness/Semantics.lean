@@ -152,7 +152,7 @@ theorem eraseStages_preserves_shortCircuitObservations
 small reference projection makes the stage boundary explicit. -/
 inductive Observation where
   | evaluate (term : Term)
-  | privateWrite (capability key : String) (type : Ty) (value : Term)
+  | privateWrite (capability key : String) (type : ResultType) (value : Term)
   deriving Repr
 
 def evaluatedObservations : List Observation → List Term
@@ -1235,17 +1235,25 @@ private def stageContinue (grants : HostGrants) (capability key : String)
   | .replay => fail "un-erased private-state stage reached circuit replay"
   continuation
 
-private def stageCast (context : EvalContext) (type : Ty) (value : RuntimeValue) :
-    MachineM RuntimeValue :=
-  match castRuntime context type value with
+private def stageConversion (program : Program) (context : EvalContext)
+    (type : ResultType) (value : RuntimeValue) : Except String RuntimeValue :=
+  match type with
+  | .unit => .error "native witness execution cannot stage Unit"
+  | .scalar ty => castRuntime context ty value
+  | .composite _ => coerceRuntime program context type value
+
+private def stageCast (program : Program) (context : EvalContext) (type : ResultType)
+    (value : RuntimeValue) : MachineM RuntimeValue :=
+  match stageConversion program context type value with
   | .ok result => pure result
   | .error message => rejectBoundary .stageCast message
 
-private theorem stageCast_projection (context : EvalContext) (type : Ty)
+private theorem stageCast_projection (program : Program) (context : EvalContext)
+    (type : ResultType)
     (value : RuntimeValue) (state : MachineState) :
-    (stageCast context type value state).1 = castRuntime context type value ∧
-      machineStateObservable (stageCast context type value state).2 = machineStateObservable state := by
-  cases cast : castRuntime context type value with
+    (stageCast program context type value state).1 = stageConversion program context type value ∧
+      machineStateObservable (stageCast program context type value state).2 = machineStateObservable state := by
+  cases cast : stageConversion program context type value with
   | error message => simp [stageCast, cast, rejectBoundary, machineStateObservable]
   | ok result => simp [stageCast, cast, machineMMonad, Applicative.toPure, Monad.toApplicative, Pure.pure, machineStateObservable]
 
@@ -1269,9 +1277,10 @@ private theorem sourceProviderReply_marksMalformedValue
   simp [sourceProviderReply, providerReplyState, received, invalid]
 
 private theorem stageCast_marksRejectedCast
-    (context : EvalContext) (type : Ty) (value : RuntimeValue) (state : MachineState)
-    (message : String) (rejected : castRuntime context type value = .error message) :
-    stageCast context type value state =
+    (program : Program) (context : EvalContext) (type : ResultType)
+    (value : RuntimeValue) (state : MachineState)
+    (message : String) (rejected : stageConversion program context type value = .error message) :
+    stageCast program context type value state =
       (.error message, {state with boundaryRejections := state.boundaryRejections ++ [.stageCast]}) := by
   simp [stageCast, rejected, rejectBoundary]
 
@@ -1445,7 +1454,7 @@ mutual
               | _ => fail "helper assertion requires Bool"
           | .stage capability key ty term => do
               let value ← evalTerm fuel program context grants provider declaration.id.scope environment term
-              let value ← stageCast context ty value
+              let value ← stageCast program context ty value
               let state ← get
               stageContinue grants capability key value state
                 (evalBody fuel program context grants provider declaration environment rest)
@@ -1849,10 +1858,11 @@ private theorem recordSafe_getStageContinue (grants : HostGrants) (capability ke
   exact recordStep_stageContinue grants capability key value state continuation
     hmode hcursor hcontinuation
 
-private theorem recordSafe_stageCast (context : EvalContext) (type : Ty)
-    (value : RuntimeValue) : RecordSafe (stageCast context type value) := by
+private theorem recordSafe_stageCast (program : Program) (context : EvalContext)
+    (type : ResultType) (value : RuntimeValue) :
+    RecordSafe (stageCast program context type value) := by
   intro state hmode hcursor
-  cases hcast : castRuntime context type value with
+  cases hcast : stageConversion program context type value with
   | ok result =>
       simp only [stageCast, hcast]
       exact RecordStep.refl state hmode hcursor
@@ -2007,7 +2017,7 @@ private theorem body_recordSafe_step (fuel : Nat)
       · exact termSafe program context grants provider declaration.id.scope environment term
       · intro value
         apply recordSafe_bind
-        · exact recordSafe_stageCast context type value
+        · exact recordSafe_stageCast program context type value
         · intro value
           exact recordSafe_getStageContinue grants capability key value _
             (bodySafe program context grants provider declaration environment rest)
@@ -3818,13 +3828,14 @@ private theorem successSim_sourceStage (grants : HostGrants)
       exact simulation written replay returned sourceFinal frozen
         writtenRelation continuationRun finalPrefix
 
-private theorem successSim_stageCast (context : EvalContext) (type : Ty)
+private theorem successSim_stageCast (program : Program) (context : EvalContext)
+    (type : ResultType)
     (value : RuntimeValue) (next : RuntimeValue → MachineM RuntimeValue)
     (replay : MachineM RuntimeValue)
     (simulation : ∀ castValue,
-      castRuntime context type value = .ok castValue → SuccessSim (next castValue) replay) :
-    SuccessSim (stageCast context type value >>= next) replay := by
-  cases castResult : castRuntime context type value with
+      stageConversion program context type value = .ok castValue → SuccessSim (next castValue) replay) :
+    SuccessSim (stageCast program context type value >>= next) replay := by
+  cases castResult : stageConversion program context type value with
   | error message =>
       intro source replayState returned sourceFinal frozen relation sourceRun _
       simp [stageCast, castResult, rejectBoundary, Bind.bind] at sourceRun
@@ -3976,12 +3987,12 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
       apply successSim_bind
       · exact termSafe declaration.id.scope environment term
       · intro value
-        exact recordSafe_bind _ _ (recordSafe_stageCast context type value)
+        exact recordSafe_bind _ _ (recordSafe_stageCast program context type value)
           (fun value => recordSafe_getStageContinue grants capability key value _
             (bodySafe declaration environment rest))
       · exact termSim declaration.id.scope environment term
       · intro value
-        apply successSim_stageCast
+        apply successSim_stageCast program context type value
         intro castValue castSucceeded
         exact successSim_sourceStage grants capability key castValue _ _
           (bodySim declaration environment rest)
@@ -4547,13 +4558,14 @@ private theorem failureSim_stageContinue (grants : HostGrants)
         exact finalAdmitted
       simp at impossibleTrace
 
-private theorem failureSim_stageCast (context : EvalContext) (type : Ty)
+private theorem failureSim_stageCast (program : Program) (context : EvalContext)
+    (type : ResultType)
     (value : RuntimeValue) (next : RuntimeValue → MachineM RuntimeValue)
     (replay : MachineM RuntimeValue)
-    (simulation : ∀ castValue, castRuntime context type value = .ok castValue →
+    (simulation : ∀ castValue, stageConversion program context type value = .ok castValue →
       FailureSim (next castValue) replay) :
-    FailureSim (stageCast context type value >>= next) replay := by
-  cases castResult : castRuntime context type value with
+    FailureSim (stageCast program context type value >>= next) replay := by
+  cases castResult : stageConversion program context type value with
   | error castMessage =>
       intro source replayState message sourceFinal frozen relation initialAdmitted sourceRun finalAdmitted finalPrefix
       have stateEquality :
@@ -4742,7 +4754,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
       simp only [Noctium.Witness.eraseStages, evalBody, discard_then_eq]
       intro source replay message sourceFinal frozen relation initialAdmitted sourceRun finalAdmitted finalPrefix
       let sourceContinuation : RuntimeValue → MachineM RuntimeValue := fun value => do
-        let castValue ← stageCast context type value
+        let castValue ← stageCast program context type value
         let state ← get
         stageContinue grants capability key castValue state
           (evalBody fuel program context grants sourceProvider declaration environment rest)
@@ -4752,7 +4764,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
           environment (Noctium.Witness.eraseStages rest)
       have sourceShape :
           (evalTerm fuel program context grants sourceProvider declaration.id.scope environment term >>= fun value =>
-            stageCast context type value >>= fun castValue =>
+            stageCast program context type value >>= fun castValue =>
               get >>= fun state => stageContinue grants capability key castValue state
                 (evalBody fuel program context grants sourceProvider declaration environment rest)) =
           (evalTerm fuel program context grants sourceProvider declaration.id.scope environment term >>= fun value =>
@@ -4789,7 +4801,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
               simpa [sourceShape, sourceContinuation, termRun, machineMMonad, Monad.toBind, Bind.bind] using sourceRun
             have continuationSafe : RecordSafe (sourceContinuation value) := by
               apply recordSafe_bind
-              · exact recordSafe_stageCast context type value
+              · exact recordSafe_stageCast program context type value
               · intro castValue
                 exact recordSafe_getStageContinue grants capability key castValue
                   (evalBody fuel program context grants sourceProvider declaration environment rest)
@@ -4816,7 +4828,7 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
               termSuccess declaration.id.scope environment term source replay value afterTerm frozen
                 relation termRun intermediatePrefix
             have continuationFailure : FailureSim (sourceContinuation value) replayContinuation := by
-              apply failureSim_stageCast context type value
+              apply failureSim_stageCast program context type value
                 (fun castValue => get >>= fun state => stageContinue grants capability key castValue state
                   (evalBody fuel program context grants sourceProvider declaration environment rest))
                 replayContinuation
@@ -5863,7 +5875,7 @@ private def boundaryReadSignature : WitnessSignature := {
 private def boundaryExampleDeclaration : Declaration := {
   id := ⟨0, 0⟩, name := "example", result := .scalar .native,
   body := [
-    .stage "private" "cache" .native (.native 1),
+    .stage "private" "cache" (.scalar .native) (.native 1),
     .return (some (.witnessCall "read-cache" "cache" []))
   ]
 }
@@ -5914,7 +5926,8 @@ private def boundaryExampleRun (grants : HostGrants) (reply : WitnessReply) :=
 -- Denied writes and stage-only casts have explicit nonempty rejection traces.
 #guard (boundaryExampleRun {boundaryExampleGrants with stateWrites := []}
   (.value (.scalar (.native 1)))).2.boundaryRejections == [.stageWrite]
-#guard (stageCast boundaryExampleContext .native .unit {}).2.boundaryRejections == [.stageCast]
+#guard (stageCast boundaryExampleProgram boundaryExampleContext (.scalar .native) .unit {}).2.boundaryRejections == [.stageCast]
+#guard (stageCast boundaryExampleProgram boundaryExampleContext .unit .unit {}).2.boundaryRejections == [.stageCast]
 
 -- Malformed typed callbacks are distinct from accepted terminal provider failures.
 private def boundaryMalformedReplyRun :=

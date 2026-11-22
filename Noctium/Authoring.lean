@@ -2543,9 +2543,9 @@ private partial def statementTerm : Statement → CommandElabM (TSyntax `term)
       | none => `(none)
       | some value => `(some $(← termTerm value))
     `(Noctium.Helpers.Statement.«return» $value)
-  | .stage capability key ty value => do
+  | .stage capability key type value => do
     `(Noctium.Helpers.Statement.stage $(stringTerm capability) $(stringTerm key)
-      $(← tyTerm ty) $(← termTerm value))
+      $(← resultTypeTerm type) $(← termTerm value))
   | .readCell .. => throwError "readable witness source does not support ledger cell reads"
   | .writeCell .. => throwError "readable witness source does not support ledger cell writes"
   | .readMap .. | .readMember .. =>
@@ -2784,6 +2784,12 @@ private def lookupPrivateField (fieldPath : TSyntax `ident) : CommandElabM Priva
     | throwErrorAt fieldPath "schema '{schema.name}' has no field '{fieldName}'"
   pure field
 
+private def checkPrivateFieldCodec (fieldPath : TSyntax `ident) (field : PrivateStateField)
+    (codecTerms : Array (TSyntax `term)) : CommandElabM Unit := do
+  if let some codec := field.codec then
+    unless codecTerms.any (·.raw.getId == codec) do
+      throwErrorAt fieldPath s!"add codec '{privateToUserName codec}' to the circuit's using clause"
+
 private abbrev PatternBinding := TSyntax `ident × ResultType × (Helpers.Term → Helpers.Term)
 
 private partial def patternBindings (composites : Types.CompositeEnv)
@@ -2879,9 +2885,7 @@ private partial def lowerReadableStatement (programName path : String)
       throwErrorAt id s!"duplicate readable witness value '{valueName}'"
     let site := s!"{programName}.read.{path}"
     validIdentity statement site
-    if let some codec := field.codec then
-      unless codecTerms.any (·.raw.getId == codec) do
-        throwErrorAt fieldPath s!"add codec '{privateToUserName codec}' to the circuit's using clause"
+    checkPrivateFieldCodec fieldPath field codecTerms
     let signature := field.signature
     let readTerm := Noctium.Helpers.Term.witnessCall site signature.name []
     let logicalAliases := match signature.result with
@@ -2943,13 +2947,19 @@ private partial def lowerReadableStatement (programName path : String)
         statements := body.statements ++ [.bind name .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
-    let .scalar ty := field.signature.result
-      | throwErrorAt fieldPath "private staging currently requires a scalar cell"
-    let (lowered, body) ← body.lower programName path exprState source
-    let value ← coerce source lowered ty
+    checkPrivateFieldCodec fieldPath field codecTerms
+    let type := field.signature.result
+    let (lowered, body) ← body.lower programName path exprState source (some type)
+    let value ← match type with
+      | .scalar ty => coerce source lowered ty
+      | .composite _ => do
+        unless Helpers.subtype lowered.type type do
+          throwErrorAt source "private stage value does not match its declared Payload type"
+        pure lowered
+      | .unit => throwErrorAt fieldPath "private stage requires a cell value"
     let body := body.observe value [source] [s!"typed staged private-state value: {field.key}"]
     pure {body with
-      statements := body.statements ++ value.before ++ [.stage field.capability field.key ty (.at (← spanValue statement) value.term)]
+      statements := body.statements ++ value.before ++ [.stage field.capability field.key type (.at (← spanValue statement) value.term)]
       observation := {body.observation with
         privateStages := (body.observation.privateStages ++ [field.key]).eraseDups}}
   | `(noctium_witness_statement| if $condition:nlexpr then $yes:noctium_witness_statement*

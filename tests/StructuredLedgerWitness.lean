@@ -23,7 +23,7 @@ def ledgerWitnessProgram : Program := {
         .writeCell "balance" .native (.disclose {} (.binary .add (.ref "before") (.ref "delta"))),
         .readCell "balance" "after" .native,
         .assert (.eq (.ref "after") (.ref "expected")),
-        .stage "private" "ledger/last" .native (.ref "delta"),
+        .stage "private" "ledger/last" (.scalar .native) (.ref "delta"),
         .return (some (.ref "after"))] [.return (some (.native 0))]]}]
   exports := [{name := "advance", target := ⟨0, 0⟩, inputs := [
     {name := "enabled", ty := .bool, visibility := .private},

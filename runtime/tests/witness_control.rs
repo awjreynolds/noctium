@@ -1081,10 +1081,36 @@ fn typed_private_cells_bind_distinct_read_types() {
             .resume_typed(reply(request, &attempt, "value", Some(response)))
             .unwrap();
     }
-    assert_eq!(session.advance().unwrap()["status"], "completed");
+    let staged_receipt = json!({"kind":"struct", "id":"MeterReceipt", "fields":[
+        {"name":"amount", "value":{"kind":"uint","maximum":"255","value":"3"}},
+        {"name":"okay", "value":{"kind":"bool","value":false}}
+    ]});
+    let receipt_key = "noctium/PrivateStateMixed.Wallet/receipt";
+    let pending = session.advance().unwrap();
+    let request = &pending["request"];
+    assert_eq!(request["operation"], host::READ);
+    assert_eq!(request["schema"], receipt_schema.as_str());
+    let private = session.private_request().unwrap();
+    assert_eq!(private["arguments"]["key"], receipt_key);
+    assert_eq!(
+        private["invocationWrites"][receipt_key]["value"], staged_receipt
+    );
+    let mut substituted = staged_receipt.clone();
+    substituted["fields"][0]["value"]["value"] = json!("2");
+    assert!(session
+        .resume_typed(reply(request, &attempt, "value", Some(substituted)))
+        .is_err());
+    assert_eq!(session.advance().unwrap(), pending);
+    session
+        .resume_typed(reply(request, &attempt, "value", Some(staged_receipt.clone())))
+        .unwrap();
+    let public = session.advance().unwrap();
+    assert_eq!(public["status"], "completed");
+    assert!(public.get("hostWrites").is_none());
     let completed = session
         .private_completion(&binding(&control)["nativeRelation"])
         .unwrap();
+    assert_eq!(completed["hostWrites"][receipt_key]["value"], staged_receipt);
     assert_eq!(
         completed["hostWrites"]["noctium/PrivateStateMixed.Wallet/saved"]["value"],
         "2"
@@ -1128,6 +1154,8 @@ fn typed_private_cells_bind_distinct_read_types() {
             recipient.y().unwrap(),
             Fr::from(2u64),
             Fr::from(1u64),
+            Fr::from(3u64),
+            Fr::from(0u64),
         ]
     );
     execution.preimage.private_transcript[2] = Fr::from(0u64);

@@ -98,7 +98,7 @@ private def iterationSource : Except Diagnostic Program := do
         .bind "sum" (.scalar .native) folded,
         .assert (.eq (.ref "sum") (.ref "expected")),
         .writeCell "total" .native (.disclose {} (.ref "sum")),
-        .stage "private" "iteration/last" .native (.ref "sum")] [],
+        .stage "private" "iteration/last" (.scalar .native) (.ref "sum")] [],
       .readCell "total" "after" .native,
       .return (some (receiptValue (.ref "after")))]}
     else declaration}

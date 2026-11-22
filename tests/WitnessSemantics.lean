@@ -9,13 +9,13 @@ namespace WitnessSemanticsTest
 
 /-- Covers direct stages, nested branches, ordered witness calls, and a return. -/
 def sourceFixture : List Statement := [
-  .stage "private" "claim/first" .native (.witnessCall "first" "lookup" []),
+  .stage "private" "claim/first" (.scalar .native) (.witnessCall "first" "lookup" []),
   .branch (.witnessCall "condition" "eligible" [])
-    [.stage "private" "claim/yes" .bool (.witnessCall "yes" "lookup" [])]
+    [.stage "private" "claim/yes" (.scalar .bool) (.witnessCall "yes" "lookup" [])]
     [.evaluate (.witnessCall "no" "lookup" [])],
   .evaluate (.witnessCall "before-return" "lookup" []),
   .return (some (.witnessCall "return" "lookup" [])),
-  .stage "private" "claim/after-return" .native (.native 9)
+  .stage "private" "claim/after-return" (.scalar .native) (.native 9)
 ]
 
 example : expressionSchedule (eraseStages sourceFixture) = expressionSchedule sourceFixture :=
@@ -53,7 +53,7 @@ def sourceWriteKeys : List String := writeKeys (stageObservations sourceFixture)
 ])
 
 def failingFixture : List Statement := [
-  .stage "private" "claim/value" .native (.witnessCall "stage-value" "lookup" []),
+  .stage "private" "claim/value" (.scalar .native) (.witnessCall "stage-value" "lookup" []),
   .evaluate (.witnessCall "failure" "lookup" []),
   .return (some (.witnessCall "after-failure" "lookup" []))
 ]
@@ -93,14 +93,14 @@ def cachedClaim : Program := {
     {id := ⟨0, 1⟩, name := "claim",
       parameters := [{name := "expected", ty := .native}, {name := "seed", ty := .native}],
       result := .scalar .native, body := [
-        .stage "private" "claim/cache" .native (.native 1),
+        .stage "private" "claim/cache" (.scalar .native) (.native 1),
         .bind "afterStage" (.scalar .native) (.witnessCall "after-stage" "cache" []),
         .assert (.eq (.ref "afterStage") (.native 1)),
         .bind "first" (.scalar .native) (.call "fetch" [.ref "seed"]),
         .bind "second" (.scalar .native) (.call "fetch" [.ref "seed"]),
         .assert (.eq (.ref "first") (.ref "expected")),
         .assert (.eq (.ref "second") (.ref "expected")),
-        .stage "private" "claim/cache" .native (.ref "second"),
+        .stage "private" "claim/cache" (.scalar .native) (.ref "second"),
         .return (some (.ref "expected"))
       ]}
   ]
@@ -250,7 +250,7 @@ def pairProgram : Program := {
         .bind "answer" (.composite pairType) (.call "fetchPair" [.ref "request"]),
         .assert (.eq (.project (.ref "answer") (.field "amount")) (.ref "expected")),
         .assert (.project (.ref "answer") (.field "okay")),
-        .stage "private" "pair/amount" (.uint 255)
+        .stage "private" "pair/amount" (.scalar (.uint 255))
           (.project (.ref "answer") (.field "amount")),
         .return (some (.disclose {} (.ref "answer")))
       ]}

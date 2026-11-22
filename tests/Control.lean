@@ -77,7 +77,7 @@ private def guarded (condition : Term) (yes no : Term) : Program := {
 #guard errorContains (Control.compile (program (returned (.witness "privateResult" .native))) "main") "undisclosed private"
 #guard accepted (Control.compile (program (returned (.disclose {} (.witness "privateResult" .native)))) "main")
 #guard errorContains (Control.compile (program [.branch (.bool false) [.evaluate (.witness "bad name" .native)] [], .return (some (.native 0))]) "main") "invalid control witness"
-#guard errorContains (Control.compile (program [.branch (.bool false) [.stage "store" "../bad" .native (.native 1)] [], .return (some (.native 0))]) "main") "invalid private stage"
+#guard errorContains (Control.compile (program [.branch (.bool false) [.stage "store" "../bad" (.scalar .native) (.native 1)] [], .return (some (.native 0))]) "main") "invalid private stage"
 
 -- Constant-aware disclosure must retain the static wider conditional type for overloads.
 #guard accepted (Control.compile {

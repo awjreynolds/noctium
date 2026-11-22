@@ -29,9 +29,9 @@ schema still restricts reads to that type. Declare a record cell with
 `cell receipt : Payload receiptWire`. The reading circuit lists the same codec
 in `using`. It receives a typed record from the host, projects checked fields,
 and requires explicit disclosure at public sinks. The mixed-cell fixture reads
-the record beside a counter, a flag and a Jubjub key pair. The native checker
-rejects an altered receipt or inconsistent scalar and point. The revised fixture
-sizes at K12 with 2,236 rows. Whole-record staging remains open.
+the record beside a counter, a flag and a Jubjub key pair. It stages a replacement
+receipt and reads it back within the same invocation. The native checker rejects
+an altered receipt or inconsistent scalar and point.
 [Mixed-cell example](../../tests/PrivateStateMixed.lean)
 
 Declarations describe access requests. The host still grants storage permissions.
@@ -248,7 +248,12 @@ A typed private read declares `operation := "private_state.read.v1"`, an explici
 
 Runtime already owns staged writes. A reply for an owned staged key must match its exact schema and newest canonical value. A wrong reply leaves the pending request and staged journal available for a valid retry. Reads of committed host storage still depend on the host storage service.
 
-Source `Statement.stage` currently stages scalar values. Its writes remain tentative. The circuit translation retains evaluation of each stage value without treating the private write as a proved ledger transition. Staging and compare-and-exchange operations are reserved for the controlled journal lifecycle. They cannot be declared as ordinary typed witness providers. The host typed journal also supports nominal composite values; whole-composite source staging needs a separate source-language extension.
+Source `stage` accepts scalar and composite values checked against the declared
+cell type. For example, `stage Wallet.receipt := record(Payload receiptWire,
+{amount := uint(3), okay := false})` stages a whole typed receipt. The next read
+in the invocation must return the exact canonical value. Writes stay tentative
+in the private journal until the authorized commit. The circuit evaluates the
+staged expression. The host owns staging and compare-and-exchange.
 
 A source-bound execution accepts journal writes only from its compiled stage statements. The public manual-stage API remains available for legacy host-policy execution. It does not add writes to a source-qualified invocation.
 

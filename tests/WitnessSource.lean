@@ -19,14 +19,14 @@ def scalarProgram : Program := {
         .return (some (.witnessCall "fetch-value" "lookup" [.ref "seed"]))]},
     {id := ⟨0, 1⟩, name := "claim", parameters := [{name := "expected", ty := .uint 255}, {name := "seed", ty := .uint 255}],
       result := .scalar (.uint 255), body := [
-        .stage "private" "cache/last" (.uint 255) (.uint 255 1),
+        .stage "private" "cache/last" (.scalar (.uint 255)) (.uint 255 1),
         .bind "afterStage" (.scalar (.uint 255)) (.witnessCall "read-after-stage" "cache" []),
         .assert (.eq (.ref "afterStage") (.uint 255 1)),
         .bind "first" (.scalar (.uint 255)) (.call "fetch" [.ref "seed"]),
         .bind "second" (.scalar (.uint 255)) (.call "fetch" [.ref "seed"]),
         .assert (.eq (.ref "first") (.ref "expected")),
         .assert (.eq (.ref "second") (.ref "expected")),
-        .stage "private" "cache/last" (.uint 255) (.ref "second"),
+        .stage "private" "cache/last" (.scalar (.uint 255)) (.ref "second"),
         .return (some (.ref "expected"))]}]
   exports := [{name := "scalar", target := ⟨0, 1⟩, inputs := [
     {name := "expected", ty := .uint 255, visibility := .public},
@@ -59,7 +59,7 @@ def pairProgram : Program := {
         .bind "answer" (.composite pairType) (.call "fetchPair" [.ref "request"]),
         .assert (.eq (.project (.ref "answer") (.field "amount")) (.ref "expected")),
         .assert (.project (.ref "answer") (.field "okay")),
-        .stage "private" "cache/last" (.uint 255) (.project (.ref "answer") (.field "amount")),
+        .stage "private" "cache/last" (.scalar (.uint 255)) (.project (.ref "answer") (.field "amount")),
         .return (some (.disclose {} (.ref "answer")))]}]
   exports := [
     {name := "pair", target := ⟨0, 1⟩,
