@@ -5532,8 +5532,8 @@
       "id": "C-STDLIB-JUBJUBSCHNORRVERIFY",
       "layer": "standard-library",
       "surface": "jubjubSchnorrVerify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Jubjub Schnorr preserves the R, public-key and message field order, with the existing 1020-field limit. Ordinary and readable circuits use the same checked Lean equation. One typed provider reply supplies the signature. The pinned Compact and native ZKIR 3.2.1 cases agree on the selected valid signature and changed message.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5546,20 +5546,15 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper hashes exactly [R.x,R.y,key.x,key.y] followed by Native message fields, at most 1020 message fields. Challenge/response reduce to JubjubScalar. Identity keys abort and identity announcements are allowed.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableSignatures.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-signatures.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-SECP256K1ECDSAVERIFY",
@@ -5650,8 +5645,8 @@
       "id": "C-STDLIB-ED25519VERIFY",
       "layer": "standard-library",
       "surface": "ed25519Verify",
-      "noctiumStatus": "related-subset",
-      "notes": "Inventory by exported name, not full semantic coverage.",
+      "noctiumStatus": "subset",
+      "notes": "Ed25519 hashes the compressed announcement and public key before the message, with the existing 960-byte limit. Ordinary and readable circuits use the same checked Lean equation. One typed provider reply supplies the signature. The pinned Compact and native ZKIR 3.2.1 cases agree on the selected valid signature and changed message.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5664,20 +5659,15 @@
         "ZK",
         "ABI"
       ],
-      "observedEvidence": [],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-18",
-        "scope": "Typed Source helper checks SHA512(encode(R)||encode(key)||message), with canonical prime-subgroup points and scalar S, using zero through 960 message bytes. Identity keys abort. RFC8032 empty-message vector and changed-message rejection are scoped native cases.",
-        "evidence": [
-          "Noctium/Crypto/Signatures.lean",
-          "tests/SignatureChecks.lean",
-          "runtime/tests/signature_helpers.rs",
-          "docs/development/signatures.md"
-        ],
-        "limits": "Focused Source/native checker and shared Rust prepare route only. No new keys, proofs, deployments, general signature correctness proof or whole-compiler preservation. Full equivalence remains unverified.",
-        "fullEquivalence": "unverified"
-      }
+      "observedEvidence": [
+        "Noctium/Crypto/Signatures.lean",
+        "tests/SignatureChecks.lean",
+        "tests/ReadableSignatures.lean",
+        "runtime/tests/signature_helpers.rs",
+        "tests/compact/readable-signatures.mjs",
+        "docs/development/signatures.md"
+      ],
+      "equivalence": "unverified"
     },
     {
       "id": "C-STDLIB-MERKLETREEPATHROOT",
