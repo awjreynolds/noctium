@@ -406,11 +406,11 @@ theorem wrong_scope_rejected : ¬ NativePrivacyObligation allOutcomesPolicy := b
 
 /-- Exact byte/build binding is a future proof argument. This theorem exposes
 both pending conclusions instead of silently claiming artifact authentication. -/
-theorem exact_artifact_composition {Bytes Build : Type} (sourceIdentity : String)
-    (planBytes callBytes : Bytes) (planTree callTree : Lean.Json) (build : Build)
-    (parse : Bytes → Except String Lean.Json)
-    (authenticates : Build → String → Bytes → Bytes → Prop)
-    (bindingCertificate : ExactArtifactBinding Bytes Build sourceIdentity planBytes callBytes planTree callTree build parse authenticates)
+theorem exact_artifact_composition {byteType buildType : Type} (sourceIdentity : String)
+    (planBytes callBytes : byteType) (planTree callTree : Lean.Json) (build : buildType)
+    (parse : byteType → Except String Lean.Json)
+    (authenticates : buildType → String → byteType → byteType → Prop)
+    (bindingCertificate : ExactArtifactBinding byteType buildType sourceIdentity planBytes callBytes planTree callTree build parse authenticates)
     (planCertificate : Verification.NativeStateJson.decode planTree = .ok symbolicPlan)
     (callCertificate : Verification.NativeRelationJson.decode callTree = .ok callProgram) :
     parse planBytes = .ok planTree ∧ parse callBytes = .ok callTree ∧

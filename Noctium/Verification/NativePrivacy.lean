@@ -81,10 +81,10 @@ theorem binding_view_congruence (binding : BindingFunction) (left right : Bindin
 
 /-- Reserved composition obligations for the exact-artifact package. These
 are proof parameters. No inhabitant or byte/build authentication is supplied. -/
-structure ExactArtifactBinding (Bytes : Type) (Build : Type) (sourceIdentity : String)
-    (planBytes callBytes : Bytes) (planTree callTree : Lean.Json) (build : Build)
-    (parse : Bytes → Except String Lean.Json)
-    (authenticates : Build → String → Bytes → Bytes → Prop) : Prop where
+structure ExactArtifactBinding (byteType : Type) (Build : Type) (sourceIdentity : String)
+    (planBytes callBytes : byteType) (planTree callTree : Lean.Json) (build : Build)
+    (parse : byteType → Except String Lean.Json)
+    (authenticates : Build → String → byteType → byteType → Prop) : Prop where
   planParsed : parse planBytes = .ok planTree
   callParsed : parse callBytes = .ok callTree
   authenticatedBuild : authenticates build sourceIdentity planBytes callBytes

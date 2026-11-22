@@ -70,25 +70,25 @@ theorem source_canonical (ctx : EvalContext) (input : Inputs) (modulus : ctx.mod
   · simpa only [Inputs.source, modulus] using input.sibling0.isLt
   · simpa only [Inputs.source, modulus] using input.sibling1.isLt
 
-structure InputBindings (input : Inputs) (witness : Assignment) : Prop where
-  root : witness "%input_root" = input.root
-  campaign : witness "%input_campaign" = input.campaign
-  nullifier : witness "%input_suppliedNullifier" = input.nullifier
-  secret : witness "%input_secret" = input.secret
-  sibling0 : witness "%input_sibling0" = input.sibling0
-  sibling1 : witness "%input_sibling1" = input.sibling1
-  direction0 : witness "%input_direction0" = input.direction0
-  direction1 : witness "%input_direction1" = input.direction1
+structure InputBindings (input : Inputs) (assignment : Assignment) : Prop where
+  root : assignment "%input_root" = input.root
+  campaign : assignment "%input_campaign" = input.campaign
+  nullifier : assignment "%input_suppliedNullifier" = input.nullifier
+  secret : assignment "%input_secret" = input.secret
+  sibling0 : assignment "%input_sibling0" = input.sibling0
+  sibling1 : assignment "%input_sibling1" = input.sibling1
+  direction0 : assignment "%input_direction0" = input.direction0
+  direction1 : assignment "%input_direction1" = input.direction1
 
-theorem stream_bindings (hash : Hash) (input : Inputs) (witness : Assignment)
+theorem stream_bindings (hash : Hash) (input : Inputs) (assignment : Assignment)
     (groups : List (List Scalar)) (returns : List Scalar)
-    (sat : Satisfies hash program input.streams witness groups returns) : InputBindings input witness := by
+    (sat : Satisfies hash program input.streams assignment groups returns) : InputBindings input assignment := by
   have hp := sat.publicInputs
   have hs := sat.privateInputs
-  change [witness "%input_root", witness "%input_campaign", witness "%input_suppliedNullifier"] =
+  change [assignment "%input_root", assignment "%input_campaign", assignment "%input_suppliedNullifier"] =
     [input.root, input.campaign, input.nullifier] at hp
-  change [witness "%input_secret", witness "%input_sibling0", witness "%input_sibling1",
-    witness "%input_direction0", witness "%input_direction1"] =
+  change [assignment "%input_secret", assignment "%input_sibling0", assignment "%input_sibling1",
+    assignment "%input_direction0", assignment "%input_direction1"] =
     [input.secret, input.sibling0, input.sibling1, input.direction0, input.direction1] at hs
   simp only [List.cons.injEq, and_true] at hp hs
   exact ⟨hp.1, hp.2.1, hp.2.2, hs.1, hs.2.1, hs.2.2.1, hs.2.2.2.1, hs.2.2.2.2⟩
@@ -171,24 +171,24 @@ theorem source_hash_trace (ctx : EvalContext) (hash : Hash) (agreement : HashAgr
 /-- Security direction: every satisfying assignment, including an adversarial
 internal witness, yields source acceptance and the externally bound result. -/
 theorem native_satisfaction_sound (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
-    (sat : Satisfies hash program input.streams witness groups returns) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
+    (sat : Satisfies hash program input.streams assignment groups returns) :
     claimEntry.circuit.run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] ∧
     returns = [input.nullifier] ∧
     groups = [[input.root], [input.campaign], [input.nullifier], [input.nullifier]] ∧
     (input.direction0 = zero ∨ input.direction0 = one) ∧
     (input.direction1 = zero ∨ input.direction1 = one) := by
-  have bindings := stream_bindings hash input witness groups returns sat
-  have checks := satisfying_checks hash input witness groups returns sat
-  have trace := source_hash_trace ctx hash agreement input witness groups returns sat
+  have bindings := stream_bindings hash input assignment groups returns sat
+  have checks := satisfying_checks hash input assignment groups returns sat
+  have trace := source_hash_trace ctx hash agreement input assignment groups returns sat
   refine ⟨hash_trace_circuit_accepts ctx input.source _ _ (source_canonical ctx input agreement.modulus) trace, ?_, ?_, ?_, ?_⟩
   · have out := sat.outputs
-    change [witness "%input_suppliedNullifier"] = returns at out
+    change [assignment "%input_suppliedNullifier"] = returns at out
     exact out.symm.trans (congrArg (fun v => [v]) bindings.nullifier)
   · have publicBinding := sat.groups
-    change [[witness "%input_root"], [witness "%input_campaign"],
-      [witness "%input_suppliedNullifier"], [witness "%input_suppliedNullifier"]] = groups at publicBinding
+    change [[assignment "%input_root"], [assignment "%input_campaign"],
+      [assignment "%input_suppliedNullifier"], [assignment "%input_suppliedNullifier"]] = groups at publicBinding
     rw [bindings.root, bindings.campaign, bindings.nullifier] at publicBinding
     exact publicBinding.symm
   · simpa only [bindings.direction0] using checks.direction0
@@ -196,12 +196,12 @@ theorem native_satisfaction_sound (ctx : EvalContext) (hash : Hash) (agreement :
 
 /-- Composition uses the existing proved pruning transformation. -/
 theorem native_satisfaction_pruned_sound (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
-    (sat : Satisfies hash program input.streams witness groups returns) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
+    (sat : Satisfies hash program input.streams assignment groups returns) :
     (Passes.pruneCircuit claimEntry.circuit).run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] := by
   rw [Passes.pruneCircuit_run]
-  exact (native_satisfaction_sound ctx hash agreement input witness groups returns sat).1
+  exact (native_satisfaction_sound ctx hash agreement input assignment groups returns sat).1
 
 structure Computation where
   leaf : Scalar
@@ -263,9 +263,12 @@ theorem source_acceptance_calculation (ctx : EvalContext) (hash : Hash) (agreeme
   have source := successful_source_root_and_nullifier ctx input.source
     (source_canonical ctx input agreement.modulus) outputs accepted
   have rootEnvironment : rootExpression.eval ctx (inputEnvironment input.source) =
-      rootExpression.eval ctx (inputEnvironment (computedSource hash input)) := by rfl
+      rootExpression.eval ctx (inputEnvironment (computedSource hash input)) := by
+    simp [rootExpression, firstNodeExpression, leafExpression, Expr.eval, inputEnvironment, computedSource,
+      List.lookup]
   have nullifierEnvironment : nullifierExpression.eval ctx (inputEnvironment input.source) =
-      nullifierExpression.eval ctx (inputEnvironment (computedSource hash input)) := by rfl
+      nullifierExpression.eval ctx (inputEnvironment (computedSource hash input)) := by
+    simp [nullifierExpression, Expr.eval, inputEnvironment, computedSource, List.lookup]
   rw [← rootEnvironment] at calculated
   rw [← nullifierEnvironment] at calculated
   exact ⟨Fin.ext (Except.ok.inj (calculated.1.symm.trans source.1)),
@@ -332,7 +335,7 @@ theorem source_acceptance_complete (ctx : EvalContext) (hash : Hash) (agreement 
     (input : Inputs) (direction0 : input.direction0 = zero ∨ input.direction0 = one)
     (direction1 : input.direction1 = zero ∨ input.direction1 = one) (outputs : EvalEnv)
     (accepted : claimEntry.circuit.run ctx (inputEnvironment input.source) = .ok outputs) :
-    ∃ witness, Satisfies hash program input.streams witness
+    ∃ assignment, Satisfies hash program input.streams assignment
       [[input.root], [input.campaign], [input.nullifier], [input.nullifier]] [input.nullifier] := by
   obtain ⟨root, nullifier⟩ := source_acceptance_calculation ctx hash agreement input outputs accepted
   exact ⟨computedWitness hash input, computed_assignment_satisfies hash input direction0 direction1 root nullifier⟩
@@ -367,7 +370,7 @@ theorem eligible_source_complete (ctx : EvalContext) (hash : Hash) (agreement : 
     (input : InputValues) (canonical : CanonicalInputs ctx input) (leaf node : Nat)
     (trace : HashTrace ctx input leaf node) :
     let nativeInputs := Inputs.ofSource ctx input canonical agreement.modulus
-    ∃ witness, Satisfies hash program nativeInputs.streams witness
+    ∃ assignment, Satisfies hash program nativeInputs.streams assignment
       [[nativeInputs.root], [nativeInputs.campaign], [nativeInputs.nullifier], [nativeInputs.nullifier]]
       [nativeInputs.nullifier] := by
   dsimp only
@@ -381,15 +384,15 @@ theorem eligible_source_complete (ctx : EvalContext) (hash : Hash) (agreement : 
 /-- Satisfaction of an independently decoded JSON tree. Exact tree/program
 binding is a separate checked certificate, not a lowering assumption. -/
 def ArtifactRelation (json : Lean.Json) (hash : Hash) (streams : InputStreams)
-    (witness : Assignment) (groups : List (List Scalar)) (returns : List Scalar) : Prop :=
+    (assignment : Assignment) (groups : List (List Scalar)) (returns : List Scalar) : Prop :=
   ∃ target, Verification.NativeRelationJson.decode json = .ok target ∧
-    Satisfies hash target streams witness groups returns
+    Satisfies hash target streams assignment groups returns
 
 theorem decoded_artifact_sound (json : Lean.Json)
     (certificate : Verification.NativeRelationJson.decode json = .ok program)
     (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
-    (sat : ArtifactRelation json hash input.streams witness groups returns) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar)) (returns : List Scalar)
+    (sat : ArtifactRelation json hash input.streams assignment groups returns) :
     claimEntry.circuit.run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] ∧
     returns = [input.nullifier] ∧
@@ -399,7 +402,7 @@ theorem decoded_artifact_sound (json : Lean.Json)
   obtain ⟨target, decoded, satisfaction⟩ := sat
   have targetEq := Except.ok.inj (decoded.symm.trans certificate)
   subst target
-  exact native_satisfaction_sound ctx hash agreement input witness groups returns satisfaction
+  exact native_satisfaction_sound ctx hash agreement input assignment groups returns satisfaction
 
 theorem decoded_eligible_complete (json : Lean.Json)
     (certificate : Verification.NativeRelationJson.decode json = .ok program)
@@ -407,46 +410,46 @@ theorem decoded_eligible_complete (json : Lean.Json)
     (input : InputValues) (canonical : CanonicalInputs ctx input) (leaf node : Nat)
     (trace : HashTrace ctx input leaf node) :
     let nativeInputs := Inputs.ofSource ctx input canonical agreement.modulus
-    ∃ witness, ArtifactRelation json hash nativeInputs.streams witness
+    ∃ assignment, ArtifactRelation json hash nativeInputs.streams assignment
       [[nativeInputs.root], [nativeInputs.campaign], [nativeInputs.nullifier], [nativeInputs.nullifier]]
       [nativeInputs.nullifier] := by
-  obtain ⟨witness, satisfaction⟩ := eligible_source_complete ctx hash agreement input canonical leaf node trace
-  exact ⟨witness, program, certificate, satisfaction⟩
+  obtain ⟨assignment, satisfaction⟩ := eligible_source_complete ctx hash agreement input canonical leaf node trace
+  exact ⟨assignment, program, certificate, satisfaction⟩
 
 /-- Native constraints alone establish source acceptance. No alleged external
 host return is assumed. This claim's actual return is authenticated by its final
 Impact group, unlike an unbound standalone Output in general. -/
 theorem native_constraints_sound (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar))
-    (sat : CircuitSatisfies hash program input.streams witness groups) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar))
+    (sat : CircuitSatisfies hash program input.streams assignment groups) :
     claimEntry.circuit.run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] ∧
-    program.returns witness = [input.nullifier] ∧
-    program.returns witness = groups.getLastD [] := by
-  have sound := native_satisfaction_sound ctx hash agreement input witness groups
-    (program.returns witness) sat.withObservedReturns
+    program.returns assignment = [input.nullifier] ∧
+    program.returns assignment = groups.getLastD [] := by
+  have sound := native_satisfaction_sound ctx hash agreement input assignment groups
+    (program.returns assignment) sat.withObservedReturns
   refine ⟨sound.1, sound.2.1, ?_⟩
   rw [sound.2.1, sound.2.2.1]
   rfl
 
 def DecodedCircuitRelation (json : Lean.Json) (hash : Hash) (streams : InputStreams)
-    (witness : Assignment) (groups : List (List Scalar)) : Prop :=
+    (assignment : Assignment) (groups : List (List Scalar)) : Prop :=
   ∃ target, Verification.NativeRelationJson.decode json = .ok target ∧
-    CircuitSatisfies hash target streams witness groups
+    CircuitSatisfies hash target streams assignment groups
 
 theorem decoded_constraints_sound (json : Lean.Json)
     (certificate : Verification.NativeRelationJson.decode json = .ok program)
     (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar))
-    (sat : DecodedCircuitRelation json hash input.streams witness groups) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar))
+    (sat : DecodedCircuitRelation json hash input.streams assignment groups) :
     claimEntry.circuit.run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] ∧
-    program.returns witness = [input.nullifier] ∧
-    program.returns witness = groups.getLastD [] := by
+    program.returns assignment = [input.nullifier] ∧
+    program.returns assignment = groups.getLastD [] := by
   obtain ⟨target, decoded, satisfaction⟩ := sat
   have targetEq := Except.ok.inj (decoded.symm.trans certificate)
   subst target
-  exact native_constraints_sound ctx hash agreement input witness groups satisfaction
+  exact native_constraints_sound ctx hash agreement input assignment groups satisfaction
 
 theorem decoded_eligible_constraints_complete (json : Lean.Json)
     (certificate : Verification.NativeRelationJson.decode json = .ok program)
@@ -454,18 +457,18 @@ theorem decoded_eligible_constraints_complete (json : Lean.Json)
     (input : InputValues) (canonical : CanonicalInputs ctx input) (leaf node : Nat)
     (trace : HashTrace ctx input leaf node) :
     let nativeInputs := Inputs.ofSource ctx input canonical agreement.modulus
-    ∃ witness, DecodedCircuitRelation json hash nativeInputs.streams witness
+    ∃ assignment, DecodedCircuitRelation json hash nativeInputs.streams assignment
       [[nativeInputs.root], [nativeInputs.campaign], [nativeInputs.nullifier], [nativeInputs.nullifier]] := by
-  obtain ⟨witness, satisfaction⟩ := eligible_source_complete ctx hash agreement input canonical leaf node trace
-  exact ⟨witness, program, certificate, satisfaction.circuit⟩
+  obtain ⟨assignment, satisfaction⟩ := eligible_source_complete ctx hash agreement input canonical leaf node trace
+  exact ⟨assignment, program, certificate, satisfaction.circuit⟩
 
 theorem native_constraints_pruned_sound (ctx : EvalContext) (hash : Hash) (agreement : HashAgreement ctx hash)
-    (input : Inputs) (witness : Assignment) (groups : List (List Scalar))
-    (sat : CircuitSatisfies hash program input.streams witness groups) :
+    (input : Inputs) (assignment : Assignment) (groups : List (List Scalar))
+    (sat : CircuitSatisfies hash program input.streams assignment groups) :
     (Passes.pruneCircuit claimEntry.circuit).run ctx (inputEnvironment input.source) =
       .ok [("nullifier", .native input.nullifier.val)] := by
   rw [Passes.pruneCircuit_run]
-  exact (native_constraints_sound ctx hash agreement input witness groups sat).1
+  exact (native_constraints_sound ctx hash agreement input assignment groups sat).1
 
 theorem source_circuit_identity : claimEntry.circuit = claimRelation := by rfl
 
@@ -480,11 +483,11 @@ theorem zero_hash_agreement : HashAgreement fixtureContext zeroHash := by
 
 theorem fixture_native_nonvacuity :
     let input := Inputs.ofSource fixtureContext fixtureValues fixture_canonical rfl
-    ∃ witness, CircuitSatisfies zeroHash program input.streams witness
+    ∃ assignment, CircuitSatisfies zeroHash program input.streams assignment
       [[input.root], [input.campaign], [input.nullifier], [input.nullifier]] := by
-  obtain ⟨witness, satisfaction⟩ := eligible_source_complete fixtureContext zeroHash zero_hash_agreement
+  obtain ⟨assignment, satisfaction⟩ := eligible_source_complete fixtureContext zeroHash zero_hash_agreement
     fixtureValues fixture_canonical 0 0 fixture_hash_trace
-  exact ⟨witness, satisfaction.circuit⟩
+  exact ⟨assignment, satisfaction.circuit⟩
 
 #print axioms decoded_constraints_sound
 #print axioms decoded_eligible_constraints_complete
