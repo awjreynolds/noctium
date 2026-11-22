@@ -7,4 +7,5 @@ import Noctium.Midnight.QualifiedShieldedCoinInfo
 import Noctium.Semantics
 import Noctium.ScalarPolicy
 import Noctium.Types.MerklePath
+import Noctium.Helpers.MerklePath
 import Noctium.Frontend
