@@ -641,6 +641,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"sliceBytes({renderExpr value}, {start.getNat}, {stop.getNat})"
   | `(nlexpr| concatBytes($left, $right)) =>
     s!"concatBytes({renderExpr left}, {renderExpr right})"
+  | `(nlexpr| toBytes($value, $width:num)) =>
+    s!"toBytes({renderExpr value}, {width.getNat})"
   | `(nlexpr| degradeToNative($value)) => s!"degradeToNative({renderExpr value})"
   | `(nlexpr| upgradeFromNative($value)) => s!"upgradeFromNative({renderExpr value})"
   | `(nlexpr| toBytes32($value)) => s!"toBytes32({renderExpr value})"
@@ -729,7 +731,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| sha512($value))
   | `(nlexpr| keccak256($value)) | `(nlexpr| degradeToNative($value))
   | `(nlexpr| upgradeFromNative($value))
-  | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| deserialize($_:nltype, $value))
+  | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
+  | `(nlexpr| deserialize($_:nltype, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
   | `(nlexpr| field($value, $_:ident))
@@ -816,7 +819,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| sha512($value))
   | `(nlexpr| keccak256($value)) | `(nlexpr| degradeToNative($value))
   | `(nlexpr| upgradeFromNative($value))
-  | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| deserialize($_:nltype, $value))
+  | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
+  | `(nlexpr| deserialize($_:nltype, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
   | `(nlexpr| field($value, $_:ident))
@@ -1950,6 +1954,22 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | .ok signature => pure signature
       | .error message => throwErrorAt stx message
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
+  | `(nlexpr| toBytes($sourceValue, $length:num)) => do
+    let value ← lowerExpr programName callPrefix env sourceValue
+    let .scalar source := value.type
+      | throwErrorAt stx "toBytes requires Native or UInt"
+    let target ← match Noctium.Wire.numericBytesTarget source length.getNat with
+      | .ok target => pure target
+      | .error message => throwErrorAt stx message
+    let operation := Noctium.Helpers.BytesOp.serialize target length.getNat
+    let (_, resultType) ← match operation.signature 1 with
+      | .ok signature => pure signature
+      | .error message => throwErrorAt stx message
+    let encoded := if target == source then value.term else .cast target value.term
+    let result := mergeLowered (.scalar resultType) (.bytes operation [encoded]) [value]
+    pure {result with generatedValidity :=
+      (if target == source then [] else [s!"checked byte fit {renderExpr stx}"]) ++
+        result.generatedValidity |>.eraseDups}
   | `(nlexpr| deserialize($target:nltype, $value)) => do
     let target ← readScalarTy target
     let value ← lowerExpr programName callPrefix env value

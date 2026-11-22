@@ -25,6 +25,12 @@ and pads on the right with zero bytes. Selection requires matching lengths.
 Private inputs keep their private origins through each operation. Publishing
 a derived value requires an explicit `disclose` at the public output or return.
 
+Use `toBytes(value, width)` to encode a Native or UInt value in 1 through
+1024 little-endian bytes. The conversion rejects a value too large for the
+selected width and pads the high bytes with zeros. For example,
+`toBytes(255, 1)` returns one byte with value 255. `toBytes(256, 1)` fails
+the fit check. `serialize` keeps its type-directed frame width rules.
+
 Readable witness circuits also construct Bytes from checked octets.
 
 ```lean
