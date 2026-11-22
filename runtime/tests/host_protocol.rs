@@ -190,6 +190,141 @@ fn commit(session: u64, value: Json) -> Result<Json, i32> {
         noctium_session_resume,
     )
 }
+fn host_cas_cases() -> (Json, Vec<Json>) {
+    let fixture: Json = serde_json::from_str(include_str!("fixtures/host-cas/cases.json")).unwrap();
+    assert_eq!(fixture["version"], 1);
+    (
+        fixture["pending"].clone(),
+        fixture["cases"].as_array().unwrap().clone(),
+    )
+}
+fn commit_case(session: u64, journal: &Json, pending: &Json, case: &Json) -> Result<Json, i32> {
+    let mut payload = json!({
+        "abiVersion":1,
+        "requestId":pending["requestId"],
+        "operation":pending["operation"],
+        "capability":pending["capability"],
+        "schema":pending["schema"],
+        "value":{
+            "attemptId":journal["attemptId"],
+            "transactionId":journal["transactionId"],
+            "journalDigest":journal["journalDigest"],
+            "baseRevision":journal["baseRevision"],
+            "outcome":"committed",
+            "revision":"r1"
+        }
+    });
+    for (field, value) in case["overrides"].as_object().unwrap() {
+        match field.as_str() {
+            "requestId" | "operation" | "capability" | "schema" => {
+                payload[field.as_str()] = value.clone();
+            }
+            "attemptId" | "transactionId" | "journalDigest" | "baseRevision" | "outcome"
+            | "revision" => payload["value"][field.as_str()] = value.clone(),
+            _ => panic!("unknown host CAS case override: {field}"),
+        }
+    }
+    call(session, payload, noctium_session_resume)
+}
+
+#[test]
+fn host_cas_acceptance_matches_shared_redacted_cases() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let (pending, cases) = host_cas_cases();
+    let session = begin(envelope('a'));
+    prepare(session);
+    let request = accepted(session, 'a', 'b');
+    assert_eq!(pending["journalDigest"], "<redacted-journal-digest>");
+    for (field, expected) in [
+        ("id", "requestId"),
+        ("operation", "operation"),
+        ("capability", "capability"),
+        ("schema", "schema"),
+    ] {
+        assert_eq!(request["request"][field], pending[expected]);
+    }
+    let journal = private(session, PRIVATE_REQUEST).unwrap()["journal"].clone();
+    assert_eq!(journal["attemptId"], pending["attemptId"]);
+    assert_eq!(journal["transactionId"], pending["transactionId"]);
+    assert_eq!(journal["baseRevision"], pending["baseRevision"]);
+    assert_ne!(journal["journalDigest"], pending["journalDigest"]);
+    let mut store = Store::default();
+    let mut conflict_session = None;
+
+    for case in &cases {
+        let name = case["name"].as_str().unwrap();
+        match case["expected"].as_str().unwrap() {
+            "pending" => {
+                assert_eq!(
+                    commit_case(session, &journal, &pending, case),
+                    Err(INVALID_RESPONSE),
+                    "{name} must reject without consuming the pending request"
+                );
+                assert_eq!(
+                    private(session, PRIVATE_REQUEST).unwrap()["journal"],
+                    journal,
+                    "{name} must preserve the pending journal"
+                );
+                assert_eq!(
+                    advance(session),
+                    request,
+                    "{name} must preserve the request"
+                );
+            }
+            "committed" => {
+                let reply = store.cas(&journal);
+                assert_eq!(reply["outcome"], case["overrides"]["outcome"], "{name}");
+                assert_eq!(reply["revision"], case["overrides"]["revision"], "{name}");
+                let status = commit_case(session, &journal, &pending, case).unwrap();
+                assert_eq!(status["phase"], "committed");
+                assert_eq!(status["hostCasAcknowledged"], true);
+                assert_eq!(store.applies, 1);
+            }
+            "rejected" => {
+                let (consumed, consumed_journal) = match case["after"].as_str().unwrap() {
+                    "committed" => (session, &journal),
+                    "conflict" => {
+                        let (session, journal) = conflict_session.as_ref().unwrap();
+                        (*session, journal)
+                    }
+                    state => panic!("unknown consumed host CAS state: {state}"),
+                };
+                assert_eq!(
+                    commit_case(consumed, consumed_journal, &pending, case),
+                    Err(INVALID_STATE),
+                    "{name} must reject after the pending request was consumed"
+                );
+            }
+            "conflict" => {
+                assert_eq!(case["after"], "");
+                let conflict = begin(envelope('a'));
+                prepare(conflict);
+                accepted(conflict, 'a', 'b');
+                let conflict_journal =
+                    private(conflict, PRIVATE_REQUEST).unwrap()["journal"].clone();
+                let mut stale_store = Store {
+                    revision: 2,
+                    ..Store::default()
+                };
+                let reply = stale_store.cas(&conflict_journal);
+                assert_eq!(reply["outcome"], case["overrides"]["outcome"], "{name}");
+                assert_eq!(reply["revision"], case["overrides"]["revision"], "{name}");
+                let status = commit_case(conflict, &conflict_journal, &pending, case).unwrap();
+                assert_eq!(status["phase"], "conflicted");
+                assert_eq!(status["hostCasAcknowledged"], false);
+                assert_eq!(stale_store.applies, 0);
+                assert_eq!(private(conflict, PRIVATE_REQUEST), Err(INVALID_STATE));
+                conflict_session = Some((conflict, conflict_journal));
+            }
+            expected => panic!("unknown host CAS expectation: {expected}"),
+        }
+    }
+    assert!(conflict_session.is_some());
+    assert_eq!(noctium_session_free(conflict_session.unwrap().0), OK);
+    assert_eq!(private(session, PRIVATE_JOURNAL), Err(INVALID_STATE));
+    assert_eq!(noctium_session_free(session), OK);
+}
+
 #[test]
 fn provider_capabilities_and_journals_follow_host_cas_lifecycle() {
     let _lock = TEST_LOCK.lock().unwrap();
