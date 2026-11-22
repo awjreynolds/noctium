@@ -1111,7 +1111,7 @@ impl Schema {
     /// Return fields for the bounded flat-structure or flat-tuple FAB subset.
     /// Enum payloads need branch-dependent field expressions, so this helper
     /// accepts only one-byte fieldless enums and exposes their tag as a field.
-    pub(crate) fn fab_hash_fields(&self, include_curves: bool) -> Result<Vec<FabHashField>> {
+    pub(crate) fn fab_hash_fields(&self) -> Result<Vec<FabHashField>> {
         let layouts: Vec<_> = match &self.nodes[self.root] {
             LayoutNode::Struct { fields, .. } => fields.iter().map(|field| field.layout).collect(),
             LayoutNode::Tuple(items) => items.clone(),
@@ -1124,8 +1124,27 @@ impl Schema {
 
         layouts
             .iter()
-            .map(|layout| self.fab_hash_field(*layout, include_curves))
+            .map(|layout| self.fab_hash_field(*layout, false))
             .collect()
+    }
+
+    /// Flatten a checked structure or root tuple for persistent FAB hashing
+    /// and hash-to-curve. Nested records, tuples, and fixed vectors retain
+    /// declaration/index order. Unit contributes no logical fields.
+    pub(crate) fn fab_hash_nested_fields(&self) -> Result<Vec<FabHashField>> {
+        ensure!(
+            matches!(
+                &self.nodes[self.root],
+                LayoutNode::Struct { .. } | LayoutNode::Tuple(_)
+            ),
+            "FAB hash requires a structure or root tuple"
+        );
+        let fields = self.transient_hash_fields()?;
+        ensure!(
+            (1..=32).contains(&fields.len()),
+            "FAB hash field count is outside the supported range"
+        );
+        Ok(fields)
     }
 
     /// Flatten a checked layout for transient hashing in struct, tuple, and

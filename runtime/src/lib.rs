@@ -893,7 +893,11 @@ fn aligned_fab_payload(
 ) -> Result<AlignedValue> {
     let schema_bytes = serde_json::to_vec(schema_json)?;
     let schema = Schema::from_json(&schema_bytes)?;
-    let fields = schema.fab_hash_fields(include_curves)?;
+    let fields = if include_curves {
+        schema.fab_hash_nested_fields()?
+    } else {
+        schema.fab_hash_fields()?
+    };
     aligned_fab_values(&fields, values, env)
 }
 
