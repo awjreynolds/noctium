@@ -61,9 +61,11 @@ private def replayBeforeOtherTransactions : LedgerState := {
       next == resetTransactionLists replayBefore
   | .error _ => false
 
-#guard match runEffectsWithEnv replayContext replayEntry.effects
-    [("answer", .native 7)] (resetTransactionLists replayBefore) with
-  | .ok (orderedEnv, _) => orderedEnv == [("answer", .native 7)]
+#guard match Noctium.Verification.SourceEffects.fold replayContext replayEntry.effects
+    ([("answer", .native 7)], resetTransactionLists replayBefore) with
+  | .ok (orderedEnv, next) =>
+      orderedEnv == [("answer", .native 7)] &&
+      next == resetTransactionLists replayBefore
   | .error _ => false
 
 private def falseGuardEntry : Entrypoint := {

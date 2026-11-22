@@ -1,4 +1,4 @@
-import Noctium.Semantics
+import Noctium.Verification.SourceEffects
 
 namespace Noctium.Verification.SourceReplayBoundary
 
@@ -46,13 +46,20 @@ theorem run_no_returns_all_none (ctx : EvalContext) (entry : Entrypoint)
     (validGuardMetadata : entry.effectGuards.isEmpty ∨
       entry.effectGuards.length = entry.effects.length)
     (allGuardsNone : entry.effectGuards.all Option.isNone = true)
-    (orderedEffects : runEffectsWithEnv ctx entry.effects
-      (outputs ++ env)
+    (orderedFold : Noctium.Verification.SourceEffects.fold ctx entry.effects
+      (outputs ++ env,
+        {state with
+          unshieldedInputs := [],
+          unshieldedOutputs := [],
+          unshieldedSpendClaims := []}) = .ok (orderedEnv, next)) :
+    entry.run ctx env state = .ok (outputs, next) := by
+  have orderedEffects : runEffectsWithEnv ctx entry.effects (outputs ++ env)
       {state with
         unshieldedInputs := [],
         unshieldedOutputs := [],
-        unshieldedSpendClaims := []} = .ok (orderedEnv, next)) :
-    entry.run ctx env state = .ok (outputs, next) := by
+        unshieldedSpendClaims := []} = .ok (orderedEnv, next) := by
+    rw [Noctium.Verification.SourceEffects.runEffectsWithEnv_eq_fold]
+    exact orderedFold
   have guardLength : entry.effectGuards.isEmpty ||
       entry.effectGuards.length == entry.effects.length := by
     rcases validGuardMetadata with empty | length
