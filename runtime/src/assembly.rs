@@ -1620,6 +1620,7 @@ mod tests {
             name: "unused".into(),
             kind: json!({"cell":"UIntRange<511>"}),
             sealed: false,
+            cell_alignment: None,
         });
         config.state.insert("unused".into(), json!("0"));
         let names = vec!["apply".to_owned(), "alias".to_owned()];

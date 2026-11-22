@@ -207,6 +207,24 @@ The relation measured K8 and 231 rows.
 [Lean fixture](../../tests/NativeUserCaller.lean) ·
 [Signed user caller receipt](native-user-caller-localnet-receipt.json)
 
+## Store a byte-aligned UInt128
+
+```lean
+cell totalSupply : UInt 128 alignedBytes
+```
+
+This direct cell retains its UInt128 type and stores one 16-byte FAB atom.
+The compiler emits `cellAlignment: "u128"` in the state schema. Constructors,
+writes and transcript reads use the same alignment. Ordinary UInt128 cells
+keep their field encoding. Current circuits retain all range checks.
+
+The native fixture reads and writes zero and the UInt128 maximum in both
+directions. An inactive write preserves state and its guarded read returns
+zero. Plan admission rejects a field-aligned typed push to the cell.
+The pinned ledger parser rejects 2^128 for the 16-byte atom.
+The VM rejects a field-aligned cell even when it carries the same number.
+[Lean fixture](../../tests/ByteAlignedUInt128Cell.lean) · [Native fixture](../../runtime/tests/uint128_fab_read.rs)
+
 ## Reset a ledger cell
 
 `reset cellName` writes the canonical default of the cell's declared scalar

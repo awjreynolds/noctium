@@ -180,6 +180,8 @@ private def alignedJson (value : Backend.Impact.Aligned) : List (String × Json)
       ("expressions", toJson (expressions.map nativeExpressionJson))]
   | .counter expression => [("alignment", toJson ("u64" : String)),
       ("expression", nativeExpressionJson expression)]
+  | .u128 expression => [("alignment", toJson ("u128" : String)),
+      ("expression", nativeExpressionJson expression)]
 
 private def alignedExpressionJson (value : Backend.Impact.Aligned) : Json :=
   match value with
@@ -193,6 +195,7 @@ private def alignedExpressionJson (value : Backend.Impact.Aligned) : Json :=
   | .compressString expression => nativeExpressionJson expression
   | .nativeFields expressions => toJson (expressions.map nativeExpressionJson)
   | .counter expression => nativeExpressionJson expression
+  | .u128 expression => nativeExpressionJson expression
 
 private def ledgerFieldExprJson (value : LedgerFieldExpr) : Json :=
   match value with
@@ -738,6 +741,9 @@ private def stateJson (state : StateDecl) : Json :=
         ("merkleTree", toJson depth), ("historic", toJson Bool.true)]
     | .opaqueString => Json.mkObj [("opaqueString", toJson Bool.true)]
   Json.mkObj ([("name", toJson state.name), ("kind", kind)] ++
+    (match state.cellAlignment? with
+      | some .u128 => [("cellAlignment", toJson ("u128" : String))]
+      | none => []) ++
     (if state.sealed then [("sealed", toJson Bool.true)] else []))
 
 private def constructorTypeName : ConstructorType → String

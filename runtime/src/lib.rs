@@ -321,6 +321,18 @@ fn aligned(value: &Value, alignment: &str) -> Result<AlignedValue> {
                 u64::try_from(number.clone()).map_err(|_| anyhow!("counter value exceeds u64"))?;
             Ok(number.into())
         }
+        "u128" => {
+            let Value::UInt { number, maximum } = value else {
+                bail!("u128 alignment requires UInt128")
+            };
+            ensure!(
+                *maximum == BigUint::from(u128::MAX),
+                "u128 alignment requires UInt128"
+            );
+            let number =
+                u128::try_from(number.clone()).map_err(|_| anyhow!("value exceeds u128"))?;
+            Ok(number.into())
+        }
         _ => bail!("unsupported alignment"),
     }
 }
@@ -1373,7 +1385,35 @@ pub struct StateDecl {
     pub kind: Json,
     #[serde(default)]
     pub sealed: bool,
+    #[serde(default, rename = "cellAlignment")]
+    pub cell_alignment: Option<String>,
 }
+
+const U128_CELL_TYPE: &str = "UIntRange<340282366920938463463374607431768211456>";
+
+fn declared_cell_alignment(declaration: &StateDecl) -> Result<Option<&'static str>> {
+    match declaration.cell_alignment.as_deref() {
+        None => Ok(None),
+        Some("u128") => {
+            ensure!(
+                declaration.kind.as_object().is_some_and(|kind| kind.len() == 1)
+                    && declaration.kind.get("cell").and_then(Json::as_str)
+                        == Some(U128_CELL_TYPE),
+                "u128 cellAlignment requires an ordinary UInt128 Cell"
+            );
+            Ok(Some("u128"))
+        }
+        Some(_) => bail!("unsupported cellAlignment"),
+    }
+}
+
+fn validate_plan_cell_alignments(plan: &Plan) -> Result<()> {
+    for declaration in &plan.state {
+        declared_cell_alignment(declaration)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Read {
     pub name: String,
@@ -2186,7 +2226,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
 fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
     let value_fields = |alignment: &str| -> Result<usize> {
         match alignment {
-            "field" | "bit" | "u64" | "compress" => Ok(1),
+            "field" | "bit" | "u64" | "u128" | "compress" => Ok(1),
             _ => match byte_alignment_length(alignment)? {
                 Some(length) => Ok(length.div_ceil(31)),
                 None => bail!("unsupported alignment"),
@@ -2426,6 +2466,119 @@ fn validate_scalar_storage_type(
     Ok(())
 }
 
+fn validate_cell_alignment_access(
+    plan: &Plan,
+    path: Option<(u32, usize)>,
+    ty: &ScalarType,
+    alignment: &str,
+) -> Result<()> {
+    let Some((slot, depth)) = path else {
+        ensure!(
+            alignment != "u128",
+            "u128 alignment requires a root Cell path"
+        );
+        return Ok(());
+    };
+    let declaration = plan
+        .state
+        .get(slot as usize)
+        .ok_or_else(|| anyhow!("state slot out of range"))?;
+    if declaration.cell_alignment.is_none() && alignment != "u128" {
+        return Ok(());
+    }
+    match declared_cell_alignment(declaration)? {
+        Some("u128") => ensure!(
+            depth == 0
+                && *ty == ScalarType::UInt(BigUint::from(u128::MAX))
+                && alignment == "u128",
+            "u128 Cell access differs from its declared type or alignment"
+        ),
+        None => ensure!(
+            alignment != "u128",
+            "u128 alignment requires cellAlignment metadata"
+        ),
+        Some(_) => bail!("unsupported cellAlignment"),
+    }
+    Ok(())
+}
+
+fn static_state_path_before(
+    plan: &Plan,
+    operation_index: usize,
+    guard: Option<&Expr>,
+) -> Result<Option<(u32, usize)>> {
+    let Some(previous) = operation_index
+        .checked_sub(1)
+        .and_then(|index| plan.operations.get(index))
+    else {
+        return Ok(None);
+    };
+    let (previous, previous_guard) = unguarded_operation(previous);
+    if previous_guard != guard {
+        return Ok(None);
+    }
+    match previous {
+        Instruction::Index {
+            slot,
+            push_path: false,
+            key,
+        } => Ok(Some((*slot, if key.is_some() { 1 } else { 0 }))),
+        Instruction::IndexPath {
+            slot,
+            push_path: false,
+            keys,
+        } => Ok(Some((*slot, keys.len()))),
+        _ => Ok(None),
+    }
+}
+
+fn direct_root_storage_slot(
+    plan: &Plan,
+    operation_index: usize,
+    guard: Option<&Expr>,
+) -> Result<Option<u32>> {
+    let Some(insert_operation) = operation_index
+        .checked_add(1)
+        .and_then(|index| plan.operations.get(index))
+    else {
+        return Ok(None);
+    };
+    let (insert_operation, insert_guard) = unguarded_operation(insert_operation);
+    if !matches!(insert_operation, Instruction::Insert { n: 1 }) {
+        return Ok(None);
+    }
+    ensure!(
+        insert_guard == guard,
+        "Cell insertion guard differs from its write"
+    );
+    let Some(index_operation) = operation_index
+        .checked_sub(1)
+        .and_then(|index| plan.operations.get(index))
+    else {
+        return Ok(None);
+    };
+    let (index_operation, index_guard) = unguarded_operation(index_operation);
+    let Instruction::Push {
+        storage: false,
+        expression: Expr::Constant { value },
+        alignment,
+    } = index_operation
+    else {
+        return Ok(None);
+    };
+    if alignment != "field" {
+        return Ok(None);
+    }
+    ensure!(
+        index_guard == guard,
+        "Cell index guard differs from its write"
+    );
+    let slot = value
+        .parse::<u32>()
+        .map_err(|_| anyhow!("root Cell index is not a canonical slot"))?;
+    Ok(Some(slot))
+}
+
 fn opaque_compressed_storage_path(
     plan: &Plan,
     operation_index: usize,
@@ -2442,30 +2595,8 @@ fn opaque_compressed_storage_path(
         "opaque insertion guard differs from its write"
     );
     if matches!(insert_operation, Instruction::Insert { n: 1 }) {
-        let index_operation = operation_index
-            .checked_sub(1)
-            .and_then(|index| plan.operations.get(index))
-            .ok_or_else(|| anyhow!("opaque Cell write has no adjacent slot push"))?;
-        let (index_operation, index_guard) = unguarded_operation(index_operation);
-        ensure!(
-            index_guard == guard,
-            "opaque Cell index guard differs from its write"
-        );
-        let Instruction::Push {
-            storage: false,
-            expression: Expr::Constant { value },
-            alignment,
-        } = index_operation
-        else {
-            bail!("opaque Cell write requires a constant root Cell slot")
-        };
-        ensure!(
-            alignment == "field",
-            "opaque Cell index must use field alignment"
-        );
-        let slot = value
-            .parse::<u32>()
-            .map_err(|_| anyhow!("opaque Cell index is not a canonical slot"))?;
+        let slot = direct_root_storage_slot(plan, operation_index, guard)?
+            .ok_or_else(|| anyhow!("opaque Cell write requires a constant root Cell slot"))?;
         ensure!(
             plan.state
                 .get(slot as usize)
@@ -4750,6 +4881,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
     );
     let mut values = Vec::new();
     for d in &plan.state {
+        let cell_alignment = declared_cell_alignment(d)?;
         let value = config
             .get(&d.name)
             .ok_or_else(|| anyhow!("missing initial state cell"))?;
@@ -4765,9 +4897,13 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                 value,
             )?)));
         } else if let Some(ty) = d.kind.get("cell").and_then(Json::as_str) {
-            values.push(StateValue::Cell(Sp::new(aligned_storage_cell(
-                &input_value(ty, value)?,
-            )?)));
+            let value = input_value(ty, value)?;
+            let aligned = match cell_alignment {
+                Some("u128") => aligned(&value, "u128")?,
+                None => aligned_storage_cell(&value)?,
+                Some(_) => bail!("unsupported cellAlignment"),
+            };
+            values.push(StateValue::Cell(Sp::new(aligned)));
         } else if let Some(types) = d.kind.get("map").and_then(Json::as_array) {
             ensure!(
                 types.len() == 2
@@ -5002,7 +5138,22 @@ fn decode_state_cell(value: &AlignedValue, ty: &str, alignment: &str) -> Result<
         "state cell encoding mismatch"
     );
     let parsed = ScalarType::parse(ty)?;
-    let decoded = if matches!(parsed, ScalarType::OpaqueBytes | ScalarType::OpaqueString) {
+    let decoded = if alignment == "u128" {
+        ensure!(
+            parsed == ScalarType::UInt(BigUint::from(u128::MAX)),
+            "u128 state read requires UInt128"
+        );
+        ensure!(
+            value.alignment
+                == Alignment::singleton(AlignmentAtom::Bytes { length: 16 }),
+            "u128 state cell alignment mismatch"
+        );
+        ensure!(value.value.0.len() == 1, "invalid u128 atom count");
+        let mut fields = Vec::new();
+        value.value_only_field_repr(&mut fields);
+        ensure!(fields.len() == 1, "expected UInt128 state cell");
+        input_value(ty, &Json::String(field_decimal(fields[0])))?
+    } else if matches!(parsed, ScalarType::OpaqueBytes | ScalarType::OpaqueString) {
         ensure!(
             alignment == "compress",
             "opaque read requires Compress alignment"
@@ -6544,6 +6695,7 @@ impl PreparationCursor {
         params: &LedgerParameters,
         has_block_time: bool,
     ) -> Result<Self> {
+        validate_plan_cell_alignments(plan)?;
         let env = parse_input_environment(plan, inputs, true)?;
         let supplied_inputs = inputs.keys().cloned().collect();
         let prefix_context = context.clone();
@@ -6921,6 +7073,21 @@ impl PreparationCursor {
                             "inactive read result differs from the source read schema"
                         );
                         let read_type = ScalarType::parse(&read.ty)?;
+                        let access_path = static_state_path_before(plan, index, Some(guard))?;
+                        if alignment == "u128"
+                            || access_path.is_some_and(|(slot, _)| {
+                                plan.state
+                                    .get(slot as usize)
+                                    .is_some_and(|state| state.cell_alignment.is_some())
+                            })
+                        {
+                            validate_cell_alignment_access(
+                                plan,
+                                access_path,
+                                &read_type,
+                                alignment,
+                            )?;
+                        }
                         if read_type == ScalarType::OpaqueString {
                             ensure!(
                                 alignment == "compress",
@@ -6947,7 +7114,7 @@ impl PreparationCursor {
                             );
                         } else {
                             ensure!(
-                                matches!(alignment.as_str(), "field" | "bit" | "u64"),
+                                matches!(alignment.as_str(), "field" | "bit" | "u64" | "u128"),
                                 "unsupported inactive read alignment"
                             );
                         }
@@ -7209,6 +7376,28 @@ impl PreparationCursor {
                 alignment,
             } => {
                 let value = evaluate(expression, &env)?;
+                if *storage
+                    && (alignment == "u128"
+                        || plan
+                            .state
+                            .iter()
+                            .any(|state| state.cell_alignment.is_some()))
+                {
+                    let root_slot = direct_root_storage_slot(plan, index, instruction_guard)?;
+                    let has_declared_alignment = root_slot.is_some_and(|slot| {
+                        plan.state
+                            .get(slot as usize)
+                            .is_some_and(|state| state.cell_alignment.is_some())
+                    });
+                    if alignment == "u128" || has_declared_alignment {
+                        validate_cell_alignment_access(
+                            plan,
+                            root_slot.map(|slot| (slot, 0)),
+                            &value.scalar_type(),
+                            alignment,
+                        )?;
+                    }
+                }
                 if *storage && matches!(&value, Value::OpaqueBytes(_) | Value::OpaqueString(_)) {
                     let ty = value.scalar_type();
                     opaque_compressed_storage_path(plan, index, instruction_guard, &ty)?;
@@ -7230,6 +7419,15 @@ impl PreparationCursor {
                 expressions,
                 schema,
             } => {
+                if *storage && plan.state.iter().any(|state| state.cell_alignment.is_some()) {
+                    if let Some(slot) = direct_root_storage_slot(plan, index, instruction_guard)? {
+                        ensure!(
+                            !plan.state.get(slot as usize)
+                                .is_some_and(|state| state.cell_alignment.is_some()),
+                            "byte-aligned UInt128 Cell requires a scalar u128 push"
+                        );
+                    }
+                }
                 if let Some(name) = typed_scalar_schema_token(schema) {
                     let ty = ScalarType::parse(name)?;
                     ensure!(
@@ -7288,6 +7486,20 @@ impl PreparationCursor {
                     "active read guard differs from the source read schema"
                 );
                 read_index += 1;
+                let read_type = ScalarType::parse(&read.ty)?;
+                let access_path = previous_index
+                    .as_ref()
+                    .map(|(slot, keys)| (*slot, keys.len()))
+                    .or(static_state_path_before(plan, index, instruction_guard)?);
+                if alignment == "u128"
+                    || access_path.is_some_and(|(slot, _)| {
+                        plan.state
+                            .get(slot as usize)
+                            .is_some_and(|state| state.cell_alignment.is_some())
+                    })
+                {
+                    validate_cell_alignment_access(plan, access_path, &read_type, alignment)?;
+                }
                 let read_reference = match expression {
                     Expr::Reference { name } => Some(name),
                     Expr::Cast { ty, value } if ty == "Native" => match value.as_ref() {
@@ -7334,7 +7546,6 @@ impl PreparationCursor {
                                     "counter read path schema mismatch"
                                 );
                             }
-                            let read_type = ScalarType::parse(&read.ty)?;
                             if read_type.bytes_length().is_some() {
                                 validate_byte_read_projections(read, &read_type)?;
                             }

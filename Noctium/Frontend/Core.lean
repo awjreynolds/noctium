@@ -352,6 +352,7 @@ scoped syntax (name := circuitCommand) "noctium_circuit" ident "where" nlcstmt* 
 
 declare_syntax_cat nlstate
 scoped syntax "cell" ident ":" nltype : nlstate
+scoped syntax "cell" ident ":" nltype "alignedBytes" : nlstate
 scoped syntax "sealed" "cell" ident ":" nltype : nlstate
 scoped syntax "sealed" "map" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "sealed" "set" ident ":" nltype : nlstate
@@ -3916,6 +3917,11 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
             pure (id, StateKind.opaqueString, ← `(Noctium.StateKind.opaqueString))
           else
             pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
+        | `(nlstate| cell $id:ident : $ty:nltype alignedBytes) => do
+          let t ← readTy ty
+          unless t == .uint (2 ^ 128 - 1) do
+            throwErrorAt state "alignedBytes is supported only for UInt 128 cells"
+          pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| cell $id:ident : $ty:nltype) => do
           let t ← readTy ty
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
@@ -4089,10 +4095,17 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
         | `(nlstate| sealed $listKind:ident $_:ident : $_:nltype) =>
             listKind.getId.toString == "list"
         | _ => Bool.false
-      concreteSchema := concreteSchema ++ [{name := id.getId.toString, kind := kind, «sealed» := isSealed}]
+      let cellAlignment? : Option CellAlignment := match state with
+        | `(nlstate| cell $_:ident : $_:nltype alignedBytes) => some .u128
+        | _ => none
+      concreteSchema := concreteSchema ++
+        [StateDecl.mk id.getId.toString kind isSealed {} cellAlignment?]
       let sealedTerm ← if isSealed then `(Bool.true) else `(Bool.false)
+      let cellAlignmentTerm ← match cellAlignment? with
+        | some .u128 => `(some Noctium.CellAlignment.u128)
+        | none => `(none)
       stateTerms := stateTerms.push (← `(Noctium.StateDecl.mk $(stringTerm id.getId.toString)
-        $term $sealedTerm $(← spanTerm state)))
+        $term $sealedTerm $(← spanTerm state) $cellAlignmentTerm))
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
       | some ctor => elaborateConstructor ctor schema
