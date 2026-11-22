@@ -407,14 +407,14 @@ private def bytesAlignmentAtom (length : Nat) : Json := Json.mkObj [
   ("tag", toJson ("atom" : String)),
   ("value", Json.mkObj [("tag", toJson ("bytes" : String)), ("length", toJson length)])]
 
-private def fabHashAlignmentAtom : Types.Layout → Json
-  | .bytes length .byteField => bytesAlignmentAtom length
-  | .scalar .nativeField => nativeFieldAtom
-  | .scalar .booleanField => bytesAlignmentAtom 1
-  | .scalar (.boundedUnsignedField maximum) =>
-      bytesAlignmentAtom (Native.fabHashByteWidth maximum)
-  | .enumeration _ (.enumTagField _) _ 0 _ _ => bytesAlignmentAtom 1
-  | _ => Json.null
+private def fabHashAlignmentAtoms (layout : Types.Layout) : List Json :=
+  match Noctium.fabHashLayoutAtoms layout with
+  | .ok descriptors => descriptors.map fun descriptor =>
+      if descriptor == "field" then nativeFieldAtom
+      else match (descriptor.drop 6).toNat? with
+        | some width => bytesAlignmentAtom width
+        | none => Json.null
+  | .error _ => []
 
 private def nativeFieldAlignment : Json := Json.arr #[nativeFieldAtom]
 
@@ -920,7 +920,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
           rejectLowering message
           pure []
       let operands ← lowerFabHashFields fields values
-      let alignment := Json.arr (fields.map (fun field => fabHashAlignmentAtom field.2) |>.toArray)
+      let alignment := Json.arr (fields.flatMap (fun field => fabHashAlignmentAtoms field.2)).toArray
       let hashKey : ExpressionKey := ("sha512_fab:" ++ type.fingerprint environment, operands, none)
       let digest ← match (← get).expressions.lookup hashKey with
         | some existing => pure existing
@@ -997,7 +997,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
           rejectLowering message
           pure []
       let operands ← lowerFabHashFields fields values
-      let alignment := Json.arr (fields.map (fun field => fabHashAlignmentAtom field.2) |>.toArray)
+      let alignment := Json.arr (fields.flatMap (fun field => fabHashAlignmentAtoms field.2)).toArray
       let result ← lowerPersistentHash ("fab:" ++ type.fingerprint environment) alignment operands
       pure {values := result, packed := true}
   | .persistentCommitFab environment type opening values => do
@@ -1016,7 +1016,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
       let payloadOperands ← lowerFabHashFields fields values
       let alignment := Json.arr
         (#[bytesAlignmentAtom 32] ++
-          (fields.map (fun field => fabHashAlignmentAtom field.2) |>.toArray))
+          (fields.flatMap (fun field => fabHashAlignmentAtoms field.2)).toArray)
       let result ← lowerPersistentHash
         ("fab-commit:" ++ type.fingerprint environment) alignment
         ([openingHighByte, openingLow31] ++ payloadOperands)
@@ -1077,6 +1077,17 @@ private def lowerFabHashFields : List (String × Types.Layout) → List (Sigma E
       | .scalar (.boundedUnsignedField _), ⟨.uint _, expression⟩ => pure [← lowerExpr expression]
       | .enumeration _ (.enumTagField _) _ 0 _ _, ⟨.uint _, expression⟩ =>
         pure [← lowerExpr expression]
+      | .curve .jubjubScalar, ⟨.jubjubScalar, expression⟩ => do
+        let scalar ← lowerExpr expression
+        pure [← lowerJubjubScalarToNative scalar]
+      | .curve .jubjubPoint, ⟨.jubjubPoint, expression⟩ => do
+        let point ← lowerExpr expression
+        let (x, y) ← lowerPointCoordinates point
+        pure [x, y]
+      | .curve (.foreign expected), ⟨.foreign actual, expression⟩ => do
+        unless expected == actual do
+          rejectLowering "mixed FAB curve type differs from its checked layout"
+        encodeForeign actual (← lowerExpr expression)
       | _, _ => do
         rejectLowering "mixed FAB field type differs from its checked layout"
         pure []

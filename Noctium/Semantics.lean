@@ -516,6 +516,39 @@ private def fabHashFieldPreimage (ctx : EvalContext) (env : EvalEnv)
     unless maximum == actualMaximum && !variants.isEmpty && variants.all (·.2.1.isEmpty) do
       throw "mixed FAB enum layout is unsupported"
     pure (integerBytesLE (← expression.eval ctx env) (fabUnsignedWidth maximum))
+  | .curve type, value => do
+    let fields ← match type, value with
+      | .jubjubScalar, ⟨.jubjubScalar, expression⟩ =>
+        pure [← Noctium.Expr.eval (ty := .jubjubScalar) ctx env expression]
+      | .jubjubPoint, ⟨.jubjubPoint, expression⟩ => do
+        let (x, y) ← Noctium.Expr.eval (ty := .jubjubPoint) ctx env expression
+        pure [x, y]
+      | .foreign (.base curve), ⟨.foreign (.base actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.base curve)
+          (← Noctium.Expr.eval (ty := .foreign (.base actual)) ctx env expression)
+      | .foreign (.scalar curve), ⟨.foreign (.scalar actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.scalar curve)
+          (← Noctium.Expr.eval (ty := .foreign (.scalar actual)) ctx env expression)
+      | .foreign (.point curve), ⟨.foreign (.point actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.point curve)
+          (← Noctium.Expr.eval (ty := .foreign (.point actual)) ctx env expression)
+      | _, _ => throw "mixed FAB curve type mismatch"
+    let atoms ← Noctium.fabHashLayoutAtoms (.curve type)
+    unless atoms.length == fields.length do throw "mixed FAB curve encoding width mismatch"
+    for (atom, field) in atoms.zip fields do
+      if atom == "field" then
+        unless field < ctx.modulus do throw "mixed FAB curve field is noncanonical"
+      else do
+        let some width := (atom.drop 6).toNat? | throw "mixed FAB curve byte atom is malformed"
+        unless field < 2 ^ (8 * width) do throw "mixed FAB curve byte atom is out of range"
+    pure (atoms.zip fields |>.flatMap fun (atom, field) =>
+      if atom == "field" then nativeFieldBytesLE field
+      else match (atom.drop 6).toNat? with
+        | some width => integerBytesLE field width
+        | none => [])
   | _, _ => throw "unsupported mixed FAB field during evaluation"
 termination_by _ value => sizeOf value
 decreasing_by
@@ -558,6 +591,35 @@ private def fabAlignedFieldValues (ctx : EvalContext) (env : EvalEnv)
     unless maximum == actualMaximum && !variants.isEmpty && variants.all (·.2.1.isEmpty) do
       throw "mixed FAB enum layout is unsupported"
     pure [← expression.eval ctx env]
+  | .curve type, value => do
+    let fields ← match type, value with
+      | .jubjubScalar, ⟨.jubjubScalar, expression⟩ =>
+        pure [← Noctium.Expr.eval (ty := .jubjubScalar) ctx env expression]
+      | .jubjubPoint, ⟨.jubjubPoint, expression⟩ => do
+        let (x, y) ← Noctium.Expr.eval (ty := .jubjubPoint) ctx env expression
+        pure [x, y]
+      | .foreign (.base curve), ⟨.foreign (.base actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.base curve)
+          (← Noctium.Expr.eval (ty := .foreign (.base actual)) ctx env expression)
+      | .foreign (.scalar curve), ⟨.foreign (.scalar actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.scalar curve)
+          (← Noctium.Expr.eval (ty := .foreign (.scalar actual)) ctx env expression)
+      | .foreign (.point curve), ⟨.foreign (.point actual), expression⟩ => do
+        unless curve == actual do throw "mixed FAB curve type mismatch"
+        Foreign.encodeValue (.point curve)
+          (← Noctium.Expr.eval (ty := .foreign (.point actual)) ctx env expression)
+      | _, _ => throw "mixed FAB curve type mismatch"
+    let atoms ← Noctium.fabHashLayoutAtoms (.curve type)
+    unless atoms.length == fields.length do throw "mixed FAB curve encoding width mismatch"
+    for (atom, field) in atoms.zip fields do
+      if atom == "field" then
+        unless field < ctx.modulus do throw "mixed FAB curve field is noncanonical"
+      else do
+        let some width := (atom.drop 6).toNat? | throw "mixed FAB curve byte atom is malformed"
+        unless field < 2 ^ (8 * width) do throw "mixed FAB curve byte atom is out of range"
+    pure fields
   | _, _ => throw "unsupported mixed FAB field during evaluation"
 termination_by _ value => sizeOf value
 decreasing_by

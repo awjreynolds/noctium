@@ -156,24 +156,6 @@ def fabHashByteWidth (maximum : Nat) : Nat := Id.run do
     if maximum < 2 ^ (8 * width) then return width
   return 0
 
-/-- The checked source layout determines each FAB atom. Byte atoms of length
-32 consume two native fields, while shorter byte atoms consume one. -/
-def fabHashLayoutAtom : Types.Layout → Except String String
-  | .bytes length .byteField => do
-    unless 1 ≤ length && length ≤ 32 do throw "unsupported mixed FAB byte width"
-    pure s!"bytes:{length}"
-  | .scalar .nativeField => pure "field"
-  | .scalar .booleanField => pure "bytes:1"
-  | .scalar (.boundedUnsignedField maximum) => do
-    let width := fabHashByteWidth maximum
-    unless width > 0 do throw "unsupported mixed FAB unsigned width"
-    pure s!"bytes:{width}"
-  | .enumeration _ (.enumTagField maximum) _ 0 _ variants => do
-    unless maximum < 256 && !variants.isEmpty && variants.all (fun variant => variant.2.1.isEmpty) do
-      throw "unsupported mixed FAB enum layout"
-    pure "bytes:1"
-  | _ => throw "unsupported mixed FAB field layout"
-
 private def fabBytes32Pairs : List Term → List (Term × Term)
   | highByte :: low31 :: rest => (highByte, low31) :: fabBytes32Pairs rest
   | _ => []
@@ -220,6 +202,21 @@ def foreignEncodedFieldTerm (kind : Foreign.Kind) (value : Term) (index : Nat) :
 def foreignEncodedFieldMaximum (kind : Foreign.Kind) (index : Nat) : Nat :=
   if kind.encodedFieldCount == 5 && index == 4 then 1
   else if index % 2 == 0 then kind.lowRadix - 1 else Foreign.highRadix - 1
+
+private def fabCurveNativeTerms (type : Ty) (value : Term) :
+    Except String (List Term × List (Term × Nat)) := do
+  match type with
+  | .jubjubScalar =>
+    let field := Term.unary "jubjub_scalar_to_native" value
+    pure ([field], [(field, Jubjub.scalarOrder - 1)])
+  | .jubjubPoint =>
+    pure ([Term.unary "jubjub_x" value, Term.unary "jubjub_y" value], [])
+  | .foreign kind =>
+    let fields := (List.range kind.encodedFieldCount).map fun index =>
+      foreignEncodedFieldTerm kind value index
+    pure (fields, fields.zipIdx.map fun (field, index) =>
+      (field, foreignEncodedFieldMaximum kind index))
+  | _ => throw "unsupported mixed FAB curve value type"
 
 def coordinateExtractionRequiresNonidentity : Foreign.Curve → Bool
   | .secp256k1 | .secp256r1 => true
@@ -480,18 +477,19 @@ private def alignedFabPayload (fields : List (String × Types.Layout))
   let mut bounds := []
   let mut assertions := []
   for (field, normalized) in fields.zip values do
-    alignment := alignment ++ [← fabHashLayoutAtom field.2]
-    let aligned ← match field.2 with
+    alignment := alignment ++ (← Noctium.fabHashLayoutAtoms field.2)
+    let (aligned, curveBounds) ← match field.2 with
       | .bytes 32 .byteField => do
         let (highByte, low31) ← alignedBytes32Fields normalized
-        pure [highByte, low31]
-      | .bytes length .byteField => bytesChunksTerm length normalized.term
+        pure ([highByte, low31], [])
+      | .bytes length .byteField => pure (← bytesChunksTerm length normalized.term, [])
       | .scalar .nativeField | .scalar .booleanField
       | .scalar (.boundedUnsignedField _) | .enumeration _ (.enumTagField _) _ 0 _ _ =>
-        pure [normalized.term]
+        pure ([normalized.term], [])
+      | .curve type => fabCurveNativeTerms type normalized.term
       | _ => throw "unsupported mixed FAB field layout"
     operands := operands ++ aligned
-    bounds := bounds ++ normalized.bounds
+    bounds := bounds ++ normalized.bounds ++ curveBounds
     assertions := assertions ++ normalized.assertions
   pure (NormalizedFabPayload.mk alignment operands bounds assertions)
 

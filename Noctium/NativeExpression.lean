@@ -279,6 +279,11 @@ private def nativeExpressionFabValuesJson : List Types.Layout → List (Sigma Ex
       | .enumeration id (.enumTagField maximum) _ 0 _ _, ⟨.uint _, expression⟩ => Json.mkObj [
           ("tag", toJson ("enumTag" : String)), ("id", toJson id),
           ("maximum", toJson (toString maximum)), ("value", nativeExpressionJson expression)]
+      | .curve expected, ⟨actual, expression⟩ =>
+        if expected == actual then Json.mkObj [
+          ("tag", toJson ("curve" : String)), ("type", toJson (typeName actual)),
+          ("value", nativeExpressionJson expression)]
+        else Json.null
       | _, _ => Json.null
     #[encoded] ++ nativeExpressionFabValuesJson layouts rest
   | _, _ => #[]
