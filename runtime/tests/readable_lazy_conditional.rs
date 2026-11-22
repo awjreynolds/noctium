@@ -3,17 +3,17 @@
 use anyhow::Result;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    check,
+    Plan, check,
     control::{InvocationTarget, Session, TypedResponse},
     create_state,
     host::{self, Capability, Context, Limits, Operation, Provider},
     prepare,
     zkir::IrSource,
-    Plan,
 };
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
+use transient_crypto::curve::Fr;
 
 const SOURCE_NAMESPACE: &str = "ReadableLazyConditional";
 const PROFILE: &str = "midnight-ledger-9-zkir-3.2.1";
@@ -216,6 +216,7 @@ fn run_case(
     let selected = if choice { "loadLeft" } else { "loadRight" };
     let expected_provider = format!("{SOURCE_NAMESPACE}.{selected}");
     let amount = if choice { "7" } else { "9" };
+    let expects_tail = fixture.entrypoint == "branchChoice" && accepted;
     let mut providers = 0;
     let outcome = loop {
         let status = session.advance()?;
@@ -223,19 +224,26 @@ fn run_case(
             "need_host" => {
                 let request = &status["request"];
                 let name = request["name"].as_str().expect("provider name");
-                assert_eq!(name, expected_provider);
+                let value = if providers == 0 {
+                    assert_eq!(name, expected_provider);
+                    payload(amount, choice)
+                } else {
+                    assert!(expects_tail && providers == 1);
+                    assert_eq!(name, format!("{SOURCE_NAMESPACE}.afterChoice"));
+                    assert_eq!(
+                        session.private_request()?["arguments"]["expected"],
+                        expected
+                    );
+                    json!({"kind":"unit"})
+                };
                 providers += 1;
-                session.resume_typed(typed_reply(
-                    request,
-                    &attempt_id,
-                    payload(amount, choice),
-                )?)?;
+                session.resume_typed(typed_reply(request, &attempt_id, value)?)?;
             }
             terminal @ ("completed" | "failed") => break terminal.to_owned(),
             other => anyhow::bail!("unexpected witness status {other}"),
         }
     };
-    assert_eq!(providers, 1, "only one branch provider must run");
+    assert_eq!(providers, 1 + usize::from(expects_tail));
     assert_eq!(outcome, if accepted { "completed" } else { "failed" });
     if !accepted {
         return Ok(());
@@ -244,7 +252,7 @@ fn run_case(
     let completion = session.private_completion(&fixture.binding["nativeRelation"])?;
     let mut inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
     let initial = create_state(&fixture.plan, &BTreeMap::new())?;
-    let execution = prepare(
+    let mut execution = prepare(
         &fixture.plan,
         &inputs,
         &initial,
@@ -259,6 +267,18 @@ fn run_case(
     );
 
     let wrong_expected = if choice { "9" } else { "7" };
+    if fixture.entrypoint == "branchChoice" {
+        let amount_index = if choice { 0 } else { 2 };
+        assert_eq!(execution.preimage.private_transcript.len(), 4);
+        assert_eq!(
+            execution.preimage.private_transcript[amount_index],
+            Fr::from(amount.parse::<u64>()?)
+        );
+        execution.preimage.private_transcript[amount_index] =
+            Fr::from(wrong_expected.parse::<u64>()?);
+        assert!(check(&execution, &fixture.circuit).is_err());
+        return Ok(());
+    }
     assert_eq!(
         inputs.insert("expected".into(), json!(wrong_expected)),
         Some(json!(expected))
@@ -295,5 +315,23 @@ fn readable_short_circuit_skips_inactive_provider_and_rejects_wrong_expectation(
     run_case(&fixture, true, "7", 4, true)?;
     run_case(&fixture, false, "9", 5, true)?;
     run_case(&fixture, true, "9", 6, false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableLazyConditional artifacts in NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR"]
+fn readable_statement_branch_runs_the_continuation_once() -> Result<()> {
+    let fixture = Fixture::load("branchChoice")?;
+    assert_fixture_shape(&fixture);
+    let calls = fixture.binding["calls"]
+        .as_array()
+        .expect("native call sites");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2]["name"], format!("{SOURCE_NAMESPACE}.afterChoice"));
+    assert_eq!(calls[2]["guard"], json!({"tag":"bool","value":true}));
+
+    run_case(&fixture, true, "7", 7, true)?;
+    run_case(&fixture, false, "9", 8, true)?;
+    run_case(&fixture, true, "9", 9, false)?;
     Ok(())
 }

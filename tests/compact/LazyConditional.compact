@@ -1,4 +1,32 @@
 pragma language_version >= 0.28.0;
+import CompactStandardLibrary;
+
+struct Extra {
+  enabled: Boolean;
+}
+
+struct Payload {
+  amount: Field;
+  extra: Extra;
+}
+
+witness loadLeft(): Payload;
+witness loadRight(): Payload;
+witness afterChoice(expected: Field): [];
+
+export circuit branchChoice(choice: Boolean, expected: Field): [Field, Boolean] {
+  if (choice) {
+    const selected = loadLeft();
+    assert(selected.amount == expected, "left amount must match expected");
+    assert(selected.extra.enabled, "left payload must be enabled");
+  } else {
+    const selected = loadRight();
+    assert(selected.amount == expected, "right amount must match expected");
+    assert(!selected.extra.enabled, "right payload must be disabled");
+  }
+  const completed = afterChoice(expected);
+  return [expected, choice];
+}
 
 export circuit branches(thenCondition: Boolean, elseCondition: Boolean, amount: Uint<8>): [Boolean, Boolean] {
   return [

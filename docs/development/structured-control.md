@@ -43,6 +43,26 @@ still require disclosure at public outputs.
 The native fixture covers both callback paths and rejects a failed active
 assertion. [Lean source](../../tests/ReadableLazyConditional.lean) · [Rust check](../../runtime/tests/readable_lazy_conditional.rs)
 
+### Scoped statements
+
+Use a statement block for branch-local bindings, assertions and witnesses.
+
+```lean
+if choice then
+  let selected := witness loadLeft()
+  prove eq(field(selected, amount), expected)
+else
+  let selected := witness loadRight()
+  prove eq(field(selected, amount), expected)
+end
+witness afterChoice(expected)
+```
+
+Each arm has its own bindings. Both arms type-check and only the selected arm
+runs. The compiler lowers the branch as a Unit helper so the following
+witness has one unconditional call site. A failed active assertion stops
+execution before that call. An omitted `else` has an empty body.
+
 ## Bounded native write guards
 
 Issue 43 now has a narrow source-to-checker slice for scalar state writes:
