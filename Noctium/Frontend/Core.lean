@@ -93,9 +93,11 @@ private structure CallInterface where
   operation : String
   argumentFields : List (String × Ty)
   argumentContractRefs : List (String × Name) := []
+  argumentNominalUInts : List (String × NominalUIntType) := []
   argumentViews : List (String × List (String × Ty))
   resultFields : List (String × Ty)
   resultContractRefs : List (String × Name) := []
+  resultNominalUInts : List (String × NominalUIntType) := []
   resultViews : List (String × List (String × Ty))
   deriving Inhabited
 
@@ -104,6 +106,8 @@ private structure CallInterfaceSourceRefs where
   operation : String
   argumentContractRefs : List (String × Name) := []
   resultContractRefs : List (String × Name) := []
+  argumentNominalUInts : List (String × NominalUIntType) := []
+  resultNominalUInts : List (String × NominalUIntType) := []
   deriving Inhabited
 
 /-- A named Lean declaration whose source metadata defines a checked contract ABI. -/
@@ -157,7 +161,11 @@ private def sameCallInterfaceShape (expected actual : CallInterface) : Bool :=
   expected.argumentFields.map (fun (name, _) => expected.argumentContractRefs.lookup name) ==
     actual.argumentFields.map (fun (name, _) => actual.argumentContractRefs.lookup name) &&
   expected.resultFields.map (fun (name, _) => expected.resultContractRefs.lookup name) ==
-    actual.resultFields.map (fun (name, _) => actual.resultContractRefs.lookup name)
+    actual.resultFields.map (fun (name, _) => actual.resultContractRefs.lookup name) &&
+  expected.argumentFields.map (fun (name, _) => expected.argumentNominalUInts.lookup name) ==
+    actual.argumentFields.map (fun (name, _) => actual.argumentNominalUInts.lookup name) &&
+  expected.resultFields.map (fun (name, _) => expected.resultNominalUInts.lookup name) ==
+    actual.resultFields.map (fun (name, _) => actual.resultNominalUInts.lookup name)
 
 private def interfaceMethods (name : Name) : CommandElabM (Array CallInterface) := do
   pure ((callInterfaceRegistry.getState (← getEnv)).filter (·.contract == name))
@@ -756,22 +764,25 @@ private def tyTerm : Ty → CommandElabM (TSyntax `term)
 
 private def elaborateInterfaceValues (values : Array (TSyntax `nlinterfacevalue)) :
     CommandElabM (List (String × Ty) × List (String × Name) ×
+      List (String × NominalUIntType) ×
       List (String × List (String × Ty))) := do
   let mut fields : List (String × Ty) := []
   let mut contractRefs : List (String × Name) := []
+  let mut nominalUInts : List (String × NominalUIntType) := []
   let mut views : List (String × List (String × Ty)) := []
   let mut labels : List String := []
   for value in values do
-    let (label, members, refs, isView) ← match value with
+    let (label, members, refs, memberNominals, isView) ← match value with
       | `(nlinterfacevalue| $field:nlinterfacefield) =>
         match field with
         | `(nlinterfacefield| $name:ident : $type:nltype) => do
           let sourceType ← readCircuitSourceType type
-          unless sourceType.nominalUInt.isNone do
-            throwErrorAt type "nominal UInt values are not supported in contract interfaces"
           let refs := (sourceType.contractRef.map fun interface =>
             (name.getId.toString, interface)).toList
-          pure (name.getId.toString, [(name.getId.toString, sourceType.type)], refs, Bool.false)
+          let memberNominals := (sourceType.nominalUInt.map fun nominalUInt =>
+            (name.getId.toString, nominalUInt)).toList
+          pure (name.getId.toString, [(name.getId.toString, sourceType.type)], refs,
+            memberNominals, Bool.false)
         | _ => throwErrorAt field "invalid contract interface field"
       | `(nlinterfacevalue| $label:ident := fields($items:nlinterfacefield,*)) => do
         unless items.getElems.size > 0 do
@@ -781,13 +792,13 @@ private def elaborateInterfaceValues (values : Array (TSyntax `nlinterfacevalue)
           let `(nlinterfacefield| $name:ident : $type:nltype) := item
             | throwErrorAt item "invalid contract interface view field"
           let sourceType ← readCircuitSourceType type
-          unless sourceType.nominalUInt.isNone do
-            throwErrorAt type "nominal UInt values are not supported in contract interfaces"
           let ref := sourceType.contractRef.map fun interface =>
             (name.getId.toString, interface)
-          pure ((name.getId.toString, sourceType.type), ref)
-        pure (label.getId.toString, memberValues.map Prod.fst,
-          memberValues.flatMap fun (_, ref) => ref.toList, Bool.true)
+          pure ((name.getId.toString, sourceType.type), ref,
+            sourceType.nominalUInt.map fun nominalUInt => (name.getId.toString, nominalUInt))
+        pure (label.getId.toString, memberValues.map fun (field, _, _) => field,
+          memberValues.flatMap fun (_, ref, _) => ref.toList,
+          memberValues.flatMap fun (_, _, nominalUInt) => nominalUInt.toList, Bool.true)
       | _ => throwErrorAt value "invalid contract interface value"
     if labels.contains label then
       throwErrorAt value s!"duplicate contract interface value '{label}'"
@@ -799,8 +810,9 @@ private def elaborateInterfaceValues (values : Array (TSyntax `nlinterfacevalue)
     labels := label :: labels
     fields := fields ++ members
     contractRefs := contractRefs ++ refs
+    nominalUInts := nominalUInts ++ memberNominals
     if isView then views := views ++ [(label, members)]
-  pure (fields, contractRefs, views)
+  pure (fields, contractRefs, nominalUInts, views)
 
 private def foreignCurveTerm : Foreign.Curve → CommandElabM (TSyntax `term)
   | .secp256k1 => `(Noctium.Foreign.Curve.secp256k1)
@@ -966,21 +978,24 @@ private def callExpressions (role : String) (ordered : List (String × Ty))
     pure (name, value, ty)
 
 private def commitmentHashWith (env : Bindings)
-    (expected : TSyntax `nlexpr → Ty → Option Name → CommandElabM (TSyntax `term))
+    (expected : TSyntax `nlexpr → Ty → Option Name → Option NominalUIntType →
+      CommandElabM (TSyntax `term))
     (interface : CallInterface) (opening : TSyntax `nlexpr)
     (inputs outputs : Array (TSyntax `nlcallvalue)) (stx : TSyntax `nlexpr) :
     CommandElabM (Ty × TSyntax `term) := do
   let arguments ← callExpressions "argument" interface.argumentFields interface.argumentViews inputs stx
   let results ← callExpressions "result" interface.resultFields interface.resultViews outputs stx
   let argumentPayload := arguments.map fun (name, value, ty) =>
-    (value, ty, interface.argumentContractRefs.lookup name)
+    (value, ty, interface.argumentContractRefs.lookup name,
+      interface.argumentNominalUInts.lookup name)
   let resultPayload := results.map fun (name, value, ty) =>
-    (value, ty, interface.resultContractRefs.lookup name)
-  let payload := [(opening, Ty.native, none)] ++ argumentPayload ++ resultPayload
+    (value, ty, interface.resultContractRefs.lookup name,
+      interface.resultNominalUInts.lookup name)
+  let payload := [(opening, Ty.native, none, none)] ++ argumentPayload ++ resultPayload
   let mut bindings := []
   let mut fields : Array (TSyntax `term) := #[]
-  for ((part, ty, contractRef), index) in payload.zipIdx do
-    let value ← expected part ty contractRef
+  for ((part, ty, contractRef, nominalUInt), index) in payload.zipIdx do
+    let value ← expected part ty contractRef nominalUInt
     -- Pick a local name outside the incoming environment before expanding ABI projections.
     let name := ((List.range (env.length + 1)).map fun suffix =>
       s!"_noctium_call_{index}_{suffix}").find? fun name =>
@@ -1848,8 +1863,10 @@ where
     if !interface.argumentContractRefs.isEmpty || !interface.resultContractRefs.isEmpty then
       throwErrorAt stx
         "typed contract reference values require an interface-based claimContractCall"
+    else if !interface.argumentNominalUInts.isEmpty || !interface.resultNominalUInts.isEmpty then
+      throwErrorAt stx "nominal UInt interface values require a typed contract reference"
     else
-      commitmentHashWith env (fun value ty _ => expected env value ty)
+      commitmentHashWith env (fun value ty _ _ => expected env value ty)
         interface opening inputs outputs stx
   arithmetic (env : Bindings) (stx : Syntax) (op : ScalarPolicy.Binary)
       (left right : TSyntax `nlexpr) : CommandElabM (Ty × TSyntax `term) := do
@@ -2292,9 +2309,13 @@ private unsafe def checkGeneratedContract (name : Name)
           argumentContractRefs := (interfaceRefs.map (·.argumentContractRefs)).getD [] |>.filterMap
             fun (field, interface) =>
               if entrypoint.callArguments.any (·.name == field) then some (field, interface) else none
+          argumentNominalUInts := (interfaceRefs.map (·.argumentNominalUInts)).getD [] |>.filterMap
+            fun (field, nominalUInt) =>
+              if entrypoint.callArguments.any (·.name == field) then some (field, nominalUInt) else none
           argumentViews := entrypoint.callInputViews.map fun view => (view.name, view.fields)
           resultFields := entrypoint.returns.map fun result => (result.name, result.ty)
           resultContractRefs := (interfaceRefs.map (·.resultContractRefs)).getD []
+          resultNominalUInts := (interfaceRefs.map (·.resultNominalUInts)).getD []
           resultViews
         }
 
@@ -2462,6 +2483,7 @@ private structure EntryEffects where
   guards : Array (TSyntax `term) := #[]
   returns : Array (TSyntax `term) := #[]
   returnContractRefs : List (String × Name) := []
+  returnNominalUInts : List (String × NominalUIntType) := []
   returnViews : Array (TSyntax `term) := #[]
   nextLocal : Nat := 0
   usedLocalNames : List String := []
@@ -3784,9 +3806,9 @@ private def elaborateEffect (schema : List (String × StateKind))
           let some method := methods.find? (·.operation == operation)
             | throwErrorAt call s!"contract interface '{interfaceName}' has no entry '{operation}'"
           let (_, commitment) ← commitmentHashWith state.env
-            (fun value ty contractRef =>
+            (fun value ty contractRef nominalUInt =>
               checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings
-                value {type := ty, contractRef})
+                value {type := ty, contractRef, nominalUInt})
             method opening inputs outputs call
           pure (operation, ← wrapClaimDisclosures payload commitment)
         | none => do
@@ -4862,6 +4884,9 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
         returnContractRefs := match sourceType.contractRef with
           | some interface => state.returnContractRefs ++ [(labelName, interface)]
           | none => state.returnContractRefs
+        returnNominalUInts := match sourceType.nominalUInt with
+          | some nominalUInt => state.returnNominalUInts ++ [(labelName, nominalUInt)]
+          | none => state.returnNominalUInts
       }
     | `(nlreturn| return $label:ident) => do
       let labelName := label.getId.toString
@@ -5908,6 +5933,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           operation := id.getId.toString
           argumentContractRefs := info.contractRefBindings
           resultContractRefs := lowered.returnContractRefs
+          argumentNominalUInts := info.nominalUIntInputs
+          resultNominalUInts := lowered.returnNominalUInts
         }]
         let circuitTerm := mkIdent info.declName
         let entryName := stringTerm id.getId.toString
@@ -5949,6 +5976,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           operation := id.getId.toString
           argumentContractRefs := info.contractRefBindings
           resultContractRefs := lowered.returnContractRefs
+          argumentNominalUInts := info.nominalUIntInputs
+          resultNominalUInts := lowered.returnNominalUInts
         }]
         let circuitTerm := mkIdent info.declName
         entryTerms := entryTerms.push (← `({ name := $(stringTerm id.getId.toString), circuit := $circuitTerm, effects := [$lowered.terms,*], returns := [$lowered.returns,*], returnViews := [$lowered.returnViews,*], span := $(← spanTerm entryStx), effectSpans := [$lowered.spans,*], effectGuards := [$lowered.guards,*] : Noctium.Entrypoint }))
@@ -6037,9 +6066,9 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
       let operationName := operation.getId.toString
       if methods.any (·.operation == operationName) then
         throwErrorAt operation s!"duplicate contract interface entry '{operationName}'"
-      let (argumentFields, argumentContractRefs, argumentViews) ←
+      let (argumentFields, argumentContractRefs, argumentNominalUInts, argumentViews) ←
         elaborateInterfaceValues arguments
-      let (resultFields, resultContractRefs, resultViews) ←
+      let (resultFields, resultContractRefs, resultNominalUInts, resultViews) ←
         elaborateInterfaceValues results
       let argumentCount := (argumentFields.map (Ty.nativeCallFieldCount ∘ Prod.snd)).sum
       let resultCount := (resultFields.map (Ty.nativeCallFieldCount ∘ Prod.snd)).sum
@@ -6050,9 +6079,11 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         operation := operationName
         argumentFields
         argumentContractRefs
+        argumentNominalUInts
         argumentViews
         resultFields
         resultContractRefs
+        resultNominalUInts
         resultViews
       }
     elabCommand (← `(def $name : Noctium.ContractInterface := Noctium.ContractInterface.declared))

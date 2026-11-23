@@ -432,7 +432,8 @@ jobs:
               --test structural_equality_widening \
               --test readable_lazy_conditional --test readable_iteration \
               --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
-              --test typed_contract_reference --test nominal_record_maybe \
+              --test typed_contract_reference --test nominal_contract_interface \
+              --test nominal_record_maybe \
               --test generic_jubjub_module -- --ignored
           NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \

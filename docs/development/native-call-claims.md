@@ -197,6 +197,14 @@ state, and the callee total became seven. The harness rejected a changed
 target, method selector and expected result before proving.
 [Finalized receipt](typed-reference-record-key-localnet-receipt.json) · [Funded test](../../runtime/tests/native_composition.rs)
 
+A method's nominal UInt parameters and results keep their declared types
+through a `ContractRef` call. The compiler checks each field before building
+the commitment. Two aliases with the same width still require an explicit cast
+between them. Both compilers reject a same-width wrong alias in the matched
+method signatures. Native assembly uses the same UInt8 representation for
+the checked call.
+[Compact fixture](../../tests/compact/NominalInterface.compact) · [Native checker](../../runtime/tests/nominal_contract_interface.rs)
+
 ### Bind the entrypoint and read the address from a registry
 
 The two-argument form derives the entrypoint selector from the same declared
