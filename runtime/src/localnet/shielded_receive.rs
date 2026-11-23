@@ -1147,6 +1147,76 @@ mod tests {
         )
     }
 
+    fn assert_four_parent_coin_lists(
+        value: &StateValue<Db>,
+        selected_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_newest_first: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let StateValue::Map(owners) = value else {
+            anyhow::bail!("expected four-parent qualified coin List owner Map");
+        };
+        ensure!(owners.size() == 1, "four-parent List owner bucket differs");
+        let owner_key = AlignedValue::from(*selected_owner);
+        let Some(owner_groups) = owners.get(&owner_key) else {
+            anyhow::bail!("four-parent List selected owner path is missing");
+        };
+        let group_paths = [
+            ([*selected_group, *selected_group, *selected_group], true),
+            ([*selected_group, *selected_group, *other_group], false),
+            ([*selected_group, *other_group, *selected_group], false),
+            ([*other_group, *selected_group, *selected_group], false),
+        ];
+        for (path, selected) in group_paths {
+            let expected = if selected { selected_newest_first } else { &[] };
+            let mut current = (*owner_groups).clone();
+            for group in path {
+                let StateValue::Map(groups) = &current else {
+                    anyhow::bail!("expected an intermediate four-parent List Map");
+                };
+                let group_key = AlignedValue::from(group);
+                let Some(next) = groups.get(&group_key) else {
+                    anyhow::bail!("four-parent List path is missing an initialized group");
+                };
+                current = (*next).clone();
+            }
+            assert_qualified_coin_list(&current, expected)?;
+        }
+        Ok(())
+    }
+
+    fn assert_four_parent_coin_list_state(
+        state_bytes: &[u8],
+        plan: &Plan,
+        selected_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_newest_first: &[AlignedValue],
+    ) -> Result<()> {
+        let state: ContractState<Db> = native_decode(state_bytes)?;
+        let StateValue::Array(slots) = state.data.get_ref() else {
+            anyhow::bail!("expected four-parent List state slots");
+        };
+        let slot = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinLists")
+            .context("deepCoinLists state slot missing from plan")?;
+        let value = slots
+            .get(slot)
+            .context("deepCoinLists state slot missing from contract state")?;
+        assert_four_parent_coin_lists(
+            value,
+            selected_owner,
+            selected_group,
+            other_group,
+            selected_newest_first,
+        )
+    }
+
     fn assert_two_parent_coin_lists(
         value: &StateValue<Db>,
         selected_owner: &[u8; 32],
@@ -1414,9 +1484,20 @@ mod tests {
                 && ["coinSets", "coinLists", "deepCoinLists", "rootCoinMap", "coinMaps"]
                     .iter()
                     .all(|name| !has_state(name));
+            let deep_list_only = nested
+                && has_state("pot")
+                && has_state("deepCoinLists")
+                && plan.state.len() == 2
+                && ["coinSets", "deepCoinSets", "coinLists", "rootCoinMap", "coinMaps"]
+                    .iter()
+                    .all(|name| !has_state(name));
             ensure!(
                 !deep_set_only || (!deep_map && !overwrite),
                 "a Set-only bundle does not use Map-depth or overwrite mode"
+            );
+            ensure!(
+                !deep_list_only || (!deep_map && !overwrite),
+                "a List-only bundle does not use Map-depth or overwrite mode"
             );
             let make_funding = || {
                 DevelopmentFunding::new(
@@ -1474,17 +1555,17 @@ mod tests {
                 let initialize_parameters = initialize_parameters
                     .as_ref()
                     .context("nested initializer parameters missing")?;
-                let mut initialize_inputs = BTreeMap::from([
-                    (
-                        "selectedOwner".into(),
-                        json!({"kind":"bytes", "values": selected_owner}),
-                    ),
-                    (
+                let mut initialize_inputs = BTreeMap::from([(
+                    "selectedOwner".into(),
+                    json!({"kind":"bytes", "values": selected_owner}),
+                )]);
+                if !deep_list_only {
+                    initialize_inputs.insert(
                         "otherOwner".into(),
                         json!({"kind":"bytes", "values": other_owner}),
-                    ),
-                ]);
-                if deep_map || deep_set_only {
+                    );
+                }
+                if deep_map || deep_set_only || deep_list_only {
                     initialize_inputs.insert(
                         "selectedGroup".into(),
                         json!({"kind":"bytes", "values": selected_group}),
@@ -1521,13 +1602,14 @@ mod tests {
                 let receipt = finalize(&node, &bound)
                     .await
                     .context("finalize the owner initializer")?;
-                if deep_map || deep_set_only {
+                if deep_map || deep_set_only || deep_list_only {
                     initialization_inclusion = Some(json!({
                         "height": receipt.height,
                         "blockHash": receipt.block_hash,
                         "finalizedHeight": receipt.finalized_height,
                         "finalizedBlockHash": receipt.finalized_hash,
-                        "transactionId": receipt.transaction_id
+                        "transactionId": receipt.transaction_id,
+                        "stateSha256": artifacts::digest(&receipt.contract_state)
                     }));
                 }
                 if deep_set_only {
@@ -1536,6 +1618,15 @@ mod tests {
                         &plan,
                         &selected_owner,
                         &other_owner,
+                        &selected_group,
+                        &other_group,
+                        &[],
+                    )?;
+                } else if deep_list_only {
+                    assert_four_parent_coin_list_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
                         &selected_group,
                         &other_group,
                         &[],
@@ -1566,17 +1657,25 @@ mod tests {
                     "blockHash": receipt.finalized_hash,
                     "transactionId": receipt.transaction_id,
                     "stateSha256": artifacts::digest(&receipt.contract_state),
-                    "selectedOwner": hex::encode(selected_owner),
-                    "otherOwner": hex::encode(other_owner),
-                    "bothOwnersInitialized": true
+                    "selectedOwner": hex::encode(selected_owner)
                 });
+                if deep_list_only {
+                    observation["singleOwnerInitialized"] = json!(true);
+                } else {
+                    observation["otherOwner"] = json!(hex::encode(other_owner));
+                    observation["bothOwnersInitialized"] = json!(true);
+                }
                 if overwrite {
                     observation["finalizedHeight"] = json!(receipt.finalized_height);
                 }
-                if deep_map || deep_set_only {
+                if deep_map || deep_set_only || deep_list_only {
                     observation["selectedGroup"] = json!(hex::encode(selected_group));
                     observation["otherGroup"] = json!(hex::encode(other_group));
-                    observation["bothGroupsInitializedForBothOwners"] = json!(true);
+                    if deep_list_only {
+                        observation["fourParentListPathsInitialized"] = json!(true);
+                    } else {
+                        observation["bothGroupsInitializedForBothOwners"] = json!(true);
+                    }
                 }
                 Some(observation)
             } else {
@@ -1611,7 +1710,7 @@ mod tests {
                         "owner".into(),
                         json!({"kind":"bytes", "values":selected_owner}),
                     );
-                    if deep_map || deep_set_only {
+                    if deep_map || deep_set_only || deep_list_only {
                         values.insert(
                             "group".into(),
                             json!({"kind":"bytes", "values":selected_group}),
@@ -1656,7 +1755,7 @@ mod tests {
                 node.finalized_contract_state(target.contract_address())?
                     .bytes
                     == before_funded_call,
-                "invalid offer changed the Map"
+                "invalid offer changed contract state"
             );
             let (bound, call_binding) = make_funding()
                 .bind_minted_shielded_receive_with_binding(
@@ -1674,7 +1773,7 @@ mod tests {
             let receipt = finalize(&node, &bound)
                 .await
                 .context("finalize the shielded mint and write")?;
-            if overwrite {
+            if overwrite || deep_list_only {
                 current = call_binding.admit_committed_state(
                     &receipt.contract_state,
                     bound.expected_state(),
@@ -1682,7 +1781,7 @@ mod tests {
                     false,
                 )?;
             }
-            let finalized = if overwrite {
+            let finalized = if overwrite || deep_list_only {
                 let snapshot = node.replay_to(
                     &receipt.finalized_hash,
                     &mut node.cache.borrow_mut(),
@@ -1746,6 +1845,15 @@ mod tests {
                         &plan,
                         &selected_owner,
                         &other_owner,
+                        &selected_group,
+                        &other_group,
+                        &[qualified.clone()],
+                    )?;
+                } else if deep_list_only {
+                    assert_four_parent_coin_list_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
                         &selected_group,
                         &other_group,
                         &[qualified.clone()],
@@ -1816,7 +1924,7 @@ mod tests {
                     .contains_key(&commitment)
             );
             let mut replacement_inclusion = None;
-            let overwrite_evidence = if overwrite {
+            let overwrite_evidence = if overwrite || deep_list_only {
                 let replacement = Info::new(&mut OsRng, coin.value, coin.type_);
                 ensure!(
                     replacement.nonce.0.0 != coin.nonce.0.0,
@@ -1846,13 +1954,20 @@ mod tests {
                 let replacement_receipt = finalize(&node, &replacement_bound)
                     .await
                     .context("finalize the replacement shielded mint and write")?;
-                if deep_map {
+                let replacement_contract =
+                    node.finalized_contract_state(target.contract_address())?;
+                ensure!(
+                    replacement_contract.bytes == replacement_receipt.contract_state,
+                    "finalized contract state differs from the second mint receipt"
+                );
+                if deep_map || deep_list_only {
                     replacement_inclusion = Some(json!({
                         "height": replacement_receipt.height,
                         "blockHash": replacement_receipt.block_hash,
                         "finalizedHeight": replacement_receipt.finalized_height,
                         "finalizedBlockHash": replacement_receipt.finalized_hash,
-                        "transactionId": replacement_receipt.transaction_id
+                        "transactionId": replacement_receipt.transaction_id,
+                        "stateSha256": artifacts::digest(&replacement_receipt.contract_state)
                     }));
                 }
                 let _replacement_current = replacement_binding.admit_committed_state(
@@ -1906,45 +2021,89 @@ mod tests {
                             .contains_key(&replacement_commitment),
                     "finalized Zswap state does not retain both minted commitments"
                 );
-                assert_nested_qualified_coin_collections(
-                    &replacement_receipt.contract_state,
-                    &plan,
-                    &selected_owner,
-                    &other_owner,
-                    &public_key,
-                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
-                    &[(&replacement, replacement_index), (&coin, finalized_index)],
-                )?;
-                let mut replacement_evidence = json!({
-                    "height": replacement_receipt.height,
-                    "blockHash": replacement_receipt.block_hash,
-                    "finalizedBlockHash": replacement_receipt.finalized_hash,
-                    "transactionId": replacement_receipt.transaction_id,
-                    "commitment": hex::encode(replacement_commitment.0.0),
-                    "nonce": hex::encode(replacement.nonce.0.0),
-                    "color": hex::encode(replacement.type_.0.0),
-                    "domain": hex::encode(domain.0),
-                    "owner": hex::encode(selected_owner),
-                    "mapKey": hex::encode(public_key),
-                    "value": replacement.value.to_string(),
-                    "mtIndex": replacement_index,
-                    "stateSha256": artifacts::digest(&replacement_receipt.contract_state),
-                    "receiptFinalizedHeights": {
-                        "deployment": deployed.finalized_height,
-                        "initialization": initialization_observation
-                            .as_ref()
-                            .and_then(|value| value.get("finalizedHeight"))
-                            .and_then(Value::as_u64),
-                        "initialCall": receipt.finalized_height,
-                        "replacementCall": replacement_receipt.finalized_height
-                    },
-                    "rootCoinMapContainsReplacementOnly": true,
-                    "nestedCoinMapContainsReplacementOnly": true,
-                    "originalNonceRemainsInPot": true,
-                    "selectedSetContainsBothCoins": true,
-                    "selectedListNewestFirst": true,
-                    "otherOwnerCollectionsEmpty": true
-                });
+                if deep_list_only {
+                    assert_four_parent_coin_list_state(
+                        &replacement_receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &selected_group,
+                        &other_group,
+                        &[
+                            AlignedValue::from(replacement.qualify(replacement_index)),
+                            AlignedValue::from(coin.qualify(finalized_index)),
+                        ],
+                    )?;
+                } else {
+                    assert_nested_qualified_coin_collections(
+                        &replacement_receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &other_owner,
+                        &public_key,
+                        deep_map.then_some((&selected_group, &other_group, map_parent_count)),
+                        &[(&replacement, replacement_index), (&coin, finalized_index)],
+                    )?;
+                }
+                let mut replacement_evidence = if deep_list_only {
+                    json!({
+                        "height": replacement_receipt.height,
+                        "blockHash": replacement_receipt.block_hash,
+                        "finalizedHeight": replacement_receipt.finalized_height,
+                        "finalizedBlockHash": replacement_receipt.finalized_hash,
+                        "transactionId": replacement_receipt.transaction_id,
+                        "commitment": hex::encode(replacement_commitment.0.0),
+                        "nonce": hex::encode(replacement.nonce.0.0),
+                        "color": hex::encode(replacement.type_.0.0),
+                        "domain": hex::encode(domain.0),
+                        "owner": hex::encode(selected_owner),
+                        "group": hex::encode(selected_group),
+                        "value": replacement.value.to_string(),
+                        "mtIndex": replacement_index,
+                        "stateSha256": artifacts::digest(&replacement_receipt.contract_state),
+                        "receiptFinalizedHeights": {
+                            "deployment": deployed.finalized_height,
+                            "initialization": initialization_observation
+                                .as_ref()
+                                .and_then(|value| value.get("finalizedHeight"))
+                                .and_then(Value::as_u64),
+                            "firstCall": receipt.finalized_height,
+                            "secondCall": replacement_receipt.finalized_height
+                        },
+                        "deepCoinListNewestFirst": true,
+                        "allThreeSiblingListsEmpty": true
+                    })
+                } else {
+                    json!({
+                        "height": replacement_receipt.height,
+                        "blockHash": replacement_receipt.block_hash,
+                        "finalizedBlockHash": replacement_receipt.finalized_hash,
+                        "transactionId": replacement_receipt.transaction_id,
+                        "commitment": hex::encode(replacement_commitment.0.0),
+                        "nonce": hex::encode(replacement.nonce.0.0),
+                        "color": hex::encode(replacement.type_.0.0),
+                        "domain": hex::encode(domain.0),
+                        "owner": hex::encode(selected_owner),
+                        "mapKey": hex::encode(public_key),
+                        "value": replacement.value.to_string(),
+                        "mtIndex": replacement_index,
+                        "stateSha256": artifacts::digest(&replacement_receipt.contract_state),
+                        "receiptFinalizedHeights": {
+                            "deployment": deployed.finalized_height,
+                            "initialization": initialization_observation
+                                .as_ref()
+                                .and_then(|value| value.get("finalizedHeight"))
+                                .and_then(Value::as_u64),
+                            "initialCall": receipt.finalized_height,
+                            "replacementCall": replacement_receipt.finalized_height
+                        },
+                        "rootCoinMapContainsReplacementOnly": true,
+                        "nestedCoinMapContainsReplacementOnly": true,
+                        "originalNonceRemainsInPot": true,
+                        "selectedSetContainsBothCoins": true,
+                        "selectedListNewestFirst": true,
+                        "otherOwnerCollectionsEmpty": true
+                    })
+                };
                 if deep_map {
                     replacement_evidence["selectedGroup"] = json!(hex::encode(selected_group));
                     replacement_evidence["siblingGroup"] = json!(hex::encode(other_group));
@@ -1977,8 +2136,41 @@ mod tests {
             });
             if nested {
                 evidence["selectedOwner"] = json!(hex::encode(selected_owner));
-                evidence["otherOwner"] = json!(hex::encode(other_owner));
-                if deep_set_only {
+                if !deep_list_only {
+                    evidence["otherOwner"] = json!(hex::encode(other_owner));
+                }
+                if deep_list_only {
+                    evidence["selectedGroup"] = json!(hex::encode(selected_group));
+                    evidence["siblingGroup"] = json!(hex::encode(other_group));
+                    evidence["coinListParentCount"] = json!(4);
+                    evidence["deepCoinListMatchesFinalizedOutputsNewestFirst"] = json!(true);
+                    evidence["allThreeSiblingListsEmpty"] = json!(true);
+                    evidence["twoFinalizedSelfMints"] = json!(true);
+                    evidence["receiptInclusions"] = json!({
+                        "deployment": {
+                            "height": deployed.height,
+                            "blockHash": deployed.block_hash,
+                            "finalizedHeight": deployed.finalized_height,
+                            "finalizedBlockHash": deployed.finalized_hash,
+                            "transactionId": deployed.transaction_id,
+                            "stateSha256": artifacts::digest(&deployed.contract_state)
+                        },
+                        "initialization": initialization_inclusion
+                            .as_ref()
+                            .context("four-parent List initializer receipt evidence missing")?,
+                        "firstCall": {
+                            "height": receipt.height,
+                            "blockHash": receipt.block_hash,
+                            "finalizedHeight": receipt.finalized_height,
+                            "finalizedBlockHash": receipt.finalized_hash,
+                            "transactionId": receipt.transaction_id,
+                            "stateSha256": artifacts::digest(&receipt.contract_state)
+                        },
+                        "secondCall": replacement_inclusion
+                            .as_ref()
+                            .context("second List mint receipt evidence missing")?
+                    });
+                } else if deep_set_only {
                     evidence["selectedGroup"] = json!(hex::encode(selected_group));
                     evidence["siblingGroup"] = json!(hex::encode(other_group));
                     evidence["coinSetParentCount"] = json!(5);
@@ -2049,7 +2241,11 @@ mod tests {
                 evidence["listCoinHeadMatchesFinalizedOutput"] = json!(true);
             }
             if let Some(overwrite) = overwrite_evidence {
-                evidence["overwrite"] = overwrite;
+                if deep_list_only {
+                    evidence["secondMint"] = overwrite;
+                } else {
+                    evidence["overwrite"] = overwrite;
+                }
             }
             println!("{evidence}");
             Ok(())

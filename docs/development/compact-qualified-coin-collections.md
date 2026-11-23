@@ -60,6 +60,15 @@ four Bytes32 Map parents. The selected List stores the new booked index
 case rejects missing and wrong bookings and an absent path.
 [Compact fixture and runner](../../tests/compact/four-parent-qualified-coin-list.mjs)
 
+Two focused four-parent List calls finalized on development Ledger
+9.1.0.1 at blocks 72,222 and 72,225. The selected List held booked indices
+48 and 47 in newest-first order, with three sibling Lists empty. Read-only
+recovery matched the two stored coin commitments to their contract-owned
+outputs in the finalized extrinsics. The normal receipt observer returned
+a response error on the second call. Independent Zswap replay and the
+observer error remain under investigation. [Finalized evidence](funded-four-parent-coin-list-localnet-receipt.json) ·
+[Observer ticket](https://github.com/awjreynolds/noctium/issues/791)
+
 A funded Ledger 9 run stored one self-minted coin in a Map, root Cell, root
 Set, and one-element root List in the same call. The test compares the Map,
 Cell and Set records and the List head with the finalized contract-owned
