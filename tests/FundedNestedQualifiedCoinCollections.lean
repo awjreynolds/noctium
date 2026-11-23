@@ -12,6 +12,7 @@ end
 noctium_circuit fundedNestedQualifiedCoinCollectionsInputs where
   public domain : Bytes32
   public owner : Bytes32
+  public key : Bytes32
   private nonce : Bytes32
   private color : Bytes32
 end
@@ -35,19 +36,36 @@ noctium_contract FundedNestedQualifiedCoinCollections where
     value : UInt 128
     mtIndex : UInt 64
   }
+  tree rootCoinMap : Bytes32 => struct Coin {
+    nonce : Bytes32
+    color : Bytes32
+    value : UInt 128
+    mtIndex : UInt 64
+  }
+  tree coinMaps : Bytes32 => Bytes32 => struct Coin {
+    nonce : Bytes32
+    color : Bytes32
+    value : UInt 128
+    mtIndex : UInt 64
+  }
 
   entry initializeOwners uses fundedNestedQualifiedCoinCollectionsOwnersInputs where
     reset coinSets[selectedOwner]
     reset coinLists[selectedOwner]
+    reset coinMaps[selectedOwner]
     reset coinSets[otherOwner]
     reset coinLists[otherOwner]
+    reset coinMaps[otherOwner]
   end
 
   entry tip uses fundedNestedQualifiedCoinCollectionsInputs where
+    readSelf as own
     mintShielded(domain, 5)
     receiveShieldedToMap(pot, disclose(nonce), disclose(color), 5)
     insertShieldedCoinSet(coinSets[owner], disclose(nonce), disclose(color), 5)
     pushFrontCoin(coinLists[owner], disclose(nonce), disclose(color), 5)
+    insertShieldedCoinMap(rootCoinMap, key, disclose(nonce), disclose(color), 5, true, own)
+    insertShieldedCoinMap(coinMaps[owner], key, disclose(nonce), disclose(color), 5, true, own)
   end
 end
 
@@ -68,8 +86,27 @@ private def fundedNestedQualifiedCoinCollectionsEntry (name : String) : Entrypoi
 #guard match (fundedNestedQualifiedCoinCollectionsEntry "initializeOwners").effects with
   | [ .emptyMapPath "coinSets" [.mk (.bytes 32) (.ref "selectedOwner")]
     , .listReset "coinLists" [.mk (.bytes 32) (.ref "selectedOwner")]
+    , .emptyMapPath "coinMaps" [.mk (.bytes 32) (.ref "selectedOwner")]
     , .emptyMapPath "coinSets" [.mk (.bytes 32) (.ref "otherOwner")]
-    , .listReset "coinLists" [.mk (.bytes 32) (.ref "otherOwner")] ] => Bool.true
+    , .listReset "coinLists" [.mk (.bytes 32) (.ref "otherOwner")]
+    , .emptyMapPath "coinMaps" [.mk (.bytes 32) (.ref "otherOwner")] ] => Bool.true
   | _ => Bool.false
 
+#guard (fundedNestedQualifiedCoinCollectionsEntry "tip").circuit.inputs.map (·.name) ==
+  ["domain", "owner", "key", "nonce", "color"]
+#guard match (fundedNestedQualifiedCoinCollectionsEntry "tip").effects.head? with
+  | some (.readContractAddress "own") => Bool.true
+  | _ => Bool.false
+#guard match ((fundedNestedQualifiedCoinCollectionsEntry "tip").effects.filterMap
+    fun (effect : Effect) =>
+    match effect with
+    | .insertShieldedCoinMap .. => some effect
+    | _ => none) with
+  | [ .insertShieldedCoinMap "rootCoinMap" (.ref "key")
+      (.disclose _ (.ref "nonce")) (.disclose _ (.ref "color")) _ (.bool Bool.true)
+      (.ref "own") []
+    , .insertShieldedCoinMap "coinMaps" (.ref "key")
+      (.disclose _ (.ref "nonce")) (.disclose _ (.ref "color")) _ (.bool Bool.true)
+      (.ref "own") [.mk (.bytes 32) (.ref "owner")] ] => Bool.true
+  | _ => Bool.false
 #guard (fundedNestedQualifiedCoinCollectionsEntry "tip").effectGuards.all Option.isNone

@@ -2716,7 +2716,7 @@
       "layer": "language-ledger",
       "surface": "Map.insertCoin",
       "noctiumStatus": "subset",
-      "notes": "Mint-funded receive, wallet-funded receive and partial-spend change finalize on Ledger 9.1.0.1 and store the assigned index in a root Bytes32-keyed Map. Pinned Compact and Noctium also agree on insertion and overwrite of a prebooked coin under an independent root Bytes32 key. The native query context checks the exact booked index and rejects missing or wrong recipient bookings. The insertion adds no receive claim. A one-level Bytes32 owner Map also admits insert and overwrite at an independent key. Tests preserve the other owner and reject missing owner or booking. Finalized independent-key calls and deeper paths remain open.",
+      "notes": "Mint-funded receive, wallet-funded receive and partial-spend change finalize on Ledger 9.1.0.1 and store the assigned index in a root Bytes32-keyed Map. Pinned Compact and Noctium also agree on insertion and overwrite of a prebooked coin under an independent root Bytes32 key. The native query context checks the exact booked index and rejects missing or wrong recipient bookings. The insertion adds no receive claim. A one-level Bytes32 owner Map also admits insert and overwrite at an independent key. Tests preserve the other owner and reject missing owner or booking. A funded development Ledger 9.1.0.1 call at block 68,970 stored the assigned index 37 at an independent key in both the root and one-owner nested Maps. The sibling owner stayed empty. Deeper paths and funded overwrite remain open.",
       "source": [
         "adt"
       ],
@@ -2736,6 +2736,7 @@
         "tests/compact/qualified-coin-collections.mjs",
         "tests/BookedCoinMap.lean",
         "tests/NestedBookedCoinMap.lean",
+        "docs/development/funded-independent-coin-maps-localnet-receipt.json",
         "runtime/src/lib.rs"
       ],
       "equivalence": "unverified"

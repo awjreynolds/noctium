@@ -83,24 +83,28 @@ other owner's Map unchanged. Missing owners reject. The Impact suffix uses
 reinsertion. A private owner requires explicit disclosure because the path
 appears in the public transcript. [Nested Lean fixture](../../tests/NestedBookedCoinMap.lean)
 
-These checks use a native query context. Deeper paths and finalized
-independent-key calls remain open.
+The query-context checks cover overwrite and missing owners. The funded
+fixture below checks the first independent-key insertion on Ledger 9.
 
-## Funded nested Set and List
+## Funded Maps, Set and List
 
-The funded fixture initializes two Bytes32 owners, then self-mints five units
-and writes the qualified coin to both collections for the selected owner.
-Ledger 9.1.0.1 finalized the call at block 68,113. The selected Set member and
-List head match the Zswap output at index 36. The other owner's Set and List
-stayed empty. The harness also rejects missing and mismatched offers before
-submission. [Lean fixture](../../tests/FundedNestedQualifiedCoinCollections.lean)
-· [Finalized receipt](nested-qualified-coin-collections-localnet-receipt.json)
+The fixture initializes two Bytes32 owners, self-mints five units, then
+stores the booked coin at the same independent key in a root Map and the
+selected owner's nested Map. The selected owner's Set and List also store
+the coin. Ledger 9.1.0.1 finalized the call at block 68,970. Both Maps, the
+Set member and the List head match the finalized Zswap coin at index 37.
+The other owner's buckets stayed empty. The harness rejects missing and
+mismatched offers before submission. [Lean fixture](../../tests/FundedNestedQualifiedCoinCollections.lean)
+· [Finalized receipt](funded-independent-coin-maps-localnet-receipt.json)
 
 Compile the fixture for the pinned ZKIR 3.2.1 profile and assemble both
-entrypoint bundles. The initializer measured 250 rows at K9. The funded
-`tip` measured 18,616 rows at K15. The localnet test uses the manifest pins
+entrypoint bundles. Use the compiler revision and fixture hash in the receipt
+for the pinned build. The initializer measured 284 rows at K9. The funded
+`tip` measured 24,829 rows at K15. The localnet test uses the manifest pins
 and a parameter cache with the pinned DUST and Zswap output material.
 [Bundle setup](portable-artifacts.md) · [Localnet setup](../../scripts/localnet/README.md)
+
+The earlier Set and List run has its own receipt. [Set and List receipt](nested-qualified-coin-collections-localnet-receipt.json)
 
 ```sh
 NOCTIUM_RECEIVE_NODE=http://127.0.0.1:19944 \

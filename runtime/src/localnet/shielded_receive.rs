@@ -703,6 +703,30 @@ mod tests {
                 "initialized owner List is not empty"
             );
         }
+
+        let root_map_slot = slot("rootCoinMap")?;
+        let Some(StateValue::Map(root_coins)) = slots.get(root_map_slot) else {
+            anyhow::bail!("expected initialized root qualified coin Map");
+        };
+        ensure!(root_coins.size() == 0, "initialized root coin Map is not empty");
+
+        let coin_maps_slot = slot("coinMaps")?;
+        let Some(StateValue::Map(coin_map_owners)) = slots.get(coin_maps_slot) else {
+            anyhow::bail!("expected initialized owner-keyed qualified coin Map");
+        };
+        ensure!(
+            coin_map_owners.size() == 2,
+            "initializer did not create both qualified coin Map owners"
+        );
+        for owner in &owners {
+            let Some(coins) = coin_map_owners.get(owner) else {
+                anyhow::bail!("initializer omitted a qualified coin Map owner");
+            };
+            let StateValue::Map(coins) = &*coins else {
+                anyhow::bail!("expected initialized owner qualified coin Map");
+            };
+            ensure!(coins.size() == 0, "initialized owner coin Map is not empty");
+        }
         Ok(())
     }
 
@@ -785,7 +809,7 @@ mod tests {
                     let tip_circuit = IrSource::load(tip_bundle.file(Role::Circuit)?)?;
                     let initialize_parameters = cache.parameters(initialize_circuit.k()).await?;
                     let parameters = cache.parameters(tip_circuit.k()).await?;
-                    let state_config = br#"{"state":{"pot":[],"coinSets":[],"coinLists":[]}}"#;
+                    let state_config = br#"{"state":{"pot":[],"coinSets":[],"coinLists":[],"rootCoinMap":[],"coinMaps":[]}}"#;
                     let target = WitnessContractTarget::from_state_config(
                         ContractBundleSet::new(vec![initialize_bundle, tip_bundle])?,
                         state_config,
@@ -941,6 +965,7 @@ mod tests {
                 );
                 Some(json!({
                     "height": receipt.height,
+                    "blockHash": receipt.finalized_hash,
                     "transactionId": receipt.transaction_id,
                     "stateSha256": artifacts::digest(&receipt.contract_state),
                     "selectedOwner": hex::encode(selected_owner),
@@ -956,6 +981,7 @@ mod tests {
                     .map_err(|_| anyhow::anyhow!("wrong contract address size"))?,
             ));
             let domain = HashOutput([3; 32]);
+            let public_key = [4u8; 32];
             let coin = Info::new(&mut OsRng, 5, address.custom_shielded_token_type(domain));
             let snapshot = node.sync()?;
             let expected_index = snapshot.state.zswap.first_free;
@@ -976,6 +1002,10 @@ mod tests {
                     values.insert(
                         "owner".into(),
                         json!({"kind":"bytes", "values":selected_owner}),
+                    );
+                    values.insert(
+                        "key".into(),
+                        json!({"kind":"bytes", "values":public_key}),
                     );
                 }
                 values
@@ -1106,6 +1136,46 @@ mod tests {
                     "qualified coin leaked into other owner Set"
                 );
 
+                let root_map_slot = slot("rootCoinMap")?;
+                let Some(StateValue::Map(root_coins)) = slots.get(root_map_slot) else {
+                    anyhow::bail!("expected finalized root qualified coin Map");
+                };
+                let public_key = AlignedValue::from(public_key);
+                ensure!(
+                    root_coins.size() == 1
+                        && root_coins.get(&public_key).as_deref()
+                            == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
+                    "root Map does not contain the Ledger-assigned qualified coin under the public key"
+                );
+
+                let coin_maps_slot = slot("coinMaps")?;
+                let Some(StateValue::Map(coin_map_owners)) = slots.get(coin_maps_slot) else {
+                    anyhow::bail!("expected owner-keyed finalized qualified coin Map");
+                };
+                ensure!(
+                    coin_map_owners.size() == 2,
+                    "qualified coin Map owner buckets differ"
+                );
+                let Some(selected_coin_map) = coin_map_owners.get(&selected_key) else {
+                    anyhow::bail!("selected owner is missing from the qualified coin Map");
+                };
+                let StateValue::Map(selected_coins) = &*selected_coin_map else {
+                    anyhow::bail!("expected selected owner's qualified coin Map");
+                };
+                ensure!(
+                    selected_coins.size() == 1
+                        && selected_coins.get(&public_key).as_deref()
+                            == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
+                    "selected owner Map does not contain the Ledger-assigned qualified coin under the public key"
+                );
+                let Some(other_coin_map) = coin_map_owners.get(&other_key) else {
+                    anyhow::bail!("other owner is missing from the qualified coin Map");
+                };
+                let StateValue::Map(other_coins) = &*other_coin_map else {
+                    anyhow::bail!("expected other owner's qualified coin Map");
+                };
+                ensure!(other_coins.size() == 0, "qualified coin leaked into other owner Map");
+
                 let Some(StateValue::Map(list_owners)) = slots.get(list_slot) else {
                     anyhow::bail!("expected owner-keyed qualified coin List");
                 };
@@ -1216,6 +1286,8 @@ mod tests {
             );
             let mut evidence = json!({
                 "deploymentHeight": deployed.height,
+                "deploymentBlockHash": deployed.finalized_hash,
+                "deploymentTransaction": deployed.transaction_id,
                 "callHeight": receipt.height,
                 "callTransaction": receipt.transaction_id,
                 "finalizedBlockHash": receipt.finalized_hash,
@@ -1238,6 +1310,10 @@ mod tests {
                 evidence["nestedListHeadMatchesFinalizedOutput"] = json!(true);
                 evidence["otherOwnerSetEmpty"] = json!(true);
                 evidence["otherOwnerListEmpty"] = json!(true);
+                evidence["rootCoinMapMatchesFinalizedOutput"] = json!(true);
+                evidence["nestedCoinMapMatchesFinalizedOutput"] = json!(true);
+                evidence["otherOwnerCoinMapEmpty"] = json!(true);
+                evidence["mapKey"] = json!(hex::encode(public_key));
             } else {
                 evidence["cellCoinMatchesFinalizedOutput"] = json!(true);
                 evidence["setCoinMatchesFinalizedOutput"] = json!(true);
