@@ -62,6 +62,10 @@ opt-level = 1
 debug = 0
 incremental = false
 
+# Use the pinned ledger's release decoding limit for finalized development state.
+[profile.dev.package.midnight-serialize]
+debug-assertions = false
+
 [profile.wasm]
 inherits = "release"
 opt-level = "z"
