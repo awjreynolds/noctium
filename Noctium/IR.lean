@@ -923,6 +923,7 @@ inductive ConstructorAction where
   | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
   | initializeRecordCell (state : String) (fields : List LedgerFieldExpr)
   | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
+  | pushRecordList (state : String) (fields : List LedgerFieldExpr) (guard : Option (Expr .bool))
   | counterIncrement (action : ConstructorCounterIncrement)
   | initializeCellFromCounter (state counter : String)
   deriving Repr
@@ -2023,6 +2024,24 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
       | .error message => throw {span := destination.span, message}
       | .ok _ => pure ()
+    | .pushRecordList stateName fields guard => do
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor List state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor pushes to unknown List '{stateName}'"}
+      let .tree (.«list» environment (.structure recordType)) := destination.kind
+        | throw {span := destination.span, message :=
+          s!"constructor pushFront requires a root record List '{stateName}'"}
+      let checkedFields ← match LedgerValueType.listElementFields environment (.structure recordType) with
+        | .ok checkedFields => pure checkedFields
+        | .error message => throw {span := destination.span, message}
+      match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
+      | .error message => throw {span := destination.span, message}
+      | .ok _ => pure ()
+      if let some guard := guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
   for increment in constructor.counterIncrements do
     unless Types.validFieldName increment.state do
       throw {span, message := s!"invalid constructor Counter state name '{increment.state}'"}

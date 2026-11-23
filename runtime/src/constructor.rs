@@ -8,7 +8,10 @@ use onchain_runtime::state::{ChargedState, StateValue};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 use std::collections::{BTreeMap, BTreeSet};
-use storage::{arena::Sp, storage::HashMap};
+use storage::{
+    arena::Sp,
+    storage::{Array, HashMap},
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,6 +83,12 @@ pub enum ConstructorAction {
     InitializeRecordCell {
         state: String,
         fields: Vec<Expr>,
+    },
+    PushRecordList {
+        state: String,
+        fields: Vec<Expr>,
+        #[serde(default)]
+        guard: Option<Expr>,
     },
     InsertRecordMap {
         state: String,
@@ -486,6 +495,37 @@ fn record_map_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedReco
     Ok((slot, crate::checked_typed_record_schema(record)?))
 }
 
+fn record_list_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRecordSchema)> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor record List state"))?;
+    ensure!(
+        declaration
+            .kind
+            .as_object()
+            .is_some_and(|kind| kind.len() == 1 && kind.contains_key("tree")),
+        "constructor record List push requires a root List"
+    );
+    let tree = declaration
+        .kind
+        .get("tree")
+        .and_then(Json::as_object)
+        .filter(|tree| tree.len() == 1)
+        .ok_or_else(|| anyhow!("constructor record List push requires a root List"))?;
+    let list = tree
+        .get("list")
+        .and_then(Json::as_object)
+        .filter(|list| list.len() == 1)
+        .ok_or_else(|| anyhow!("constructor record List push requires a root record List"))?;
+    let schema = list
+        .get("composite")
+        .ok_or_else(|| anyhow!("constructor record List push requires a root record List"))?;
+    Ok((slot, crate::checked_list_record_schema(schema)?))
+}
+
 fn evaluate_map_insert(
     plan: &Plan,
     state: &str,
@@ -539,6 +579,13 @@ fn validate_ordered_action_targets(
                 ensure!(
                     initialized.insert(state.clone()),
                     "duplicate constructor initializer"
+                );
+            }
+            ConstructorAction::PushRecordList { state, fields, .. } => {
+                let (_, schema) = record_list_slot(plan, state)?;
+                ensure!(
+                    fields.len() == schema.fields.len(),
+                    "record expression count mismatch"
                 );
             }
             ConstructorAction::InsertRecordMap { state, .. } => {
@@ -666,6 +713,19 @@ fn apply_ordered_actions(
                     .insert(slot, StateValue::Cell(Sp::new(value)))
                     .ok_or_else(|| anyhow!("constructor record Cell slot is outside state"))?;
             }
+            ConstructorAction::PushRecordList {
+                state: list_name,
+                fields,
+                guard,
+            } => {
+                if !constructor_list_push_enabled(guard.as_ref(), environment)? {
+                    continue;
+                }
+                let (slot, schema) = record_list_slot(plan, list_name)?;
+                let values = crate::record_values_from_expressions(&schema, fields, environment)?;
+                let head = crate::aligned_record_value(&schema, &values)?;
+                slots = push_list_head(slots, slot, head)?;
+            }
             ConstructorAction::InsertRecordMap {
                 state: map_name,
                 key,
@@ -736,6 +796,61 @@ fn constructor_counter_value(value: &StateValue<Db>) -> Result<u64> {
     u64::try_from(number).map_err(|_| anyhow!("constructor Counter value exceeds UInt64"))
 }
 
+fn constructor_list_push_enabled(
+    guard: Option<&Expr>,
+    environment: &BTreeMap<String, Value>,
+) -> Result<bool> {
+    let Some(guard) = guard else {
+        return Ok(true);
+    };
+    let guard = evaluate(guard, environment)?;
+    let Value::Bool(enabled) = guard else {
+        bail!("constructor List push guard must be Bool")
+    };
+    Ok(enabled)
+}
+
+fn constructor_list_length(value: &StateValue<Db>) -> Result<u64> {
+    let StateValue::Array(node) = value else {
+        bail!("constructor List state requires array storage")
+    };
+    ensure!(node.len() == 3, "invalid constructor List node width");
+    let Some(StateValue::Cell(length)) = node.get(2) else {
+        bail!("invalid constructor List length cell")
+    };
+    let Value::UInt { number, .. } =
+        crate::decode_state_cell(length, "UIntRange<18446744073709551616>", "u64")?
+    else {
+        bail!("invalid constructor List length")
+    };
+    u64::try_from(number).map_err(|_| anyhow!("constructor List length exceeds UInt64"))
+}
+
+fn push_list_head(
+    slots: Array<StateValue<Db>, Db>,
+    slot: usize,
+    head: AlignedValue,
+) -> Result<Array<StateValue<Db>, Db>> {
+    let previous = slots
+        .get(slot)
+        .ok_or_else(|| anyhow!("constructor List slot is outside state"))?
+        .clone();
+    let length = constructor_list_length(&previous)?
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("constructor List length exceeds UInt64"))?;
+    let list = StateValue::Array(
+        vec![
+            StateValue::Cell(Sp::new(head)),
+            previous,
+            StateValue::Cell(Sp::new(AlignedValue::from(length))),
+        ]
+        .into(),
+    );
+    slots
+        .insert(slot, list)
+        .ok_or_else(|| anyhow!("constructor List slot is outside state"))
+}
+
 fn apply_set_inserts(
     plan: &Plan,
     inserts: &[SetInsert],
@@ -801,7 +916,6 @@ fn apply_list_pushes(
         bail!("constructor List state requires array storage")
     };
     let mut slots = state_slots.clone();
-    let mut lengths = BTreeMap::<usize, u64>::new();
     for push in pushes {
         let (slot, declaration) = plan
             .state
@@ -811,18 +925,8 @@ fn apply_list_pushes(
             .ok_or_else(|| anyhow!("unknown constructor List state"))?;
         let element_type = flat_scalar_list_type(declaration)?
             .ok_or_else(|| anyhow!("constructor List push requires a flat scalar List"))?;
-        if let Some(guard) = &push.guard {
-            let guard = evaluate(guard, environment)?;
-            ensure!(
-                guard.scalar_type() == ScalarType::Bool,
-                "constructor List push guard must be Bool"
-            );
-            let Value::Bool(guard) = guard else {
-                bail!("constructor List push guard must be Bool")
-            };
-            if !guard {
-                continue;
-            }
+        if !constructor_list_push_enabled(push.guard.as_ref(), environment)? {
+            continue;
         }
         let value = evaluate(&push.value, environment)?;
         ensure!(
@@ -831,25 +935,7 @@ fn apply_list_pushes(
         );
         value.validate()?;
         let head = crate::aligned_storage_cell(&value)?;
-        let length = lengths.entry(slot).or_default();
-        *length = length
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("constructor List length exceeds UInt64"))?;
-        let previous = slots
-            .get(slot)
-            .ok_or_else(|| anyhow!("constructor List slot is outside state"))?
-            .clone();
-        let list = StateValue::Array(
-            vec![
-                StateValue::Cell(Sp::new(head)),
-                previous,
-                StateValue::Cell(Sp::new(AlignedValue::from(*length))),
-            ]
-            .into(),
-        );
-        slots = slots
-            .insert(slot, list)
-            .ok_or_else(|| anyhow!("constructor List slot is outside state"))?;
+        slots = push_list_head(slots, slot, head)?;
     }
     Ok(ChargedState::new(StateValue::Array(slots)))
 }
