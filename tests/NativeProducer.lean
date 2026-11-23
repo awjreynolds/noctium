@@ -148,6 +148,22 @@ private def packBytes64 (outputs : List String) : Json :=
   (packingState {packedBytes with valueType := .native})
   (packBytes64 ["%low", "%middle", "%high"]))
 
+private def coordinateState : State := {
+  definitions := [("%point", {
+    term := .input "%point"
+    maximum := Field.modulus - 1
+    valueType := .jubjubPoint
+  })]
+}
+
+private def coordinateInstruction : Json := op "into_coordinates" [
+  ("point", toJson ("%point" : String)),
+  ("outputs", toJson (["%x", "%y"] : List String))]
+
+#guard match validateInstruction expected coordinateState coordinateInstruction with
+  | .ok _ => outputDefinitionsInInstruction coordinateInstruction == 2
+  | .error _ => false
+
 -- A primitive cannot acquire default privacy/effect behavior silently.
 example : True := by
   fail_if_success
