@@ -527,3 +527,27 @@ NOCTIUM_RECORD_MAP_COLLECTIONS_NODE=http://127.0.0.1:19944 \
   --no-default-features --features zkir-321,localnet \
   record_map_collections_finalize_distinct_keys_noop_and_reset -- --ignored --nocapture
 ```
+
+## Nested typed record-key Maps on the development ledger
+
+`NestedRecordMap` stores a UInt16 value under a flat Bool and UInt16 record key
+within each Bytes32 owner bucket. The pinned Ledger 9.1.0.1 development chain
+finalized the empty deployment at height 66409 and all seven calls through
+height 66430. The strict lookup read 11, and the removal changed the selected
+key’s membership from true to false. The finalized data matched native
+execution after every call and retained two owner buckets.
+[Lean fixture](../../tests/NestedRecordMap.lean) · [Finalized evidence](nested-record-map-localnet-receipt.json)
+
+Use `--emit ledger` on the ZKIR 3.2.1 target. Assemble authenticated bundles in
+subdirectories named `initializeOwner`, `upsert`, `lookup`, and `removeMemo`.
+The manifest pins are a JSON object keyed by entrypoint name.
+
+```sh
+NOCTIUM_NESTED_RECORD_MAP_NODE=http://127.0.0.1:19944 \
+NOCTIUM_NESTED_RECORD_MAP_BUNDLES=PATH_TO_BUNDLES \
+NOCTIUM_NESTED_RECORD_MAP_MANIFESTS=JSON_OF_MANIFEST_DIGESTS \
+NOCTIUM_NESTED_RECORD_MAP_PARAMETER_CACHE=PATH_TO_PUBLIC_PARAMETER_CACHE \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  nested_record_map_finalizes_and_preserves_outer_and_inner_siblings -- --ignored --nocapture
+```

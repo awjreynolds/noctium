@@ -2674,6 +2674,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/nested-record-map-localnet-receipt.json",
         "tests/NestedRecordMap.lean",
         "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
@@ -2797,6 +2798,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/nested-record-map-localnet-receipt.json",
         "tests/NestedRecordMap.lean",
         "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
@@ -2841,6 +2843,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/nested-record-map-localnet-receipt.json",
         "tests/NestedRecordMap.lean",
         "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
@@ -2886,6 +2889,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/nested-record-map-localnet-receipt.json",
         "tests/NestedRecordMap.lean",
         "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
