@@ -87,11 +87,19 @@ try {
       'new type Count = Uint<8>; struct Position { amount: Amount; count: Count; active: Boolean; } ledger position: Position; constructor() { position = Position { amount: 0 as Amount, count: 0 as Count, active: true }; }',
       'circuit invalid(value: Uint<8>): [] { position = Position { amount: disclose(value), count: 0 as Count, active: true }; return []; }',
       /mismatch between actual type Uint<8> and declared type Amount for field amount of struct/],
+    ['position-constructor-wrong-nominal',
+      'new type Count = Uint<8>; struct Position { amount: Amount; count: Count; active: Boolean; } ledger position: Position;',
+      'constructor(value: Count) { position = Position { amount: disclose(value), count: disclose(value), active: true }; }',
+      /mismatch between actual type Count and declared type Amount for field amount of struct/, ''],
+    ['position-constructor-implicit-raw',
+      'new type Count = Uint<8>; struct Position { amount: Amount; count: Count; active: Boolean; } ledger position: Position;',
+      'constructor(value: Uint<8>) { position = Position { amount: disclose(value), count: 0 as Count, active: true }; }',
+      /mismatch between actual type Uint<8> and declared type Amount for field amount of struct/, ''],
   ];
-  for (const [name, extra, circuit, diagnostic] of rejectedCases) {
+  for (const [name, extra, circuit, diagnostic, prefix = 'export '] of rejectedCases) {
     const source = join(scratch, name + '.compact');
     writeFileSync(source, ['pragma language_version 0.28;', 'import CompactStandardLibrary;', 'new type Amount = Uint<8>;',
-      extra, 'export ' + circuit].join('\n') + '\n');
+      extra, prefix + circuit].join('\n') + '\n');
     const result = spawnSync(compactc, ['--skip-zk', source, join(scratch, name)], { encoding: 'utf8' });
     assert.notEqual(result.status, 0, name);
     assert.match(result.stderr + result.stdout, diagnostic, name);
@@ -121,6 +129,14 @@ try {
     });
     return contract.circuits[name](context, ...args);
   }
+  const recordKey = new Uint8Array(32).fill(1);
+  const { currentContractState: recordState } = await contract.initialState(
+    compactRuntime.createConstructorContext(null, wallet), 7n, 19n, recordKey,
+  );
+  const initializedRecord = { amount: 19n, count: 7n, active: true };
+  assert.deepEqual(ledger(recordState.data).position, initializedRecord);
+  assert.deepEqual(ledger(recordState.data).positions.lookup(recordKey), initializedRecord);
+
   const initial = currentContractState.data;
   assert.equal((await invoke('get', initial)).result, 19n);
   assert.equal(ledger(initial).balances.member(2n), true);

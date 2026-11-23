@@ -67,6 +67,15 @@ pub enum ConstructorAction {
         map: String,
         key: Expr,
     },
+    InitializeRecordCell {
+        state: String,
+        fields: Vec<Expr>,
+    },
+    InsertRecordMap {
+        state: String,
+        key: Expr,
+        fields: Vec<Expr>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -326,6 +335,76 @@ fn flat_map_slot(plan: &Plan, name: &str) -> Result<(usize, ScalarType, ScalarTy
     Ok((slot, key_type, value_type))
 }
 
+fn record_cell_slot(
+    plan: &Plan,
+    name: &str,
+) -> Result<(usize, crate::CheckedRecordSchema)> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor record Cell state"))?;
+    ensure!(
+        declaration
+            .kind
+            .as_object()
+            .is_some_and(|kind| kind.len() == 1 && kind.contains_key("tree")),
+        "constructor record Cell initializer requires a root record Cell"
+    );
+    let tree = declaration
+        .kind
+        .get("tree")
+        .and_then(Json::as_object)
+        .filter(|tree| tree.len() == 1)
+        .ok_or_else(|| anyhow!("constructor record Cell initializer requires a root record Cell"))?;
+    let schema = tree
+        .get("composite")
+        .ok_or_else(|| anyhow!("constructor record Cell initializer requires a root record Cell"))?;
+    Ok((slot, crate::checked_cell_record_schema(schema)?))
+}
+
+fn record_map_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRecordSchema)> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor record Map state"))?;
+    ensure!(
+        declaration
+            .kind
+            .as_object()
+            .is_some_and(|kind| kind.len() == 1 && kind.contains_key("tree")),
+        "constructor record Map insert requires a root Bytes32 Map of records"
+    );
+    let tree = declaration
+        .kind
+        .get("tree")
+        .and_then(Json::as_object)
+        .filter(|tree| tree.len() == 1)
+        .ok_or_else(|| {
+            anyhow!("constructor record Map insert requires a root Bytes32 Map of records")
+        })?;
+    let map = tree
+        .get("map")
+        .and_then(Json::as_array)
+        .filter(|map| map.len() == 2)
+        .ok_or_else(|| {
+            anyhow!("constructor record Map insert requires a root Bytes32 Map of records")
+        })?;
+    ensure!(
+        crate::ledger_key_type(&map[0])? == ScalarType::Bytes32,
+        "constructor record Map key must be Bytes32"
+    );
+    let record = map[1]
+        .as_object()
+        .filter(|value| value.len() == 1)
+        .and_then(|value| value.get("composite"))
+        .ok_or_else(|| anyhow!("constructor record Map value must be a record"))?;
+    Ok((slot, crate::checked_typed_record_schema(record)?))
+}
+
 fn evaluate_map_insert(
     plan: &Plan,
     state: &str,
@@ -362,6 +441,16 @@ fn validate_ordered_action_targets(
         match action {
             ConstructorAction::MapInsert { state, .. } => {
                 flat_map_slot(plan, state)?;
+            }
+            ConstructorAction::InitializeRecordCell { state, .. } => {
+                record_cell_slot(plan, state)?;
+                ensure!(
+                    initialized.insert(state.clone()),
+                    "duplicate constructor initializer"
+                );
+            }
+            ConstructorAction::InsertRecordMap { state, .. } => {
+                record_map_slot(plan, state)?;
             }
             ConstructorAction::InitializeCellFromMapMember { state, map, .. } => {
                 flat_map_slot(plan, map)?;
@@ -432,6 +521,40 @@ fn apply_ordered_actions(
                 slots = slots
                     .insert(slot, StateValue::Map(map))
                     .ok_or_else(|| anyhow!("constructor Map slot is outside state"))?;
+            }
+            ConstructorAction::InitializeRecordCell {
+                state: cell_name,
+                fields,
+            } => {
+                let (slot, schema) = record_cell_slot(plan, cell_name)?;
+                let values = crate::record_values_from_expressions(&schema, fields, environment)?;
+                let value = crate::aligned_record_value(&schema, &values)?;
+                slots = slots
+                    .insert(slot, StateValue::Cell(Sp::new(value)))
+                    .ok_or_else(|| anyhow!("constructor record Cell slot is outside state"))?;
+            }
+            ConstructorAction::InsertRecordMap {
+                state: map_name,
+                key,
+                fields,
+            } => {
+                let (slot, schema) = record_map_slot(plan, map_name)?;
+                let key_value = evaluate(key, environment)?;
+                ensure!(
+                    key_value.scalar_type() == ScalarType::Bytes32,
+                    "constructor record Map key type mismatch"
+                );
+                crate::validate_ledger_key_value(&ScalarType::Bytes32, &key_value)?;
+                let key = crate::aligned(&key_value, "bytes32")?;
+                let values = crate::record_values_from_expressions(&schema, fields, environment)?;
+                let value = crate::aligned_record_value(&schema, &values)?;
+                let Some(StateValue::Map(map)) = slots.get(slot) else {
+                    bail!("constructor record Map state requires map storage")
+                };
+                let map = map.insert(key, StateValue::Cell(Sp::new(value)));
+                slots = slots
+                    .insert(slot, StateValue::Map(map))
+                    .ok_or_else(|| anyhow!("constructor record Map slot is outside state"))?;
             }
             ConstructorAction::InitializeCellFromMapMember {
                 state: cell_name,
@@ -704,7 +827,16 @@ pub fn construct_state(
             if collection_default {
                 continue;
             }
-            cell_type(declaration)?;
+            if declaration
+                .kind
+                .get("tree")
+                .and_then(|tree| tree.get("composite"))
+                .is_some()
+            {
+                record_cell_slot(plan, &declaration.name)?;
+            } else {
+                cell_type(declaration)?;
+            }
             ensure!(
                 initialized.contains(declaration.name.as_str()),
                 "sealed cell lacks constructor initialization"
