@@ -196,6 +196,7 @@ jobs:
           lake env lean tests/ShieldedSendResult.lean
           lake env lean tests/QualifiedCoinSet.lean
           lake env lean tests/QualifiedCoinList.lean
+          lake env lean tests/NestedQualifiedCoinList.lean
           lake env lean tests/QualifiedCoinRecipient.lean
           lake env lean tests/NominalShieldedRecipients.lean
           lake env lean tests/TypedPublicAddress.lean

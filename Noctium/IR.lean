@@ -991,16 +991,18 @@ inductive Effect where
   | writeShieldedCoinCellTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient : Expr (.bytes 32))
-  /-- Push a transaction-booked self-recipient shielded coin to a root List.
-  The backend obtains the coin's current transaction index from ledger context. -/
+  /-- Push a transaction-booked self-recipient shielded coin to a root or
+  one-level Bytes32-keyed List. The backend obtains the coin's current
+  transaction index from ledger context. -/
   | pushFrontCoin (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
+      (keys : List PathKey)
   /-- Push a transaction-booked coin for an explicit wallet or contract
-  recipient to a qualified coin List. The runtime gets its index from the
-  current transaction context. -/
+  recipient to a root or one-level Bytes32-keyed qualified coin List. The
+  runtime gets its index from the current transaction context. -/
   | pushFrontCoinTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
-      (recipient : Expr (.bytes 32))
+      (recipient : Expr (.bytes 32)) (keys : List PathKey)
   /-- Spend the exact coin record read from a Bytes32-keyed tree Map entry.
   The backend derives native nullifier and output-commitment claims. -/
   | spendShieldedFromMap (state : String) (nonce color : Expr (.bytes 32))
@@ -2036,24 +2038,38 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         isContract.validate caps env
         recipient.validate caps env
         pure []
-      | .pushFrontCoin state nonce color amount selfAddress => do
+      | .pushFrontCoin state nonce color amount selfAddress keys => do
         if !caps.stateMaps then throw "target lacks state maps"
+        for key in keys do key.validate caps env
         let some declaration := decls.find? (·.name == state)
           | throw s!"unknown qualified shielded coin List '{state}'"
-        let .tree (.list compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin push requires a root List '{state}'"
+        let .tree treeSchema := declaration.kind
+          | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
+        let oneBytes32Key := match keys with
+          | [key] => key.ty == .bytes 32
+          | _ => false
+        unless keys.isEmpty || oneBytes32Key do
+          throw s!"qualified shielded coin push supports only a root List or one Bytes32-keyed List '{state}'"
+        let (compositeEnv, recordType, _) ← treeSchema.listPath keys
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
         color.validate caps env
         amount.validate caps env
         selfAddress.validate caps env
         pure []
-      | .pushFrontCoinTo state nonce color amount isContract recipient => do
+      | .pushFrontCoinTo state nonce color amount isContract recipient keys => do
         if !caps.stateMaps then throw "target lacks state maps"
+        for key in keys do key.validate caps env
         let some declaration := decls.find? (·.name == state)
           | throw s!"unknown qualified shielded coin List '{state}'"
-        let .tree (.list compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin push requires a root List '{state}'"
+        let .tree treeSchema := declaration.kind
+          | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
+        let oneBytes32Key := match keys with
+          | [key] => key.ty == .bytes 32
+          | _ => false
+        unless keys.isEmpty || oneBytes32Key do
+          throw s!"qualified shielded coin push supports only a root List or one Bytes32-keyed List '{state}'"
+        let (compositeEnv, recordType, _) ← treeSchema.listPath keys
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
         color.validate caps env

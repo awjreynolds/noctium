@@ -1461,31 +1461,35 @@ private def resolveListState (state : List StateDecl) (name : String)
   schema.listPath keys
 
 private def pushFrontCoinOp (state : List StateDecl) (name : String)
+    (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (selfAddress : Expr (.bytes 32)) : Except String Op := do
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
-  let (environment, recordType, fields) ← resolveListState state name []
+  let (environment, recordType, fields) ← resolveListState state name keys
   let expectedFields ← LedgerValueType.shieldedCoinRecordFields environment recordType
   unless fields == expectedFields do
     throw "qualified shielded coin List must use the exact shielded coin record"
   let schema ← listElementOperationSchema environment recordType
+  let keys ← nativePathKeys keys
   let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
-  pure (.listPushFrontCoin slot [] schema nonce color amount commitment)
+  pure (.listPushFrontCoin slot keys schema nonce color amount commitment)
 
 private def pushFrontCoinToOp (state : List StateDecl) (name : String)
+    (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (isContract : Expr .bool) (recipient : Expr (.bytes 32)) : Except String Op := do
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
-  let (environment, recordType, fields) ← resolveListState state name []
+  let (environment, recordType, fields) ← resolveListState state name keys
   let expectedFields ← LedgerValueType.shieldedCoinRecordFields environment recordType
   unless fields == expectedFields do
     throw "qualified shielded coin List must use the exact shielded coin record"
   let schema ← listElementOperationSchema environment recordType
+  let keys ← nativePathKeys keys
   let commitment := shieldedCoinDigestForRecipient
     "midnight:zswap-cc[v1]" nonce color amount isContract recipient
-  pure (.listPushFrontCoinTo slot [] schema nonce color amount isContract recipient commitment)
+  pure (.listPushFrontCoinTo slot keys schema nonce color amount isContract recipient commitment)
 
 private def mapSizeOp (state : List StateDecl) (name destination : String)
     (keys : List PathKey) : Except String Op := do
@@ -1857,11 +1861,11 @@ def appendEffect (state : List StateDecl) (effect : Effect)
       "midnight:zswap-cc[v1]" nonce color amount isContract recipient
     pure {plan with operations := plan.operations ++ [
       .writeShieldedCoinCellTo slot nonce color amount isContract recipient commitment]}
-  | .pushFrontCoin stateName nonce color amount selfAddress => do
-    let operation ← pushFrontCoinOp state stateName nonce color amount selfAddress
+  | .pushFrontCoin stateName nonce color amount selfAddress keys => do
+    let operation ← pushFrontCoinOp state stateName keys nonce color amount selfAddress
     pure {plan with operations := plan.operations ++ [operation]}
-  | .pushFrontCoinTo stateName nonce color amount isContract recipient => do
-    let operation ← pushFrontCoinToOp state stateName nonce color amount isContract recipient
+  | .pushFrontCoinTo stateName nonce color amount isContract recipient keys => do
+    let operation ← pushFrontCoinToOp state stateName keys nonce color amount isContract recipient
     pure {plan with operations := plan.operations ++ [operation]}
   | .spendShieldedFromMap _ nonce color amount recipient selfAddress =>
     pure {plan with operations := plan.operations ++ [
@@ -2645,11 +2649,11 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
       "midnight:zswap-cc[v1]" nonce color amount isContract recipient
     plan := {plan with operations := plan.operations ++ [
       .writeShieldedCoinCellTo slot nonce color amount isContract recipient commitment]}
-  | .pushFrontCoin stateName nonce color amount selfAddress => do
-    let operation ← pushFrontCoinOp state stateName nonce color amount selfAddress
+  | .pushFrontCoin stateName nonce color amount selfAddress keys => do
+    let operation ← pushFrontCoinOp state stateName keys nonce color amount selfAddress
     plan := {plan with operations := plan.operations ++ [operation]}
-  | .pushFrontCoinTo stateName nonce color amount isContract recipient => do
-    let operation ← pushFrontCoinToOp state stateName nonce color amount isContract recipient
+  | .pushFrontCoinTo stateName nonce color amount isContract recipient keys => do
+    let operation ← pushFrontCoinToOp state stateName keys nonce color amount isContract recipient
     plan := {plan with operations := plan.operations ++ [operation]}
   | .spendShieldedFromMap _ nonce color amount recipient selfAddress =>
     plan := {plan with operations := plan.operations ++ [

@@ -432,8 +432,8 @@ scoped syntax "insertShieldedCoinSet" "(" ident "," nlexpr "," nlexpr "," nlexpr
 scoped syntax "insertShieldedCoinSet" "(" ident "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "writeShieldedCoinCell" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "writeShieldedCoinCell" "(" ident "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
-scoped syntax "pushFrontCoin" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
-scoped syntax "pushFrontCoin" "(" ident "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
+scoped syntax "pushFrontCoin" "(" nlpath "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
+scoped syntax "pushFrontCoin" "(" nlpath "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "spendShieldedFromMap" "(" ident "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "mergeShieldedFromMap" "(" ident "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "mergeShieldedImmediateFromMap" "(" ident "," nlexpr "," nlexpr "," nlexpr
@@ -1869,6 +1869,26 @@ private def lowerListPath (schema : List (String × StateKind)) (env : Bindings)
     | .ok fields => pure fields
     | .error message => throwErrorAt path message
   pure (storage, ← pathKeysTerm keys, environment, type, fields)
+
+private def lowerQualifiedCoinListPath (schema : List (String × StateKind))
+    (env : Bindings) (path : TSyntax `nlpath) :
+    CommandElabM (TSyntax `ident × TSyntax `term) := do
+  let (storage, sourceKeys) ← sourcePathParts path
+  let treeSchema ← treeStateSchema schema storage
+  let supportedShape := match treeSchema, sourceKeys with
+    | .«list» .., [] => _root_.Bool.true
+    | .map (.bytes 32) _, [_] => _root_.Bool.true
+    | _, _ => _root_.Bool.false
+  unless supportedShape do
+    throwErrorAt path
+      "pushFrontCoin supports a root qualified coin List or one Bytes32-keyed nested List"
+  let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
+  let .«list» environment recordType := selected
+    | throwErrorAt path "pushFrontCoin path must select a qualified coin List"
+  match LedgerValueType.shieldedCoinRecordFields environment recordType with
+  | .ok _ => pure ()
+  | .error message => throwErrorAt path message
+  pure (storage, ← pathKeysTerm keys)
 
 private def counterPathTerm (env : Bindings) (schema : LedgerValueType)
     (keys : List (TSyntax `nlexpr)) : CommandElabM (TSyntax `term) := do
@@ -3373,40 +3393,30 @@ private def elaborateEffect (schema : List (String × StateKind))
         terms := state.terms.push writeTerm
         spans := state.spans.push span
         guards := state.guards.push noGuard}
-    | `(nlupdate| pushFrontCoin($storage:ident, $nonce:nlexpr,
+    | `(nlupdate| pushFrontCoin($path:nlpath, $nonce:nlexpr,
         $color:nlexpr, $amount:nlexpr, $isContract:nlexpr, $recipient:nlexpr)) => do
       unless depth == 0 do
         throwErrorAt update "pushFrontCoin must be unguarded"
       match guard with
       | `(term| none) => pure ()
       | _ => throwErrorAt update "pushFrontCoin must be unguarded"
-      let treeSchema ← treeStateSchema schema storage
-      let .«list» environment recordType := treeSchema
-        | throwErrorAt storage "pushFrontCoin requires a root qualified coin List"
-      match LedgerValueType.shieldedCoinRecordFields environment recordType with
-      | .ok _ => pure ()
-      | .error message => throwErrorAt storage message
+      let (storage, keys) ← lowerQualifiedCoinListPath schema state.env path
       let nonce ← checkedExpression state.env nonce (.bytes 32)
       let color ← checkedExpression state.env color (.bytes 32)
       let amount ← checkedExpression state.env amount (.uint (2 ^ 128 - 1))
       let isContract ← checkedExpression state.env isContract .bool
       let recipient ← checkedExpression state.env recipient (.bytes 32)
       let pushTerm ← `(Noctium.Effect.pushFrontCoinTo
-        $(stringTerm storage.getId.toString) $nonce $color $amount $isContract $recipient)
+        $(stringTerm storage.getId.toString) $nonce $color $amount $isContract $recipient $keys)
       state := {state with terms := state.terms.push pushTerm}
-    | `(nlupdate| pushFrontCoin($storage:ident, $nonce:nlexpr,
+    | `(nlupdate| pushFrontCoin($path:nlpath, $nonce:nlexpr,
         $color:nlexpr, $amount:nlexpr)) => do
       unless depth == 0 do
         throwErrorAt update "pushFrontCoin must be unguarded"
       match guard with
       | `(term| none) => pure ()
       | _ => throwErrorAt update "pushFrontCoin must be unguarded"
-      let treeSchema ← treeStateSchema schema storage
-      let .«list» environment recordType := treeSchema
-        | throwErrorAt storage "pushFrontCoin requires a root qualified coin List"
-      match LedgerValueType.shieldedCoinRecordFields environment recordType with
-      | .ok _ => pure ()
-      | .error message => throwErrorAt storage message
+      let (storage, keys) ← lowerQualifiedCoinListPath schema state.env path
       let nonce ← checkedExpression state.env nonce (.bytes 32)
       let color ← checkedExpression state.env color (.bytes 32)
       let amount ← checkedExpression state.env amount (.uint (2 ^ 128 - 1))
@@ -3418,7 +3428,7 @@ private def elaborateEffect (schema : List (String × StateKind))
       state ← bindReadName state addressName addressName (.bytes 32)
       let selfAddress ← `(@Noctium.Expr.ref (Noctium.Ty.bytes 32) $(stringTerm addressName))
       let pushTerm ← `(Noctium.Effect.pushFrontCoin
-        $(stringTerm storage.getId.toString) $nonce $color $amount $selfAddress)
+        $(stringTerm storage.getId.toString) $nonce $color $amount $selfAddress $keys)
       let noGuard ← `(none)
       state := {state with
         terms := state.terms.push pushTerm

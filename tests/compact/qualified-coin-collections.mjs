@@ -84,4 +84,33 @@ assert.deepEqual(
   [qualifiedFirst, qualifiedSecond],
 );
 
+const owners = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
+const thirdCoin = { color: coin.color, nonce: new Uint8Array(32).fill(4), value: 11n };
+let nestedState = currentContractState.data;
+const nestedLists = () => owners.map(owner => [...ledger(nestedState).coinLists.lookup(owner)]);
+for (const owner of owners) {
+  const { context } = await contract.circuits.initializeOwner(
+    contextFor('initializeOwner', nestedState), owner,
+  );
+  nestedState = context.callContext.currentQueryContext.state;
+}
+
+await assert.rejects(contract.circuits.putInNestedList(
+  contextFor('putInNestedList', nestedState), owners[0], coin, false,
+), /Coin commitment not found/);
+assert.deepEqual(nestedLists(), [[], []]);
+
+for (const [owner, entry] of [[owners[0], coin], [owners[1], thirdCoin], [owners[0], secondCoin]]) {
+  const { context } = await contract.circuits.putInNestedList(
+    contextFor('putInNestedList', nestedState), owner, entry, true,
+  );
+  const query = context.callContext.currentQueryContext;
+  assert.equal(query.effects.claimedShieldedReceives.length, 1);
+  nestedState = query.state;
+}
+assert.deepEqual(nestedLists(), [
+  [qualifiedSecond, qualifiedFirst],
+  [{ ...thirdCoin, mt_index: 0n }],
+]);
+
 console.log(JSON.stringify(receipt, null, 2));
