@@ -21,16 +21,21 @@ export ledger routes: Map<Bytes<32>, Route>;
 export ledger routeLists: Map<Bytes<32>, List<Route>>;
 export ledger deepRoutes: Map<Bytes<32>, Map<Bytes<32>, Route>>;
 export ledger deepRouteLists: Map<Bytes<32>, Map<Bytes<32>, List<Route>>>;
+export ledger recordKeyRoutes: Map<RouteKey, Route>;
+export ledger recordKeyTargets: Map<RouteKey, TypedRefUpdate>;
+export ledger nestedRecordKeyRoutes: Map<Bytes<32>, Map<RouteKey, Route>>;
 
 struct Route { target: TypedRefUpdate, enabled: Boolean }
+struct RouteKey { target: TypedRefUpdate, enabled: Boolean }
 
-constructor(targetRef: TypedRefUpdate) {
+constructor(keyTargetRef: TypedRefUpdate, targetRef: TypedRefUpdate) {
   target = disclose(targetRef);
   echoes = 0 as Uint<8>;
   const routeKey = 0 as Bytes<32>;
   const parentKey = 0 as Bytes<32>;
   const deepRouteKey = 1 as Bytes<32>;
   const route = Route{target: disclose(targetRef), enabled: disclose(true)};
+  const recordKey = RouteKey{target: disclose(keyTargetRef), enabled: disclose(true)};
   routes.insert(disclose(routeKey), disclose(route));
   routeLists.insertDefault(disclose(routeKey));
   routeLists.lookup(disclose(routeKey)).pushFront(disclose(route));
@@ -39,6 +44,10 @@ constructor(targetRef: TypedRefUpdate) {
   deepRouteLists.insertDefault(disclose(parentKey));
   deepRouteLists.lookup(disclose(parentKey)).insertDefault(disclose(deepRouteKey));
   deepRouteLists.lookup(disclose(parentKey)).lookup(disclose(deepRouteKey)).pushFront(disclose(route));
+  recordKeyRoutes.insert(disclose(recordKey), disclose(route));
+  recordKeyTargets.insert(disclose(recordKey), disclose(targetRef));
+  nestedRecordKeyRoutes.insertDefault(disclose(parentKey));
+  nestedRecordKeyRoutes.lookup(disclose(parentKey)).insert(disclose(recordKey), disclose(route));
 }
 
 export circuit echo(value: TypedRefValue): TypedRefValue {
@@ -73,5 +82,25 @@ export circuit forwardDeepRouteList(parentKey: Bytes<32>, key: Bytes<32>, amount
   const route = deepRouteLists.lookup(disclose(parentKey)).lookup(disclose(key)).head();
   assert(route.is_some, "missing route");
   if (route.value.enabled) { return route.value.target.update(disclose(amount)); }
+  return 0 as Uint<8>;
+}
+
+export circuit forwardRecordKeyRoute(targetRef: TypedRefUpdate, amount: Uint<8>): Uint<8> {
+  const key = RouteKey{target: disclose(targetRef), enabled: disclose(true)};
+  const route = recordKeyRoutes.lookup(disclose(key));
+  if (route.enabled) { return route.target.update(disclose(amount)); }
+  return 0 as Uint<8>;
+}
+
+export circuit forwardRecordKeyTarget(targetRef: TypedRefUpdate, amount: Uint<8>): Uint<8> {
+  const key = RouteKey{target: disclose(targetRef), enabled: disclose(true)};
+  return recordKeyTargets.lookup(disclose(key)).update(disclose(amount));
+}
+
+export circuit forwardNestedRecordKeyRoute(parentKey: Bytes<32>, targetRef: TypedRefUpdate,
+                                           amount: Uint<8>): Uint<8> {
+  const key = RouteKey{target: disclose(targetRef), enabled: disclose(true)};
+  const route = nestedRecordKeyRoutes.lookup(disclose(parentKey)).lookup(disclose(key));
+  if (route.enabled) { return route.target.update(disclose(amount)); }
   return 0 as Uint<8>;
 }

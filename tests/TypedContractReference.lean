@@ -1,6 +1,9 @@
 import Noctium.Frontend
+import Noctium.Backend.Impact
+import Noctium.Backend.Zkir
 
 open scoped Noctium
+open Noctium
 
 noctium_circuit typedRefTargetInput where
   private amount : UInt 8
@@ -527,3 +530,175 @@ noctium_contract RawSelectorForTypedRef where
     claimContractCall(route, bytes(32, ""), 1)
   end
 end
+
+noctium_circuit typedRefRecordKeyInsertInputs where
+  private keyTarget : ContractRef TypedRefUpdate
+  private replacement : ContractRef TypedRefUpdate
+end
+
+noctium_circuit typedRefRecordKeyForwardInputs where
+  private keyTarget : ContractRef TypedRefUpdate
+  private opening : Native
+  private amount : UInt 8
+  private expected : UInt 8
+end
+
+noctium_circuit typedRefRecordKeyNestedInitInputs where
+  private owner : Bytes32
+end
+
+noctium_circuit typedRefRecordKeyNestedInsertInputs where
+  private owner : Bytes32
+  private keyTarget : ContractRef TypedRefUpdate
+  private replacement : ContractRef TypedRefUpdate
+end
+
+noctium_circuit typedRefRecordKeyNestedForwardInputs where
+  private owner : Bytes32
+  private keyTarget : ContractRef TypedRefUpdate
+  private opening : Native
+  private amount : UInt 8
+  private expected : UInt 8
+end
+
+noctium_contract TypedRefRecordKeyCaller where
+  tree routes : struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  tree direct : struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => ContractRef TypedRefUpdate
+  tree nested : Bytes32 => struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+
+  entry insertRoute uses typedRefRecordKeyInsertInputs arguments [keyTarget, replacement] where
+    insert routes[fields(disclose(keyTarget), true)] := fields(disclose(replacement), true)
+    insert direct[fields(disclose(keyTarget), true)] := disclose(replacement)
+  end
+
+  entry forward uses typedRefRecordKeyForwardInputs
+      arguments [keyTarget, opening, amount, expected] where
+    read routes[fields(disclose(keyTarget), true)] as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+
+  entry forwardDirect uses typedRefRecordKeyForwardInputs
+      arguments [keyTarget, opening, amount, expected] where
+    read direct[fields(disclose(keyTarget), true)] as target
+    claimContractCall(target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+
+  entry initializeOwner uses typedRefRecordKeyNestedInitInputs arguments [owner] where
+    member nested[disclose(owner)] as ownerPresent
+    when eq(ownerPresent, false) insertDefault nested[disclose(owner)]
+  end
+
+  entry insertNestedRoute uses typedRefRecordKeyNestedInsertInputs
+      arguments [owner, keyTarget, replacement] where
+    insert nested[disclose(owner)][fields(disclose(keyTarget), true)] :=
+      fields(disclose(replacement), true)
+  end
+
+  entry forwardNested uses typedRefRecordKeyNestedForwardInputs
+      arguments [owner, keyTarget, opening, amount, expected] where
+    read nested[disclose(owner)][fields(disclose(keyTarget), true)] as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+noctium_circuit typedRefRecordKeyWrongKeyInputs where
+  private keyTarget : ContractRef TypedRefOther
+  private replacement : ContractRef TypedRefUpdate
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract TypedRefRecordKeyWrongInterfaceKey where
+  tree routes : struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses typedRefRecordKeyWrongKeyInputs arguments [keyTarget, replacement] where
+    insert routes[fields(disclose(keyTarget), true)] := fields(disclose(replacement), true)
+  end
+end
+
+noctium_circuit typedRefRecordKeyWrongValueInputs where
+  private keyTarget : ContractRef TypedRefUpdate
+  private replacement : ContractRef TypedRefOther
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract TypedRefRecordKeyWrongInterfaceValue where
+  tree routes : struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses typedRefRecordKeyWrongValueInputs arguments [keyTarget, replacement] where
+    insert routes[fields(disclose(keyTarget), true)] := fields(disclose(replacement), true)
+  end
+end
+
+noctium_circuit typedRefRecordKeyRawKeyInputs where
+  private rawKey : Bytes32
+  private replacement : ContractRef TypedRefUpdate
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract TypedRefRecordKeyRawKey where
+  tree routes : struct Key {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  } => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses typedRefRecordKeyRawKeyInputs arguments [rawKey, replacement] where
+    insert routes[fields(disclose(rawKey), true)] := fields(disclose(replacement), true)
+  end
+end
+
+private def typedRefRecordKeyEntry (name : String) : Entrypoint :=
+  (TypedRefRecordKeyCaller.entrypoints.find? (·.name == name)).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+#guard (TypedRefRecordKeyCaller.validate Capabilities.source).isOk
+#guard TypedRefRecordKeyCaller.entrypoints.all fun operation =>
+  operation.validate Capabilities.source TypedRefRecordKeyCaller.state |>.isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "insertRoute")).isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "forward")).isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "forwardDirect")).isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "initializeOwner")).isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "insertNestedRoute")).isOk
+#guard (Backend.Impact.lower TypedRefRecordKeyCaller.state
+  (typedRefRecordKeyEntry "forwardNested")).isOk
+#guard TypedRefRecordKeyCaller.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint TypedRefRecordKeyCaller.state operation).isOk
