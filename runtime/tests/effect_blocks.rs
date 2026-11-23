@@ -113,11 +113,9 @@ fn nested_effect_blocks_bind_branch_locals_and_preserve_order() {
         Some(root) => {
             let default = fixture(Some(&root.join("default")));
             let dedup = fixture(Some(&root.join("dedup")));
-            assert!(
-                dedup.range_checks < default.range_checks,
-                "range dedup must reduce constrain_bits instructions (default {}, dedup {})",
-                default.range_checks,
-                dedup.range_checks
+            assert_eq!(
+                default.range_checks, dedup.range_checks,
+                "both pinned 3.2.1 build modes deduplicate range checks"
             );
             vec![default, dedup]
         }
