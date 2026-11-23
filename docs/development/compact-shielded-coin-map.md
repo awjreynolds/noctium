@@ -208,6 +208,24 @@ NOCTIUM_PARTIAL_SPEND_SPEND_MANIFEST_SHA256=YOUR_SPEND_MANIFEST_SHA256 \
   funded_shielded_map_partial_spend_localnet -- --ignored --nocapture
 ```
 
+## Partial immediate send with contract change
+
+The [Compact 0.36.1 fixture](../../tests/compact/ImmediateShieldedChange.compact) receives five units, uses `sendImmediateShielded` to send two to a user, and returns three as change. The [Noctium fixture](../../tests/ShieldedImmediateChange.lean) stages the five-unit transient in its Map within the same call. The checked send consumes the transient, removes its key, and books the three-unit change under its derived nonce.
+
+Ledger 9.1.0.1 finalized the Noctium call at block 113. The recipient decrypted two units at index 28, and the contract Map held three at index 29. The transient used index 30, and its nullifier appeared in finalized Zswap state. The host rejected a request for six units before submission. The pinned ZKIR tool measured k=15 and 25,793 rows for this circuit. [Localnet receipt](shielded-immediate-change-localnet-receipt.json)
+
+The development host path covers the five-to-two-plus-three case. Compile `tests/ShieldedImmediateChange.lean` for the 3.2.1 profile and [assemble the public bundle](portable-artifacts.md) before running the funded check on an isolated development node.
+
+```sh
+NOCTIUM_IMMEDIATE_CHANGE_NODE=http://127.0.0.1:19944 \
+NOCTIUM_IMMEDIATE_CHANGE_PARAMETER_CACHE=/path/to/verified/parameter-cache \
+NOCTIUM_IMMEDIATE_CHANGE_BUNDLE=/path/to/bundle \
+NOCTIUM_IMMEDIATE_CHANGE_MANIFEST_SHA256=YOUR_MANIFEST_SHA256 \
+  cargo test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  funded_shielded_immediate_change_localnet -- --ignored --nocapture
+```
+
 ## Merge two finalized coins
 
 `mergeShieldedFromMap(pot, nonceA, nonceB)` consumes two distinct, finalized contract-owned coins of the same color. It uses a checked UInt128 sum and derives the new nonce from the first coin. The native host checks both nullifiers and their Merkle roots and owner after the ledger normalizes the offer order. The proved call claims the exact output commitment and stores one new qualified coin.
