@@ -1390,18 +1390,30 @@ def listElementOperationSchema (environment : Types.CompositeEnv)
   match type with
   | .scalar ty => pure (Lean.Json.str (Noctium.NativeExpression.typeName ty))
   | _ => do
-    match LedgerValueType.recordFields environment type with
-    | .ok _ => recordSchema environment type
-    | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+    let nested : Bool := match type with
+      | .structure id =>
+        let declaration := environment.structures.find? (fun item : Types.StructDecl => item.id == id)
+        declaration.any fun item : Types.StructDecl =>
+          item.fields.any fun field : Types.Field => match field.type with
+            | .structure _ => true
+            | _ => false
+      | _ => false
+    if nested then do
+      let compiled ← (Types.compileType environment type).mapError Types.LayoutDiagnostic.message
+      Types.schemaJson compiled
+    else do
+      match LedgerValueType.recordFields environment type with
       | .ok _ => recordSchema environment type
-      | .error _ => do
-        let fields ← LedgerValueType.listElementFields environment type
-        let .structure id := type | throw "List records must be named structures"
-        pure <| Lean.Json.mkObj [
-          ("id", Lean.toJson id),
-          ("fields", Lean.toJson (fields.map fun (name, ty) => Lean.Json.mkObj [
-            ("name", Lean.toJson name),
-            ("type", Lean.toJson (Noctium.NativeExpression.typeName ty))]))]
+      | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
+        | .ok _ => recordSchema environment type
+        | .error _ => do
+          let fields ← LedgerValueType.listElementFields environment type
+          let .structure id := type | throw "List records must be named structures"
+          pure <| Lean.Json.mkObj [
+            ("id", Lean.toJson id),
+            ("fields", Lean.toJson (fields.map fun (name, ty) => Lean.Json.mkObj [
+              ("name", Lean.toJson name),
+              ("type", Lean.toJson (Noctium.NativeExpression.typeName ty))]))]
 
 private def listHeadParts (environment : Types.CompositeEnv)
     (type : Types.CompositeType) (destination : String)

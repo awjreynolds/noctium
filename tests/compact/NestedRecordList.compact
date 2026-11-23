@@ -1,0 +1,26 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Inner {
+  first: Field;
+  active: Boolean;
+}
+
+struct Envelope {
+  memo: Inner;
+  tag: Field;
+}
+
+export ledger records: List<Envelope>;
+
+export circuit push(envelope: Envelope): [] {
+  records.pushFront(disclose(envelope));
+}
+
+export circuit head(): Maybe<Envelope> {
+  return records.head();
+}
+
+export circuit pop(): [] {
+  records.popFront();
+}

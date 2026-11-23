@@ -2420,7 +2420,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
                         )
                     }
                     None => {
-                        let parsed = checked_typed_record_schema(schema)?;
+                        let parsed = checked_list_record_schema(schema)?;
                         ensure!(
                             expressions.len() == parsed.fields.len(),
                             "list record expression count mismatch"
@@ -3070,7 +3070,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             );
             return Ok(());
         }
-        checked_typed_record_schema(
+        checked_list_record_schema(
             parts
                 .get("composite")
                 .ok_or_else(|| anyhow!("List requires a scalar or record element"))?,
@@ -3524,6 +3524,77 @@ fn record_type_name(ty: &ScalarType) -> Result<Cow<'static, str>> {
     })
 }
 
+fn nested_native_bool_aggregate_fields(json: &Json) -> Result<Vec<RecordField>> {
+    fn scalar_type(layout: &Json) -> Result<ScalarType> {
+        ensure!(
+            layout.get("kind").and_then(Json::as_str) == Some("scalar"),
+            "nested List record fields must be Native or Bool scalars"
+        );
+        match layout
+            .get("leaf")
+            .and_then(|leaf| leaf.get("kind"))
+            .and_then(Json::as_str)
+        {
+            Some("native") => Ok(ScalarType::Native),
+            Some("bool") => Ok(ScalarType::Bool),
+            _ => bail!("nested List record fields must be Native or Bool scalars"),
+        }
+    }
+
+    let layout = json
+        .get("layout")
+        .ok_or_else(|| anyhow!("aggregate List record is missing its layout"))?;
+    ensure!(
+        layout.get("kind").and_then(Json::as_str) == Some("struct"),
+        "nested List record must have a struct root"
+    );
+    let fields = layout
+        .get("fields")
+        .and_then(Json::as_array)
+        .ok_or_else(|| anyhow!("aggregate List record fields are missing"))?;
+    let mut result = Vec::new();
+    let mut has_nested_record = false;
+
+    for field in fields {
+        let child = field
+            .get("layout")
+            .ok_or_else(|| anyhow!("aggregate List record field is missing its layout"))?;
+        match child.get("kind").and_then(Json::as_str) {
+            Some("scalar") => result.push(RecordField {
+                name: None,
+                ty: scalar_type(child)?,
+            }),
+            Some("struct") => {
+                has_nested_record = true;
+                let nested_fields = child
+                    .get("fields")
+                    .and_then(Json::as_array)
+                    .ok_or_else(|| anyhow!("nested List record fields are missing"))?;
+                ensure!(
+                    !nested_fields.is_empty(),
+                    "nested List record must contain at least one field"
+                );
+                for nested_field in nested_fields {
+                    let leaf = nested_field
+                        .get("layout")
+                        .ok_or_else(|| anyhow!("nested List record field is missing its layout"))?;
+                    result.push(RecordField {
+                        name: None,
+                        ty: scalar_type(leaf)?,
+                    });
+                }
+            }
+            _ => bail!("nested List records support one level of Native/Bool fields"),
+        }
+    }
+
+    ensure!(
+        has_nested_record && !result.is_empty(),
+        "List record extension requires one nested record with Native/Bool fields"
+    );
+    Ok(result)
+}
+
 fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Legacy)
 }
@@ -3539,7 +3610,12 @@ fn checked_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
 enum RecordScope {
     Legacy,
     Typed,
+    List,
     Cell,
+}
+
+fn checked_list_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    checked_record_schema_fields(json, RecordScope::List)
 }
 
 fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<CheckedRecordSchema> {
@@ -3571,16 +3647,37 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
     if json.get("schemaVersion").is_some() {
         let schema = aggregates::Schema::from_json(&serde_json::to_vec(json)?)?;
         ensure!(
-            schema.counts().leaves > 0 && schema.native_field_only(),
-            "record requires nonempty Native leaves"
+            schema.counts().leaves > 0,
+            "record requires nonempty scalar leaves"
         );
-        return Ok(CheckedRecordSchema {
-            fields: (0..schema.counts().leaves)
+        let fields: Vec<RecordField> = if schema.native_field_only() {
+            (0..schema.counts().leaves)
                 .map(|_| RecordField {
                     name: None,
                     ty: ScalarType::Native,
                 })
-                .collect(),
+                .collect()
+        } else {
+            ensure!(
+                matches!(&scope, RecordScope::List),
+                "record requires Native leaves or a nested Native/Bool List record"
+            );
+            let fields = nested_native_bool_aggregate_fields(json)?;
+            let leaf_types = schema.leaf_types()?;
+            ensure!(
+                fields.len() == leaf_types.len(),
+                "nested List record leaf count mismatch"
+            );
+            for (field, leaf_type) in fields.iter().zip(leaf_types) {
+                ensure!(
+                    record_type_name(&field.ty)?.as_ref() == leaf_type,
+                    "nested List record leaf types differ from its layout"
+                );
+            }
+            fields
+        };
+        return Ok(CheckedRecordSchema {
+            fields,
             aggregate: Some(schema),
             shielded_coin: false,
         });
@@ -3664,11 +3761,14 @@ fn validate_record_values(schema: &CheckedRecordSchema, values: &[Value]) -> Res
         value.validate()?;
     }
     if let Some(aggregate) = &schema.aggregate {
-        let fields = values
+        let leaves = values
             .iter()
-            .map(Value::field)
+            .map(|value| match value {
+                Value::Bool(value) => Ok(Json::Bool(*value)),
+                _ => Ok(Json::String(field_decimal(value.field()?))),
+            })
             .collect::<Result<Vec<_>>>()?;
-        validate_record_fields(aggregate, &fields)?;
+        aggregate.from_leaf_json(&leaves)?;
     }
     Ok(())
 }
@@ -4567,7 +4667,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         "scalar List operation requires one expression"
                     );
                 } else {
-                    checked_typed_record_schema(schema)?;
+                    checked_list_record_schema(schema)?;
                 }
             }
             _ => {}
@@ -4579,9 +4679,16 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
 fn record_values_from_json(schema: &CheckedRecordSchema, json: &Json) -> Result<Vec<Value>> {
     let values = if let Some(aggregate) = &schema.aggregate {
         let leaves = aggregate.flatten_leaves_json(&serde_json::to_vec(json)?)?;
+        ensure!(
+            leaves.len() == schema.fields.len(),
+            "aggregate record leaf count mismatch"
+        );
         leaves
             .iter()
-            .map(|leaf| input_value("Native", leaf))
+            .zip(&schema.fields)
+            .map(|(leaf, field)| {
+                input_value(record_type_name(&field.ty)?.as_ref(), leaf)
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
         let object = json
@@ -4843,15 +4950,6 @@ fn aligned_call_inputs(plan: &Plan, env: &Environment) -> Result<AlignedValue> {
         })
         .collect::<Result<Vec<_>>>()?;
     aligned_call_values(values.into_iter())
-}
-
-fn validate_record_fields(schema: &aggregates::Schema, fields: &[Fr]) -> Result<()> {
-    let json: Vec<_> = fields
-        .iter()
-        .map(|field| Json::String(field_decimal(*field)))
-        .collect();
-    schema.from_leaf_json(&json)?;
-    Ok(())
 }
 
 fn record_component_names(
@@ -6131,7 +6229,7 @@ fn native_list_value(
         let ty = validate_tree_scalar_type(ty_name)?;
         decode_state_cell(head, ty_name, &scalar_storage_alignment(&ty))?;
     } else {
-        let checked = checked_typed_record_schema(
+        let checked = checked_list_record_schema(
             schema
                 .get("composite")
                 .ok_or_else(|| anyhow!("List state requires a scalar or record element"))?,
@@ -8331,7 +8429,7 @@ impl PreparationCursor {
                                     env,
                                 )?);
                             } else {
-                                let checked = checked_typed_record_schema(schema)?;
+                                let checked = checked_list_record_schema(schema)?;
                                 record_component_names(read, expressions, schema, &checked)?;
                                 let defaults = checked
                                     .fields
@@ -9213,7 +9311,7 @@ impl PreparationCursor {
                         env,
                     )?);
                 } else {
-                    let checked = checked_typed_record_schema(schema)?;
+                    let checked = checked_list_record_schema(schema)?;
                     record_component_names(read, expressions, schema, &checked)?;
                     let values = decode_record_value(&checked, &head)?;
                     let produced = bind_record_values(read, &checked, &values, env)?;
@@ -9257,7 +9355,7 @@ impl PreparationCursor {
                     value.validate()?;
                     aligned_storage_cell(&value)?
                 } else {
-                    let checked = checked_typed_record_schema(schema)?;
+                    let checked = checked_list_record_schema(schema)?;
                     let fields = record_values_from_expressions(&checked, expressions, &env)?;
                     aligned_record_value(&checked, &fields)?
                 };

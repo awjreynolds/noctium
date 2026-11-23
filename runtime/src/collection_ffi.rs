@@ -510,7 +510,7 @@ fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
         } else {
             let record = element.get("composite").ok_or(INVALID_ARGUMENT)?;
             CollectionValueSchema::Record(
-                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
+                crate::checked_list_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
             )
         };
         return Ok(Some(CollectionSchema::List { element }));
@@ -576,6 +576,7 @@ fn record_values_json(schema: &crate::CheckedRecordSchema, values: &[Value]) -> 
             .iter()
             .map(|value| match value {
                 Value::Native(field) => Ok(Json::String(crate::field_decimal(*field))),
+                Value::Bool(value) => Ok(Json::String(u8::from(*value).to_string())),
                 _ => Err(INVALID_ARGUMENT),
             })
             .collect::<Result<Vec<_>, _>>()?;

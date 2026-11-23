@@ -431,6 +431,7 @@ scoped syntax "sealed" "counter" ident : nlstate
 scoped syntax "sealed" ident ident ":" nltype : nlstate
 declare_syntax_cat nlcompositefield
 scoped syntax ident ":" nltype : nlcompositefield
+scoped syntax ident ":" "struct" ident "{" nlcompositefield* "}" : nlcompositefield
 declare_syntax_cat nlmerkleafield
 scoped syntax ident ":" nltype : nlmerkleafield
 scoped syntax ident ":" "struct" ident "{" nlmerkleafield* "}" : nlmerkleafield
@@ -2450,6 +2451,7 @@ private structure OptionalRecordHead where
   environment : Types.CompositeEnv
   type : Types.CompositeType
   fields : List (String × Ty)
+  fieldPaths : List (List String × String × Ty) := []
   nominalUIntFields : List (String × NominalUIntType) := []
 
 private structure CollectionNominals where
@@ -3062,6 +3064,7 @@ private def elaborateListHeadOrDefault (schema : List (String × StateKind))
       environment
       type
       fields
+      fieldPaths := (LedgerValueType.listElementFieldPaths environment type).toOption.getD []
       nominalUIntFields
     } :: headed.optionalRecordHeads}
   | _ => pure headed
@@ -4606,6 +4609,12 @@ private def sourceSpanValueTerm (span : SourceSpan) : CommandElabM (TSyntax `ter
   `({ file := $(stringTerm span.file), line := $(natTerm span.line),
       column := $(natTerm span.column) : Noctium.SourceSpan })
 
+private def maybeCompositeTypeTerm (type : Types.CompositeType) : CommandElabM (TSyntax `term) := do
+  match type with
+  | .scalar ty => `(Noctium.Types.CompositeType.scalar $(← tyTerm ty))
+  | .structure id => `(Noctium.Types.CompositeType.structure $(stringTerm id))
+  | _ => throwError "returnMaybe nested records only support scalar leaves and named structs"
+
 private def returnMaybeListFieldTySupported : Ty → _root_.Bool
   | .native => _root_.Bool.true
   | .bool => _root_.Bool.true
@@ -4616,10 +4625,9 @@ private def flatMaybeRecordId (head : OptionalRecordHead) : Option String := do
   let .structure typeId := head.type | none
   let declaration ← head.environment.structures.find? (·.id == typeId)
   guard (!declaration.fields.isEmpty)
-  let fields ← declaration.fields.mapM fun field => do
-    let .scalar ty := field.type | none
-    guard (returnMaybeListFieldTySupported ty)
-    pure (field.name, ty)
+  let fields := head.fieldPaths.map fun (_, name, ty) => (name, ty)
+  guard (!fields.isEmpty)
+  guard (fields.all fun (_, ty) => returnMaybeListFieldTySupported ty)
   guard (head.fields == fields)
   pure typeId
 
@@ -4642,26 +4650,28 @@ private def recordMaybeEnvironment (environment : Types.CompositeEnv) (recordId 
     throwError s!"generated record Maybe type id '{typeId}' collides with an enum"
   if environment.structures.any (·.id == typeId) then
     throwError s!"generated record Maybe type id '{typeId}' collides with another structure"
-  let sourceFields : Array (TSyntax `term) ← record.fields.toArray.mapM fun field => do
-    let name := stringTerm field.name
-    let .scalar ty := field.type
-      | throwError s!"List record field '{field.name}' must be scalar"
-    let fieldType : TSyntax `term ← `(Noctium.Types.CompositeType.scalar $(← tyTerm ty))
-    let fieldSpan ← sourceSpanValueTerm field.span
-    `(Noctium.Types.Field.mk $name $fieldType $fieldSpan)
-  let recordIdTerm := stringTerm recordId
-  let recordSpan ← sourceSpanValueTerm record.span
-  let recordTerm ← `(Noctium.Types.StructDecl.mk $recordIdTerm [$sourceFields,*] $recordSpan)
+  let sourceStructures ← environment.structures.toArray.mapM fun declaration => do
+    let sourceFields ← declaration.fields.toArray.mapM fun field => do
+      let name := stringTerm field.name
+      let fieldType ← maybeCompositeTypeTerm field.type
+      let fieldSpan ← sourceSpanValueTerm field.span
+      `(Noctium.Types.Field.mk $name $fieldType $fieldSpan)
+    let id := stringTerm declaration.id
+    let declarationSpan ← sourceSpanValueTerm declaration.span
+    `(Noctium.Types.StructDecl.mk $id [$sourceFields,*] $declarationSpan)
   let generated : Types.StructDecl := {
     id := typeId
     fields := expectedFields.map fun (name, type) => {name, type, span}
     span
   }
-  let extended : Types.CompositeEnv := {structures := [record, generated]}
+  let extended : Types.CompositeEnv := {
+    environment with structures := environment.structures ++ [generated]
+  }
   match Types.compileType extended (.structure typeId) with
     | .ok _ => pure ()
     | .error diagnostic => throwError diagnostic.message
   let typeIdTerm := stringTerm typeId
+  let recordIdTerm := stringTerm recordId
   let isSomeName := stringTerm "is_some"
   let isSomeType ← `(Noctium.Types.CompositeType.scalar $(← tyTerm .bool))
   let isSomeSpan ← sourceSpanValueTerm span
@@ -4672,7 +4682,8 @@ private def recordMaybeEnvironment (environment : Types.CompositeEnv) (recordId 
   let valueField ← `(Noctium.Types.Field.mk $valueName $valueType $valueSpan)
   let generatedSpan ← sourceSpanValueTerm span
   let generatedTerm ← `(Noctium.Types.StructDecl.mk $typeIdTerm [$isSomeField, $valueField] $generatedSpan)
-  let term ← `(Noctium.Types.CompositeEnv.mk [$recordTerm, $generatedTerm]
+  let allStructures := sourceStructures.push generatedTerm
+  let term ← `(Noctium.Types.CompositeEnv.mk [$allStructures,*]
     ([] : List Noctium.Types.EnumDecl))
   pure term
 
@@ -4682,7 +4693,7 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
     CommandElabM EntryEffects := do
   let some recordId := flatMaybeRecordId head
     | throwErrorAt statement
-      "returnMaybe record payload must be a checked flat Native, Bool, or UInt List record"
+      "returnMaybe record payload must be a checked Native, Bool, or UInt List record"
   let labelName := label.getId.toString
   let typeId ← maybeRecordTypeId contractName recordId
   let compositeType ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
@@ -4698,7 +4709,7 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
   let environmentTerm ←
     recordMaybeEnvironment head.environment recordId typeId spanValue
   let isSomeReturnName := s!"{labelName}_is_some"
-  let valueReturnNames := head.fields.map fun (field, _) => s!"{labelName}_value_{field}"
+  let valueReturnNames := head.fieldPaths.map fun (_, field, _) => s!"{labelName}_value_{field}"
   let physicalNames := isSomeReturnName :: valueReturnNames
   let physicalNameTerms := physicalNames.toArray.map stringTerm
   for returnName in physicalNames do
@@ -4707,7 +4718,7 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
   let isSomeReturn ← `(Noctium.Output.mk $(stringTerm isSomeReturnName) Noctium.Ty.native
     (Noctium.Expr.cast Noctium.Ty.native $presentExpression) $span)
   let mut returnTerms := #[isSomeReturn]
-  for ((fieldName, fieldTy), returnName) in head.fields.zip valueReturnNames do
+  for ((_, fieldName, fieldTy), returnName) in head.fieldPaths.zip valueReturnNames do
     let bindingName := s!"{head.recordName}_{fieldName}"
     let expectedNominalUInt := head.nominalUIntFields.lookup fieldName
     let actualNominalUInt := (state.nominalUIntBindings.lookup bindingName).join
@@ -4725,13 +4736,13 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
     let fieldReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
       $canonicalField $span)
     returnTerms := returnTerms.push fieldReturn
-  let orderedNominalUIntFields := head.fields.filterMap fun (fieldName, _) =>
-    (head.nominalUIntFields.lookup fieldName).map fun nominalUInt => (fieldName, nominalUInt)
-  let nominalUIntFieldTerms ← orderedNominalUIntFields.toArray.mapM fun (fieldName, nominalUInt) => do
+  let orderedNominalUIntFields := head.fieldPaths.filterMap fun (fieldPath, fieldName, _) =>
+    (head.nominalUIntFields.lookup fieldName).map fun nominalUInt => (fieldPath, nominalUInt)
+  let nominalUIntFieldTerms ← orderedNominalUIntFields.toArray.mapM fun (fieldPath, nominalUInt) => do
     let name := stringTerm nominalUInt.name
     let maximum := natTerm nominalUInt.maximum
     let nominalUIntTerm ← `({name := $name, maximum := $maximum : Noctium.NominalUIntType})
-    let path := (#[stringTerm "value", stringTerm fieldName])
+    let path := (#[(stringTerm "value")] ++ fieldPath.toArray.map stringTerm)
     `(Noctium.NominalUIntReturnField.mk [$path,*] $nominalUIntTerm)
   let view ← `(Noctium.ReturnView.mk $(stringTerm labelName) $environmentTerm
     $compositeType [$physicalNameTerms,*] [$nominalUIntFieldTerms,*])
@@ -4966,29 +4977,70 @@ private partial def readMerkleCompositeField (rootId path : String)
     pure (parent, declaration :: nestedDeclarations.toList, leafFields.toList)
   | _ => throwErrorAt field "expected a scalar or nested struct MerkleTree field"
 
-private def elaborateTypedLedgerRecord (contractName : Name) (record : TSyntax `ident)
+private partial def elaborateTypedLedgerFields (parentId pathPrefix : String)
     (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax) :
-    CommandElabM ((Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) ×
-      List (String × CircuitSourceType)) := do
-  let typeId := contractName.toString ++ "." ++ record.getId.toString
+    CommandElabM (Array (TSyntax `term) × List Types.Field × Array (TSyntax `term) ×
+      List Types.StructDecl × List (String × CircuitSourceType)) := do
   let mut fieldTerms : Array (TSyntax `term) := #[]
-  let mut fieldValues : List Noctium.Types.Field := []
+  let mut fieldValues : List Types.Field := []
+  let mut nestedTerms : Array (TSyntax `term) := #[]
+  let mut nestedValues : List Types.StructDecl := []
   let mut fieldTypes : List (String × CircuitSourceType) := []
   for field in recordFields do
-    let (fieldName, sourceType) ← readCompositeField field
-    let fieldTy := sourceType.type
-    if sourceType.contractRef.isSome || sourceType.nominalUInt.isSome then
-      fieldTypes := (fieldName, sourceType) :: fieldTypes
-    fieldValues := fieldValues ++ [{name := fieldName, type := .scalar fieldTy}]
-    let fieldTypeTerm ← `(Noctium.Types.CompositeType.scalar $(← tyTerm fieldTy))
-    let fieldSpan ← spanTerm field
-    fieldTerms := fieldTerms.push (← `({ name := $(stringTerm fieldName), type := $fieldTypeTerm, span := $fieldSpan : Noctium.Types.Field }))
+    match field with
+    | `(nlcompositefield| $fieldName:ident : $fieldType:nltype) => do
+      let name := fieldName.getId.toString
+      let sourceType ← readCircuitSourceType fieldType
+      let fieldTy := sourceType.type
+      let physicalName := if pathPrefix.isEmpty then name else s!"{pathPrefix}_{name}"
+      if sourceType.contractRef.isSome || sourceType.nominalUInt.isSome then
+        fieldTypes := fieldTypes ++ [(physicalName, sourceType)]
+      fieldValues := fieldValues ++ [{name, type := .scalar fieldTy}]
+      let fieldTypeTerm ← `(Noctium.Types.CompositeType.scalar $(← tyTerm fieldTy))
+      let fieldSpan ← spanTerm field
+      fieldTerms := fieldTerms.push (← `({ name := $(stringTerm name), type := $fieldTypeTerm, span := $fieldSpan : Noctium.Types.Field }))
+    | `(nlcompositefield| $fieldName:ident : struct $record:ident { $children:nlcompositefield* }) => do
+      let name := fieldName.getId.toString
+      let path := if pathPrefix.isEmpty then name else s!"{pathPrefix}_{name}"
+      let nestedId := s!"{parentId}.{path}.{record.getId}"
+      let (childTerms, childFields, descendantTerms, descendants, childTypes) ←
+        elaborateTypedLedgerFields nestedId path children owner
+      let structSpan ← spanTerm field
+      let nestedTerm ← `({ id := $(stringTerm nestedId), fields := [$childTerms,*], span := $structSpan : Noctium.Types.StructDecl })
+      let structureFieldType ← `(Noctium.Types.CompositeType.structure $(stringTerm nestedId))
+      let fieldSpan ← spanTerm field
+      fieldTerms := fieldTerms.push (← `({ name := $(stringTerm name), type := $structureFieldType, span := $fieldSpan : Noctium.Types.Field }))
+      fieldValues := fieldValues ++ [{name, type := .structure nestedId}]
+      nestedTerms := nestedTerms ++ descendantTerms
+      nestedTerms := nestedTerms.push nestedTerm
+      nestedValues := nestedValues ++ descendants ++ [{id := nestedId, fields := childFields}]
+      fieldTypes := fieldTypes ++ childTypes
+    | _ => throwErrorAt field "expected a scalar or nested named ledger record field"
+  pure (fieldTerms, fieldValues, nestedTerms, nestedValues, fieldTypes)
+
+private def elaborateTypedLedgerRecord (contractName : Name) (record : TSyntax `ident)
+    (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax)
+    (allowNested : _root_.Bool := _root_.Bool.false) :
+    CommandElabM ((Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) ×
+      List (String × CircuitSourceType)) := do
+  let containsNested := recordFields.any fun field =>
+      match field with
+      | `(nlcompositefield| $_:ident : struct $_:ident { $_:nlcompositefield* }) => _root_.Bool.true
+      | _ => _root_.Bool.false
+  if !allowNested && containsNested then
+    throwErrorAt owner "nested named records are supported only by root Lists"
+  let typeId := contractName.toString ++ "." ++ record.getId.toString
+  let (fieldTerms, fieldValues, nestedTerms, nestedValues, fieldTypes) ←
+    elaborateTypedLedgerFields typeId "" recordFields owner
   let structSpan ← spanTerm owner
   let structureTerm ← `({ id := $(stringTerm typeId), fields := [$fieldTerms,*], span := $structSpan : Noctium.Types.StructDecl })
-  let environmentTerm ← `({ structures := [$structureTerm] : Noctium.Types.CompositeEnv })
+  let allTerms := #[structureTerm] ++ nestedTerms
+  let environmentTerm ← `({ structures := [$allTerms,*] : Noctium.Types.CompositeEnv })
   let compositeType := Types.CompositeType.structure typeId
   let compositeTypeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
-  let environment : Types.CompositeEnv := {structures := [{id := typeId, fields := fieldValues}]}
+  let environment : Types.CompositeEnv := {
+    structures := [{id := typeId, fields := fieldValues}] ++ nestedValues
+  }
   pure ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes)
 
 private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
@@ -5811,7 +5863,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
             throwErrorAt listKind "unsupported recursive List state declaration"
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
-            elaborateTypedLedgerRecord contractName record recordFields state
+            elaborateTypedLedgerRecord contractName record recordFields state _root_.Bool.true
+          match LedgerValueType.listElementFields environment compositeType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           let valueSchema := LedgerValueType.«list» environment compositeType
@@ -5823,6 +5878,9 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           if listKind.getId.toString == "List" then
             let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
               elaborateTypedLedgerRecord contractName record recordFields state
+            match LedgerValueType.listElementFields environment compositeType with
+            | .ok _ => pure ()
+            | .error message => throwErrorAt state message
             if !fieldTypes.isEmpty then
               recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
             let valueSchema := LedgerValueType.map keyTy (.«list» environment compositeType)
@@ -5845,6 +5903,9 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+          match LedgerValueType.listElementFields environment compositeType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           let valueSchema := LedgerValueType.map outerTy
