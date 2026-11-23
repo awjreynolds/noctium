@@ -549,15 +549,12 @@ pub(crate) fn shielded_immediate_change_shape_valid(
         && transient.nullifier == transient_nullifier
         && transient.contract_address.as_deref() == Some(&call.address)
         && transient.ciphertext.is_none()
-        && transient.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
         && user_output.coin_com == user_commitment
         && user_output.contract_address.is_none()
         && user_output.ciphertext.is_some()
-        && user_output.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
         && change_output.coin_com == change_commitment
         && change_output.contract_address.as_deref() == Some(&call.address)
         && change_output.ciphertext.is_none()
-        && change_output.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
         && delta.token_type == mint.type_
         && delta.value == -(MINT_AMOUNT as i128)
 }

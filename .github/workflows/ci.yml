@@ -190,6 +190,7 @@ jobs:
           lake env lean tests/ShieldedCoinMerge.lean
           lake env lean tests/ShieldedCoinImmediateMerge.lean
           lake env lean tests/ShieldedImmediateRelay.lean
+          lake env lean tests/ShieldedImmediateChange.lean
           lake env lean tests/IndexedShieldedNonce.lean
           lake env lean tests/ShieldedBurnAddress.lean
           lake env lean tests/QualifiedCoinCell.lean

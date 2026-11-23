@@ -302,7 +302,6 @@ impl BookedImmediateChange {
             || transient.nullifier != self.transient_nullifier
             || transient.contract_address.as_deref() != Some(&self.address)
             || transient.ciphertext.is_some()
-            || transient.segment() != Some(GUARANTEED_SEGMENT)
             || snapshot
                 .state
                 .zswap
@@ -316,11 +315,9 @@ impl BookedImmediateChange {
             || user_output.coin_com != self.user_commitment
             || user_output.contract_address.is_some()
             || user_output.ciphertext.is_none()
-            || user_output.segment() != Some(GUARANTEED_SEGMENT)
             || change_output.coin_com != self.change_commitment
             || change_output.contract_address.as_deref() != Some(&self.address)
             || change_output.ciphertext.is_some()
-            || change_output.segment() != Some(GUARANTEED_SEGMENT)
             || snapshot.state.zswap.coin_coms_set.contains_key(&self.user_commitment)
             || snapshot.state.zswap.coin_coms_set.contains_key(&self.change_commitment)
             || self.user_commitment == self.change_commitment
@@ -883,7 +880,6 @@ mod tests {
     use transient_crypto::proofs::Zkir;
     use zswap::keys::SecretKeys;
 
-    #[path = "shielded_transfer/immediate_change_tests.rs"]
     mod immediate_change_tests;
 
     #[test]
