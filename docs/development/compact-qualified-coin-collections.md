@@ -97,14 +97,19 @@ The original Impact sequence uses a four-bit `Dup` index of
 native sequence reads the transaction booking before traversing the Map
 path. It writes the leaf and rebuilds each parent with cached lookups.
 The Lean compiler binds the expanded sequence to the circuit transcript.
-The six-parent source artifact passes the pinned native circuit and query
-checks. A fifteen-parent path rejects at both admission boundaries.
+The six- and fourteen-parent source artifacts pass the pinned native circuit
+and query checks. At fourteen parents, the insert consumes 99 Impact groups,
+uses the booked index, and preserves every sibling Map. A fifteen-parent path
+rejects at both admission boundaries. The funded Ledger evidence reaches six
+parents.
 [Six-parent Lean fixture](../../tests/DeepBookedCoinMapSix.lean) ·
+[Fourteen-parent Lean fixture](../../tests/DeepBookedCoinMapBoundary.lean) ·
 [Wider lowering](https://github.com/awjreynolds/noctium/issues/716)
 
-The pinned Compact six-parent source probe produced no artifacts. Its exit
-diagnostic was unavailable, so the six-parent Compact comparison remains
-open.
+A pinned five-parent Compact probe completed insertion and overwrite. The
+reduced six-parent Compact probe reached its 180-second timeout with no
+artifacts or compiler diagnostic. The six-parent runtime comparison remains
+open. [Compact probe result](https://github.com/awjreynolds/noctium/issues/716)
 
 The query-context checks cover overwrite and missing owners. The funded
 fixture below exercises independent-key insertion and overwrite on Ledger 9.
