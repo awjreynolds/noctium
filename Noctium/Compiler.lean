@@ -602,6 +602,11 @@ private def effectJson : Effect → Json
       ("op", toJson ("readRecordMap" : String)), ("state", toJson state),
       ("destination", toJson destination),
       ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .readRecordMapComposite state destination _ values destinations => Json.mkObj [
+      ("op", toJson ("readRecordMapComposite" : String)), ("state", toJson state),
+      ("destination", toJson destination),
+      ("values", toJson (values.map sourceLedgerFieldExprJson)),
+      ("destinations", toJson (destinations.map Prod.fst))]
   | .memberRecordMap state destination values => Json.mkObj [
       ("op", toJson ("memberRecordMap" : String)), ("state", toJson state),
       ("destination", toJson destination),
@@ -610,6 +615,10 @@ private def effectJson : Effect → Json
       ("op", toJson ("writeRecordMap" : String)), ("state", toJson state),
       ("values", toJson (values.map sourceLedgerFieldExprJson)),
       ("value", expressionJson value)]
+  | .writeRecordMapComposite state _ keyValues valueValues => Json.mkObj [
+      ("op", toJson ("writeRecordMapComposite" : String)), ("state", toJson state),
+      ("keyValues", toJson (keyValues.map sourceLedgerFieldExprJson)),
+      ("valueValues", toJson (valueValues.map sourceLedgerFieldExprJson))]
   | .removeRecordMap state values => Json.mkObj [
       ("op", toJson ("removeRecordMap" : String)), ("state", toJson state),
       ("values", toJson (values.map sourceLedgerFieldExprJson))]
@@ -775,6 +784,9 @@ private def stateJson (state : StateDecl) : Json :=
     | _, _, .recordMapKey environment type valueTy => Json.mkObj [("map", toJson [
         Json.mkObj [("composite", recordMapKeyCompositeSchema environment type)],
         Json.mkObj [("scalar", toJson (typeName valueTy))]])]
+    | _, _, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => Json.mkObj [("map", toJson [
+        Json.mkObj [("composite", recordMapKeyCompositeSchema keyEnvironment keyType)],
+        Json.mkObj [("composite", cellCompositeSchema valueEnvironment valueType)]])]
     | _, _, .shieldedCoinSet environment type => Json.mkObj [("set", Json.mkObj [
         ("composite", compositeSchema environment type)])]
     | rootCell, mapValue, .composite environment type => Json.mkObj [("composite",

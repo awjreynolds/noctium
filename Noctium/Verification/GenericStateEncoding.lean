@@ -430,6 +430,76 @@ private theorem foreignPoint_beq_refl (point : Foreign.Point) :
     Foreign.instBEqPoint.beq point point = true := by
   cases point <;> simp [Foreign.instBEqPoint.beq, BEq.beq]
 
+private theorem foreignKind_beq_eq (left right : Foreign.Kind)
+    (same : (left == right) = true) : left = right := by
+  cases left with
+  | base leftCurve =>
+    cases right with
+    | base rightCurve =>
+      change (leftCurve == rightCurve) = true at same
+      exact congrArg Foreign.Kind.base (foreignCurve_beq_eq leftCurve rightCurve same)
+    | _ => simp [BEq.beq, Foreign.instBEqKind.beq, Foreign.Kind.ctorIdx] at same
+  | scalar leftCurve =>
+    cases right with
+    | scalar rightCurve =>
+      change (leftCurve == rightCurve) = true at same
+      exact congrArg Foreign.Kind.scalar (foreignCurve_beq_eq leftCurve rightCurve same)
+    | _ => simp [BEq.beq, Foreign.instBEqKind.beq, Foreign.Kind.ctorIdx] at same
+  | point leftCurve =>
+    cases right with
+    | point rightCurve =>
+      change (leftCurve == rightCurve) = true at same
+      exact congrArg Foreign.Kind.point (foreignCurve_beq_eq leftCurve rightCurve same)
+    | _ => simp [BEq.beq, Foreign.instBEqKind.beq, Foreign.Kind.ctorIdx] at same
+
+private theorem ty_beq_refl (ty : Ty) : (ty == ty) = true := by
+  cases ty with
+  | native | bool | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint => rfl
+  | uint maximum => simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx]
+  | bytes length => simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx]
+  | foreign kind =>
+    cases kind with
+    | base curve => cases curve <;> rfl
+    | scalar curve => cases curve <;> rfl
+    | point curve => cases curve <;> rfl
+
+private theorem ty_beq_eq (left right : Ty) (same : (left == right) = true) : left = right := by
+  cases left with
+  | native => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | bool => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | uint leftMaximum =>
+    cases right with
+    | uint rightMaximum =>
+      simp only [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+      exact congrArg Ty.uint (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+  | bytes leftLength =>
+    cases right with
+    | bytes rightLength =>
+      simp only [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+      exact congrArg Ty.bytes (beq_iff_eq.mp same)
+    | _ => simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+  | opaqueBytes => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | opaqueString => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | jubjubScalar => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | jubjubPoint => cases right <;> simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same <;> rfl
+  | foreign leftKind =>
+    cases right with
+    | foreign rightKind =>
+      simp only [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+      exact congrArg Ty.foreign (foreignKind_beq_eq leftKind rightKind same)
+    | _ => simp [BEq.beq, Noctium.instBEqTy.beq, Noctium.Ty.ctorIdx] at same
+
+local instance : LawfulBEq Ty where
+  rfl {a} := ty_beq_refl a
+  eq_of_beq {a b} h := ty_beq_eq a b h
+
+private theorem recordFields_beq_refl (fields : List (Ty × List Nat)) :
+    (fields == fields) = true := beq_self_eq_true fields
+
+private theorem recordFields_beq_eq (left right : List (Ty × List Nat))
+    (same : (left == right) = true) : left = right := beq_iff_eq.mp same
+
 private theorem value_beq_refl (value : Value) : (value == value) = true := by
   cases value with
   | native value => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx]
@@ -455,6 +525,9 @@ private theorem value_beq_refl (value : Value) : (value == value) = true := by
   | foreignPoint curve value =>
     change Foreign.instBEqCurve.beq curve curve && Foreign.instBEqPoint.beq value value = true
     simp [foreignCurve_beq_refl, foreignPoint_beq_refl]
+  | record fields =>
+    change Noctium.instBEqValue.beq (.record fields) (.record fields) = true
+    simp [Noctium.instBEqValue.beq, Noctium.Value.ctorIdx, recordFields_beq_refl]
 
 private theorem value_beq_eq (left right : Value) (same : (left == right) = true) :
     left = right := by
@@ -544,6 +617,12 @@ private theorem value_beq_eq (left right : Value) (same : (left == right) = true
       cases foreignCurve_beq_eq leftCurve rightCurve same.1
       cases foreignPoint_beq_eq leftValue rightValue same.2
       rfl
+    | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+  | record leftFields =>
+    cases right with
+    | record rightFields =>
+      simp only [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
+      exact congrArg Value.record (recordFields_beq_eq leftFields rightFields same)
     | _ => simp [BEq.beq, Noctium.instBEqValue.beq, Noctium.Value.ctorIdx] at same
 
 private theorem lookup_member_value (entries : List (Value × Value))

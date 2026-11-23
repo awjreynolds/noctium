@@ -57,19 +57,20 @@ fn assert_result(execution: &noctium_runtime::Execution, expected: u64) {
     );
 }
 
+fn load_entrypoint(directory: &std::path::Path, stem: &str) -> anyhow::Result<(Plan, IrSource)> {
+    Ok((
+        serde_json::from_slice(&std::fs::read(
+            directory.join(format!("{stem}.impact.json")),
+        )?)?,
+        IrSource::load(std::fs::File::open(directory.join(format!("{stem}.zkir")))?)?,
+    ))
+}
+
 #[test]
 #[ignore = "requires fresh artifacts in NOCTIUM_RECORD_MAP_KEYS_DIR"]
 fn record_map_keys_preserve_strict_lookup_and_distinct_members() -> anyhow::Result<()> {
     let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_KEYS_DIR")?);
-    let load = |entry: &str| -> anyhow::Result<(Plan, IrSource)> {
-        let stem = format!("RecordMapKeys.{entry}");
-        Ok((
-            serde_json::from_slice(&std::fs::read(
-                directory.join(format!("{stem}.impact.json")),
-            )?)?,
-            IrSource::load(std::fs::File::open(directory.join(format!("{stem}.zkir")))?)?,
-        ))
-    };
+    let load = |entry| load_entrypoint(&directory, &format!("RecordMapKeys.{entry}"));
     let (update, update_relation) = load("update")?;
     let (lookup, lookup_relation) = load("lookup")?;
     let (remove, remove_relation) = load("removeMemo")?;
@@ -125,6 +126,93 @@ fn record_map_keys_preserve_strict_lookup_and_distinct_members() -> anyhow::Resu
     assert_eq!(read(false, 513, &state)?, json!("22"));
     assert_eq!(read(true, 514, &state)?, json!("33"));
     assert!(read(true, 65536, &state).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_RECORD_MAP_COMPOSITION_DIR"]
+fn record_map_composes_typed_keys_and_values() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_COMPOSITION_DIR")?);
+    let load = |entry| load_entrypoint(&directory, &format!("RecordMapComposition.{entry}"));
+    let put = load("put")?;
+    let lookup = load("lookup")?;
+    let member = load("contains")?;
+    let remove = load("deleteMemo")?;
+    let mut state = create_state(&put.0, &BTreeMap::from([("receipts".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let key = |active, amount: u32| {
+        BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+        ])
+    };
+    let put_args = |active, amount, accepted, code: u32| {
+        let mut arguments = key(active, amount);
+        arguments.insert("accepted".into(), json!(accepted));
+        arguments.insert("code".into(), json!(code.to_string()));
+        arguments
+    };
+    let run =
+        |operation: &(Plan, IrSource), args: &BTreeMap<String, Json>, state: &ChargedState<Db>| {
+            let result = prepare(&operation.0, args, state, parameters, address)?;
+            assert_eq!(check(&result, &operation.1)?, result.activity_schedule);
+            Ok::<_, anyhow::Error>(result)
+        };
+    let read = |active, amount, state: &ChargedState<Db>| -> anyhow::Result<(Json, Json)> {
+        let returns = run(&lookup, &key(active, amount), state)?.returns_json();
+        Ok((
+            returns["storedAccepted"].clone(),
+            returns["storedCode"].clone(),
+        ))
+    };
+    assert_eq!(
+        run(&member, &key(true, 513), &state)?.returns_json()["isFound"],
+        json!(false)
+    );
+    for (active, accepted, code) in [(true, false, 7), (false, false, 22), (true, true, 41)] {
+        state = run(&put, &put_args(active, 513, accepted, code), &state)?
+            .after
+            .state;
+        assert_eq!(
+            read(active, 513, &state)?,
+            (json!(accepted), json!(code.to_string()))
+        );
+    }
+    for (active, amount, present) in [(true, 513, true), (false, 513, true), (true, 514, false)] {
+        let result = run(&member, &key(active, amount), &state)?;
+        assert_eq!(result.returns_json()["isFound"], json!(present));
+    }
+    let StateValue::Array(slots) = state.get_ref() else {
+        anyhow::bail!("expected a state array");
+    };
+    let Some(StateValue::Map(entries)) = slots.get(0) else {
+        anyhow::bail!("expected a Map of records");
+    };
+    assert_eq!(entries.size(), 2);
+    let removed = run(&remove, &key(true, 513), &state)?;
+    assert_eq!(removed.returns_json()["presentBefore"], json!(true));
+    assert_eq!(removed.returns_json()["presentAfter"], json!(false));
+    state = removed.after.state;
+    assert!(read(true, 513, &state).is_err());
+    assert_eq!(read(false, 513, &state)?, (json!(false), json!("22")));
+    assert!(run(&put, &put_args(true, 65536, false, 7), &state).is_err());
+    assert!(run(&put, &put_args(true, 513, false, 65536), &state).is_err());
+    let mut wrong_value_plan = lookup.0.clone();
+    wrong_value_plan.state[0].kind["tree"]["map"][1]["composite"]["fields"]
+        .as_array_mut()
+        .expect("composed Map value fields")
+        .swap(0, 1);
+    assert!(
+        prepare(
+            &wrong_value_plan,
+            &key(false, 513),
+            &state,
+            parameters,
+            address
+        )
+        .is_err()
+    );
     Ok(())
 }
 

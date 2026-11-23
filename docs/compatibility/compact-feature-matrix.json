@@ -2664,7 +2664,7 @@
       "layer": "language-ledger",
       "surface": "Map.insert",
       "noctiumStatus": "subset",
-      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open. A flat Bool/UInt16 Map record stores disclosed fields and rejects UInt16 overflow. The checked native relation stores distinct root Bool/UInt16 record keys with UInt16 values.",
+      "notes": "Source upserts ordered scalar entries and writes checked records. Native examples cover Bytes32 keys, structured Native updates, qualified foreign keys, and mixed Native, Bytes32 and JubjubPoint records on direct and nested paths. Generic ADT values and all Compact overloads remain open. A flat Bool/UInt16 Map record stores disclosed fields and rejects UInt16 overflow. The checked native relation stores distinct root Bool/UInt16 record keys with UInt16 values. Pinned Compact and the native relation agree on inserting and overwriting typed Bool/UInt16 values under flat Bool/UInt16 keys in one root Map.",
       "source": [
         "adt"
       ],
@@ -2674,6 +2674,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
@@ -2779,7 +2780,7 @@
       "layer": "language-ledger",
       "surface": "Map.lookup",
       "noctiumStatus": "subset",
-      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal. The checked native relation reads exact UInt16 values for distinct root Bool/UInt16 record keys and rejects missing keys.",
+      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal. The checked native relation reads exact UInt16 values for distinct root Bool/UInt16 record keys and rejects missing keys. A root Map with flat record keys returns the exact Bool/UInt16 record value and rejects strict lookup of a removed key. The native checker rejects a mismatched value schema.",
       "source": [
         "adt"
       ],
@@ -2789,6 +2790,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "tests/Issue69Bytes32Map.lean",
@@ -2821,7 +2823,7 @@
       "layer": "language-ledger",
       "surface": "Map.member",
       "noctiumStatus": "subset",
-      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified. The native Bool/UInt16 record case checks membership before and after insertion. The checked native relation distinguishes root Bool/UInt16 record keys. Source disclosure validation rejects an undisclosed private key.",
+      "notes": "Binds Boolean presence on direct and nested Map paths and observes earlier writes. Native cases cover Bytes32 and qualified foreign keys and a guarded structured Native upsert. Inactive queries bind false. The host ledger method remains unqualified. The native Bool/UInt16 record case checks membership before and after insertion. The checked native relation distinguishes root Bool/UInt16 record keys. Source disclosure validation rejects an undisclosed private key. The composed record-key and record-value Map distinguishes either changed key field.",
       "source": [
         "adt"
       ],
@@ -2831,6 +2833,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
         "tests/TypedRecordMap.lean",
         "runtime/tests/mixed_ledger_record.rs",
@@ -2864,7 +2867,7 @@
       "layer": "language-ledger",
       "surface": "Map.remove",
       "noctiumStatus": "equivalent",
-      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal. The checked native relation removes one root Bool/UInt16 record key and preserves the other keys and values.",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal. The checked native relation removes one root Bool/UInt16 record key and preserves the other keys and values. In the composed typed record Map, removal preserves the sibling key and its exact typed value.",
       "source": [
         "adt"
       ],
@@ -2874,6 +2877,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapComposition.lean",
         "tests/TypedRecordMapKey.lean",
         "runtime/tests/structured_maps.rs",
         "tests/TypedRecordMap.lean",

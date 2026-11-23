@@ -1507,6 +1507,15 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some value := raw.as valueTy | throw s!"record Map value type mismatch '{name}'"
       if !canonical ctx valueTy value then throw s!"noncanonical record Map value '{name}'"
       env := (destination, Value.pack valueTy value) :: env
+    | .readRecordMapComposite name _destination valueType values destinations => do
+      let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let key ← evaluateRecordKey ctx env values
+      let some (.composite foundType leaves) := treeLookup root [key]
+        | throw s!"missing record Map key in '{name}'"
+      unless foundType == valueType do throw s!"record Map value type mismatch '{name}'"
+      env := env ++ (← checkedRecordBindings ctx destinations leaves
+        s!"record Map value type mismatch '{name}'"
+        s!"noncanonical record Map value '{name}'")
     | .memberRecordMap name destination values => do
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
       let key ← evaluateRecordKey ctx env values
@@ -1697,6 +1706,13 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some updated := treeSet root [key] payload
         | throw s!"record Map root is not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
+    | .writeRecordMapComposite name valueType keyValues valueValues => do
+      let key ← evaluateRecordKey ctx env keyValues
+      let leaves ← valueValues.mapM (evalLedgerField ctx env)
+      let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let some updated := treeSet root [key] (.composite valueType leaves)
+        | throw s!"record Map root is not a map '{name}'"
+      next := {next with trees := updateAssoc name updated next.trees}
     | .removeRecordMap name values => do
       let key ← evaluateRecordKey ctx env values
       next ← removeMapAt next name [key]
@@ -1766,8 +1782,9 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .readTokenBalance .. |
             .readPath .. | .readCompositePath .. | .memberPath .. | .insertPath .. |
             .writePath .. | .writeCompositePath .. | .emptyMapPath .. | .setInsert .. | .counterRead .. |
-            .memberRecordSet .. | .readRecordMap .. | .memberRecordMap .. |
-            .writeRecordMap .. | .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. |
+            .memberRecordSet .. | .readRecordMap .. | .readRecordMapComposite .. |
+            .memberRecordMap .. | .writeRecordMap .. | .writeRecordMapComposite .. |
+            .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. |
             .counterLessThan .. |
             .counterAdjust .. | .counterReset .. | .removePath .. |
             .listLength .. | .listHead .. | .listPushFront .. | .listPopFront .. | .listReset .. |
@@ -2013,8 +2030,9 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
           env := updatedEnv
           next := updatedState
-        | .memberRecordSet .. | .readRecordMap .. | .memberRecordMap .. |
-            .writeRecordMap .. | .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. => do
+        | .memberRecordSet .. | .readRecordMap .. | .readRecordMapComposite .. |
+            .memberRecordMap .. | .writeRecordMap .. | .writeRecordMapComposite .. |
+            .removeRecordMap .. | .setInsertRecord .. | .removeRecordSet .. => do
           let (updatedEnv, updatedState) ← runEffectsWithEnv ctx [effect] env next
           env := updatedEnv
           next := updatedState
@@ -2116,6 +2134,9 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             | .foreign (.point _) => .identity
           env := (destination, Value.pack ty zero) :: env
         | .readCompositePath _ _ _ _ destinations =>
+          env := env ++ destinations.map fun (destination, ty) =>
+            (destination, defaultValue ty)
+        | .readRecordMapComposite _ _ _ _ destinations =>
           env := env ++ destinations.map fun (destination, ty) =>
             (destination, defaultValue ty)
         | .readCaller destinations =>
