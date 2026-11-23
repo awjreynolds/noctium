@@ -518,11 +518,10 @@ def LedgerValueType.collectionKey? : LedgerValueType → Option Ty
   | .map ty _ | .set ty => some ty
   | _ => none
 
-/-- Collection operations that address the selected collection as a whole.
-Record Sets have no scalar key type, but support the same root size, emptiness,
-and reset effects as ordinary Maps and Sets. -/
+/-- Whole-collection operations such as size, emptiness, and reset
+need no entry key, including for root record Sets and record-key Maps. -/
 def LedgerValueType.isCollection : LedgerValueType → Bool
-  | .map .. | .set _ | .recordSet .. => true
+  | .map .. | .set _ | .recordSet .. | .recordMapKey .. | .recordMapComposite .. => true
   | _ => false
 
 /-- The final key addresses an entry in the selected parent map or set. -/
