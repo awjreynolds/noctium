@@ -740,6 +740,24 @@ mod tests {
             );
         }
 
+        if let Some(deep_list_slot) = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinLists")
+        {
+            let Some((selected_group, other_group, _)) = deep_groups else {
+                anyhow::bail!("deepCoinLists requires the selected and sibling groups");
+            };
+            assert_two_parent_coin_lists(
+                slots.get(deep_list_slot).context("deepCoinLists state slot missing")?,
+                selected_owner,
+                other_owner,
+                selected_group,
+                other_group,
+                &[],
+            )?;
+        }
+
         let root_map_slot = slot("rootCoinMap")?;
         let Some(StateValue::Map(root_coins)) = slots.get(root_map_slot) else {
             anyhow::bail!("expected initialized root qualified coin Map");
@@ -991,6 +1009,101 @@ mod tests {
                 && matches!(other_list.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
             "replacement leaked into other owner List"
         );
+
+        if let Some(deep_list_slot) = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinLists")
+        {
+            let Some((selected_group, other_group, _)) = deep_groups else {
+                anyhow::bail!("deepCoinLists requires the selected and sibling groups");
+            };
+            assert_two_parent_coin_lists(
+                slots.get(deep_list_slot).context("deepCoinLists state slot missing")?,
+                selected_owner,
+                other_owner,
+                selected_group,
+                other_group,
+                &qualified,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn assert_two_parent_coin_lists(
+        value: &StateValue<Db>,
+        selected_owner: &[u8; 32],
+        other_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_newest_first: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let StateValue::Map(owners) = value else {
+            anyhow::bail!("expected two-parent qualified coin List owner Map");
+        };
+        ensure!(owners.size() == 2, "two-parent List owner buckets differ");
+        let owner_paths = [
+            (AlignedValue::from(*selected_owner), true),
+            (AlignedValue::from(*other_owner), false),
+        ];
+        let group_paths = [
+            (AlignedValue::from(*selected_group), true),
+            (AlignedValue::from(*other_group), false),
+        ];
+        for (owner_key, is_selected_owner) in owner_paths {
+            let Some(groups) = owners.get(&owner_key) else {
+                anyhow::bail!("two-parent List owner is missing");
+            };
+            let StateValue::Map(groups) = &*groups else {
+                anyhow::bail!("expected two-parent List group Map");
+            };
+            ensure!(groups.size() == 2, "two-parent List group count differs");
+            for (group_key, is_selected_group) in &group_paths {
+                let Some(list) = groups.get(group_key) else {
+                    anyhow::bail!("two-parent List group is missing");
+                };
+                let expected = if is_selected_owner && *is_selected_group {
+                    selected_newest_first
+                } else {
+                    &[]
+                };
+                assert_qualified_coin_list(&list, expected)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_qualified_coin_list(
+        value: &StateValue<Db>,
+        newest_first: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let mut cursor = value;
+        for (index, expected) in newest_first.iter().enumerate() {
+            let StateValue::Array(node) = cursor else {
+                anyhow::bail!("expected qualified coin List node");
+            };
+            ensure!(
+                node.len() == 3
+                    && matches!(node.get(0), Some(StateValue::Cell(value)) if **value == *expected)
+                    && matches!(node.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from((newest_first.len() - index) as u64)),
+                "qualified List order or length differs from finalized coins"
+            );
+            cursor = node.get(1).context("expected qualified List tail")?;
+        }
+        let StateValue::Array(node) = cursor else {
+            anyhow::bail!("expected canonical empty qualified List tail");
+        };
+        ensure!(
+            node.len() == 3
+                && matches!(node.get(0), Some(StateValue::Null))
+                && matches!(node.get(1), Some(StateValue::Null))
+                && matches!(node.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+            "qualified List does not end in the canonical empty node"
+        );
         Ok(())
     }
 
@@ -1121,17 +1234,22 @@ mod tests {
                     let tip_circuit = IrSource::load(tip_bundle.file(Role::Circuit)?)?;
                     let initialize_parameters = cache.parameters(initialize_circuit.k()).await?;
                     let parameters = cache.parameters(tip_circuit.k()).await?;
-                    let state_config = br#"{"state":{"pot":[],"coinSets":[],"coinLists":[],"rootCoinMap":[],"coinMaps":[]}}"#;
+                    let plan: Plan = serde_json::from_slice(tip_bundle.file(Role::Plan)?)?;
+                    let state = plan
+                        .state
+                        .iter()
+                        .map(|declaration| (declaration.name.clone(), json!([])))
+                        .collect::<BTreeMap<_, _>>();
+                    let state_config = serde_json::to_vec(&json!({"state": state}))?;
                     let target = WitnessContractTarget::from_state_config(
                         ContractBundleSet::new(vec![initialize_bundle, tip_bundle])?,
-                        state_config,
+                        &state_config,
                         ttl,
                         &mut OsRng,
-                    )?;
+                    ).context("prepare the nested collection deployment")?;
                     let initializer =
                         target.operation("initializeOwners", &initialize_parameters, ttl)?;
                     let operation = target.operation("tip", &parameters, ttl)?;
-                    let plan: Plan = serde_json::from_slice(operation.bundle()?.file(Role::Plan)?)?;
                     (
                         target,
                         operation,

@@ -37,8 +37,8 @@ Noctium also checks a self-recipient List prepend under two Bytes32 Map
 parents. The emitted ZKIR 3.2.1 relation accepts booked index 42 ahead of
 index 31 and preserves the neighboring bucket and the other owner's List.
 Missing parents, a missing booking and a wrong-recipient booking reject
-in the native query context. Pinned Compact comparison and funded-chain
-evidence cover shallower List paths.
+in the native query context. The pinned Compact comparison here covers
+the root and one-parent forms.
 [Lean fixture](../../tests/TwoParentQualifiedCoinList.lean) ·
 [Native check](../../runtime/tests/two_parent_qualified_coin_list.rs)
 
@@ -153,6 +153,15 @@ state digests matched direct node queries.
 [Two-parent Lean fixture](../../tests/FundedDeepQualifiedCoinMaps.lean) ·
 [Ledger receipt](funded-two-parent-coin-maps-localnet-receipt.json)
 
+The two-parent List fixture adds four Lists under two owners and two
+groups. Two funded calls finalized at blocks 71,239 and 71,242. The
+selected List stores the two contract-owned Zswap outputs in newest-first
+order, with assigned indices 45 and 44. The other three Lists stayed
+empty. Direct node queries matched four inclusion and finalization
+identities and three retained state digests.
+[Lean fixture](../../tests/FundedTwoParentQualifiedCoinList.lean) ·
+[Ledger receipt](funded-two-parent-coin-list-localnet-receipt.json)
+
 The six-parent fixture initializes a chain below each owner and group.
 Its two calls finalized at blocks 69,757 and 69,760. The independent
 leaf key stored index 42 and then index 43 in the selected chain.
@@ -183,7 +192,8 @@ NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS='{"initializeOwners":"INITIA
 ```
 
 Set `NOCTIUM_FUNDED_MAP_OVERWRITE=1` for a two-call run. For the two-parent
-run, select bundles from `FundedDeepQualifiedCoinMaps` and also set
+run, select bundles from `FundedDeepQualifiedCoinMaps` or
+`FundedTwoParentQualifiedCoinList` and also set
 `NOCTIUM_FUNDED_TWO_PARENT_MAP=1`. For six parents, select
 `FundedSixParentQualifiedCoinMaps` bundles and set
 `NOCTIUM_FUNDED_SIX_PARENT_MAP=1` instead. Run against a
