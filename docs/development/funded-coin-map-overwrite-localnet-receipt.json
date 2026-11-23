@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "scope": "Two self-mint calls on one development Ledger 9 deployment with a shared independent key in root and owner Maps",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "artifacts": {
+    "record": "funded-independent-coin-maps-localnet-receipt.json",
+    "compilerRevision": "b42ae81523a2a01489f089fbd05f3b729ff05cd7",
+    "sourceSha256": "fb2e606298facbbe73ffeba0d87d44d1f5df773c9e90f90719a5f72c1dc872f4",
+    "manifestSha256": {
+      "initializeOwners": "deca10c389f4e925e369d8778f6c311581131cb4a19711390c5e855eb2614837",
+      "tip": "26bb7ea96122cab2de1e484f9f163ca1fc28fa7ed46714daad0d3a6808fadfef"
+    }
+  },
+  "contractAddress": "09017b2d0e0530a8887de2cfdad1c41a76367df30da332754524372c372f1660",
+  "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+  "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+  "mapKey": "0404040404040404040404040404040404040404040404040404040404040404",
+  "deployment": {
+    "height": 69235,
+    "blockHash": "43fb416ca1885c9fbdbcf87900035065922645664330c1cc77dea4a657db3fc8",
+    "finalizedHeight": 69235,
+    "finalizedBlockHash": "43fb416ca1885c9fbdbcf87900035065922645664330c1cc77dea4a657db3fc8",
+    "transactionId": "2f1ee1b5bc5aa5f7ab34b00c9928cd9147ed2fad0e3fb552906dbb13f7b2bb26"
+  },
+  "initialization": {
+    "height": 69238,
+    "blockHash": "5e4ff7b594b288e3037e1ccd59cf29d33cfee770ad667c34aac0c38ab2fbb8d5",
+    "finalizedHeight": 69238,
+    "finalizedBlockHash": "5e4ff7b594b288e3037e1ccd59cf29d33cfee770ad667c34aac0c38ab2fbb8d5",
+    "transactionId": "6822027e95378285dd48434b0a03738d20e90c0ad6c61674073d3327baf1b7db",
+    "stateSha256": "815abf17db071e49dc6599a46560de3e593e2eb7c903fa1f81b9fc2b6d4317e0"
+  },
+  "firstCall": {
+    "height": 69242,
+    "blockHash": "3fc94f57bee30a72f6674d371f6308fbbc6ccea59ccffe7ad1c4f59d4168a7ed",
+    "finalizedHeight": 69242,
+    "finalizedBlockHash": "3fc94f57bee30a72f6674d371f6308fbbc6ccea59ccffe7ad1c4f59d4168a7ed",
+    "transactionId": "408ec66e50c2bbafca2c6a4361a587cc1ba07cfaaafc5fab0e464569af806118",
+    "stateSha256": "2a0d019003f2063ea2f2ad7510730e1a68172ac4a186d2034cec050230c62db1",
+    "coin": {
+      "nonce": "c021582a112c6ef09f923f3cc606746a8dbc1ed9d830c7003f5c6564f491c48d",
+      "color": "df0831ae9103c8bec7b8b244d58c8c6e06e2aa766dd59ef0bd12c94a98239776",
+      "value": "5",
+      "commitment": "ad57ad1ba755c62d56f1ca99f8cb047118b7da94090a050ac30fe0a77b2fff26",
+      "mtIndex": 38
+    }
+  },
+  "replacementCall": {
+    "height": 69245,
+    "blockHash": "e26a7f50d836d959f01245f89d024abec873248d0118ca5d72dda8e948d16d1c",
+    "finalizedHeight": 69245,
+    "finalizedBlockHash": "e26a7f50d836d959f01245f89d024abec873248d0118ca5d72dda8e948d16d1c",
+    "transactionId": "322882445162a16bff353beb4166ea3c165c80c121a81bda529d11d319430888",
+    "stateSha256": "cff16019d0e53bce8b2dbcea7aa6af5303d093d791b9c98fdec98c97e6956744",
+    "coin": {
+      "nonce": "ce06a9c83a0b162e1524cd5eef213916f183ad346b66fd0b327e592770cc69be",
+      "color": "df0831ae9103c8bec7b8b244d58c8c6e06e2aa766dd59ef0bd12c94a98239776",
+      "value": "5",
+      "commitment": "51ab9a43df7adfa2cc71dbed9602bc4268568d47fa256fdc1a4dabc79ce498e7",
+      "mtIndex": 39
+    }
+  },
+  "verified": {
+    "rootCoinMapContainsReplacementOnly": true,
+    "nestedCoinMapContainsReplacementOnly": true,
+    "originalNonceRemainsInPot": true,
+    "selectedSetContainsBothCoins": true,
+    "selectedListNewestFirst": true,
+    "otherOwnerCollectionsEmpty": true
+  },
+  "rejectedBeforeFirstCall": [
+    "missingOffer",
+    "mismatchedOffer"
+  ],
+  "test": {
+    "name": "localnet::shielded_receive::tests::funded_shielded_receive_localnet",
+    "sourceSha256": "787a2cbe6b6fb53bab6ca24d7baa9cdec0f0ab71f70e81ca2f4a0226618e1699",
+    "binarySha256": "bff09297f112bb5f55f7ab43ab664648d732f3719095b671d563c67b93e0b8d6",
+    "result": "passed",
+    "durationSeconds": 148.24
+  }
+}

@@ -730,6 +730,169 @@ mod tests {
         Ok(())
     }
 
+    fn assert_nested_qualified_coin_collections(
+        state_bytes: &[u8],
+        plan: &Plan,
+        selected_owner: &[u8; 32],
+        other_owner: &[u8; 32],
+        map_key: &[u8; 32],
+        newest_first: &[(&Info, u64)],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        ensure!(!newest_first.is_empty(), "expected at least one nested coin");
+        let state: ContractState<Db> = native_decode(state_bytes)?;
+        let StateValue::Array(slots) = state.data.get_ref() else {
+            anyhow::bail!("expected initialized nested collection state slots");
+        };
+        let slot = |name: &str| {
+            plan.state
+                .iter()
+                .position(|declaration| declaration.name == name)
+                .with_context(|| format!("{name} state slot missing from plan"))
+        };
+        let selected_key = AlignedValue::from(*selected_owner);
+        let other_key = AlignedValue::from(*other_owner);
+        let map_key = AlignedValue::from(*map_key);
+        let qualified = newest_first
+            .iter()
+            .map(|(coin, index)| AlignedValue::from(coin.qualify(*index)))
+            .collect::<Vec<_>>();
+        for coin in &qualified {
+            ensure!(
+                coin.alignment.fits(&coin.value),
+                "qualified coin does not fit its Map key alignment"
+            );
+        }
+
+        let pot_slot = slot("pot")?;
+        let Some(StateValue::Map(pot)) = slots.get(pot_slot) else {
+            anyhow::bail!("expected finalized pot Map");
+        };
+        ensure!(pot.size() == newest_first.len(), "pot coin count differs");
+        for ((coin, _), qualified) in newest_first.iter().zip(&qualified) {
+            ensure!(
+                pot.get(&AlignedValue::from(coin.nonce)).as_deref()
+                    == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
+                "pot is missing a qualified coin by nonce"
+            );
+        }
+
+        let root_map_slot = slot("rootCoinMap")?;
+        let Some(StateValue::Map(root_coins)) = slots.get(root_map_slot) else {
+            anyhow::bail!("expected finalized root qualified coin Map");
+        };
+        ensure!(
+            root_coins.size() == 1
+                && root_coins.get(&map_key).as_deref()
+                    == Some(&StateValue::Cell(Sp::new(qualified[0].clone()))),
+            "root Map does not contain the newest coin under the original key"
+        );
+
+        let coin_maps_slot = slot("coinMaps")?;
+        let Some(StateValue::Map(coin_map_owners)) = slots.get(coin_maps_slot) else {
+            anyhow::bail!("expected owner-keyed finalized qualified coin Map");
+        };
+        ensure!(coin_map_owners.size() == 2, "qualified coin Map owner buckets differ");
+        let Some(selected_coin_map) = coin_map_owners.get(&selected_key) else {
+            anyhow::bail!("selected owner is missing from the qualified coin Map");
+        };
+        let StateValue::Map(selected_coins) = &*selected_coin_map else {
+            anyhow::bail!("expected selected owner's qualified coin Map");
+        };
+        ensure!(
+            selected_coins.size() == 1
+                && selected_coins.get(&map_key).as_deref()
+                    == Some(&StateValue::Cell(Sp::new(qualified[0].clone()))),
+            "selected owner Map does not contain the newest coin under the original key"
+        );
+        let Some(other_coin_map) = coin_map_owners.get(&other_key) else {
+            anyhow::bail!("other owner is missing from the qualified coin Map");
+        };
+        let StateValue::Map(other_coins) = &*other_coin_map else {
+            anyhow::bail!("expected other owner's qualified coin Map");
+        };
+        ensure!(other_coins.size() == 0, "replacement leaked into other owner Map");
+
+        let set_slot = slot("coinSets")?;
+        let Some(StateValue::Map(set_owners)) = slots.get(set_slot) else {
+            anyhow::bail!("expected owner-keyed qualified coin Set");
+        };
+        ensure!(set_owners.size() == 2, "qualified coin Set owner buckets differ");
+        let Some(selected_set) = set_owners.get(&selected_key) else {
+            anyhow::bail!("selected owner is missing from the qualified coin Set");
+        };
+        let StateValue::Map(selected_members) = &*selected_set else {
+            anyhow::bail!("expected selected owner's qualified coin Set");
+        };
+        ensure!(
+            selected_members.size() == newest_first.len(),
+            "selected owner Set coin count differs"
+        );
+        for qualified in &qualified {
+            ensure!(
+                matches!(selected_members.get(qualified), Some(marker) if matches!(*marker, StateValue::Null)),
+                "selected owner Set is missing a qualified coin"
+            );
+        }
+        let Some(other_set) = set_owners.get(&other_key) else {
+            anyhow::bail!("other owner is missing from the qualified coin Set");
+        };
+        let StateValue::Map(other_members) = &*other_set else {
+            anyhow::bail!("expected other owner's qualified coin Set");
+        };
+        ensure!(other_members.size() == 0, "replacement leaked into other owner Set");
+
+        let list_slot = slot("coinLists")?;
+        let Some(StateValue::Map(list_owners)) = slots.get(list_slot) else {
+            anyhow::bail!("expected owner-keyed qualified coin List");
+        };
+        ensure!(list_owners.size() == 2, "qualified coin List owner buckets differ");
+        let Some(selected_list) = list_owners.get(&selected_key) else {
+            anyhow::bail!("selected owner is missing from the qualified coin List");
+        };
+        let StateValue::Array(coin_list) = &*selected_list else {
+            anyhow::bail!("expected selected owner's qualified coin List");
+        };
+        let mut list_node = coin_list;
+        for (index, expected) in qualified.iter().enumerate() {
+            ensure!(
+                list_node.len() == 3
+                    && matches!(list_node.get(0), Some(StateValue::Cell(value)) if **value == *expected)
+                    && matches!(list_node.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from((qualified.len() - index) as u64)),
+                "selected List order or length differs from finalized coins"
+            );
+            if index + 1 < qualified.len() {
+                let Some(StateValue::Array(tail)) = list_node.get(1) else {
+                    anyhow::bail!("expected selected qualified coin List tail");
+                };
+                list_node = tail;
+            } else {
+                ensure!(
+                    matches!(list_node.get(1), Some(StateValue::Array(empty)) if empty.len() == 3
+                        && matches!(empty.get(0), Some(StateValue::Null))
+                        && matches!(empty.get(1), Some(StateValue::Null))
+                        && matches!(empty.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64))),
+                    "selected List does not end in an empty tail"
+                );
+            }
+        }
+        let Some(other_list) = list_owners.get(&other_key) else {
+            anyhow::bail!("other owner is missing from the qualified coin List");
+        };
+        let StateValue::Array(other_list) = &*other_list else {
+            anyhow::bail!("expected other owner's qualified coin List");
+        };
+        ensure!(
+            other_list.len() == 3
+                && matches!(other_list.get(0), Some(StateValue::Null))
+                && matches!(other_list.get(1), Some(StateValue::Null))
+                && matches!(other_list.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+            "replacement leaked into other owner List"
+        );
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires a generated funded receive bundle and isolated development node"]
     fn funded_shielded_receive_localnet() -> Result<()> {
@@ -742,6 +905,20 @@ mod tests {
                 "nested collection mode requires both nested bundle and manifest settings"
             );
             let nested = nested_directory.is_some();
+            let overwrite = match env::var_os("NOCTIUM_FUNDED_MAP_OVERWRITE") {
+                Some(value) => {
+                    ensure!(
+                        value.to_str() == Some("1"),
+                        "NOCTIUM_FUNDED_MAP_OVERWRITE must be set to 1 to enable overwrite mode"
+                    );
+                    true
+                }
+                None => false,
+            };
+            ensure!(
+                !overwrite || nested,
+                "NOCTIUM_FUNDED_MAP_OVERWRITE=1 requires nested collection mode"
+            );
             let root_bundle = if nested {
                 None
             } else {
@@ -963,7 +1140,7 @@ mod tests {
                             false,
                         )?,
                 );
-                Some(json!({
+                let mut observation = json!({
                     "height": receipt.height,
                     "blockHash": receipt.finalized_hash,
                     "transactionId": receipt.transaction_id,
@@ -971,7 +1148,11 @@ mod tests {
                     "selectedOwner": hex::encode(selected_owner),
                     "otherOwner": hex::encode(other_owner),
                     "bothOwnersInitialized": true
-                }))
+                });
+                if overwrite {
+                    observation["finalizedHeight"] = json!(receipt.finalized_height);
+                }
+                Some(observation)
             } else {
                 None
             };
@@ -986,7 +1167,7 @@ mod tests {
             let snapshot = node.sync()?;
             let expected_index = snapshot.state.zswap.first_free;
             let commitment = coin.commitment(&Recipient::Contract(address));
-            let inputs = || {
+            let inputs = |coin: &Info| {
                 let mut values = BTreeMap::from([
                     ("domain".into(), json!({"kind":"bytes", "values":domain.0})),
                     (
@@ -1013,11 +1194,11 @@ mod tests {
             let mut absent = current;
             ensure!(
                 operation
-                    .prepare_call(&mut absent, &parameters, inputs(), &mut OsRng)
+                    .prepare_call(&mut absent, &parameters, inputs(&coin), &mut OsRng)
                     .is_err(),
                 "receive without offer prepared"
             );
-            let current = absent.context("missing offer consumed the current state")?;
+            let mut current = absent.context("missing offer consumed the current state")?;
             let other_coin = Info::new(&mut OsRng, coin.value, coin.type_);
             let signer = ExplicitSeal::new(approve, StdRng::from_entropy());
             ensure!(
@@ -1025,7 +1206,7 @@ mod tests {
                     .bind_minted_shielded_receive(
                         &operation,
                         &current,
-                        inputs(),
+                        inputs(&coin),
                         &other_coin,
                         &parameters,
                         &cache,
@@ -1042,11 +1223,11 @@ mod tests {
                     == before_funded_call,
                 "invalid offer changed the Map"
             );
-            let bound = make_funding()
-                .bind_minted_shielded_receive(
+            let (bound, call_binding) = make_funding()
+                .bind_minted_shielded_receive_with_binding(
                     &operation,
                     &current,
-                    inputs(),
+                    inputs(&coin),
                     &coin,
                     &parameters,
                     &cache,
@@ -1058,7 +1239,28 @@ mod tests {
             let receipt = finalize(&node, &bound)
                 .await
                 .context("finalize the shielded mint and write")?;
-            let finalized = node.sync()?;
+            if overwrite {
+                current = call_binding.admit_committed_state(
+                    &receipt.contract_state,
+                    bound.expected_state(),
+                    &receipt.finalized_hash,
+                    false,
+                )?;
+            }
+            let finalized = if overwrite {
+                let snapshot = node.replay_to(
+                    &receipt.finalized_hash,
+                    &mut node.cache.borrow_mut(),
+                    None,
+                )?;
+                ensure!(
+                    snapshot.height == receipt.finalized_height,
+                    "first call Zswap snapshot height differs from its receipt"
+                );
+                snapshot
+            } else {
+                node.sync()?
+            };
             let finalized_output = finalized
                 .state
                 .zswap
@@ -1103,133 +1305,14 @@ mod tests {
                 "finalized Map does not contain the Ledger-assigned qualified coin"
             );
             if nested {
-                let selected_key = AlignedValue::from(selected_owner);
-                let other_key = AlignedValue::from(other_owner);
-                let set_slot = slot("coinSets")?;
-                let list_slot = slot("coinLists")?;
-                let Some(StateValue::Map(set_owners)) = slots.get(set_slot) else {
-                    anyhow::bail!("expected owner-keyed qualified coin Set");
-                };
-                ensure!(
-                    set_owners.size() == 2,
-                    "qualified coin Set owner buckets differ"
-                );
-                let Some(selected_set) = set_owners.get(&selected_key) else {
-                    anyhow::bail!("selected owner is missing from the qualified coin Set");
-                };
-                let StateValue::Map(selected_members) = &*selected_set else {
-                    anyhow::bail!("expected selected owner's qualified coin Set");
-                };
-                ensure!(
-                    selected_members.size() == 1
-                        && matches!(selected_members.get(&qualified), Some(marker) if matches!(*marker, StateValue::Null)),
-                    "selected owner Set does not contain the Ledger-assigned qualified coin"
-                );
-                let Some(other_set) = set_owners.get(&other_key) else {
-                    anyhow::bail!("other owner is missing from the qualified coin Set");
-                };
-                let StateValue::Map(other_members) = &*other_set else {
-                    anyhow::bail!("expected other owner's qualified coin Set");
-                };
-                ensure!(
-                    other_members.size() == 0,
-                    "qualified coin leaked into other owner Set"
-                );
-
-                let root_map_slot = slot("rootCoinMap")?;
-                let Some(StateValue::Map(root_coins)) = slots.get(root_map_slot) else {
-                    anyhow::bail!("expected finalized root qualified coin Map");
-                };
-                let public_key = AlignedValue::from(public_key);
-                ensure!(
-                    root_coins.size() == 1
-                        && root_coins.get(&public_key).as_deref()
-                            == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
-                    "root Map does not contain the Ledger-assigned qualified coin under the public key"
-                );
-
-                let coin_maps_slot = slot("coinMaps")?;
-                let Some(StateValue::Map(coin_map_owners)) = slots.get(coin_maps_slot) else {
-                    anyhow::bail!("expected owner-keyed finalized qualified coin Map");
-                };
-                ensure!(
-                    coin_map_owners.size() == 2,
-                    "qualified coin Map owner buckets differ"
-                );
-                let Some(selected_coin_map) = coin_map_owners.get(&selected_key) else {
-                    anyhow::bail!("selected owner is missing from the qualified coin Map");
-                };
-                let StateValue::Map(selected_coins) = &*selected_coin_map else {
-                    anyhow::bail!("expected selected owner's qualified coin Map");
-                };
-                ensure!(
-                    selected_coins.size() == 1
-                        && selected_coins.get(&public_key).as_deref()
-                            == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
-                    "selected owner Map does not contain the Ledger-assigned qualified coin under the public key"
-                );
-                let Some(other_coin_map) = coin_map_owners.get(&other_key) else {
-                    anyhow::bail!("other owner is missing from the qualified coin Map");
-                };
-                let StateValue::Map(other_coins) = &*other_coin_map else {
-                    anyhow::bail!("expected other owner's qualified coin Map");
-                };
-                ensure!(other_coins.size() == 0, "qualified coin leaked into other owner Map");
-
-                let Some(StateValue::Map(list_owners)) = slots.get(list_slot) else {
-                    anyhow::bail!("expected owner-keyed qualified coin List");
-                };
-                ensure!(
-                    list_owners.size() == 2,
-                    "qualified coin List owner buckets differ"
-                );
-                let Some(selected_list) = list_owners.get(&selected_key) else {
-                    anyhow::bail!("selected owner is missing from the qualified coin List");
-                };
-                let StateValue::Array(coin_list) = &*selected_list else {
-                    anyhow::bail!("expected selected owner's qualified coin List");
-                };
-                ensure!(
-                    coin_list.len() == 3,
-                    "invalid selected qualified coin List node"
-                );
-                let Some(StateValue::Cell(list_head)) = coin_list.get(0) else {
-                    anyhow::bail!("expected selected qualified coin List head");
-                };
-                ensure!(
-                    **list_head == qualified,
-                    "selected List head differs from the Ledger-assigned qualified coin"
-                );
-                let Some(StateValue::Array(list_tail)) = coin_list.get(1) else {
-                    anyhow::bail!("expected selected qualified coin List tail");
-                };
-                ensure!(
-                    list_tail.len() == 3
-                        && matches!(list_tail.get(0), Some(StateValue::Null))
-                        && matches!(list_tail.get(1), Some(StateValue::Null))
-                        && matches!(list_tail.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
-                    "selected qualified coin List has unexpected tail entries"
-                );
-                let Some(StateValue::Cell(list_length)) = coin_list.get(2) else {
-                    anyhow::bail!("expected selected qualified coin List length");
-                };
-                ensure!(
-                    **list_length == AlignedValue::from(1u64),
-                    "selected qualified coin List must contain one value"
-                );
-                let Some(other_list) = list_owners.get(&other_key) else {
-                    anyhow::bail!("other owner is missing from the qualified coin List");
-                };
-                let StateValue::Array(other_list) = &*other_list else {
-                    anyhow::bail!("expected other owner's qualified coin List");
-                };
-                ensure!(
-                    other_list.len() == 3
-                        && matches!(other_list.get(0), Some(StateValue::Null))
-                        && matches!(other_list.get(1), Some(StateValue::Null))
-                        && matches!(other_list.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
-                    "qualified coin leaked into other owner List"
-                );
+                assert_nested_qualified_coin_collections(
+                    &receipt.contract_state,
+                    &plan,
+                    &selected_owner,
+                    &other_owner,
+                    &public_key,
+                    &[(&coin, finalized_index)],
+                )?;
             } else {
                 let cell_slot = slot("held")?;
                 let set_slot = slot("registry")?;
@@ -1284,6 +1367,128 @@ mod tests {
                     .coin_coms_set
                     .contains_key(&commitment)
             );
+            let overwrite_evidence = if overwrite {
+                let replacement = Info::new(&mut OsRng, coin.value, coin.type_);
+                ensure!(
+                    replacement.nonce.0.0 != coin.nonce.0.0,
+                    "replacement coin nonce must differ from original nonce"
+                );
+                let replacement_commitment =
+                    replacement.commitment(&Recipient::Contract(address));
+                ensure!(
+                    replacement.type_ == coin.type_,
+                    "replacement coin color differs from original color"
+                );
+                let replacement_index = node.sync()?.state.zswap.first_free;
+                let replacement_signer = ExplicitSeal::new(approve, StdRng::from_entropy());
+                let (replacement_bound, replacement_binding) = make_funding()
+                    .bind_minted_shielded_receive_with_binding(
+                        &operation,
+                        &current,
+                        inputs(&replacement),
+                        &replacement,
+                        &parameters,
+                        &cache,
+                        &replacement_signer,
+                        StdRng::from_entropy(),
+                    )
+                    .await
+                    .context("fund the replacement shielded mint and write")?;
+                let replacement_receipt = finalize(&node, &replacement_bound)
+                    .await
+                    .context("finalize the replacement shielded mint and write")?;
+                let _replacement_current = replacement_binding.admit_committed_state(
+                    &replacement_receipt.contract_state,
+                    replacement_bound.expected_state(),
+                    &replacement_receipt.finalized_hash,
+                    false,
+                )?;
+                let replacement_finalized = node.replay_to(
+                    &replacement_receipt.finalized_hash,
+                    &mut node.cache.borrow_mut(),
+                    None,
+                )?;
+                ensure!(
+                    replacement_finalized.height == replacement_receipt.finalized_height,
+                    "replacement Zswap snapshot height differs from its receipt"
+                );
+                ensure!(
+                    replacement_index != finalized_index,
+                    "replacement mint reused the original Ledger index"
+                );
+                let original_output = replacement_finalized
+                    .state
+                    .zswap
+                    .coin_coms
+                    .index(finalized_index)
+                    .context("original finalized minted output leaf missing")?;
+                let replacement_output = replacement_finalized
+                    .state
+                    .zswap
+                    .coin_coms
+                    .index(replacement_index)
+                    .context("replacement finalized minted output leaf missing")?;
+                ensure!(
+                    original_output.0 == commitment.0
+                        && original_output.1.as_deref() == Some(&address)
+                        && replacement_output.0 == replacement_commitment.0
+                        && replacement_output.1.as_deref() == Some(&address),
+                    "finalized Zswap leaves do not match both contract-owned mints"
+                );
+                ensure!(
+                    replacement_finalized
+                        .state
+                        .zswap
+                        .coin_coms_set
+                        .contains_key(&commitment)
+                        && replacement_finalized
+                            .state
+                            .zswap
+                            .coin_coms_set
+                            .contains_key(&replacement_commitment),
+                    "finalized Zswap state does not retain both minted commitments"
+                );
+                assert_nested_qualified_coin_collections(
+                    &replacement_receipt.contract_state,
+                    &plan,
+                    &selected_owner,
+                    &other_owner,
+                    &public_key,
+                    &[(&replacement, replacement_index), (&coin, finalized_index)],
+                )?;
+                Some(json!({
+                    "height": replacement_receipt.height,
+                    "blockHash": replacement_receipt.block_hash,
+                    "finalizedBlockHash": replacement_receipt.finalized_hash,
+                    "transactionId": replacement_receipt.transaction_id,
+                    "commitment": hex::encode(replacement_commitment.0.0),
+                    "nonce": hex::encode(replacement.nonce.0.0),
+                    "color": hex::encode(replacement.type_.0.0),
+                    "domain": hex::encode(domain.0),
+                    "owner": hex::encode(selected_owner),
+                    "mapKey": hex::encode(public_key),
+                    "value": replacement.value.to_string(),
+                    "mtIndex": replacement_index,
+                    "stateSha256": artifacts::digest(&replacement_receipt.contract_state),
+                    "receiptFinalizedHeights": {
+                        "deployment": deployed.finalized_height,
+                        "initialization": initialization_observation
+                            .as_ref()
+                            .and_then(|value| value.get("finalizedHeight"))
+                            .and_then(Value::as_u64),
+                        "initialCall": receipt.finalized_height,
+                        "replacementCall": replacement_receipt.finalized_height
+                    },
+                    "rootCoinMapContainsReplacementOnly": true,
+                    "nestedCoinMapContainsReplacementOnly": true,
+                    "originalNonceRemainsInPot": true,
+                    "selectedSetContainsBothCoins": true,
+                    "selectedListNewestFirst": true,
+                    "otherOwnerCollectionsEmpty": true
+                }))
+            } else {
+                None
+            };
             let mut evidence = json!({
                 "deploymentHeight": deployed.height,
                 "deploymentBlockHash": deployed.finalized_hash,
@@ -1318,6 +1523,9 @@ mod tests {
                 evidence["cellCoinMatchesFinalizedOutput"] = json!(true);
                 evidence["setCoinMatchesFinalizedOutput"] = json!(true);
                 evidence["listCoinHeadMatchesFinalizedOutput"] = json!(true);
+            }
+            if let Some(overwrite) = overwrite_evidence {
+                evidence["overwrite"] = overwrite;
             }
             println!("{evidence}");
             Ok(())

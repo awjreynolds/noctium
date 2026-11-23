@@ -84,7 +84,7 @@ reinsertion. A private owner requires explicit disclosure because the path
 appears in the public transcript. [Nested Lean fixture](../../tests/NestedBookedCoinMap.lean)
 
 The query-context checks cover overwrite and missing owners. The funded
-fixture below checks the first independent-key insertion on Ledger 9.
+fixture below exercises independent-key insertion and overwrite on Ledger 9.
 
 ## Funded Maps, Set and List
 
@@ -96,6 +96,15 @@ Set member and the List head match the finalized Zswap coin at index 37.
 The other owner's buckets stayed empty. The harness rejects missing and
 mismatched offers before submission. [Lean fixture](../../tests/FundedNestedQualifiedCoinCollections.lean)
 · [Finalized receipt](funded-independent-coin-maps-localnet-receipt.json)
+
+A second run used the same bundles and called the same entrypoint twice on
+one deployment. The calls finalized at blocks 69,242 and 69,245. The root
+and owner Maps kept one entry each at the same key and replaced coin index
+38 with index 39. Both coins remained in the nonce-keyed Map, the owner's
+Set and the owner's List, with the replacement at the head. The other
+owner's buckets stayed empty. The recorded block hashes and three contract
+state digests matched direct queries at the recorded blocks.
+[Overwrite receipt](funded-coin-map-overwrite-localnet-receipt.json)
 
 Compile the fixture for the pinned ZKIR 3.2.1 profile and assemble both
 entrypoint bundles. Use the compiler revision and fixture hash in the receipt
@@ -115,6 +124,10 @@ NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS='{"initializeOwners":"INITIA
   --no-default-features --features zkir-321,localnet \
   localnet::shielded_receive::tests::funded_shielded_receive_localnet -- --exact --ignored --nocapture
 ```
+
+Set `NOCTIUM_FUNDED_MAP_OVERWRITE=1` for the two-call run. Run against a
+dedicated development chain to keep Zswap booking indices stable during
+funding and submission.
 
 The [pinned VM opcode source](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-vm/src/ops.rs)
 defines opcode names and immediate encoding. The pinned runtime exports the
