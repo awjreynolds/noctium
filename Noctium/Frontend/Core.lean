@@ -426,6 +426,7 @@ scoped syntax "pushFront" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "when" nlexpr "pushFront" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "constructor" "(" nlconstructorparam,* ")" "where" nlconstructorinit* "end" : nlstate
 scoped syntax "map" ident ":" nltype "=>" nltype : nlstate
+scoped syntax "map" ident ":" "Vector(" num "," nltype ")" "=>" nltype : nlstate
 scoped syntax "counter" ident : nlstate
 scoped syntax "sealed" "counter" ident : nlstate
 scoped syntax "sealed" ident ident ":" nltype : nlstate
@@ -5500,6 +5501,25 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     pure (keyTy :: restTypes, record, recordFields)
   | _ => throwErrorAt tail "expected a nested Map key or record Set leaf"
 
+private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `nlstate)
+    (label : String) :
+    CommandElabM (Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) := do
+  unless 0 < length && length ≤ Types.defaultLimits.maxVectorLength do
+    throwErrorAt source
+      s!"root {label} length must be between 1 and {Types.defaultLimits.maxVectorLength}"
+  let environment : Types.CompositeEnv := {}
+  let compositeType : Types.CompositeType := .vector length (.scalar .native)
+  let environmentTerm ← `(({} : Noctium.Types.CompositeEnv))
+  let nativeType ← tyTerm .native
+  let compositeTypeTerm ← `(Noctium.Types.CompositeType.vector $(natTerm length)
+    (Noctium.Types.CompositeType.scalar $nativeType))
+  match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+  | .error message => throwErrorAt source message
+  | .ok fields =>
+    unless fields.length == length && fields.all (fun field => field.2 == .native) do
+      throwErrorAt source s!"root {label} layout does not match its Native width"
+  pure (environment, compositeType, environmentTerm, compositeTypeTerm)
+
 @[command_elab contractCommand] unsafe def elabContract : CommandElab := fun stx => do
   match stx with
   | `(noctium_contract $name:ident where $states:nlstate* $entries:nlentry* end) =>
@@ -5534,19 +5554,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           unless element.type == .native && element.nominalUInt.isNone do
             throwErrorAt state "root Set vectors require Native elements"
           let length := length.getNat
-          unless 0 < length && length ≤ Types.defaultLimits.maxVectorLength do
-            throwErrorAt state s!"root Set vector length must be between 1 and {Types.defaultLimits.maxVectorLength}"
-          let environment : Types.CompositeEnv := {}
-          let compositeType : Types.CompositeType := .vector length (.scalar .native)
-          let environmentTerm ← `(({} : Noctium.Types.CompositeEnv))
-          let nativeType ← tyTerm .native
-          let compositeTypeTerm ← `(Noctium.Types.CompositeType.vector $(natTerm length)
-            (Noctium.Types.CompositeType.scalar $nativeType))
-          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
-          | .error message => throwErrorAt state message
-          | .ok fields =>
-            unless fields.length == length && fields.all (fun field => field.2 == .native) do
-              throwErrorAt state "root Set vector key layout does not match its Native width"
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            checkedRootNativeVectorKeyLayout length state "Set vector"
           let valueSchema := LedgerValueType.recordSet environment compositeType
           let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
@@ -5647,6 +5656,24 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
+        | `(nlstate| map $id:ident : Vector($length:num, $element:nltype) => $valueType:nltype) => do
+          let elementSource ← readCircuitSourceType element
+          unless elementSource.type == .native && elementSource.nominalUInt.isNone do
+            throwErrorAt state "root Map vector keys require Native elements"
+          let length := length.getNat
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            checkedRootNativeVectorKeyLayout length state "Map vector key"
+          let valueSource ← readCircuitSourceType valueType
+          let valueTy := valueSource.type
+          if let some interface := valueSource.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
+          if valueSource.nominalUInt.isSome then
+            nominalUIntCollections := (id.getId.toString, {scalarValue := valueSource.nominalUInt}) ::
+              nominalUIntCollections
+          let valueSchema := LedgerValueType.recordMapKey environment compositeType valueTy
+          let valueTerm ← `(Noctium.LedgerValueType.recordMapKey
+            $environmentTerm $compositeTypeTerm $(← tyTerm valueTy))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype)
         | `(nlstate| map $id:ident : $key:nltype => $value:nltype) => do
           let key ← readCollectionScalarSourceType key

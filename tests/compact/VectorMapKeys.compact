@@ -1,0 +1,43 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger vectorValues: Map<Vector<2, Field>, Field>;
+
+export circuit update(first: Field, second: Field, third: Field): [Boolean, Boolean, Uint<64>] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  vectorValues.insert(keyA, 101 as Field);
+  vectorValues.insert(keyB, 303 as Field);
+  vectorValues.insert(keyA, 202 as Field);
+  return [vectorValues.member(keyA), vectorValues.member(keyB), vectorValues.size()];
+}
+
+export circuit lookup(first: Field, second: Field, third: Field): [Field, Field, Field] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  const missingKey = [disclose(second), disclose(third)] as Vector<2, Field>;
+  const missingValue = vectorValues.member(missingKey)
+    ? vectorValues.lookup(missingKey)
+    : 0 as Field;
+  return [vectorValues.lookup(keyA), vectorValues.lookup(keyB), missingValue];
+}
+
+export circuit member(first: Field, second: Field, third: Field): [Boolean, Boolean, Boolean] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  const missingKey = [disclose(second), disclose(third)] as Vector<2, Field>;
+  return [vectorValues.member(keyA), vectorValues.member(keyB), vectorValues.member(missingKey)];
+}
+
+export circuit size(): Uint<64> {
+  return vectorValues.size();
+}
+
+export circuit remove(first: Field, second: Field, third: Field): [Boolean, Boolean, Field, Uint<64>] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  vectorValues.remove(keyA);
+  const memberA = vectorValues.member(keyA);
+  const valueA = memberA ? vectorValues.lookup(keyA) : 0 as Field;
+  return [memberA, vectorValues.member(keyB), valueA, vectorValues.size()];
+}
