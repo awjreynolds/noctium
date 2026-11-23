@@ -85,6 +85,14 @@ def decodeOperands (value : Json) : Except String (List Operand) := do
 def decodeOperandField (value : Json) (name : String) : Except String Operand := do
   decodeOperand (← value.getObjVal? name)
 
+private def decodeCopy (value : Json) : Except String Instruction := do
+  exactFields value ["op", "val", "output"]
+  let source ← stringField value "val"
+  ensure (validIdentifier source) "invalid native SSA reference"
+  let output ← stringField value "output"
+  ensure (validIdentifier output) "invalid native SSA definition"
+  return .equal (.reference source) (.reference output)
+
 def decodeInstruction (value : Json) : Except String Instruction := do
   let opcode ← stringField value "op"
   match opcode with
@@ -127,6 +135,7 @@ def decodeInstruction (value : Json) : Except String Instruction := do
     let output ← stringField value "output"
     ensure (validIdentifier output) "invalid native SSA definition"
     return .mul a b output
+  | "copy" => decodeCopy value
   | "neg" => do
     exactFields value ["op", "a", "output"]
     let a ← decodeOperandField value "a"
@@ -178,6 +187,51 @@ def decodeInstruction (value : Json) : Except String Instruction := do
     exactFields value ["op", "vals"]
     return .output (← decodeOperands (← value.getObjVal? "vals"))
   | _ => throw s!"unsupported native instruction '{opcode}'"
+
+/-- The exact Copy object emitted for a reused comparison decodes to the field
+equality between its source and destination references. Copy's `val` and
+`output` are SSA bindings, so immediate sources are rejected. Freshness remains
+the native producer's admission check. -/
+private theorem decode_comparisonCopyJson (source destination : String)
+    (sourceValid : validIdentifier source = true)
+    (destinationValid : validIdentifier destination = true) :
+    decodeCopy (Json.mkObj [
+      ("op", toJson ("copy" : String)), ("val", toJson source),
+      ("output", toJson destination)]) =
+        .ok (.equal (.reference source) (.reference destination)) := by
+  let copyJson := Json.mkObj [
+    ("op", toJson ("copy" : String)), ("val", toJson source),
+    ("output", toJson destination)]
+  have fields : exactFields copyJson ["op", "val", "output"] = .ok () := by
+    rfl
+  have sourceField : stringField copyJson "val" = .ok source := by
+    rfl
+  have outputField : stringField copyJson "output" = .ok destination := by
+    rfl
+  change decodeCopy copyJson = .ok (.equal (.reference source) (.reference destination))
+  unfold decodeCopy
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, fields, sourceField, ensure, sourceValid,
+    outputField, destinationValid]
+
+/-- The parser dispatches a Copy object to the strict Copy decoder. -/
+theorem decodeInstruction_copyJson (source destination : String)
+    (sourceValid : validIdentifier source = true)
+    (destinationValid : validIdentifier destination = true) :
+    decodeInstruction (Json.mkObj [
+      ("op", toJson ("copy" : String)), ("val", toJson source),
+      ("output", toJson destination)]) =
+        .ok (.equal (.reference source) (.reference destination)) := by
+  let copyJson := Json.mkObj [
+    ("op", toJson ("copy" : String)), ("val", toJson source),
+    ("output", toJson destination)]
+  have opcode : stringField copyJson "op" = .ok "copy" := by
+    rfl
+  have decoded : decodeCopy copyJson = .ok (.equal (.reference source) (.reference destination)) := by
+    exact decode_comparisonCopyJson source destination sourceValid destinationValid
+  change decodeInstruction copyJson = .ok (.equal (.reference source) (.reference destination))
+  unfold decodeInstruction
+  rw [opcode]
+  simpa only [Bind.bind, Except.bind] using decoded
 
 /-- Decode the exact ZKIR 3.2 root and typed Native relation subset represented
 by `NativeRelation`. This checks JSON shape and encoding only. -/

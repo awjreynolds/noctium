@@ -190,7 +190,8 @@ private def impactEnvironment : EvalEnv := [
   ("first", .uint 255 5), ("middle", .native 17), ("last", .uint 255 5)]
 
 private def ledgerArtifactPair (deduplicate : _root_.Bool) :=
-  Zkir.lowerPrunedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint deduplicate
+  Zkir.lowerPrunedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint
+    (if deduplicate then .rangeAndAssertions else .disabled)
 
 #guard (ledgerArtifactPair _root_.Bool.false).isOk
 #guard (ledgerArtifactPair _root_.Bool.true).isOk
