@@ -1,0 +1,38 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Receipt {
+  amount: Field;
+  active: Boolean;
+}
+
+export ledger receipts: Map<Vector<2, Field>, Receipt>;
+
+export circuit update(first: Field, second: Field, third: Field): [Boolean, Boolean, Uint<64>] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  receipts.insert(keyA, disclose(Receipt { amount: 101 as Field, active: true }));
+  receipts.insert(keyB, disclose(Receipt { amount: 303 as Field, active: true }));
+  receipts.insert(keyA, disclose(Receipt { amount: 202 as Field, active: false }));
+  return [receipts.member(keyA), receipts.member(keyB), receipts.size()];
+}
+
+export circuit lookup(first: Field, second: Field, third: Field): [Field, Boolean, Field, Boolean] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  const receiptA = receipts.lookup(keyA);
+  const receiptB = receipts.lookup(keyB);
+  return [receiptA.amount, receiptA.active, receiptB.amount, receiptB.active];
+}
+
+export circuit size(): Uint<64> {
+  return receipts.size();
+}
+
+export circuit remove(first: Field, second: Field, third: Field): [Boolean, Boolean, Field, Boolean, Uint<64>] {
+  const keyA = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyB = [disclose(first), disclose(third)] as Vector<2, Field>;
+  receipts.remove(keyA);
+  const receiptB = receipts.lookup(keyB);
+  return [receipts.member(keyA), receipts.member(keyB), receiptB.amount, receiptB.active, receipts.size()];
+}
