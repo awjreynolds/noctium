@@ -37,7 +37,6 @@
   {"val": "%v4", "op": "constrain_bits", "bits": 9},
   {"output": "%v5", "op": "less_than", "bits": 9, "b": "0x0101", "a": "%v4"},
   {"op": "assert", "cond": "%v5"},
-  {"val": "%input_expected", "op": "constrain_bits", "bits": 9},
   {"output": "%v6",
    "op": "less_than",
    "bits": 9,
