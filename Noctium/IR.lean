@@ -1037,7 +1037,8 @@ inductive Effect where
   | emitEvent (kind : EventKind) (payload : Expr (.bytes kind.payloadSize))
   | readPath (state destination : String) (keys : List PathKey) (valueTy : Ty)
   | memberPath (state destination : String) (keys : List PathKey)
-  | memberRecordSet (state destination : String) (values : List LedgerFieldExpr)
+  | memberRecordSet (state destination : String) (keys : List PathKey)
+      (values : List LedgerFieldExpr)
   | readRecordMap (state destination : String) (valueTy : Ty) (values : List LedgerFieldExpr)
   | memberRecordMap (state destination : String) (values : List LedgerFieldExpr)
   | writeRecordMap (state : String) (values : List LedgerFieldExpr)
@@ -1082,8 +1083,8 @@ inductive Effect where
   | merkleTreeResetHistoryAt (state : String) (keys : List PathKey)
   | emptyMapPath (state : String) (keys : List PathKey)
   | setInsert (state : String) (keys : List PathKey)
-  | setInsertRecord (state : String) (values : List LedgerFieldExpr)
-  | removeRecordSet (state : String) (values : List LedgerFieldExpr)
+  | setInsertRecord (state : String) (keys : List PathKey) (values : List LedgerFieldExpr)
+  | removeRecordSet (state : String) (keys : List PathKey) (values : List LedgerFieldExpr)
   | removePath (state : String) (keys : List PathKey)
   deriving Repr
 
@@ -1562,11 +1563,15 @@ private def resolveTreeState (decls : List StateDecl) (state : String)
   schema.resolvePath keys
 
 private def resolveRecordSetFields (decls : List StateDecl) (state : String)
-    (values : List LedgerFieldExpr) : Except String (List (String × Ty)) := do
+    (keys : List PathKey) (values : List LedgerFieldExpr) : Except String (List (String × Ty)) := do
   let some declaration := decls.find? (·.name == state)
     | throw s!"unknown record Set '{state}'"
-  let .tree (.recordSet environment type) := declaration.kind
-    | throw s!"state '{state}' is not a typed record Set"
+  let .tree schema := declaration.kind
+    | throw s!"state '{state}' is not a recursive map"
+  if keys.length > 13 then throw "record Set path exceeds the native insertion depth"
+  let selected ← if keys.isEmpty then pure schema else schema.resolvePath keys
+  let .recordSet environment type := selected
+    | throw s!"path does not select a typed record Set in '{state}'"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Set key field type mismatch"
@@ -2145,9 +2150,10 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"state '{state}' is not a map or set"
         discard (schema.entryParent keys)
         pure [(destination, .bool)]
-      | .memberRecordSet state destination values => do
+      | .memberRecordSet state destination keys values => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveRecordSetFields decls state values
+        let fields ← resolveRecordSetFields decls state keys values
+        for key in keys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for value in values do
           match value with
@@ -2392,9 +2398,10 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         let .set _ ← schema.entryParent keys
           | throw "set insertion path must select a Set"
         pure []
-      | .setInsertRecord state values | .removeRecordSet state values => do
+      | .setInsertRecord state keys values | .removeRecordSet state keys values => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveRecordSetFields decls state values
+        let fields ← resolveRecordSetFields decls state keys values
+        for key in keys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for value in values do
           match value with
