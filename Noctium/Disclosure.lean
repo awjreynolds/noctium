@@ -281,15 +281,15 @@ def describeEffect : Effect → LedgerEffectDescriptor
       [.selector "nonce" sink nonce, .selector "color" sink color,
        .payload "amount" sink amount, .selector "isContract" sink isContract,
        .selector "recipient" sink recipient] []
-  | .pushFrontCoin _ nonce color amount selfAddress =>
+  | .pushFrontCoin _ nonce color amount selfAddress keys =>
     let sink := "public qualified shielded coin List write"
     .publicEffect "pushFrontCoin" .stateWrite .publicActivity sink
-      [.selector "nonce" sink nonce, .selector "color" sink color,
+      [.path sink keys, .selector "nonce" sink nonce, .selector "color" sink color,
        .payload "amount" sink amount, .selector "contractAddress" sink selfAddress] []
-  | .pushFrontCoinTo _ nonce color amount isContract recipient =>
+  | .pushFrontCoinTo _ nonce color amount isContract recipient keys =>
     let sink := "public qualified shielded coin List write"
     .publicEffect "pushFrontCoinTo" .stateWrite .publicActivity sink
-      [.selector "nonce" sink nonce, .selector "color" sink color,
+      [.path sink keys, .selector "nonce" sink nonce, .selector "color" sink color,
        .payload "amount" sink amount, .selector "isContract" sink isContract,
        .selector "recipient" sink recipient] []
   | .spendShieldedFromMap _ nonce color amount recipient selfAddress =>

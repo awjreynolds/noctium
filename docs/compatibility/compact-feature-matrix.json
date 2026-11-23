@@ -3134,7 +3134,7 @@
       "layer": "language-ledger",
       "surface": "List.pushFrontCoin",
       "noctiumStatus": "subset",
-      "notes": "A root List prepends the fixed QualifiedInfo record using a coin index booked for the current contract. The native query-context fixture checks head-to-tail order and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run matches a single finalized List head to the self-minted output and the other three collection records. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Finalized tests for those recipients remain open.",
+      "notes": "A root List prepends the fixed QualifiedInfo record using a coin index booked for the current contract. The native query-context fixture checks head-to-tail order and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run matches a single finalized List head to the self-minted output and the other three collection records. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Finalized tests for those recipients remain open. The pinned Compact runtime and native query fixture agree on prepending booked records under a Bytes32 owner, preserving a second owner, and rejecting a missing booking. The native fixture exercises implicit and explicit contract recipients on the nested path.",
       "source": [
         "adt"
       ],
@@ -3144,6 +3144,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/NestedQualifiedCoinList.lean",
+        "tests/compact/qualified-coin-collections.mjs",
         "tests/QualifiedCoinList.lean",
         "runtime/tests/qualified_coin_list.rs",
         "docs/development/shielded-coin-collections-localnet-receipt.json",

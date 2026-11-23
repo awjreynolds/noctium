@@ -505,15 +505,19 @@ private def effectJson : Effect → Json
       ("nonce", expressionJson nonce), ("color", expressionJson color),
       ("amount", expressionJson amount), ("isContract", expressionJson isContract),
       ("recipient", expressionJson recipient)]
-  | .pushFrontCoin state nonce color amount selfAddress => Json.mkObj [
-      ("op", toJson ("pushFrontCoin" : String)), ("state", toJson state),
-      ("nonce", expressionJson nonce), ("color", expressionJson color),
-      ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)]
-  | .pushFrontCoinTo state nonce color amount isContract recipient => Json.mkObj [
-      ("op", toJson ("pushFrontCoinTo" : String)), ("state", toJson state),
-      ("nonce", expressionJson nonce), ("color", expressionJson color),
-      ("amount", expressionJson amount), ("isContract", expressionJson isContract),
-      ("recipient", expressionJson recipient)]
+  | .pushFrontCoin state nonce color amount selfAddress keys => Json.mkObj (
+      [("op", toJson ("pushFrontCoin" : String)), ("state", toJson state),
+       ("nonce", expressionJson nonce), ("color", expressionJson color),
+       ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => match key with
+        | .mk _ value => expressionJson value))]))
+  | .pushFrontCoinTo state nonce color amount isContract recipient keys => Json.mkObj (
+      [("op", toJson ("pushFrontCoinTo" : String)), ("state", toJson state),
+       ("nonce", expressionJson nonce), ("color", expressionJson color),
+       ("amount", expressionJson amount), ("isContract", expressionJson isContract),
+       ("recipient", expressionJson recipient)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => match key with
+        | .mk _ value => expressionJson value))]))
   | .spendShieldedFromMap state nonce color amount recipient selfAddress => Json.mkObj [
       ("op", toJson ("spendShieldedFromMap" : String)), ("state", toJson state),
       ("nonce", expressionJson nonce), ("color", expressionJson color),

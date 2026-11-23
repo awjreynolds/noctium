@@ -55,7 +55,7 @@ private def qualifiedCoinListRootPathMatches
   qualifiedCoinListEntry.effectGuards.all Option.isNone
 #guard match qualifiedCoinListEntry.effects with
   | [.readContractAddress addressName,
-      .pushFrontCoin "coinList" _ _ _ (.ref selfAddressName)] =>
+      .pushFrontCoin "coinList" _ _ _ (.ref selfAddressName) []] =>
       addressName == "noctium_coin_list_address_0" && addressName == selfAddressName
   | _ => Bool.false
 #guard (Disclosure.entrypoint qualifiedCoinListEntry).isOk

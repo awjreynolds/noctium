@@ -4,6 +4,7 @@ import CompactStandardLibrary;
 export ledger coinSlot: QualifiedShieldedCoinInfo;
 export ledger coinSet: Set<QualifiedShieldedCoinInfo>;
 export ledger coinList: List<QualifiedShieldedCoinInfo>;
+export ledger coinLists: Map<Bytes<32>, List<QualifiedShieldedCoinInfo>>;
 
 circuit bookCoin(coin: ShieldedCoinInfo, book: Boolean): [] {
   if (disclose(book)) {
@@ -24,4 +25,14 @@ export circuit putInSet(coin: ShieldedCoinInfo, book: Boolean): [] {
 export circuit putInList(coin: ShieldedCoinInfo, book: Boolean): [] {
   bookCoin(coin, book);
   coinList.pushFrontCoin(disclose(coin), right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+}
+
+export circuit initializeOwner(owner: Bytes<32>): [] {
+  coinLists.insertDefault(disclose(owner));
+}
+
+export circuit putInNestedList(owner: Bytes<32>, coin: ShieldedCoinInfo, book: Boolean): [] {
+  bookCoin(coin, book);
+  coinLists.lookup(disclose(owner)).pushFrontCoin(
+    disclose(coin), right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
 }

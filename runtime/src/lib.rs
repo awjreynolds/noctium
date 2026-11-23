@@ -3147,12 +3147,23 @@ fn validate_shielded_coin_list(
         slot < 16 && (slot as usize) < plan.state.len(),
         "qualified coin List slot exceeds the native state limit"
     );
-    ensure!(keys.is_empty(), "qualified coin List must be at the root");
+    ensure!(
+        keys.len() <= 1,
+        "qualified coin List supports at most one parent key"
+    );
+    if !keys.is_empty() {
+        let key_types = map_path_key_types(plan, slot, keys.len())?;
+        ensure!(
+            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
+            "qualified coin List parent key must be Bytes32"
+        );
+    }
+    path_field_count(plan, slot, keys)?;
     ensure!(
         !plan.state[slot as usize].sealed,
         "qualified coin List is sealed"
     );
-    let schema = list_element_schema_at_path(plan, slot, 0)?;
+    let schema = list_element_schema_at_path(plan, slot, keys.len())?;
     let record = schema
         .as_object()
         .filter(|object| object.len() == 1)
@@ -6599,6 +6610,46 @@ fn probe_instruction(
                 probe_expressions(expressions, plan, env, deferred_outputs)
             }
         }
+        Instruction::ListPushFrontCoin {
+            keys,
+            nonce,
+            color,
+            amount,
+            commitment,
+            ..
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions(
+                    [nonce, color, amount, commitment],
+                    plan,
+                    env,
+                    deferred_outputs,
+                )
+            }
+        }
+        Instruction::ListPushFrontCoinTo {
+            keys,
+            nonce,
+            color,
+            amount,
+            is_contract,
+            recipient,
+            commitment,
+            ..
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions(
+                    [nonce, color, amount, is_contract, recipient, commitment],
+                    plan,
+                    env,
+                    deferred_outputs,
+                )
+            }
+        }
         Instruction::Push { expression, .. } => {
             probe_expression(expression, plan, env, deferred_outputs)
         }
@@ -6677,13 +6728,6 @@ fn probe_instruction(
             commitment,
             ..
         }
-        | Instruction::ListPushFrontCoin {
-            nonce,
-            color,
-            amount,
-            commitment,
-            ..
-        }
         | Instruction::InsertShieldedCoinSet {
             nonce,
             color,
@@ -6706,15 +6750,6 @@ fn probe_instruction(
             ..
         }
         | Instruction::InsertShieldedCoinSetTo {
-            nonce,
-            color,
-            amount,
-            is_contract,
-            recipient,
-            commitment,
-            ..
-        }
-        | Instruction::ListPushFrontCoinTo {
             nonce,
             color,
             amount,
@@ -9236,17 +9271,29 @@ impl PreparationCursor {
                 } else {
                     &context
                 };
+                let (_, parent_keys) = native_index(plan, *slot, keys, false, &env)?;
                 native_list_value(
                     current,
                     *slot,
-                    &[],
-                    list_element_schema_at_path(plan, *slot, 0)?,
+                    &parent_keys,
+                    list_element_schema_at_path(plan, *slot, keys.len())?,
                 )?;
-                let path = vec![Key::Value(
+                let mut path = vec![Key::Value(
                     AlignedValue::from(u8::try_from(*slot)?)
                         .try_into()
                         .map_err(|_| anyhow!("invalid qualified coin List slot"))?,
                 )];
+                path.extend(
+                    parent_keys
+                        .iter()
+                        .cloned()
+                        .map(|key| {
+                            key.try_into()
+                                .map(Key::Value)
+                                .map_err(|_| anyhow!("invalid qualified coin List parent key"))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                );
                 let path_length = path.len();
                 let mut operations = Vec::from(
                     onchain_runtime::program_fragments::List_push_front_coin!(
