@@ -4328,7 +4328,7 @@
       "layer": "language-ledger",
       "surface": "ShieldedSpend",
       "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "notes": "The pinned Compact helper fixture emits ShieldedSpend only for the active guard. Its 0.36.1 runner matches version 1, tag 0 and the 32-byte nullifier against the finalized active receipt. The Noctium checker binds the payload and rejects a substituted event tape. Full semantic equivalence remains unverified.",
       "source": [
         "stdlib",
         "events",
@@ -4342,6 +4342,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardHelperEvents.compact",
+        "tests/compact/standard-helper-events.mjs",
+        "tests/standard-helper-event-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4528,7 +4531,7 @@
       "layer": "language-ledger",
       "surface": "Paused",
       "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "notes": "The pinned Compact helper fixture emits Paused before the optional spend. Its 0.36.1 runner matches version 1, tag 8 and the empty payload against both finalized guard outcomes. The Noctium checker covers the corresponding logs. Full semantic equivalence remains unverified.",
       "source": [
         "stdlib",
         "events",
@@ -4542,6 +4545,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardHelperEvents.compact",
+        "tests/compact/standard-helper-events.mjs",
+        "tests/standard-helper-event-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4553,7 +4559,7 @@
       "layer": "language-ledger",
       "surface": "Unpaused",
       "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "notes": "The pinned Compact helper fixture emits Unpaused after the optional spend. Its 0.36.1 runner matches version 1, tag 9 and the empty payload against both finalized guard outcomes. The Noctium checker covers the corresponding logs. Full semantic equivalence remains unverified.",
       "source": [
         "stdlib",
         "events",
@@ -4567,6 +4573,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardHelperEvents.compact",
+        "tests/compact/standard-helper-events.mjs",
+        "tests/standard-helper-event-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"

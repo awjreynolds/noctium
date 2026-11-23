@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+circuit emitSpend(nullifier: Bytes<32>): [] {
+  emit(ShieldedSpend { nullifier: disclose(nullifier) });
+}
+
+export circuit logHelperSpend(active: Boolean, nullifier: Bytes<32>): [] {
+  emit(Paused {});
+  if (disclose(active)) {
+    emitSpend(nullifier);
+  }
+  emit(Unpaused {});
+}
