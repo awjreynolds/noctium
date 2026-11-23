@@ -56,6 +56,9 @@ structure CircuitInfo where
   inputs : List (String × Ty)
   publicInputs : List (String × Ty)
   outputs : List (String × Ty)
+  /-- Source-only nominal UInt identities for circuit inputs and outputs. -/
+  nominalUIntInputs : List (String × NominalUIntType) := []
+  nominalUIntOutputs : List (String × NominalUIntType) := []
   /-- Logical witness-circuit results retained when a grouped helper result is
   expanded into native leaves. The names point to typed Expr constants. -/
   logicalOutputs : List (String × Ty × Name) := []
@@ -1826,6 +1829,10 @@ private def checkedExpression (env : Bindings) (stx : TSyntax `nlexpr) (ty : Ty)
 
 private abbrev CircuitNominalEnv := List (String × Option NominalUIntType)
 
+private def circuitNominalEnvironment (info : CircuitInfo) : CircuitNominalEnv :=
+  (info.nominalUIntInputs.map fun (name, nominalUInt) => (name, some nominalUInt)) ++
+    (info.nominalUIntOutputs.map fun (name, nominalUInt) => (name, some nominalUInt))
+
 private def bindCircuitNominal (env : CircuitNominalEnv) (name : String)
     (nominalUInt : Option NominalUIntType) : CircuitNominalEnv :=
   (name, nominalUInt) :: env.filter (·.1 != name)
@@ -2191,8 +2198,10 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
     let mut inputs : Array (TSyntax `term) := #[]
     let mut inputInfo := []
     let mut publicInputInfo := []
+    let mut nominalUIntInputInfo := []
     let mut outputs : Array (TSyntax `term) := #[]
     let mut outputInfo : List (String × Ty) := []
+    let mut nominalUIntOutputInfo := []
     let mut constraints : Array (TSyntax `term) := #[]
     for stmt in stmts do
       match stmt with
@@ -2209,6 +2218,8 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
         env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
         inputInfo := inputInfo ++ [(id.getId.toString, t)]
+        if let some nominalUInt := sourceType.nominalUInt then
+          nominalUIntInputInfo := nominalUIntInputInfo ++ [(id.getId.toString, nominalUInt)]
         if isPublic then publicInputInfo := publicInputInfo ++ [(id.getId.toString, t)]
       | `(nlcstmt| let $id:ident : $ty:nltype := $value:nlexpr) =>
         ensureFresh env id
@@ -2241,12 +2252,21 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
         let span ← spanTerm stmt
         outputs := outputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, value := $value, span := $span : Noctium.Output }))
         outputInfo := outputInfo ++ [(id.getId.toString, t)]
+        if let some nominalUInt := sourceType.nominalUInt then
+          nominalUIntOutputInfo := nominalUIntOutputInfo ++ [(id.getId.toString, nominalUInt)]
       | _ => throwErrorAt stmt "unsupported Noctium circuit statement"
     let span ← spanTerm stx
     let fullName := (← getCurrNamespace) ++ name.getId
     elabCommand (← `(def $name : Noctium.Circuit := { name := $(stringTerm fullName.toString), inputs := [$inputs,*], outputs := [$outputs,*], constraints := [$constraints,*], span := $span }))
     unsafe checkGeneratedCircuit fullName
-    modifyEnv fun e => circuitRegistry.addEntry e {declName := fullName, inputs := inputInfo, publicInputs := publicInputInfo, outputs := outputInfo}
+    modifyEnv fun e => circuitRegistry.addEntry e {
+      declName := fullName
+      inputs := inputInfo
+      publicInputs := publicInputInfo
+      outputs := outputInfo
+      nominalUIntInputs := nominalUIntInputInfo
+      nominalUIntOutputs := nominalUIntOutputInfo
+    }
   | _ => throwUnsupportedSyntax
 
 private def addReferences (env : Bindings) (items : List (String × Ty)) : CommandElabM Bindings := do
@@ -2291,6 +2311,8 @@ private structure OptionalRecordHead where
 
 private structure EntryEffects where
   env : Bindings
+  nominalUIntBindings : CircuitNominalEnv := []
+  nominalUIntCells : List (String × NominalUIntType) := []
   nominalBytes32Bindings : List (String × NominalBytes32) := []
   merkleLeafTypes : List (String × MerkleLeafType) := []
   optionalRecordHeads : List OptionalRecordHead := []
@@ -2414,11 +2436,12 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr readCaller as ($_present:ident, $_isContract:ident, $_contract:ident, $_user:ident)) => some condition
   | _ => none
 
-private def effectGuardTerm (env : Bindings) (parent : Option (TSyntax `term))
+private def effectGuardTerm (state : EntryEffects) (parent : Option (TSyntax `term))
     (effect : TSyntax `nleffect) : CommandElabM (TSyntax `term) := do
   let explicit ← match explicitEffectGuard effect with
     | none => pure none
-    | some condition => pure (some (← checkedExpression env condition .bool))
+    | some condition => pure (some (← checkedCircuitSourceExpression state.env
+        state.nominalUIntBindings condition {type := .bool}))
   match parent, explicit with
   | none, none => `(none)
   | none, some condition => `(some $condition)
@@ -3268,7 +3291,10 @@ private def elaborateNamedPathRead (schema : List (String × StateKind))
       let term ← `(Noctium.Effect.readCell
         $(stringTerm storage.getId.toString) $(stringTerm readName) $(← tyTerm ty))
       let updated := {updated with terms := updated.terms.push term}
-      bindReadName updated destination.getId.toString readName ty
+      let updated ← bindReadName updated destination.getId.toString readName ty
+      let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
+      pure {updated with nominalUIntBindings :=
+        (bindCircuitNominal updated.nominalUIntBindings destination.getId.toString nominalUInt)}
     | some (.map keyTy valueTy) => do
       let [key] := sourceKeys | throwErrorAt path "map reads require exactly one key"
       let (readName, updated) ← freshReadName depth state destination
@@ -3496,10 +3522,10 @@ private def elaborateEffect (schema : List (String × StateKind))
       some (path, present, record)
     | _ => none
   if let some (path, present, record) := optionalHead? then
-    let guard ← effectGuardTerm state.env parent effect
+    let guard ← effectGuardTerm state parent effect
     let span ← spanTerm effect
     return ← elaborateListHeadOrDefault schema path present record depth guard span state
-  let guard ← effectGuardTerm state.env parent effect
+  let guard ← effectGuardTerm state parent effect
   let span ← spanTerm effect
   let mut state := {state with
     spans := state.spans.push span
@@ -3960,11 +3986,13 @@ private def elaborateEffect (schema : List (String × StateKind))
       state := {state with terms := state.terms.push term}
     | _ => throwErrorAt update "unsupported Noctium update"
   | `(nleffect| require $value:nlexpr) =>
-    let condition ← checkedExpression state.env value .bool
+    let condition ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value
+      {type := .bool}
     let term ← `(Noctium.Effect.require $condition)
     state := {state with terms := state.terms.push term}
   | `(nleffect| when $_:nlexpr require $value:nlexpr) =>
-    let condition ← checkedExpression state.env value .bool
+    let condition ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value
+      {type := .bool}
     let term ← `(Noctium.Effect.require $condition)
     state := {state with terms := state.terms.push term}
   | `(nleffect| readCaller as ($presentName:ident, $isContractName:ident, $contractName:ident, $userName:ident))
@@ -4065,7 +4093,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| when $_:nlexpr write $storage:ident := $value:nlexpr) => do
     let some (.cell ty) := schema.lookup storage.getId.toString
       | throwErrorAt storage "write requires a declared state cell"
-    let loweredValue ← checkedExpression state.env value ty
+    let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
+    let loweredValue ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value
+      {type := ty, nominalUInt}
     let term ← `(Noctium.Effect.writeCell
       $(stringTerm storage.getId.toString) $(← tyTerm ty) $loweredValue)
     state := {state with terms := state.terms.push term}
@@ -4245,7 +4275,8 @@ private partial def elaborateStatements (schema : List (String × StateKind))
       state ← elaborateEffect schema parent depth state effect
     | `(nlstatement| if $condition:nlexpr then { $thenStatements:nlstatement* }
         else { $elseStatements:nlstatement* }) => do
-      let condition ← checkedExpression state.env condition .bool
+      let condition ← checkedCircuitSourceExpression state.env state.nominalUIntBindings condition
+        {type := .bool}
       let parentExpression ← match parent with
         | some expression => pure expression
         | none => `(Noctium.Expr.bool Bool.true)
@@ -4257,16 +4288,19 @@ private partial def elaborateStatements (schema : List (String × StateKind))
         `(Noctium.Backend.Impact.activityGuardWithin
           $parentExpression $negated))
       let branchEnv := state.env
+      let branchNominalUIntBindings := state.nominalUIntBindings
       let branchNominalBytes32Bindings := state.nominalBytes32Bindings
       let branchOptionalRecordHeads := state.optionalRecordHeads
       let afterThen ← elaborateStatements schema thenPath (depth + 1) thenStatements state
       let afterElse ← elaborateStatements schema elsePath (depth + 1) elseStatements
         {afterThen with
           env := branchEnv
+          nominalUIntBindings := branchNominalUIntBindings
           nominalBytes32Bindings := branchNominalBytes32Bindings
           optionalRecordHeads := branchOptionalRecordHeads}
       state := {afterElse with
         env := branchEnv
+        nominalUIntBindings := branchNominalUIntBindings
         nominalBytes32Bindings := branchNominalBytes32Bindings
         optionalRecordHeads := branchOptionalRecordHeads}
     | _ => throwErrorAt statement "unsupported Noctium state statement"
@@ -4539,8 +4573,9 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
       if state.env.any (fun binding => binding.1 == labelName) then
         throwErrorAt label "entry return label '{labelName}' collides with an input or read binding"
       labels := labelName :: labels
-      let ty ← readTy returnTy
-      let value ← checkedExpression state.env value ty
+      let sourceType ← readCircuitSourceType returnTy
+      let ty := sourceType.type
+      let value ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value sourceType
       let span ← spanTerm statement
       state := {state with returns := state.returns.push (← `({
         name := $(stringTerm labelName), ty := $(← tyTerm ty), value := $value,
@@ -4652,18 +4687,22 @@ private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (element : T
   pure (.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
 
 private def elaborateConstructor (source : TSyntax `nlstate)
-    (schema : List (String × StateKind)) : CommandElabM (TSyntax `term) := do
+    (schema : List (String × StateKind))
+    (nominalUIntCells : List (String × NominalUIntType)) : CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
   let mut parameterTerms : Array (TSyntax `term) := #[]
   let mut scalarBindings : Bindings := []
+  let mut nominalUIntBindings : CircuitNominalEnv := []
   let mut opaqueParameters : List String := []
   let mut parameterNames : List String := []
   for parameter in parameters.getElems.toList do
     let (name, parameterType, typeTerm) ← match parameter with
       | `(nlconstructorparam| $id:ident : $sourceTy:nltype) => do
         let name := id.getId.toString
-        let ty ← readTy sourceTy
+        let sourceType ← readCircuitSourceType sourceTy
+        let ty := sourceType.type
+        nominalUIntBindings := bindCircuitNominal nominalUIntBindings name sourceType.nominalUInt
         if ty == .opaqueString then
           pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString))
         else
@@ -4696,7 +4735,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .map keyTy valueTy) => do
-        let conditionExpression ← checkedExpression scalarBindings condition .bool
+        let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+          nominalUIntBindings condition {type := .bool}
         let keyExpression ← checkedExpression scalarBindings key keyTy
         let valueExpression ← checkedExpression scalarBindings value valueTy
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
@@ -4809,7 +4849,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
               pure (destination, ConstructorType.opaqueString, (typeTerm, valueTerm))
             | _ => throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
           | some (_, .cell ty) => do
-            let expression ← checkedExpression scalarBindings value ty
+            let nominalUInt := nominalUIntCells.lookup destination
+            let expression ← checkedCircuitSourceExpression scalarBindings nominalUIntBindings value
+              {type := ty, nominalUInt}
             let typeTerm ← `(Noctium.ConstructorType.scalar $(← tyTerm ty))
             let valueTerm ← `(Noctium.ConstructorValue.scalar $expression)
             pure (destination, ConstructorType.scalar ty, (typeTerm, valueTerm))
@@ -4962,6 +5004,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
   | `(noctium_contract $name:ident where $states:nlstate* $entries:nlentry* end) =>
     let mut stateTerms : Array (TSyntax `term) := #[]
     let mut schema : List (String × StateKind) := []
+    let mut nominalUIntCells : List (String × NominalUIntType) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
     let mut concreteSchema : List StateDecl := []
     let mut stateDeclarations : Array (TSyntax `nlstate) := #[]
@@ -5037,18 +5080,27 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let valueTerm ← `(Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| sealed cell $id:ident : $ty:nltype) => do
-          let t ← readTy ty
+          let sourceType ← readCircuitSourceType ty
+          let t := sourceType.type
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
           if t == .opaqueString then
             pure (id, StateKind.opaqueString, ← `(Noctium.StateKind.opaqueString))
           else
             pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| cell $id:ident : $ty:nltype alignedBytes) => do
-          let t ← readTy ty
+          let sourceType ← readCircuitSourceType ty
+          let t := sourceType.type
           unless t == .uint (2 ^ 128 - 1) do
             throwErrorAt state "alignedBytes is supported only for UInt 128 cells"
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| cell $id:ident : $ty:nltype) => do
-          let t ← readTy ty
+          let sourceType ← readCircuitSourceType ty
+          let t := sourceType.type
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype) => do
           let k ← readTy key
@@ -5329,7 +5381,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         $term $sealedTerm $(← spanTerm state) $cellAlignmentTerm))
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
-      | some ctor => elaborateConstructor ctor schema
+      | some ctor => elaborateConstructor ctor schema nominalUIntCells
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     for entryStx in entries do
@@ -5367,6 +5419,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           returns.toList.flatMap (fun statement => syntaxIdentifiers statement.raw)
         let initial : EntryEffects := {
           env := env
+          nominalUIntBindings := circuitNominalEnvironment info
+          nominalUIntCells := nominalUIntCells
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5392,6 +5446,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           returns.toList.flatMap (fun statement => syntaxIdentifiers statement.raw)
         let initial : EntryEffects := {
           env := env
+          nominalUIntBindings := circuitNominalEnvironment info
+          nominalUIntCells := nominalUIntCells
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5408,6 +5464,17 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
+        for effect in value.effects do
+          match effect with
+          | .readCell storage _ _ =>
+            if nominalUIntCells.any (fun (name, _) => name == storage) then
+              throwErrorAt entryStx
+                s!"structured entry helpers cannot read nominal UInt Cell '{storage}' until helper tags are supported"
+          | .writeCell storage _ _ =>
+            if nominalUIntCells.any (fun (name, _) => name == storage) then
+              throwErrorAt entryStx
+                s!"structured entry helpers cannot write nominal UInt Cell '{storage}' until helper tags are supported"
+          | _ => pure ()
         let localCircuitName := name.getId ++ id.getId ++ `circuit
         let fullCircuitName := (← getCurrNamespace) ++ localCircuitName
         let circuitId := mkIdent localCircuitName
