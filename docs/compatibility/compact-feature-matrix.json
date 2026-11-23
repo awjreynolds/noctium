@@ -1410,7 +1410,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open. A checked ordered constructor guards an insert into a sealed Field-to-Field Map, then initializes a sealed Bool from its updated membership. Pinned Compact 0.36.1 and native construction from the emitted plan agree on the empty/false and seeded/true outcomes.",
       "source": [
         "reference"
       ],
@@ -1420,6 +1420,10 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/ConditionalConstructorActions.lean",
+        "tests/compact/ConditionalSealedMapInsert.compact",
+        "tests/compact/conditional-sealed-map-insert.mjs",
+        "runtime/tests/constructor_actions.rs",
         "Noctium/IR.lean",
         "Noctium/Compiler.lean",
         "runtime/src/constructor.rs",
@@ -1447,7 +1451,7 @@
       "layer": "language-ledger",
       "surface": "Sealed ledger fields",
       "noctiumStatus": "subset",
-      "notes": "Noctium supports sealed scalar and OpaqueString Cells, flat scalar Maps, root Counters, root scalar Lists, and root scalar Sets. Source checks reject entrypoint writes and supported helper writes. A funded lookup preserved two sealed Maps at localnet height 50649. The Counter and Native List fixtures match Compact 0.36.1. A proof-bound read finalized at height 51065 and preserved the deployed state bytes. A sealed Set fixture matches the Compact duplicate-insert behavior, and a funded read preserved both Sets at height 51346. Additional ledger types and layouts remain open.",
+      "notes": "Noctium supports sealed scalar and OpaqueString Cells, flat scalar Maps, root Counters, root scalar Lists, and root scalar Sets. Source checks reject entrypoint writes and supported helper writes. A funded lookup preserved two sealed Maps at localnet height 50649. The Counter and Native List fixtures match Compact 0.36.1. A proof-bound read finalized at height 51065 and preserved the deployed state bytes. A sealed Set fixture matches the Compact duplicate-insert behavior, and a funded read preserved both Sets at height 51346. Additional ledger types and layouts remain open. A checked constructor seeds a sealed Map conditionally and initializes a sealed Bool from its membership. Both outcomes match pinned Compact 0.36.1 and the native constructed state. The source rejects membership initialization of an unsealed cell or duplicate target.",
       "source": [
         "reference"
       ],
@@ -1456,6 +1460,10 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/ConditionalConstructorActions.lean",
+        "tests/compact/ConditionalSealedMapInsert.compact",
+        "tests/compact/conditional-sealed-map-insert.mjs",
+        "runtime/tests/constructor_actions.rs",
         "Noctium/IR.lean",
         "Noctium/Helpers.lean",
         "Noctium/Compiler.lean",

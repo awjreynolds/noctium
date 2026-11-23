@@ -369,7 +369,8 @@ jobs:
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
-              --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi
+              --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi \
+              --test constructor_actions
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \

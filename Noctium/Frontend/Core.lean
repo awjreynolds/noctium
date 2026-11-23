@@ -387,6 +387,8 @@ declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
+scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
+scoped syntax "initializeMember" ident "from" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "increment" ident "by" nlexpr : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlexpr : nlconstructorinit
@@ -4669,14 +4671,55 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     parameterTerms := parameterTerms.push (← `(Noctium.ConstructorParameter.mk $(stringTerm name) $typeTerm))
   let mut initializerTerms : Array (TSyntax `term) := #[]
   let mut mapInsertTerms : Array (TSyntax `term) := #[]
+  let mut orderedActionTerms : Array (TSyntax `term) := #[]
+  let mut hasOrderedActions : _root_.Bool := _root_.Bool.false
   let mut counterIncrementTerms : Array (TSyntax `term) := #[]
   let mut listPushTerms : Array (TSyntax `term) := #[]
   let mut setInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
   for initializer in initializers do
     match initializer with
+    | `(nlconstructorinit| when $condition:nlexpr insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      match schema.find? (·.1 == destination) with
+      | some (_, .map keyTy valueTy) => do
+        let conditionExpression ← checkedExpression scalarBindings condition .bool
+        let keyExpression ← checkedExpression scalarBindings key keyTy
+        let valueExpression ← checkedExpression scalarBindings value valueTy
+        let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
+        let valueType ← tyTerm valueTy
+        let orderedInsert ← `(Noctium.ConstructorOrderedMapInsert.mk $(stringTerm destination)
+          $key $valueType $valueExpression (some $conditionExpression))
+        orderedActionTerms := orderedActionTerms.push
+          (← `(Noctium.ConstructorAction.mapInsert $orderedInsert))
+        hasOrderedActions := _root_.Bool.true
+      | some _ => throwErrorAt stateName "constructor insert requires a Map"
+      | none => throwErrorAt stateName s!"constructor inserts into unknown Map '{destination}'"
+    | `(nlconstructorinit| initializeMember $stateName from $mapNameStx[$key:nlexpr]) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let mapName := mapNameStx.getId.toString
+      match schema.find? (·.1 == destination), schema.find? (·.1 == mapName) with
+      | some (_, .cell .bool), some (_, .map keyTy _) => do
+        let keyExpression ← checkedExpression scalarBindings key keyTy
+        let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
+        let mapMemberInitializer ← `(Noctium.ConstructorMapMemberInitializer.mk
+          $(stringTerm destination) $(stringTerm mapName) $key)
+        orderedActionTerms := orderedActionTerms.push
+          (← `(Noctium.ConstructorAction.initializeCellFromMapMember $mapMemberInitializer))
+        hasOrderedActions := _root_.Bool.true
+      | some (_, .cell _), some (_, .map ..) =>
+        throwErrorAt stateName "Map membership constructor initialization requires a Bool cell"
+      | some _, some _ => throwErrorAt mapNameStx "constructor membership read requires a Map"
+      | none, _ => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
+      | _, none => throwErrorAt mapNameStx s!"constructor reads unknown Map '{mapName}'"
     | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
@@ -4689,7 +4732,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _ => throwErrorAt stateName "constructor insert requires a root Set"
       | none => throwErrorAt stateName s!"constructor inserts into unknown Set '{destination}'"
     | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
@@ -4701,10 +4744,14 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         let valueType ← tyTerm valueTy
         mapInsertTerms := mapInsertTerms.push
           (← `(Noctium.ConstructorMapInsert.mk $(stringTerm destination) $key $valueType $valueExpression))
+        let orderedInsert ← `(Noctium.ConstructorOrderedMapInsert.mk $(stringTerm destination)
+          $key $valueType $valueExpression none)
+        orderedActionTerms := orderedActionTerms.push
+          (← `(Noctium.ConstructorAction.mapInsert $orderedInsert))
       | some _ => throwErrorAt stateName "constructor insert requires a Map"
       | none => throwErrorAt stateName s!"constructor inserts into unknown Map '{destination}'"
     | `(nlconstructorinit| increment $stateName:ident by $amount:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
@@ -4724,7 +4771,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _ => throwErrorAt stateName "constructor increment requires a root Counter"
       | none => throwErrorAt stateName s!"constructor increments unknown Counter '{destination}'"
     | `(nlconstructorinit| pushFront $stateName:ident := $value:nlexpr) => do
-      if mapInsertTerms.size + counterIncrementTerms.size + listPushTerms.size +
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
@@ -4776,12 +4823,13 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         (← `(Noctium.ConstructorInitializer.mk $(stringTerm destination) $typeTerm $valueTerm))
   let parameters := parameterTerms
   let initializers := initializerTerms
-  let mapInserts := mapInsertTerms
+  let mapInserts := if hasOrderedActions then #[] else mapInsertTerms
+  let actions := if hasOrderedActions then orderedActionTerms else #[]
   let counterIncrements := counterIncrementTerms
   let listPushes := listPushTerms
   let setInserts := setInsertTerms
   `(some (Noctium.Constructor.mk [$parameters,*] [$initializers,*] [$mapInserts,*]
-    [$counterIncrements,*] [$listPushes,*] [$setInserts,*]))
+    [$counterIncrements,*] [$listPushes,*] [$setInserts,*] [$actions,*]))
 
 private def checkMerkleLeafWidth (source : Syntax) (fields : List Ty) : CommandElabM Unit := do
   let widths ← fields.mapM fun ty =>

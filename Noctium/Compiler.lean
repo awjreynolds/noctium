@@ -893,6 +893,20 @@ private def constructorSetInsertJson (insertion : ConstructorSetInsert) : Json :
     ("name", toJson insertion.name),
     ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression)]
 
+private def constructorActionJson (action : ConstructorAction) : Json :=
+  match action with
+  | .mapInsert insertion => Json.mkObj ([
+      ("kind", toJson ("mapInsert" : String)),
+      ("state", toJson insertion.state),
+      ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression),
+      ("value", nativeExpressionJson insertion.value)] ++
+      insertion.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
+  | .initializeCellFromMapMember initializer => Json.mkObj [
+      ("kind", toJson ("initializeCellFromMapMember" : String)),
+      ("state", toJson initializer.state),
+      ("map", toJson initializer.map),
+      ("key", match initializer.key with | .mk _ expression => nativeExpressionJson expression)]
+
 private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [
     ("name", toJson parameter.name), ("type", toJson (constructorTypeName parameter.type))])),
@@ -907,7 +921,9 @@ private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   (if ctor.listPushes.isEmpty then [] else [
     ("listPushes", toJson (ctor.listPushes.map constructorListPushJson))]) ++
   (if ctor.setInserts.isEmpty then [] else [
-    ("setInserts", toJson (ctor.setInserts.map constructorSetInsertJson))]))
+    ("setInserts", toJson (ctor.setInserts.map constructorSetInsertJson))]) ++
+  (if ctor.actions.isEmpty then [] else [
+    ("actions", toJson (ctor.actions.map constructorActionJson))]))
 
 private def jsonLetParts (expression : Json) : Except String (Array Json × Json) := do
   let tag ← (← expression.getObjVal? "tag").getStr?

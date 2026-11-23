@@ -838,6 +838,25 @@ structure ConstructorSetInsert where
   key : PathKey
   deriving Repr
 
+structure ConstructorOrderedMapInsert where
+  state : String
+  key : PathKey
+  valueType : Ty
+  value : Expr valueType
+  guard : Option (Expr .bool) := none
+  deriving Repr
+
+structure ConstructorMapMemberInitializer where
+  state : String
+  map : String
+  key : PathKey
+  deriving Repr
+
+inductive ConstructorAction where
+  | mapInsert (action : ConstructorOrderedMapInsert)
+  | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
+  deriving Repr
+
 /-- Fresh-deployment inputs and cell values. This metadata never enters a circuit. -/
 structure Constructor where
   parameters : List ConstructorParameter := []
@@ -846,6 +865,7 @@ structure Constructor where
   counterIncrements : List ConstructorCounterIncrement := []
   listPushes : List ConstructorListPush := []
   setInserts : List ConstructorSetInsert := []
+  actions : List ConstructorAction := []
   deriving Repr
 
 inductive EventFieldType where
@@ -1738,9 +1758,12 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
   let initializerNames := constructor.initializers.map (·.state)
   unless uniqueNames initializerNames do
     throw {span, message := "duplicate constructor state initializer"}
-  if constructor.mapInserts.length + constructor.counterIncrements.length +
-      constructor.listPushes.length + constructor.setInserts.length > 64 then
+  if constructor.actions.length + constructor.mapInserts.length +
+      constructor.counterIncrements.length + constructor.listPushes.length +
+      constructor.setInserts.length > 64 then
     throw {span, message := "constructor collection action limit exceeded"}
+  if !constructor.actions.isEmpty && !constructor.mapInserts.isEmpty then
+    throw {span, message := "ordered constructor Map actions cannot be mixed with legacy Map inserts"}
   for initializer in constructor.initializers do
     unless Types.validFieldName initializer.state do
       throw {span, message := s!"invalid constructor state name '{initializer.state}'"}
@@ -1780,6 +1803,54 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     match insertion.value.validate caps scalarEnvironment with
     | .error message => throw {span, message}
     | .ok _ => pure ()
+  let mut orderedInitializerNames : List String := []
+  for action in constructor.actions do
+    match action with
+    | .mapInsert insertion => do
+      unless Types.validFieldName insertion.state do
+        throw {span, message := s!"invalid constructor Map state name '{insertion.state}'"}
+      let some state := states.find? (·.name == insertion.state)
+        | throw {span, message := s!"constructor inserts into unknown Map '{insertion.state}'"}
+      let .map keyTy valueTy := state.kind
+        | throw {span := state.span, message := s!"constructor insert requires a Map '{insertion.state}'"}
+      let .mk insertedKeyTy key := insertion.key
+      unless insertedKeyTy == keyTy do
+        throw {span := state.span, message := s!"constructor Map key type mismatch for '{insertion.state}'"}
+      match key.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      unless insertion.valueType == valueTy do
+        throw {span := state.span, message := s!"constructor Map value type mismatch for '{insertion.state}'"}
+      match insertion.value.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      if let some guard := insertion.guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
+    | .initializeCellFromMapMember initializer => do
+      unless Types.validFieldName initializer.state do
+        throw {span, message := s!"invalid constructor state name '{initializer.state}'"}
+      let some destination := states.find? (·.name == initializer.state)
+        | throw {span, message := s!"constructor initializes unknown state '{initializer.state}'"}
+      unless destination.kind == .cell .bool && destination.sealed do
+        throw {span := destination.span, message :=
+          s!"Map membership constructor initialization requires a sealed Bool cell '{initializer.state}'"}
+      if initializerNames.contains initializer.state || orderedInitializerNames.contains initializer.state then
+        throw {span, message := s!"duplicate constructor state initializer for '{initializer.state}'"}
+      orderedInitializerNames := initializer.state :: orderedInitializerNames
+      unless Types.validFieldName initializer.map do
+        throw {span, message := s!"invalid constructor Map state name '{initializer.map}'"}
+      let some source := states.find? (·.name == initializer.map)
+        | throw {span, message := s!"constructor reads unknown Map '{initializer.map}'"}
+      let .map keyTy _ := source.kind
+        | throw {span := source.span, message := s!"constructor membership read requires a Map '{initializer.map}'"}
+      let .mk readKeyTy key := initializer.key
+      unless readKeyTy == keyTy do
+        throw {span := source.span, message := s!"constructor Map key type mismatch for '{initializer.map}'"}
+      match key.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
   for increment in constructor.counterIncrements do
     unless Types.validFieldName increment.state do
       throw {span, message := s!"invalid constructor Counter state name '{increment.state}'"}
@@ -1818,7 +1889,7 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
   for state in states do
     let sealedMap := match state.kind with | .map .. => true | _ => false
     if state.sealed && !sealedMap && !state.kind.isDefaultEmptyRoot &&
-        !(initializerNames.contains state.name) then
+        !(initializerNames.contains state.name || orderedInitializerNames.contains state.name) then
       throw {span := state.span, message := s!"sealed state '{state.name}' must be initialized by the constructor"}
 
 private def Effect.writeTarget : Effect → Option String
