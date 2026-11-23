@@ -8,7 +8,8 @@ use coin_structure::{
     transfer::Recipient,
 };
 use noctium_runtime::{
-    Db, Execution, Instruction, Plan, check, create_state, prepare_with_context, zkir::IrSource,
+    Db, Execution, Expr, Instruction, PathPart, Plan, check, create_state, prepare_with_context,
+    zkir::IrSource,
 };
 use onchain_runtime::{
     context::QueryContext,
@@ -637,26 +638,276 @@ fn deep_qualified_coin_set_checks_bookings_and_preserves_sibling_paths() -> anyh
     assert!(error.to_string().contains("missing map path key"));
     assert_eq!(missing_path_context.state, state);
 
-    let mut excessive_depth = depth5_to.clone();
-    let mut changed = false;
-    for operation in &mut excessive_depth.operations {
-        if let Instruction::InsertShieldedCoinSetTo { keys, .. } = operation {
-            keys.push(keys.last().expect("five parent keys").clone());
-            changed = true;
-        }
+    Ok(())
+}
+
+fn deep_booked_coin_set_inputs(
+    owner: &[u8; 32],
+    group: &[u8; 32],
+    leaf: &[u8; 32],
+    coin: &Info,
+) -> BTreeMap<String, Json> {
+    BTreeMap::from([
+        ("owner".into(), nested_bytes(owner)),
+        ("group".into(), nested_bytes(group)),
+        ("leaf".into(), nested_bytes(leaf)),
+        ("nonce".into(), nested_bytes(&coin.nonce.0.0)),
+        ("color".into(), nested_bytes(&coin.type_.0.0)),
+        ("amount".into(), json!(coin.value.to_string())),
+    ])
+}
+
+fn deep_booked_coin_set_to_inputs(
+    owner: &[u8; 32],
+    group: &[u8; 32],
+    leaf: &[u8; 32],
+    coin: &Info,
+    recipient: ContractAddress,
+) -> BTreeMap<String, Json> {
+    let mut inputs = deep_booked_coin_set_inputs(owner, group, leaf, coin);
+    inputs.insert("isContract".into(), json!(true));
+    inputs.insert("recipient".into(), nested_bytes(&recipient.0.0));
+    inputs
+}
+
+fn deep_booked_coin_set_path<'a>(
+    owner: &'a [u8; 32],
+    group: &'a [u8; 32],
+    leaf: &'a [u8; 32],
+) -> Vec<&'a [u8; 32]> {
+    let mut path = Vec::with_capacity(14);
+    path.push(owner);
+    path.extend(std::iter::repeat(group).take(12));
+    path.push(leaf);
+    path
+}
+
+fn deep_booked_coin_set_keys(plan: &Plan, explicit: bool) -> &[PathPart] {
+    plan.operations
+        .iter()
+        .find_map(|operation| match (operation, explicit) {
+            (Instruction::InsertShieldedCoinSet { keys, .. }, false) => Some(keys.as_slice()),
+            (Instruction::InsertShieldedCoinSetTo { keys, .. }, true) => Some(keys.as_slice()),
+            _ => None,
+        })
+        .expect("qualified Set insertion operation")
+}
+
+fn assert_deep_booked_coin_set_path(plan: &Plan, explicit: bool) {
+    let keys = deep_booked_coin_set_keys(plan, explicit);
+    assert_eq!(keys.len(), 14, "owner + 12 repeated group keys + leaf");
+    for (index, key) in keys.iter().enumerate() {
+        let expected = match index {
+            0 => "owner",
+            13 => "leaf",
+            _ => "group",
+        };
+        assert_eq!(key.alignment, "bytes32");
+        assert!(matches!(&key.expression, Expr::Reference { name } if name == expected));
     }
-    assert!(changed, "depth-five artifact contains explicit Set insertion");
-    let error = prepare_with_context(
-        &excessive_depth,
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_DEEP_BOOKED_COIN_SET_DIR"]
+fn fourteen_parent_booked_coin_set_checks_bookings_and_preserves_sibling_paths() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_DEEP_BOOKED_COIN_SET_DIR")
+            .expect("NOCTIUM_DEEP_BOOKED_COIN_SET_DIR"),
+    );
+    let artifact = |entry: &str, suffix: &str| {
+        directory.join(format!("DeepBookedCoinSetBoundary.{entry}.{suffix}"))
+    };
+    let initialize: Plan = serde_json::from_reader(File::open(
+        artifact("initializePaths", "impact.json"),
+    )?)?;
+    let initialize_circuit = IrSource::load(File::open(artifact("initializePaths", "zkir"))?)?;
+    let insert: Plan = serde_json::from_reader(File::open(artifact("insertCoin", "impact.json"))?)?;
+    assert_deep_booked_coin_set_path(&insert, false);
+    let insert_circuit = IrSource::load(File::open(artifact("insertCoin", "zkir"))?)?;
+    let insert_to: Plan =
+        serde_json::from_reader(File::open(artifact("insertCoinTo", "impact.json"))?)?;
+    assert_deep_booked_coin_set_path(&insert_to, true);
+    let insert_to_circuit = IrSource::load(File::open(artifact("insertCoinTo", "zkir"))?)?;
+
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let own = ContractAddress(HashOutput([9; 32]));
+    let other = ContractAddress(HashOutput([8; 32]));
+    let owner = [1; 32];
+    let group = [2; 32];
+    let leaf = [3; 32];
+    let sibling_leaf = [4; 32];
+    let absent_leaf = [5; 32];
+    let initial = create_state(&insert, &BTreeMap::from([("coinSets".into(), json!([]))]))?;
+
+    let initialized = prepare_with_context(
+        &initialize,
+        &BTreeMap::from([
+            ("owner".into(), nested_bytes(&owner)),
+            ("group".into(), nested_bytes(&group)),
+            ("leaf".into(), nested_bytes(&leaf)),
+            ("siblingLeaf".into(), nested_bytes(&sibling_leaf)),
+        ]),
+        QueryContext::new(initial, own),
+        parameters,
+    )
+    .context("initialize selected and sibling fourteen-parent Sets")?;
+    assert_eq!(
+        check(&initialized, &initialize_circuit).context("check the initializer preimage")?,
+        initialized.activity_schedule
+    );
+    let mut state = initialized.after.state;
+
+    let context_with_booking = |state: &ChargedState<Db>,
+                                coin: &Info,
+                                recipient: Option<ContractAddress>,
+                                index: u64| {
+        let mut context = QueryContext::new(state.clone(), own);
+        if let Some(recipient) = recipient {
+            context.call_context.com_indices = context
+                .call_context
+                .com_indices
+                .insert(coin.commitment(&Recipient::Contract(recipient)), index);
+        }
+        context
+    };
+    let coin = |nonce: u8, color: u8, value: u128| Info {
+        nonce: Nonce(HashOutput([nonce; 32])),
+        type_: ShieldedTokenType(HashOutput([color; 32])),
+        value,
+    };
+
+    let sibling_coin = coin(10, 11, 13);
+    let sibling_seed = prepare_with_context(
+        &insert_to,
+        &deep_booked_coin_set_to_inputs(&owner, &group, &sibling_leaf, &sibling_coin, own),
+        context_with_booking(&state, &sibling_coin, Some(own), 7),
+        parameters,
+    )
+    .context("seed the sibling Set with an explicit matching booking")?;
+    assert_eq!(
+        check(&sibling_seed, &insert_to_circuit)?,
+        sibling_seed.activity_schedule
+    );
+    state = sibling_seed.after.state;
+
+    let selected_coin = coin(20, 21, 23);
+    let selected_write = prepare_with_context(
+        &insert,
+        &deep_booked_coin_set_inputs(&owner, &group, &leaf, &selected_coin),
+        context_with_booking(&state, &selected_coin, Some(own), 31),
+        parameters,
+    )
+    .context("insert a self-booked coin at fourteen Map parents")?;
+    assert_eq!(
+        check(&selected_write, &insert_circuit)?,
+        selected_write.activity_schedule
+    );
+    state = selected_write.after.state;
+
+    let explicit_coin = coin(22, 23, 29);
+    let explicit_inputs =
+        deep_booked_coin_set_to_inputs(&owner, &group, &leaf, &explicit_coin, other);
+    let explicit_write = prepare_with_context(
+        &insert_to,
         &explicit_inputs,
-        QueryContext::new(state.clone(), own),
+        context_with_booking(&state, &explicit_coin, Some(other), 42),
+        parameters,
+    )
+    .context("insert a coin for an explicitly selected recipient")?;
+    assert_eq!(
+        check(&explicit_write, &insert_to_circuit)?,
+        explicit_write.activity_schedule
+    );
+    state = explicit_write.after.state;
+    let expected_target = [
+        AlignedValue::from(selected_coin.qualify(31)),
+        AlignedValue::from(explicit_coin.qualify(42)),
+    ];
+    assert_deep_coin_set(
+        &state,
+        &insert,
+        "coinSets",
+        &deep_booked_coin_set_path(&owner, &group, &leaf),
+        &expected_target,
+    );
+    assert_deep_coin_set(
+        &state,
+        &insert,
+        "coinSets",
+        &deep_booked_coin_set_path(&owner, &group, &sibling_leaf),
+        &[AlignedValue::from(sibling_coin.qualify(7))],
+    );
+
+    let repeated = prepare_with_context(
+        &insert_to,
+        &explicit_inputs,
+        context_with_booking(&state, &explicit_coin, Some(other), 42),
+        parameters,
+    )
+    .context("repeat the same qualified Set insertion")?;
+    assert_eq!(check(&repeated, &insert_to_circuit)?, repeated.activity_schedule);
+    assert_eq!(repeated.after.state.get_ref(), state.get_ref(), "Set insertion is idempotent");
+
+    let rejected_coin = coin(24, 25, 31);
+    let missing_implicit_booking = context_with_booking(&state, &rejected_coin, None, 53);
+    let error = prepare_with_context(
+        &insert,
+        &deep_booked_coin_set_inputs(&owner, &group, &leaf, &rejected_coin),
+        missing_implicit_booking.clone(),
         parameters,
     )
     .err()
-    .expect("native plan validation rejects a sixth parent key");
+    .expect("implicit insertion requires a current-contract booking");
+    assert!(error.to_string().contains("absent from the current transaction"));
+    assert_eq!(missing_implicit_booking.state, state);
+
+    let wrong_booking = context_with_booking(&state, &rejected_coin, Some(own), 54);
+    let error = prepare_with_context(
+        &insert_to,
+        &deep_booked_coin_set_to_inputs(&owner, &group, &leaf, &rejected_coin, other),
+        wrong_booking.clone(),
+        parameters,
+    )
+    .err()
+    .expect("explicit recipient must match the commitment booking");
+    assert!(error.to_string().contains("absent from the current transaction"));
+    assert_eq!(wrong_booking.state, state);
+
+    let absent_parent_coin = coin(26, 27, 37);
+    let absent_parent_context = context_with_booking(&state, &absent_parent_coin, Some(own), 56);
+    let error = prepare_with_context(
+        &insert,
+        &deep_booked_coin_set_inputs(&owner, &group, &absent_leaf, &absent_parent_coin),
+        absent_parent_context.clone(),
+        parameters,
+    )
+    .err()
+    .expect("the selected Set parent path must already exist");
+    assert!(error.to_string().contains("missing map path key"));
+    assert_eq!(absent_parent_context.state, state);
+
+    let mut fifteen_parent_plan = insert_to.clone();
+    let mut changed = false;
+    for operation in &mut fifteen_parent_plan.operations {
+        if let Instruction::InsertShieldedCoinSetTo { keys, .. } = operation {
+            keys.push(keys.last().expect("fourteen parent keys").clone());
+            changed = true;
+        }
+    }
+    assert!(changed, "accepted depth-fourteen plan contains explicit Set insertion");
+    let excessive_path_context = context_with_booking(&state, &rejected_coin, Some(other), 57);
+    let error = prepare_with_context(
+        &fifteen_parent_plan,
+        &deep_booked_coin_set_to_inputs(&owner, &group, &leaf, &rejected_coin, other),
+        excessive_path_context.clone(),
+        parameters,
+    )
+    .err()
+    .expect("native Plan validation rejects fifteen Map parents");
     assert!(error
         .to_string()
-        .contains("shielded coin Set supports at most five parent keys"));
+        .contains("shielded coin Set supports at most fourteen parent keys"));
+    assert_eq!(excessive_path_context.state, state);
 
     Ok(())
 }

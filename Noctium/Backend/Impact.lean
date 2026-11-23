@@ -396,21 +396,53 @@ private def shieldedCoinCellFieldGroups (slot : Nat) (nonce color : Expr (.bytes
   , [.native 0x91]
   ]
 
+private def shieldedCoinMapIndexPathFields (slot : Nat) (cached : Bool)
+    (parents : List Aligned) : List Scalar :=
+  [.native ((if cached then 0x60 else 0x50) + parents.length),
+    .native 1, .native 1, .native slot] ++ parents.flatMap Aligned.fields
+
+private def pushAlignedBytes32Fields (value : Aligned) : List Scalar :=
+  [.native 0x10, .native 1] ++ value.fields
+
+private def shieldedCoinMapParentRebuildFieldGroups (slot : Nat)
+    (keys : List Aligned) : List (List Scalar) :=
+  keys.reverse.zipIdx.flatMap fun (nextParent, reverseIndex) =>
+    let parents := keys.take (keys.length - reverseIndex - 1)
+    [[.native 0x31], shieldedCoinMapIndexPathFields slot true parents,
+      pushAlignedBytes32Fields nextParent,
+      [.native 0x40], [.native 0x41], [.native 0xa1]]
+
 private def shieldedCoinSetFieldGroups (slot : Nat) (keys : List Aligned)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (commitment : Expr (.bytes 32)) : List (List Scalar) :=
-  [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
-      keys.flatMap Aligned.fields
-  , [.native (0x34 + 2 * keys.length)]
-  , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
-  , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
-  , shieldedCoinPushFields nonce color amount
-  , [.native 0x40]
-  , [.native 0x17, .native 91]
-  , [.native 0x11, .native 0]
-  , [.native 0x91]
-  , [.native (0xa1 + keys.length)]
-  ]
+  if keys.length ≤ 5 then
+    [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
+        keys.flatMap Aligned.fields
+    , [.native (0x34 + 2 * keys.length)]
+    , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
+    , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
+    , shieldedCoinPushFields nonce color amount
+    , [.native 0x40]
+    , [.native 0x17, .native 91]
+    , [.native 0x11, .native 0]
+    , [.native 0x91]
+    , [.native (0xa1 + keys.length)]
+    ]
+  else
+    [ [.native 0x32]
+    , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
+    , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
+    , shieldedCoinPushFields nonce color amount
+    , [.native 0x40]
+    , [.native 0x17, .native 91]
+    , [.native 0x31]
+    , shieldedCoinMapIndexPathFields slot false keys
+    , [.native 0x40]
+    , [.native 0x11, .native 0]
+    , [.native 0x91]
+    ] ++ shieldedCoinMapParentRebuildFieldGroups slot keys ++
+    [[.native 0x10, .native 1, .native 1, .native 1, .native slot],
+      [.native 0x40], [.native 0xa1]]
 
 private def shieldedCoinMapInsertFieldGroups (slot : Nat) (keys : List Aligned)
     (key nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
@@ -425,25 +457,14 @@ private def shieldedCoinMapInsertFieldGroups (slot : Nat) (keys : List Aligned)
       shieldedCoinPushFields nonce color amount,
       [.native 0x40], [.native 0x17, .native 91], [.native 0x91], [.native (0xa1 + keys.length)]]
 
-  let pushBytes32 (value : Expr (.bytes 32)) : List Scalar :=
-    [.native 0x10, .native 1] ++ (Aligned.bytes32 value).fields
-  let indexPath (cached : Bool) (parents : List Aligned) : List Scalar :=
-    [.native ((if cached then 0x60 else 0x50) + parents.length),
-      .native 1, .native 1, .native slot] ++ parents.flatMap Aligned.fields
-  let pushAlignedBytes32 (value : Aligned) : List Scalar :=
-    [.native 0x10, .native 1] ++ value.fields
-  let insertParentGroups (nextParent : Aligned) (parents : List Aligned) : List (List Scalar) :=
-    [[.native 0x31], indexPath true parents, pushAlignedBytes32 nextParent,
-      [.native 0x40], [.native 0x41], [.native 0xa1]]
-  let parentGroups := keys.reverse.zipIdx.flatMap fun (nextParent, reverseIndex) =>
-    let parents := keys.take (keys.length - reverseIndex - 1)
-    insertParentGroups nextParent parents
+  let parentGroups := shieldedCoinMapParentRebuildFieldGroups slot keys
   let groups :=
-    [[.native 0x32], pushBytes32 commitment,
+    [[.native 0x32], pushAlignedBytes32Fields (.bytes32 commitment),
       [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)],
       shieldedCoinPushFields nonce color amount,
       [.native 0x40], [.native 0x17, .native 91],
-      [.native 0x31], indexPath false keys, pushBytes32 key,
+      [.native 0x31], shieldedCoinMapIndexPathFields slot false keys,
+      pushAlignedBytes32Fields (.bytes32 key),
       [.native 0x40], [.native 0x41], [.native 0x91]] ++
       parentGroups ++
       [[.native 0x10, .native 1, .native 1, .native 1, .native slot],
@@ -1601,14 +1622,10 @@ private def insertShieldedCoinMapOp (state : List StateDecl) (name : String)
     (← nativePathKeys keys))
 
 private def validateQualifiedCoinSetKeys (keys : List PathKey) : Except String Unit := do
-  unless keys.length ≤ 5 do
-    throw "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  unless keys.length ≤ 14 do
+    throw "insertShieldedCoinSet supports at most fourteen Bytes32 Map parents"
   unless keys.all (fun key => key.ty == .bytes 32) do
     throw "qualified coin Set parent keys must be Bytes32"
-  unless 4 + 2 * keys.length ≤ 15 do
-    throw "qualified coin Set parent path exceeds the native Dup immediate range"
-  unless keys.length + 1 ≤ 15 && keys.length + 2 ≤ 15 do
-    throw "qualified coin Set parent path exceeds the native Ins immediate range"
 
 private def shieldedCoinSetPath (state : List StateDecl) (name : String)
     (keys : List PathKey) : Except String (Nat × List Aligned) := do

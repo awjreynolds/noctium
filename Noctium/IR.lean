@@ -768,7 +768,7 @@ def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
   let some schema := kind.pathSchema | throw "path must select a Map or Set"
   let selected ← schema.resolvePath keys
   let nestedShieldedCoinSet := match selected with
-    | .shieldedCoinSet .. => 1 ≤ keys.length && keys.length ≤ 5 &&
+    | .shieldedCoinSet .. => 1 ≤ keys.length && keys.length ≤ 14 &&
         keys.all (fun key => key.ty == .bytes 32)
     | _ => false
   unless selected.isCollection || nestedShieldedCoinSet do
@@ -977,12 +977,12 @@ inductive Effect where
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
   /-- Insert a coin whose self-recipient commitment is already booked in the
   current transaction into a root qualified-record Set or one selected under
-  up to five Bytes32-keyed Map parents. The runtime gets its index from context. -/
+  up to fourteen Bytes32-keyed Map parents. The runtime gets its index from context. -/
   | insertShieldedCoinSet (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
       (keys : List PathKey)
   /-- Insert a transaction-booked coin for an explicit wallet or contract
-  recipient into a root qualified-record Set or one selected under up to five
+  recipient into a root qualified-record Set or one selected under up to fourteen
   Bytes32-keyed Map parents. The runtime gets its index from context. -/
   | insertShieldedCoinSetTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
@@ -1677,14 +1677,10 @@ private def resolveListState (decls : List StateDecl) (state : String)
 
 private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
-  unless keys.length ≤ 5 do
-    throw "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  unless keys.length ≤ 14 do
+    throw "insertShieldedCoinSet supports at most fourteen Bytes32 Map parents"
   unless keys.all (fun key => key.ty == .bytes 32) do
     throw "qualified coin Set parent keys must be Bytes32"
-  unless 4 + 2 * keys.length ≤ 15 do
-    throw "qualified coin Set parent path exceeds the native Dup immediate range"
-  unless keys.length + 1 ≤ 15 && keys.length + 2 ≤ 15 do
-    throw "qualified coin Set parent path exceeds the native Ins immediate range"
   let some declaration := decls.find? (·.name == state)
     | throw s!"unknown qualified shielded coin Set '{state}'"
   let .tree schema := declaration.kind
