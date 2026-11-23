@@ -1078,6 +1078,25 @@ impl Schema {
         self.measures[self.root]
     }
 
+    pub(crate) fn uint_leaf_maximum(&self, path: &[String]) -> Result<&BigUint> {
+        ensure!(!path.is_empty(), "aggregate UInt field path is empty");
+        let mut layout = self.root;
+        for segment in path {
+            let LayoutNode::Struct { fields, .. } = &self.nodes[layout] else {
+                bail!("aggregate UInt field path must select a struct field");
+            };
+            layout = fields
+                .iter()
+                .find(|field| &field.name == segment)
+                .ok_or_else(|| anyhow!("aggregate UInt field path does not exist"))?
+                .layout;
+        }
+        match &self.nodes[layout] {
+            LayoutNode::Scalar(Leaf::UInt(maximum)) => Ok(maximum),
+            _ => bail!("aggregate UInt field path does not end at a UInt leaf"),
+        }
+    }
+
     fn fab_hash_field(&self, layout: usize) -> Result<FabHashField> {
         match &self.nodes[layout] {
             LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),

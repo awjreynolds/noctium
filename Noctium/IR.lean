@@ -423,11 +423,20 @@ def Output.nativeReturnFieldCount (output : Output) : Nat := output.ty.nativeCal
 
 def maxEntrypointReturnFields : Nat := 256
 
+/-- A nominal UInt identity attached to one checked leaf of a composite return view. -/
+structure NominalUIntReturnField where
+  path : List String
+  nominalUInt : NominalUIntType
+  deriving Repr, BEq, DecidableEq
+
 structure ReturnView where
   name : String
   environment : Types.CompositeEnv
   type : Types.CompositeType
   fields : List String
+  /-- Source-only nominal UInt identities keyed by logical composite field path.
+  The aggregate schema and Native return leaves keep their existing wire types. -/
+  nominalUIntFields : List NominalUIntReturnField := []
   deriving Repr
 
 structure CallInputView where

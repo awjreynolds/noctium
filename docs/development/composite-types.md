@@ -55,6 +55,22 @@ lake build Noctium.Types.Composite
 lake env lean tests/CompositeTypes.lean
 ```
 
+## Nominal UInt fields in ledger records
+
+Declare field types with `noctium_uint_type` when equal-width integers have
+different meanings. Record reads, writes and List operations check their
+declared identities, including the three-key Map paths in the fixture.
+Use an explicit checked cast to convert from an unbranded UInt.
+[Nested record fixture](../../tests/NominalUIntNestedRecords.lean)
+
+`headOrDefault` followed by `returnMaybe` emits a checked logical record view.
+The plan records alias names and maxima in `nominalUIntFields` at paths such
+as `["value", "amount"]`. Native transcript fields retain their existing
+encoding. The runtime checks the declared UInt maximum at each selected path.
+Compact 0.36.1 and the native checker agree on both the empty-list default
+and present `{amount = 19, count = 7, active = true}` payload.
+[Lean fixture](../../tests/NominalRecordMaybe.lean) · [Native checker](../../runtime/tests/nominal_record_maybe.rs)
+
 ## Nested owner/spender records
 
 `tree escrow : Bytes32 => Bytes32 => struct EscrowRecord { ... }` places a

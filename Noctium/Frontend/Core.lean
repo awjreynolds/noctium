@@ -2425,6 +2425,7 @@ private structure OptionalRecordHead where
   environment : Types.CompositeEnv
   type : Types.CompositeType
   fields : List (String × Ty)
+  nominalUIntFields : List (String × NominalUIntType) := []
 
 private structure CollectionNominals where
   /-- Nominal identities for each Map key, followed by the member key for a leaf Set. -/
@@ -3026,12 +3027,16 @@ private def elaborateListHeadOrDefault (schema : List (String × StateKind))
   let headed ← elaborateListHead schema path record depth updated
   match type with
   | .structure _ =>
+    let fieldTypes := (state.recordFieldTypes.lookup storage.getId.toString).getD []
+    let nominalUIntFields := fieldTypes.filterMap fun (field, sourceType) =>
+      sourceType.nominalUInt.map fun nominalUInt => (field, nominalUInt)
     pure {headed with optionalRecordHeads := {
       presentName
       recordName := record.getId.toString
       environment
       type
       fields
+      nominalUIntFields
     } :: headed.optionalRecordHeads}
   | _ => pure headed
 
@@ -4678,8 +4683,11 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
   let mut returnTerms := #[isSomeReturn]
   for ((fieldName, fieldTy), returnName) in head.fields.zip valueReturnNames do
     let bindingName := s!"{head.recordName}_{fieldName}"
-    if ((state.nominalUIntBindings.lookup bindingName).join).isSome then
-      throwErrorAt statement "nominal UInt fields require an explicitly typed return"
+    let expectedNominalUInt := head.nominalUIntFields.lookup fieldName
+    let actualNominalUInt := (state.nominalUIntBindings.lookup bindingName).join
+    unless actualNominalUInt == expectedNominalUInt do
+      throwErrorAt statement
+        s!"returnMaybe record field '{bindingName}' does not match its declared nominal UInt identity"
     let some (bindingTy, fieldExpression) := maybeReturnBinding state.env bindingName
       | throwErrorAt statement s!"returnMaybe record field '{bindingName}' is not a typed binding"
     unless bindingTy == fieldTy do
@@ -4691,8 +4699,16 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
     let fieldReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
       $canonicalField $span)
     returnTerms := returnTerms.push fieldReturn
+  let orderedNominalUIntFields := head.fields.filterMap fun (fieldName, _) =>
+    (head.nominalUIntFields.lookup fieldName).map fun nominalUInt => (fieldName, nominalUInt)
+  let nominalUIntFieldTerms ← orderedNominalUIntFields.toArray.mapM fun (fieldName, nominalUInt) => do
+    let name := stringTerm nominalUInt.name
+    let maximum := natTerm nominalUInt.maximum
+    let nominalUIntTerm ← `({name := $name, maximum := $maximum : Noctium.NominalUIntType})
+    let path := (#[stringTerm "value", stringTerm fieldName])
+    `(Noctium.NominalUIntReturnField.mk [$path,*] $nominalUIntTerm)
   let view ← `(Noctium.ReturnView.mk $(stringTerm labelName) $environmentTerm
-    $compositeType [$physicalNameTerms,*])
+    $compositeType [$physicalNameTerms,*] [$nominalUIntFieldTerms,*])
   pure {state with
     returns := state.returns ++ returnTerms
     returnViews := state.returnViews.push view
@@ -5627,8 +5643,12 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let (tailTypes, asList, record, recordFields) ← readMapRecordTail tail
           let keyTypes := [firstTy, secondTy, thirdTy] ++ tailTypes
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
+            elaborateTypedLedgerRecord contractName record recordFields state
+          if fieldTypes.any (fun (_, field) => field.contractRef.isSome) then
+            throwErrorAt state "typed contract reference fields are unsupported for this ledger layout"
+          if !fieldTypes.isEmpty then
+            recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           let leafSchema := if asList then LedgerValueType.«list» environment compositeType
             else .composite environment compositeType
           let valueSchema := keyTypes.reverse.foldl

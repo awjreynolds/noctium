@@ -18,6 +18,7 @@ export ledger amountSet: Set<Amount>;
 export ledger amountSets: Map<Count, Set<Amount>>;
 export ledger position: Position;
 export ledger positions: Map<Bytes<32>, Position>;
+export ledger positionHistory: List<Position>;
 
 constructor(initialKey: Count, initial: Amount, positionKey: Bytes<32>) {
   balance = disclose(initial);
@@ -99,6 +100,15 @@ export circuit writePositionRaw(key: Bytes<32>, value: Uint<8>): [] {
     amount: disclose(amount), count: mapped.count, active: mapped.active,
   });
   return [];
+}
+
+export circuit rememberPosition(amount: Amount, count: Count): [] {
+  positionHistory.pushFront(disclose(Position { amount: amount, count: count, active: true }));
+  return [];
+}
+
+export circuit positionHead(): Maybe<Position> {
+  return positionHistory.head();
 }
 
 export circuit positionAmount(): Amount {

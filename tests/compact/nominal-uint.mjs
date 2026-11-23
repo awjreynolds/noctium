@@ -137,6 +137,12 @@ try {
   assert.deepEqual(ledger(recordState.data).position, initializedRecord);
   assert.deepEqual(ledger(recordState.data).positions.lookup(recordKey), initializedRecord);
 
+  assert.deepEqual((await invoke('positionHead', recordState.data)).result,
+    { is_some: false, value: { amount: 0n, count: 0n, active: false } });
+  const remembered = await invoke('rememberPosition', recordState.data, 19n, 7n);
+  assert.deepEqual((await invoke('positionHead', remembered.context.callContext.currentQueryContext.state)).result,
+    { is_some: true, value: initializedRecord });
+
   const initial = currentContractState.data;
   assert.equal((await invoke('get', initial)).result, 19n);
   assert.equal(ledger(initial).balances.member(2n), true);
