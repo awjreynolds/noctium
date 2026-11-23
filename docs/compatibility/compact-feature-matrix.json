@@ -6596,8 +6596,8 @@
       "id": "C-STDLIB-BLOCKTIMELT",
       "layer": "standard-library",
       "surface": "blockTimeLt",
-      "noctiumStatus": "subset",
-      "notes": "The exact standard-library export is absent. Scoped direct support uses blockTimeBefore(UInt64 deadline), which compares Unix-second current time < deadline. Lean, Compact 0.36.1 and native checks cover the strict boundary and guarded case. The finalized receipt uses both strict kernel predicates, not this exact standard-library export. Full equivalence and hosted-context integration remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "blockTimeBefore matches Compact 0.36.1 blockTimeLt for now < deadline with a UInt64 deadline and Unix-second clock. The paired cases exercise either side of equality, inactive comparisons and the maximum deadline. The native check rejects a modified result or missing active clock context. Ledger 9.1.0.1 finalized the four-result operation at cutoff zero with state preserved.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6619,17 +6619,18 @@
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
         "runtime/tests/native_block_time.rs",
+        "docs/development/native-block-time-inclusive-receipt.json",
         "docs/development/native-block-time-localnet-receipt.json",
         "docs/development/native-contract.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-BLOCKTIMEGTE",
       "layer": "standard-library",
       "surface": "blockTimeGte",
-      "noctiumStatus": "subset",
-      "notes": "blockTimeAtOrAfter(UInt64 deadline) complements the native strict-before predicate when active. The Compact 0.36.1 and native fixtures agree below, on and above the deadline and when disabled. Native checks also cover UInt64 maximum clock time. The active inclusive fixture finalized on Ledger 9.1.0.1 at cutoff zero.",
+      "noctiumStatus": "equivalent",
+      "notes": "blockTimeAtOrAfter matches Compact 0.36.1 blockTimeGte for now >= deadline with a UInt64 deadline and Unix-second clock. The paired cases exercise either side of equality, inactive comparisons and the maximum deadline. The native check rejects a modified result or missing active clock context. Ledger 9.1.0.1 finalized the four-result operation at cutoff zero with state preserved.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6652,16 +6653,18 @@
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
         "runtime/tests/native_block_time.rs",
-        "docs/development/native-block-time-inclusive-receipt.json"
+        "docs/development/native-block-time-inclusive-receipt.json",
+        "docs/development/native-block-time-localnet-receipt.json",
+        "docs/development/native-contract.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-BLOCKTIMEGT",
       "layer": "standard-library",
       "surface": "blockTimeGt",
-      "noctiumStatus": "subset",
-      "notes": "The exact standard-library export is absent. Scoped direct support uses blockTimeAfter(UInt64 deadline), which compares deadline < Unix-second current time. Lean, Compact 0.36.1 and native checks cover the strict boundary and guarded case. The finalized receipt uses both strict kernel predicates, not this exact standard-library export. Full equivalence and hosted-context integration remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "blockTimeAfter matches Compact 0.36.1 blockTimeGt for now > deadline with a UInt64 deadline and Unix-second clock. The paired cases exercise either side of equality, inactive comparisons and the maximum deadline. The native check rejects a modified result or missing active clock context. Ledger 9.1.0.1 finalized the four-result operation at cutoff zero with state preserved.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6683,17 +6686,18 @@
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
         "runtime/tests/native_block_time.rs",
+        "docs/development/native-block-time-inclusive-receipt.json",
         "docs/development/native-block-time-localnet-receipt.json",
         "docs/development/native-contract.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-BLOCKTIMELTE",
       "layer": "standard-library",
       "surface": "blockTimeLte",
-      "noctiumStatus": "subset",
-      "notes": "blockTimeAtOrBefore(UInt64 deadline) complements the native strict-after predicate when active. The Compact 0.36.1 and native fixtures agree below, on and above the deadline and when disabled. Native checks also cover UInt64 maximum clock time. The active inclusive fixture finalized on Ledger 9.1.0.1 at cutoff zero.",
+      "noctiumStatus": "equivalent",
+      "notes": "blockTimeAtOrBefore matches Compact 0.36.1 blockTimeLte for now <= deadline with a UInt64 deadline and Unix-second clock. The paired cases exercise either side of equality, inactive comparisons and the maximum deadline. The native check rejects a modified result or missing active clock context. Ledger 9.1.0.1 finalized the four-result operation at cutoff zero with state preserved.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6716,9 +6720,11 @@
         "tests/compact/block-time.mjs",
         "runtime/src/lib.rs",
         "runtime/tests/native_block_time.rs",
-        "docs/development/native-block-time-inclusive-receipt.json"
+        "docs/development/native-block-time-inclusive-receipt.json",
+        "docs/development/native-block-time-localnet-receipt.json",
+        "docs/development/native-contract.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SERIALIZE",

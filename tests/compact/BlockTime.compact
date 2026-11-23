@@ -3,8 +3,8 @@ import CompactStandardLibrary;
 
 export circuit checkTime(cutoff: Uint<64>, enabled: Boolean): [Boolean, Boolean, Boolean, Boolean] {
   if (disclose(enabled)) {
-    return [kernel.blockTimeLessThan(disclose(cutoff)),
-            kernel.blockTimeGreaterThan(disclose(cutoff)),
+    return [blockTimeLt(disclose(cutoff)),
+            blockTimeGt(disclose(cutoff)),
             blockTimeGte(disclose(cutoff)),
             blockTimeLte(disclose(cutoff))];
   }
