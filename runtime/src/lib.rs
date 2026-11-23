@@ -1636,6 +1636,8 @@ pub enum Instruction {
         slot: u32,
         schema: Json,
         expressions: Vec<Expr>,
+        #[serde(default)]
+        keys: Vec<PathPart>,
     },
     New,
     Push {
@@ -2333,11 +2335,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             schema,
             expressions,
         } => {
-            let expected = if keys.is_empty() {
-                record_collection_key_schema(plan, *slot)
-            } else {
-                ordinary_record_set_schema_at_path(plan, *slot, keys)?
-            };
+            let expected = record_removal_key_schema(plan, *slot, keys)?;
             ensure!(
                 expected == Some(schema),
                 "record key removal differs from state schema"
@@ -2487,13 +2485,14 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
             slot,
             schema,
             expressions,
+            keys,
         } => {
             let record = checked_typed_record_schema(schema)?;
             ensure!(
                 expressions.len() == record.fields.len(),
                 "record Map index expression count mismatch"
             );
-            path_field_count(plan, *slot, &[])? + record.popeq_impact_width() - 1
+            path_field_count(plan, *slot, keys)? + record.popeq_impact_width() - 1
         }
         Instruction::ListLength { .. }
         | Instruction::MapSize { .. }
@@ -2989,7 +2988,10 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         .filter(|parts| parts.len() == 2)
         .ok_or_else(|| anyhow!("invalid state tree map schema"))?;
     if let Some(record) = ordinary_record_key_schema(&parts[0]) {
-        ensure!(depth == 0, "record-key Maps must use a root state slot");
+        ensure!(
+            depth <= 1,
+            "record-key Maps may only be root or one scalar Map level deep"
+        );
         let value = parts[1]
             .as_object()
             .filter(|value| value.len() == 1)
@@ -3001,6 +3003,10 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             );
         } else if let Some(value_record) = value.get("composite") {
             ensure!(
+                depth == 0,
+                "nested record-key Maps require scalar values"
+            );
+            ensure!(
                 is_record_schema(value_record)
                     && !is_shielded_coin_record_schema(value_record),
                 "record-key Maps require an ordinary typed record value"
@@ -3009,6 +3015,10 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         } else {
             bail!("record-key Maps require a scalar or record value")
         }
+        ensure!(
+            depth + 2 < 16,
+            "record-key Map insertion depth exceeds native insertion depth"
+        );
         checked_typed_record_schema(record)?;
         return validate_tree_schema(&parts[1], depth + 1);
     }
@@ -3947,34 +3957,79 @@ fn indexed_record_collection_schema<'a>(
     keys: &[PathPart],
 ) -> Result<Option<&'a Json>> {
     if !keys.is_empty() {
+        let selected = tree_schema_at_path(plan, slot, keys.len())?;
+        if selected.get("map").is_some() {
+            return ordinary_record_map_schema_at_path(plan, slot, keys, true);
+        }
         return ordinary_record_set_schema_at_path(plan, slot, keys);
     }
     Ok(record_collection_key_schema(plan, slot))
 }
 
 fn ordinary_record_map_parts(plan: &Plan, slot: u32) -> Option<&[Json]> {
-    tree_schema_at_path(plan, slot, 0)
-        .ok()?
-        .get("map")?
-        .as_array()
-        .filter(|parts| parts.len() == 2)
-        .map(Vec::as_slice)
+    ordinary_record_map_parts_at_path(plan, slot, &[]).ok().flatten()
 }
 
-fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
-    let parts = ordinary_record_map_parts(plan, slot)?;
-    let value = parts[1].as_object().filter(|descriptor| descriptor.len() == 1)?;
+fn ordinary_record_map_parts_at_path<'a>(
+    plan: &'a Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<Option<&'a [Json]>> {
+    path_field_count(plan, slot, keys)?;
+    Ok(tree_schema_at_path(plan, slot, keys.len())?
+        .get("map")
+        .and_then(Json::as_array)
+        .filter(|parts| parts.len() == 2)
+        .map(Vec::as_slice))
+}
+
+fn ordinary_record_map_schema_at_path<'a>(
+    plan: &'a Plan,
+    slot: u32,
+    keys: &[PathPart],
+    scalar_value_only: bool,
+) -> Result<Option<&'a Json>> {
+    let Some(parts) = ordinary_record_map_parts_at_path(plan, slot, keys)? else {
+        return Ok(None);
+    };
+    let value = parts[1].as_object().filter(|descriptor| descriptor.len() == 1);
+    let Some(value) = value else {
+        return Ok(None);
+    };
     let scalar_value = value.get("scalar").and_then(Json::as_str).is_some();
     let record_value = value
         .get("composite")
         .is_some_and(is_record_schema);
-    (scalar_value || record_value)
-        .then(|| ordinary_record_key_schema(&parts[0]))
+    if scalar_value || (!scalar_value_only && record_value) {
+        Ok(ordinary_record_key_schema(&parts[0]))
+    } else {
+        Ok(None)
+    }
+}
+
+fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    ordinary_record_map_schema_at_path(plan, slot, &[], false)
+        .ok()
         .flatten()
 }
 
 fn record_collection_key_schema(plan: &Plan, slot: u32) -> Option<&Json> {
     ordinary_record_set_schema(plan, slot).or_else(|| ordinary_record_map_schema(plan, slot))
+}
+
+fn record_removal_key_schema<'a>(
+    plan: &'a Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<Option<&'a Json>> {
+    if keys.is_empty() {
+        return Ok(record_collection_key_schema(plan, slot));
+    }
+    if tree_schema_at_path(plan, slot, keys.len())?.get("map").is_some() {
+        ordinary_record_map_schema_at_path(plan, slot, keys, true)
+    } else {
+        ordinary_record_set_schema_at_path(plan, slot, keys)
+    }
 }
 
 fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
@@ -4005,6 +4060,36 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         "record key differs from its indexed schema or guard"
                     );
                     checked_typed_record_schema(schema)?;
+                    if let Some(previous) = index
+                        .checked_sub(1)
+                        .and_then(|previous| plan.operations.get(previous))
+                    {
+                        let (previous, _) = unguarded_operation(previous);
+                        if let Instruction::IndexPath { slot, keys, .. } = previous {
+                            if !keys.is_empty()
+                                && ordinary_record_map_schema_at_path(plan, *slot, keys, true)?
+                                    == Some(schema)
+                            {
+                                if let Some((Instruction::Push { storage: true, .. }, value_guard)) =
+                                    plan.operations.get(index + 1).map(unguarded_operation)
+                                {
+                                    let (insert, insert_guard) = plan
+                                        .operations
+                                        .get(index + 2)
+                                        .map(unguarded_operation)
+                                        .ok_or_else(|| {
+                                            anyhow!("nested record Map write has no insertion")
+                                        })?;
+                                    ensure!(
+                                        value_guard == guard
+                                            && insert_guard == guard
+                                            && matches!(insert, Instruction::Insert { n } if usize::from(*n) == keys.len() + 2),
+                                        "nested record Map insertion depth or guard differs from its indexed path"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 } else {
                     checked_record_schema(schema)?;
                 }
@@ -4015,20 +4100,22 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 schema,
                 ..
             } => {
-                let expected = if keys.is_empty() {
-                    record_collection_key_schema(plan, *slot)
-                } else {
-                    ordinary_record_set_schema_at_path(plan, *slot, keys)?
-                };
+                let expected = record_removal_key_schema(plan, *slot, keys)?;
                 ensure!(
                     expected == Some(schema),
                     "record key removal differs from state schema"
                 );
                 checked_typed_record_schema(schema)?;
             }
-            Instruction::IndexRecordPath { slot, schema, .. } => {
+            Instruction::IndexRecordPath {
+                slot,
+                schema,
+                keys,
+                ..
+            } => {
                 ensure!(
-                    ordinary_record_map_schema(plan, *slot) == Some(schema),
+                    ordinary_record_map_schema_at_path(plan, *slot, keys, !keys.is_empty())?
+                        == Some(schema),
                     "record Map index differs from state schema"
                 );
                 let (read, read_guard) = plan
@@ -4042,7 +4129,9 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     "record Map index and read guards differ"
                 );
                 checked_typed_record_schema(schema)?;
-                let parts = ordinary_record_map_parts(plan, *slot)
+                let map_parts = ordinary_record_map_parts_at_path(plan, *slot, keys)?;
+                let parts = map_parts
+                    .as_ref()
                     .ok_or_else(|| anyhow!("record Map index differs from state schema"))?;
                 let value = &parts[1];
                 match read {
@@ -4172,14 +4261,21 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     Instruction::IndexRecordPath {
                         slot,
                         schema: key_schema,
+                        keys,
                         ..
                     } => {
                         ensure!(
-                            ordinary_record_map_schema(plan, *slot) == Some(key_schema),
+                            ordinary_record_map_schema_at_path(
+                                plan,
+                                *slot,
+                                keys,
+                                !keys.is_empty(),
+                            )? == Some(key_schema),
                             "record Map read key differs from state schema"
                         );
                         ensure!(
-                            ordinary_record_map_parts(plan, *slot)
+                            ordinary_record_map_parts_at_path(plan, *slot, keys)?
+                                .as_ref()
                                 .and_then(|parts| parts[1].get("composite"))
                                 == Some(schema),
                             "record Map read differs from state schema"
@@ -6528,8 +6624,17 @@ fn probe_instruction(
             env,
             deferred_outputs,
         ),
-        Instruction::IndexRecordPath { expressions, .. } => {
-            probe_expressions(expressions, plan, env, deferred_outputs)
+        Instruction::IndexRecordPath {
+            expressions, keys, ..
+        } => {
+            probe_expressions(
+                keys.iter()
+                    .map(|part| &part.expression)
+                    .chain(expressions.iter()),
+                plan,
+                env,
+                deferred_outputs,
+            )
         }
         Instruction::ClaimContractCall {
             address,
@@ -7824,23 +7929,31 @@ impl PreparationCursor {
                 slot,
                 schema,
                 expressions,
+                keys,
             } => {
                 let record = checked_typed_record_schema(schema)?;
                 let fields = record_values_from_expressions(&record, expressions, &env)?;
                 let key = aligned_record_value(&record, &fields)?;
-                let path = vec![
-                    Key::Value(
-                        field_value(Fr::from(*slot as u64))
-                            .try_into()
-                            .map_err(|_| anyhow!("invalid native index key"))?,
-                    ),
-                    Key::Value(
-                        key.clone()
-                            .try_into()
-                            .map_err(|_| anyhow!("invalid native record Map key"))?,
-                    ),
-                ];
-                current_index = Some((*slot, vec![key]));
+                let (_, mut values) = native_index(plan, *slot, keys, false, &env)?;
+                let mut path = vec![Key::Value(
+                    field_value(Fr::from(*slot as u64))
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid native index key"))?,
+                )];
+                path.extend(values.iter().map(|value| {
+                    value
+                        .clone()
+                        .try_into()
+                        .map(Key::Value)
+                        .map_err(|_| anyhow!("invalid native map key"))
+                }).collect::<Result<Vec<_>>>()?);
+                path.push(Key::Value(
+                    key.clone()
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid native record Map key"))?,
+                ));
+                values.push(key);
+                current_index = Some((*slot, values));
                 Op::Idx {
                     cached: false,
                     push_path: false,

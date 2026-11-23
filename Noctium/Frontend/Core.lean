@@ -388,6 +388,7 @@ scoped syntax num "of" "struct" ident "{" nlcompositefield* "}" : nlmerklespec
 scoped syntax "merkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "historicMerkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "Set" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -460,6 +461,7 @@ scoped syntax "member" nlpath "as" ident : nleffect
 scoped syntax "member" ident "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "member" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "read" ident "[" nlleaves "]" "as" ident : nleffect
+scoped syntax "read" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "checkRoot" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "tokenBalance(" nlexpr "," nlexpr ")" "as" ident : nleffect
 scoped syntax "tokenBalanceLt(" nlexpr "," nlexpr "," nlexpr ")" "as" ident : nleffect
@@ -484,6 +486,7 @@ scoped syntax "absent" ident "[" nlexpr "]" : nleffect
 scoped syntax "write" ident ":=" nlexpr : nleffect
 scoped syntax "write" ident ":=" nlleaves : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nleffect
+scoped syntax "insert" ident "[" nlexpr "]" "[" nlleaves "]" ":=" nlexpr : nleffect
 scoped syntax "insert" ident "[" nlleaves "]" ":=" nlexpr : nleffect
 scoped syntax "insert" ident "[" nlleaves "]" ":=" nlleaves : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlleaves : nleffect
@@ -511,6 +514,7 @@ scoped syntax "insert" ident "[" nlleaves "]" : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "write" ident ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlexpr : nleffect
+scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" "[" nlleaves "]" ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "require" nlexpr : nleffect
 scoped syntax "when" nlexpr "read" nlpath "as" ident : nleffect
@@ -519,6 +523,7 @@ scoped syntax "when" nlexpr "member" nlpath "as" ident : nleffect
 scoped syntax "when" nlexpr "member" ident "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "when" nlexpr "member" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "when" nlexpr "read" ident "[" nlleaves "]" "as" ident : nleffect
+scoped syntax "when" nlexpr "read" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "when" nlexpr "checkRoot" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "when" nlexpr "tokenBalance(" nlexpr "," nlexpr ")" "as" ident : nleffect
 scoped syntax "when" nlexpr "tokenBalanceLt(" nlexpr "," nlexpr "," nlexpr ")" "as" ident : nleffect
@@ -2067,10 +2072,12 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr write $_state:ident := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_key:nlexpr ] := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_payload:nlleaves ] := $_value:nlexpr) => some condition
+  | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_owner:nlexpr ] [ $_payload:nlleaves ] := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_payload:nlleaves ] := $_valuePayload:nlleaves) => some condition
   | `(nleffect| when $condition:nlexpr require $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr read $_path:nlpath as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr read $_state:ident [$_payload:nlleaves] as $_dest:ident) => some condition
+  | `(nleffect| when $condition:nlexpr read $_state:ident [$_owner:nlexpr] [$_payload:nlleaves] as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr readSelf as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr mintUnshieldedTo($_:nlexpr, $_:nlexpr, $_:nlexpr, $_:nlexpr) as $_:ident) =>
     some condition
@@ -2646,7 +2653,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
     | .recordMapKey _ _ valueTy => do
       let type ← tyTerm valueTy
       let value ← `(Noctium.GuardedExpression.zeroValue $type)
-      `(Noctium.Effect.writeRecordMap $name $keyValues $type $value)
+      `(Noctium.Effect.writeRecordMap $name $keyValues $type $value ([] : List Noctium.PathKey))
     | .recordMapComposite _ _ valueEnvironment valueType => do
       let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
         | .ok fields => pure fields
@@ -2758,43 +2765,59 @@ private def elaborateNestedRecordSetMutation (schema : List (String × StateKind
     `(Noctium.Effect.removeRecordSet $(stringTerm storage.getId.toString) $keys $values)
   pure {state with terms := state.terms.push term}
 
-private def recordMapKeyValues (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
-    CommandElabM (List (String × Ty) × Ty × TSyntax `term) := do
-  let valueSchema ← statePathSchema schema storage
-  let .recordMapKey environment type valueTy := valueSchema
-    | throwErrorAt storage "typed record key operation requires a root record-key Map"
+private def recordMapFieldsAt (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM (TSyntax `term × LedgerValueType × List (String × Ty) × TSyntax `term) := do
+  let treeSchema ← treeStateSchema schema storage
+  let (keys, valueSchema) ← lowerTreePath state.env treeSchema parentKeys
+  let (environment, type) ← match valueSchema with
+    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
+      pure (environment, type)
+    | _ => throwErrorAt storage "typed record key operation requires a record-key Map"
   let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   let values ← elaborateLedgerFieldValues state.env payload fields
-  pure (fields, valueTy, values)
+  pure (← pathKeysTerm keys, valueSchema, fields, values)
+
+private def recordMapKeyValuesAt (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM (TSyntax `term × List (String × Ty) × Ty × TSyntax `term) := do
+  let (keys, valueSchema, fields, values) ← recordMapFieldsAt schema storage parentKeys payload state
+  let .recordMapKey _ _ valueTy := valueSchema
+    | throwErrorAt storage "typed record key operation requires a scalar-valued record-key Map"
+  pure (keys, fields, valueTy, values)
+
+private def nestedRecordMapAt (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (state : EntryEffects) : CommandElabM _root_.Bool := do
+  let treeSchema ← treeStateSchema schema storage
+  let (_, selected) ← lowerTreePath state.env treeSchema parentKeys
+  pure (match selected with
+    | .recordMapKey .. | .recordMapComposite .. => _root_.Bool.true
+    | _ => _root_.Bool.false)
 
 private def elaborateRecordMapMember (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
     (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let valueSchema ← statePathSchema schema storage
-  let (keyEnvironment, keyType) ← match valueSchema with
-    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
-      pure (environment, type)
-    | _ => throwErrorAt storage "typed record key operation requires a root record-key Map"
-  let fields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
-    | .ok fields => pure fields
-    | .error message => throwErrorAt storage message
-  let values ← elaborateLedgerFieldValues state.env payload fields
+  let (keys, _, _, values) ← recordMapFieldsAt schema storage parentKeys payload state
   let (readName, updated) ← freshReadName depth state destination
   let term ← `(Noctium.Effect.memberRecordMap
-    $(stringTerm storage.getId.toString) $(stringTerm readName) $values)
+    $(stringTerm storage.getId.toString) $(stringTerm readName) $values $keys)
   bindReadName {updated with terms := updated.terms.push term}
     destination.getId.toString readName .bool
 
 private def elaborateRecordMapRead (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
     (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (_, valueTy, values) ← recordMapKeyValues schema storage payload state
+  let (keys, _, valueTy, values) ← recordMapKeyValuesAt schema storage parentKeys payload state
   let (readName, updated) ← freshReadName depth state destination
   let term ← `(Noctium.Effect.readRecordMap
-    $(stringTerm storage.getId.toString) $(stringTerm readName) $(← tyTerm valueTy) $values)
+    $(stringTerm storage.getId.toString) $(stringTerm readName) $(← tyTerm valueTy) $values $keys)
   bindReadName {updated with terms := updated.terms.push term}
     destination.getId.toString readName valueTy
 
@@ -2854,27 +2877,21 @@ private def elaborateRecordMapCompositeWrite (schema : List (String × StateKind
   pure {state with terms := state.terms.push term}
 
 private def elaborateRecordMapWrite (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (value : TSyntax `nlexpr)
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (value : TSyntax `nlexpr)
     (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (_, valueTy, values) ← recordMapKeyValues schema storage payload state
+  let (keys, _, valueTy, values) ← recordMapKeyValuesAt schema storage parentKeys payload state
   let value ← checkedExpression state.env value valueTy
   let term ← `(Noctium.Effect.writeRecordMap
-    $(stringTerm storage.getId.toString) $values $(← tyTerm valueTy) $value)
+    $(stringTerm storage.getId.toString) $values $(← tyTerm valueTy) $value $keys)
   pure {state with terms := state.terms.push term}
 
 private def elaborateRecordMapRemove (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (state : EntryEffects) :
     CommandElabM EntryEffects := do
-  let valueSchema ← statePathSchema schema storage
-  let (keyEnvironment, keyType) ← match valueSchema with
-    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
-      pure (environment, type)
-    | _ => throwErrorAt storage "typed record key operation requires a root record-key Map"
-  let fields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
-    | .ok fields => pure fields
-    | .error message => throwErrorAt storage message
-  let values ← elaborateLedgerFieldValues state.env payload fields
-  let term ← `(Noctium.Effect.removeRecordMap $(stringTerm storage.getId.toString) $values)
+  let (keys, _, _, values) ← recordMapFieldsAt schema storage parentKeys payload state
+  let term ← `(Noctium.Effect.removeRecordMap $(stringTerm storage.getId.toString) $values $keys)
   pure {state with terms := state.terms.push term}
 
 private def elaborateNamedPathRead (schema : List (String × StateKind))
@@ -3658,12 +3675,15 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident)
   | `(nleffect| when $_:nlexpr counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident) =>
     state ← elaborateCounterLessThan schema path threshold destination depth state
+  | `(nleffect| read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident)
+  | `(nleffect| when $_:nlexpr read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) =>
+    state := ← elaborateRecordMapRead schema storage [owner] payload destination depth state
   | `(nleffect| read $storage:ident [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr read $storage:ident [ $payload:nlleaves ] as $destination:ident) =>
     match (← statePathSchema schema storage) with
     | .recordMapComposite .. =>
       state := ← elaborateRecordMapCompositeRead schema storage payload destination depth state
-    | _ => state := ← elaborateRecordMapRead schema storage payload destination depth state
+    | _ => state := ← elaborateRecordMapRead schema storage [] payload destination depth state
   | `(nleffect| read $path:nlpath as $destination:ident)
   | `(nleffect| when $_:nlexpr read $path:nlpath as $destination:ident) =>
     state := ← elaborateNamedPathRead schema "read" path destination depth guard state
@@ -3678,13 +3698,16 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| when $_:nlexpr mintUnshieldedTo($domain, $amount, $isContract, $recipient) as $destination:ident) =>
     state := ← elaborateUnshieldedMintTo state domain amount isContract recipient destination guard span
   | `(nleffect| member $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident)
-  | `(nleffect| when $_:nlexpr member $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) =>
-    state ← elaborateNestedRecordSetMember schema storage owner payload destination depth state
+  | `(nleffect| when $_:nlexpr member $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) => do
+    if ← nestedRecordMapAt schema storage [owner] state then
+      state ← elaborateRecordMapMember schema storage [owner] payload destination depth state
+    else
+      state ← elaborateNestedRecordSetMember schema storage owner payload destination depth state
   | `(nleffect| member $storage:ident [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr member $storage:ident [ $payload:nlleaves ] as $destination:ident) =>
     match (← statePathSchema schema storage) with
     | .recordMapKey .. | .recordMapComposite .. =>
-      state := ← elaborateRecordMapMember schema storage payload destination depth state
+      state := ← elaborateRecordMapMember schema storage [] payload destination depth state
     | _ => state := ← elaborateRecordSetMember schema storage payload destination depth state
   | `(nleffect| member $path:nlpath as $destination:ident)
   | `(nleffect| when $_:nlexpr member $path:nlpath as $destination:ident) =>
@@ -3757,7 +3780,10 @@ private def elaborateEffect (schema : List (String × StateKind))
     state := ← elaborateTypedMerkleWrite schema path none (some index) Bool.false state
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ] := $value:nlexpr)
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ] := $value:nlexpr) =>
-    state := ← elaborateRecordMapWrite schema storage payload value state
+    state := ← elaborateRecordMapWrite schema storage [] payload value state
+  | `(nleffect| insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] := $value:nlexpr)
+  | `(nleffect| when $_:nlexpr insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] := $value:nlexpr) =>
+    state := ← elaborateRecordMapWrite schema storage [owner] payload value state
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ] := $valuePayload:nlleaves)
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ] := $valuePayload:nlleaves) =>
     state := ← elaborateRecordMapCompositeWrite schema storage payload valuePayload state
@@ -3822,19 +3848,25 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| when $_:nlexpr popFront $path:nlpath) =>
     state := ← elaborateListPopFront schema path state
   | `(nleffect| remove $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ])
-  | `(nleffect| when $_:nlexpr remove $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) =>
-    state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.false state
+  | `(nleffect| when $_:nlexpr remove $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) => do
+    if ← nestedRecordMapAt schema storage [owner] state then
+      state ← elaborateRecordMapRemove schema storage [owner] payload state
+    else
+      state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.false state
   | `(nleffect| remove $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr remove $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
-    | .recordMapKey .. | .recordMapComposite .. => state := ← elaborateRecordMapRemove schema storage payload state
+    | .recordMapKey .. | .recordMapComposite .. => state := ← elaborateRecordMapRemove schema storage [] payload state
     | _ => state := ← elaborateRecordSetMutation schema storage payload Bool.false state
   | `(nleffect| remove $path:nlpath)
   | `(nleffect| when $_:nlexpr remove $path:nlpath) =>
     state := ← elaborateMapRemove schema path state
   | `(nleffect| insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ])
-  | `(nleffect| when $_:nlexpr insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) =>
-    state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.true state
+  | `(nleffect| when $_:nlexpr insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) => do
+    if ← nestedRecordMapAt schema storage [owner] state then
+      throwErrorAt storage "record-key Map insert requires a value"
+    else
+      state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.true state
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
@@ -4645,6 +4677,24 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
             (Noctium.LedgerValueType.map $innerTerm
               (Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)))
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+        | `(nlstate| tree $id:ident : $outer:nltype => struct $keyRecord:ident
+            { $keyFields:nlcompositefield* } => $valueType:nltype) => do
+          let outerTy ← readTy outer
+          let valueTy ← readTy valueType
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            elaborateNamedRecord contractName keyRecord keyFields state
+          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
+          let nestedSchema := LedgerValueType.recordMapKey environment compositeType valueTy
+          let valueSchema := LedgerValueType.map outerTy nestedSchema
+          let outerTerm ← tyTerm outerTy
+          let valueTerm ← tyTerm valueTy
+          let treeTerm ← `(Noctium.LedgerValueType.map $outerTerm
+            (Noctium.LedgerValueType.recordMapKey
+              $environmentTerm $compositeTypeTerm $valueTerm))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $treeTerm))
         | `(nlstate| tree $id:ident : $key:nltype => Set struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId

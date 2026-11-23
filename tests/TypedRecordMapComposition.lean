@@ -145,7 +145,7 @@ private def sealedRecordMapCompositionState :=
 #guard match Backend.Impact.lower RecordMapComposition.state (recordMapCompositionEntry "lookup") with
   | .ok plan =>
       plan.operations.any (fun operation => match operation with
-        | .indexRecordPath 0 _ values => values.map LedgerFieldExpr.ty == [.bool, .uint 65535]
+        | .indexRecordPath 0 _ values [] => values.map LedgerFieldExpr.ty == [.bool, .uint 65535]
         | _ => _root_.Bool.false) &&
       plan.reads.any (fun binding => binding.ty == .bool) &&
       plan.reads.any (fun binding => binding.ty == .uint 65535)

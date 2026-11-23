@@ -144,6 +144,7 @@ inductive Op where
   | index (slot : Nat) (pushPath : Bool := false)
   | mapIndex (slot : Nat) (key : Aligned)
   | indexRecordPath (slot : Nat) (schema : Lean.Json) (values : List LedgerFieldExpr)
+      (keys : List Aligned)
   | indexPath (slot : Nat) (pushPath : Bool) (keys : List Aligned)
   | push (value : Aligned) (storage : Bool := false)
   | newMap
@@ -706,8 +707,9 @@ def Op.fields : Op → List Scalar
       (Aligned.field (.native slot)).fields
   | .mapIndex slot key => [.native 0x51] ++
       (Aligned.field (.native slot)).fields ++ key.fields
-  | .indexRecordPath slot _ values => [.native 0x51] ++
-      (Aligned.field (.native slot)).fields ++ ledgerFieldSequence values
+  | .indexRecordPath slot _ values keys => [.native (0x51 + keys.length)] ++
+      (Aligned.field (.native slot)).fields ++ keys.flatMap Aligned.fields ++
+      ledgerFieldSequence values
   | .indexPath slot pushPath keys => indexPathFields slot pushPath keys
   | .push value storage => [.native (if storage then 0x11 else 0x10), .native 1] ++ value.fields
   | .newMap => [.native 0x05]
@@ -936,8 +938,6 @@ def Op.fieldGroups : Op → List (List Scalar)
       , [.native 0x19]
       , [.native (0x91 + keys.length)]
       ]
-  | .indexRecordPath slot _ values =>
-      [[.native 0x51] ++ (Aligned.field (.native slot)).fields ++ ledgerFieldSequence values]
   | .claimContractCall address entryPointHash commitment =>
       claimContractCallFieldGroups address entryPointHash commitment
   | .insertShieldedCoinSet slot nonce color amount commitment =>
@@ -1370,10 +1370,11 @@ private def recordSetInsertOps (slot : Nat) (keys : List Aligned)
     .push (.field (.native 1)), .newMap, .insert levels]
 
 private def recordMapKeySchema (state : List StateDecl) (name : String)
-    (values : List LedgerFieldExpr) : Except String (Nat × Lean.Json × Ty) := do
+    (values : List LedgerFieldExpr) (parentKeys : List PathKey) :
+    Except String (Nat × Lean.Json × Ty) := do
   let slot ← stateSlot state name
-  let some {kind := .tree (.recordMapKey environment type valueTy), ..} := state[slot]?
-    | throw s!"state '{name}' is not a record-key Map"
+  let .recordMapKey environment type valueTy ← resolveTreeState state name parentKeys
+    | throw s!"path does not select a scalar-valued record-key Map in '{name}'"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
@@ -1381,13 +1382,13 @@ private def recordMapKeySchema (state : List StateDecl) (name : String)
   pure (slot, schema, valueTy)
 
 private def anyRecordMapKeySchema (state : List StateDecl) (name : String)
-    (values : List LedgerFieldExpr) : Except String (Nat × Lean.Json) := do
+    (values : List LedgerFieldExpr) (parentKeys : List PathKey) :
+    Except String (Nat × Lean.Json) := do
   let slot ← stateSlot state name
-  let some declaration := state[slot]?
-    | throw s!"unknown record-key Map '{name}'"
-  let (environment, type) ← match declaration.kind with
-    | .tree (.recordMapKey environment type _) => pure (environment, type)
-    | .tree (.recordMapComposite environment type _ _) => pure (environment, type)
+  let selected ← resolveTreeState state name parentKeys
+  let (environment, type) ← match selected with
+    | .recordMapKey environment type _ => pure (environment, type)
+    | .recordMapComposite environment type _ _ => pure (environment, type)
     | _ => throw s!"state '{name}' is not a record-key Map"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
@@ -1922,21 +1923,25 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     pure {plan with operations := plan.operations ++ [
       .index slot true, pushKey key,
       value, .insert 2]}
-  | .writeRecordMap name values ty value => do
-    let (slot, schema, foundTy) ← recordMapKeySchema state name values
+  | .writeRecordMap name values ty value parentKeys => do
+    let (slot, schema, foundTy) ← recordMapKeySchema state name values parentKeys
     unless foundTy == ty do throw "record Map value type mismatch"
+    let keys ← nativePathKeys parentKeys
     let value ← storageWriteValue ty value
+    let levels := keys.length + 2
+    if levels >= 16 then throw "nested record Map insertion exceeds native Ins depth"
     pure {plan with operations := plan.operations ++ [
-      .indexPath slot true [], .pushFields schema values false, value, .insert 2]}
+      .indexPath slot true keys, .pushFields schema values false, value, .insert levels]}
   | .writeRecordMapComposite name valueType keyValues valueValues => do
     let (slot, keySchema, valueSchema, foundType) ← recordMapCompositeSchemas state name keyValues valueValues
     unless foundType == valueType do throw "record Map value type mismatch"
     pure {plan with operations := plan.operations ++ [
       .indexPath slot true [], .pushFields keySchema keyValues false,
       .pushFields valueSchema valueValues true, .insert 2]}
-  | .removeRecordMap name values => do
-    let (slot, schema) ← anyRecordMapKeySchema state name values
-    pure {plan with operations := plan.operations ++ [.mapRemoveRecord slot schema [] values]}
+  | .removeRecordMap name values parentKeys => do
+    let (slot, schema) ← anyRecordMapKeySchema state name values parentKeys
+    pure {plan with operations := plan.operations ++ [
+      .mapRemoveRecord slot schema (← nativePathKeys parentKeys) values]}
   | .readMap name destination _ ty key => do
     let slot ← stateSlot state name
     let key ← nativeAligned _ key
@@ -1946,13 +1951,13 @@ def appendEffect (state : List StateDecl) (effect : Effect)
         .dup, .mapIndex slot key,
         value]
       reads := plan.reads ++ [{name := destination, ty}] }
-  | .readRecordMap name destination ty values => do
-    let (slot, schema, foundTy) ← recordMapKeySchema state name values
+  | .readRecordMap name destination ty values parentKeys => do
+    let (slot, schema, foundTy) ← recordMapKeySchema state name values parentKeys
     unless foundTy == ty do throw "record Map value type mismatch"
     let value ← storageReadValue ty destination
     pure {plan with
       operations := plan.operations ++ [
-        .dup, .indexRecordPath slot schema values, value]
+        .dup, .indexRecordPath slot schema values (← nativePathKeys parentKeys), value]
       reads := plan.reads ++ [{name := destination, ty}]}
   | .readRecordMapComposite name destination valueType values destinations => do
     let fields := destinations.map fun (fieldName, ty) => .mk ty (.ref fieldName)
@@ -1962,7 +1967,7 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     let read : Read := {name := destination, ty := .native, components := destinations, schema := some valueSchema}
     pure {plan with
       operations := plan.operations ++ [
-        .dup, .indexRecordPath slot keySchema values, .popeqFields valueSchema fields],
+        .dup, .indexRecordPath slot keySchema values [], .popeqFields valueSchema fields],
       reads := plan.reads ++ [read]}
   | .readMember name destination _ _ key => do
     let slot ← stateSlot state name
@@ -2080,11 +2085,12 @@ def appendEffect (state : List StateDecl) (effect : Effect)
         .dup, .indexPath slot false (← nativePathKeys keys), .pushFields schema values false, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
-  | .memberRecordMap name destination values => do
-    let (slot, schema) ← anyRecordMapKeySchema state name values
+  | .memberRecordMap name destination values parentKeys => do
+    let (slot, schema) ← anyRecordMapKeySchema state name values parentKeys
     pure {plan with
       operations := plan.operations ++ [
-        .dup, .indexPath slot false [], .pushFields schema values false, .member,
+        .dup, .indexPath slot false (← nativePathKeys parentKeys),
+        .pushFields schema values false, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
   | .setInsertRecord name keys values => do
@@ -2214,32 +2220,37 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       let avoid := pathExpressionNames keys ++ ledgerFieldExprNames values
       pure (.memberRecordSet name destination (totalizePathKeys condition keys)
         (values.map (totalizeLedgerFieldExpr condition avoid)))
-    | some condition, .readRecordMap name destination ty values =>
-      let avoid := ledgerFieldExprNames values
+    | some condition, .readRecordMap name destination ty values parentKeys =>
+      let avoid := pathExpressionNames parentKeys ++ ledgerFieldExprNames values
       pure (.readRecordMap name destination ty
-        (values.map (totalizeLedgerFieldExpr condition avoid)))
+        (values.map (totalizeLedgerFieldExpr condition avoid))
+        (totalizePathKeys condition parentKeys))
     | some condition, .readRecordMapComposite name destination valueType values destinations =>
       let avoid := ledgerFieldExprNames values
       pure (.readRecordMapComposite name destination valueType
         (values.map (totalizeLedgerFieldExpr condition avoid)) destinations)
-    | some condition, .memberRecordMap name destination values =>
-      let avoid := ledgerFieldExprNames values
+    | some condition, .memberRecordMap name destination values parentKeys =>
+      let avoid := pathExpressionNames parentKeys ++ ledgerFieldExprNames values
       pure (.memberRecordMap name destination
-        (values.map (totalizeLedgerFieldExpr condition avoid)))
-    | some condition, .writeRecordMap name values valueTy value =>
-      let avoid := ledgerFieldExprNames values ++ expressionNames value
+        (values.map (totalizeLedgerFieldExpr condition avoid))
+        (totalizePathKeys condition parentKeys))
+    | some condition, .writeRecordMap name values valueTy value parentKeys =>
+      let avoid := pathExpressionNames parentKeys ++ ledgerFieldExprNames values ++
+        expressionNames value
       pure (.writeRecordMap name
         (values.map (totalizeLedgerFieldExpr condition avoid)) valueTy
-        (totalizeActivityValue condition avoid value))
+        (totalizeActivityValue condition avoid value)
+        (totalizePathKeys condition parentKeys))
     | some condition, .writeRecordMapComposite name valueType keyValues valueValues =>
       let avoid := ledgerFieldExprNames keyValues ++ ledgerFieldExprNames valueValues
       pure (.writeRecordMapComposite name valueType
         (keyValues.map (totalizeLedgerFieldExpr condition avoid))
         (valueValues.map (totalizeLedgerFieldExpr condition avoid)))
-    | some condition, .removeRecordMap name values =>
-      let avoid := ledgerFieldExprNames values
+    | some condition, .removeRecordMap name values parentKeys =>
+      let avoid := pathExpressionNames parentKeys ++ ledgerFieldExprNames values
       pure (.removeRecordMap name
-        (values.map (totalizeLedgerFieldExpr condition avoid)))
+        (values.map (totalizeLedgerFieldExpr condition avoid))
+        (totalizePathKeys condition parentKeys))
     | some condition, .counterRead name destination keys =>
       pure (.counterRead name destination (totalizePathKeys condition keys))
     | some condition, .counterLessThan name destination keys threshold =>
@@ -2808,13 +2819,13 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
         .dup, .indexPath slot false (← nativePathKeys keys), .pushFields schema values false, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
-  | .readRecordMap name destination ty values => do
-    let (slot, schema, foundTy) ← recordMapKeySchema state name values
+  | .readRecordMap name destination ty values parentKeys => do
+    let (slot, schema, foundTy) ← recordMapKeySchema state name values parentKeys
     unless foundTy == ty do throw "record Map value type mismatch"
     let value ← storageReadValue ty destination
     plan := {plan with
       operations := plan.operations ++ [
-        .dup, .indexRecordPath slot schema values, value]
+        .dup, .indexRecordPath slot schema values (← nativePathKeys parentKeys), value]
       reads := plan.reads ++ [{name := destination, ty}]}
   | .readRecordMapComposite name destination valueType values destinations => do
     let valueExpressions := destinations.map fun (fieldName, ty) => .mk ty (.ref fieldName)
@@ -2824,30 +2835,35 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
     let read : Read := {name := destination, ty := .native, components := destinations, schema := some valueSchema}
     plan := {plan with
       operations := plan.operations ++ [
-        .dup, .indexRecordPath slot keySchema values, .popeqFields valueSchema valueExpressions],
+        .dup, .indexRecordPath slot keySchema values [], .popeqFields valueSchema valueExpressions],
       reads := plan.reads ++ [read]}
-  | .memberRecordMap name destination values => do
-    let (slot, schema) ← anyRecordMapKeySchema state name values
+  | .memberRecordMap name destination values parentKeys => do
+    let (slot, schema) ← anyRecordMapKeySchema state name values parentKeys
     plan := {plan with
       operations := plan.operations ++ [
-        .dup, .indexPath slot false [], .pushFields schema values false, .member,
+        .dup, .indexPath slot false (← nativePathKeys parentKeys),
+        .pushFields schema values false, .member,
         .popeq (.bitExpr (.ref destination))]
       reads := plan.reads ++ [{name := destination, ty := .bool}]}
-  | .writeRecordMap name values ty value => do
-    let (slot, schema, foundTy) ← recordMapKeySchema state name values
+  | .writeRecordMap name values ty value parentKeys => do
+    let (slot, schema, foundTy) ← recordMapKeySchema state name values parentKeys
     unless foundTy == ty do throw "record Map value type mismatch"
+    let keys ← nativePathKeys parentKeys
     let value ← storageWriteValue ty value
+    let levels := keys.length + 2
+    if levels >= 16 then throw "nested record Map insertion exceeds native Ins depth"
     plan := {plan with operations := plan.operations ++ [
-      .indexPath slot true [], .pushFields schema values false, value, .insert 2]}
+      .indexPath slot true keys, .pushFields schema values false, value, .insert levels]}
   | .writeRecordMapComposite name valueType keyValues valueValues => do
     let (slot, keySchema, valueSchema, foundType) ← recordMapCompositeSchemas state name keyValues valueValues
     unless foundType == valueType do throw "record Map value type mismatch"
     plan := {plan with operations := plan.operations ++ [
       .indexPath slot true [], .pushFields keySchema keyValues false,
       .pushFields valueSchema valueValues true, .insert 2]}
-  | .removeRecordMap name values => do
-    let (slot, schema) ← anyRecordMapKeySchema state name values
-    plan := {plan with operations := plan.operations ++ [.mapRemoveRecord slot schema [] values]}
+  | .removeRecordMap name values parentKeys => do
+    let (slot, schema) ← anyRecordMapKeySchema state name values parentKeys
+    plan := {plan with operations := plan.operations ++ [
+      .mapRemoveRecord slot schema (← nativePathKeys parentKeys) values]}
   | .setInsertRecord name keys values => do
     let (slot, schema) ← recordSetKeySchema state name keys values
     plan := {plan with operations := plan.operations ++
@@ -3053,10 +3069,14 @@ def Op.toJson (ctx : EvalContext) (env : EvalEnv) : Op → Except String Lean.Js
       ("path", Lean.Json.arr #[
         Lean.Json.mkObj [("tag", Lean.toJson ("value" : String)), ("value", slotValue)],
         Lean.Json.mkObj [("tag", Lean.toJson ("value" : String)), ("value", keyValue)]])])])
-  | .indexRecordPath slot schema expressions => do
+  | .indexRecordPath slot schema expressions keys => do
     let values ← (expressions.flatMap ledgerFieldPayloads).mapM (fun value => value.eval ctx env)
-    pure (Lean.Json.mkObj [("indexRecordPath", Lean.Json.mkObj [
-      ("slot", Lean.toJson slot), ("schema", schema), ("values", Lean.toJson values)])])
+    let keyValues ← keys.mapM fun key => key.toJson ctx env
+    let keyParts := keyValues.map fun value =>
+      Lean.Json.mkObj [("tag", Lean.toJson ("value" : String)), ("value", value)]
+    pure (Lean.Json.mkObj [("indexRecordPath", Lean.Json.mkObj (
+      [("slot", Lean.toJson slot), ("schema", schema), ("values", Lean.toJson values)] ++
+      (if keyParts.isEmpty then [] else [("keys", Lean.Json.arr keyParts.toArray)])))])
   | .indexPath slot pushPath keys => do
     let slotValue ← (Aligned.field (.native slot)).toJson ctx env
     let keyValues ← keys.mapM fun key => key.toJson ctx env

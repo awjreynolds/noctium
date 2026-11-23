@@ -1499,10 +1499,11 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
         | throw s!"missing record Set parent '{name}'"
       let key ← evaluateRecordKey ctx env values
       env := (destination, .bool (← treeMember selected [key])) :: env
-    | .readRecordMap name destination valueTy values => do
+    | .readRecordMap name destination valueTy values parentKeys => do
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env values
-      let some (.scalar raw) := treeLookup root [key]
+      let some (.scalar raw) := treeLookup root (evaluatedKeys ++ [key])
         | throw s!"missing record Map key in '{name}'"
       let some value := raw.as valueTy | throw s!"record Map value type mismatch '{name}'"
       if !canonical ctx valueTy value then throw s!"noncanonical record Map value '{name}'"
@@ -1516,10 +1517,11 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       env := env ++ (← checkedRecordBindings ctx destinations leaves
         s!"record Map value type mismatch '{name}'"
         s!"noncanonical record Map value '{name}'")
-    | .memberRecordMap name destination values => do
+    | .memberRecordMap name destination values parentKeys => do
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env values
-      env := (destination, .bool (← treeMember root [key])) :: env
+      env := (destination, .bool (← treeMember root (evaluatedKeys ++ [key]))) :: env
     | .mapIsEmpty name destination keys => do
       let empty ← mapIsEmptyAt next name (← evaluatePath ctx env keys)
       env := (destination, .bool empty) :: env
@@ -1699,11 +1701,12 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let evaluatedKeys ← evaluatePath ctx env keys
       let key ← evaluateRecordKey ctx env values
       next ← removeMapAt next name (evaluatedKeys ++ [key])
-    | .writeRecordMap name values valueTy value => do
+    | .writeRecordMap name values valueTy value parentKeys => do
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env values
       let payload := LedgerValue.scalar (Value.pack valueTy (← value.eval ctx env))
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
-      let some updated := treeSet root [key] payload
+      let some updated := treeSet root (evaluatedKeys ++ [key]) payload
         | throw s!"record Map root is not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
     | .writeRecordMapComposite name valueType keyValues valueValues => do
@@ -1713,9 +1716,10 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some updated := treeSet root [key] (.composite valueType leaves)
         | throw s!"record Map root is not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
-    | .removeRecordMap name values => do
+    | .removeRecordMap name values parentKeys => do
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env values
-      next ← removeMapAt next name [key]
+      next ← removeMapAt next name (evaluatedKeys ++ [key])
     | .removePath name keys => do
       next ← removeMapAt next name (← evaluatePath ctx env keys)
 

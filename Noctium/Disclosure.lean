@@ -370,18 +370,18 @@ def describeEffect : Effect → LedgerEffectDescriptor
     let sink := s!"public record Set membership guard '{state}'"
     .publicEffect "memberRecordSet" .stateRead .publicActivity sink
       ([.path sink keys] ++ recordKeyOperands sink state values) [destination]
-  | .readRecordMap state destination _ values =>
+  | .readRecordMap state destination _ values parentKeys =>
     let sink := s!"public record Map read key '{state}'"
     .publicEffect "readRecordMap" .stateRead .publicActivity sink
-      (recordKeyOperands sink state values) [destination]
+      ([.path sink parentKeys] ++ recordKeyOperands sink state values) [destination]
   | .readRecordMapComposite state _ _ values destinations =>
     let sink := s!"public record Map key read guard '{state}'"
     .publicEffect "readRecordMapComposite" .stateRead .publicActivity sink
       (recordKeyOperands sink state values) (destinations.map Prod.fst)
-  | .memberRecordMap state destination values =>
+  | .memberRecordMap state destination values parentKeys =>
     let sink := s!"public record Map membership key '{state}'"
     .publicEffect "memberRecordMap" .stateRead .publicActivity sink
-      (recordKeyOperands sink state values) [destination]
+      ([.path sink parentKeys] ++ recordKeyOperands sink state values) [destination]
   | .mapIsEmpty state destination keys =>
     .publicEffect "mapIsEmpty" .stateRead .publicActivity s!"public map or set emptiness guard '{state}'"
       [.path s!"public map or set emptiness path '{state}'" keys] [destination]
@@ -489,10 +489,10 @@ def describeEffect : Effect → LedgerEffectDescriptor
     let sink := s!"public record Set removal key '{state}'"
     .publicEffect "removeRecordSet" .stateWrite .publicActivity sink
       ([.path sink keys] ++ recordKeyOperands sink state values) []
-  | .writeRecordMap state values _ value =>
+  | .writeRecordMap state values _ value parentKeys =>
     let sink := s!"public record Map write key '{state}'"
     .publicEffect "writeRecordMap" .stateWrite .publicActivity sink
-      (recordKeyOperands sink state values ++
+      ([.path sink parentKeys] ++ recordKeyOperands sink state values ++
         [.payload "value" s!"public record Map value '{state}'" value]) []
   | .writeRecordMapComposite state _ keyValues valueValues =>
     let sink := s!"public record Map key and value write '{state}'"
@@ -501,10 +501,10 @@ def describeEffect : Effect → LedgerEffectDescriptor
         valueValues.zipIdx.map (fun (value, index) => match value with
           | .mk _ expression => .payload "field"
               s!"public record Map value field {index} of '{state}'" expression)) []
-  | .removeRecordMap state values =>
+  | .removeRecordMap state values parentKeys =>
     let sink := s!"public record Map removal key '{state}'"
     .publicEffect "removeRecordMap" .stateWrite .publicActivity sink
-      (recordKeyOperands sink state values) []
+      ([.path sink parentKeys] ++ recordKeyOperands sink state values) []
   | .removePath state keys =>
     let sink := s!"public nested map removal path '{state}'"
     .publicEffect "removePath" .stateWrite .publicActivity sink [.path sink keys] []

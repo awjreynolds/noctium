@@ -367,6 +367,152 @@ fn record_key_maps_report_size_and_reset_to_constructor_state() -> anyhow::Resul
 }
 
 #[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_NESTED_RECORD_MAP_DIR"]
+fn nested_record_key_map_reads_inserts_and_guarded_removes() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_NESTED_RECORD_MAP_DIR")?);
+    let load = |entry| load_entrypoint(&directory, &format!("NestedRecordMap.{entry}"));
+    let (initialize, initialize_relation) = load("initializeOwner")?;
+    let (upsert, upsert_relation) = load("upsert")?;
+    let (lookup, lookup_relation) = load("lookup")?;
+    let (remove, remove_relation) = load("removeMemo")?;
+    let mut state = create_state(&upsert, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let owner = |byte: u8| json!({"kind":"bytes", "values":vec![byte; 32]});
+    let owner_args = |owner_byte| BTreeMap::from([("owner".into(), owner(owner_byte))]);
+    for owner_byte in [1, 2] {
+        let step = prepare(
+            &initialize,
+            &owner_args(owner_byte),
+            &state,
+            parameters,
+            address,
+        )?;
+        assert_eq!(
+            check(&step, &initialize_relation)
+                .map_err(|error| anyhow::anyhow!("initializeOwner check: {error}"))?,
+            step.activity_schedule
+        );
+        state = step.after.state;
+    }
+    let key_args = |owner_byte, active, amount: u16| {
+        BTreeMap::from([
+            ("owner".into(), owner(owner_byte)),
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+        ])
+    };
+    for (owner_byte, active, value) in [(1, true, 11u16), (1, false, 22), (2, true, 99)] {
+        let mut args = key_args(owner_byte, active, 513);
+        args.insert("value".into(), json!(value.to_string()));
+        let step = prepare(&upsert, &args, &state, parameters, address)?;
+        assert_eq!(
+            check(&step, &upsert_relation).map_err(|error| {
+                anyhow::anyhow!("upsert owner={owner_byte} active={active}: {error}")
+            })?,
+            step.activity_schedule
+        );
+        let returns = step.returns_json();
+        assert_eq!(returns["presentBefore"], json!(false));
+        assert_eq!(returns["presentAfter"], json!(true));
+        assert_eq!(returns["storedValue"], json!(value.to_string()));
+        state = step.after.state;
+    }
+
+    let mut overwrite_args = key_args(1, true, 513);
+    overwrite_args.insert("value".into(), json!("33"));
+    let overwrite = prepare(&upsert, &overwrite_args, &state, parameters, address)?;
+    assert_eq!(
+        check(&overwrite, &upsert_relation)
+            .map_err(|error| anyhow::anyhow!("overwrite check: {error}"))?,
+        overwrite.activity_schedule
+    );
+    assert_eq!(overwrite.returns_json()["presentBefore"], json!(true));
+    assert_eq!(overwrite.returns_json()["presentAfter"], json!(true));
+    assert_eq!(overwrite.returns_json()["storedValue"], json!("33"));
+    state = overwrite.after.state;
+
+    let lookup_args = |owner_byte, active, amount: u16, should_read| {
+        let mut args = key_args(owner_byte, active, amount);
+        args.insert("shouldRead".into(), json!(should_read));
+        args
+    };
+    let found = prepare(
+        &lookup,
+        &lookup_args(1, true, 513, true),
+        &state,
+        parameters,
+        address,
+    )?;
+    assert_eq!(
+        check(&found, &lookup_relation)
+            .map_err(|error| anyhow::anyhow!("found lookup check: {error}"))?,
+        found.activity_schedule
+    );
+    assert_eq!(found.returns_json()["present"], json!(true));
+    assert_eq!(found.returns_json()["storedValue"], json!("33"));
+
+    let miss_args = lookup_args(1, true, 514, false);
+    let miss = prepare(&lookup, &miss_args, &state, parameters, address)?;
+    assert_eq!(
+        check(&miss, &lookup_relation)
+            .map_err(|error| anyhow::anyhow!("missing lookup check: {error}"))?,
+        miss.activity_schedule
+    );
+    assert_eq!(miss.returns_json()["present"], json!(false));
+    assert_eq!(miss.returns_json()["storedValue"], json!("0"));
+    let mut invalid_miss_args = miss_args;
+    invalid_miss_args.insert("shouldRead".into(), json!(true));
+    assert!(prepare(&lookup, &invalid_miss_args, &state, parameters, address).is_err());
+
+    let mut inactive_args = key_args(1, false, 513);
+    inactive_args.insert("removeIt".into(), json!(false));
+    let inactive = prepare(&remove, &inactive_args, &state, parameters, address)?;
+    assert_eq!(
+        check(&inactive, &remove_relation)
+            .map_err(|error| anyhow::anyhow!("inactive remove check: {error}"))?,
+        inactive.activity_schedule
+    );
+    assert_eq!(inactive.returns_json()["presentBefore"], json!(true));
+    assert_eq!(inactive.returns_json()["presentAfter"], json!(true));
+    assert_eq!(inactive.after.state.get_ref(), state.get_ref());
+
+    let mut active_args = key_args(1, false, 513);
+    active_args.insert("removeIt".into(), json!(true));
+    let removed = prepare(
+        &remove,
+        &active_args,
+        &inactive.after.state,
+        parameters,
+        address,
+    )?;
+    assert_eq!(
+        check(&removed, &remove_relation)
+            .map_err(|error| anyhow::anyhow!("active remove check: {error}"))?,
+        removed.activity_schedule
+    );
+    assert_eq!(removed.returns_json()["presentBefore"], json!(true));
+    assert_eq!(removed.returns_json()["presentAfter"], json!(false));
+    for (owner_byte, active, value) in [(1, true, 33u16), (2, true, 99)] {
+        let step = prepare(
+            &lookup,
+            &lookup_args(owner_byte, active, 513, true),
+            &removed.after.state,
+            parameters,
+            address,
+        )?;
+        assert_eq!(
+            check(&step, &lookup_relation)
+                .map_err(|error| anyhow::anyhow!("retained lookup check: {error}"))?,
+            step.activity_schedule
+        );
+        assert_eq!(step.returns_json()["present"], json!(true));
+        assert_eq!(step.returns_json()["storedValue"], json!(value.to_string()));
+    }
+    Ok(())
+}
+
+#[test]
 fn structured_helper_binds_guarded_bytes32_map_effects_and_returns() {
     let plan: Plan = serde_json::from_str(PLAN).expect("source map plan parses");
     let circuit = IrSource::load(CIRCUIT).expect("source ZKIR parses");
