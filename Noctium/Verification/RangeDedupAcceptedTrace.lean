@@ -61,7 +61,7 @@ theorem acceptedPrefixAssertComparisonOutputCopyBridge
     (initialMeaning : StateMeaning hash inputs witness initial)
     (initialNativeDefinitions : ScalarValidationArithmeticLoop.NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (prefixSteps : ∀ item ∈ prelude, NativeStepHolds hash witness item.1)

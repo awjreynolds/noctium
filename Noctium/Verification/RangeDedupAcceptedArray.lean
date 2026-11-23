@@ -259,7 +259,7 @@ private theorem acceptedMeaningStep_preserves
     (meaning : StateMeaning hash inputs witness state)
     (definitions : NativeDefinitions state)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (step : AcceptedMeaningStep hash witness raw)
@@ -272,21 +272,21 @@ private theorem acceptedMeaningStep_preserves
       obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
         (visibility := .«public») (by simpa [inputOpcode] using opcode) accepted
       have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-      obtain ⟨nativeInput, unguarded⟩ := inputSchema requirement member
+      obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
       have agreement := inputAgreement requirement member
-      exact ⟨public_input_step_meaning meaning selected nativeInput unguarded agreement
+      exact ⟨public_input_step_meaning meaning selected nonforeignInput unguarded agreement
           opcode accepted,
-        input_nativeDefinitions_step (visibility := .«public») definitions selected nativeInput
+        input_nativeDefinitions_step (visibility := .«public») definitions selected nonforeignInput
           unguarded (by simpa [inputOpcode] using opcode) accepted⟩
     | privateInput opcode =>
       obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
         (visibility := .«private») (by simpa [inputOpcode] using opcode) accepted
       have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-      obtain ⟨nativeInput, unguarded⟩ := inputSchema requirement member
+      obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
       have agreement := inputAgreement requirement member
-      exact ⟨private_input_step_meaning meaning selected nativeInput unguarded agreement
+      exact ⟨private_input_step_meaning meaning selected nonforeignInput unguarded agreement
           opcode accepted,
-        input_nativeDefinitions_step (visibility := .«private») definitions selected nativeInput
+        input_nativeDefinitions_step (visibility := .«private») definitions selected nonforeignInput
           unguarded (by simpa [inputOpcode] using opcode) accepted⟩
     | arithmetic arithmeticStep =>
       cases arithmeticStep with
@@ -372,7 +372,7 @@ theorem accepted_loop_meaning_at_steps
     (initialMeaning : StateMeaning hash inputs witness initial)
     (initialDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (steps : ∀ item ∈ items, AcceptedMeaningStep hash witness item.1)
@@ -432,7 +432,7 @@ theorem acceptedArrayWholeFold
     (initialMeaning : StateMeaning hash inputs witness initial)
     (initialDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (steps : ∀ item ∈ source.toList.zipIdx, AcceptedMeaningStep hash witness item.1)
@@ -521,7 +521,7 @@ theorem acceptedComparisonBoundsFromPrefix
     (initialMeaning : StateMeaning hash witness witness initial)
     (initialDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
     (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
       initial = .ok final)
@@ -559,7 +559,7 @@ theorem acceptedArrayReusePreserves
     (initialMeaning : ∀ hash witness, StateMeaning hash witness witness initial)
     (initialDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
     (decoded : source.toList.mapM decodeInstruction = .ok original)
     (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
@@ -583,7 +583,7 @@ theorem acceptedArrayReusePreservesKernel
     (initialMeaning : ∀ hash witness, StateMeaning hash witness witness initial)
     (initialDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
     (sourceDecoded : source.toList.mapM decodeInstruction = .ok left.instructions)
     (runDecoded : (reuseComparisons source).toList.mapM decodeInstruction = .ok right.instructions)
