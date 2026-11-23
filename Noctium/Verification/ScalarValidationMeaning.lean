@@ -267,7 +267,7 @@ theorem public_input_step_meaning {hash : Hash} {inputs witness : Assignment}
     {requirement : InputRequirement}
     (invariant : StateMeaning hash inputs witness state)
     (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nativeInput : requirement.ty = .native)
+    (nonforeignInput : requirement.ty.isForeign = false)
     (unguarded : requirement.activityGuard = none)
     (inputAgreement : witness requirement.identifier = inputs requirement.identifier)
     (opcodeParsed : stringField raw "op" = .ok "public_input")
@@ -277,24 +277,28 @@ theorem public_input_step_meaning {hash : Hash} {inputs witness : Assignment}
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
   have opcodeEq : opcode = "public_input" := Except.ok.inj (op.symm.trans opcodeParsed)
-  simp only [opcodeEq, selected, nativeInput, unguarded] at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
-    guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
-    definedState, defined, result⟩
-  cases valueParsed
-  have outputEq : output = requirement.identifier := eq_of_beq
-    (Bool.and_eq_true_iff.mp (ensure_ok.mp schema)).1
-  have inputEq : witness output = inputs output := by
-    rw [outputEq]
-    exact inputAgreement
-  let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
-  have nextEq : nextState = next := by
-    change Except.ok nextState = .ok next at result
-    exact Except.ok.inj result
-  subst next
-  change StateMeaning hash inputs witness definedState
-  exact define_meaning invariant (input_fact_meaning inputEq) defined
+  simp only [opcodeEq, selected] at accepted
+  split at accepted
+  · simp_all [Ty.isForeign]
+  ·
+    simp only [unguarded] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+      guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
+      definedState, defined, result⟩
+    cases valueParsed
+    have outputEq : output = requirement.identifier := eq_of_beq
+      (Bool.and_eq_true_iff.mp (ensure_ok.mp schema)).1
+    have inputEq : witness output = inputs output := by
+      rw [outputEq]
+      exact inputAgreement
+    let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
+    have nextEq : nextState = next := by
+      change Except.ok nextState = .ok next at result
+      exact Except.ok.inj result
+    subst next
+    change StateMeaning hash inputs witness definedState
+    exact define_meaning invariant (input_fact_meaning inputEq) defined
 
 /-- A validated private input installs its source term for every witness that
 matches the externally supplied private transcript value. -/
@@ -303,7 +307,7 @@ theorem private_input_step_meaning {hash : Hash} {inputs witness : Assignment}
     {requirement : InputRequirement}
     (invariant : StateMeaning hash inputs witness state)
     (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nativeInput : requirement.ty = .native)
+    (nonforeignInput : requirement.ty.isForeign = false)
     (unguarded : requirement.activityGuard = none)
     (inputAgreement : witness requirement.identifier = inputs requirement.identifier)
     (opcodeParsed : stringField raw "op" = .ok "private_input")
@@ -313,24 +317,28 @@ theorem private_input_step_meaning {hash : Hash} {inputs witness : Assignment}
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
   have opcodeEq : opcode = "private_input" := Except.ok.inj (op.symm.trans opcodeParsed)
-  simp only [opcodeEq, selected, nativeInput, unguarded] at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
-    guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
-    definedState, defined, result⟩
-  cases valueParsed
-  have outputEq : output = requirement.identifier := eq_of_beq
-    (Bool.and_eq_true_iff.mp (ensure_ok.mp schema)).1
-  have inputEq : witness output = inputs output := by
-    rw [outputEq]
-    exact inputAgreement
-  let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
-  have nextEq : nextState = next := by
-    change Except.ok nextState = .ok next at result
-    exact Except.ok.inj result
-  subst next
-  change StateMeaning hash inputs witness definedState
-  exact define_meaning invariant (input_fact_meaning inputEq) defined
+  simp only [opcodeEq, selected] at accepted
+  split at accepted
+  · simp_all [Ty.isForeign]
+  ·
+    simp only [unguarded] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+      guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
+      definedState, defined, result⟩
+    cases valueParsed
+    have outputEq : output = requirement.identifier := eq_of_beq
+      (Bool.and_eq_true_iff.mp (ensure_ok.mp schema)).1
+    have inputEq : witness output = inputs output := by
+      rw [outputEq]
+      exact inputAgreement
+    let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
+    have nextEq : nextState = next := by
+      change Except.ok nextState = .ok next at result
+      exact Except.ok.inj result
+    subst next
+    change StateMeaning hash inputs witness definedState
+    exact define_meaning invariant (input_fact_meaning inputEq) defined
 
 theorem combine_meaning {hash : Hash} {inputs witness : Assignment}
     {term : Term} {maximum : Nat} {children : List Fact} {fact : Fact}

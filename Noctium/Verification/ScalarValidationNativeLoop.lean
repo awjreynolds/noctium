@@ -34,7 +34,7 @@ theorem input_nativeDefinitions_step {expected : Expected} {state next : State}
     {raw : Json} {visibility : Visibility} {requirement : InputRequirement}
     (nativeDefinitions : NativeDefinitions state)
     (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nativeInput : requirement.ty = .native)
+    (nonforeignInput : requirement.ty.isForeign = false)
     (unguarded : requirement.activityGuard = none)
     (opcodeParsed : Backend.Native.stringField raw "op" = .ok (inputOpcode visibility))
     (accepted : validateInstruction expected state raw = .ok next) :
@@ -44,26 +44,30 @@ theorem input_nativeDefinitions_step {expected : Expected} {state next : State}
     simp only [bind_ok] at accepted
     rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
     have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
-    simp only [opcodeEq, inputOpcode, selected, nativeInput, unguarded] at accepted
-    simp only [bind_ok] at accepted
-    rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
-      guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
-      definedState, defined, result⟩
-    cases valueParsed
-    have definedInput : define state output
-        ({term := .input output, maximum := Field.modulus - 1} : Fact) = .ok definedState := by
-      change define state output
-        ({term := .input output, maximum := Field.modulus - 1} : Fact) = .ok definedState at defined
-      exact defined
-    have typedState : NativeDefinitions definedState := by
-      exact define_nativeDefinitions nativeDefinitions rfl definedInput
-    let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
-    have nextEq : nextState = next := by
-      change Except.ok nextState = .ok next at result
-      exact Except.ok.inj result
-    subst next
-    change NativeDefinitions {definedState with inputCount := definedState.inputCount + 1}
-    exact typedState
+    simp only [opcodeEq, inputOpcode, selected] at accepted
+    split at accepted
+    · simp_all [Ty.isForeign]
+    ·
+      simp only [unguarded] at accepted
+      simp only [bind_ok] at accepted
+      rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+        guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
+        definedState, defined, result⟩
+      cases valueParsed
+      have definedInput : define state output
+          ({term := .input output, maximum := Field.modulus - 1} : Fact) = .ok definedState := by
+        change define state output
+          ({term := .input output, maximum := Field.modulus - 1} : Fact) = .ok definedState at defined
+        exact defined
+      have typedState : NativeDefinitions definedState := by
+        exact define_nativeDefinitions nativeDefinitions rfl definedInput
+      let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
+      have nextEq : nextState = next := by
+        change Except.ok nextState = .ok next at result
+        exact Except.ok.inj result
+      subst next
+      change NativeDefinitions {definedState with inputCount := definedState.inputCount + 1}
+      exact typedState
 
 theorem accepted_input_requirement_selected {expected : Expected} {state next : State}
     {raw : Json} {visibility : Visibility}
@@ -100,7 +104,7 @@ theorem accepted_native_loop_meaning
     (invariant : StateMeaning hash inputs witness initial)
     (nativeDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty = .native ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (steps : ∀ item ∈ items, NativeStepHolds hash witness item.1)
@@ -123,22 +127,22 @@ theorem accepted_native_loop_meaning
           obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
             (visibility := .«public») (by simpa [inputOpcode] using opcode) checked
           have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-          obtain ⟨nativeInput, unguarded⟩ := inputSchema requirement member
+          obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
           have agreement := inputAgreement requirement member
-          exact ⟨public_input_step_meaning invariant selected nativeInput unguarded agreement
+          exact ⟨public_input_step_meaning invariant selected nonforeignInput unguarded agreement
               opcode checked,
             input_nativeDefinitions_step (visibility := .«public») nativeDefinitions selected
-              nativeInput unguarded (by simpa [inputOpcode] using opcode) checked⟩
+              nonforeignInput unguarded (by simpa [inputOpcode] using opcode) checked⟩
         | privateInput opcode =>
           obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
             (visibility := .«private») (by simpa [inputOpcode] using opcode) checked
           have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-          obtain ⟨nativeInput, unguarded⟩ := inputSchema requirement member
+          obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
           have agreement := inputAgreement requirement member
-          exact ⟨private_input_step_meaning invariant selected nativeInput unguarded agreement
+          exact ⟨private_input_step_meaning invariant selected nonforeignInput unguarded agreement
               opcode checked,
             input_nativeDefinitions_step (visibility := .«private») nativeDefinitions selected
-              nativeInput unguarded (by simpa [inputOpcode] using opcode) checked⟩
+              nonforeignInput unguarded (by simpa [inputOpcode] using opcode) checked⟩
         | arithmetic arithmeticStep =>
           cases arithmeticStep with
           | add _ _ _ opcode decoded holds =>
