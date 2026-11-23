@@ -901,25 +901,57 @@ def validateInstructionLoop (expected : Expected) (items : List (Json × Nat))
       throw s!"native instruction {index}: {message}"
       pure (.yield state)
 
-theorem validateInstructionLoop_checks {expected : Expected}
-    {items : List (Json × Nat)} {initial final : State}
+theorem validateInstructionLoop_prefixInvariant {expected : Expected}
+    {items : List (Json × Nat)} {initial final : State} (property : State → Prop)
+    (initialProperty : property initial)
+    (preserved : ∀ {state next instruction}, property state →
+      validateInstruction expected state instruction = .ok next → property next)
     (accepted : validateInstructionLoop expected items initial = .ok final) :
-    ∀ instruction ∈ items.map Prod.fst, ∃ state next,
-      validateInstruction expected state instruction = .ok next := by
-  induction items generalizing initial with
-  | nil => simp
+    property final ∧ ∀ instruction index, (instruction, index) ∈ items →
+      ∃ state next, property state ∧
+        validateInstruction expected state instruction = .ok next ∧ property next := by
+  induction items generalizing initial final with
+  | nil =>
+    have finalEq : final = initial := by
+      have initialEq : initial = final := by
+        injection accepted
+      exact initialEq.symm
+    subst final
+    constructor
+    · exact initialProperty
+    · simp
   | cons head tail ih =>
-    intro instruction member
     rw [validateInstructionLoop, List.forIn_cons] at accepted
     cases checked : validateInstruction expected initial head.1 with
     | error message => simp [checked, Bind.bind, Except.bind] at accepted
     | ok next =>
       simp only [checked, bind_pure_comp] at accepted
-      have member' : instruction = head.1 ∨ instruction ∈ tail.map Prod.fst := by
-        simpa only [List.map_cons, List.mem_cons] using member
-      rcases member' with rfl | member
-      · exact ⟨initial, next, checked⟩
-      · exact ih accepted instruction member
+      have nextProperty := preserved initialProperty checked
+      obtain ⟨finalProperty, tailVisits⟩ := ih nextProperty accepted
+      constructor
+      · exact finalProperty
+      · intro instruction index member
+        have member' : (instruction, index) = head ∨ (instruction, index) ∈ tail := by
+          simpa only [List.mem_cons] using member
+        rcases member' with headMember | tailMember
+        · have instructionEq : instruction = head.1 := congrArg Prod.fst headMember
+          subst instruction
+          exact ⟨initial, next, initialProperty, checked, nextProperty⟩
+        · exact tailVisits instruction index tailMember
+
+theorem validateInstructionLoop_checks {expected : Expected}
+    {items : List (Json × Nat)} {initial final : State}
+    (accepted : validateInstructionLoop expected items initial = .ok final) :
+    ∀ instruction ∈ items.map Prod.fst, ∃ state next,
+      validateInstruction expected state instruction = .ok next := by
+  intro instruction member
+  obtain ⟨⟨raw, index⟩, indexedMember, rfl⟩ := List.mem_map.mp member
+  obtain ⟨_, visits⟩ := validateInstructionLoop_prefixInvariant
+    (expected := expected) (items := items) (initial := initial) (final := final)
+    (property := fun _ => True) True.intro
+    (by intro state next instruction _ _; trivial) accepted
+  obtain ⟨state, next, _, checked, _⟩ := visits raw index indexedMember
+  exact ⟨state, next, checked⟩
 
 private theorem zipIdx_values {α : Type} (items : List α) (offset : Nat) :
     (items.zipIdx offset).map Prod.fst = items := by
