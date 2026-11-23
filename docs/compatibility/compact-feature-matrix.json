@@ -1514,7 +1514,7 @@
       "layer": "language-ledger",
       "surface": "Contract types and implements",
       "noctiumStatus": "subset",
-      "notes": "Named non-generic interfaces check provable entrypoint names, ordered scalar types and grouped ABI layouts. A funded localnet call through a named interface updated both contracts and rejected a changed expected return before proving. Compact 0.36.1 returned the same grouped values in memory. Dynamic contract values need separate evidence.",
+      "notes": "Named non-generic interfaces check provable entrypoint names, ordered scalar types and grouped ABI layouts. A funded localnet call through a named interface updated both contracts and rejected a changed expected return before proving. Compact 0.36.1 returned the same grouped values in memory. Typed references preserve the interface through circuit parameters, scalar Cells and root scalar Lists. The paired reference forwards update(7) through both storage routes. Noctium's native assembly checks the stored address and method selector. Record fields, typed method parameter or result values and deployed dynamic interface qualification remain open.",
       "source": [
         "reference",
         "release0360"
@@ -1526,6 +1526,9 @@
       ],
       "observedEvidence": [
         "tests/ContractInterfaces.lean",
+        "tests/TypedContractReference.lean",
+        "tests/compact/typed-contract-reference.mjs",
+        "runtime/tests/typed_contract_reference.rs",
         "tests/compact/contract-interfaces.py",
         "examples/AggregateSerialization.lean",
         "runtime/tests/aggregate_serialization.rs",

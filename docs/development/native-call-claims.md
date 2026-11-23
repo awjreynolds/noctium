@@ -146,6 +146,28 @@ returned `[7n, true]` and stored `saved = 7n` in memory. This checks the grouped
 argument and return behavior. The Noctium receipt covers atomic state updates
 across two deployed contracts.
 
+### Route a call through a typed contract reference
+
+Use `ContractRef BalanceUpdate` for a circuit input, scalar Cell, or root
+scalar List element. The compiler retains the declared interface when reading
+a cell or taking a list head. The address uses the existing Bytes32 encoding.
+
+```lean
+read route as target
+claimContractCall(target,
+  disclose(callCommitment("store", opening, [proposedAmount], [expectedStored])))
+```
+
+The target's interface supplies the method selector and ordered argument and
+result types. A private target still needs an explicit `disclose(target)`.
+Native call assembly checks the selected address, operation, and committed
+argument and return values against the supplied callee relation.
+
+The [typed reference fixture](../../tests/TypedContractReference.lean) and
+[Compact comparison](../../tests/compact/typed-contract-reference.mjs) exercise
+Cell and List routing. Deployed interface lookup and record fields remain open
+under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+
 ### Bind the entrypoint and read the address from a registry
 
 The two-argument form derives the entrypoint selector from the same declared
