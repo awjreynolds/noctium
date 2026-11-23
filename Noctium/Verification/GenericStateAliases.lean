@@ -175,7 +175,7 @@ theorem typedEnvironment_cons_unused (hash : Hash) (inputs : Assignment)
   exact ⟨aliasAgreement_cons_unused hash inputs aliases values name term
     environment.aliases unused, environment.complete⟩
 
-private theorem packed_as_canonical (ty found : Ty) (value : ty.Denote)
+theorem packed_as_canonical (ty found : Ty) (value : ty.Denote)
     (result : found.Denote) (canonical : Canonical ty value)
     (typed : (Value.pack ty value).as found = some result) :
     Canonical found result ∧ sourceScalar? found result = sourceScalar? ty value := by
