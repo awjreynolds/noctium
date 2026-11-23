@@ -148,9 +148,10 @@ across two deployed contracts.
 
 ### Route a call through a typed contract reference
 
-Use `ContractRef BalanceUpdate` for a circuit input, scalar Cell, or root
-scalar List element. The compiler retains the declared interface when reading
-a cell or taking a list head. The address uses the existing Bytes32 encoding.
+Use `ContractRef BalanceUpdate` for a circuit input, scalar Cell, root scalar
+List element, or field of a named record stored in a root Cell or List. The
+compiler retains the declared interface when reading a Cell or taking a List
+head. Each address uses the existing Bytes32 encoding.
 
 ```lean
 read route as target
@@ -163,10 +164,15 @@ result types. A private target still needs an explicit `disclose(target)`.
 Native call assembly checks the selected address, operation, and committed
 argument and return values against the supplied callee relation.
 
+For a record field named `target`, `read route as stored` binds
+`stored_target` with its declared interface. A record write or List push
+checks every typed field against the destination's interface.
+
 The [typed reference fixture](../../tests/TypedContractReference.lean) and
 [Compact comparison](../../tests/compact/typed-contract-reference.mjs) exercise
-Cell and List routing. Deployed interface lookup and record fields remain open
-under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+scalar and record Cell and List routing. Deployed interface lookup and typed
+method arguments and results remain open under
+[typed contract references](https://github.com/awjreynolds/noctium/issues/828).
 
 ### Bind the entrypoint and read the address from a registry
 

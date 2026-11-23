@@ -22,8 +22,12 @@ const fixture = fileURLToPath(new URL('./TypedContractReference.compact', import
 const calleeSource = join(scratch, 'TypedRefUpdate.compact');
 const calleeOutput = join(scratch, 'TypedRefUpdate');
 const callerOutput = join(scratch, 'Forwarder');
+const routeSource = join(scratch, 'RouteForwarder.compact');
+const routeOutput = join(scratch, 'RouteForwarder');
 const listSource = join(scratch, 'ForwarderList.compact');
 const listOutput = join(scratch, 'ForwarderList');
+const routeListSource = join(scratch, 'RouteForwarderList.compact');
+const routeListOutput = join(scratch, 'RouteForwarderList');
 try {
   await writeFile(calleeSource, `pragma language_version 0.28;
 import CompactStandardLibrary;
@@ -39,9 +43,29 @@ export circuit update(amount: Uint<8>): Uint<8> {
   execFileSync(compactc, [calleeSource, calleeOutput], {encoding: 'utf8'});
   execFileSync(compactc, ['--compact-path', scratch, fixture, callerOutput], {encoding: 'utf8'});
   const contractInfo = JSON.parse(await readFile(join(callerOutput, 'compiler/contract-info.json'), 'utf8'));
-  const targetLedger = contractInfo.ledger.find(({name}) => name === 'target');
-  assert.equal(targetLedger?.storage, 'Cell');
-  assert.equal(targetLedger?.type['type-name'], 'Contract');
+  const scalarLedger = contractInfo.ledger.find(({name}) => name === 'target');
+  assert.equal(scalarLedger?.storage, 'Cell');
+  assert.equal(scalarLedger?.type['type-name'], 'Contract');
+
+  await writeFile(routeSource, `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefUpdate { circuit update(amount: Uint<8>): Uint<8>; }
+struct Route { target: TypedRefUpdate, enabled: Boolean }
+export ledger route: Route;
+constructor(targetRef: TypedRefUpdate) {
+  route = disclose(Route{target: disclose(targetRef), enabled: disclose(true)});
+}
+export circuit forward(amount: Uint<8>): Uint<8> {
+  if (route.enabled) { return route.target.update(disclose(amount)); }
+  return 0 as Uint<8>;
+}
+`);
+  execFileSync(compactc, ['--compact-path', scratch, routeSource, routeOutput], {encoding: 'utf8'});
+  const routeInfo = JSON.parse(await readFile(join(routeOutput, 'compiler/contract-info.json'), 'utf8'));
+  const routeLedgerInfo = routeInfo.ledger.find(({name}) => name === 'route');
+  assert.equal(routeLedgerInfo?.storage, 'Cell');
+  assert.equal(routeLedgerInfo?.type['type-name'], 'Struct');
+  assert.equal(routeLedgerInfo?.type.name, 'Route');
 
   await writeFile(listSource, `pragma language_version 0.28;
 import CompactStandardLibrary;
@@ -56,14 +80,35 @@ export circuit forward(amount: Uint<8>): Uint<8> {
 `);
   execFileSync(compactc, ['--compact-path', scratch, listSource, listOutput], {encoding: 'utf8'});
 
-  for (const output of [calleeOutput, callerOutput, listOutput]) {
+  await writeFile(routeListSource, `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefUpdate { circuit update(amount: Uint<8>): Uint<8>; }
+struct Route { target: TypedRefUpdate, enabled: Boolean }
+export ledger targets: List<Route>;
+constructor(targetRef: TypedRefUpdate) {
+  targets.pushFront(disclose(Route{target: disclose(targetRef), enabled: disclose(true)}));
+}
+export circuit forward(amount: Uint<8>): Uint<8> {
+  const route = targets.head();
+  assert(route.is_some, "missing route");
+  if (route.value.enabled) {
+    return route.value.target.update(disclose(amount));
+  }
+  return 0 as Uint<8>;
+}
+`);
+  execFileSync(compactc, ['--compact-path', scratch, routeListSource, routeListOutput], {encoding: 'utf8'});
+
+  for (const output of [calleeOutput, callerOutput, routeOutput, listOutput, routeListOutput]) {
     const scopedRuntime = join(output, 'node_modules/@midnight-ntwrk/compact-runtime');
     await mkdir(dirname(scopedRuntime), {recursive: true});
     await symlink(runtimeDirectory, scopedRuntime, 'dir');
   }
   const {Contract: TypedRefUpdate} = await import(pathToFileURL(join(calleeOutput, 'contract/index.js')).href);
   const {Contract: Forwarder, ledger} = await import(pathToFileURL(join(callerOutput, 'contract/index.js')).href);
+  const {Contract: RouteForwarder, ledger: routeLedger} = await import(pathToFileURL(join(routeOutput, 'contract/index.js')).href);
   const {Contract: ListForwarder, ledger: listLedger} = await import(pathToFileURL(join(listOutput, 'contract/index.js')).href);
+  const {Contract: RouteListForwarder, ledger: routeListLedger} = await import(pathToFileURL(join(routeListOutput, 'contract/index.js')).href);
   const key = '00'.repeat(32);
   const callee = new TypedRefUpdate({});
   const calleeState = await callee.initialState(runtime.createConstructorContext(null, key));
@@ -95,15 +140,31 @@ export circuit forward(amount: Uint<8>): Uint<8> {
     parentBlockHash: '00'.repeat(32),
     crossContract,
   });
-  const {result} = await forwarder.circuits.forward(contextFor(callerState.currentContractState.data), 7n);
-  assert.equal(result, 7n);
+  const {result: scalarCellResult} = await forwarder.circuits.forward(contextFor(callerState.currentContractState.data), 7n);
+  assert.equal(scalarCellResult, 7n);
+
+  const routeForwarder = new RouteForwarder({});
+  const routeState = await routeForwarder.initialState(runtime.createConstructorContext(null, key), reference);
+  const route = routeLedger(routeState.currentContractState.data).route;
+  assert.deepEqual(route.target.bytes, reference.bytes);
+  assert.equal(route.enabled, true);
+  const {result: routeCellResult} = await routeForwarder.circuits.forward(contextFor(routeState.currentContractState.data), 7n);
+  assert.equal(routeCellResult, 7n);
 
   const listForwarder = new ListForwarder({});
   const listState = await listForwarder.initialState(runtime.createConstructorContext(null, key), reference);
   assert.deepEqual(listLedger(listState.currentContractState.data).targets.head().value.bytes, reference.bytes);
-  const {result: listResult} = await listForwarder.circuits.forward(contextFor(listState.currentContractState.data), 7n);
-  assert.equal(listResult, 7n);
-  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell and List<TypedRefUpdate> references round-tripped; both forwarded update(7) and returned 7`);
+  const {result: scalarListResult} = await listForwarder.circuits.forward(contextFor(listState.currentContractState.data), 7n);
+  assert.equal(scalarListResult, 7n);
+
+  const routeListForwarder = new RouteListForwarder({});
+  const routeListState = await routeListForwarder.initialState(runtime.createConstructorContext(null, key), reference);
+  const listedRoute = routeListLedger(routeListState.currentContractState.data).targets.head().value;
+  assert.deepEqual(listedRoute.target.bytes, reference.bytes);
+  assert.equal(listedRoute.enabled, true);
+  const {result: routeListResult} = await routeListForwarder.circuits.forward(contextFor(routeListState.currentContractState.data), 7n);
+  assert.equal(routeListResult, 7n);
+  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, scalar List, Route Cell, and List<Route> references round-tripped; all forwarded update(7)`);
 } finally {
   await rm(scratch, {recursive: true, force: true});
   try {
