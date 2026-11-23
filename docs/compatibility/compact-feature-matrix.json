@@ -556,7 +556,7 @@
       "layer": "language",
       "surface": "Structural and nominal type aliases",
       "noctiumStatus": "subset",
-      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. The native representation remains the ordinary bounded UInt. Standalone low-level circuits preserve declared UInt identity through parameters, bindings, arithmetic, equality, selection and explicit casts before lowering. Scalar Cells preserve nominal identity through direct constructors and direct or structured reads, writes and returns. Structured helpers retain parameter, result and ledger callback identities and require an explicit checked cast for widening arithmetic. Scalar Lists retain nominal identity through constructor and entrypoint pushFront, head and returns, including scoped Lists under Map keys. Direct scalar Maps preserve nominal keys and values through root constructors, writes, lookups and membership. Two-key scalar Map paths preserve both key identities and the returned value identity. Sets preserve nominal membership keys at the root and below one or two Map keys. Parent keys keep their own identities during default initialization, membership and removal. Structured helpers retain the key identity on direct scalar Map membership and lookup and check both alias identities on writes. The returned alias passes through a reusable helper. Hosted ledger callback signatures carry the same aliases and the compiler reapplies the owning contract's tags during native artifact generation. Flat records keep each nominal UInt field through writes and reads in root Cells, Bytes32-keyed Maps and root Lists. A record may hold distinct equal-width aliases beside an unbranded Boolean. The native wire layout is unchanged. Record constructor initialization is tracked in #843. Nested structured collection paths and automatic tagged record return views remain open.",
+      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. The native representation remains the ordinary bounded UInt. Standalone low-level circuits preserve declared UInt identity through parameters, bindings, arithmetic, equality, selection and explicit casts before lowering. Scalar Cells preserve nominal identity through direct constructors and direct or structured reads, writes and returns. Structured helpers retain parameter, result and ledger callback identities and require an explicit checked cast for widening arithmetic. Scalar Lists retain nominal identity through constructor and entrypoint pushFront, head and returns, including scoped Lists under Map keys. Direct scalar Maps preserve nominal keys and values through root constructors, writes, lookups and membership. Two-key scalar Map paths preserve both key identities and the returned value identity. Sets preserve nominal membership keys at the root and below one or two Map keys. Parent keys keep their own identities during default initialization, membership and removal. Structured helpers retain the key identity on direct scalar Map membership and lookup and check both alias identities on writes. The returned alias passes through a reusable helper. Hosted ledger callback signatures carry the same aliases and the compiler reapplies the owning contract's tags during native artifact generation. Flat records keep each nominal UInt field through writes and reads in root Cells, Bytes32-keyed Maps and root Lists. A record may hold distinct equal-width aliases beside an unbranded Boolean. The native wire layout is unchanged. Constructors initialize named records in root Cells and insert them into root Bytes32-keyed Maps with checked nominal UInt fields and ordered overwrites. Nested structured collection paths and automatic tagged record return views remain open.",
       "source": [
         "reference",
         "typeInference"
@@ -565,7 +565,13 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": ["tests/NominalUInt.lean", "tests/compact/NominalUint.compact", "tests/compact/nominal-uint.mjs"],
+      "observedEvidence": [
+        "tests/NominalUInt.lean",
+        "tests/compact/NominalUint.compact",
+        "tests/compact/nominal-uint.mjs",
+        "tests/RecordConstructor.lean",
+        "docs/development/record-constructor-localnet-receipt.json"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-17",
@@ -1410,7 +1416,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open. A checked ordered constructor guards an insert into a sealed Field-to-Field Map, then initializes a sealed Bool from its updated membership. Pinned Compact 0.36.1 and native construction from the emitted plan agree on the empty/false and seeded/true outcomes.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open. A checked ordered constructor guards an insert into a sealed Field-to-Field Map, then initializes a sealed Bool from its updated membership. Pinned Compact 0.36.1 and native construction from the emitted plan agree on the empty/false and seeded/true outcomes. Ordered constructor actions also initialize a flat record Cell and overwrite a record under a root Bytes32 Map key. Compact 0.36.1 and the native checker agree on the nominal UInt and Bool values. Funded deployment and inspect finalized on Ledger 9.1.0.1 with matching constructor state and unchanged read state.",
       "source": [
         "reference"
       ],
@@ -1442,7 +1448,11 @@
         "tests/compact/sealed-set-constructor.mjs",
         "runtime/tests/sealed_set_constructor.rs",
         "docs/development/sealed-set-localnet-receipt.json",
-        "docs/development/constructors.md"
+        "docs/development/constructors.md",
+        "tests/RecordConstructor.lean",
+        "tests/compact/nominal-uint.mjs",
+        "runtime/tests/flat_record_cell.rs",
+        "docs/development/record-constructor-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },

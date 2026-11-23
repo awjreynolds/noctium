@@ -465,6 +465,8 @@ scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nltype : nlstate
 
 declare_syntax_cat nlleaves
 scoped syntax "fields(" nlexpr,* ")" : nlleaves
+scoped syntax "initialize" ident ":=" nlleaves : nlconstructorinit
+scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
 
 declare_syntax_cat nlledgervalue
 scoped syntax nlexpr : nlledgervalue
@@ -4954,7 +4956,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     (nominalUIntCells : List (String × NominalUIntType))
     (nominalUIntLists : List (String × NominalUIntType))
     (nominalUIntCollections : List (String × CollectionNominals))
-    (contractRefState : List (String × Name)) : CommandElabM (TSyntax `term) := do
+    (contractRefState : List (String × Name))
+    (recordFieldTypes : List (String × List (String × CircuitSourceType))) :
+    CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
   let mut parameterTerms : Array (TSyntax `term) := #[]
@@ -4994,8 +4998,47 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut listPushTerms : Array (TSyntax `term) := #[]
   let mut setInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
+  let bindings : EntryEffects := {
+    env := scalarBindings, nominalUIntBindings, contractRefBindings := contractRefs
+  }
   for initializer in initializers do
     match initializer with
+    | `(nlconstructorinit| initialize $stateName:ident := $payload:nlleaves) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let some (.tree (.composite environment type)) := schema.lookup destination
+        | throwErrorAt stateName "constructor fields initialization requires a root record Cell"
+      if initializedNames.contains destination then
+        throwErrorAt initializer s!"duplicate constructor initializer for '{destination}'"
+      let fields ← match LedgerValueType.cellWriteRecordFields environment type with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt payload message
+      let values ← elaborateLedgerFieldValues bindings payload fields
+        ((recordFieldTypes.lookup destination).getD [])
+      initializedNames := destination :: initializedNames
+      orderedActionTerms := orderedActionTerms.push
+        (← `(Noctium.ConstructorAction.initializeRecordCell $(stringTerm destination) $values))
+      hasOrderedActions := _root_.Bool.true
+    | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $payload:nlleaves) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let some (.tree (.map (.bytes 32) (.composite environment type))) := schema.lookup destination
+        | throwErrorAt stateName "constructor fields insert requires a Bytes32-keyed record Map"
+      let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
+        {type := .bytes 32}
+      let key ← `(Noctium.PathKey.mk (Noctium.Ty.bytes 32) $keyExpression)
+      let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt payload message
+      let values ← elaborateLedgerFieldValues bindings payload fields
+        ((recordFieldTypes.lookup destination).getD [])
+      orderedActionTerms := orderedActionTerms.push
+        (← `(Noctium.ConstructorAction.insertRecordMap $(stringTerm destination) $key $values))
+      hasOrderedActions := _root_.Bool.true
     | `(nlconstructorinit| when $condition:nlexpr insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
@@ -5743,7 +5786,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
       | some ctor =>
-        elaborateConstructor ctor schema nominalUIntCells nominalUIntLists nominalUIntCollections contractRefState
+        elaborateConstructor ctor schema nominalUIntCells nominalUIntLists nominalUIntCollections
+          contractRefState recordFieldTypes
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     let mut interfaceSourceRefs : List CallInterfaceSourceRefs := []

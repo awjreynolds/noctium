@@ -108,6 +108,27 @@ Ledger 9.1.0.1 finalized deployment at localnet height 51343. The state
 matched the native constructor output. The read at 51346 preserved the full
 deployed state bytes. [Finalized receipt](sealed-set-localnet-receipt.json)
 
+## Initialize named records
+
+```lean
+constructor(owner : Bytes32, amount : RecordAmount, count : RecordCount, active : Bool) where
+  initialize position := fields(disclose(amount), disclose(count), disclose(active))
+  insert positions[disclose(owner)] := fields(cast(RecordAmount, 0), disclose(count), false)
+  insert positions[disclose(owner)] := fields(disclose(amount), disclose(count), disclose(active))
+end
+```
+
+This initializes a root record Cell and inserts into a root Bytes32-keyed
+record Map. Field order and nominal types follow the declared schema.
+Actions run in source order, so the second insert overwrites the first.
+The compiler rejects substituting another alias or a raw UInt for a nominal
+field. [Lean fixture](../../tests/RecordConstructor.lean) · [Compact 0.36.1 comparison](../../tests/compact/nominal-uint.mjs)
+
+The native constructor, the pinned Compact fixture and the finalized Ledger
+9.1.0.1 state agree on the selected fields. The funded inspect call returned
+both records and preserved the exact deployed state bytes.
+[Finalized receipt](record-constructor-localnet-receipt.json)
+
 ## Initialize an opaque string
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one

@@ -912,6 +912,15 @@ private def constructorActionJson (action : ConstructorAction) : Json :=
       ("state", toJson initializer.state),
       ("map", toJson initializer.map),
       ("key", match initializer.key with | .mk _ expression => nativeExpressionJson expression)]
+  | .initializeRecordCell state fields => Json.mkObj [
+      ("kind", toJson ("initializeRecordCell" : String)),
+      ("state", toJson state),
+      ("fields", toJson (fields.map ledgerFieldExprJson))]
+  | .insertRecordMap state key fields => Json.mkObj [
+      ("kind", toJson ("insertRecordMap" : String)),
+      ("state", toJson state),
+      ("key", match key with | .mk _ expression => nativeExpressionJson expression),
+      ("fields", toJson (fields.map ledgerFieldExprJson))]
 
 private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [

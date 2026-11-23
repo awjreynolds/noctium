@@ -1,0 +1,42 @@
+{
+  "bundleManifestSha256": "ab70a3318540ffe874eb384cf57d6aeacb66bd47ea3c4e5befb0d931e924280b",
+  "checkedReturns": {
+    "cellActive": true,
+    "cellAmount": "19",
+    "cellCount": "7",
+    "mapActive": true,
+    "mapAmount": "19",
+    "mapCount": "7"
+  },
+  "circuitSha256": "efe80f074fcf6ca9b05001d69448753bf4eb83d2ea6207a9a9d0ce19e89ed76b",
+  "constructStateMatchedDeployment": true,
+  "constructorPlanSha256": "7641b5528a032e0d1a182bcebeb7ab313df1f8c218e84da0562d0984d5f3bf86",
+  "contractAddress": "6bcaff4b4d08e403bb300cae4ee131484d0f10ea06654d8175f12957ea252155",
+  "degree": 8,
+  "deployment": {
+    "blockHash": "a455fbc8057bb868e882cbde9906ab111181ea71cd6fe880b2909da70ad7e383",
+    "finalizedHash": "a455fbc8057bb868e882cbde9906ab111181ea71cd6fe880b2909da70ad7e383",
+    "height": 17,
+    "stateSha256": "7cd0ea119cc1626be2f6a31e91511283e6afc04023cd8902895da243ad9d1e0b",
+    "transactionId": "11eb1f5076bb69d65d4f563ddc06cab17cbf10cd752583fc5308c5dee04d91ce"
+  },
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "inspect": {
+    "blockHash": "fbb67e0d5e77c68dda9f511a8eedfb597f35d058d9d02dfab81d45575e1aecc6",
+    "finalizedHash": "fbb67e0d5e77c68dda9f511a8eedfb597f35d058d9d02dfab81d45575e1aecc6",
+    "height": 20,
+    "stateSha256": "7cd0ea119cc1626be2f6a31e91511283e6afc04023cd8902895da243ad9d1e0b",
+    "transactionId": "7f7831a1987a15abec440707106c2a0f1247fc59f26abbed76bec10f1936de21"
+  },
+  "ledgerParametersSha256": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "runtimeSpecVersion": 2001100,
+  "source": "tests/RecordConstructor.lean",
+  "sourceCompilerRevision": "e34ee297d836904df3eb8c9a772bb62d4b3af10b",
+  "sourceSha256": "db565b80a317074ed8ce898a23e9dbc45357b3745b55878c44a8e2a742108f7a",
+  "stateUnchanged": true,
+  "verifierKeySha256": "a0221ac3b3739e2df5c0293cb2c69423d0d07984efb9e9d1f3a793bd9515dc02",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

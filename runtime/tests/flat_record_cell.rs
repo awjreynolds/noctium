@@ -4,7 +4,7 @@ use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
     Plan, Value, check, constructor::construct_state, create_state, prepare, zkir::IrSource,
 };
-use serde_json::json;
+use serde_json::{Value as Json, json};
 use std::{collections::BTreeMap, fs::File, path::PathBuf};
 
 #[test]
@@ -200,5 +200,97 @@ fn fixed_bytes_record_cell_preserves_payload_width() -> anyhow::Result<()> {
 
     inputs.insert("payload".into(), as_bytes(&[1, 2, 3]));
     assert!(prepare(&write, &inputs, &initial, parameters, address).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh RecordConstructor.inspect artifacts in NOCTIUM_RECORD_CONSTRUCTOR_DIR"]
+fn record_constructor_initializes_cell_and_map() -> anyhow::Result<()> {
+    let directory = PathBuf::from(std::env::var("NOCTIUM_RECORD_CONSTRUCTOR_DIR")?);
+    let plan_path = directory.join("RecordConstructor.inspect.impact.json");
+    let plan_json: Json = serde_json::from_reader(File::open(&plan_path)?)?;
+    let plan: Plan = serde_json::from_value(plan_json.clone())?;
+    let circuit = IrSource::load(File::open(
+        directory.join("RecordConstructor.inspect.zkir"),
+    )?)?;
+    let owner = json!({"kind":"bytes", "values":vec![1u8; 32]});
+    let arguments = BTreeMap::from([
+        ("owner".into(), owner.clone()),
+        ("amount".into(), json!("19")),
+        ("count".into(), json!("7")),
+        ("active".into(), json!(true)),
+    ]);
+    let initial = construct_state(&plan, &arguments)?;
+    let inputs = BTreeMap::from([("owner".into(), owner)]);
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+    let returns = execution.returns_json();
+    for (name, expected) in [
+        ("cellAmount", json!("19")),
+        ("cellCount", json!("7")),
+        ("cellActive", json!(true)),
+        ("mapAmount", json!("19")),
+        ("mapCount", json!("7")),
+        ("mapActive", json!(true)),
+    ] {
+        assert_eq!(returns.get(name), Some(&expected));
+    }
+
+    let mut missing_argument = arguments.clone();
+    missing_argument.remove("active");
+    assert!(construct_state(&plan, &missing_argument).is_err());
+
+    let mut missing_field_json = plan_json.clone();
+    missing_field_json["constructor"]["actions"][0]["fields"]
+        .as_array_mut()
+        .expect("record Cell fields")
+        .pop();
+    let missing_field_plan: Plan = serde_json::from_value(missing_field_json)?;
+    assert!(construct_state(&missing_field_plan, &arguments).is_err());
+
+    let mut missing_map_field_json = plan_json.clone();
+    missing_map_field_json["constructor"]["actions"][1]["fields"]
+        .as_array_mut()
+        .expect("record Map fields")
+        .pop();
+    let missing_map_field_plan: Plan = serde_json::from_value(missing_map_field_json)?;
+    assert!(construct_state(&missing_map_field_plan, &arguments).is_err());
+
+    let mut wrong_type_json = plan_json.clone();
+    wrong_type_json["constructor"]["actions"][0]["fields"][0] =
+        json!({"tag":"bool", "value":true});
+    let wrong_type_plan: Plan = serde_json::from_value(wrong_type_json)?;
+    assert!(construct_state(&wrong_type_plan, &arguments).is_err());
+
+    let mut wrong_map_type_json = plan_json.clone();
+    wrong_map_type_json["constructor"]["actions"][1]["fields"][0] =
+        json!({"tag":"bool", "value":true});
+    let wrong_map_type_plan: Plan = serde_json::from_value(wrong_map_type_json)?;
+    assert!(construct_state(&wrong_map_type_plan, &arguments).is_err());
+
+    let mut duplicate_json = plan_json.clone();
+    let duplicate = duplicate_json["constructor"]["actions"][0].clone();
+    duplicate_json["constructor"]["actions"]
+        .as_array_mut()
+        .expect("constructor actions")
+        .push(duplicate);
+    let duplicate_plan: Plan = serde_json::from_value(duplicate_json)?;
+    assert!(construct_state(&duplicate_plan, &arguments).is_err());
+
+    let mut invalid_cell_json = plan_json.clone();
+    invalid_cell_json["state"][0]["kind"]["tree"]["counter"] = json!(true);
+    let invalid_cell_plan: Plan = serde_json::from_value(invalid_cell_json)?;
+    assert!(construct_state(&invalid_cell_plan, &arguments).is_err());
+
+    let mut invalid_map_json = plan_json;
+    invalid_map_json["state"][1]["kind"]["tree"]["map"][0] = json!("Native");
+    let invalid_map_plan: Plan = serde_json::from_value(invalid_map_json)?;
+    assert!(construct_state(&invalid_map_plan, &arguments).is_err());
     Ok(())
 }

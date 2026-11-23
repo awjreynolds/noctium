@@ -27,6 +27,9 @@ constructor(initialKey: Count, initial: Amount, positionKey: Bytes<32>) {
     amount: disclose(initial), count: disclose(initialKey), active: true,
   });
   position = initialPosition;
+  positions.insert(disclose(positionKey), disclose(Position {
+    amount: 0 as Amount, count: disclose(initialKey), active: false,
+  }));
   positions.insert(disclose(positionKey), initialPosition);
 }
 

@@ -2801,6 +2801,134 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "requires an authenticated RecordConstructor bundle and funded development node"]
+    fn funded_record_constructor_deploys_and_reads_initialized_state() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let manifest = setting("NOCTIUM_RECORD_CONSTRUCTOR_FUNDED_MANIFEST_SHA256")?;
+            let bundle = artifacts::verify(
+                Path::new(&setting("NOCTIUM_RECORD_CONSTRUCTOR_FUNDED_BUNDLE")?),
+                Some(&manifest),
+            )?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(
+                plan.entrypoint == "inspect",
+                "unexpected record constructor entrypoint"
+            );
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let degree = circuit.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_RECORD_CONSTRUCTOR_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_RECORD_CONSTRUCTOR_FUNDED_NODE")?,
+                &cache,
+            )
+            .await?;
+            let parameters = cache.parameters(degree).await?;
+            let owner = json!({"kind": "bytes", "values": ([1u8; 32])});
+            let arguments = BTreeMap::from([
+                ("owner".into(), owner.clone()),
+                ("amount".into(), json!("19")),
+                ("count".into(), json!("7")),
+                ("active".into(), json!(true)),
+            ]);
+            let expected_state = crate::construct_state(&plan, &arguments)?;
+            let state_config = serde_json::to_vec(&json!({"state": arguments}))?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                &state_config,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let (deployed, deployment) = funded.deploy(&target, "inspect").await?;
+            let state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                state.data.get_ref() == expected_state.get_ref(),
+                "finalized deployment differs from the checked constructor"
+            );
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid contract address"))?,
+            ));
+            let inputs = BTreeMap::from([("owner".into(), owner)]);
+            let snapshot = funded.node.sync()?;
+            let execution = crate::prepare(
+                &plan,
+                &inputs,
+                &state.data,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            ensure!(
+                crate::check(&execution, &circuit)? == execution.activity_schedule,
+                "constructor read does not match the native circuit"
+            );
+            let returns = execution.returns_json();
+            ensure!(
+                returns
+                    == BTreeMap::from([
+                        ("cellAmount".into(), json!("19")),
+                        ("cellCount".into(), json!("7")),
+                        ("cellActive".into(), json!(true)),
+                        ("mapAmount".into(), json!("19")),
+                        ("mapCount".into(), json!("7")),
+                        ("mapActive".into(), json!(true)),
+                    ]),
+                "record constructor read returned unexpected fields"
+            );
+            let operation = target.operation("inspect", &parameters, ttl)?;
+            let call = funded
+                .call(&operation, &mut Some(deployed), &parameters, inputs)
+                .await?;
+            ensure!(
+                call.contract_state == deployment.contract_state,
+                "read changed the finalized record state"
+            );
+            let receipt = |item: &FinalizedReceipt| {
+                json!({
+                    "height": item.height,
+                    "blockHash": item.block_hash,
+                    "finalizedHash": item.finalized_hash,
+                    "transactionId": item.transaction_id,
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&item.contract_state)),
+                })
+            };
+            println!(
+                "{}",
+                json!({
+                    "profile": crate::profile::NAME,
+                    "genesis": funded.node.policy.genesis,
+                    "contractAddress": target.contract_address(),
+                    "bundleManifestSha256": manifest,
+                    "degree": degree,
+                    "deployment": receipt(&deployment),
+                    "inspect": receipt(&call),
+                    "checkedReturns": returns,
+                    "stateUnchanged": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
     fn prepared_runtime(attempt: &str, address: &str) -> crate::host::Runtime {
         let context = serde_json::from_value(json!({"protocolVersion":1,"namespace":"qualification","baseRevision":"r0","attemptId":attempt,"capabilities":[{"id":"store","namespace":"qualification","keyPrefix":"claims/","operations":[crate::host::STAGE,crate::host::CAS]}],"operations":[],"providers":[],"commitCapability":"store"})).unwrap();
         let mut runtime = crate::host::Runtime::new(

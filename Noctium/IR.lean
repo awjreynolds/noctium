@@ -852,9 +852,18 @@ structure ConstructorMapMemberInitializer where
   key : PathKey
   deriving Repr
 
+inductive LedgerFieldExpr where
+  | mk (ty : Ty) (value : Expr ty)
+  deriving Repr
+
+def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
+  | .mk ty _ => ty
+
 inductive ConstructorAction where
   | mapInsert (action : ConstructorOrderedMapInsert)
   | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
+  | initializeRecordCell (state : String) (fields : List LedgerFieldExpr)
+  | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
   deriving Repr
 
 /-- Fresh-deployment inputs and cell values. This metadata never enters a circuit. -/
@@ -948,13 +957,6 @@ inductive BalanceQuery where
 def BalanceQuery.resultType : BalanceQuery → Ty
   | .exact => .uint balanceMaximum
   | .compare .. => .bool
-
-inductive LedgerFieldExpr where
-  | mk (ty : Ty) (value : Expr ty)
-  deriving Repr
-
-def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
-  | .mk ty _ => ty
 
 inductive ShieldedClaimKind where
   | nullifier | receive | spend
@@ -1753,6 +1755,17 @@ private def validateCounterEffect (decls : List StateDecl) (state : String)
 
 def uniqueNames (names : List String) : Bool := names.eraseDups.length == names.length
 
+private def validateConstructorRecordFields (caps : Capabilities)
+    (env : TypeEnv) (fields : List (String × Ty)) (values : List LedgerFieldExpr) :
+    Except String Unit := do
+  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+    throw "constructor record field type mismatch"
+  for value in values do
+    match value with
+    | .mk ty expression => do
+      validateStateScalar caps ty
+      expression.validate caps env
+
 private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     (constructor : Constructor) (span : SourceSpan) : Except Diagnostic Unit := do
   let parameterNames := constructor.parameters.map (·.name)
@@ -1866,6 +1879,47 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
         throw {span := source.span, message := s!"constructor Map key type mismatch for '{initializer.map}'"}
       match key.validate caps scalarEnvironment with
       | .error message => throw {span, message}
+      | .ok _ => pure ()
+    | .initializeRecordCell stateName fields => do
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor initializes unknown state '{stateName}'"}
+      let .tree (.composite environment type) := destination.kind
+        | throw {span := destination.span, message :=
+          s!"constructor record initializer requires a root record Cell '{stateName}'"}
+      let checkedFields ← match LedgerValueType.cellWriteRecordFields environment type with
+        | .ok checkedFields => pure checkedFields
+        | .error message => throw {span := destination.span, message}
+      match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
+      | .error message => throw {span := destination.span, message}
+      | .ok _ => pure ()
+      if initializerNames.contains stateName || orderedInitializerNames.contains stateName then
+        throw {span, message := s!"duplicate constructor state initializer for '{stateName}'"}
+      orderedInitializerNames := stateName :: orderedInitializerNames
+    | .insertRecordMap stateName key fields => do
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor Map state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor inserts into unknown Map '{stateName}'"}
+      let .tree (.map keyTy (.composite environment type)) := destination.kind
+        | throw {span := destination.span, message :=
+          s!"constructor record insert requires a Bytes32 Map of records '{stateName}'"}
+      unless keyTy == .bytes 32 do
+        throw {span := destination.span, message :=
+          s!"constructor record Map key must be Bytes32 for '{stateName}'"}
+      let .mk insertedKeyTy keyValue := key
+      unless insertedKeyTy == keyTy do
+        throw {span := destination.span, message :=
+          s!"constructor Map key type mismatch for '{stateName}'"}
+      match keyValue.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      let checkedFields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+        | .ok checkedFields => pure checkedFields
+        | .error message => throw {span := destination.span, message}
+      match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
+      | .error message => throw {span := destination.span, message}
       | .ok _ => pure ()
   for increment in constructor.counterIncrements do
     unless Types.validFieldName increment.state do

@@ -178,6 +178,7 @@ jobs:
           lake env lean tests/NativeCellReset.lean
           lake env lean tests/FlatRecordCellReset.lean
           lake env lean tests/TypedRecordCell.lean
+          lake env lean tests/RecordConstructor.lean
           lake env lean tests/FixedBytesRecordCell.lean
           lake env lean tests/NativeStandaloneMints.lean
           lake env lean tests/ShieldedReceive.lean
@@ -365,6 +366,9 @@ jobs:
           .lake/build/bin/noctium compile tests/TypedContractReference.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/typed-contract-reference"
+          .lake/build/bin/noctium compile tests/RecordConstructor.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/record-constructor"
           .lake/build/bin/noctium compile tests/AlignedByteConcat.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/aligned-byte-concat"
@@ -419,6 +423,10 @@ jobs:
               --test readable_lazy_conditional --test readable_iteration \
               --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
               --test typed_contract_reference -- --ignored
+          NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test flat_record_cell \
+              record_constructor_initializes_cell_and_map -- --ignored
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness
