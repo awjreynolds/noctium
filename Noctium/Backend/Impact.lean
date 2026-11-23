@@ -2607,6 +2607,168 @@ private def appendPublicInput := publicInputStep
 def publicInputPlan (inputs : List Input) (initial : Plan := {}) : Except String Plan :=
   inputs.foldlM (fun plan input => appendPublicInput input plan) initial
 
+/-- Reads introduced by one public circuit input, in the order used by the
+public transcript. Compound curve and foreign values contribute their native
+projections in projection order. -/
+def publicInputReads (input : Input) : List Read :=
+  if input.visibility != .«public» then [] else
+  match input.ty with
+  | .bytes 0 => []
+  | .bytes length => [{name := input.name, ty := .bytes length}]
+  | .jubjubScalar =>
+    [{name := input.publicProjectionIdentifiers[0]!, ty := .native}]
+  | .jubjubPoint =>
+    [{name := input.publicProjectionIdentifiers[0]!, ty := .native},
+      {name := input.publicProjectionIdentifiers[1]!, ty := .native}]
+  | .foreign kind =>
+    (List.range kind.encodedFieldCount).map fun index =>
+      {name := input.publicProjectionIdentifiers[index]!, ty := .native}
+  | .opaqueBytes => [{name := input.name, ty := .opaqueBytes}]
+  | .opaqueString => [{name := input.name, ty := .opaqueString}]
+  | .native | .bool | .uint _ => [{name := input.name, ty := input.ty}]
+
+private theorem visibilityNePublic (visibility : Visibility) :
+    (visibility != .public) = (visibility == .private) := by
+  cases visibility <;> decide
+
+private theorem visibilityEqPrivate (visibility : Visibility) :
+    (visibility == .private) = (if visibility = .private then true else false) := by
+  cases visibility <;> decide
+
+private theorem foldl_planReads_append {α} (items : List α) (initial : Plan)
+    (step : Plan → α → Plan) (read : α → Read)
+    (stepReads : ∀ plan item, (step plan item).reads = plan.reads ++ [read item]) :
+    (items.foldl step initial).reads = initial.reads ++ items.map read := by
+  induction items generalizing initial with
+  | nil => simp
+  | cons item rest ih =>
+    simp only [List.foldl_cons]
+    rw [ih, stepReads]
+    simp [List.map, List.append_assoc]
+
+private theorem publicInputStep_reads (input : Input) (initial result : Plan)
+    (accepted : publicInputStep input initial = .ok result) :
+    result.reads = initial.reads ++ publicInputReads input := by
+  cases input with
+  | mk name ty visibility span =>
+    cases visibility <;> cases ty
+    case public.bytes length =>
+      by_cases is32 : length = 32
+      · subst length
+        simp [publicInputStep, publicInputReads, visibilityNePublic, visibilityEqPrivate]
+          at accepted ⊢ <;> cases accepted <;> rfl
+      · by_cases isZero : length = 0
+        · subst length
+          simp [publicInputStep, publicInputReads, visibilityNePublic, visibilityEqPrivate]
+            at accepted ⊢ <;> cases accepted <;> rfl
+        · simp [publicInputStep, publicInputReads, visibilityNePublic,
+            visibilityEqPrivate] at accepted ⊢ <;> cases accepted <;> rfl
+    case public.foreign kind =>
+      simp [publicInputStep, publicInputReads, Input.publicProjectionIdentifiers,
+        visibilityNePublic, visibilityEqPrivate] at accepted ⊢
+      cases accepted
+      apply foldl_planReads_append
+      intro plan index
+      rfl
+    all_goals
+      simp [publicInputStep, publicInputReads, Input.publicProjectionIdentifiers,
+        nativeRead, visibilityNePublic, visibilityEqPrivate] at accepted ⊢ <;>
+        cases accepted <;> rfl
+
+private theorem exceptBindOk {ε α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
+    (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+/-- A successful public-input fold records its generated reads in source
+input order. Compound curve and foreign values follow their projection order. -/
+theorem publicInputPlan_reads_order (inputs : List Input) (initial result : Plan)
+    (accepted : publicInputPlan inputs initial = .ok result) :
+    result.reads = initial.reads ++ inputs.flatMap publicInputReads := by
+  induction inputs generalizing initial with
+  | nil =>
+    simp [publicInputPlan] at accepted
+    cases accepted
+    simp
+  | cons input rest ih =>
+    change (publicInputStep input initial >>= fun next =>
+      publicInputPlan rest next) = .ok result at accepted
+    simp only [exceptBindOk] at accepted
+    rcases accepted with ⟨next, firstAccepted, restAccepted⟩
+    have first := publicInputStep_reads input initial next firstAccepted
+    have remaining := ih next restAccepted
+    rw [remaining, first]
+    simp [List.flatMap_cons, List.append_assoc]
+
+/-- Inputs accepted by the scalar transcript prefix: private values are
+omitted, while public values use the scalar Native alignment. -/
+def publicInputScalarCompatible (input : Input) : Prop :=
+  input.visibility = .«private» ∨ input.ty = .native ∨ input.ty = .bool ∨
+    ∃ maximum, input.ty = .uint maximum
+
+/-- Exact operation pairs contributed by one public Native, Bool, or UInt
+input. The list order matches the source input order. -/
+def publicInputScalarOperations (input : Input) : List Op :=
+  match input.visibility, input.ty with
+  | .«public», .native =>
+    let value := Aligned.field (.ref input.name : Expr .native)
+    [.push value, .popeq value]
+  | .«public», .bool =>
+    let value := Aligned.field (.cast .native (.ref input.name : Expr .bool))
+    [.push value, .popeq value]
+  | .«public», .uint maximum =>
+    let value := Aligned.field (.cast .native (.ref input.name : Expr (.uint maximum)))
+    [.push value, .popeq value]
+  | _, _ => []
+
+private theorem publicInputStep_scalar_operations (input : Input)
+    (initial result : Plan)
+    (compatible : publicInputScalarCompatible input)
+    (accepted : publicInputStep input initial = .ok result) :
+    result.operations = initial.operations ++ publicInputScalarOperations input := by
+  cases input with
+  | mk name ty visibility span =>
+    cases visibility with
+    | «private» =>
+      simp [publicInputStep, publicInputScalarOperations,
+        visibilityNePublic, visibilityEqPrivate] at accepted ⊢ <;>
+        cases accepted <;> rfl
+    | «public» =>
+      cases ty with
+      | native | bool | uint _ =>
+        simp [publicInputStep, publicInputScalarOperations, nativeRead,
+          visibilityNePublic, visibilityEqPrivate] at accepted ⊢ <;>
+          cases accepted <;> rfl
+      | bytes length | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+        simp [publicInputScalarCompatible] at compatible
+
+/-- For scalar-qualified circuit inputs, the fallible public-input fold emits
+exactly the ordered scalar push/popeq pairs used by the VM prefix. -/
+theorem publicInputPlan_scalar_operations (inputs : List Input) (initial plan : Plan)
+    (accepted : publicInputPlan inputs initial = .ok plan)
+    (compatible : ∀ input ∈ inputs, publicInputScalarCompatible input) :
+    plan.operations = initial.operations ++
+      inputs.flatMap publicInputScalarOperations := by
+  induction inputs generalizing initial plan with
+  | nil =>
+    simp [publicInputPlan] at accepted
+    cases accepted
+    simp
+  | cons input rest ih =>
+    change (publicInputStep input initial >>= fun next =>
+      publicInputPlan rest next) = .ok plan at accepted
+    simp only [exceptBindOk] at accepted
+    rcases accepted with ⟨next, firstAccepted, restAccepted⟩
+    have firstShape := publicInputStep_scalar_operations input initial next
+      (compatible input (by simp)) firstAccepted
+    have restCompatible : ∀ item ∈ rest, publicInputScalarCompatible item := by
+      intro item member
+      exact compatible item (by simp [member])
+    have restShape := ih next plan restAccepted restCompatible
+    rw [restShape, firstShape]
+    simp [List.flatMap_cons, List.append_assoc]
+
 private def previousPublicInputStep (input : Input) (plan : Plan) : Except String Plan :=
   publicInputStep input plan
 
@@ -3105,6 +3267,48 @@ def lowerWithEffectBoundaries (state : List StateDecl) (entry : Entrypoint) :
     appendEffectsGuardedWithBoundaries state entry.effects entry.effectGuards plan
   let (plan, boundaries) ← result.mapError fun message => {span := entry.span, message}
   pure ((← finishPlan entry (.ok plan)), boundaries)
+
+private theorem exceptMapErrorOk {α ε δ : Type} (mapError : ε → δ)
+    (source : Except ε α) (value : α) :
+    source.mapError mapError = .ok value ↔ source = .ok value := by
+  cases source <;> simp [Except.mapError]
+
+theorem lowerWithEffectBoundaries_inputPrefix (state : List StateDecl)
+    (entry : Entrypoint) (plan : Plan) (boundaries : List Nat)
+    (accepted : lowerWithEffectBoundaries state entry = .ok (plan, boundaries)) :
+    ∃ inputPlan,
+      publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
+      appendEffectsGuardedWithBoundaries state entry.effects entry.effectGuards inputPlan =
+        .ok (plan, boundaries) := by
+  unfold lowerWithEffectBoundaries at accepted
+  simp only [exceptBindOk] at accepted
+  rcases accepted with ⟨_, _, ⟨_, _, ⟨result, resultAccepted,
+    ⟨finished, finishAccepted, outputAccepted⟩⟩⟩⟩
+  rcases result with ⟨rawPlan, rawBoundaries⟩
+  have outputPair : (finished, rawBoundaries) = (plan, boundaries) := by
+    change Except.ok (finished, rawBoundaries) = Except.ok (plan, boundaries) at outputAccepted
+    exact (Except.ok.inj outputAccepted)
+  rcases Prod.mk.inj outputPair with ⟨finishedEq, boundariesEq⟩
+  have finishIdentity : finished = rawPlan := by
+    cases validation : rawPlan.validate entry with
+    | error message =>
+      simp [finishPlan, validation] at finishAccepted
+    | ok valid =>
+      simp [finishPlan, validation] at finishAccepted
+      have pureResult : (pure rawPlan : Except Diagnostic Plan) = .ok rawPlan := rfl
+      rw [pureResult] at finishAccepted
+      exact (Except.ok.inj finishAccepted).symm
+  have rawPlanEq : rawPlan = plan := finishIdentity.symm.trans finishedEq
+  simp only [exceptMapErrorOk] at resultAccepted
+  split at resultAccepted
+  · change (Except.error
+      "source names beginning '_noctium_' are reserved by the native transcript producer" :
+        Except String (Plan × List Nat)) = Except.ok (rawPlan, rawBoundaries) at resultAccepted
+    cases resultAccepted
+  · simp only [exceptBindOk] at resultAccepted
+    rcases resultAccepted with ⟨inputPlan, inputAccepted, effectsAccepted⟩
+    rw [rawPlanEq, boundariesEq] at effectsAccepted
+    exact ⟨inputPlan, inputAccepted, effectsAccepted⟩
 
 /-- Lower a typed entrypoint to a symbolic native VM program. The state layout
 is a root array with one slot per declaration. Cells, including booleans, use

@@ -537,4 +537,44 @@ theorem evalPlan_supported (ctx : EvalContext) (env : EvalEnv)
   apply evalOperations_supported ctx env plan.operations ops
   simpa only [evalPlan] using evaluated
 
+private theorem publicInputScalarOperation_supported (input : Input)
+    (operation : Impact.Op)
+    (member : operation ∈ Impact.publicInputScalarOperations input) :
+    ScalarOperation operation := by
+  cases input with
+  | mk name ty visibility span =>
+    cases visibility <;> cases ty <;>
+      simp [Impact.publicInputScalarOperations] at member <;>
+      rcases member with push | popeq <;> subst operation <;>
+        simp [ScalarOperation, ScalarAligned]
+
+private theorem publicInputScalarOperations_supported (inputs : List Input)
+    (operation : Impact.Op)
+    (member : operation ∈ inputs.flatMap Impact.publicInputScalarOperations) :
+    ScalarOperation operation := by
+  induction inputs with
+  | nil => simp at member
+  | cons input rest ih =>
+    simp only [List.flatMap_cons, List.mem_append] at member
+    rcases member with first | remaining
+    · exact publicInputScalarOperation_supported input operation first
+    · exact ih remaining
+
+/-- A successful scalar-qualified source prefix preserves the scalar VM
+operation boundary and leaves the prior plan's support obligations intact. -/
+theorem publicInputPlan_scalar_supported (inputs : List Input)
+    (initial plan : Impact.Plan)
+    (accepted : Impact.publicInputPlan inputs initial = .ok plan)
+    (compatible : ∀ input ∈ inputs, Impact.publicInputScalarCompatible input)
+    (initialSupported : ∀ operation ∈ initial.operations, ScalarOperation operation) :
+    ∀ operation ∈ plan.operations, ScalarOperation operation := by
+  have ordered := Impact.publicInputPlan_scalar_operations inputs initial plan
+    accepted compatible
+  intro operation member
+  rw [ordered] at member
+  simp only [List.mem_append] at member
+  rcases member with prior | publicMember
+  · exact initialSupported operation prior
+  · exact publicInputScalarOperations_supported inputs operation publicMember
+
 end Noctium.Verification.GenericStateOps
