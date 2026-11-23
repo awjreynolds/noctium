@@ -71,6 +71,9 @@ structure CircuitInfo where
   /-- Source nominal identities for scalar cells in the owning structured
   contract. These tags are reapplied when the helper source is rebuilt. -/
   stateNominalUIntCells : List (String × NominalUIntType) := []
+  /-- Source nominal identities for direct Map keys and values in the owning
+  structured contract. These tags are reapplied when the helper source is rebuilt. -/
+  stateNominalUIntMaps : List (String × NominalUIntMap) := []
   specializationArtifact? : Option String := none
   deriving Inhabited
 
@@ -2434,6 +2437,15 @@ private structure CollectionNominals where
 
 private def CollectionNominals.isEmpty (nominals : CollectionNominals) : _root_.Bool :=
   nominals.scalarValue.isNone && nominals.pathKeys.all Option.isNone
+
+private def directNominalUIntMaps (schema : List (String × StateKind))
+    (nominals : List (String × CollectionNominals)) : List (String × NominalUIntMap) :=
+  schema.filterMap fun (name, kind) => do
+    let .map .. := kind | none
+    let some metadata := nominals.lookup name | none
+    let [key] := metadata.pathKeys | none
+    if metadata.isEmpty then none
+    else some (name, {key := key, value := metadata.scalarValue})
 
 private structure EntryEffects where
   env : Bindings
@@ -5723,7 +5735,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
-        unless info.stateNominalUIntCells.isEmpty do
+        unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         unless args.getElems.size ≤ 256 && uniqueNames (args.getElems.toList.map (·.getId.toString)) do
           throwErrorAt id "invalid logical call argument list"
@@ -5781,7 +5793,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
-        unless info.stateNominalUIntCells.isEmpty do
+        unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         let env ← addReferences [] (info.inputs ++ info.outputs)
         let env ← addLogicalReferences env info.logicalOutputs
@@ -5815,7 +5827,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         entryNames := id.getId :: entryNames
         let sourceName ← liftCoreM <| resolveGlobalConstNoOverload source
         let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
-        let program := {program with nominalUIntCells := nominalUIntCells}
+        let entryNominalUIntMaps := directNominalUIntMaps schema nominalUIntCollections
+        let program := program.withNominalUIntState nominalUIntCells entryNominalUIntMaps
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
@@ -5824,8 +5837,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           | .readCell storage _ _ | .writeCell storage _ _ =>
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
-          | .readMap storage .. | .readMember storage .. | .writeMap storage .. |
-              .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
+          | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
               .mapSize storage .. | .insertPath storage .. | .writePath storage .. |
               .emptyMapPath storage .. | .setInsert storage .. | .removePath storage .. =>
             if (nominalUIntCollections.lookup storage).isSome then
@@ -5836,12 +5848,22 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let circuitId := mkIdent localCircuitName
         let circuitName := stringTerm fullCircuitName.toString
         let sourceTerm := mkIdent sourceName
-        let nominalUIntCellTerms ← nominalUIntCells.toArray.mapM fun (storage, nominalUInt) => do
-          let name := stringTerm nominalUInt.name
-          let maximum := natTerm nominalUInt.maximum
-          `(($(stringTerm storage), ({name := $name, maximum := $maximum} : Noctium.NominalUIntType)))
-        let taggedProgram ← `({$sourceTerm with nominalUIntCells := [$nominalUIntCellTerms,*]
-          : Noctium.Helpers.Program})
+        let quoteNominal (nominal : NominalUIntType) : CommandElabM (TSyntax `term) :=
+          `(({name := $(stringTerm nominal.name), maximum := $(natTerm nominal.maximum)}
+            : Noctium.NominalUIntType))
+        let quoteOptionalNominal (nominal : Option NominalUIntType) :
+            CommandElabM (TSyntax `term) :=
+          match nominal with
+          | none => `(none)
+          | some label => do `(some $(← quoteNominal label))
+        let nominalUIntCellTerms ← nominalUIntCells.toArray.mapM fun (storage, nominal) => do
+          `(($(stringTerm storage), $(← quoteNominal nominal)))
+        let nominalUIntMapTerms ← entryNominalUIntMaps.toArray.mapM fun (storage, nominalMap) => do
+          let key ← quoteOptionalNominal nominalMap.key
+          let value ← quoteOptionalNominal nominalMap.value
+          `(($(stringTerm storage), ({key := $key, value := $value} : Noctium.NominalUIntMap)))
+        let taggedProgram ← `(Noctium.Helpers.Program.withNominalUIntState $sourceTerm
+          [$nominalUIntCellTerms,*] [$nominalUIntMapTerms,*])
         elabCommand (← `(def $circuitId : Noctium.Circuit :=
           match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with
           | .ok compiledEntry => {compiledEntry.circuit with name := $circuitName}
@@ -5853,7 +5875,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           publicInputs := (value.circuit.inputs.filter (·.visibility == .public)).map fun input => (input.name, input.ty)
           outputs := []
           stateProgram? := some (sourceName, exportName.getString)
-          stateNominalUIntCells := nominalUIntCells}
+          stateNominalUIntCells := nominalUIntCells
+          stateNominalUIntMaps := entryNominalUIntMaps}
         let circuitTerm := mkIdent fullCircuitName
         entryTerms := entryTerms.push (← `(
           match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with

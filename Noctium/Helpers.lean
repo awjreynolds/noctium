@@ -406,7 +406,16 @@ structure Program where
   ledger : List StateDecl := []
   /-- Source labels from the owning contract. Native ledger atoms remain scalar UInts. -/
   nominalUIntCells : List (String × NominalUIntType) := []
+  /-- Source labels for scalar keys and values in direct ledger Maps. -/
+  nominalUIntMaps : List (String × NominalUIntMap) := []
   deriving Repr
+
+/-- Reapply source-only state aliases when a structured helper is attached to
+its owning contract. -/
+def Program.withNominalUIntState (program : Program)
+    (cells : List (String × NominalUIntType))
+    (maps : List (String × NominalUIntMap)) : Program :=
+  {program with nominalUIntCells := cells, nominalUIntMaps := maps}
 
 private def fail (span : SourceSpan) (message : String) : Except Diagnostic α :=
   .error {span, message}
@@ -803,6 +812,20 @@ private def sourcePreflight (limits : Limits) (program : Program) :
   if program.ledger.length > limits.maxDeclarations then resource {} "ledger declarations"
   if program.nominalUIntCells.length > limits.maxDeclarations then resource {} "nominal UInt cells"
   unless uniqueNames (program.nominalUIntCells.map Prod.fst) do fail {} "duplicate nominal UInt Cell"
+  if program.nominalUIntMaps.length > limits.maxDeclarations then resource {} "nominal UInt Maps"
+  unless uniqueNames (program.nominalUIntMaps.map Prod.fst) do fail {} "duplicate nominal UInt Map"
+  for (name, nominalMap) in program.nominalUIntMaps do
+    let some declaration := program.ledger.find? (·.name == name)
+      | fail {} s!"unknown nominal UInt Map '{name}'"
+    let .map keyTy valueTy := declaration.kind
+      | fail {} s!"nominal UInt state '{name}' is not a direct Map"
+    for (nominal, ty) in [(nominalMap.key, keyTy), (nominalMap.value, valueTy)] do
+      if let some nominal := nominal then
+        textMetadata nominal.name
+        if nominal.name.isEmpty then fail {} "nominal UInt identity is empty"
+        liftError {} (ScalarPolicy.validate (.uint nominal.maximum))
+        unless ty == .uint nominal.maximum do
+          fail {} s!"nominal UInt Map '{name}' type mismatch"
   checkLedgerSchema {} program.ledger
   if program.declarations.length > limits.maxDeclarations then resource {} "declarations"
   if program.scopes.length > limits.maxScopes then resource {} "scopes"
@@ -1511,6 +1534,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let arguments ← arguments.mapM (fun value => inferPartialTerm fuel program scope env span value nominals)
       unless arguments.length == signature.parameters.length do fail span "typed witness argument arity mismatch"
       let useNominals := nominals.isSome && (!program.nominalUIntCells.isEmpty ||
+        !program.nominalUIntMaps.isEmpty ||
         program.declarations.any (fun decl =>
           !decl.nominalUIntParameters.isEmpty || decl.nominalUIntResult.isSome))
       for (argument, parameter) in arguments.zip signature.parameters do
@@ -1745,25 +1769,30 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
         | .readMap state destination keyTy valueTy key
         | .readMember state destination keyTy valueTy key => do
           checkedMap program span state keyTy valueTy
+          let nominalMap := program.nominalUIntMaps.lookup state
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
-          checkNominalUInt span none info.nominalUInt
+          checkNominalUInt span (nominalMap.bind (·.key)) info.nominalUInt
           unless partialSubtype info.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           if locals.contains destination || (inputNames program declaration.id).contains destination then
             fail span s!"ledger read destination '{destination}' shadows an existing binding"
           let resultTy := match statement with
             | .readMember .. => Ty.bool
             | _ => valueTy
+          let resultNominal := match statement with
+            | .readMember .. => none
+            | _ => nominalMap.bind (·.value)
           env := (destination, some (.scalar resultTy)) :: env
-          nominals := (destination, none) :: nominals
+          nominals := (destination, resultNominal) :: nominals
           locals := destination :: locals
           pure {info with ty := some .unit, effects := (.ledgerRead :: info.effects).eraseDups}
         | .writeMap state keyTy valueTy key value => do
           checkedMap program span state keyTy valueTy true
+          let nominalMap := program.nominalUIntMaps.lookup state
           let key ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
-          checkNominalUInt span none key.nominalUInt
+          checkNominalUInt span (nominalMap.bind (·.key)) key.nominalUInt
           unless partialSubtype key.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           let value ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
-          checkNominalUInt span none value.nominalUInt
+          checkNominalUInt span (nominalMap.bind (·.value)) value.nominalUInt
           unless partialSubtype value.ty (.scalar valueTy) do fail span "ledger map value type mismatch"
           pure (combine (some .unit) [key, value] [.ledgerWrite])
         | .emitEvent kind payload => do

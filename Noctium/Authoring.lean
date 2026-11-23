@@ -3822,6 +3822,15 @@ private partial def lowerReadableStatement (programName path : String)
     let nominalUIntCellTerms ← program.nominalUIntCells.mapM fun (name, target) => do
       `(($(stringTerm name), $(← nominalUIntTypeTerm target)))
     let nominalUIntCellTerms := nominalUIntCellTerms.toArray
+    let nominalUIntMapTerms ← program.nominalUIntMaps.mapM fun (name, nominalMap) => do
+      let key ← match nominalMap.key with
+        | none => `(none)
+        | some target => `(some $(← nominalUIntTypeTerm target))
+      let value ← match nominalMap.value with
+        | none => `(none)
+        | some target => `(some $(← nominalUIntTypeTerm target))
+      `(($(stringTerm name), ({key := $key, value := $value} : Noctium.NominalUIntMap)))
+    let nominalUIntMapTerms := nominalUIntMapTerms.toArray
     let programTerm ← match libraryName with
       | some source =>
         let library := mkIdent source
@@ -3833,6 +3842,7 @@ private partial def lowerReadableStatement (programName path : String)
           witnesses := [$signatureTerms,*]
           ledger := $(library).ledger
           nominalUIntCells := [$nominalUIntCellTerms,*]
+          nominalUIntMaps := [$nominalUIntMapTerms,*]
           : Noctium.Helpers.Program })
       | none => `({
           scopes := [{id := 0}]
@@ -3841,6 +3851,7 @@ private partial def lowerReadableStatement (programName path : String)
           composites := $compositeEnvTerm
           witnesses := [$signatureTerms,*]
           nominalUIntCells := [$nominalUIntCellTerms,*]
+          nominalUIntMaps := [$nominalUIntMapTerms,*]
           : Noctium.Helpers.Program })
     let programTerm ← if codecTerms.isEmpty || helperProgram.isSome then pure programTerm else
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with

@@ -10,6 +10,13 @@ structure NominalUIntType where
   maximum : Nat
   deriving Repr, BEq, DecidableEq
 
+/-- Source-only nominal labels for the scalar key and value of a root Map.
+The state wire types remain ordinary bounded UInt values. -/
+structure NominalUIntMap where
+  key : Option NominalUIntType := none
+  value : Option NominalUIntType := none
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 end Noctium
 
 namespace Noctium.ScalarPolicy
