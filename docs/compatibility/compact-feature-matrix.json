@@ -315,7 +315,7 @@
           "expected": "Result retains alias. 255+1 fails downcast, 1+1 succeeds. Different nominal identities reject statically.",
           "status": "executed-pinned-compact-and-noctium",
           "evidence": ["tests/NominalUInt.lean", "tests/compact/NominalUint.compact", "tests/compact/nominal-uint.mjs"],
-          "result": "Compact 0.36.1 and readable Noctium agree on the bounded addition and explicit narrowing cases. The alias survives addition and a witness call in Noctium source. Both reject mixing distinct equal-bound types, implicit conversion to the underlying type, checked narrowing overflow and a too-wide intermediate sum."
+          "result": "Compact 0.36.1 and readable Noctium agree on the bounded addition and explicit narrowing cases. The alias survives addition in both readable and low-level Noctium circuits, and typed witness calls preserve it in readable authoring. Both reject mixing distinct equal-bound types, implicit conversion to the underlying type, checked narrowing overflow and a too-wide intermediate sum."
         }
       ],
       "conformanceContexts": [
@@ -556,7 +556,7 @@
       "layer": "language",
       "surface": "Structural and nominal type aliases",
       "noctiumStatus": "subset",
-      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. The paired Compact and Lean source cases check retained identity, upper-bound rejection and the intermediate width guard. The native representation remains the ordinary bounded UInt. Other source forms, including low-level ledger and iteration types, remain open.",
+      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. The paired Compact and Lean source cases check retained identity, upper-bound rejection and the intermediate width guard. The native representation remains the ordinary bounded UInt. Standalone low-level circuits now preserve declared UInt identity through parameters, bindings, arithmetic, equality, selection and explicit casts before lowering. Ledger state types, iteration element types and other nominal-dependent operations remain open.",
       "source": [
         "reference",
         "typeInference"

@@ -18,6 +18,20 @@ import Lean
 namespace Noctium
 open Lean Elab Command
 
+/-- A source-level bounded unsigned type. Its native representation stays the
+underlying UInt maximum, while this identity stays distinct during elaboration. -/
+structure NominalUIntType where
+  name : String
+  maximum : Nat
+  deriving Repr, BEq, DecidableEq
+
+initialize noctiumNominalUIntTypeRegistry : SimplePersistentEnvExtension
+    Noctium.NominalUIntType (Array Noctium.NominalUIntType) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
 /-- Source-only labels for Midnight address and key values represented by
 Bytes32 expressions at circuit and native boundaries. -/
 inductive NominalBytes32 where
@@ -207,6 +221,7 @@ initialize moduleBuildRegistry : SimplePersistentEnvExtension ModuleBuildInfo (A
   }
 
 declare_syntax_cat nltype
+scoped syntax (name := nominalUIntTypeName) (priority := low) ident : nltype
 scoped syntax "Native" : nltype
 scoped syntax "Bool" : nltype
 scoped syntax "UInt" num : nltype
@@ -226,6 +241,8 @@ scoped syntax "Secp256r1Point" : nltype
 scoped syntax "Curve25519Base" : nltype
 scoped syntax "Curve25519Scalar" : nltype
 scoped syntax "Curve25519Point" : nltype
+scoped syntax (name := noctiumUIntTypeCommand) "noctium_uint_type" ident ":="
+  "UInt" num : command
 
 declare_syntax_cat nlexpr
 scoped syntax ident : nlexpr
@@ -608,6 +625,34 @@ scoped syntax (name := implementsCommand) "noctium_implements" ident "implements
 
 open scoped Noctium
 
+private def nominalUIntTypeIdentifier (stx : TSyntax `nltype) : Option Syntax := do
+  let `(nltype| $name:ident) := stx | none
+  pure name.raw
+
+private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM NominalUIntType := do
+  let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
+  let current := ((← getCurrNamespace) ++ name).toString
+  match registry.find? (·.name == current) <|> registry.find? (·.name == name.toString) with
+  | some declaration => pure declaration
+  | none => throwErrorAt site s!"unknown nominal UInt type '{name}'"
+
+@[command_elab noctiumUIntTypeCommand] unsafe def elabNoctiumUIntType : CommandElab := fun stx => do
+  match stx with
+  | `(noctium_uint_type $name:ident := UInt $bits:num) => do
+    let fullName := ((← getCurrNamespace) ++ name.getId).toString
+    unless Helpers.validWitnessIdentifier fullName do
+      throwErrorAt name s!"nominal UInt identity is invalid or too long: {fullName}"
+    let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
+    if registry.any (·.name == fullName) then
+      throwErrorAt name s!"duplicate nominal UInt type '{name.getId}'"
+    let maximum ← match ScalarPolicy.sized bits.getNat with
+      | .ok (.uint maximum) => pure maximum
+      | .error message => throwErrorAt bits message
+      | _ => throwErrorAt bits "invalid nominal UInt width"
+    let declaration : NominalUIntType := {name := fullName, maximum}
+    modifyEnv fun env => noctiumNominalUIntTypeRegistry.addEntry env declaration
+  | _ => throwUnsupportedSyntax
+
 private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
   match stx with
   | `(nltype| Native) => pure .native
@@ -641,6 +686,16 @@ private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
   | `(nltype| Curve25519Scalar) => pure (.foreign (.scalar .curve25519))
   | `(nltype| Curve25519Point) => pure (.foreign (.point .curve25519))
   | _ => throwErrorAt stx "unsupported Noctium type"
+
+private structure CircuitSourceType where
+  type : Ty
+  nominalUInt : Option NominalUIntType := none
+
+private def readCircuitSourceType (stx : TSyntax `nltype) : CommandElabM CircuitSourceType := do
+  if let some name := nominalUIntTypeIdentifier stx then
+    let declaration ← resolveNominalUIntType name.getId name
+    return {type := .uint declaration.maximum, nominalUInt := some declaration}
+  return {type := ← readTy stx}
 
 private def tyTerm : Ty → CommandElabM (TSyntax `term)
   | .native => `(Noctium.Ty.native)
@@ -1766,6 +1821,141 @@ private def checkedExpression (env : Bindings) (stx : TSyntax `nlexpr) (ty : Ty)
   let (found, value) ← expression env stx
   coerceExpression stx found ty value
 
+private abbrev CircuitNominalEnv := List (String × Option NominalUIntType)
+
+private def bindCircuitNominal (env : CircuitNominalEnv) (name : String)
+    (nominalUInt : Option NominalUIntType) : CircuitNominalEnv :=
+  (name, nominalUInt) :: env.filter (·.1 != name)
+
+private partial def hasCircuitNominalReference (env : CircuitNominalEnv) (stx : Syntax) : _root_.Bool :=
+  match stx with
+  | .ident _ _ name _ => env.any fun (binding, nominalUInt) =>
+      binding == name.toString && nominalUInt.isSome
+  | .node _ kind children =>
+    kind == ``nominalUIntTypeName || children.toList.any (hasCircuitNominalReference env)
+  | _ => _root_.Bool.false
+
+/-- Keep nominal identities while checking low-level circuits. Expr erases source
+identity, so every conversion through this boundary must be explicit. -/
+private partial def circuitSourceExpression (env : Bindings) (nominalEnv : CircuitNominalEnv)
+    (stx : TSyntax `nlexpr) : CommandElabM (Ty × TSyntax `term × Option NominalUIntType) := do
+  match stx with
+  | `(nlexpr| cast($target:nltype, $value:nlexpr)) => do
+    let target ← readCircuitSourceType target
+    let (source, value, _) ← circuitSourceExpression env nominalEnv value
+    if target.type.isOpaqueBytes || source.isOpaqueBytes then
+      throwErrorAt stx "OpaqueBytes do not support scalar casts"
+    if target.type.isOpaqueString || source.isOpaqueString then
+      throwErrorAt stx "OpaqueString do not support scalar casts"
+    if target.type.isJubjub || source.isJubjub || target.type.isForeign || source.isForeign then
+      throwErrorAt stx "curve values require explicit typed conversions"
+    if target.type.isBytes || source.isBytes then
+      throwErrorAt stx "byte strings do not support scalar casts"
+    pure (target.type,
+      ← `(Noctium.Expr.cast $(← tyTerm target.type) $value), target.nominalUInt)
+  | _ =>
+    if !hasCircuitNominalReference nominalEnv stx.raw then
+      let (type, value) ← expression env stx
+      return (type, value, none)
+    match stx with
+    | `(nlexpr| $id:ident) => do
+      let some (_, type, value) := env.find? (fun binding => binding.1 == id.getId.toString)
+        | throwErrorAt id s!"unknown Noctium value '{id.getId}'"
+      let nominalUInt := (nominalEnv.lookup id.getId.toString).join
+      return (type, value, nominalUInt)
+    | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
+      let (valueType, valueTerm, valueNominal) ← circuitSourceExpression env nominalEnv value
+      let valueTypeTerm ← tyTerm valueType
+      let valueRef ← `(Noctium.Expr.ref (ty := $valueTypeTerm) $(stringTerm id.getId.toString))
+      let bodyEnv := (id.getId.toString, valueType, valueRef) :: env.filter
+        (fun binding => binding.1 != id.getId.toString)
+      let bodyNominals := bindCircuitNominal nominalEnv id.getId.toString valueNominal
+      let (bodyType, bodyTerm, bodyNominal) ← circuitSourceExpression bodyEnv bodyNominals body
+      pure (bodyType,
+        ← `(Noctium.Expr.letE $(stringTerm id.getId.toString) $valueTerm $bodyTerm), bodyNominal)
+    | `(nlexpr| disclose($value)) => do
+      let (type, value, nominalUInt) ← circuitSourceExpression env nominalEnv value
+      pure (type, ← `(Noctium.Expr.disclose $(← spanTerm stx) $value), nominalUInt)
+    | `(nlexpr| copyValue($value)) => do
+      let (type, value, nominalUInt) ← circuitSourceExpression env nominalEnv value
+      pure (type, ← `(Noctium.Expr.copyValue $value), nominalUInt)
+    | `(nlexpr| assertThen($condition, $body)) => do
+      let (conditionType, conditionTerm, conditionNominal) ←
+        circuitSourceExpression env nominalEnv condition
+      unless conditionType == .bool && conditionNominal.isNone do
+        throwErrorAt condition "assertThen condition requires Bool"
+      let (bodyType, bodyTerm, bodyNominal) ← circuitSourceExpression env nominalEnv body
+      pure (bodyType, ← `(Noctium.Expr.assertE $conditionTerm $bodyTerm), bodyNominal)
+    | `(nlexpr| add($left, $right)) =>
+      circuitSourceArithmetic env nominalEnv stx .add left right
+    | `(nlexpr| sub($left, $right)) =>
+      circuitSourceArithmetic env nominalEnv stx .sub left right
+    | `(nlexpr| mul($left, $right)) =>
+      circuitSourceArithmetic env nominalEnv stx .mul left right
+    | `(nlexpr| eq($left, $right)) => do
+      let (leftType, leftTerm, leftNominal) ← circuitSourceExpression env nominalEnv left
+      let (rightType, rightTerm, rightNominal) ← circuitSourceExpression env nominalEnv right
+      unless leftNominal == rightNominal do
+        throwErrorAt stx "nominal UInt equality requires matching nominal operands"
+      if leftNominal.isSome then
+        unless leftType == rightType do
+          throwErrorAt stx "nominal UInt equality operands do not match their declared bound"
+        pure (.bool, ← `(Noctium.Expr.eq $leftTerm $rightTerm), none)
+      else
+        let type ← commonType stx leftType rightType
+        let leftTerm ← coerceExpression stx leftType type leftTerm
+        let rightTerm ← coerceExpression stx rightType type rightTerm
+        pure (.bool, ← `(Noctium.Expr.eq $leftTerm $rightTerm), none)
+    | `(nlexpr| select($condition, $yes, $no)) => do
+      let (conditionType, conditionTerm, conditionNominal) ←
+        circuitSourceExpression env nominalEnv condition
+      unless conditionType == .bool && conditionNominal.isNone do
+        throwErrorAt condition "select condition requires Bool"
+      let (yesType, yesTerm, yesNominal) ← circuitSourceExpression env nominalEnv yes
+      let (noType, noTerm, noNominal) ← circuitSourceExpression env nominalEnv no
+      unless yesNominal == noNominal do
+        throwErrorAt stx "select branches require the same nominal UInt type"
+      let type ← commonType stx yesType noType
+      let yesTerm ← coerceExpression stx yesType type yesTerm
+      let noTerm ← coerceExpression stx noType type noTerm
+      pure (type, ← `(Noctium.Expr.select $conditionTerm $yesTerm $noTerm), yesNominal)
+    | _ => throwErrorAt stx "nominal UInt values require an explicit cast before this operation"
+where
+  circuitSourceArithmetic (env : Bindings) (nominalEnv : CircuitNominalEnv) (stx : TSyntax `nlexpr)
+      (operation : ScalarPolicy.Binary) (left right : TSyntax `nlexpr) :
+      CommandElabM (Ty × TSyntax `term × Option NominalUIntType) := do
+    let (leftType, leftTerm, leftNominal) ← circuitSourceExpression env nominalEnv left
+    let (rightType, rightTerm, rightNominal) ← circuitSourceExpression env nominalEnv right
+    unless leftNominal == rightNominal do
+      throwErrorAt stx "nominal UInt arithmetic requires matching nominal operands"
+    match leftNominal with
+    | none =>
+      let (type, term) ← expression env stx
+      pure (type, term, none)
+    | some nominalUInt => do
+      unless leftType == .uint nominalUInt.maximum && rightType == .uint nominalUInt.maximum do
+        throwErrorAt stx "nominal UInt arithmetic operands do not match their declared bound"
+      let result ← match ScalarPolicy.infer operation leftType.scalarKind rightType.scalarKind with
+        | .ok result => pure result
+        | .error message => throwErrorAt stx message
+      let .uint _ := result
+        | throwErrorAt stx "nominal UInt arithmetic requires unsigned operands"
+      let term ← match operation with
+        | .add => `(Noctium.Expr.uadd $leftTerm $rightTerm)
+        | .sub => `(Noctium.Expr.usub $leftTerm $rightTerm)
+        | .mul => `(Noctium.Expr.umul $leftTerm $rightTerm)
+      let bounded ← `(Noctium.Expr.cast $(← tyTerm (.uint nominalUInt.maximum)) $term)
+      pure (.uint nominalUInt.maximum, bounded, some nominalUInt)
+
+private def checkedCircuitSourceExpression (env : Bindings) (nominalEnv : CircuitNominalEnv)
+    (stx : TSyntax `nlexpr) (target : CircuitSourceType) : CommandElabM (TSyntax `term) := do
+  if target.nominalUInt.isNone && !hasCircuitNominalReference nominalEnv stx.raw then
+    return ← checkedExpression env stx target.type
+  let (found, value, nominalUInt) ← circuitSourceExpression env nominalEnv stx
+  unless nominalUInt == target.nominalUInt do
+    throwErrorAt stx "nominal UInt values require an explicit cast and must match the target type"
+  coerceExpression stx found target.type value
+
 private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
     (fields : List (String × Ty)) : CommandElabM (List (Ty × TSyntax `term)) := do
   let `(nlleaves| fields($items:nlexpr,*)) := payload
@@ -1994,6 +2184,7 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
   match stx with
   | `(noctium_circuit $name:ident where $stmts:nlcstmt* end) =>
     let mut env : Bindings := []
+    let mut nominalEnv : CircuitNominalEnv := []
     let mut inputs : Array (TSyntax `term) := #[]
     let mut inputInfo := []
     let mut publicInputInfo := []
@@ -2005,20 +2196,23 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
       | `(nlcstmt| public $id:ident : $ty:nltype)
       | `(nlcstmt| private $id:ident : $ty:nltype) =>
         ensureFresh env id
-        let t ← readTy ty
+        let sourceType ← readCircuitSourceType ty
+        let t := sourceType.type
         let tt ← tyTerm t
         let isPublic := stmt.raw[0].getAtomVal == "public"
         let visibility ← if isPublic then `(Noctium.Visibility.public) else `(Noctium.Visibility.private)
         let span ← spanTerm stmt
         inputs := inputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
         env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
+        nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
         inputInfo := inputInfo ++ [(id.getId.toString, t)]
         if isPublic then publicInputInfo := publicInputInfo ++ [(id.getId.toString, t)]
       | `(nlcstmt| let $id:ident : $ty:nltype := $value:nlexpr) =>
         ensureFresh env id
-        let t ← readTy ty
+        let sourceType ← readCircuitSourceType ty
+        let t := sourceType.type
         let retain := (match t with | .uint _ => Bool.true | _ => Bool.false) || hasPartialScalar value
-        let value ← checkedExpression env value t
+        let value ← checkedCircuitSourceExpression env nominalEnv value sourceType
         if retain then
           -- Equality keeps partial range/underflow checks in unused bindings.
           -- Byte expressions have no equality operator on the source surface, so
@@ -2030,14 +2224,17 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
           | _ =>
             constraints := constraints.push (← `(Noctium.Expr.eq $value $value))
         env := (id.getId.toString, t, value) :: env
+        nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
       | `(nlcstmt| assert $value:nlexpr) =>
-        constraints := constraints.push (← checkedExpression env value .bool)
+        constraints := constraints.push (← checkedCircuitSourceExpression env nominalEnv value
+          {type := .bool})
       | `(nlcstmt| output $id:ident : $ty:nltype := $value:nlexpr) =>
         if outputInfo.any (fun p => p.1 == id.getId.toString) || inputInfo.any (fun p => p.1 == id.getId.toString) then
           throwErrorAt id "duplicate Noctium output '{id.getId}'"
-        let t ← readTy ty
+        let sourceType ← readCircuitSourceType ty
+        let t := sourceType.type
         let tt ← tyTerm t
-        let value ← checkedExpression env value t
+        let value ← checkedCircuitSourceExpression env nominalEnv value sourceType
         let span ← spanTerm stmt
         outputs := outputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, value := $value, span := $span : Noctium.Output }))
         outputInfo := outputInfo ++ [(id.getId.toString, t)]

@@ -43,6 +43,29 @@ noctium_witness_circuit amountPrivateState where
   output result : Amount := disclose(next)
 end
 
+noctium_circuit lowLevelAmountArithmetic where
+  private left : Amount
+  private right : Amount
+  let sum : Amount := add(left, right)
+  output result : Amount := disclose(sum)
+end
+
+noctium_circuit lowLevelAmountCast where
+  private raw : UInt 9
+  output result : Amount := disclose(cast(Amount, raw))
+end
+
+noctium_circuit lowLevelAmountUnderlyingCast where
+  private amount : Amount
+  output result : UInt 8 := disclose(cast(UInt 8, amount))
+end
+
+noctium_circuit lowLevelCastedAmountArithmetic where
+  private left : UInt 8
+  private right : UInt 8
+  output result : Amount := disclose(add(cast(Amount, left), cast(Amount, right)))
+end
+
 #guard preserveAmount.__witnessSignature.parameters.map (·.sourceNominal) ==
   [some "NominalUInt.Amount"]
 #guard preserveAmount.__witnessSignature.resultNominal == some "NominalUInt.Amount"
@@ -77,6 +100,11 @@ private def castEntry : String :=
 #guard match Noctium.Witness.compile checkedAmountCast.__program castEntry with
   | .ok compiled => (Noctium.Backend.Zkir.lowerCircuit compiled.circuit).isOk
   | .error _ => Bool.false
+
+#guard (Noctium.Backend.Zkir.lowerCircuit lowLevelAmountArithmetic).isOk
+#guard (Noctium.Backend.Zkir.lowerCircuit lowLevelAmountCast).isOk
+#guard (Noctium.Backend.Zkir.lowerCircuit lowLevelAmountUnderlyingCast).isOk
+#guard (Noctium.Backend.Zkir.lowerCircuit lowLevelCastedAmountArithmetic).isOk
 
 private def context : EvalContext := {
   modulus := Field.modulus,
@@ -126,12 +154,69 @@ private def context : EvalContext := {
     | _ => Bool.false
   | .error _ => Bool.false
 
+#guard match lowLevelAmountArithmetic.run context [
+    ("left", .uint 255 1), ("right", .uint 255 1)] with
+  | .ok [("result", .uint 255 2)] => Bool.true
+  | _ => Bool.false
+
+#guard match lowLevelAmountArithmetic.run context [
+    ("left", .uint 255 255), ("right", .uint 255 1)] with
+  | .error _ => Bool.true
+  | _ => Bool.false
+
+#guard match lowLevelAmountCast.run context [("raw", .uint 511 255)] with
+  | .ok [("result", .uint 255 255)] => Bool.true
+  | _ => Bool.false
+
+#guard match lowLevelAmountCast.run context [("raw", .uint 511 256)] with
+  | .error _ => Bool.true
+  | _ => Bool.false
+
+#guard match lowLevelAmountUnderlyingCast.run context [("amount", .uint 255 255)] with
+  | .ok [("result", .uint 255 255)] => Bool.true
+  | _ => Bool.false
+
+#guard match lowLevelCastedAmountArithmetic.run context [
+    ("left", .uint 255 1), ("right", .uint 255 1)] with
+  | .ok [("result", .uint 255 2)] => Bool.true
+  | _ => Bool.false
+
 /- error: nominal UInt values require an explicit cast and must match the target type -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsImplicitRawConversion where
   private amount : Amount
   let raw : UInt 8 := amount
   output result : UInt 8 := raw
+end
+
+/- error: nominal UInt arithmetic requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsLowLevelAliasMix where
+  private amount : Amount
+  private count : Count
+  output result : Amount := add(amount, count)
+end
+
+/- error: nominal UInt equality requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsLowLevelAliasAssertion where
+  private amount : Amount
+  private count : Count
+  assert eq(amount, count)
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsLowLevelImplicitRawOutput where
+  private amount : Amount
+  output result : UInt 8 := amount
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsLowLevelImplicitNominalOutput where
+  private raw : UInt 8
+  output result : Amount := raw
 end
 
 /- error: nominal UInt arithmetic requires matching nominal operands -/
