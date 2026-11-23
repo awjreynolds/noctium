@@ -2758,7 +2758,7 @@
       "layer": "language-ledger",
       "surface": "Map.isEmpty",
       "noctiumStatus": "subset",
-      "notes": "Binds native Boolean emptiness for a direct or nested Map path. The matched Set fixture also checks the empty and populated outer Native-keyed Map. Inactive queries bind false without accessing the path. The host ledger method remains unqualified.",
+      "notes": "Binds native Boolean emptiness for a direct or nested Map path. The matched Set fixture also checks the empty and populated outer Native-keyed Map. Inactive queries bind false without accessing the path. Root record-key Maps with scalar or record values also match the pinned Compact observation and pass native execution. The host ledger method remains unqualified.",
       "source": [
         "adt"
       ],
@@ -2768,6 +2768,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/RecordMapCollections.lean",
+        "runtime/tests/structured_maps.rs",
         "tests/NativeSet.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
@@ -2898,7 +2900,7 @@
       "layer": "language-ledger",
       "surface": "Map.resetToDefault",
       "noctiumStatus": "equivalent",
-      "notes": "Root and nested Map resets match Compact 0.36.1 and finalize on Ledger 9.1.0.1 with exact state. Root reset empties a populated Map. Nested reset retains the selected entry as an empty inner Map and preserves siblings. An active reset initializes an absent selected entry, while an inactive reset preserves state. This row covers the circuit method.",
+      "notes": "Root and nested Map resets match Compact 0.36.1 and finalize on Ledger 9.1.0.1 with exact state. Root reset empties a populated Map. Nested reset retains the selected entry as an empty inner Map and preserves siblings. An active reset initializes an absent selected entry, while an inactive reset preserves state. Native execution also checks that root record-key Maps with scalar or record values return to their exact constructor state. This row covers the circuit method.",
       "source": [
         "adt"
       ],
@@ -2908,6 +2910,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/RecordMapCollections.lean",
+        "runtime/tests/structured_maps.rs",
         "Noctium/Frontend/Core.lean",
         "Noctium/Backend/Impact.lean",
         "tests/Issue69NestedCounter.lean",
@@ -2929,7 +2933,7 @@
       "layer": "language-ledger",
       "surface": "Map.size",
       "noctiumStatus": "subset",
-      "notes": "The source size statement and native Map or Set size operation bind UInt64. Inactive queries bind zero. The existing checker fixture exercises the shared operation on Sets. Dedicated Map size comparison and host qualification remain open.",
+      "notes": "The source size statement and native Map or Set size operation bind UInt64. Inactive queries bind zero. The existing checker fixture exercises the shared operation on Sets. Root record-key Maps with scalar or record values match the pinned Compact size observations and pass native execution. Host qualification remains open.",
       "source": [
         "adt"
       ],
@@ -2939,6 +2943,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/RecordMapCollections.lean",
+        "runtime/tests/structured_maps.rs",
         "Noctium/Frontend/Core.lean",
         "Noctium/Backend/Impact.lean",
         "tests/NativeSet.lean",

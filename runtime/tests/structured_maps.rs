@@ -217,6 +217,48 @@ fn record_map_composes_typed_keys_and_values() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_RECORD_MAP_COLLECTIONS_DIR"]
+fn record_key_maps_report_size_and_reset_to_constructor_state() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_COLLECTIONS_DIR")?);
+    let (plan, relation) = load_entrypoint(&directory, "RecordMapCollections.update")?;
+    let initial = create_state(
+        &plan,
+        &BTreeMap::from([("scalars".into(), json!([])), ("records".into(), json!([]))]),
+    )?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let mut state = initial.clone();
+    for (active, adding, clear, size) in [
+        (true, false, false, 0),
+        (true, true, false, 1),
+        (true, true, false, 1),
+        (false, true, false, 2),
+        (false, false, false, 2),
+        (true, false, true, 0),
+    ] {
+        let inputs = BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("amount".into(), json!("513")),
+            ("adding".into(), json!(adding)),
+            ("clear".into(), json!(clear)),
+        ]);
+        let step = prepare(&plan, &inputs, &state, parameters, address)?;
+        assert_eq!(check(&step, &relation)?, step.activity_schedule);
+        let returns = step.returns_json();
+        assert_eq!(returns["scalarSize"], json!(size.to_string()));
+        assert_eq!(returns["recordSize"], json!(size.to_string()));
+        assert_eq!(returns["scalarEmpty"], json!(size == 0));
+        assert_eq!(returns["recordEmpty"], json!(size == 0));
+        if !adding && !clear {
+            assert_eq!(step.after.state.get_ref(), state.get_ref());
+        }
+        state = step.after.state;
+    }
+    assert_eq!(state.get_ref(), initial.get_ref());
+    Ok(())
+}
+
+#[test]
 fn structured_helper_binds_guarded_bytes32_map_effects_and_returns() {
     let plan: Plan = serde_json::from_str(PLAN).expect("source map plan parses");
     let circuit = IrSource::load(CIRCUIT).expect("source ZKIR parses");

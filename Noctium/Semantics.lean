@@ -2111,7 +2111,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             | .exact => Value.uint balanceMaximum 0
             | .compare .. => Value.bool false
           env := (destination, value) :: env
-        | .writeCell .. | .writeMap .. | .require .. | .claimContractCall .. |
+        | .writeCell .. | .writeMap .. | .writeRecordMap .. | .writeRecordMapComposite .. |
+            .require .. | .claimContractCall .. |
             .requireContractCaller .. | .checkpoint | .mintShielded .. |
             .mintUnshielded .. | .incUnshieldedInputs .. | .incUnshieldedOutputs .. |
             .claimUnshieldedCoinSpend .. | .emitEvent .. |

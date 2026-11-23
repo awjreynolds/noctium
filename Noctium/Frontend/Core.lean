@@ -2065,6 +2065,7 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr write $_state:ident := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_key:nlexpr ] := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_payload:nlleaves ] := $_value:nlexpr) => some condition
+  | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_payload:nlleaves ] := $_valuePayload:nlleaves) => some condition
   | `(nleffect| when $condition:nlexpr require $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr read $_path:nlpath as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr read $_state:ident [$_payload:nlleaves] as $_dest:ident) => some condition
@@ -2543,7 +2544,8 @@ private def collectionResetTerm (path : TSyntax `nlpath) (storage : TSyntax `ide
   | .«list» .. =>
     unless keyCount ≤ 13 do throwErrorAt path "List paths support at most 13 map keys"
     `(Noctium.Effect.listReset $name $keys)
-  | .map .. | .set _ | .recordSet .. => `(Noctium.Effect.emptyMapPath $name $keys)
+  | .map .. | .set _ | .recordSet .. | .recordMapKey .. | .recordMapComposite .. =>
+    `(Noctium.Effect.emptyMapPath $name $keys)
   | .merkleTree depth historic =>
     unless 1 ≤ keyCount && keyCount ≤ 12 do
       throwErrorAt path "nested MerkleTree paths require one to twelve map keys"
