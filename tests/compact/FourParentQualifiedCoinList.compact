@@ -1,0 +1,63 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger coinLists: Map<Bytes<32>, Map<Bytes<32>, Map<Bytes<32>,
+  Map<Bytes<32>, List<QualifiedShieldedCoinInfo>>>>>;
+export ledger paddingSlot: QualifiedShieldedCoinInfo;
+
+circuit destination(isContract: Boolean, bytes: Bytes<32>): Either<ZswapCoinPublicKey, ContractAddress> {
+  return isContract ? right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: bytes})
+                    : left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey{bytes: bytes});
+}
+
+export circuit initializePaths(first: Bytes<32>, second: Bytes<32>, third: Bytes<32>,
+                               fourth: Bytes<32>, siblingThird: Bytes<32>,
+                               siblingFourth: Bytes<32>): [] {
+  if (!coinLists.member(disclose(first))) { coinLists.insertDefault(disclose(first)); }
+  if (!coinLists.lookup(disclose(first)).member(disclose(second))) {
+    coinLists.lookup(disclose(first)).insertDefault(disclose(second));
+  }
+  if (!coinLists.lookup(disclose(first)).lookup(disclose(second)).member(disclose(third))) {
+    coinLists.lookup(disclose(first)).lookup(disclose(second)).insertDefault(disclose(third));
+  }
+  if (!coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(third))
+      .member(disclose(fourth))) {
+    coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(third))
+      .insertDefault(disclose(fourth));
+  }
+  if (!coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(third))
+      .member(disclose(siblingFourth))) {
+    coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(third))
+      .insertDefault(disclose(siblingFourth));
+  }
+  if (!coinLists.lookup(disclose(first)).lookup(disclose(second)).member(disclose(siblingThird))) {
+    coinLists.lookup(disclose(first)).lookup(disclose(second)).insertDefault(disclose(siblingThird));
+  }
+  if (!coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(siblingThird))
+      .member(disclose(fourth))) {
+    coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(siblingThird))
+      .insertDefault(disclose(fourth));
+  }
+}
+
+export circuit pushCoin(first: Bytes<32>, second: Bytes<32>, third: Bytes<32>,
+                        fourth: Bytes<32>, domain: Bytes<32>, nonce: Bytes<32>,
+                        value: Uint<64>, book: Boolean, bookingIsContract: Boolean,
+                        bookingAddress: Bytes<32>, recipientIsContract: Boolean,
+                        recipientAddress: Bytes<32>, prefixMint: Boolean,
+                        paddingNonce: Bytes<32>, paddingValue: Uint<64>): ShieldedCoinInfo {
+  if (disclose(prefixMint)) {
+    const padding = mintShieldedToken(disclose(domain), disclose(paddingValue),
+      disclose(paddingNonce), right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+    paddingSlot.writeCoin(disclose(padding),
+      right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+  }
+  const coin = disclose(book)
+    ? mintShieldedToken(disclose(domain), disclose(value), disclose(nonce),
+                       disclose(destination(bookingIsContract, bookingAddress)))
+    : ShieldedCoinInfo{nonce: nonce, color: tokenType(domain, kernel.self()), value: value};
+  coinLists.lookup(disclose(first)).lookup(disclose(second)).lookup(disclose(third))
+    .lookup(disclose(fourth)).pushFrontCoin(
+      disclose(coin), disclose(destination(recipientIsContract, recipientAddress)));
+  return disclose(coin);
+}
