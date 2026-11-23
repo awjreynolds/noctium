@@ -1488,6 +1488,7 @@ pub struct DevelopmentFunding<'a> {
     rng: RefCell<Option<rand::rngs::StdRng>>,
     shielded_receive: Option<shielded_receive::BookedOffer>,
     shielded_relay: Option<shielded_relay::BookedRelay>,
+    shielded_immediate_change: Option<shielded_transfer::BookedImmediateChange>,
     wallet_shielded_receive: Option<shielded_receive::BookedWalletOffer>,
     wallet_shielded_mint: Option<shielded_receive::BookedWalletMint>,
     shielded_transfer: Option<shielded_transfer::BookedTransfer>,
@@ -1498,6 +1499,7 @@ impl<'a> DevelopmentFunding<'a> {
     fn has_shielded_offer(&self) -> bool {
         self.shielded_receive.is_some()
             || self.shielded_relay.is_some()
+            || self.shielded_immediate_change.is_some()
             || self.wallet_shielded_receive.is_some()
             || self.wallet_shielded_mint.is_some()
             || self.shielded_transfer.is_some()
@@ -1520,6 +1522,7 @@ impl<'a> DevelopmentFunding<'a> {
             rng: RefCell::new(Some(rng)),
             shielded_receive: None,
             shielded_relay: None,
+            shielded_immediate_change: None,
             wallet_shielded_receive: None,
             wallet_shielded_mint: None,
             shielded_transfer: None,
@@ -1591,6 +1594,25 @@ impl crate::client::FundingAdapter for DevelopmentFunding<'_> {
                     relay.randomness,
                     &relay.mint,
                     relay.domain,
+                    &policy.network_id,
+                    &snapshot.state.parameters,
+                    self.material,
+                    self.parameters,
+                    snapshot.block.tblock,
+                    self.policy,
+                    rng,
+                )
+                .await
+        } else if let Some(immediate_change) = &self.shielded_immediate_change {
+            immediate_change.check_booking(snapshot)?;
+            wallet
+                .fund_shielded_immediate_change(
+                    contract,
+                    immediate_change.offer.clone(),
+                    immediate_change.randomness,
+                    &immediate_change.mint,
+                    immediate_change.domain,
+                    immediate_change.recipient,
                     &policy.network_id,
                     &snapshot.state.parameters,
                     self.material,

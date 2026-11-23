@@ -1,0 +1,15 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit splitImmediateShielded(
+  coin: ShieldedCoinInfo,
+  recipient: ZswapCoinPublicKey,
+  amount: Uint<128>
+): ShieldedSendResult {
+  receiveShielded(disclose(coin));
+  return sendImmediateShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient)),
+    disclose(amount)
+  );
+}

@@ -11,7 +11,7 @@ use crate::{
 use base_crypto::hash::HashOutput;
 #[cfg(feature = "localnet")]
 use coin_structure::{
-    coin::Info,
+    coin::{Info, PublicKey},
     transfer::{Recipient, SenderEvidence},
 };
 use ledger::{
@@ -464,6 +464,104 @@ pub(crate) fn shielded_relay_shape_valid(
         && delta.value == -(RELAY_AMOUNT as i128)
 }
 
+/// Bind one same-call mint split to the exact transient and outputs booked by the host.
+#[cfg(feature = "localnet")]
+pub(crate) fn shielded_immediate_change_shape_valid(
+    contract: &ProvedNativeIntent,
+    offer: &zswap::Offer<transient_crypto::proofs::Proof, Db>,
+    mint: &Info,
+    mint_domain: HashOutput,
+    recipient: PublicKey,
+) -> bool {
+    const MINT_AMOUNT: u128 = 5;
+    const USER_AMOUNT: u128 = 2;
+    const NONCE_EVOLUTION_DOMAIN: &[u8] = b"midnight:kernel:nonce_evolve";
+    const CHANGE_NONCE_EVOLUTION_DOMAIN: &[u8] = b"midnight:kernel:nonce_evolve/2";
+
+    let Some(ContractAction::Call(call)) = contract.actions.get(0) else {
+        return false;
+    };
+    let Some(transcript) = call.guaranteed_transcript.as_deref() else {
+        return false;
+    };
+    if contract.actions.len() != 1
+        || call.fallible_transcript.is_some()
+        || mint.value != MINT_AMOUNT
+        || mint.type_ != call.address.custom_shielded_token_type(mint_domain)
+        || !offer.inputs.is_empty()
+        || offer.outputs.len() != 2
+        || offer.transient.len() != 1
+        || offer.deltas.len() != 1
+    {
+        return false;
+    }
+
+    let Some(transient) = offer.transient.iter_deref().next() else {
+        return false;
+    };
+    let Some(delta) = offer.deltas.iter_deref().next() else {
+        return false;
+    };
+
+    let change_amount = MINT_AMOUNT - USER_AMOUNT;
+    let user_coin = mint.evolve_from(NONCE_EVOLUTION_DOMAIN, USER_AMOUNT, mint.type_);
+    let change_coin =
+        mint.evolve_from(CHANGE_NONCE_EVOLUTION_DOMAIN, change_amount, mint.type_);
+    let transient_commitment = mint.commitment(&Recipient::Contract(call.address));
+    let transient_nullifier = mint.nullifier(&SenderEvidence::Contract(call.address));
+    let user_commitment = user_coin.commitment(&Recipient::User(recipient));
+    let change_commitment = change_coin.commitment(&Recipient::Contract(call.address));
+    if user_commitment == change_commitment {
+        return false;
+    }
+    let Some(user_output) = offer.outputs.iter_deref().find(|output| {
+        output.coin_com == user_commitment
+            && output.contract_address.is_none()
+            && output.ciphertext.is_some()
+    }) else {
+        return false;
+    };
+    let Some(change_output) = offer.outputs.iter_deref().find(|output| {
+        output.coin_com == change_commitment
+            && output.contract_address.as_deref() == Some(&call.address)
+            && output.ciphertext.is_none()
+    }) else {
+        return false;
+    };
+    let effects = &transcript.effects;
+
+    effects.claimed_contract_calls.size() == 0
+        && no_unshielded_effects(effects)
+        && effects.claimed_nullifiers.size() == 1
+        && effects.claimed_nullifiers.member(&transient_nullifier)
+        && effects.claimed_shielded_receives.size() == 2
+        && effects.claimed_shielded_receives.member(&transient_commitment)
+        && effects.claimed_shielded_receives.member(&change_commitment)
+        && effects.claimed_shielded_spends.size() == 2
+        && effects.claimed_shielded_spends.member(&user_commitment)
+        && effects.claimed_shielded_spends.member(&change_commitment)
+        && effects.shielded_mints.size() == 1
+        && effects
+            .shielded_mints
+            .get(&mint_domain)
+            .is_some_and(|amount| *amount == MINT_AMOUNT as u64)
+        && transient.coin_com == transient_commitment
+        && transient.nullifier == transient_nullifier
+        && transient.contract_address.as_deref() == Some(&call.address)
+        && transient.ciphertext.is_none()
+        && transient.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
+        && user_output.coin_com == user_commitment
+        && user_output.contract_address.is_none()
+        && user_output.ciphertext.is_some()
+        && user_output.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
+        && change_output.coin_com == change_commitment
+        && change_output.contract_address.as_deref() == Some(&call.address)
+        && change_output.ciphertext.is_none()
+        && change_output.segment() == Some(ledger::structure::GUARANTEED_SEGMENT)
+        && delta.token_type == mint.type_
+        && delta.value == -(MINT_AMOUNT as i128)
+}
+
 /// Bind the proved merge effects to the precise guaranteed offer that the host booked.
 #[cfg(feature = "localnet")]
 pub(crate) fn shielded_merge_shape_valid(
@@ -781,6 +879,40 @@ impl BoundTransaction {
     ) -> Result<Self> {
         require(
             shielded_relay_shape_valid(contract, expected_offer, relay_mint, mint_domain),
+            Error::Funding,
+        )?;
+        let expected_offer = body(&Some(storage::arena::Sp::new(expected_offer.clone())))?;
+        Self::prepare_inner(
+            contract,
+            policy,
+            chain,
+            funding,
+            signer,
+            ContractFunding::Shielded(expected_offer),
+        )
+        .await
+    }
+
+    #[cfg(feature = "localnet")]
+    pub(crate) async fn prepare_shielded_immediate_change(
+        contract: &ProvedNativeIntent,
+        expected_offer: &zswap::Offer<transient_crypto::proofs::Proof, Db>,
+        mint: &Info,
+        mint_domain: HashOutput,
+        recipient: PublicKey,
+        policy: NetworkPolicy,
+        chain: &impl ChainAdapter,
+        funding: &impl FundingAdapter,
+        signer: &impl SigningAdapter,
+    ) -> Result<Self> {
+        require(
+            shielded_immediate_change_shape_valid(
+                contract,
+                expected_offer,
+                mint,
+                mint_domain,
+                recipient,
+            ),
             Error::Funding,
         )?;
         let expected_offer = body(&Some(storage::arena::Sp::new(expected_offer.clone())))?;

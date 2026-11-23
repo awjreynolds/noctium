@@ -226,6 +226,114 @@ impl BookedTransfer {
     }
 }
 
+/// One same-call transient split booked against a single finalized snapshot.
+pub(super) struct BookedImmediateChange {
+    pub(super) offer: Offer<Proof, Db>,
+    pub(super) randomness: PedersenRandomness,
+    pub(super) mint: Info,
+    pub(super) domain: HashOutput,
+    address: ContractAddress,
+    current_state: Vec<u8>,
+    send_amount: u128,
+    pub(super) recipient: PublicKey,
+    transient_commitment: Commitment,
+    transient_index: u64,
+    transient_nullifier: Nullifier,
+    user_commitment: Commitment,
+    user_index: u64,
+    change_commitment: Commitment,
+    change_index: u64,
+}
+
+impl BookedImmediateChange {
+    pub(super) fn check_booking(
+        &self,
+        snapshot: &Snapshot,
+    ) -> std::result::Result<(), HostFailure> {
+        let (_, indices) = snapshot
+            .state
+            .zswap
+            .try_apply(&self.offer, None)
+            .map_err(|_| HostFailure)?;
+        let contract = snapshot
+            .state
+            .contract
+            .get(&self.address)
+            .ok_or(HostFailure)?;
+        let mut state_bytes = Vec::new();
+        serialize::tagged_serialize(&*contract, &mut state_bytes).map_err(|_| HostFailure)?;
+
+        let transient = self.offer.transient.get(0).ok_or(HostFailure)?;
+        let user_output = self.offer.outputs.get(0).ok_or(HostFailure)?;
+        let change_output = self.offer.outputs.get(1).ok_or(HostFailure)?;
+        let user_coin = self.mint.evolve_from(
+            b"midnight:kernel:nonce_evolve",
+            self.send_amount,
+            self.mint.type_,
+        );
+        let change_amount = self.mint.value.checked_sub(self.send_amount).ok_or(HostFailure)?;
+        let change_coin = self.mint.evolve_from(
+            b"midnight:kernel:nonce_evolve/2",
+            change_amount,
+            self.mint.type_,
+        );
+        let expected_transient_commitment =
+            self.mint.commitment(&Recipient::Contract(self.address));
+        let expected_transient_nullifier =
+            self.mint.nullifier(&SenderEvidence::Contract(self.address));
+        let expected_user_commitment = user_coin.commitment(&Recipient::User(self.recipient));
+        let expected_change_commitment =
+            change_coin.commitment(&Recipient::Contract(self.address));
+
+        if state_bytes != self.current_state
+            || self.mint.value != 5
+            || self.mint.type_ != self.address.custom_shielded_token_type(self.domain)
+            || self.send_amount != 2
+            || change_amount != 3
+            || !self.offer.inputs.is_empty()
+            || self.offer.outputs.len() != 2
+            || self.offer.transient.len() != 1
+            || indices.size() != 3
+            || expected_transient_commitment != self.transient_commitment
+            || expected_transient_nullifier != self.transient_nullifier
+            || expected_user_commitment != self.user_commitment
+            || expected_change_commitment != self.change_commitment
+            || transient.coin_com != self.transient_commitment
+            || transient.nullifier != self.transient_nullifier
+            || transient.contract_address.as_deref() != Some(&self.address)
+            || transient.ciphertext.is_some()
+            || transient.segment() != Some(GUARANTEED_SEGMENT)
+            || snapshot
+                .state
+                .zswap
+                .nullifiers
+                .contains_key(&self.transient_nullifier)
+            || snapshot
+                .state
+                .zswap
+                .coin_coms_set
+                .contains_key(&self.transient_commitment)
+            || user_output.coin_com != self.user_commitment
+            || user_output.contract_address.is_some()
+            || user_output.ciphertext.is_none()
+            || user_output.segment() != Some(GUARANTEED_SEGMENT)
+            || change_output.coin_com != self.change_commitment
+            || change_output.contract_address.as_deref() != Some(&self.address)
+            || change_output.ciphertext.is_some()
+            || change_output.segment() != Some(GUARANTEED_SEGMENT)
+            || snapshot.state.zswap.coin_coms_set.contains_key(&self.user_commitment)
+            || snapshot.state.zswap.coin_coms_set.contains_key(&self.change_commitment)
+            || self.user_commitment == self.change_commitment
+            || indices.get(&self.transient_commitment).as_deref() != Some(&self.transient_index)
+            || indices.get(&self.user_commitment).as_deref() != Some(&self.user_index)
+            || indices.get(&self.change_commitment).as_deref() != Some(&self.change_index)
+        {
+            return Err(HostFailure);
+        }
+        Ok(())
+    }
+}
+
 impl DevelopmentFunding<'_> {
     /// Bind a single contract-owned Map coin to one encrypted user output.
     pub async fn bind_shielded_map_spend(
@@ -348,6 +456,162 @@ impl DevelopmentFunding<'_> {
         let bound = BoundTransaction::prepare_shielded_transfer(
             proved.native(),
             expected,
+            policy,
+            self.node,
+            &self,
+            signer,
+        )
+        .await
+        .map_err(|_| Error::State)?;
+        check(
+            bound.expected_state() == binding.expected_state(),
+            Error::State,
+        )?;
+        Ok(bound)
+    }
+
+    /// Bind one same-call contract transient into an encrypted user send and Map change.
+    pub async fn bind_shielded_immediate_change(
+        mut self,
+        target: &ContractOperationTarget,
+        current: &CurrentStateContext,
+        inputs: BTreeMap<String, Value>,
+        recipient_encryption_key: encryption::PublicKey,
+        parameters: &TrustedParameters,
+        cache: &ProofCache,
+        signer: &impl SigningAdapter,
+        mut rng: StdRng,
+    ) -> Result<BoundTransaction> {
+        let policy = self.node.policy.clone();
+        check(policy.genesis == DEVELOPMENT_GENESIS, Error::Policy)?;
+        check(inputs.len() == 5, Error::State)?;
+        let domain = read_bytes32(&inputs, "domain")?;
+        let nonce = Nonce(read_bytes32(&inputs, "nonce")?);
+        let color = read_bytes32(&inputs, "color")?;
+        let recipient = PublicKey(read_bytes32(&inputs, "recipient")?);
+        let send_amount = read_uint128(&inputs, "sendAmount")?;
+        let bytes = hex::decode(
+            target
+                .contract_address()
+                .strip_prefix("0x")
+                .unwrap_or(target.contract_address()),
+        )
+        .map_err(|_| Error::State)?;
+        let address = ContractAddress(HashOutput(bytes.try_into().map_err(|_| Error::State)?));
+        let mint_type = address.custom_shielded_token_type(domain);
+        check(color == mint_type.0, Error::State)?;
+        let mint = Info {
+            nonce,
+            type_: mint_type,
+            value: 5,
+        };
+        check(send_amount == 2, Error::State)?;
+        let change_amount = mint.value.checked_sub(send_amount).ok_or(Error::State)?;
+
+        let snapshot = self.node.sync()?;
+        snapshot.validate(&policy).map_err(|_| Error::Network)?;
+        check(policy == self.node.policy, Error::Policy)?;
+        let current_contract = snapshot.state.contract.get(&address).ok_or(Error::State)?;
+        let current_state = tagged_state_bytes(&current_contract)?;
+
+        let zswap = &snapshot.state.zswap;
+        let transient = stage_contract_owned_transient(address, &mint, &mut rng)?;
+        let transient_commitment = transient.coin_com;
+        let transient_nullifier = transient.nullifier;
+        let user_coin = mint.evolve_from(
+            b"midnight:kernel:nonce_evolve",
+            send_amount,
+            mint.type_,
+        );
+        let user_output = Output::<_, Db>::new(
+            &mut rng,
+            &user_coin,
+            Some(GUARANTEED_SEGMENT),
+            &recipient,
+            Some(recipient_encryption_key),
+        )
+        .map_err(|_| Error::State)?;
+        let user_commitment = user_output.coin_com;
+        let change_coin = mint.evolve_from(
+            b"midnight:kernel:nonce_evolve/2",
+            change_amount,
+            mint.type_,
+        );
+        let StagedContractOutput {
+            output: change_output,
+            commitment: change_commitment,
+        } = stage_contract_owned_output(address, &change_coin, &mut rng)?;
+        check(user_commitment != change_commitment, Error::State)?;
+        let offer = Offer::new(vec![], vec![user_output, change_output], vec![transient])
+            .ok_or(Error::State)?;
+        let (_, indices) = zswap.try_apply(&offer, None).map_err(|_| Error::State)?;
+        check(indices.size() == 3, Error::State)?;
+        let transient_index = *indices.get(&transient_commitment).ok_or(Error::State)?;
+        let user_index = *indices.get(&user_commitment).ok_or(Error::State)?;
+        let change_index = *indices.get(&change_commitment).ok_or(Error::State)?;
+
+        let prepared = PreparedProof::from_contract_witness_inputs_with_com_indices(
+            target, current, inputs, indices, &mut rng,
+        )
+        .map_err(|_| Error::Proof)?;
+        let proved = prepared
+            .prove(
+                &LocalProver::new(rng.split()),
+                parameters,
+                1_048_576,
+                pending(),
+            )
+            .await
+            .map_err(|_| Error::Proof)?;
+        let binding = proved.contract_binding().ok_or(Error::State)?;
+        check(
+            binding.current_state_bytes() == Some(current_state.as_slice()),
+            Error::State,
+        )?;
+
+        let mut provider = cache.provider.clone();
+        provider.expected_data = zswap::ZSWAP_EXPECTED_FILES.to_vec();
+        let resolver = ZswapResolver(provider);
+        let randomness = offer.binding_randomness();
+        let (_, offer) = offer
+            .prove(
+                builtin_zkir::LocalProvingProvider {
+                    rng: rng.split(),
+                    resolver: &resolver,
+                    params: &resolver,
+                },
+                GUARANTEED_SEGMENT,
+            )
+            .await
+            .map_err(|_| Error::Proof)?;
+
+        self.shielded_immediate_change = Some(BookedImmediateChange {
+            offer,
+            randomness,
+            mint,
+            domain,
+            address,
+            current_state,
+            send_amount,
+            recipient,
+            transient_commitment,
+            transient_index,
+            transient_nullifier,
+            user_commitment,
+            user_index,
+            change_commitment,
+            change_index,
+        });
+        let booked = self
+            .shielded_immediate_change
+            .as_ref()
+            .ok_or(Error::State)?;
+        let bound = BoundTransaction::prepare_shielded_immediate_change(
+            proved.native(),
+            &booked.offer,
+            &booked.mint,
+            booked.domain,
+            booked.recipient,
             policy,
             self.node,
             &self,
@@ -618,6 +882,9 @@ mod tests {
     };
     use transient_crypto::proofs::Zkir;
     use zswap::keys::SecretKeys;
+
+    #[path = "shielded_transfer/immediate_change_tests.rs"]
+    mod immediate_change_tests;
 
     #[test]
     fn staged_contract_coin_witnesses_match_live_native_booking() {
