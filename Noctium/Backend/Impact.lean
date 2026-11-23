@@ -197,6 +197,7 @@ inductive Op where
   | mapRemoveRecord (slot : Nat) (schema : Lean.Json) (keys : List Aligned)
       (values : List LedgerFieldExpr)
   | claimContractCall (address entryPointHash : Expr (.bytes 32)) (commitment : Scalar)
+  | claimShielded (kind : ShieldedClaimKind) (digest : Expr (.bytes 32))
   | receiveShieldedToMap (slot : Nat) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
   | insertShieldedCoinMap (slot : Nat) (key nonce color : Expr (.bytes 32))
@@ -910,6 +911,7 @@ def Op.fields : Op → List Scalar
         ledgerFieldSequence values ++ [.native 0x19, .native (0x91 + keys.length)]
   | .claimContractCall address entryPointHash commitment =>
       (claimContractCallFieldGroups address entryPointHash commitment).flatten
+  | .claimShielded kind digest => (shieldedClaimFieldGroups kind.slot digest).flatten
   | .insertShieldedCoinSet slot nonce color amount commitment keys =>
       (shieldedCoinSetFieldGroups slot keys nonce color amount commitment).flatten
   | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment keys =>
@@ -1042,6 +1044,7 @@ def Op.fieldGroups : Op → List (List Scalar)
       ]
   | .claimContractCall address entryPointHash commitment =>
       claimContractCallFieldGroups address entryPointHash commitment
+  | .claimShielded kind digest => shieldedClaimFieldGroups kind.slot digest
   | .insertShieldedCoinSet slot nonce color amount commitment keys =>
       shieldedCoinSetFieldGroups slot keys nonce color amount commitment
   | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment keys =>
@@ -1997,6 +2000,8 @@ def appendEffect (state : List StateDecl) (effect : Effect)
   | .claimContractCall address entryPointHash commitment =>
     pure {plan with operations := plan.operations ++ [
       .claimContractCall address entryPointHash commitment]}
+  | .claimShielded kind digest =>
+    pure {plan with operations := plan.operations ++ [.claimShielded kind digest]}
   | .receiveShieldedToMap stateName nonce color amount selfAddress => do
     let slot ← stateSlot state stateName
     if slot > 255 then throw "shielded coin map index exceeds native u8 range"
@@ -2343,6 +2348,9 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
         (totalizeActivityValue condition avoid address)
         (totalizeActivityValue condition avoid entryPointHash)
         (totalizeActivityValue condition avoid commitment))
+    | some condition, .claimShielded kind digest =>
+      pure (.claimShielded kind
+        (totalizeActivityValue condition (expressionNames digest) digest))
     | some condition, .mintShielded domain amount =>
       pure (.mintShielded
         (totalizeActivityValue condition (expressionNames domain) domain)
@@ -2584,7 +2592,8 @@ private def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       some condition, .merkleTreeResetHistory .. |
       some condition, .merkleTreeInsertHashAt .. | some condition, .merkleTreeInsertHashIndexAt .. |
       some condition, .merkleTreeResetAt .. | some condition, .merkleTreeResetHistoryAt .. |
-      some condition, .claimContractCall .. | some condition, .mintShielded .. |
+      some condition, .claimContractCall .. | some condition, .claimShielded .. |
+      some condition, .mintShielded .. |
       some condition, .relayShieldedImmediate .. |
       some condition, .mintUnshielded .. | some condition, .incUnshieldedInputs .. |
       some condition, .incUnshieldedOutputs .. | some condition, .claimUnshieldedCoinSpend .. |
@@ -2944,6 +2953,8 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
   | .claimContractCall address entryPointHash commitment =>
     plan := {plan with operations := plan.operations ++ [
       .claimContractCall address entryPointHash commitment]}
+  | .claimShielded kind digest =>
+    plan := {plan with operations := plan.operations ++ [.claimShielded kind digest]}
   | .receiveShieldedToMap stateName nonce color amount selfAddress => do
     let slot ← stateSlot state stateName
     if slot > 255 then throw "shielded coin map index exceeds native u8 range"
@@ -3545,6 +3556,7 @@ def Op.toJson (ctx : EvalContext) (env : EvalEnv) : Op → Except String Lean.Js
         (if keys.isEmpty then [] else [("keys", Lean.Json.arr keys.toArray)]) ++
         [("values", Lean.toJson values)]))])
   | .claimContractCall .. => throw "claimContractCall uses its dedicated native-plan operation JSON"
+  | .claimShielded .. => throw "claimShielded uses its dedicated native-plan operation JSON"
   | .receiveShieldedToMap .. => throw "shielded coin receive uses its dedicated native-plan operation JSON"
   | .insertShieldedCoinMap .. => throw "qualified shielded coin Map insertion uses its dedicated native-plan operation JSON"
   | .insertShieldedCoinSet .. => throw "qualified shielded coin Set insertion uses its dedicated native-plan operation JSON"

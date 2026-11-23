@@ -1056,6 +1056,7 @@ structure LedgerState where
   maps : List (String × List (Value × Value)) := []
   trees : List (String × LedgerValue) := []
   events : List (EventKind × List Nat) := []
+  shieldedClaims : List (ShieldedClaimKind × List Nat) := []
   shieldedMints : List (List Nat × Nat) := []
   unshieldedMints : List (List Nat × Nat) := []
   unshieldedInputs : List (TokenEffectKey × Nat) := []
@@ -1094,6 +1095,12 @@ private def mintShielded (ctx : EvalContext) (env : EvalEnv) (state : LedgerStat
   let mints ← accumulateMintAmount state.shieldedMints
     (← domain.eval ctx env) (← amount.eval ctx env)
   pure {state with shieldedMints := mints}
+
+private def claimShielded (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
+    (kind : ShieldedClaimKind) (digest : Expr (.bytes 32)) : Except String LedgerState := do
+  let claim := (kind, ← digest.eval ctx env)
+  pure (if state.shieldedClaims.contains claim then state
+    else {state with shieldedClaims := state.shieldedClaims ++ [claim]})
 
 private def mintUnshielded (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
     (domain : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 64 - 1))) :
@@ -1411,6 +1418,8 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       if !(← condition.eval ctx env) then throw "state transition guard failed"
     | .claimContractCall .. =>
       throw "reference evaluator does not execute cross-contract claims"
+    | .claimShielded kind digest =>
+      next ← claimShielded ctx env next kind digest
     | .receiveShieldedToMap .. =>
       throw "reference evaluator cannot determine the native shielded receive index"
     | .insertShieldedCoinMap .. | .insertShieldedCoinSet .. | .insertShieldedCoinSetTo .. =>
@@ -1798,7 +1807,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .merkleTreeIsFullAt .. | .merkleTreeCheckRootAt .. |
             .merkleTreeInsertHashAt .. | .merkleTreeInsertHashIndexAt .. |
             .merkleTreeResetAt .. | .merkleTreeResetHistoryAt .. |
-            .claimContractCall .. | .mintShielded .. | .mintUnshielded .. |
+            .claimContractCall .. | .claimShielded .. | .mintShielded .. | .mintUnshielded .. |
             .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
             .requireContractCaller .. | .checkpoint | .blockTimeCompare .. |
             .emitEvent .. | .readCaller .. => pure ()
@@ -1837,6 +1846,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           if !(← condition.eval ctx env) then throw "state transition guard failed"
         | .claimContractCall .. =>
           throw "reference evaluator does not execute cross-contract claims"
+        | .claimShielded kind digest =>
+          next ← claimShielded ctx env next kind digest
         | .receiveShieldedToMap .. =>
           throw "reference evaluator cannot determine the native shielded receive index"
         | .insertShieldedCoinMap .. | .insertShieldedCoinSet .. | .insertShieldedCoinSetTo .. =>
@@ -2114,7 +2125,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             | .compare .. => Value.bool false
           env := (destination, value) :: env
         | .writeCell .. | .writeMap .. | .writeRecordMap .. | .writeRecordMapComposite .. |
-            .require .. | .claimContractCall .. |
+            .require .. | .claimContractCall .. | .claimShielded .. |
             .requireContractCaller .. | .checkpoint | .mintShielded .. |
             .mintUnshielded .. | .incUnshieldedInputs .. | .incUnshieldedOutputs .. |
             .claimUnshieldedCoinSpend .. | .emitEvent .. |
