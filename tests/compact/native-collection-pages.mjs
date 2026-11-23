@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [generatedDirectory] = process.argv.slice(2);
 const runtimeDirectory = process.env.NOCTIUM_COMPACT_RUNTIME_DIR;
 assert.ok(generatedDirectory && runtimeDirectory, 'pass the compiler output and set NOCTIUM_COMPACT_RUNTIME_DIR');
+const runtimeLink = resolve(generatedDirectory, 'node_modules/@midnight-ntwrk/compact-runtime');
+mkdirSync(resolve(runtimeLink, '..'), { recursive: true });
+if (!existsSync(runtimeLink)) symlinkSync(resolve(runtimeDirectory), runtimeLink, 'dir');
 const { createCircuitContext, createConstructorContext, dummyContractAddress } = await import(
   pathToFileURL(resolve(runtimeDirectory, 'dist/index.js')).href,
 );
@@ -14,7 +18,7 @@ const { Contract, ledger } = await import(
 const contract = new Contract({});
 const walletKey = '00'.repeat(32);
 const { currentContractState } = await contract.initialState(createConstructorContext(null, walletKey));
-const call = async (state, entrypoint, ...args) => {
+const callWithResult = async (state, entrypoint, ...args) => {
   const context = createCircuitContext({
     circuitId: entrypoint,
     contractAddress: dummyContractAddress(),
@@ -23,8 +27,9 @@ const call = async (state, entrypoint, ...args) => {
     privateState: null,
   });
   const result = await contract.circuits[entrypoint](context, ...args);
-  return result.context.callContext.currentQueryContext.state;
+  return [result.result, result.context.callContext.currentQueryContext.state];
 };
+const call = async (...args) => (await callWithResult(...args))[1];
 
 const flags = [[10n, true], [2n, false], [1n, true]];
 const members = [9, 1, 4];
@@ -73,4 +78,29 @@ const recordState = await call(currentContractState.data, 'seedRecords', owner, 
 const records = ledger(recordState);
 assert.deepEqual([...records.records], [[owner, mapped]]);
 assert.deepEqual([...records.recordList], [listed]);
+
+assert.deepEqual([...ledger(currentContractState.data).recordMembers], []);
+let recordMemberState = currentContractState.data;
+const memoTrue513 = { active: true, amount: 513n };
+const memoFalse513 = { active: false, amount: 513n };
+const memoTrue514 = { active: true, amount: 514n };
+const normalizedRecordMembers = (state) => [...ledger(state).recordMembers]
+  .map(({ active, amount }) => ({ active, amount }))
+  .sort((left, right) => Number(left.active) - Number(right.active) ||
+    (left.amount < right.amount ? -1 : left.amount > right.amount ? 1 : 0));
+for (const [memo, expectedSize] of [
+  [memoTrue513, 1n], [memoFalse513, 2n], [memoTrue514, 3n], [memoTrue513, 3n],
+]) {
+  const [result, next] = await callWithResult(
+    recordMemberState, 'updateRecordMember', memo.active, memo.amount, true, false,
+  );
+  assert.deepEqual(result, [true, expectedSize]);
+  recordMemberState = next;
+}
+assert.deepEqual(normalizedRecordMembers(recordMemberState), [memoFalse513, memoTrue513, memoTrue514]);
+const [removed, finalRecords] = await callWithResult(
+  recordMemberState, 'updateRecordMember', memoFalse513.active, memoFalse513.amount, false, true,
+);
+assert.deepEqual(removed, [false, 2n]);
+assert.deepEqual(normalizedRecordMembers(finalRecords), [memoTrue513, memoTrue514]);
 console.log('Compact 0.36.1 matched scalar and checked record collection contents');

@@ -15,8 +15,22 @@ struct Ciphertext4 {
   c2y: Field;
 }
 
+struct RecordMemo {
+  active: Boolean;
+  amount: Uint<16>;
+}
+
 export ledger records: Map<Bytes<32>, Ciphertext4>;
 export ledger recordList: List<Ciphertext4>;
+export ledger recordMembers: Set<RecordMemo>;
+
+export circuit updateRecordMember(active: Boolean, amount: Uint<16>, adding: Boolean,
+                                  removing: Boolean): [Boolean, Uint<64>] {
+  const memo = disclose(RecordMemo{active: disclose(active), amount: disclose(amount)});
+  if (disclose(adding)) { recordMembers.insert(memo); }
+  if (disclose(removing)) { recordMembers.remove(memo); }
+  return [recordMembers.member(memo), recordMembers.size()];
+}
 
 export circuit seedRecords(key: Bytes<32>, mapped: Ciphertext4, listed: Ciphertext4): [] {
   records.insert(disclose(key), disclose(mapped));
