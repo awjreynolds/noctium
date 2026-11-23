@@ -1960,10 +1960,12 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       return ← lowerFabDigest stx .keccak256 type value
     let operation ← match value.type with
       | .scalar (.bytes length) => pure (Noctium.Helpers.BytesOp.keccak256 length)
+      | .scalar .native => pure (Noctium.Helpers.BytesOp.fabDigest .keccak256
+          (.tuple [.scalar .native]) [.native])
       | .scalar (.foreign (.point .secp256k1)) => pure .keccak256Secp256k1Point
       | .scalar (.foreign (.point _)) =>
         throwErrorAt stx "keccak256 point overload supports Secp256k1Point"
-      | _ => throwErrorAt stx "keccak256 requires fixed bytes, a checked FAB payload, or Secp256k1Point"
+      | _ => throwErrorAt stx "keccak256 requires fixed bytes, Native, a checked FAB payload, or Secp256k1Point"
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
       | .ok signature => pure signature

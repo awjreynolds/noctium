@@ -4826,7 +4826,7 @@
       "layer": "standard-library",
       "surface": "keccak256",
       "noctiumStatus": "subset",
-      "notes": "Fixed bytes, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Broader layout equivalence remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
+      "notes": "Fixed bytes, scalar Native, typed Secp256k1Point and checked FAB composites lower to Keccak-256. For the selected generator, Compact 0.36.1 and native ZKIR 3.2.1 agree on the exact 96-byte preimage and digest. The named Bytes32/Bool/UInt16/Native record matches two Compact vectors and rejects a changed return commitment and UInt16 overflow. A Rust witness session also matches a pinned digest with one record reply. Both Native source routes match pinned Compact on zero, one and the largest canonical Field using the 32-byte little-endian preimage. Both reject the Field modulus at input. Broader layout equivalence remains open. The native runtime matches the reference digest for a 33-lane UInt16 vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4843,6 +4843,8 @@
         "tests/WideFabVectors.lean",
         "tests/ByteHashes.lean",
         "runtime/tests/byte_hashes.rs",
+        "tests/FieldKeccak.lean",
+        "runtime/tests/field_keccak.rs",
         "tests/TypedPointKeccak.lean",
         "tests/compact/TypedPointKeccak.compact",
         "tests/compact/typed-point-keccak.mjs",
