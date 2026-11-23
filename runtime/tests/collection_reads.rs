@@ -6,6 +6,7 @@ use noctium_runtime::{
     Db, Plan, artifacts, check, create_state,
     collection_ffi::{
         noctium_ledger_collection_page, noctium_ledger_list_head, noctium_ledger_map_lookup,
+        noctium_ledger_set_member,
     },
     field_value,
     native_ffi::{
@@ -214,6 +215,91 @@ impl Snapshot {
         status
     }
 
+    fn member(&self, name: &str, key: Value) -> Value {
+        self.member_at(name, Vec::new(), key)
+    }
+
+    fn member_at(&self, name: &str, keys: Vec<Value>, key: Value) -> Value {
+        let request = serde_json::to_vec(&json!({
+            "abiVersion": 1,
+            "planSha256": artifacts::digest(&self.plan),
+            "stateSha256": artifacts::digest(&self.state),
+            "name": name,
+            "keys": keys,
+            "key": key,
+        }))
+        .unwrap();
+        let mut token = 0;
+        unsafe {
+            assert_eq!(
+                noctium_ledger_set_member(
+                    request.as_ptr(),
+                    request.len(),
+                    self.plan.as_ptr(),
+                    self.plan.len(),
+                    self.state.as_ptr(),
+                    self.state.len(),
+                    &mut token,
+                ),
+                OK
+            );
+            let mut length = 0;
+            assert_eq!(noctium_native_result_length(token, &mut length), OK);
+            let mut output = vec![0; length];
+            let mut written = 0;
+            assert_eq!(
+                noctium_native_result_copy(token, output.as_mut_ptr(), length, &mut written),
+                OK
+            );
+            assert_eq!(written, length);
+            assert_eq!(noctium_native_result_free(token), OK);
+            serde_json::from_slice(&output).unwrap()
+        }
+    }
+
+    fn member_status_at(
+        &self,
+        name: &str,
+        keys: Vec<Value>,
+        key: Option<Value>,
+        plan_sha256: &str,
+        state_sha256: &str,
+    ) -> i32 {
+        let mut request = json!({
+            "abiVersion": 1,
+            "planSha256": plan_sha256,
+            "stateSha256": state_sha256,
+            "name": name,
+            "keys": keys,
+        });
+        if let Some(key) = key {
+            request["key"] = key;
+        }
+        self.member_status(request)
+    }
+
+    fn member_status(&self, request: Value) -> i32 {
+        let request = serde_json::to_vec(&request).unwrap();
+        let mut token = 0;
+        let status = unsafe {
+            noctium_ledger_set_member(
+                request.as_ptr(),
+                request.len(),
+                self.plan.as_ptr(),
+                self.plan.len(),
+                self.state.as_ptr(),
+                self.state.len(),
+                &mut token,
+            )
+        };
+        if status == OK {
+            assert_eq!(noctium_native_result_free(token), OK);
+        } else {
+            assert_eq!(token, 0);
+        }
+        status
+    }
+
     fn head_at(&self, name: &str, keys: Vec<Value>) -> Value {
         self.head_with_digests(
             name,
@@ -272,6 +358,10 @@ impl Snapshot {
 
 fn bytes32_key(value: u8) -> Value {
     json!({"type":"Bytes<32>","value":{"kind":"bytes","values":vec![value;32]}})
+}
+
+fn bytes32_member_key(value: u8) -> Value {
+    json!({"kind":"bytes","values":vec![value;32]})
 }
 
 fn native_key(value: u64) -> Value {
@@ -333,6 +423,20 @@ fn corrupt_map_lookup_snapshot() -> Snapshot {
             "kind":{"map":["Native","Bool"]}
         })]),
         ChargedState::new(StateValue::Array(vec![StateValue::Map(map)].into())),
+    )
+}
+
+fn corrupt_set_member_snapshot() -> Snapshot {
+    let set = HashMap::new().insert(
+        AlignedValue::from([1u8; 32]),
+        StateValue::Cell(Sp::new(field_value(Fr::from(1u64)))),
+    );
+    Snapshot::new(
+        plan(vec![json!({
+            "name":"members",
+            "kind":{"tree":{"set":"Bytes<32>"}}
+        })]),
+        ChargedState::new(StateValue::Array(vec![StateValue::Map(set)].into())),
     )
 }
 
@@ -746,6 +850,167 @@ fn map_lookup_returns_typed_root_values_and_null_for_missing_keys() {
 }
 
 #[test]
+fn set_member_reports_root_membership_and_rejects_invalid_requests() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = map_set_snapshot(false);
+
+    assert_eq!(
+        snapshot.member("members", bytes32_member_key(1)),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        snapshot.member("members", bytes32_member_key(2)),
+        json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
+
+    let plan_digest = artifacts::digest(&snapshot.plan);
+    let state_digest = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.member_status_at(
+            "members",
+            Vec::new(),
+            Some(bytes32_member_key(1)),
+            &plan_digest,
+            &"0".repeat(64),
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.member_status_at(
+            "members",
+            Vec::new(),
+            Some(bytes32_member_key(1)),
+            &"0".repeat(64),
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.member_status_at(
+            "members",
+            Vec::new(),
+            Some(json!({"kind":"bytes","values":vec![1u8;31]})),
+            &plan_digest,
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.member_status_at(
+            "members",
+            Vec::new(),
+            None,
+            &plan_digest,
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.member_status_at(
+            "flags",
+            Vec::new(),
+            Some(json!("1")),
+            &plan_digest,
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+
+    let corrupt = corrupt_set_member_snapshot();
+    assert_eq!(
+        corrupt.member_status_at(
+            "members",
+            Vec::new(),
+            Some(bytes32_member_key(1)),
+            &artifacts::digest(&corrupt.plan),
+            &artifacts::digest(&corrupt.state),
+        ),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn set_member_decodes_checked_record_keys() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = flat_record_set_snapshot_from_rows(&[(true, 513)]);
+
+    assert_eq!(
+        snapshot.member(
+            "memoSet",
+            json!({"active":true,"amount":"513"}),
+        ),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        snapshot.member(
+            "memoSet",
+            json!({"active":false,"amount":"513"}),
+        ),
+        json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
+
+    let digest_plan = artifacts::digest(&snapshot.plan);
+    let digest_state = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.member_status_at(
+            "memoSet",
+            Vec::new(),
+            Some(json!({"active":true,"amount":"65536"})),
+            &digest_plan,
+            &digest_state,
+        ),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn nested_set_member_uses_the_selected_parent() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = nested_collection_snapshot();
+    let owner_path = vec![bytes32_key(7)];
+
+    assert_eq!(
+        snapshot.member_at(
+            "nestedMembers",
+            owner_path.clone(),
+            bytes32_member_key(1),
+        ),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        snapshot.member_at(
+            "nestedMembers",
+            owner_path.clone(),
+            bytes32_member_key(2),
+        ),
+        json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
+
+    let plan_digest = artifacts::digest(&snapshot.plan);
+    let state_digest = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.member_status_at(
+            "nestedMembers",
+            vec![bytes32_key(8)],
+            Some(bytes32_member_key(1)),
+            &plan_digest,
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.member_status_at(
+            "nestedMembers",
+            vec![native_key(7)],
+            Some(bytes32_member_key(1)),
+            &plan_digest,
+            &state_digest,
+        ),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn qualified_coin_set_pages_decode_records_and_validate_all_members() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let first = (qualified_coin_key(2, 5, 17), StateValue::Null);
@@ -778,6 +1043,15 @@ fn qualified_coin_set_pages_decode_records_and_validate_all_members() {
     );
     assert_eq!(reverse.page("coinSet", 0, 1), first_page);
     assert_eq!(reverse.page("coinSet", 1, 1), second_page);
+
+    assert_eq!(
+        snapshot.member("coinSet", qualified_coin_json(2, 5, 17)),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        snapshot.member("coinSet", qualified_coin_json(2, 5, 18)),
+        json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
 
     let malformed_key = qualified_coin_set_snapshot(vec![
         (qualified_coin_key(2, 5, 17), StateValue::Null),
@@ -1386,4 +1660,91 @@ fn nested_scalar_collection_pages_follow_typed_paths() {
         ),
         INVALID_ARGUMENT
     );
+}
+
+#[test]
+#[ignore = "requires fresh Lean outputs in NOCTIUM_SET_DIR and NOCTIUM_RECORD_SET_COLLECTIONS_DIR"]
+fn source_emitted_sets_support_native_and_checked_record_membership() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let native_dir = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_SET_DIR").expect("NativeSet Lean outputs"),
+    );
+    let native_plan_bytes = std::fs::read(native_dir.join("NativeSet.update.impact.json"))?;
+    let native_plan: Plan = serde_json::from_slice(&native_plan_bytes)?;
+    let native_circuit = IrSource::load(
+        std::fs::read(native_dir.join("NativeSet.update.zkir"))?.as_slice(),
+    )?;
+    let native_state = create_state(
+        &native_plan,
+        &BTreeMap::from([
+            ("registered".into(), json!([])),
+            ("groups".into(), json!([])),
+        ]),
+    )?;
+    let native_inputs = BTreeMap::from([
+        ("bucket".into(), json!("1")),
+        ("tag".into(), bytes32_member_key(7)),
+        ("adding".into(), json!(true)),
+        ("removing".into(), json!(false)),
+        ("clearing".into(), json!(false)),
+    ]);
+    let native_step = prepare(
+        &native_plan,
+        &native_inputs,
+        &native_state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(
+        check(&native_step, &native_circuit)?,
+        native_step.activity_schedule
+    );
+    let native = Snapshot::from_plan_bytes(native_plan_bytes, native_step.after.state);
+    assert_eq!(
+        native.member("registered", bytes32_member_key(7)),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        native.member_at("groups", vec![native_key(1)], bytes32_member_key(7)),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+
+    let record_dir = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_RECORD_SET_COLLECTIONS_DIR")
+            .expect("RecordSetCollections Lean outputs"),
+    );
+    let record_plan_bytes =
+        std::fs::read(record_dir.join("RecordSetCollections.update.impact.json"))?;
+    let record_plan: Plan = serde_json::from_slice(&record_plan_bytes)?;
+    let record_circuit = IrSource::load(
+        std::fs::read(record_dir.join("RecordSetCollections.update.zkir"))?.as_slice(),
+    )?;
+    let record_state = create_state(&record_plan, &BTreeMap::from([("memoSet".into(), json!([]))]))?;
+    let record_inputs = BTreeMap::from([
+        ("active".into(), json!(true)),
+        ("amount".into(), json!("513")),
+        ("adding".into(), json!(true)),
+        ("clear".into(), json!(false)),
+    ]);
+    let record_step = prepare(
+        &record_plan,
+        &record_inputs,
+        &record_state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(
+        check(&record_step, &record_circuit)?,
+        record_step.activity_schedule
+    );
+    let record = Snapshot::from_plan_bytes(record_plan_bytes, record_step.after.state);
+    assert_eq!(
+        record.member("memoSet", json!({"active":true,"amount":"513"})),
+        json!({"abiVersion":1,"kind":"setMember","member":true})
+    );
+    assert_eq!(
+        record.member("memoSet", json!({"active":false,"amount":"513"})),
+        json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
+    Ok(())
 }

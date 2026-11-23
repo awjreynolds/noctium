@@ -1090,3 +1090,73 @@ pub unsafe extern "C" fn noctium_ledger_map_lookup(
         Ok(())
     })
 }
+
+/// Check whether one key is present in a typed Set from an authenticated, canonical state snapshot.
+/// The request, plan, and snapshot pointers follow the same safety contract as
+/// `noctium_ledger_map_lookup`.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_set_member(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: MapLookupRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if request.keys.len() > MAX_KEYS {
+            return Err(LIMIT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
+
+        let (final_schema, selected) =
+            typed_state_path(&plan.state, &state.data, &request.name, &keys)
+                .map_err(|_| INVALID_ARGUMENT)?;
+        let Some(CollectionSchema::Set { key: key_schema }) = collection_schema(final_schema)?
+        else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let lookup_key = collection_map_key(&key_schema, &request.key)?;
+        let StateValue::Map(set) = &*selected else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let member = match set.get(&lookup_key) {
+            Some(value) if matches!(*value, StateValue::Null) => true,
+            Some(_) => return Err(INVALID_ARGUMENT),
+            None => false,
+        };
+        let result = json!({
+            "abiVersion": 1,
+            "kind": "setMember",
+            "member": member
+        });
+        let result =
+            native_ffi::service_public_bytes(serde_json::to_vec(&result).map_err(|_| INTERNAL)?)?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}

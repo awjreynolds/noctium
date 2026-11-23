@@ -2537,7 +2537,7 @@
       "layer": "language-ledger",
       "surface": "Set.member",
       "noctiumStatus": "subset",
-      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. The native query-context test distinguishes root record keys when either the Bool or the UInt16 field differs. The native checker also covers Curve25519Point members. Broader composite member and host getter coverage remain open. A native Bytes32-keyed nested Set distinguishes the two fields of a Bool/UInt16 key.",
+      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. Native query-context tests distinguish the Bool and UInt16 fields of root and nested record keys. The native checker also covers Curve25519Point members. The C ABI checks membership by typed key in pinned snapshots, with tested scalar, flat record and qualified coin cases. Broader composite member shapes need separate evidence.",
       "source": [
         "adt"
       ],
@@ -2552,6 +2552,8 @@
         "tests/TypedSetKey.lean",
         "tests/compact/native-set.mjs",
         "runtime/tests/native_set.rs",
+        "runtime/tests/collection_reads.rs",
+        "docs/development/native-client-abi.md",
         "docs/development/native-contract.md",
         "tests/ForeignKeys.lean",
         "runtime/tests/foreign_keys.rs",

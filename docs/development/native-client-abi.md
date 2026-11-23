@@ -150,6 +150,21 @@ selected key directly from the supplied immutable snapshot.
 [C header](../../runtime/include/noctium_native.h) ·
 [ABI tests](../../runtime/tests/collection_reads.rs)
 
+## Check Set membership
+
+Call `noctium_ledger_set_member` with the same request fields as
+`noctium_ledger_map_lookup`. Pass the member as `key`, separate from
+any enclosing Map keys. The Set declaration supplies the member type.
+Scalar keys use native input JSON. Ordinary record and qualified coin
+keys use an object containing the declared fields.
+
+The result handle contains `kind: "setMember"` and a Boolean `member`.
+A valid key absent from the Set returns `false`. Missing parents, invalid
+keys and a malformed selected Set value return an error. The getter tests
+membership in the supplied pinned snapshot.
+[C header](../../runtime/include/noctium_native.h) ·
+[ABI tests](../../runtime/tests/collection_reads.rs)
+
 ## Read a List head
 
 Call `noctium_ledger_list_head` with the emitted plan, exact tagged snapshot
