@@ -114,14 +114,18 @@ The native checker accepts both implicit and explicit contract recipient
 paths. The root Set and root explicit-recipient artifacts match their previous
 bytes. The nested Set checks use the query context and emitted relation.
 
-Noctium source admits qualified Set insertion under up to five Bytes32 Map
-parents. The ZKIR 3.2.1 fixture checks self-recipient insertion at depth two
-and explicit contract-recipient insertion at depth five. It stores the
-booked indices 41 and 42, preserves the seeded sibling Sets, and rejects
-missing parents or missing and wrong-recipient bookings. A sixth parent
-rejects at source and native plan admission. The root and one-parent
-artifacts match the earlier bytes. The deeper cases use a native query
-context. [Lean fixture](../../tests/DeepQualifiedCoinSet.lean) ·
+The direct Impact fragment handles qualified Set insertion under up to
+five Bytes32 Map parents. The ZKIR 3.2.1 fixture checks self-recipient
+insertion at depth two and explicit contract-recipient insertion at depth
+five. It stores booked indices 41 and 42, preserves seeded siblings, and
+rejects missing parents and invalid bookings. [Five-parent source](../../tests/DeepQualifiedCoinSet.lean)
+
+The deeper lowering qualifies the coin before following the Set path and
+rebuilds each ancestor with a one-key insertion. Fresh ZKIR 3.2.1 and the
+native query context check fourteen parents through the source initializer,
+both recipient forms, idempotence, a seeded sibling, and rejection of
+missing paths and invalid bookings. Source and native-plan admission
+reject fifteen. [Fourteen-parent source](../../tests/DeepBookedCoinSetBoundary.lean) ·
 [Native query check](../../runtime/tests/qualified_coin_set.rs)
 
 The pinned Compact 0.36.1 and Runtime 0.21.0 query test also inserts under

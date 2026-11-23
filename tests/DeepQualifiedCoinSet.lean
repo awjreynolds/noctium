@@ -112,32 +112,3 @@ private def deepQualifiedCoinSetEntry (name : String) : Entrypoint :=
   (deepQualifiedCoinSetEntry "insertAtDepth2")).isOk
 #guard (Backend.Zkir.lowerPrunedEntrypoint DeepQualifiedCoinSet.state
   (deepQualifiedCoinSetEntry "insertAtDepth5To")).isOk
-
-noctium_circuit tooDeepQualifiedCoinSetInputs where
-  public first : Bytes32
-  public second : Bytes32
-  public third : Bytes32
-  public fourth : Bytes32
-  public fifth : Bytes32
-  public sixth : Bytes32
-  private nonce : Bytes32
-  private color : Bytes32
-  private amount : UInt 128
-end
-
-/-- error: insertShieldedCoinSet supports at most five Bytes32 Map parents -/
-#guard_msgs (substring := true) in
-noctium_contract TooDeepQualifiedCoinSet where
-  tree coinSet : Bytes32 => Bytes32 => Bytes32 => Bytes32 => Bytes32 => Bytes32 => Set struct Coin {
-    nonce : Bytes32
-    color : Bytes32
-    value : UInt 128
-    mtIndex : UInt 64
-  }
-
-  entry insertTooDeep uses tooDeepQualifiedCoinSetInputs where
-    insertShieldedCoinSet(
-      coinSet[first][second][third][fourth][fifth][sixth],
-      disclose(nonce), disclose(color), disclose(amount))
-  end
-end

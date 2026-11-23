@@ -1896,8 +1896,8 @@ private def lowerQualifiedCoinSetPath (schema : List (String × StateKind))
     (env : Bindings) (path : TSyntax `nlpath) :
     CommandElabM (TSyntax `ident × TSyntax `term) := do
   let (storage, sourceKeys) ← sourcePathParts path
-  unless sourceKeys.length ≤ 5 do
-    throwErrorAt path "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  unless sourceKeys.length ≤ 14 do
+    throwErrorAt path "insertShieldedCoinSet supports at most fourteen Bytes32 Map parents"
   let treeSchema ← treeStateSchema schema storage
   unless bytes32ParentMaps treeSchema sourceKeys do
     throwErrorAt path
@@ -2650,8 +2650,8 @@ private def collectionResetTerm (path : TSyntax `nlpath) (storage : TSyntax `ide
   | .map .. | .set _ | .recordSet .. | .recordMapKey .. | .recordMapComposite .. =>
     `(Noctium.Effect.emptyMapPath $name $keys)
   | .shieldedCoinSet .. => do
-    unless 1 ≤ keyCount && keyCount ≤ 5 do
-      throwErrorAt path "qualified shielded coin Set reset supports one to five Map keys"
+    unless 1 ≤ keyCount && keyCount ≤ 14 do
+      throwErrorAt path "qualified shielded coin Set reset supports one to fourteen Map keys"
     `(Noctium.Effect.emptyMapPath $name $keys)
   | .merkleTree depth historic =>
     unless 1 ≤ keyCount && keyCount ≤ 12 do

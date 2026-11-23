@@ -2066,6 +2066,16 @@ fn deep_booked_coin_map_field_counts(
         1,
     ]);
 
+    append_deep_booked_coin_rebuild_field_counts(&mut counts, plan, slot, parents)?;
+    Ok(counts)
+}
+
+fn append_deep_booked_coin_rebuild_field_counts(
+    counts: &mut Vec<usize>,
+    plan: &Plan,
+    slot: u32,
+    parents: &[PathPart],
+) -> Result<()> {
     // Rebuild each parent from the leaf toward the root. Prefix length one
     // selects the state slot's root Map and inserts parent[0].
     for prefix_len in (1..=parents.len()).rev() {
@@ -2081,6 +2091,28 @@ fn deep_booked_coin_map_field_counts(
 
     // Insert the rebuilt root Map back into the state array.
     counts.extend([5, 1, 1]);
+    Ok(())
+}
+
+fn deep_booked_coin_set_field_counts(
+    plan: &Plan,
+    slot: u32,
+    parents: &[PathPart],
+) -> Result<Vec<usize>> {
+    let mut counts = vec![
+        1,
+        6,
+        5,
+        11,
+        1,
+        2,
+        1,
+        path_field_count(plan, slot, parents)?,
+        1,
+        2,
+        1,
+    ];
+    append_deep_booked_coin_rebuild_field_counts(&mut counts, plan, slot, parents)?;
     Ok(counts)
 }
 
@@ -2258,10 +2290,8 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
         Instruction::ListPushFrontCoinTo { .. } => {
             bail!("qualified coin List push must be unguarded")
         }
-        Instruction::InsertShieldedCoinSet { slot, keys, .. } => {
-            shielded_coin_set_field_counts(plan, *slot, keys)?
-        }
-        Instruction::InsertShieldedCoinSetTo { slot, keys, .. } => {
+        Instruction::InsertShieldedCoinSet { slot, keys, .. }
+        | Instruction::InsertShieldedCoinSetTo { slot, keys, .. } => {
             shielded_coin_set_field_counts(plan, *slot, keys)?
         }
         Instruction::SpendShieldedFromMap { .. } => SPEND_SHIELDED_FROM_MAP_FIELD_COUNTS.to_vec(),
@@ -2652,6 +2682,9 @@ const RELAY_SHIELDED_IMMEDIATE_FIELD_COUNTS: [usize; 18] =
 
 fn shielded_coin_set_field_counts(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<Vec<usize>> {
     validate_shielded_coin_set(plan, slot, keys)?;
+    if keys.len() > 5 {
+        return deep_booked_coin_set_field_counts(plan, slot, keys);
+    }
     let mut counts = INSERT_SHIELDED_COIN_SET_FIELD_COUNTS.to_vec();
     counts[0] = path_field_count(plan, slot, keys)?;
     Ok(counts)
@@ -3282,8 +3315,8 @@ fn validate_shielded_coin_set(plan: &Plan, slot: u32, keys: &[PathPart]) -> Resu
         "shielded coin Set slot exceeds the native state limit"
     );
     ensure!(
-        keys.len() <= 5,
-        "shielded coin Set supports at most five parent keys"
+        keys.len() <= 14,
+        "shielded coin Set supports at most fourteen parent keys"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
@@ -6298,6 +6331,44 @@ fn append_deep_booked_coin_map_rebuild_ops(
     Ok(())
 }
 
+fn deep_booked_coin_qualification_ops(
+    coin: &ShieldedCoinInfo,
+    commitment: Commitment,
+) -> Result<Vec<Op<ResultModeVerify, Db>>> {
+    Ok(vec![
+        // QueryContext::to_vm_stack leaves call context, effects, then state.
+        // Qualify before path expansion so Dup2 stays shallow.
+        Op::Dup { n: 2 },
+        push_native_state(
+            StateValue::Cell(Sp::new(AlignedValue::from(commitment))),
+            false,
+        )?,
+        Op::Idx {
+            cached: true,
+            push_path: false,
+            path: vec![
+                Key::Value(
+                    AlignedValue::from(1u8)
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid booked coin index key"))?,
+                ),
+                Key::Stack,
+            ]
+            .into_iter()
+            .collect(),
+        },
+        push_native_state(
+            StateValue::Cell(Sp::new(AlignedValue::from(coin.clone()))),
+            false,
+        )?,
+        Op::Swap { n: 0 },
+        Op::Concat {
+            cached: true,
+            n: 91,
+        },
+    ])
+}
+
 fn deep_booked_coin_map_insert_ops(
     slot: u32,
     parent_keys: &[AlignedValue],
@@ -6347,6 +6418,27 @@ fn deep_booked_coin_map_insert_ops(
         },
     ];
 
+    append_deep_booked_coin_map_rebuild_ops(&mut ops, slot, parent_keys)?;
+    Ok(ops)
+}
+
+fn deep_booked_coin_set_insert_ops(
+    slot: u32,
+    parent_keys: &[AlignedValue],
+    coin: &ShieldedCoinInfo,
+    commitment: Commitment,
+) -> Result<Vec<Op<ResultModeVerify, Db>>> {
+    let mut ops = deep_booked_coin_qualification_ops(coin, commitment)?;
+    ops.extend([
+        Op::Dup { n: 1 },
+        native_index_from_aligned_values(slot, parent_keys, false)?,
+        Op::Swap { n: 0 },
+        push_native_state(StateValue::Null, true)?,
+        Op::Ins {
+            cached: false,
+            n: 1,
+        },
+    ]);
     append_deep_booked_coin_map_rebuild_ops(&mut ops, slot, parent_keys)?;
     Ok(ops)
 }
@@ -9900,42 +9992,57 @@ impl PreparationCursor {
                     );
                 }
 
-                let mut path = vec![Key::Value(
-                    AlignedValue::from(u8::try_from(*slot)?)
-                        .try_into()
-                        .map_err(|_| anyhow!("invalid shielded coin Set slot"))?,
-                )];
-                path.extend(
-                    parent_keys
-                        .iter()
-                        .cloned()
-                        .map(|key| {
-                            key.try_into()
-                                .map(Key::Value)
-                                .map_err(|_| anyhow!("invalid shielded coin Set parent key"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                );
-                let set_ops = onchain_runtime::program_fragments::Set_insert_coin!(
-                    path,
-                    false,
-                    QualifiedInfo,
-                    coin,
-                    recipient
-                );
-                program.extend([
-                    set_ops[0].clone(),
-                    set_ops[1].clone(),
-                    set_ops[2].clone(),
-                    set_ops[3].clone(),
-                    set_ops[5].clone(),
-                    set_ops[6].clone(),
-                    set_ops[4].clone(),
-                    set_ops[7].clone(),
-                    set_ops[8].clone(),
-                ]);
+                let insert_final = if keys.len() > 5 {
+                    let mut set_ops = deep_booked_coin_set_insert_ops(
+                        *slot,
+                        &parent_keys,
+                        &coin,
+                        coin_commitment,
+                    )?;
+                    let insert_final = set_ops
+                        .pop()
+                        .ok_or_else(|| anyhow!("deep booked coin Set fragment is empty"))?;
+                    program.extend(set_ops);
+                    insert_final
+                } else {
+                    let mut path = vec![Key::Value(
+                        AlignedValue::from(u8::try_from(*slot)?)
+                            .try_into()
+                            .map_err(|_| anyhow!("invalid shielded coin Set slot"))?,
+                    )];
+                    path.extend(
+                        parent_keys
+                            .iter()
+                            .cloned()
+                            .map(|key| {
+                                key.try_into()
+                                    .map(Key::Value)
+                                    .map_err(|_| anyhow!("invalid shielded coin Set parent key"))
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    );
+                    let set_ops = onchain_runtime::program_fragments::Set_insert_coin!(
+                        path,
+                        false,
+                        QualifiedInfo,
+                        coin,
+                        recipient
+                    );
+                    program.extend([
+                        set_ops[0].clone(),
+                        set_ops[1].clone(),
+                        set_ops[2].clone(),
+                        set_ops[3].clone(),
+                        set_ops[5].clone(),
+                        set_ops[6].clone(),
+                        set_ops[4].clone(),
+                        set_ops[7].clone(),
+                        set_ops[8].clone(),
+                    ]);
+                    set_ops[9].clone()
+                };
                 has_written = true;
-                set_ops[9].clone()
+                insert_final
             }
             Instruction::SpendShieldedFromMap {
                 nonce,
