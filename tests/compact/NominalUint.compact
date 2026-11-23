@@ -1,11 +1,14 @@
 pragma language_version 0.28;
+import CompactStandardLibrary;
 
 export new type Amount = Uint<8>;
 
 export ledger balance: Amount;
+export ledger amounts: List<Amount>;
 
 constructor(initial: Amount) {
   balance = disclose(initial);
+  amounts.pushFront(disclose(initial));
 }
 
 pure circuit forwardAmount(value: Amount): Amount {
@@ -14,12 +17,19 @@ pure circuit forwardAmount(value: Amount): Amount {
 
 export circuit setAmount(value: Amount): [] {
   balance = disclose(forwardAmount(value));
+  amounts.pushFront(disclose(value));
   return [];
 }
 
 export circuit setRaw(value: Uint<8>): [] {
-  balance = disclose(forwardAmount(value as Amount));
+  const amount = value as Amount;
+  balance = disclose(forwardAmount(amount));
+  amounts.pushFront(disclose(amount));
   return [];
+}
+
+export circuit amountHead(): Maybe<Amount> {
+  return amounts.head();
 }
 
 export circuit get(): Amount {

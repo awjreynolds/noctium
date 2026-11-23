@@ -72,6 +72,45 @@ noctium_circuit nominalLedgerValues where
   output amountResult : Amount := disclose(amount)
 end
 
+noctium_circuit nominalListValues where
+  private owner : Bytes32
+  private amount : Amount
+  private count : Count
+  private raw : UInt 8
+end
+
+noctium_circuit nominalListHeadOnly where
+end
+
+noctium_contract NominalAmountLists where
+  list amounts : Amount
+  sealed list seededAmounts : Amount
+  tree counts : Bytes32 => List Count
+  tree nestedAmounts : Bytes32 => Bytes32 => List Amount
+
+  constructor(initial : Amount) where
+    pushFront amounts := initial
+    pushFront seededAmounts := initial
+  end
+
+  entry append uses nominalListValues where
+    pushFront amounts := disclose(amount)
+    head amounts as currentAmount
+    pushFront counts[disclose(owner)] := disclose(count)
+    head counts[disclose(owner)] as currentCount
+    pushFront nestedAmounts[disclose(owner)][disclose(owner)] := disclose(amount)
+    head nestedAmounts[disclose(owner)][disclose(owner)] as nestedAmount
+    return amountResult : Amount := currentAmount
+    return countResult : Count := currentCount
+    return nestedAmountResult : Amount := nestedAmount
+  end
+  entry appendRaw uses nominalListValues where
+    pushFront amounts := disclose(cast(Amount, raw))
+    head amounts as currentAmount
+    return amountResult : Amount := currentAmount
+  end
+end
+
 noctium_circuit countLedgerValue where
   private count : Count
 end
@@ -140,6 +179,21 @@ noctium_contract NominalAmountHelperLedger where
   entry setAmount from nominalHelperProgram entry "set" end
   entry setRaw from nominalHelperProgram entry "setRaw" end
 end
+
+private def nominalAmountListsAppendEntry : Entrypoint :=
+  (NominalAmountLists.entrypoints.find? (·.name == "append")).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+#guard (nominalAmountListsAppendEntry.validate Capabilities.source NominalAmountLists.state).isOk
+#guard (Backend.Impact.lower NominalAmountLists.state nominalAmountListsAppendEntry).isOk
+#guard NominalAmountLists.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint NominalAmountLists.state operation).isOk
+#guard match NominalAmountLists.constructor with
+  | some {listPushes := pushes, ..} =>
+      pushes.map (·.state) == ["amounts", "seededAmounts"] &&
+        pushes.all (fun push => push.valueType == .uint 255 &&
+          (match push.value with | .ref "initial" => Bool.true | _ => Bool.false))
+  | _ => Bool.false
 
 /- error: use 'entry from' to bind a structured nominal UInt circuit to its contract -/
 #guard_msgs (substring := true) in
@@ -238,6 +292,25 @@ private def context : EvalContext := {
   modulus := Field.modulus,
   poseidon2 := fun _ _ _ => .error "unused Poseidon oracle"
 }
+
+private def nominalListRoundTrip : Except String _root_.Bool := do
+  let [appendAmount, appendRaw] := NominalAmountLists.entrypoints
+    | throw "expected two List operations"
+  let owner : Value := .bytes 32 (List.replicate 32 1)
+  let inputs : EvalEnv := [
+    ("owner", owner), ("amount", .uint 255 41), ("count", .uint 255 11), ("raw", .uint 255 255)]
+  let initial : LedgerState := {trees := [
+    ("amounts", .list [[.uint 255 19]]), ("counts", .map [(owner, .list [])]),
+    ("nestedAmounts", .map [(owner, .map [(owner, .list [])])])]}
+  let (amountOutputs, amountState) ← appendAmount.run context inputs initial
+  let (rawOutputs, finalState) ← appendRaw.run context inputs amountState
+  pure (amountOutputs.lookup "amountResult" == some (.uint 255 41) &&
+    amountOutputs.lookup "countResult" == some (.uint 255 11) &&
+    amountOutputs.lookup "nestedAmountResult" == some (.uint 255 41) &&
+    rawOutputs.lookup "amountResult" == some (.uint 255 255) &&
+    finalState.trees.lookup "amounts" == some (.list [[.uint 255 255], [.uint 255 41], [.uint 255 19]]))
+
+#guard nominalListRoundTrip.toOption == some Bool.true
 
 #guard match NominalAmountLedger.constructor with
   | some {parameters := [parameter], initializers := [initializer], ..} =>
@@ -414,6 +487,34 @@ noctium_contract rejectsNominalCellRawWrite where
   cell balance : Amount
   entry setRaw uses nominalLedgerValues where
     write balance := raw
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalListAliasPush where
+  list amounts : Amount
+  entry append uses nominalListValues where
+    pushFront amounts := disclose(count)
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalListRawPush where
+  list amounts : Amount
+  entry append uses nominalListValues where
+    pushFront amounts := disclose(raw)
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalListHeadAliasReturn where
+  list amounts : Amount
+  entry inspect uses nominalListHeadOnly where
+    head amounts as currentAmount
+    return wrongAlias : Count := currentAmount
   end
 end
 

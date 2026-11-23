@@ -41,10 +41,16 @@ try {
       'ledger balance: Amount; constructor(x: Amount) { balance = disclose(x); }',
       'circuit invalid(x: Uint<8>): [] { balance = disclose(x); return []; }',
       /expected right-hand side of = to have type Amount but received Uint<8>/],
+    ['list-wrong-nominal-insert', 'new type Count = Uint<8>; ledger amounts: List<Amount>;',
+      'circuit invalid(x: Count): [] { amounts.pushFront(disclose(x)); return []; }',
+      /expected first argument of pushFront to have type Amount but received Count/],
+    ['list-implicit-raw-insert', 'ledger amounts: List<Amount>;',
+      'circuit invalid(x: Uint<8>): [] { amounts.pushFront(disclose(x)); return []; }',
+      /expected first argument of pushFront to have type Amount but received Uint<8>/],
   ];
   for (const [name, extra, circuit, diagnostic] of rejectedCases) {
     const source = join(scratch, name + '.compact');
-    writeFileSync(source, ['pragma language_version 0.28;', 'new type Amount = Uint<8>;',
+    writeFileSync(source, ['pragma language_version 0.28;', 'import CompactStandardLibrary;', 'new type Amount = Uint<8>;',
       extra, 'export ' + circuit].join('\n') + '\n');
     const result = spawnSync(compactc, ['--skip-zk', source, join(scratch, name)], { encoding: 'utf8' });
     assert.notEqual(result.status, 0, name);
@@ -76,12 +82,23 @@ try {
   }
   const initial = currentContractState.data;
   assert.equal((await invoke('get', initial)).result, 19n);
+  const initialListHead = (await invoke('amountHead', initial)).result;
+  assert.deepEqual(Object.keys(initialListHead), ['is_some', 'value']);
+  assert.equal(initialListHead.is_some, true);
+  assert.equal(initialListHead.value, 19n);
   const written = await invoke('setAmount', initial, 41n);
   const afterWrite = written.context.callContext.currentQueryContext.state;
   assert.equal((await invoke('get', afterWrite)).result, 41n);
+  const pushedListHead = (await invoke('amountHead', afterWrite)).result;
+  assert.equal(pushedListHead.is_some, true);
+  assert.equal(pushedListHead.value, 41n);
   const cast = await invoke('setRaw', afterWrite, 255n);
-  assert.equal((await invoke('get', cast.context.callContext.currentQueryContext.state)).result, 255n);
-  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing and ledger state cases`);
+  const afterCast = cast.context.callContext.currentQueryContext.state;
+  assert.equal((await invoke('get', afterCast)).result, 255n);
+  const castListHead = (await invoke('amountHead', afterCast)).result;
+  assert.equal(castListHead.is_some, true);
+  assert.equal(castListHead.value, 255n);
+  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state and List<Amount> cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

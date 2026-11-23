@@ -2383,6 +2383,7 @@ private structure EntryEffects where
   env : Bindings
   nominalUIntBindings : CircuitNominalEnv := []
   nominalUIntCells : List (String × NominalUIntType) := []
+  nominalUIntLists : List (String × NominalUIntType) := []
   contractRefBindings : List (String × Name) := []
   contractRefState : List (String × Name) := []
   recordContractRefs : List (String × List (String × Name)) := []
@@ -2855,9 +2856,12 @@ private def elaborateListHead (schema : List (String × StateKind))
   let (updated, destinations) ← match type with
     | .scalar ty => do
       let updated ← bindReadName updated destination.getId.toString readName ty
+      let nominalUInt := state.nominalUIntLists.lookup storage.getId.toString
+      let nominalUIntBindings := bindCircuitNominal updated.nominalUIntBindings
+        destination.getId.toString nominalUInt
       let interface := state.contractRefState.lookup storage.getId.toString
       let contractRefBindings := bindContractRef updated.contractRefBindings destination.getId.toString interface
-      let updated := {updated with contractRefBindings}
+      let updated := {updated with nominalUIntBindings, contractRefBindings}
       pure (updated, ← `([($(stringTerm readName), $(← tyTerm ty))]))
     | _ =>
       let fieldRefs := (state.recordContractRefs.lookup storage.getId.toString).getD []
@@ -2924,7 +2928,9 @@ private def elaborateListPushFront (schema : List (String × StateKind))
       let .scalar ty := type
         | throwErrorAt payload "record List pushFront expects fields(...)"
       let contractRef := state.contractRefState.lookup storage.getId.toString
-      let value ← checkedSourceValue state.env [] state.contractRefBindings item {type := ty, contractRef}
+      let nominalUInt := state.nominalUIntLists.lookup storage.getId.toString
+      let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings item
+        {type := ty, nominalUInt, contractRef}
       `([Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value])
     | `(nlledgervalue| $items:nlleaves) => do
       if let .scalar _ := type then
@@ -4828,6 +4834,7 @@ private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy :
 private def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
     (nominalUIntCells : List (String × NominalUIntType))
+    (nominalUIntLists : List (String × NominalUIntType))
     (contractRefState : List (String × Name)) : CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
@@ -4970,7 +4977,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.«list» _ (.scalar valueTy))) => do
         let contractRef := contractRefState.lookup destination
-        let valueExpression ← checkedSourceValue scalarBindings [] contractRefs value {type := valueTy, contractRef}
+        let nominalUInt := nominalUIntLists.lookup destination
+        let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
+          {type := valueTy, nominalUInt, contractRef}
         listPushTerms := listPushTerms.push
           (← `(Noctium.ConstructorListPush.mk $(stringTerm destination)
             $(← tyTerm valueTy) $valueExpression))
@@ -5149,6 +5158,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let mut stateTerms : Array (TSyntax `term) := #[]
     let mut schema : List (String × StateKind) := []
     let mut nominalUIntCells : List (String × NominalUIntType) := []
+    let mut nominalUIntLists : List (String × NominalUIntType) := []
     let mut contractRefState : List (String × Name) := []
     let mut recordContractRefs : List (String × List (String × Name)) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
@@ -5273,6 +5283,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a sealed scalar List declaration"
           let sourceType ← readCircuitSourceType element
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntLists := nominalUIntLists ++ [(id.getId.toString, nominalUInt)]
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           let (kind, term) ← elaborateScalarListDecl [] sourceType.type
@@ -5489,6 +5501,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a scalar List declaration"
           let sourceType ← readCircuitSourceType element
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntLists := nominalUIntLists ++ [(id.getId.toString, nominalUInt)]
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           let (kind, term) ← elaborateScalarListDecl [] sourceType.type
@@ -5496,12 +5510,22 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| tree $id:ident : $key:nltype => $listKind:ident $element:nltype) => do
           unless listKind.getId.toString == "List" do
             throwErrorAt listKind "expected a List value in the recursive tree"
-          let (kind, term) ← elaborateScalarListDecl [key] (← readTy element)
+          let sourceType ← readCircuitSourceType element
+          unless sourceType.contractRef.isNone do
+            throwErrorAt element "typed contract reference Lists require root storage"
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntLists := nominalUIntLists ++ [(id.getId.toString, nominalUInt)]
+          let (kind, term) ← elaborateScalarListDecl [key] sourceType.type
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $listKind:ident $element:nltype) => do
           unless listKind.getId.toString == "List" do
             throwErrorAt listKind "expected a List value in the recursive tree"
-          let (kind, term) ← elaborateScalarListDecl [outer, inner] (← readTy element)
+          let sourceType ← readCircuitSourceType element
+          unless sourceType.contractRef.isNone do
+            throwErrorAt element "typed contract reference Lists require root storage"
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntLists := nominalUIntLists ++ [(id.getId.toString, nominalUInt)]
+          let (kind, term) ← elaborateScalarListDecl [outer, inner] sourceType.type
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $value:nltype) => do
           let outerTy ← readTy outer
@@ -5541,7 +5565,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         $term $sealedTerm $(← spanTerm state) $cellAlignmentTerm))
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
-      | some ctor => elaborateConstructor ctor schema nominalUIntCells contractRefState
+      | some ctor => elaborateConstructor ctor schema nominalUIntCells nominalUIntLists contractRefState
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     for entryStx in entries do
@@ -5583,6 +5607,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
+          nominalUIntLists := nominalUIntLists
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordContractRefs := recordContractRefs
@@ -5615,6 +5640,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
+          nominalUIntLists := nominalUIntLists
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordContractRefs := recordContractRefs
