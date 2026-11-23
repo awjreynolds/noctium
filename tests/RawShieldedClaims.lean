@@ -15,6 +15,23 @@ noctium_circuit guardedRawShieldedClaimInputs where
   private digest : Bytes32
 end
 
+private def rawShieldedReceiveHelper : Helpers.Program := {
+  declarations := [
+    {id := ⟨0, 0⟩, name := "recordReceive", parameters := [⟨"digest", .bytes 32⟩],
+      result := .unit, body := [
+        .claimShielded .receive (.disclose {} (.ref "digest")),
+        .return none]},
+    {id := ⟨0, 1⟩, name := "guardedReceive",
+      parameters := [⟨"enabled", .bool⟩, ⟨"digest", .bytes 32⟩],
+      result := .unit, body := [
+        .branch (.disclose {} (.ref "enabled")) [
+          .evaluate (.call "recordReceive" [.ref "digest"])] [],
+        .return none]}]
+  exports := [{name := "guardedReceive", target := ⟨0, 1⟩, inputs := [
+    {name := "enabled", ty := .bool, visibility := .private},
+    {name := "digest", ty := .bytes 32, visibility := .private}]}]
+}
+
 noctium_contract RawShieldedClaims where
   entry claimNullifier uses rawShieldedClaimInputs where
     claimShielded(nullifier, disclose(digest))
@@ -36,6 +53,8 @@ noctium_contract RawShieldedClaims where
   entry guardedClaimReceive uses guardedRawShieldedClaimInputs where
     when disclose(enabled) claimShielded(receive, disclose(digest))
   end
+
+  entry helperClaimReceive from rawShieldedReceiveHelper entry "guardedReceive" end
 end
 
 private def rawClaimEntry (name : String) : Entrypoint :=
@@ -79,6 +98,31 @@ private def guardedRawClaimInputs (enabled : _root_.Bool) : EvalEnv := [
 #guard !(Disclosure.entrypoint {rawClaimEntry "guardedClaimReceive" with
   effectGuards := [some (.ref "enabled")]}).isOk
 
+private def privateHelperGuard : Helpers.Program := {
+  rawShieldedReceiveHelper with
+  declarations := rawShieldedReceiveHelper.declarations.map fun declaration =>
+    if declaration.name == "guardedReceive" then
+      {declaration with body := [
+        .branch (.ref "enabled") [.evaluate (.call "recordReceive" [.ref "digest"])] [],
+        .return none]}
+    else declaration
+}
+
+private def privateHelperDigest : Helpers.Program := {
+  rawShieldedReceiveHelper with
+  declarations := rawShieldedReceiveHelper.declarations.map fun declaration =>
+    if declaration.name == "recordReceive" then
+      {declaration with body := [.claimShielded .receive (.ref "digest"), .return none]}
+    else declaration
+}
+
+#guard match Helpers.compileEntrypointFor privateHelperGuard "guardedReceive" [] with
+  | .error diagnostic => (diagnostic.message.splitOn "undisclosed private control").length > 1
+  | .ok _ => _root_.Bool.false
+#guard match Helpers.compileEntrypointFor privateHelperDigest "guardedReceive" [] with
+  | .error diagnostic => (diagnostic.message.splitOn "undisclosed private").length > 1
+  | .ok _ => _root_.Bool.false
+
 private def rawClaimPlanOperation (name : String) : Except String (String × String) := do
   let selected := rawClaimEntry name
   let plan ← (Backend.Impact.lower RawShieldedClaims.state selected).mapError (·.message)
@@ -120,6 +164,15 @@ private def rawClaimPlanOperation (name : String) : Except String (String × Str
   | .ok state => state.2.shieldedClaims.isEmpty
   | .error _ => _root_.Bool.false
 #guard match Entrypoint.run rawClaimContext (rawClaimEntry "guardedClaimReceive")
+    (guardedRawClaimInputs _root_.Bool.true) {} with
+  | .ok state => state.2.shieldedClaims == [(ShieldedClaimKind.receive, claimBytes)]
+  | .error _ => _root_.Bool.false
+
+#guard match Entrypoint.run rawClaimContext (rawClaimEntry "helperClaimReceive")
+    (guardedRawClaimInputs _root_.Bool.false) {} with
+  | .ok state => state.2.shieldedClaims.isEmpty
+  | .error _ => _root_.Bool.false
+#guard match Entrypoint.run rawClaimContext (rawClaimEntry "helperClaimReceive")
     (guardedRawClaimInputs _root_.Bool.true) {} with
   | .ok state => state.2.shieldedClaims == [(ShieldedClaimKind.receive, claimBytes)]
   | .error _ => _root_.Bool.false

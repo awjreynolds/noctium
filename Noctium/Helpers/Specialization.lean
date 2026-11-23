@@ -103,6 +103,7 @@ inductive Statement where
   | forRange (index : String) (start stop : Natural) (body : List Statement)
   | stage (capability key : String) (type : GenericType) (value : Term)
   | emitEvent (kind : EventKind) (payload : Term)
+  | claimShielded (kind : ShieldedClaimKind) (digest : Term)
   deriving Repr, Inhabited
 
 structure Declaration where
@@ -612,6 +613,7 @@ private def sourceChildren (limits : Limits) (span : SourceSpan) :
       pure ([SourceNode.natural start, SourceNode.natural stop] ++ body.map SourceNode.statement)
     | .stage _ _ type value => pure [.typeExpr type, .term value]
     | .emitEvent _ payload => pure [.term payload]
+    | .claimShielded _ digest => pure [.term digest]
 
 private def scanNodes (limits : Limits) (span : SourceSpan) (available : Nat)
     (initial : List SourceNode) : Except Diagnostic Nat := go available 0 (initial.map (·, 1))
@@ -858,6 +860,9 @@ mutual
       | .emitEvent kind payload => do
         let payload ← convertTerm limits declaration types naturals values payload
         result := result.push (.emitEvent kind payload)
+      | .claimShielded kind digest => do
+        let digest ← convertTerm limits declaration types naturals values digest
+        result := result.push (.claimShielded kind digest)
     pure result.toList
 
   private partial def convertTerm (limits : Limits) (declaration : Declaration)
@@ -1200,6 +1205,7 @@ private partial def collectWitnessStatements (providers : List Helpers.WitnessSi
       | .writeMap _ _ _ key value =>
         collectWitnessTerms providers value (collectWitnessTerms providers key result)
       | .emitEvent _ payload => collectWitnessTerms providers payload result
+      | .claimShielded _ digest => collectWitnessTerms providers digest result
     collectWitnessStatements providers rest result
 
 private def witnessStatements (providers : List Helpers.WitnessSignature)

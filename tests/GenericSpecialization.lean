@@ -109,6 +109,25 @@ private def hasGenericRange (program : Helpers.Program) (exportName : String) (s
       (Helpers.compile result.program result.exportName).isOk
   | .error _ => false
 
+private def genericShieldedClaimProgram : GProgram := {
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "claim"
+    parameters := [⟨"T", .type⟩]
+    values := [("digest", .bytes (.literal 32))]
+    result := .unit
+    body := [
+      .claimShielded .receive (.disclose {} (.ref "digest")),
+      .return none]
+  }]
+  exports := [genericExport "claim" ⟨0, 0⟩ [.type .native] [
+    genericInput "digest" (.bytes (.literal 32)) .private]]
+}
+
+#guard match specialize genericShieldedClaimProgram "claim" with
+  | .ok result => (Helpers.compileEntrypointFor result.program result.exportName []).isOk
+  | .error _ => false
+
 #guard messageContains
   (specialize {genericRangeProgram with exports :=
     [genericExport "reverse" ⟨0, 0⟩ [.natural (.literal 0)]]} "reverse")

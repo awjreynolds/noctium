@@ -48,9 +48,9 @@ private def effectProgram (kind : EffectKind) (declaredPure := false) : Program 
   {id := ⟨0, 0⟩, name := "outer", declaredPure, body := [.evaluate (.call "inner" [])]},
   {id := ⟨0, 1⟩, name := "inner", body := [.evaluate (.effect kind "effect" .unit)]}]
 -- FN-PURE-INDIRECT. Each external category survives transitive summarization.
-#guard ([EffectKind.witness, .privateState, .ledgerRead, .ledgerWrite, .event, .crossCall]).all fun kind =>
+#guard ([EffectKind.witness, .privateState, .ledgerRead, .ledgerWrite, .event, .asset, .crossCall]).all fun kind =>
   errorContains (analyze (effectProgram kind true)) "transitive effects"
-#guard ([EffectKind.witness, .privateState, .ledgerRead, .ledgerWrite, .event, .crossCall]).all fun kind =>
+#guard ([EffectKind.witness, .privateState, .ledgerRead, .ledgerWrite, .event, .asset, .crossCall]).all fun kind =>
   match analyze (effectProgram kind) with
   | .ok summaries => summaries.any (fun s => s.id == ⟨0, 0⟩ && s.effects.contains kind)
   | _ => false

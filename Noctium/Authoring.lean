@@ -2840,6 +2840,7 @@ private partial def statementTerm : Statement → CommandElabM (TSyntax `term)
     throwError "readable witness source does not support ledger map reads"
   | .writeMap .. => throwError "readable witness source does not support ledger map writes"
   | .emitEvent .. => throwError "readable witness source does not support ledger events"
+  | .claimShielded .. => throwError "readable witness source does not support shielded claims"
   | .branch condition yes no => do
     let yes ← yes.toArray.mapM statementTerm
     let no ← no.toArray.mapM statementTerm
