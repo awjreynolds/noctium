@@ -2869,7 +2869,7 @@
       "layer": "language-ledger",
       "surface": "Map.remove",
       "noctiumStatus": "equivalent",
-      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal. The checked native relation removes one root Bool/UInt16 record key and preserves the other keys and values. In the composed typed record Map, removal preserves the sibling key and its exact typed value.",
+      "notes": "The circuit method matches pinned Compact for typed leaf and map-valued entry removal. Funded Ledger 9.1.0.1 finalized both cases and preserved sibling records and the other owner. Repeated and inactive cases preserve state, and an active missing parent rejects before submission. Key types and host projections have separate rows. A flat Bool/UInt16 record case also checks absent membership and the restored empty Map after removal. The checked native relation removes one root Bool/UInt16 record key on an active guard and preserves the other keys and values. An inactive guard preserves the exact state. In the composed typed record Map, removal preserves the sibling key and its exact typed value.",
       "source": [
         "adt"
       ],
