@@ -640,16 +640,92 @@ mod tests {
             .context("missing guaranteed shielded offer")
     }
 
+    fn assert_nested_qualified_coin_owners_empty(
+        state_bytes: &[u8],
+        plan: &Plan,
+        selected_owner: &[u8; 32],
+        other_owner: &[u8; 32],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let state: ContractState<Db> = native_decode(state_bytes)?;
+        let StateValue::Array(slots) = state.data.get_ref() else {
+            anyhow::bail!("expected initialized nested collection state slots");
+        };
+        let slot = |name: &str| {
+            plan.state
+                .iter()
+                .position(|declaration| declaration.name == name)
+                .with_context(|| format!("{name} state slot missing from plan"))
+        };
+        let owners = [
+            AlignedValue::from(*selected_owner),
+            AlignedValue::from(*other_owner),
+        ];
+        let set_slot = slot("coinSets")?;
+        let Some(StateValue::Map(set_owners)) = slots.get(set_slot) else {
+            anyhow::bail!("expected initialized owner Set map");
+        };
+        ensure!(
+            set_owners.size() == 2,
+            "initializer did not create both Set owners"
+        );
+        for owner in &owners {
+            let Some(set) = set_owners.get(owner) else {
+                anyhow::bail!("initializer omitted a Set owner");
+            };
+            let StateValue::Map(members) = &*set else {
+                anyhow::bail!("expected initialized owner Set");
+            };
+            ensure!(members.size() == 0, "initialized owner Set is not empty");
+        }
+
+        let list_slot = slot("coinLists")?;
+        let Some(StateValue::Map(list_owners)) = slots.get(list_slot) else {
+            anyhow::bail!("expected initialized owner List map");
+        };
+        ensure!(
+            list_owners.size() == 2,
+            "initializer did not create both List owners"
+        );
+        for owner in &owners {
+            let Some(list) = list_owners.get(owner) else {
+                anyhow::bail!("initializer omitted a List owner");
+            };
+            let StateValue::Array(list) = &*list else {
+                anyhow::bail!("expected initialized owner List");
+            };
+            ensure!(
+                list.len() == 3
+                    && matches!(list.get(0), Some(StateValue::Null))
+                    && matches!(list.get(1), Some(StateValue::Null))
+                    && matches!(list.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+                "initialized owner List is not empty"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires a generated funded receive bundle and isolated development node"]
     fn funded_shielded_receive_localnet() -> Result<()> {
         futures::executor::block_on(async {
             let setting = |name| env::var(name).with_context(|| format!("missing {name}"));
-            let bundle = artifacts::verify(
-                Path::new(&setting("NOCTIUM_RECEIVE_BUNDLE")?),
-                Some(&setting("NOCTIUM_RECEIVE_MANIFEST_SHA256")?),
-            )?;
-            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let nested_directory = env::var_os("NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_BUNDLES");
+            let nested_pins = env::var("NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS").ok();
+            ensure!(
+                nested_directory.is_some() == nested_pins.is_some(),
+                "nested collection mode requires both nested bundle and manifest settings"
+            );
+            let nested = nested_directory.is_some();
+            let root_bundle = if nested {
+                None
+            } else {
+                Some(artifacts::verify(
+                    Path::new(&setting("NOCTIUM_RECEIVE_BUNDLE")?),
+                    Some(&setting("NOCTIUM_RECEIVE_MANIFEST_SHA256")?),
+                )?)
+            };
             let cache = ProofCache::new(
                 setting("NOCTIUM_RECEIVE_PARAMETER_CACHE")?.into(),
                 "https://srs.midnight.network/".parse()?,
@@ -667,35 +743,94 @@ mod tests {
                 policy.clone(),
                 Duration::from_secs(15),
                 64 * 1024 * 1024,
-                10_000,
+                100_000,
             )?;
             let mut seed = [0; 32];
             seed[31] = 1;
             node.attach_dust_seed(&seed)?;
             let dust = cache.dust().await?;
             let dust_parameters = cache.parameters(dust.k()).await?;
-            let parameters = cache.parameters(circuit.k()).await?;
-            let ttl = node.sync()?.block.tblock.to_secs() + 1800;
-            let zero_bytes = json!({"kind":"bytes", "values": vec![0; 32]});
-            let state_config = serde_json::to_vec(&json!({"state": {
-                "pot": [],
-                "held": {
-                    "nonce": zero_bytes.clone(),
-                    "color": zero_bytes,
-                    "value": "0",
-                    "mtIndex": "0"
-                },
-                "registry": [],
-                "coinList": []
-            }}))?;
-            let target = WitnessContractTarget::from_state_config(
-                ContractBundleSet::new(vec![bundle])?,
-                &state_config,
-                ttl,
-                &mut OsRng,
-            )?;
-            let operation = target.operation("tip", &parameters, ttl)?;
-            let plan: Plan = serde_json::from_slice(operation.bundle()?.file(Role::Plan)?)?;
+            let ttl = node
+                .sync()
+                .context("replay the development ledger")?
+                .block
+                .tblock
+                .to_secs()
+                + 1800;
+            let (target, operation, initializer, plan, circuit, parameters, initialize_parameters) =
+                if nested {
+                    let directory = Path::new(
+                        nested_directory
+                            .as_ref()
+                            .expect("nested collection directory"),
+                    );
+                    let pins: BTreeMap<String, String> = serde_json::from_str(
+                        nested_pins
+                            .as_deref()
+                            .expect("nested collection manifest pins"),
+                    )?;
+                    ensure!(
+                        pins.len() == 2
+                            && pins.contains_key("initializeOwners")
+                            && pins.contains_key("tip"),
+                        "nested collection manifest map must pin initializeOwners and tip"
+                    );
+                    let initialize_bundle = artifacts::verify(
+                        &directory.join("initializeOwners"),
+                        Some(&pins["initializeOwners"]),
+                    )?;
+                    let tip_bundle = artifacts::verify(&directory.join("tip"), Some(&pins["tip"]))?;
+                    let initialize_circuit =
+                        IrSource::load(initialize_bundle.file(Role::Circuit)?)?;
+                    let tip_circuit = IrSource::load(tip_bundle.file(Role::Circuit)?)?;
+                    let initialize_parameters = cache.parameters(initialize_circuit.k()).await?;
+                    let parameters = cache.parameters(tip_circuit.k()).await?;
+                    let state_config = br#"{"state":{"pot":[],"coinSets":[],"coinLists":[]}}"#;
+                    let target = WitnessContractTarget::from_state_config(
+                        ContractBundleSet::new(vec![initialize_bundle, tip_bundle])?,
+                        state_config,
+                        ttl,
+                        &mut OsRng,
+                    )?;
+                    let initializer =
+                        target.operation("initializeOwners", &initialize_parameters, ttl)?;
+                    let operation = target.operation("tip", &parameters, ttl)?;
+                    let plan: Plan = serde_json::from_slice(operation.bundle()?.file(Role::Plan)?)?;
+                    (
+                        target,
+                        operation,
+                        Some(initializer),
+                        plan,
+                        tip_circuit,
+                        parameters,
+                        Some(initialize_parameters),
+                    )
+                } else {
+                    let bundle = root_bundle.expect("root receive bundle");
+                    let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                    let parameters = cache.parameters(circuit.k()).await?;
+                    let zero_bytes = json!({"kind":"bytes", "values": vec![0; 32]});
+                    let state_config = serde_json::to_vec(&json!({"state": {
+                        "pot": [],
+                        "held": {
+                            "nonce": zero_bytes.clone(),
+                            "color": zero_bytes,
+                            "value": "0",
+                            "mtIndex": "0"
+                        },
+                        "registry": [],
+                        "coinList": []
+                    }}))?;
+                    let target = WitnessContractTarget::from_state_config(
+                        ContractBundleSet::new(vec![bundle])?,
+                        &state_config,
+                        ttl,
+                        &mut OsRng,
+                    )?;
+                    let operation = target.operation("tip", &parameters, ttl)?;
+                    let plan: Plan = serde_json::from_slice(operation.bundle()?.file(Role::Plan)?)?;
+                    (target, operation, None, plan, circuit, parameters, None)
+                };
             let make_funding = || {
                 DevelopmentFunding::new(
                     &node,
@@ -726,14 +861,95 @@ mod tests {
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             let deploy =
                 BoundTransaction::prepare(&deploy, policy.clone(), &node, &make_funding(), &signer)
+                    .await
+                    .context("fund the receive deployment")?;
+            let deployed = finalize(&node, &deploy)
+                .await
+                .context("finalize the receive deployment")?;
+            let deployment_entry = if nested { "initializeOwners" } else { "tip" };
+            let mut current = Some(
+                target
+                    .deployment_binding(deployment_entry)?
+                    .admit_committed_state(
+                        &deployed.contract_state,
+                        deploy.expected_state(),
+                        &deployed.finalized_hash,
+                        true,
+                    )?,
+            );
+            let selected_owner = [1u8; 32];
+            let other_owner = [2u8; 32];
+            let mut before_funded_call = deployed.contract_state.clone();
+            let initialization_observation = if let Some(initializer) = &initializer {
+                let initialize_parameters = initialize_parameters
+                    .as_ref()
+                    .context("nested initializer parameters missing")?;
+                let initialize_inputs = BTreeMap::from([
+                    (
+                        "selectedOwner".into(),
+                        json!({"kind":"bytes", "values": selected_owner}),
+                    ),
+                    (
+                        "otherOwner".into(),
+                        json!({"kind":"bytes", "values": other_owner}),
+                    ),
+                ]);
+                let proved = initializer
+                    .prepare_call(
+                        &mut current,
+                        initialize_parameters,
+                        initialize_inputs,
+                        &mut OsRng,
+                    )?
+                    .prove(
+                        &LocalProver::new(StdRng::from_entropy()),
+                        initialize_parameters,
+                        1_048_576,
+                        futures::future::pending(),
+                    )
                     .await?;
-            let deployed = finalize(&node, &deploy).await?;
-            let current = target.deployment_binding("tip")?.admit_committed_state(
-                &deployed.contract_state,
-                deploy.expected_state(),
-                &deployed.finalized_hash,
-                true,
-            )?;
+                let initialize_signer = ExplicitSeal::new(approve, StdRng::from_entropy());
+                let bound = BoundTransaction::prepare(
+                    proved.native(),
+                    policy.clone(),
+                    &node,
+                    &make_funding(),
+                    &initialize_signer,
+                )
+                .await
+                .context("fund the owner initializer")?;
+                let receipt = finalize(&node, &bound)
+                    .await
+                    .context("finalize the owner initializer")?;
+                assert_nested_qualified_coin_owners_empty(
+                    &receipt.contract_state,
+                    &plan,
+                    &selected_owner,
+                    &other_owner,
+                )?;
+                before_funded_call = receipt.contract_state.clone();
+                current = Some(
+                    proved
+                        .contract_binding()
+                        .context("initializer proof omitted its contract binding")?
+                        .admit_committed_state(
+                            &receipt.contract_state,
+                            bound.expected_state(),
+                            &receipt.finalized_hash,
+                            false,
+                        )?,
+                );
+                Some(json!({
+                    "height": receipt.height,
+                    "transactionId": receipt.transaction_id,
+                    "stateSha256": artifacts::digest(&receipt.contract_state),
+                    "selectedOwner": hex::encode(selected_owner),
+                    "otherOwner": hex::encode(other_owner),
+                    "bothOwnersInitialized": true
+                }))
+            } else {
+                None
+            };
             let address = ContractAddress(HashOutput(
                 hex::decode(target.contract_address())?
                     .try_into()
@@ -745,7 +961,7 @@ mod tests {
             let expected_index = snapshot.state.zswap.first_free;
             let commitment = coin.commitment(&Recipient::Contract(address));
             let inputs = || {
-                BTreeMap::from([
+                let mut values = BTreeMap::from([
                     ("domain".into(), json!({"kind":"bytes", "values":domain.0})),
                     (
                         "nonce".into(),
@@ -755,9 +971,16 @@ mod tests {
                         "color".into(),
                         json!({"kind":"bytes", "values":coin.type_.0.0}),
                     ),
-                ])
+                ]);
+                if nested {
+                    values.insert(
+                        "owner".into(),
+                        json!({"kind":"bytes", "values":selected_owner}),
+                    );
+                }
+                values
             };
-            let mut absent = Some(current);
+            let mut absent = current;
             ensure!(
                 operation
                     .prepare_call(&mut absent, &parameters, inputs(), &mut OsRng)
@@ -786,7 +1009,7 @@ mod tests {
             ensure!(
                 node.finalized_contract_state(target.contract_address())?
                     .bytes
-                    == deployed.contract_state,
+                    == before_funded_call,
                 "invalid offer changed the Map"
             );
             let bound = make_funding()
@@ -800,8 +1023,11 @@ mod tests {
                     &signer,
                     StdRng::from_entropy(),
                 )
-                .await?;
-            let receipt = finalize(&node, &bound).await?;
+                .await
+                .context("fund the shielded mint and write")?;
+            let receipt = finalize(&node, &bound)
+                .await
+                .context("finalize the shielded mint and write")?;
             let finalized = node.sync()?;
             let finalized_output = finalized
                 .state
@@ -831,9 +1057,6 @@ mod tests {
                     .with_context(|| format!("{name} state slot missing from plan"))
             };
             let map_slot = slot("pot")?;
-            let cell_slot = slot("held")?;
-            let set_slot = slot("registry")?;
-            let list_slot = slot("coinList")?;
             let Some(StateValue::Map(coins)) = slots.get(map_slot) else {
                 anyhow::bail!("expected coin Map");
             };
@@ -849,51 +1072,141 @@ mod tests {
                     )))),
                 "finalized Map does not contain the Ledger-assigned qualified coin"
             );
-            let Some(StateValue::Cell(stored_cell)) = slots.get(cell_slot) else {
-                anyhow::bail!("expected qualified coin Cell");
-            };
-            ensure!(
-                &**stored_cell == &qualified,
-                "finalized Cell does not contain the Ledger-assigned qualified coin"
-            );
-            let Some(StateValue::Map(coin_set)) = slots.get(set_slot) else {
-                anyhow::bail!("expected qualified coin Set");
-            };
-            ensure!(
-                matches!(coin_set.get(&qualified), Some(marker) if matches!(*marker, StateValue::Null)),
-                "finalized Set does not contain the Ledger-assigned qualified coin"
-            );
-            let Some(StateValue::Array(coin_list)) = slots.get(list_slot) else {
-                anyhow::bail!("expected qualified coin List");
-            };
-            ensure!(coin_list.len() == 3, "invalid qualified coin List node");
-            let Some(StateValue::Cell(list_head)) = coin_list.get(0) else {
-                anyhow::bail!("expected qualified coin List head");
-            };
-            ensure!(
-                **list_head == qualified,
-                "finalized List head does not contain the Ledger-assigned qualified coin"
-            );
-            let Some(StateValue::Array(list_tail)) = coin_list.get(1) else {
-                anyhow::bail!("expected qualified coin List tail");
-            };
-            ensure!(
-                list_tail.len() == 3,
-                "invalid qualified coin List tail node"
-            );
-            ensure!(
-                matches!(list_tail.get(0), Some(StateValue::Null))
-                    && matches!(list_tail.get(1), Some(StateValue::Null))
-                    && matches!(list_tail.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
-                "qualified coin List contains unexpected tail entries"
-            );
-            let Some(StateValue::Cell(list_length)) = coin_list.get(2) else {
-                anyhow::bail!("expected qualified coin List length");
-            };
-            ensure!(
-                **list_length == AlignedValue::from(1u64),
-                "qualified coin List does not contain exactly one value"
-            );
+            if nested {
+                let selected_key = AlignedValue::from(selected_owner);
+                let other_key = AlignedValue::from(other_owner);
+                let set_slot = slot("coinSets")?;
+                let list_slot = slot("coinLists")?;
+                let Some(StateValue::Map(set_owners)) = slots.get(set_slot) else {
+                    anyhow::bail!("expected owner-keyed qualified coin Set");
+                };
+                ensure!(
+                    set_owners.size() == 2,
+                    "qualified coin Set owner buckets differ"
+                );
+                let Some(selected_set) = set_owners.get(&selected_key) else {
+                    anyhow::bail!("selected owner is missing from the qualified coin Set");
+                };
+                let StateValue::Map(selected_members) = &*selected_set else {
+                    anyhow::bail!("expected selected owner's qualified coin Set");
+                };
+                ensure!(
+                    selected_members.size() == 1
+                        && matches!(selected_members.get(&qualified), Some(marker) if matches!(*marker, StateValue::Null)),
+                    "selected owner Set does not contain the Ledger-assigned qualified coin"
+                );
+                let Some(other_set) = set_owners.get(&other_key) else {
+                    anyhow::bail!("other owner is missing from the qualified coin Set");
+                };
+                let StateValue::Map(other_members) = &*other_set else {
+                    anyhow::bail!("expected other owner's qualified coin Set");
+                };
+                ensure!(
+                    other_members.size() == 0,
+                    "qualified coin leaked into other owner Set"
+                );
+
+                let Some(StateValue::Map(list_owners)) = slots.get(list_slot) else {
+                    anyhow::bail!("expected owner-keyed qualified coin List");
+                };
+                ensure!(
+                    list_owners.size() == 2,
+                    "qualified coin List owner buckets differ"
+                );
+                let Some(selected_list) = list_owners.get(&selected_key) else {
+                    anyhow::bail!("selected owner is missing from the qualified coin List");
+                };
+                let StateValue::Array(coin_list) = &*selected_list else {
+                    anyhow::bail!("expected selected owner's qualified coin List");
+                };
+                ensure!(
+                    coin_list.len() == 3,
+                    "invalid selected qualified coin List node"
+                );
+                let Some(StateValue::Cell(list_head)) = coin_list.get(0) else {
+                    anyhow::bail!("expected selected qualified coin List head");
+                };
+                ensure!(
+                    **list_head == qualified,
+                    "selected List head differs from the Ledger-assigned qualified coin"
+                );
+                let Some(StateValue::Array(list_tail)) = coin_list.get(1) else {
+                    anyhow::bail!("expected selected qualified coin List tail");
+                };
+                ensure!(
+                    list_tail.len() == 3
+                        && matches!(list_tail.get(0), Some(StateValue::Null))
+                        && matches!(list_tail.get(1), Some(StateValue::Null))
+                        && matches!(list_tail.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+                    "selected qualified coin List has unexpected tail entries"
+                );
+                let Some(StateValue::Cell(list_length)) = coin_list.get(2) else {
+                    anyhow::bail!("expected selected qualified coin List length");
+                };
+                ensure!(
+                    **list_length == AlignedValue::from(1u64),
+                    "selected qualified coin List must contain one value"
+                );
+                let Some(other_list) = list_owners.get(&other_key) else {
+                    anyhow::bail!("other owner is missing from the qualified coin List");
+                };
+                let StateValue::Array(other_list) = &*other_list else {
+                    anyhow::bail!("expected other owner's qualified coin List");
+                };
+                ensure!(
+                    other_list.len() == 3
+                        && matches!(other_list.get(0), Some(StateValue::Null))
+                        && matches!(other_list.get(1), Some(StateValue::Null))
+                        && matches!(other_list.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+                    "qualified coin leaked into other owner List"
+                );
+            } else {
+                let cell_slot = slot("held")?;
+                let set_slot = slot("registry")?;
+                let list_slot = slot("coinList")?;
+                let Some(StateValue::Cell(stored_cell)) = slots.get(cell_slot) else {
+                    anyhow::bail!("expected qualified coin Cell");
+                };
+                ensure!(
+                    &**stored_cell == &qualified,
+                    "finalized Cell does not contain the Ledger-assigned qualified coin"
+                );
+                let Some(StateValue::Map(coin_set)) = slots.get(set_slot) else {
+                    anyhow::bail!("expected qualified coin Set");
+                };
+                ensure!(
+                    matches!(coin_set.get(&qualified), Some(marker) if matches!(*marker, StateValue::Null)),
+                    "finalized Set does not contain the Ledger-assigned qualified coin"
+                );
+                let Some(StateValue::Array(coin_list)) = slots.get(list_slot) else {
+                    anyhow::bail!("expected qualified coin List");
+                };
+                ensure!(coin_list.len() == 3, "invalid qualified coin List node");
+                let Some(StateValue::Cell(list_head)) = coin_list.get(0) else {
+                    anyhow::bail!("expected qualified coin List head");
+                };
+                ensure!(
+                    **list_head == qualified,
+                    "finalized List head does not contain the Ledger-assigned qualified coin"
+                );
+                let Some(StateValue::Array(list_tail)) = coin_list.get(1) else {
+                    anyhow::bail!("expected qualified coin List tail");
+                };
+                ensure!(
+                    list_tail.len() == 3
+                        && matches!(list_tail.get(0), Some(StateValue::Null))
+                        && matches!(list_tail.get(1), Some(StateValue::Null))
+                        && matches!(list_tail.get(2), Some(StateValue::Cell(length)) if **length == AlignedValue::from(0u64)),
+                    "qualified coin List contains unexpected tail entries"
+                );
+                let Some(StateValue::Cell(list_length)) = coin_list.get(2) else {
+                    anyhow::bail!("expected qualified coin List length");
+                };
+                ensure!(
+                    **list_length == AlignedValue::from(1u64),
+                    "qualified coin List does not contain exactly one value"
+                );
+            }
             ensure!(
                 finalized
                     .state
@@ -901,27 +1214,36 @@ mod tests {
                     .coin_coms_set
                     .contains_key(&commitment)
             );
-            println!(
-                "{}",
-                json!({
-                    "deploymentHeight": deployed.height,
-                    "callHeight": receipt.height,
-                    "callTransaction": receipt.transaction_id,
-                    "contractAddress": receipt.contract_address,
-                    "commitment": hex::encode(commitment.0.0),
-                    "nonce": hex::encode(coin.nonce.0.0),
-                    "color": hex::encode(coin.type_.0.0),
-                    "value": coin.value.to_string(),
-                    "mtIndex": finalized_index,
-                    "mapCoinMatchesFinalizedOutput": true,
-                    "cellCoinMatchesFinalizedOutput": true,
-                    "setCoinMatchesFinalizedOutput": true,
-                    "listCoinHeadMatchesFinalizedOutput": true,
-                    "stateSha256": artifacts::digest(&finalized_contract.bytes),
-                    "k": circuit.k(),
-                    "rejected": ["missingOffer", "mismatchedOffer"]
-                })
-            );
+            let mut evidence = json!({
+                "deploymentHeight": deployed.height,
+                "callHeight": receipt.height,
+                "callTransaction": receipt.transaction_id,
+                "finalizedBlockHash": receipt.finalized_hash,
+                "contractAddress": receipt.contract_address,
+                "commitment": hex::encode(commitment.0.0),
+                "nonce": hex::encode(coin.nonce.0.0),
+                "color": hex::encode(coin.type_.0.0),
+                "value": coin.value.to_string(),
+                "mtIndex": finalized_index,
+                "mapCoinMatchesFinalizedOutput": true,
+                "stateSha256": artifacts::digest(&finalized_contract.bytes),
+                "initialization": initialization_observation,
+                "k": circuit.k(),
+                "rejected": ["missingOffer", "mismatchedOffer"]
+            });
+            if nested {
+                evidence["selectedOwner"] = json!(hex::encode(selected_owner));
+                evidence["otherOwner"] = json!(hex::encode(other_owner));
+                evidence["nestedSetMatchesFinalizedOutput"] = json!(true);
+                evidence["nestedListHeadMatchesFinalizedOutput"] = json!(true);
+                evidence["otherOwnerSetEmpty"] = json!(true);
+                evidence["otherOwnerListEmpty"] = json!(true);
+            } else {
+                evidence["cellCoinMatchesFinalizedOutput"] = json!(true);
+                evidence["setCoinMatchesFinalizedOutput"] = json!(true);
+                evidence["listCoinHeadMatchesFinalizedOutput"] = json!(true);
+            }
+            println!("{evidence}");
             Ok(())
         })
     }
