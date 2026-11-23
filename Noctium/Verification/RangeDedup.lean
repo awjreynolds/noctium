@@ -315,10 +315,57 @@ private theorem filter_decoded (items : List Json) :
   | cons item rest ih =>
     by_cases kept : nonAssert (decodedItem item) <;> simp [kept, ih]
 
-/-- Native `copy` carries the witness value of its source SSA name to its
-destination. The typed instruction relation records this effect as equality. -/
+/-- A native Copy binds the destination to the source SSA value.
+Comparison reuse expresses this binding as equality over an assignment. -/
 def copyHolds (witness : Assignment) (source destination : String) : Prop :=
   witness destination = witness source
+
+/-- Read the Copy operand names. `comparisonCopyJson_decodes` applies this to
+the exact object emitted by the comparison optimizer. -/
+def comparisonCopyOperands? (instruction : Json) : Option (String × String) := do
+  guard ((← (instruction.getObjVal? "op" >>= Json.getStr?).toOption) == "copy")
+  let source ← (instruction.getObjVal? "val" >>= Json.getStr?).toOption
+  let destination ← (instruction.getObjVal? "output" >>= Json.getStr?).toOption
+  pure (source, destination)
+
+/-- Model the reference Copy arms of pinned ZKIR 3.2.1 ir_vm.rs by storing the
+resolved source value under the destination name. The VM checks freshness. -/
+def vmCopyStore (witness : Assignment) (source destination : String) : Assignment :=
+  fun name => if name == destination then witness source else witness name
+
+def executeComparisonCopy (witness : Assignment) (instruction : Json) : Option Assignment := do
+  let (source, destination) ← comparisonCopyOperands? instruction
+  pure (vmCopyStore witness source destination)
+
+theorem comparisonCopyJson_decodes (source destination : String) :
+    comparisonCopyOperands? (comparisonCopyJson source destination) =
+      some (source, destination) := by
+  have opcode : (comparisonCopyJson source destination).getObjVal? "op" =
+      .ok (.str "copy") := rfl
+  have sourceField : (comparisonCopyJson source destination).getObjVal? "val" =
+      .ok (.str source) := rfl
+  have outputField : (comparisonCopyJson source destination).getObjVal? "output" =
+      .ok (.str destination) := rfl
+  simp [comparisonCopyOperands?, opcode, sourceField, outputField, guard,
+    pure, failure, Bind.bind, Except.bind, Json.getStr?, Except.toOption, Except.pure]
+
+theorem executeComparisonCopy_emitted (witness : Assignment) (source destination : String) :
+    executeComparisonCopy witness (comparisonCopyJson source destination) =
+      some (vmCopyStore witness source destination) := by
+  simp [executeComparisonCopy, comparisonCopyJson_decodes]
+
+theorem executeComparisonCopy_emitted_holds (witness result : Assignment)
+    (source destination : String)
+    (executed : executeComparisonCopy witness (comparisonCopyJson source destination) =
+      some result) : copyHolds result source destination := by
+  rw [executeComparisonCopy_emitted] at executed
+  cases executed
+  simp [copyHolds, vmCopyStore]
+
+theorem vmCopyStore_unchanged (witness : Assignment) (source destination other : String)
+    (otherIsNotOutput : other ≠ destination) :
+    vmCopyStore witness source destination other = witness other := by
+  simp [vmCopyStore, otherIsNotOutput]
 
 /-- A retained comparison and the Copy emitted for its duplicate have exactly
 the original duplicate comparison's arbitrary-witness constraint. Both input
