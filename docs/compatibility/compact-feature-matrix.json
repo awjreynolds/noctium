@@ -6524,8 +6524,8 @@
       "id": "C-STDLIB-UNSHIELDEDBALANCE",
       "layer": "standard-library",
       "surface": "unshieldedBalance",
-      "noctiumStatus": "subset",
-      "notes": "A fixed unshielded tag selects the exact UInt128 balance. The matched fixture covers a missing token with a shielded balance of the same color. The underlying read has a finalized zero-balance Ledger 9 receipt.",
+      "noctiumStatus": "equivalent",
+      "notes": "The fixed unshielded tag selects the exact UInt128 balance. Compact 0.36.1 and the native ledger context agree on exact reads, an absent token with a shielded balance of the same color, and UInt128 maximum when comparisons are inactive. The underlying zero-balance read also has a finalized Ledger 9 receipt. The five-return ZKIR 3.2.1 relation proved and verified with official K9 parameters in a seeded ledger context. A modified return commitment failed verification.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6540,18 +6540,19 @@
       ],
       "observedEvidence": [
         "tests/UnshieldedBalanceHelpers.lean",
+        "tests/compact/TokenBalance.compact",
         "tests/compact/token-balance.mjs",
         "runtime/tests/native_token_balance.rs",
         "docs/development/native-token-balance-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDBALANCELT",
       "layer": "standard-library",
       "surface": "unshieldedBalanceLt",
-      "noctiumStatus": "subset",
-      "notes": "A fixed unshielded tag selects the native strict less-than comparison. Matched cases include equality, guarded inactivity and the active UInt64 operand limit.",
+      "noctiumStatus": "equivalent",
+      "notes": "A fixed unshielded tag selects the native strict less-than comparison. Matched cases include equality, guarded inactivity and the active UInt64 operand limit. Active comparisons admit UInt64 maximum and reject either wider operand. The five-return ZKIR 3.2.1 relation proved and verified with official K9 parameters in a seeded ledger context. A modified return commitment failed verification.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6566,17 +6567,18 @@
       ],
       "observedEvidence": [
         "tests/UnshieldedBalanceHelpers.lean",
+        "tests/compact/TokenBalance.compact",
         "tests/compact/token-balance.mjs",
         "runtime/tests/native_token_balance.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDBALANCEGTE",
       "layer": "standard-library",
       "surface": "unshieldedBalanceGte",
-      "noctiumStatus": "subset",
-      "notes": "Lean negates the native unshielded less-than result and selects false when the comparison is inactive. Matched cases include equality and the active UInt64 operand limit.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean negates the native unshielded less-than result and selects false when the comparison is inactive. Matched cases include equality and the active UInt64 operand limit. Active comparisons admit UInt64 maximum and reject either wider operand. The five-return ZKIR 3.2.1 relation proved and verified with official K9 parameters in a seeded ledger context. A modified return commitment failed verification.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6591,17 +6593,18 @@
       ],
       "observedEvidence": [
         "tests/UnshieldedBalanceHelpers.lean",
+        "tests/compact/TokenBalance.compact",
         "tests/compact/token-balance.mjs",
         "runtime/tests/native_token_balance.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDBALANCEGT",
       "layer": "standard-library",
       "surface": "unshieldedBalanceGt",
-      "noctiumStatus": "subset",
-      "notes": "A fixed unshielded tag selects the native strict greater-than comparison. Matched cases include equality, guarded inactivity and the active UInt64 operand limit.",
+      "noctiumStatus": "equivalent",
+      "notes": "A fixed unshielded tag selects the native strict greater-than comparison. Matched cases include equality, guarded inactivity and the active UInt64 operand limit. Active comparisons admit UInt64 maximum and reject either wider operand. The five-return ZKIR 3.2.1 relation proved and verified with official K9 parameters in a seeded ledger context. A modified return commitment failed verification.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6616,17 +6619,18 @@
       ],
       "observedEvidence": [
         "tests/UnshieldedBalanceHelpers.lean",
+        "tests/compact/TokenBalance.compact",
         "tests/compact/token-balance.mjs",
         "runtime/tests/native_token_balance.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDBALANCELTE",
       "layer": "standard-library",
       "surface": "unshieldedBalanceLte",
-      "noctiumStatus": "subset",
-      "notes": "Lean negates the native unshielded greater-than result and selects false when the comparison is inactive. Matched cases include equality and the active UInt64 operand limit.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean negates the native unshielded greater-than result and selects false when the comparison is inactive. Matched cases include equality and the active UInt64 operand limit. Active comparisons admit UInt64 maximum and reject either wider operand. The five-return ZKIR 3.2.1 relation proved and verified with official K9 parameters in a seeded ledger context. A modified return commitment failed verification.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6641,10 +6645,11 @@
       ],
       "observedEvidence": [
         "tests/UnshieldedBalanceHelpers.lean",
+        "tests/compact/TokenBalance.compact",
         "tests/compact/token-balance.mjs",
         "runtime/tests/native_token_balance.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-BLOCKTIMELT",

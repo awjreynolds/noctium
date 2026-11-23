@@ -390,6 +390,12 @@ jobs:
           .lake/build/bin/noctium compile tests/modules/OpaqueModuleCells.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/opaque-module-cells"
+          .lake/build/bin/noctium compile tests/NativeTokenBalance.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/native-token-balance"
+          .lake/build/bin/noctium compile tests/UnshieldedBalanceHelpers.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/unshielded-balance-helpers"
           .lake/build/bin/noctium compile tests/modules/ForeignCurveGenericIdentity.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit standalone --emit specialization --output "$artifacts/generic-foreign-curve-module"
@@ -457,6 +463,8 @@ jobs:
             NOCTIUM_RAW_SHIELDED_CLAIMS_DIR="$artifacts/raw-shielded-claims" \
             NOCTIUM_TYPED_CONTRACT_REFERENCE_DIR="$artifacts/typed-contract-reference" \
             NOCTIUM_OPAQUE_MODULE_CELLS_DIR="$artifacts/opaque-module-cells" \
+            NOCTIUM_BALANCE_DIR="$artifacts/native-token-balance" \
+            NOCTIUM_BALANCE_HELPERS_DIR="$artifacts/unshielded-balance-helpers" \
             NOCTIUM_GENERIC_FOREIGN_CURVE_MODULE_DIR="$artifacts/generic-foreign-curve-module" \
             NOCTIUM_GENERIC_JUBJUB_MODULE_DIR="$artifacts/generic-jubjub-module" \
             NOCTIUM_VECTOR_SET_KEYS_DIR="$artifacts/vector-set-keys" \
@@ -492,8 +500,9 @@ jobs:
               --test generic_jubjub_module --test imported_module_types \
               --test readable_nominal_uint --test generic_foreign_curve_module \
               --test curve25519_projection --test opaque_module_cells \
-              --test opaque_generic_circuit -- --ignored \
-                --skip curve25519_point_projection_generates_and_binds_a_native_proof
+              --test opaque_generic_circuit --test native_token_balance -- --ignored \
+                --skip curve25519_point_projection_generates_and_binds_a_native_proof \
+                --skip unshielded_balance_helpers_generate_and_bind_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_CONSTRUCTOR_RECORD_LIST_DIR="$artifacts/constructor-record-list" \
