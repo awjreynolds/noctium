@@ -2490,7 +2490,7 @@
       "layer": "language-ledger",
       "surface": "Set.insertCoin",
       "noctiumStatus": "subset",
-      "notes": "A root Set accepts an exact QualifiedInfo record with a coin index booked for the current contract. The native query-context fixture preserves existing members, checks idempotent insertion, and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run checks the exact Set key and marker against the finalized self-minted output. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Pinned Compact and native query-context cases agree on inserting booked records under two initialized Bytes32 owners, retaining each booked index and rejecting absent owners or wrong bookings. A funded nested Set write matches the finalized self-minted output and leaves the second owner empty. Finalized explicit-recipient cases remain open. Noctium checks two-parent self-recipient and five-parent explicit contract-recipient insertion under Bytes32 Maps with emitted ZKIR 3.2.1 and the native query context. Sibling Sets remain intact, invalid bookings and missing parents reject, and both source and native plan admission reject depth six. The pinned Compact 0.36.1 and Runtime 0.21.0 comparison at five parents verifies booked index 1, retained existing and sibling Set members, and rejection of absent paths or invalid bookings.",
+      "notes": "A root Set accepts an exact QualifiedInfo record with a coin index booked for the current contract. The native query-context fixture preserves existing members, checks idempotent insertion, and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run checks the exact Set key and marker against the finalized self-minted output. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Pinned Compact and native query-context cases agree on inserting booked records under two initialized Bytes32 owners, retaining each booked index and rejecting absent owners or wrong bookings. A funded nested Set write matches the finalized self-minted output and leaves the second owner empty. Finalized explicit-recipient cases remain open. Noctium checks two-parent self-recipient and five-parent explicit contract-recipient insertion under Bytes32 Maps with emitted ZKIR 3.2.1 and the native query context. Sibling Sets remain intact, invalid bookings and missing parents reject, and both source and native plan admission reject depth six. The pinned Compact 0.36.1 and Runtime 0.21.0 comparison at five parents verifies booked index 1, retained existing and sibling Set members, and rejection of absent paths or invalid bookings. A focused funded self-recipient insert at five parents matches the finalized contract-owned Zswap output and exact assigned coin index, preserves three empty siblings, and rejects missing and mismatched offers.",
       "source": [
         "adt"
       ],
@@ -2506,6 +2506,8 @@
         "tests/compact/DeepQualifiedCoinSet.compact",
         "tests/compact/five-parent-qualified-coin-set.mjs",
         "tests/FundedNestedQualifiedCoinCollections.lean",
+        "tests/FundedFiveParentQualifiedCoinSet.lean",
+        "docs/development/funded-five-parent-coin-set-localnet-receipt.json",
         "runtime/tests/qualified_coin_set.rs",
         "tests/compact/qualified-coin-collections.mjs",
         "docs/development/nested-qualified-coin-collections-localnet-receipt.json",

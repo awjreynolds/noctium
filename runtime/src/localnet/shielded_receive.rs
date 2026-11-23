@@ -675,6 +675,44 @@ mod tests {
         Ok(())
     }
 
+    fn assert_group_coin_set_path(
+        value: &StateValue,
+        group: &AlignedValue,
+        repeated_group_maps: usize,
+        expected_members: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let mut current = (*value).clone();
+        for _ in 0..repeated_group_maps {
+            let StateValue::Map(groups) = &current else {
+                anyhow::bail!("expected an intermediate qualified coin Set Map");
+            };
+            ensure!(
+                groups.size() == 1,
+                "intermediate qualified coin Set Map is not singular"
+            );
+            let Some(next) = groups.get(group) else {
+                anyhow::bail!("intermediate Set Map is missing its repeated group key");
+            };
+            current = (*next).clone();
+        }
+        let StateValue::Map(members) = &current else {
+            anyhow::bail!("expected qualified coin Set leaf Map");
+        };
+        ensure!(
+            members.size() == expected_members.len(),
+            "qualified coin Set member count differs from finalized coins"
+        );
+        for member in expected_members {
+            ensure!(
+                matches!(members.get(member), Some(value) if matches!(*value, StateValue::Null)),
+                "qualified coin Set is missing a finalized member"
+            );
+        }
+        Ok(())
+    }
+
     fn assert_nested_qualified_coin_owners_empty(
         state_bytes: &[u8],
         plan: &Plan,
@@ -1027,7 +1065,86 @@ mod tests {
                 &qualified,
             )?;
         }
+
         Ok(())
+    }
+
+    fn assert_five_parent_coin_sets(
+        value: &StateValue<Db>,
+        selected_owner: &[u8; 32],
+        other_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_members: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let StateValue::Map(owners) = value else {
+            anyhow::bail!("expected five-parent qualified coin Set owner Map");
+        };
+        ensure!(owners.size() == 2, "five-parent Set owner buckets differ");
+        let owner_paths = [
+            (AlignedValue::from(*selected_owner), true),
+            (AlignedValue::from(*other_owner), false),
+        ];
+        let group_paths = [
+            (AlignedValue::from(*selected_group), true),
+            (AlignedValue::from(*other_group), false),
+        ];
+        for (owner_key, is_selected_owner) in owner_paths {
+            let Some(groups) = owners.get(&owner_key) else {
+                anyhow::bail!("five-parent Set owner path is missing");
+            };
+            let StateValue::Map(groups) = &*groups else {
+                anyhow::bail!("expected five-parent Set group Map");
+            };
+            ensure!(groups.size() == 2, "five-parent Set group count differs");
+            for (group_key, is_selected_group) in &group_paths {
+                let Some(set_path) = groups.get(group_key) else {
+                    anyhow::bail!("five-parent Set group path is missing");
+                };
+                let expected = if is_selected_owner && *is_selected_group {
+                    selected_members
+                } else {
+                    &[]
+                };
+                // The owner and first group key are already selected. Three
+                // repeated group Maps lead to the qualified Set itself.
+                assert_group_coin_set_path(&set_path, group_key, 3, expected)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_five_parent_coin_set_state(
+        state_bytes: &[u8],
+        plan: &Plan,
+        selected_owner: &[u8; 32],
+        other_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_members: &[AlignedValue],
+    ) -> Result<()> {
+        let state: ContractState<Db> = native_decode(state_bytes)?;
+        let StateValue::Array(slots) = state.data.get_ref() else {
+            anyhow::bail!("expected five-parent Set state slots");
+        };
+        let slot = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinSets")
+            .context("deepCoinSets state slot missing from plan")?;
+        let value = slots
+            .get(slot)
+            .context("deepCoinSets state slot missing from contract state")?;
+        assert_five_parent_coin_sets(
+            value,
+            selected_owner,
+            other_owner,
+            selected_group,
+            other_group,
+            selected_members,
+        )
     }
 
     fn assert_two_parent_coin_lists(
@@ -1285,6 +1402,22 @@ mod tests {
                     let plan: Plan = serde_json::from_slice(operation.bundle()?.file(Role::Plan)?)?;
                     (target, operation, None, plan, circuit, parameters, None)
                 };
+            let has_state = |name: &str| {
+                plan.state
+                    .iter()
+                    .any(|declaration| declaration.name == name)
+            };
+            let deep_set_only = nested
+                && has_state("pot")
+                && has_state("deepCoinSets")
+                && plan.state.len() == 2
+                && ["coinSets", "coinLists", "deepCoinLists", "rootCoinMap", "coinMaps"]
+                    .iter()
+                    .all(|name| !has_state(name));
+            ensure!(
+                !deep_set_only || (!deep_map && !overwrite),
+                "a Set-only bundle does not use Map-depth or overwrite mode"
+            );
             let make_funding = || {
                 DevelopmentFunding::new(
                     &node,
@@ -1351,7 +1484,7 @@ mod tests {
                         json!({"kind":"bytes", "values": other_owner}),
                     ),
                 ]);
-                if deep_map {
+                if deep_map || deep_set_only {
                     initialize_inputs.insert(
                         "selectedGroup".into(),
                         json!({"kind":"bytes", "values": selected_group}),
@@ -1388,7 +1521,7 @@ mod tests {
                 let receipt = finalize(&node, &bound)
                     .await
                     .context("finalize the owner initializer")?;
-                if deep_map {
+                if deep_map || deep_set_only {
                     initialization_inclusion = Some(json!({
                         "height": receipt.height,
                         "blockHash": receipt.block_hash,
@@ -1397,13 +1530,25 @@ mod tests {
                         "transactionId": receipt.transaction_id
                     }));
                 }
-                assert_nested_qualified_coin_owners_empty(
-                    &receipt.contract_state,
-                    &plan,
-                    &selected_owner,
-                    &other_owner,
-                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
-                )?;
+                if deep_set_only {
+                    assert_five_parent_coin_set_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &other_owner,
+                        &selected_group,
+                        &other_group,
+                        &[],
+                    )?;
+                } else {
+                    assert_nested_qualified_coin_owners_empty(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &other_owner,
+                        deep_map.then_some((&selected_group, &other_group, map_parent_count)),
+                    )?;
+                }
                 before_funded_call = receipt.contract_state.clone();
                 current = Some(
                     proved
@@ -1428,7 +1573,7 @@ mod tests {
                 if overwrite {
                     observation["finalizedHeight"] = json!(receipt.finalized_height);
                 }
-                if deep_map {
+                if deep_map || deep_set_only {
                     observation["selectedGroup"] = json!(hex::encode(selected_group));
                     observation["otherGroup"] = json!(hex::encode(other_group));
                     observation["bothGroupsInitializedForBothOwners"] = json!(true);
@@ -1444,6 +1589,7 @@ mod tests {
             ));
             let domain = HashOutput([3; 32]);
             let public_key = [4u8; 32];
+            let requires_public_key = has_state("rootCoinMap") || has_state("coinMaps");
             let coin = Info::new(&mut OsRng, 5, address.custom_shielded_token_type(domain));
             let snapshot = node.sync()?;
             let expected_index = snapshot.state.zswap.first_free;
@@ -1465,16 +1611,18 @@ mod tests {
                         "owner".into(),
                         json!({"kind":"bytes", "values":selected_owner}),
                     );
-                    if deep_map {
+                    if deep_map || deep_set_only {
                         values.insert(
                             "group".into(),
                             json!({"kind":"bytes", "values":selected_group}),
                         );
                     }
-                    values.insert(
-                        "key".into(),
-                        json!({"kind":"bytes", "values":public_key}),
-                    );
+                    if requires_public_key {
+                        values.insert(
+                            "key".into(),
+                            json!({"kind":"bytes", "values":public_key}),
+                        );
+                    }
                 }
                 values
             };
@@ -1592,15 +1740,27 @@ mod tests {
                 "finalized Map does not contain the Ledger-assigned qualified coin"
             );
             if nested {
-                assert_nested_qualified_coin_collections(
-                    &receipt.contract_state,
-                    &plan,
-                    &selected_owner,
-                    &other_owner,
-                    &public_key,
-                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
-                    &[(&coin, finalized_index)],
-                )?;
+                if deep_set_only {
+                    assert_five_parent_coin_set_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &other_owner,
+                        &selected_group,
+                        &other_group,
+                        &[qualified.clone()],
+                    )?;
+                } else {
+                    assert_nested_qualified_coin_collections(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &other_owner,
+                        &public_key,
+                        deep_map.then_some((&selected_group, &other_group, map_parent_count)),
+                        &[(&coin, finalized_index)],
+                    )?;
+                }
             } else {
                 let cell_slot = slot("held")?;
                 let set_slot = slot("registry")?;
@@ -1818,21 +1978,12 @@ mod tests {
             if nested {
                 evidence["selectedOwner"] = json!(hex::encode(selected_owner));
                 evidence["otherOwner"] = json!(hex::encode(other_owner));
-                evidence["nestedSetMatchesFinalizedOutput"] = json!(true);
-                evidence["nestedListHeadMatchesFinalizedOutput"] = json!(true);
-                evidence["otherOwnerSetEmpty"] = json!(true);
-                evidence["otherOwnerListEmpty"] = json!(true);
-                evidence["rootCoinMapMatchesFinalizedOutput"] = json!(true);
-                evidence["nestedCoinMapMatchesFinalizedOutput"] = json!(true);
-                evidence["otherOwnerCoinMapEmpty"] = json!(true);
-                evidence["mapKey"] = json!(hex::encode(public_key));
-                if deep_map {
+                if deep_set_only {
                     evidence["selectedGroup"] = json!(hex::encode(selected_group));
                     evidence["siblingGroup"] = json!(hex::encode(other_group));
-                    evidence["mapParentCount"] = json!(map_parent_count);
-                    evidence["deepCoinMapMatchesFinalizedOutput"] = json!(true);
-                    evidence["siblingGroupsUnchanged"] = json!(true);
-                    evidence["otherOwnerGroupsUnchanged"] = json!(true);
+                    evidence["coinSetParentCount"] = json!(5);
+                    evidence["deepCoinSetMatchesFinalizedOutput"] = json!(true);
+                    evidence["deepCoinSetSiblingPathsEmpty"] = json!(true);
                     evidence["receiptInclusions"] = json!({
                         "deployment": {
                             "height": deployed.height,
@@ -1843,18 +1994,54 @@ mod tests {
                         },
                         "initialization": initialization_inclusion
                             .as_ref()
-                            .context("deep Map initializer receipt evidence missing")?,
+                            .context("five-parent Set initializer receipt evidence missing")?,
                         "firstCall": {
                             "height": receipt.height,
                             "blockHash": receipt.block_hash,
                             "finalizedHeight": receipt.finalized_height,
                             "finalizedBlockHash": receipt.finalized_hash,
                             "transactionId": receipt.transaction_id
-                        },
-                        "replacementCall": replacement_inclusion
-                            .as_ref()
-                            .context("deep Map replacement receipt evidence missing")?
+                        }
                     });
+                } else {
+                    evidence["nestedSetMatchesFinalizedOutput"] = json!(true);
+                    evidence["nestedListHeadMatchesFinalizedOutput"] = json!(true);
+                    evidence["otherOwnerSetEmpty"] = json!(true);
+                    evidence["otherOwnerListEmpty"] = json!(true);
+                    evidence["rootCoinMapMatchesFinalizedOutput"] = json!(true);
+                    evidence["nestedCoinMapMatchesFinalizedOutput"] = json!(true);
+                    evidence["otherOwnerCoinMapEmpty"] = json!(true);
+                    evidence["mapKey"] = json!(hex::encode(public_key));
+                    if deep_map {
+                        evidence["selectedGroup"] = json!(hex::encode(selected_group));
+                        evidence["siblingGroup"] = json!(hex::encode(other_group));
+                        evidence["mapParentCount"] = json!(map_parent_count);
+                        evidence["deepCoinMapMatchesFinalizedOutput"] = json!(true);
+                        evidence["siblingGroupsUnchanged"] = json!(true);
+                        evidence["otherOwnerGroupsUnchanged"] = json!(true);
+                        evidence["receiptInclusions"] = json!({
+                            "deployment": {
+                                "height": deployed.height,
+                                "blockHash": deployed.block_hash,
+                                "finalizedHeight": deployed.finalized_height,
+                                "finalizedBlockHash": deployed.finalized_hash,
+                                "transactionId": deployed.transaction_id
+                            },
+                            "initialization": initialization_inclusion
+                                .as_ref()
+                                .context("deep Map initializer receipt evidence missing")?,
+                            "firstCall": {
+                                "height": receipt.height,
+                                "blockHash": receipt.block_hash,
+                                "finalizedHeight": receipt.finalized_height,
+                                "finalizedBlockHash": receipt.finalized_hash,
+                                "transactionId": receipt.transaction_id
+                            },
+                            "replacementCall": replacement_inclusion
+                                .as_ref()
+                                .context("deep Map replacement receipt evidence missing")?
+                        });
+                    }
                 }
             } else {
                 evidence["cellCoinMatchesFinalizedOutput"] = json!(true);

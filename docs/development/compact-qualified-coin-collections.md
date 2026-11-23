@@ -92,6 +92,14 @@ after a distinct transaction-local mint, keeps the original member and
 five seeded siblings, and rejects missing bookings, wrong-recipient
 bookings and an absent Set path. [Compact fixture and runner](../../tests/compact/five-parent-qualified-coin-set.mjs)
 
+The focused Noctium self-mint finalized on isolated Ledger 9.1.0.1. The
+selected Set stored the complete qualified record at booked index
+46, matching the finalized contract-owned Zswap output. The three
+sibling Sets stayed empty. Missing and mismatched offers rejected before
+submission. The tip relation measured K14 and 12,824 rows with pinned
+ZKIR 3.2.1. [Source fixture](../../tests/FundedFiveParentQualifiedCoinSet.lean) ·
+[Finalized receipt](funded-five-parent-coin-set-localnet-receipt.json)
+
 ## Booked coin Map
 
 `insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.

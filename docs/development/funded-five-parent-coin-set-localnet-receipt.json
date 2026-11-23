@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "scope": "One funded self-mint stores the booked coin in one Set under five Bytes32 Map parents on the isolated development Ledger 9.1.0.1 chain",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "runtimeSpecVersion": 2001100,
+  "transactionVersion": 4,
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "source": {
+    "path": "tests/FundedFiveParentQualifiedCoinSet.lean",
+    "sha256": "2aaa48209b6c9f8c26c7ad25029c2e72169620badd09fed13172bb81ebc42409"
+  },
+  "artifacts": {
+    "initializeOwners": {
+      "k": 10,
+      "rows": 798,
+      "compilerRevision": "eabddbc6280bac9d6da1c843ad09d4e9f8cb1b80",
+      "manifestSha256": "e6a1bd033fae75e6a4b63e2b67b69eb61f3ba98536b8ff6e5cf65222d8974cd4",
+      "circuitSha256": "b4ecd439a4d80467c7f91559e0988532cbd4b91777385a28cb418584b98a5aad",
+      "impactPlanSha256": "99248af06fab3c179602439af28dc7bc2472bb5e191c478a3e56aba70a008315",
+      "verifierKeySha256": "dc60f5b159810ea68ffab10ec3737fd691a631659e75caff69637a03e7e0730c",
+      "proverKeySha256": "ab9408e4c2deaefa6abb8867b3f7ae026ec7fab246028b309cb896e3a20672a8"
+    },
+    "tip": {
+      "k": 14,
+      "rows": 12824,
+      "compilerRevision": "eabddbc6280bac9d6da1c843ad09d4e9f8cb1b80",
+      "manifestSha256": "83a198f9a27085ce1b39e0a265fc25c443ddc3ee6d5d5bea5b5993a513bb1bdc",
+      "circuitSha256": "aee068dfd0d3aabf58ab4afb334b697b3e3f9d6f7ebd25044c3d8a86496018fb",
+      "impactPlanSha256": "ce4c9faf8000d34a86780422cb375d35992a8934a36668568786b5e3af2d9187",
+      "verifierKeySha256": "a9141e05baf7c2d7470d1e8bc964b6e2d38451959257402b961669c85d0f859e",
+      "proverKeySha256": "64a28eba9e7e217774e6264af6ad17d46fc07153707d1bf06bd03947308a97d8"
+    }
+  },
+  "ledgerParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+  "nativeCliBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "srsSha256": {
+    "k10": "46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42",
+    "k14": "fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244"
+  },
+  "contractAddress": "a8d9fa2a0aa9b55e1a075dc942b280ea20f837637ef15f9cc6400559d8734c07",
+  "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+  "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+  "selectedGroup": "0505050505050505050505050505050505050505050505050505050505050505",
+  "siblingGroup": "0606060606060606060606060606060606060606060606060606060606060606",
+  "coinSetParentCount": 5,
+  "deployment": {
+    "blockHash": "84acb98f308d1b4ff566746e99130e2562b493c4f0ea51c02be65a6395c5988e",
+    "finalizedBlockHash": "84acb98f308d1b4ff566746e99130e2562b493c4f0ea51c02be65a6395c5988e",
+    "finalizedHeight": 71735,
+    "height": 71735,
+    "transactionId": "de71e5f902a68f40c2efb694ae10354ae9e0ac7f486db29597f4da8cecf203c7"
+  },
+  "firstCall": {
+    "blockHash": "23713912c48af563f90b4ae681f69c2faf56fa9fff3706fe09d126716bd32f1d",
+    "finalizedBlockHash": "23713912c48af563f90b4ae681f69c2faf56fa9fff3706fe09d126716bd32f1d",
+    "finalizedHeight": 71742,
+    "height": 71742,
+    "transactionId": "d81f8dc8518a773f4ad750ba25638866be0d1ee3e08636b05dc0757f16591f55",
+    "stateSha256": "5e5c8b47270343b2a4948857259090478453086b1e5387662e9b9a3a283122e6",
+    "coin": {
+      "nonce": "f1ea63e0e556eee7a161fe2d445bcdeeaa18391e533bf18dae2a32cfb5722d51",
+      "color": "53f11392cb39e02abdb44fd5574e1ec8562267b3d803313cb745ccd6acaa4c69",
+      "value": "5",
+      "commitment": "7d4bb15d7c10b69049467b678c292a265510fbbf5a8133274d8f6441d165a3fc",
+      "mtIndex": 46
+    }
+  },
+  "initialization": {
+    "blockHash": "66f9a84f060772e0004acab4500e3c70df152e59817c2e5c1db4cb9ee3c678e3",
+    "finalizedBlockHash": "66f9a84f060772e0004acab4500e3c70df152e59817c2e5c1db4cb9ee3c678e3",
+    "finalizedHeight": 71738,
+    "height": 71738,
+    "transactionId": "059b7f3dd19e9a87d93f9c34604569295876c8f0309fe833224f5a79254e1a43",
+    "stateSha256": "e3372f96712bce45b30f4f8b8b267aa514baedd8457e96fe1096c98cc7dd5eff"
+  },
+  "verified": {
+    "fourInitializedSetPaths": true,
+    "qualifiedRecordMatchesFinalizedZswapOutput": true,
+    "threeSiblingSetsRemainEmpty": true,
+    "finalizedBlockAndStateDigestsMatchNode": true
+  },
+  "rejectedBeforeFirstCall": [
+    "missingOffer",
+    "mismatchedOffer"
+  ],
+  "test": {
+    "name": "localnet::shielded_receive::tests::funded_shielded_receive_localnet",
+    "sourceSha256": "48734fbd0a275e6626b37f6f6b4c702a669e5321b0cbd99f17ec365e140db44d",
+    "binarySha256": "33a277511f20d2d3da9f91e2eb5918fc889d4fbba140c66e210e8e7d308e7fc1",
+    "result": "passed",
+    "durationSeconds": 134.75
+  }
+}
