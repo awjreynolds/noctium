@@ -503,3 +503,27 @@ Compact and native checker fixtures cover the self-send, a second contract and
 a user address whose bytes match the sender. [Lean fixture](../../tests/NativeUnshieldedSend.lean)
 [Compact fixture](../../tests/compact/UnshieldedSend.compact)
 [Native checker](../../runtime/tests/native_unshielded_send.rs)
+
+## Root record-key Maps on the development ledger
+
+`RecordMapCollections.update` uses flat Bool and UInt16 record keys in a
+scalar-valued Map and a flat-record-valued Map. Ledger 9.1.0.1 finalized the
+deployment at height 66012 and the four calls at heights 66015, 66018, 66021,
+and 66024. The checked return sizes were 1, 2, 2, and 0 in both Maps. The inactive
+call preserved the exact state bytes. Reset restored the exact constructor bytes.
+[Lean fixture](../../tests/RecordMapCollections.lean) · [Finalized evidence](record-map-collections-localnet-receipt.json)
+
+Compile the fixture with the ZKIR 3.2.1 target and `--emit ledger`. Assemble an
+authenticated `update` bundle as described in [Public entrypoint bundles](portable-artifacts.md).
+The focused Rust test needs the bundle directory, its manifest SHA-256, and
+the public parameter cache used for the run.
+
+```sh
+NOCTIUM_RECORD_MAP_COLLECTIONS_BUNDLE=PATH_TO_BUNDLE \
+NOCTIUM_RECORD_MAP_COLLECTIONS_MANIFEST=MANIFEST_SHA256 \
+NOCTIUM_RECORD_MAP_COLLECTIONS_PARAMETER_CACHE=PATH_TO_TRUSTED_PARAMETER_CACHE \
+NOCTIUM_RECORD_MAP_COLLECTIONS_NODE=http://127.0.0.1:19944 \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  record_map_collections_finalize_distinct_keys_noop_and_reset -- --ignored --nocapture
+```

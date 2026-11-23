@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "compilerRevision": "c5b0fa38005f20c80b2a8cdc3ef9bcedee17151c",
+  "sourceFixture": "tests/RecordMapCollections.lean",
+  "entrypoint": "RecordMapCollections.update",
+  "ledgerRelease": "9.1.0.1",
+  "zkirRelease": "3.2.1",
+  "rows": 267,
+  "circuitSha256": "9f37879ffd60063701d999f22c75b369eb192b0b0c34ff73a282d422a86555d1",
+  "impactSha256": "efe15f652a0822de8a359aea4e9715a7dd852bef78b6eda4d304155f6261a456",
+  "verifierKeySha256": "ac6a4498890cf9e81cbea18b91e840741c82d1024d480e033fa213b3019fb9ec",
+  "parametersSha256": "b9009f1098bcefffec3c461ab3a5e3a17f7e5599f0f08c70fcdc55a89227bcbd",
+  "nativeZkirBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "bundleManifestSha256": "389e9d07f768240288106ef819a75385dd75a71d66f883be3fbbb556c068b0ab",
+  "calls": [
+    {
+      "blockHash": "308aa0eaecb065ee43c90101d3c5ec87132236807c3d3ac086b5779035c6d8d1",
+      "checkedReturns": {
+        "recordEmpty": false,
+        "recordSize": "1",
+        "scalarEmpty": false,
+        "scalarSize": "1"
+      },
+      "extrinsicHash": "41bcbafcfd3e575306359845f9f9e823b14ac1a38838305d1c66f1fe68fae835",
+      "finalizedHash": "308aa0eaecb065ee43c90101d3c5ec87132236807c3d3ac086b5779035c6d8d1",
+      "finalizedHeight": 66015,
+      "height": 66015,
+      "intentId": "41ad11232ac8696a51a512adcbb0402d0ba42bb00257a180e1a1d140043c4110",
+      "stateBytes": 1781,
+      "stateSha256": "6b0203cdfa367aa2fed47e870ecf25690f7556bc80680b138ca827556bb38908",
+      "transactionId": "958803c09c7dcaf89072ee21d50f0317b00ce80fd1762f9a120ce5037d4e74f5"
+    },
+    {
+      "blockHash": "597b10da80a53cda84c6e7e29c59fd55ce1b6035607b3891ee03b018ece9a744",
+      "checkedReturns": {
+        "recordEmpty": false,
+        "recordSize": "2",
+        "scalarEmpty": false,
+        "scalarSize": "2"
+      },
+      "extrinsicHash": "0d4e8b5a6b10f7f159c8db98509de1f36fe3b61ba79d2ea6c2406b03bf765510",
+      "finalizedHash": "597b10da80a53cda84c6e7e29c59fd55ce1b6035607b3891ee03b018ece9a744",
+      "finalizedHeight": 66018,
+      "height": 66018,
+      "intentId": "930fc890129b75325208e6fe9b279ebce676dbf030281b435d1259b08d12300d",
+      "stateBytes": 2214,
+      "stateSha256": "aa21f76172773e84c7f299f1499a3f9998d8cf5c84148cf91e60754dd14ed3f1",
+      "transactionId": "bf228c983bc250a025a9c00ffa48e4099d360b9873c9d678bd479686a891626b"
+    },
+    {
+      "blockHash": "89fdd49573daf5570971acaa85d39467000988f0379ebfd083fb6e5a182bc3bf",
+      "checkedReturns": {
+        "recordEmpty": false,
+        "recordSize": "2",
+        "scalarEmpty": false,
+        "scalarSize": "2"
+      },
+      "extrinsicHash": "b354c640d61e5b1590b2181592ea1638ef3f516a849952d19075905f60caaf28",
+      "finalizedHash": "89fdd49573daf5570971acaa85d39467000988f0379ebfd083fb6e5a182bc3bf",
+      "finalizedHeight": 66021,
+      "height": 66021,
+      "intentId": "3d8368e4146015136ccf6abb6d84a5e211efe9a8a67f45887c26518552d56253",
+      "stateBytes": 2214,
+      "stateSha256": "aa21f76172773e84c7f299f1499a3f9998d8cf5c84148cf91e60754dd14ed3f1",
+      "transactionId": "5c93ae341bddbb59162a15b60d8efd6180f7d000354eebba218651703112abb2"
+    },
+    {
+      "blockHash": "b963f0c92ee262e506df4dbde35a9c509d4d7354fe04d1d709d5f084df4b4f8d",
+      "checkedReturns": {
+        "recordEmpty": true,
+        "recordSize": "0",
+        "scalarEmpty": true,
+        "scalarSize": "0"
+      },
+      "extrinsicHash": "6b3f4310d76348ab0c13f883085b779c027ab99c1c550234fabf7734718f9063",
+      "finalizedHash": "b963f0c92ee262e506df4dbde35a9c509d4d7354fe04d1d709d5f084df4b4f8d",
+      "finalizedHeight": 66024,
+      "height": 66024,
+      "intentId": "6f5f63b6964828d87e7dd087a13e1ceae11429ceb3a29ec4063e916a049d8092",
+      "stateBytes": 1513,
+      "stateSha256": "eae6d4ce084075af61b6c6656dda878641d386a81fabe3777be4d89e8e19b2bc",
+      "transactionId": "0c320912a92321fe15e814955329cf439f0eff0476d4bcbabd35ba75798342c5"
+    }
+  ],
+  "contractAddress": "fa09692e6dd0567fbbfc5e45e7dd6547fc047fa6ea9f6789884686a01e2b6515",
+  "degree": 9,
+  "deployment": {
+    "blockHash": "08b614e5400875669cfbe888bcf40fb9fc7bb5f6acb5229a336e88c1c91d4f0b",
+    "extrinsicHash": "7a5de68ac6d8926978fbe6609137884fc81961cb2ef654f7d7527b8b688363fc",
+    "finalizedHash": "08b614e5400875669cfbe888bcf40fb9fc7bb5f6acb5229a336e88c1c91d4f0b",
+    "finalizedHeight": 66012,
+    "height": 66012,
+    "intentId": "2bf92e87d6719a358fd8817086f1a05323403117914f6c10c20d752e2d8b383e",
+    "stateBytes": 1513,
+    "stateSha256": "eae6d4ce084075af61b6c6656dda878641d386a81fabe3777be4d89e8e19b2bc",
+    "transactionId": "8315074c314b6a70ca70e2d16e49da1752f1ac56b06fc7a6b5fcf7e73b59c0af"
+  },
+  "distinctKeysDifferByActiveBool": true,
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "inactiveUpdatePreservedExactFinalizedBytes": true,
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "resetFinalizedBothMapsEmpty": true
+}
