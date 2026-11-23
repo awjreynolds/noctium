@@ -116,7 +116,7 @@ fn memos(state: &ChargedState<Db>, owner: u8, spender: u8, expected: &[[u64; 2]]
 }
 
 #[test]
-fn native_list_records_preserve_order_paths_guards_and_empty_rejection() {
+fn native_list_records_preserve_order_paths_guards_and_empty_pop() {
     let (append, _) = fixture("append");
     let initial = create_state(
         &append,
@@ -164,7 +164,7 @@ fn native_list_records_preserve_order_paths_guards_and_empty_rejection() {
     )
     .unwrap();
     check(&view, &circuit).unwrap();
-    let (pop, circuit) = fixture("pop");
+    let (pop, pop_circuit) = fixture("pop");
     let execution = prepare(
         &pop,
         &inputs(&pop, 0, 1, 0, 0, true),
@@ -173,8 +173,8 @@ fn native_list_records_preserve_order_paths_guards_and_empty_rejection() {
         address,
     )
     .unwrap();
-    check(&execution, &circuit).unwrap();
-    // The emitted native program also rejects empty pop without host preparation.
+    check(&execution, &pop_circuit).unwrap();
+    // The selected nested path must exist even when the root List is empty.
     assert!(
         QueryContext::new(initial.clone(), address)
             .query(
@@ -202,16 +202,31 @@ fn native_list_records_preserve_order_paths_guards_and_empty_rejection() {
     inbox(&state, &[]);
     memos(&state, 0, 1, &[]);
     memos(&state, 2, 3, &[[5, 6]]);
-    assert!(
-        prepare(
-            &pop,
-            &inputs(&pop, 0, 1, 0, 0, true),
-            &state,
-            params,
-            address
-        )
-        .is_err()
-    );
+    let empty_pop = prepare(
+        &pop,
+        &inputs(&pop, 0, 1, 0, 0, true),
+        &state,
+        params,
+        address,
+    )
+    .unwrap();
+    check(&empty_pop, &pop_circuit).unwrap();
+    let StateValue::Array(root) = empty_pop.after.state.get_ref() else {
+        panic!("expected root array")
+    };
+    assert!(matches!(root.get(0), Some(StateValue::Null)));
+    let StateValue::Map(owners) = root.get(1).unwrap() else {
+        panic!("expected owner map")
+    };
+    let selected = owners.get(&AlignedValue::from([0u8; 32])).unwrap();
+    let StateValue::Map(spenders) = &*selected else {
+        panic!("expected spender map")
+    };
+    assert!(matches!(
+        spenders.get(&AlignedValue::from([1u8; 32])),
+        Some(value) if matches!(&*value, StateValue::Null)
+    ));
+    memos(&empty_pop.after.state, 2, 3, &[[5, 6]]);
     assert!(
         prepare(
             &inspect,

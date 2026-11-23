@@ -191,6 +191,21 @@ private def scalarListAbsentParentState : LedgerState := {
   ]
 }
 
+private def scalarListNonemptyRootState : LedgerState := {
+  scalarListState with
+  trees := updateAssoc "values" (.list [[.native 9]]) scalarListState.trees
+}
+
+private def scalarListNullRootState : LedgerState := {
+  scalarListState with
+  trees := updateAssoc "values" .null scalarListState.trees
+}
+
+private def scalarListNullNestedState : LedgerState := {
+  scalarListState with
+  trees := updateAssoc "memos" (.map [(scalarListOwner, .null)]) scalarListState.trees
+}
+
 private def scalarListContext : EvalContext := {
   modulus := Field.modulus
   poseidon2 := fun _ _ _ => .error "unused by this fixture"
@@ -232,13 +247,33 @@ private def scalarListContext : EvalContext := {
 
 #guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popRoot")
     (scalarListInputValues 0 (List.replicate 128 0)) scalarListState with
-  | .error _ => Bool.true
-  | .ok _ => Bool.false
+  | .ok (outputs, state) => outputs.isEmpty && state.trees.lookup "values" == some .null
+  | .error _ => Bool.false
 
 #guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popNested")
     (scalarListInputValues 0 (List.replicate 128 0)) scalarListState with
+  | .ok (outputs, state) => outputs.isEmpty &&
+      state.trees.lookup "memos" == some (.map [(scalarListOwner, .null)])
+  | .error _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "inspect")
+    (scalarListInputValues 0 (List.replicate 128 0))
+    scalarListNullRootState with
   | .error _ => Bool.true
   | .ok _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "inspect")
+    (scalarListInputValues 0 (List.replicate 128 0))
+    scalarListNullNestedState with
+  | .error _ => Bool.true
+  | .ok _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popRoot")
+    (scalarListInputValues 0 (List.replicate 128 0)) scalarListNonemptyRootState with
+  | .ok (outputs, state) => outputs.isEmpty &&
+      state.trees.lookup "values" == some (.list []) &&
+      state.trees.lookup "memos" == scalarListState.trees.lookup "memos"
+  | .error _ => Bool.false
 
 #guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popNested")
     (scalarListInputValues 0 (List.replicate 128 0)) scalarListAbsentParentState with
