@@ -27,6 +27,26 @@ NOCTIUM_SHIELDED_RECEIVE_DIR="$PWD/build/shielded-receive" \
   --no-default-features --features zkir-321 --test shielded_receive -- --include-ignored
 ```
 
+## Deep booked Map writes
+
+Noctium qualifies the coin before traversing the Map path and rebuilds
+each cached parent separately. The emitted ZKIR 3.2.1 fixture checks
+insertion at fourteen Bytes32 Map parents, including the exact booked
+index, sibling preservation and rejection of invalid bookings and
+missing parents. Source admission rejects fifteen parents. Two funded
+six-parent calls finalized at blocks 69,757 and 69,760 and stored
+indices 42 and 43 at the same key. [Boundary fixture](../../tests/DeepBookedCoinMapBoundary.lean) ·
+[Funded receipt](funded-six-parent-coin-maps-localnet-receipt.json)
+
+Compact 0.36.1 and Runtime 0.21.0 passed insertion and overwrite through
+five parents. The reduced six-parent source declared seven nested Maps.
+The pinned compiler reached the 180-second limit with `--skip-zk` before
+emitting a relation. Upstream reproduced exponential memory growth from
+the same nesting depth with an empty circuit on Compact 0.34.100. The
+six-parent comparison stays open in a separate ticket. [Recorded timeout](https://github.com/awjreynolds/noctium/issues/716#issuecomment-7095636326) ·
+[Upstream compiler issue](https://github.com/LFDT-Minokawa/compact/issues/734) ·
+[Six-parent comparison ticket](https://github.com/awjreynolds/noctium/issues/797)
+
 ## Funded Noctium localnet receipt
 
 The Lean fixture mints five units and receives one contract-owned output in the same guaranteed section. The Rust host books its index against the finalized Zswap state, proves the contract call and output, and funds fees from the development DUST wallet. Before funding, the host rechecks the booking and the initial contract state against the latest finalized snapshot.
