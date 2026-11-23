@@ -4,7 +4,9 @@ use base_crypto::{fab::AlignedValue, hash::HashOutput};
 use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
     Db, Plan, artifacts, check, create_state,
-    collection_ffi::{noctium_ledger_collection_page, noctium_ledger_map_lookup},
+    collection_ffi::{
+        noctium_ledger_collection_page, noctium_ledger_list_head, noctium_ledger_map_lookup,
+    },
     field_value,
     native_ffi::{
         INVALID_ARGUMENT, OK, noctium_native_result_copy, noctium_native_result_free,
@@ -210,6 +212,61 @@ impl Snapshot {
             assert_eq!(token, 0);
         }
         status
+    }
+
+    fn head_at(&self, name: &str, keys: Vec<Value>) -> Value {
+        self.head_with_digests(
+            name,
+            keys,
+            &artifacts::digest(&self.plan),
+            &artifacts::digest(&self.state),
+        )
+        .unwrap()
+    }
+
+    fn head_with_digests(
+        &self,
+        name: &str,
+        keys: Vec<Value>,
+        plan_sha256: &str,
+        state_sha256: &str,
+    ) -> Result<Value, i32> {
+        let request = serde_json::to_vec(&json!({
+            "abiVersion": 1,
+            "planSha256": plan_sha256,
+            "stateSha256": state_sha256,
+            "name": name,
+            "keys": keys,
+        }))
+        .unwrap();
+        let mut token = 0;
+        let status = unsafe {
+            noctium_ledger_list_head(
+                request.as_ptr(),
+                request.len(),
+                self.plan.as_ptr(),
+                self.plan.len(),
+                self.state.as_ptr(),
+                self.state.len(),
+                &mut token,
+            )
+        };
+        if status != OK {
+            assert_eq!(token, 0);
+            return Err(status);
+        }
+
+        let mut length = 0;
+        assert_eq!(unsafe { noctium_native_result_length(token, &mut length) }, OK);
+        let mut output = vec![0; length];
+        let mut written = 0;
+        assert_eq!(
+            unsafe { noctium_native_result_copy(token, output.as_mut_ptr(), length, &mut written) },
+            OK
+        );
+        assert_eq!(written, length);
+        assert_eq!(noctium_native_result_free(token), OK);
+        Ok(serde_json::from_slice(&output).unwrap())
     }
 }
 
@@ -517,6 +574,43 @@ fn nested_collection_snapshot() -> Snapshot {
             .into(),
         )),
     )
+}
+
+fn emitted_list_snapshots(
+    directory: &std::path::Path,
+    contract: &str,
+    read_entry: &str,
+    seed_entry: &str,
+    list_name: &str,
+    seed_inputs: BTreeMap<String, Value>,
+) -> anyhow::Result<(Snapshot, Snapshot)> {
+    let read_stem = format!("{contract}.{read_entry}");
+    let read_plan_bytes = std::fs::read(directory.join(format!("{read_stem}.impact.json")))?;
+    let read_plan: Plan = serde_json::from_slice(&read_plan_bytes)?;
+    let seed_stem = format!("{contract}.{seed_entry}");
+    let seed_plan: Plan = serde_json::from_slice(&std::fs::read(
+        directory.join(format!("{seed_stem}.impact.json")),
+    )?)?;
+    let seed_circuit = IrSource::load(
+        std::fs::read(directory.join(format!("{seed_stem}.zkir")))?.as_slice(),
+    )?;
+
+    let empty_state = create_state(
+        &read_plan,
+        &BTreeMap::from([(list_name.to_owned(), json!([]))]),
+    )?;
+    let seeded = prepare(
+        &seed_plan,
+        &seed_inputs,
+        &empty_state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    check(&seeded, &seed_circuit)?;
+    Ok((
+        Snapshot::from_plan_bytes(read_plan_bytes.clone(), empty_state),
+        Snapshot::from_plan_bytes(read_plan_bytes, seeded.after.state),
+    ))
 }
 
 #[test]
@@ -851,6 +945,154 @@ fn scalar_list_pages_validate_count_and_empty_sentinel() {
         malformed.status("values", 0, 2, &artifacts::digest(&malformed.state)),
         INVALID_ARGUMENT
     );
+}
+
+#[test]
+fn list_head_reads_typed_values_and_rejects_invalid_paths_and_snapshots() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let scalar = list_snapshot(&[11, 22, 33]);
+    assert_eq!(
+        scalar.head_at("values", Vec::new()),
+        json!({"abiVersion":1,"kind":"listHead","found":true,"value":"11"})
+    );
+    let empty = list_snapshot(&[]);
+    assert_eq!(
+        empty.head_at("values", Vec::new()),
+        json!({"abiVersion":1,"kind":"listHead","found":false,"value":null})
+    );
+
+    let nested = nested_collection_snapshot();
+    assert_eq!(
+        nested.head_at("nestedValues", vec![bytes32_key(7)]),
+        json!({"abiVersion":1,"kind":"listHead","found":true,"value":"11"})
+    );
+    let nested_plan_sha256 = artifacts::digest(&nested.plan);
+    let state_sha256 = artifacts::digest(&nested.state);
+    assert_eq!(
+        nested.head_with_digests(
+            "nestedValues",
+            vec![bytes32_key(8)],
+            &nested_plan_sha256,
+            &state_sha256,
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        nested.head_with_digests(
+            "nestedValues",
+            vec![native_key(7)],
+            &nested_plan_sha256,
+            &state_sha256,
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        scalar.head_with_digests(
+            "values",
+            Vec::new(),
+            &"0".repeat(64),
+            &artifacts::digest(&scalar.state),
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        scalar.head_with_digests(
+            "values",
+            Vec::new(),
+            &artifacts::digest(&scalar.plan),
+            &"0".repeat(64),
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+
+    let checked_record = composite_collection_snapshot(AlignedValue::from(0u64), &[[5, 6, 7, 8]]);
+    assert_eq!(
+        checked_record.head_at("recordList", Vec::new()),
+        json!({
+            "abiVersion":1,
+            "kind":"listHead",
+            "found":true,
+            "value":{
+                "kind":"struct",
+                "id":"Issue69CompositeMap.Ciphertext4",
+                "fields":[
+                    {"name":"c1x","value":{"kind":"native","value":"5"}},
+                    {"name":"c1y","value":{"kind":"native","value":"6"}},
+                    {"name":"c2x","value":{"kind":"native","value":"7"}},
+                    {"name":"c2y","value":{"kind":"native","value":"8"}}
+                ]
+            }
+        })
+    );
+
+    let malformed = malformed_list_snapshot();
+    assert_eq!(
+        malformed.head_with_digests(
+            "values",
+            Vec::new(),
+            &artifacts::digest(&malformed.plan),
+            &artifacts::digest(&malformed.state),
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+}
+
+#[test]
+#[ignore = "requires fresh NativeScalarListMaybe and RecordListHeadMaybe outputs in the ABI fixture directories"]
+fn list_head_reads_source_emitted_scalar_and_record_snapshots() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let scalar_directory = std::path::PathBuf::from(std::env::var(
+        "NOCTIUM_LIST_HEAD_SCALAR_DIR",
+    )?);
+    let (empty_scalar, populated_scalar) = emitted_list_snapshots(
+        &scalar_directory,
+        "NativeScalarListMaybe",
+        "head",
+        "push",
+        "values",
+        BTreeMap::from([("value".into(), json!("37"))]),
+    )?;
+    assert_eq!(
+        empty_scalar.head_at("values", Vec::new()),
+        json!({"abiVersion":1,"kind":"listHead","found":false,"value":null})
+    );
+    assert_eq!(
+        populated_scalar.head_at("values", Vec::new()),
+        json!({"abiVersion":1,"kind":"listHead","found":true,"value":"37"})
+    );
+
+    let record_directory = std::path::PathBuf::from(std::env::var(
+        "NOCTIUM_LIST_HEAD_RECORD_DIR",
+    )?);
+    let (empty_record, populated_record) = emitted_list_snapshots(
+        &record_directory,
+        "RecordListHeadMaybe",
+        "peek",
+        "seed",
+        "inbox",
+        BTreeMap::new(),
+    )?;
+    assert_eq!(
+        empty_record.head_at("inbox", Vec::new()),
+        json!({"abiVersion":1,"kind":"listHead","found":false,"value":null})
+    );
+    assert_eq!(
+        populated_record.head_at("inbox", Vec::new()),
+        json!({
+            "abiVersion":1,
+            "kind":"listHead",
+            "found":true,
+            "value":{
+                "kind":"struct",
+                "id":"RecordListHeadMaybe.Memo",
+                "fields":[
+                    {"name":"first","value":{"kind":"native","value":"17"}},
+                    {"name":"second","value":{"kind":"native","value":"23"}}
+                ]
+            }
+        })
+    );
+    Ok(())
 }
 
 #[test]

@@ -150,6 +150,22 @@ selected key directly from the supplied immutable snapshot.
 [C header](../../runtime/include/noctium_native.h) ·
 [ABI tests](../../runtime/tests/collection_reads.rs)
 
+## Read a List head
+
+Call `noctium_ledger_list_head` with the emitted plan, exact tagged snapshot
+and their trusted SHA-256 digests. Pass the List name and `keys: []` for a
+root List, or supply the typed keys for its enclosing Maps. The getter shares
+List node and element checks with paging, including counts and the empty
+sentinel.
+
+The native result handle contains `kind: "listHead"`, `found` and `value`.
+Use `found` to distinguish an empty List from one whose first element is
+zero. An empty List has a null value. A nonempty List uses the same typed
+scalar or record encoding as a collection page entry. Malformed snapshots
+and missing parent paths return an error.
+[C header](../../runtime/include/noctium_native.h) ·
+[ABI tests](../../runtime/tests/collection_reads.rs)
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to
