@@ -1,11 +1,14 @@
 #![cfg(feature = "zkir-321")]
 
-use base_crypto::{fab::AlignedValue, hash::HashOutput};
+use base_crypto::{
+    fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom},
+    hash::HashOutput,
+};
 use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
     Db, Plan, artifacts, check, create_state,
     collection_ffi::{
-        noctium_ledger_collection_page, noctium_ledger_collection_size,
+        noctium_ledger_cell_get, noctium_ledger_collection_page, noctium_ledger_collection_size,
         noctium_ledger_list_head, noctium_ledger_map_lookup, noctium_ledger_set_member,
     },
     field_value,
@@ -44,6 +47,49 @@ impl Snapshot {
             plan,
             state: state_bytes,
         }
+    }
+
+    fn cell_get(&self, name: &str) -> Value {
+        self.cell_get_with_request(json!({
+            "abiVersion": 1,
+            "planSha256": artifacts::digest(&self.plan),
+            "stateSha256": artifacts::digest(&self.state),
+            "name": name,
+            "keys": [],
+        }))
+        .unwrap_or_else(|status| panic!("read Cell {name}: status {status}"))
+    }
+
+    fn cell_get_with_request(&self, request: Value) -> Result<Value, i32> {
+        let request = serde_json::to_vec(&request).unwrap();
+        let mut token = 0;
+        let status = unsafe {
+            noctium_ledger_cell_get(
+                request.as_ptr(),
+                request.len(),
+                self.plan.as_ptr(),
+                self.plan.len(),
+                self.state.as_ptr(),
+                self.state.len(),
+                &mut token,
+            )
+        };
+        if status != OK {
+            assert_eq!(token, 0);
+            return Err(status);
+        }
+
+        let mut length = 0;
+        assert_eq!(unsafe { noctium_native_result_length(token, &mut length) }, OK);
+        let mut output = vec![0; length];
+        let mut written = 0;
+        assert_eq!(
+            unsafe { noctium_native_result_copy(token, output.as_mut_ptr(), length, &mut written) },
+            OK
+        );
+        assert_eq!(written, length);
+        assert_eq!(noctium_native_result_free(token), OK);
+        Ok(serde_json::from_slice(&output).unwrap())
     }
 
     fn page(&self, name: &str, offset: usize, limit: usize) -> Value {
@@ -1907,6 +1953,197 @@ fn source_emitted_sets_support_native_and_checked_record_membership() -> anyhow:
     assert_eq!(
         record.member("memoSet", json!({"active":false,"amount":"513"})),
         json!({"abiVersion":1,"kind":"setMember","member":false})
+    );
+    Ok(())
+}
+
+#[test]
+fn pinned_cell_get_decodes_scalar_record_u128_and_opaque_values() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let scalar = Snapshot::new(
+        plan(vec![json!({"name":"total","kind":{"cell":"Native"}})]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(field_value(Fr::from(42u64))))].into(),
+        )),
+    );
+    assert_eq!(
+        scalar.cell_get("total"),
+        json!({"abiVersion":1,"kind":"cell","value":"42"})
+    );
+
+    let record = Snapshot::new(
+        plan(vec![json!({
+            "name":"memo",
+            "kind":{"tree":{"composite":flat_record_set_schema()}}
+        })]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(flat_record_set_key(true, 513)))].into(),
+        )),
+    );
+    assert_eq!(
+        record.cell_get("memo"),
+        json!({
+            "abiVersion":1,
+            "kind":"cell",
+            "value":{"active":true,"amount":"513"}
+        })
+    );
+
+    let u128_value = u128::MAX;
+    let u128_cell = Snapshot::new(
+        plan(vec![json!({
+            "name":"totalSupply",
+            "kind":{"cell":"UIntRange<340282366920938463463374607431768211456>"},
+            "cellAlignment":"u128"
+        })]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(AlignedValue::from(u128_value)))].into(),
+        )),
+    );
+    assert_eq!(
+        u128_cell.cell_get("totalSupply"),
+        json!({
+            "abiVersion":1,
+            "kind":"cell",
+            "value":"340282366920938463463374607431768211455"
+        })
+    );
+
+    let opaque = Snapshot::new(
+        plan(vec![json!({"name":"label","kind":{"opaqueString":true}})]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(AlignedValue {
+                value: FabValue(vec![ValueAtom::from(b"stored label".as_slice())]),
+                alignment: Alignment::singleton(AlignmentAtom::Compress),
+            }))]
+            .into(),
+        )),
+    );
+    assert_eq!(
+        opaque.cell_get("label"),
+        json!({
+            "abiVersion":1,
+            "kind":"cell",
+            "value":{"kind":"opaqueString","value":"stored label"}
+        })
+    );
+}
+
+#[test]
+fn pinned_cell_get_rejects_bad_alignment_pins_keys_and_collections() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let malformed_alignment = Snapshot::new(
+        plan(vec![json!({"name":"total","kind":{"cell":"Native"}})]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(AlignedValue::from([1u8; 16])))].into(),
+        )),
+    );
+    assert_eq!(
+        malformed_alignment.cell_get_with_request(json!({
+            "abiVersion":1,
+            "planSha256":artifacts::digest(&malformed_alignment.plan),
+            "stateSha256":artifacts::digest(&malformed_alignment.state),
+            "name":"total",
+            "keys":[]
+        })),
+        Err(INVALID_ARGUMENT)
+    );
+
+    let scalar = Snapshot::new(
+        plan(vec![json!({"name":"total","kind":{"cell":"Native"}})]),
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Cell(Sp::new(field_value(Fr::from(1u64))))].into(),
+        )),
+    );
+    let valid_request = json!({
+        "abiVersion":1,
+        "planSha256":artifacts::digest(&scalar.plan),
+        "stateSha256":artifacts::digest(&scalar.state),
+        "name":"total",
+        "keys":[]
+    });
+
+    for (field, digest) in [
+        ("planSha256", artifacts::digest(&scalar.plan)),
+        ("stateSha256", artifacts::digest(&scalar.state)),
+    ] {
+        let mut request = valid_request.clone();
+        request[field] = json!(if digest.starts_with('0') {
+            format!("1{}", &digest[1..])
+        } else {
+            format!("0{}", &digest[1..])
+        });
+        assert_eq!(
+            scalar.cell_get_with_request(request),
+            Err(INVALID_ARGUMENT)
+        );
+    }
+
+    let mut keyed_request = valid_request;
+    keyed_request["keys"] = json!([native_key(1)]);
+    assert_eq!(
+        scalar.cell_get_with_request(keyed_request),
+        Err(INVALID_ARGUMENT)
+    );
+
+    let map = map_set_snapshot(false);
+    assert_eq!(
+        map.cell_get_with_request(json!({
+            "abiVersion":1,
+            "planSha256":artifacts::digest(&map.plan),
+            "stateSha256":artifacts::digest(&map.state),
+            "name":"flags",
+            "keys":[]
+        })),
+        Err(INVALID_ARGUMENT)
+    );
+}
+
+#[test]
+#[ignore = "requires fresh ByteAlignedUInt128Cell and TypedRecordCell outputs in their artifact directories"]
+fn source_emitted_cell_get_reads_u128_and_checked_record() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let u128_directory = std::path::PathBuf::from(std::env::var(
+        "NOCTIUM_BYTE_ALIGNED_UINT128_CELL_DIR",
+    )?);
+    let u128_plan_bytes = std::fs::read(
+        u128_directory.join("ByteAlignedUInt128Cell.update.impact.json"),
+    )?;
+    let u128_plan: Plan = serde_json::from_slice(&u128_plan_bytes)?;
+    let u128_state = create_state(
+        &u128_plan,
+        &BTreeMap::from([
+            ("totalSupply".into(), json!(u128::MAX.to_string())),
+            ("ordinary".into(), json!("9")),
+        ]),
+    )?;
+    let u128_snapshot = Snapshot::from_plan_bytes(u128_plan_bytes, u128_state);
+    assert_eq!(
+        u128_snapshot.cell_get("totalSupply"),
+        json!({
+            "abiVersion":1,
+            "kind":"cell",
+            "value":"340282366920938463463374607431768211455"
+        })
+    );
+
+    let record_directory =
+        std::path::PathBuf::from(std::env::var("NOCTIUM_TYPED_RECORD_CELL_DIR")?);
+    let record_plan_bytes =
+        std::fs::read(record_directory.join("TypedRecordCell.inspectMemo.impact.json"))?;
+    let record_plan: Plan = serde_json::from_slice(&record_plan_bytes)?;
+    let record_state = create_state(
+        &record_plan,
+        &BTreeMap::from([("memo".into(), json!({"active":true,"amount":"513"}))]),
+    )?;
+    let record_snapshot = Snapshot::from_plan_bytes(record_plan_bytes, record_state);
+    assert_eq!(
+        record_snapshot.cell_get("memo"),
+        json!({
+            "abiVersion":1,
+            "kind":"cell",
+            "value":{"active":true,"amount":"513"}
+        })
     );
     Ok(())
 }

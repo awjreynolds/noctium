@@ -278,6 +278,20 @@ int32_t noctium_ledger_collection_size(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Read a typed root Cell from a pinned contract-state snapshot.
+   Use the same request fields and limits as noctium_ledger_counter_get,
+   with an empty keys array. The declaration supplies the value type and
+   FAB alignment. The result token owns copied public JSON:
+     {"abiVersion":1,"kind":"cell","value":"17"}
+   The value uses native scalar JSON or the checked record encoding.
+   Wrong state kinds, invalid encodings, and mismatched pins return an
+   error. Use the native result token calls to read and free the response. */
+int32_t noctium_ledger_cell_get(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 /* Read one UInt64 Counter from a pinned, canonical contract-state snapshot.
    Request UTF-8 JSON (unknown fields reject):
      {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
