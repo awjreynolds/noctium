@@ -5,8 +5,8 @@ use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
     Db, Plan, artifacts, check, create_state,
     collection_ffi::{
-        noctium_ledger_collection_page, noctium_ledger_list_head, noctium_ledger_map_lookup,
-        noctium_ledger_set_member,
+        noctium_ledger_collection_page, noctium_ledger_collection_size,
+        noctium_ledger_list_head, noctium_ledger_map_lookup, noctium_ledger_set_member,
     },
     field_value,
     native_ffi::{
@@ -354,6 +354,61 @@ impl Snapshot {
         assert_eq!(noctium_native_result_free(token), OK);
         Ok(serde_json::from_slice(&output).unwrap())
     }
+
+    fn size_at(&self, name: &str, keys: Vec<Value>) -> Value {
+        self.size_with_digests(
+            name,
+            keys,
+            &artifacts::digest(&self.plan),
+            &artifacts::digest(&self.state),
+        )
+        .unwrap()
+    }
+
+    fn size_with_digests(
+        &self,
+        name: &str,
+        keys: Vec<Value>,
+        plan_sha256: &str,
+        state_sha256: &str,
+    ) -> Result<Value, i32> {
+        let request = serde_json::to_vec(&json!({
+            "abiVersion": 1,
+            "planSha256": plan_sha256,
+            "stateSha256": state_sha256,
+            "name": name,
+            "keys": keys,
+        }))
+        .unwrap();
+        let mut token = 0;
+        let status = unsafe {
+            noctium_ledger_collection_size(
+                request.as_ptr(),
+                request.len(),
+                self.plan.as_ptr(),
+                self.plan.len(),
+                self.state.as_ptr(),
+                self.state.len(),
+                &mut token,
+            )
+        };
+        if status != OK {
+            assert_eq!(token, 0);
+            return Err(status);
+        }
+
+        let mut length = 0;
+        assert_eq!(unsafe { noctium_native_result_length(token, &mut length) }, OK);
+        let mut output = vec![0; length];
+        let mut written = 0;
+        assert_eq!(
+            unsafe { noctium_native_result_copy(token, output.as_mut_ptr(), length, &mut written) },
+            OK
+        );
+        assert_eq!(written, length);
+        assert_eq!(noctium_native_result_free(token), OK);
+        Ok(serde_json::from_slice(&output).unwrap())
+    }
 }
 
 fn bytes32_key(value: u8) -> Value {
@@ -665,7 +720,7 @@ fn nested_collection_snapshot() -> Snapshot {
 
     Snapshot::new(
         plan(vec![
-            json!({"name":"nestedFlags","kind":{"tree":{"map":["Bytes<32>",{"map":["Native","Bool"]}]}}}),
+            json!({"name":"nestedFlags","kind":{"tree":{"map":["Bytes<32>",{"map":["Native",{"scalar":"Bool"}]}]}}}),
             json!({"name":"nestedMembers","kind":{"tree":{"map":["Bytes<32>",{"set":"Bytes<32>"}]}}}),
             json!({"name":"nestedValues","kind":{"tree":{"map":["Bytes<32>",{"list":{"scalar":"Native"}}]}}}),
         ]),
@@ -722,6 +777,15 @@ fn map_and_set_pages_are_typed_stable_and_bounded() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let snapshot = map_set_snapshot(false);
     let reverse = map_set_snapshot(true);
+
+    assert_eq!(
+        snapshot.size_at("flags", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"map","size":"3"})
+    );
+    assert_eq!(
+        snapshot.size_at("members", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"set","size":"3"})
+    );
 
     let first_map_page = snapshot.page("flags", 0, 2);
     assert_eq!(
@@ -970,6 +1034,19 @@ fn nested_set_member_uses_the_selected_parent() {
     let owner_path = vec![bytes32_key(7)];
 
     assert_eq!(
+        snapshot.size_at("nestedFlags", owner_path.clone()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"map","size":"3"})
+    );
+    assert_eq!(
+        snapshot.size_at("nestedMembers", owner_path.clone()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"set","size":"3"})
+    );
+    assert_eq!(
+        snapshot.size_at("nestedValues", owner_path.clone()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"list","size":"3"})
+    );
+
+    assert_eq!(
         snapshot.member_at(
             "nestedMembers",
             owner_path.clone(),
@@ -1187,6 +1264,14 @@ fn scalar_list_pages_validate_count_and_empty_sentinel() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let snapshot = list_snapshot(&[11, 22, 33]);
     assert_eq!(
+        snapshot.size_at("values", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"list","size":"3"})
+    );
+    assert_eq!(
+        snapshot.size_at("empty", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"list","size":"0"})
+    );
+    assert_eq!(
         snapshot.page("empty", 0, 2),
         json!({
             "abiVersion": 1,
@@ -1218,6 +1303,64 @@ fn scalar_list_pages_validate_count_and_empty_sentinel() {
     assert_eq!(
         malformed.status("values", 0, 2, &artifacts::digest(&malformed.state)),
         INVALID_ARGUMENT
+    );
+    assert_eq!(
+        malformed.size_with_digests(
+            "values",
+            Vec::new(),
+            &artifacts::digest(&malformed.plan),
+            &artifacts::digest(&malformed.state),
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+}
+
+#[test]
+fn collection_size_rejects_invalid_collection_parent_and_pins() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = nested_collection_snapshot();
+    let plan_sha256 = artifacts::digest(&snapshot.plan);
+    let state_sha256 = artifacts::digest(&snapshot.state);
+
+    assert_eq!(
+        snapshot.size_with_digests("missing", Vec::new(), &plan_sha256, &state_sha256),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        snapshot.size_with_digests(
+            "nestedValues",
+            vec![bytes32_key(8)],
+            &plan_sha256,
+            &state_sha256,
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        snapshot.size_with_digests(
+            "nestedValues",
+            vec![native_key(7)],
+            &plan_sha256,
+            &state_sha256,
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        snapshot.size_with_digests(
+            "nestedValues",
+            vec![bytes32_key(7)],
+            &"0".repeat(64),
+            &state_sha256,
+        ),
+        Err(INVALID_ARGUMENT)
+    );
+    assert_eq!(
+        snapshot.size_with_digests(
+            "nestedValues",
+            vec![bytes32_key(7)],
+            &plan_sha256,
+            &"0".repeat(64),
+        ),
+        Err(INVALID_ARGUMENT)
     );
 }
 
@@ -1326,6 +1469,12 @@ fn list_head_reads_source_emitted_scalar_and_record_snapshots() -> anyhow::Resul
         "values",
         BTreeMap::from([("value".into(), json!("37"))]),
     )?;
+    for (snapshot, length) in [(&empty_scalar, "0"), (&populated_scalar, "1")] {
+        assert_eq!(
+            snapshot.size_at("values", Vec::new()),
+            json!({"abiVersion":1,"kind":"collectionSize","collection":"list","size":length})
+        );
+    }
     assert_eq!(
         empty_scalar.head_at("values", Vec::new()),
         json!({"abiVersion":1,"kind":"listHead","found":false,"value":null})
@@ -1681,6 +1830,11 @@ fn source_emitted_sets_support_native_and_checked_record_membership() -> anyhow:
             ("groups".into(), json!([])),
         ]),
     )?;
+    let initial = Snapshot::from_plan_bytes(native_plan_bytes.clone(), native_state.clone());
+    assert_eq!(
+        initial.size_at("groups", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"map","size":"0"})
+    );
     let native_inputs = BTreeMap::from([
         ("bucket".into(), json!("1")),
         ("tag".into(), bytes32_member_key(7)),
@@ -1700,6 +1854,14 @@ fn source_emitted_sets_support_native_and_checked_record_membership() -> anyhow:
         native_step.activity_schedule
     );
     let native = Snapshot::from_plan_bytes(native_plan_bytes, native_step.after.state);
+    assert_eq!(
+        native.size_at("groups", Vec::new()),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"map","size":"1"})
+    );
+    assert_eq!(
+        native.size_at("groups", vec![native_key(1)]),
+        json!({"abiVersion":1,"kind":"collectionSize","collection":"set","size":"1"})
+    );
     assert_eq!(
         native.member("registered", bytes32_member_key(7)),
         json!({"abiVersion":1,"kind":"setMember","member":true})

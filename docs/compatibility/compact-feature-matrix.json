@@ -2622,7 +2622,7 @@
       "layer": "language-ledger",
       "surface": "Set.size",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset. The native Bytes32-keyed nested Set binds the exact count through duplicate insertion and removal.",
+      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset. The native Bytes32-keyed nested Set binds the exact count through duplicate insertion and removal. The native C ABI reads the size of root and Map-nested Sets from pinned snapshots.",
       "source": [
         "adt"
       ],
@@ -2632,6 +2632,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "runtime/tests/collection_reads.rs",
+        "tests/compact/native-collection-pages.mjs",
+        "docs/development/native-client-abi.md",
         "tests/TypedRecordSetNested.lean",
         "tests/NativeSet.lean",
         "tests/RecordSetCollections.lean",
@@ -2974,7 +2977,7 @@
       "layer": "language-ledger",
       "surface": "Map.size",
       "noctiumStatus": "subset",
-      "notes": "The source size statement and native Map or Set size operation bind UInt64. Inactive queries bind zero. The existing checker fixture exercises the shared operation on Sets. Root record-key Maps with scalar or record values match the pinned Compact size observations. Development ledger calls finalized growth from zero to two, inactive preservation, and reset. Host qualification remains open.",
+      "notes": "The source size statement and native Map or Set size operation bind UInt64. Inactive queries bind zero. The existing checker fixture exercises the shared operation on Sets. Root record-key Maps with scalar or record values match the pinned Compact size observations. Development ledger calls finalized growth from zero to two, inactive preservation, and reset. The native C ABI reads the size of root and Map-nested Maps from pinned snapshots.",
       "source": [
         "adt"
       ],
@@ -2984,6 +2987,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "runtime/tests/collection_reads.rs",
+        "tests/compact/native-collection-pages.mjs",
+        "docs/development/native-client-abi.md",
         "docs/development/record-map-collections-localnet-receipt.json",
         "runtime/src/localnet.rs",
         "tests/RecordMapCollections.lean",
@@ -3080,7 +3086,7 @@
       "layer": "language-ledger",
       "surface": "List.length",
       "noctiumStatus": "subset",
-      "notes": "Reads UInt64 length from scalar and checked named-record Lists, including nested paths. The matched fixture checks lengths after prepend, pop and reset. A guarded inactive read binds zero. The host length method remains unqualified.",
+      "notes": "Reads UInt64 length from scalar and checked named-record Lists, including nested paths. The matched fixture checks lengths after prepend, pop and reset. A guarded inactive read binds zero. The native C ABI returns the checked node count of root and Map-nested Lists from pinned snapshots.",
       "source": [
         "adt"
       ],
@@ -3090,6 +3096,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "runtime/tests/collection_reads.rs",
+        "tests/compact/native-collection-pages.mjs",
+        "docs/development/native-client-abi.md",
         "tests/NativeList.lean",
         "runtime/tests/native_list.rs",
         "docs/development/native-lists.md",

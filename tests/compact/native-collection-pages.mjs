@@ -49,13 +49,17 @@ for (const reverse of [false, true]) {
   assert.equal(snapshot.flags.lookup(2n), false);
   assert.equal(snapshot.flags.member(3n), false);
   assert.deepEqual(actualMembers, [1, 4, 9].map(value => new Uint8Array(32).fill(value)));
+  assert.equal(snapshot.flags.size(), 3n);
+  assert.equal(snapshot.members.size(), 3n);
 }
 let listState = currentContractState.data;
 assert.deepEqual([...ledger(listState).values], []);
+assert.equal(ledger(listState).values.length(), 0n);
 for (const value of [33n, 22n, 11n]) {
   listState = await call(listState, 'prepend', value);
 }
 assert.deepEqual([...ledger(listState).values], [11n, 22n, 33n]);
+assert.equal(ledger(listState).values.length(), 3n);
 
 const owner = new Uint8Array(32).fill(7);
 let nestedState = currentContractState.data;
@@ -76,6 +80,9 @@ assert.equal(nested.nestedFlags.lookup(owner).lookup(10n), true);
 assert.equal(nested.nestedFlags.lookup(owner).member(3n), false);
 assert.deepEqual(nestedMembers, [1, 4, 9].map(value => new Uint8Array(32).fill(value)));
 assert.deepEqual([...nested.nestedValues.lookup(owner)], [11n, 22n, 33n]);
+assert.equal(nested.nestedFlags.lookup(owner).size(), 3n);
+assert.equal(nested.nestedMembers.lookup(owner).size(), 3n);
+assert.equal(nested.nestedValues.lookup(owner).length(), 3n);
 const mapped = { c1x: 1n, c1y: 2n, c2x: 3n, c2y: 4n };
 const listed = { c1x: 5n, c1y: 6n, c2x: 7n, c2y: 8n };
 const recordState = await call(currentContractState.data, 'seedRecords', owner, mapped, listed);

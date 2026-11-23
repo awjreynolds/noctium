@@ -181,6 +181,20 @@ and missing parent paths return an error.
 [C header](../../runtime/include/noctium_native.h) ·
 [ABI tests](../../runtime/tests/collection_reads.rs)
 
+## Read collection sizes
+
+Call `noctium_ledger_collection_size` with the same pinned plan, snapshot,
+state name, and enclosing Map keys as `noctium_ledger_list_head`. The
+result has `kind: "collectionSize"`, the resolved `collection` type
+(`map`, `set`, or `list`), and `size` as a UInt64 decimal string.
+
+Map and Set sizes come from the native container. List sizes use the same
+node, element, and empty-sentinel checks as the List head and paging
+readers. A valid empty collection has size `"0"`. Missing parents or an
+unsupported collection return an error.
+[C header](../../runtime/include/noctium_native.h) ·
+[ABI tests](../../runtime/tests/collection_reads.rs)
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to
