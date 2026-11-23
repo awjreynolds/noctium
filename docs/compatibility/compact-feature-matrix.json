@@ -2070,7 +2070,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapCoinSpend",
       "noctiumStatus": "related-subset",
-      "notes": "Whole and partial root Map spends finalize on Ledger 9.1.0.1 with ZKIR 3.2.1. The partial case claims one user output and one contract-owned change output for one qualified input. A standalone Noctium spend entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The shared checked native helper primitive also accepts spend claims. The guarded receive fixture exercises the helper lowering route. A funded whole-coin Map spend finalized through standalone spend and nullifier claims. The native binder rejected a one-byte output digest change before submission. The accepted recipient decrypted five units at index 29. Other funded offer shapes remain open.",
+      "notes": "Whole and partial root Map spends finalize on Ledger 9.1.0.1 with ZKIR 3.2.1. The partial case claims one user output and one contract-owned change output for one qualified input. A standalone Noctium spend entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The guarded helper emits no spend claim when inactive. Pinned Compact and the Noctium native checker retain two distinct spend digests and deduplicate a repeated claim when active. A funded whole-coin Map spend finalized through standalone spend and nullifier claims. The native binder rejected a one-byte output digest change before submission. The accepted recipient decrypted five units at index 29. Other funded offer shapes remain open.",
       "source": [
         "adt"
       ],
@@ -2097,7 +2097,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapNullifier",
       "noctiumStatus": "related-subset",
-      "notes": "The whole-coin Map spend claims the input nullifier derived for the contract-owned coin and finalizes on Ledger 9.1.0.1 with ZKIR 3.2.1. The native harness rejects replay. A standalone Noctium nullifier entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The shared checked native helper primitive also accepts nullifier claims. The guarded receive fixture exercises the helper lowering route. A standalone nullifier combined with a standalone spend claim finalized a funded whole-coin Map spend. The ledger consumed the exact contract-owned input nullifier. The Map entry was removed and replay rejected before submission. Other funded offer shapes remain open.",
+      "notes": "The whole-coin Map spend claims the input nullifier derived for the contract-owned coin and finalizes on Ledger 9.1.0.1 with ZKIR 3.2.1. The native harness rejects replay. A standalone Noctium nullifier entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The guarded helper emits no nullifier claim when inactive. Pinned Compact and the Noctium native checker retain two distinct nullifier digests and deduplicate a repeated claim when active. A standalone nullifier combined with a standalone spend claim finalized a funded whole-coin Map spend. The ledger consumed the exact contract-owned input nullifier. The Map entry was removed and replay rejected before submission. Other funded offer shapes remain open.",
       "source": [
         "adt"
       ],

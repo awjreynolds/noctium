@@ -32,6 +32,31 @@ private def rawShieldedReceiveHelper : Helpers.Program := {
     {name := "digest", ty := .bytes 32, visibility := .private}]}]
 }
 
+private def guardedRawShieldedClaimHelper : Helpers.Program := {
+  declarations := [
+    {id := ⟨0, 0⟩, name := "recordClaims",
+      parameters := [⟨"digest", .bytes 32⟩, ⟨"otherDigest", .bytes 32⟩],
+      result := .unit, body := [
+        .claimShielded .nullifier (.disclose {} (.ref "digest")),
+        .claimShielded .nullifier (.disclose {} (.ref "otherDigest")),
+        .claimShielded .nullifier (.disclose {} (.ref "digest")),
+        .claimShielded .spend (.disclose {} (.ref "digest")),
+        .claimShielded .spend (.disclose {} (.ref "otherDigest")),
+        .claimShielded .spend (.disclose {} (.ref "digest")),
+        .return none]},
+    {id := ⟨0, 1⟩, name := "guardedClaims",
+      parameters := [
+        ⟨"enabled", .bool⟩, ⟨"digest", .bytes 32⟩, ⟨"otherDigest", .bytes 32⟩],
+      result := .unit, body := [
+        .branch (.disclose {} (.ref "enabled")) [
+          .evaluate (.call "recordClaims" [.ref "digest", .ref "otherDigest"])] [],
+        .return none]}]
+  exports := [{name := "guardedClaims", target := ⟨0, 1⟩, inputs := [
+    {name := "enabled", ty := .bool, visibility := .private},
+    {name := "digest", ty := .bytes 32, visibility := .private},
+    {name := "otherDigest", ty := .bytes 32, visibility := .private}]}]
+}
+
 noctium_contract RawShieldedClaims where
   entry claimNullifier uses rawShieldedClaimInputs where
     claimShielded(nullifier, disclose(digest))
@@ -55,6 +80,9 @@ noctium_contract RawShieldedClaims where
   end
 
   entry helperClaimReceive from rawShieldedReceiveHelper entry "guardedReceive" end
+
+  entry guardedHelperClaimSpendNullifier from guardedRawShieldedClaimHelper
+    entry "guardedClaims" end
 end
 
 noctium_contract FundedRawShieldedClaim where
@@ -66,6 +94,7 @@ private def rawClaimEntry (name : String) : Entrypoint :=
     {name := "missing", circuit := {name := "missing"}}
 
 private def claimBytes : List Nat := List.replicate 32 7
+private def otherClaimBytes : List Nat := List.replicate 32 9
 
 private def rawClaimContext : EvalContext := {
   modulus := Field.modulus
@@ -78,9 +107,15 @@ private def rawClaimInputs : EvalEnv := [("digest", .bytes 32 claimBytes)]
 private def guardedRawClaimInputs (enabled : _root_.Bool) : EvalEnv := [
   ("enabled", .bool enabled), ("digest", .bytes 32 claimBytes)]
 
+private def guardedRawClaimPairInputs (enabled : _root_.Bool) : EvalEnv := [
+  ("enabled", .bool enabled), ("digest", .bytes 32 claimBytes),
+  ("otherDigest", .bytes 32 otherClaimBytes)]
+
 #guard (rawClaimEntry "claimNullifier").name == "claimNullifier"
 #guard (rawClaimEntry "claimReceive").name == "claimReceive"
 #guard (rawClaimEntry "claimSpend").name == "claimSpend"
+#guard (rawClaimEntry "guardedHelperClaimSpendNullifier").name ==
+  "guardedHelperClaimSpendNullifier"
 
 #guard match (rawClaimEntry "claimNullifier").effects with
   | [.claimShielded .nullifier (.disclose _ (.ref "digest"))] => _root_.Bool.true
@@ -91,12 +126,18 @@ private def guardedRawClaimInputs (enabled : _root_.Bool) : EvalEnv := [
 #guard match (rawClaimEntry "claimSpend").effects with
   | [.claimShielded .spend (.disclose _ (.ref "digest"))] => _root_.Bool.true
   | _ => _root_.Bool.false
+#guard ((rawClaimEntry "guardedHelperClaimSpendNullifier").effects.map fun effect =>
+  match effect with
+  | .claimShielded kind _ => some kind
+  | _ => none) == [some .nullifier, some .nullifier, some .nullifier,
+    some .spend, some .spend, some .spend]
 
 #guard (Disclosure.entrypoint (rawClaimEntry "claimNullifier")).isOk
 #guard (Disclosure.entrypoint (rawClaimEntry "claimNullifierTwice")).isOk
 #guard (Disclosure.entrypoint (rawClaimEntry "claimReceive")).isOk
 #guard (Disclosure.entrypoint (rawClaimEntry "claimSpend")).isOk
 #guard (Disclosure.entrypoint (rawClaimEntry "guardedClaimReceive")).isOk
+#guard (Disclosure.entrypoint (rawClaimEntry "guardedHelperClaimSpendNullifier")).isOk
 #guard !(Disclosure.entrypoint {rawClaimEntry "claimReceive" with
   effects := [.claimShielded .receive (.ref "digest")]}).isOk
 #guard !(Disclosure.entrypoint {rawClaimEntry "guardedClaimReceive" with
@@ -179,6 +220,21 @@ private def rawClaimPlanOperation (name : String) : Except String (String × Str
 #guard match Entrypoint.run rawClaimContext (rawClaimEntry "helperClaimReceive")
     (guardedRawClaimInputs _root_.Bool.true) {} with
   | .ok state => state.2.shieldedClaims == [(ShieldedClaimKind.receive, claimBytes)]
+  | .error _ => _root_.Bool.false
+
+#guard match Entrypoint.run rawClaimContext
+    (rawClaimEntry "guardedHelperClaimSpendNullifier")
+    (guardedRawClaimPairInputs _root_.Bool.false) {} with
+  | .ok state => state.2.shieldedClaims.isEmpty
+  | .error _ => _root_.Bool.false
+#guard match Entrypoint.run rawClaimContext
+    (rawClaimEntry "guardedHelperClaimSpendNullifier")
+    (guardedRawClaimPairInputs _root_.Bool.true) {} with
+  | .ok state => state.2.shieldedClaims == [
+      (ShieldedClaimKind.nullifier, claimBytes),
+      (ShieldedClaimKind.nullifier, otherClaimBytes),
+      (ShieldedClaimKind.spend, claimBytes),
+      (ShieldedClaimKind.spend, otherClaimBytes)]
   | .error _ => _root_.Bool.false
 
 #guard match (Backend.Impact.Op.claimShielded .nullifier (.ref "digest")).fieldGroups with

@@ -107,6 +107,11 @@ ZKIR 3.2.1 and assemble a bundle for the single exported
 Map deposit bundle variables. Run the same filtered Cargo command with
 `funded_wallet_raw_shielded_receive_helper_localnet` as the test name.
 
+The guarded spend and nullifier helper also matches Compact 0.36.1. Its inactive
+branch produces no claim. Its active branch retains two distinct digests per
+kind and deduplicates repeat claims. The native checker validates the exact
+digests in the emitted ZKIR. [Paired runner](../../tests/compact/raw-shielded-claims.mjs)
+
 ## Whole-coin spend from a Map
 
 `tests/ShieldedSpend.lean` defines two entries. `tip` mints and receives five units into the Map. `spend` consumes the recorded coin, derives its nullifier and a commitment to one user-owned output, then removes the old key. The native host builds the spend proof from the coin's assigned index and the finalized Zswap tree. The Compact runner also checks the exact effects, output nonce, Map removal and replay rejection for a deterministic full-value send.

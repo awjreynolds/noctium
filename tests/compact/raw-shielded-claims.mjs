@@ -66,6 +66,9 @@ try {
     claimedShieldedReceives: receives,
     claimedShieldedSpends: spends,
   });
+  const sortClaimKinds = (value) => Object.fromEntries(
+    Object.entries(value).map(([kind, digests]) => [kind, [...digests].sort()]),
+  );
 
   const directInputs = [digest(6), digest(7), digest(8)];
   const expectedDirect = claims(
@@ -86,6 +89,18 @@ try {
   const duplicates = await invoke('duplicateClaims', ...directInputs);
   assert.deepEqual(duplicates, expectedDirect, 'repeated same-kind digest claims must deduplicate');
 
+  const guardedHelperDisabled = await invoke(
+    'guardedHelperClaimSpendNullifier', false, digest(12), digest(13),
+  );
+  assert.deepEqual(guardedHelperDisabled, emptyClaims,
+    'disabled guarded spend and nullifier helpers must add no claims');
+  const guardedHelperActive = await invoke(
+    'guardedHelperClaimSpendNullifier', true, digest(12), digest(13),
+  );
+  assert.deepEqual(sortClaimKinds(guardedHelperActive), sortClaimKinds(claims(
+    [digestHex(12), digestHex(13)], [], [digestHex(12), digestHex(13)],
+  )), 'active guards must retain distinct digests and deduplicate repeated helper calls');
+
   const distinct = await invoke(
     'distinctClaims',
     digest(6), digest(9),
@@ -96,9 +111,6 @@ try {
     [digestHex(6), digestHex(9)],
     [digestHex(7), digestHex(10)],
     [digestHex(8), digestHex(11)],
-  );
-  const sortClaimKinds = (value) => Object.fromEntries(
-    Object.entries(value).map(([kind, digests]) => [kind, [...digests].sort()]),
   );
   assert.deepEqual(sortClaimKinds(distinct), sortClaimKinds(distinctExpected));
 
@@ -113,6 +125,10 @@ try {
     direct,
     helperRoute: helpers,
     guarded: { disabled, enabled },
+    guardedHelperClaimSpendNullifier: {
+      disabled: guardedHelperDisabled,
+      active: guardedHelperActive,
+    },
     duplicateClaims: duplicates,
     distinctDigests: distinct,
   }, null, 2));
