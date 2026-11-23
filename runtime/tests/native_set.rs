@@ -143,6 +143,95 @@ fn typed_record_set_reports_size_and_resets() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_NESTED_RECORD_SET_DIR"]
+fn nested_record_set_preserves_members_and_sibling_buckets() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_NESTED_RECORD_SET_DIR")?);
+    let init = load_plan(&directory, "NestedRecordSet.initOwner.impact.json");
+    let init_circuit = load_circuit(&directory, "NestedRecordSet.initOwner.zkir");
+    let plan = load_plan(&directory, "NestedRecordSet.update.impact.json");
+    let circuit = load_circuit(&directory, "NestedRecordSet.update.zkir");
+    let mut state = create_state(&plan, &BTreeMap::from([("buckets".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let owner_input = |owner: u8| {
+        let owner_bytes = [owner; 32];
+        json!({"kind": "bytes", "values": owner_bytes.as_slice()})
+    };
+    for owner in [0x11, 0x22] {
+        let args = BTreeMap::from([("owner".into(), owner_input(owner))]);
+        let step = prepare(&init, &args, &state, parameters, address)?;
+        assert_eq!(check(&step, &init_circuit)?, step.activity_schedule);
+        state = step.after.state;
+    }
+    let inputs = |owner, active, amount: u32, adding, removing| {
+        BTreeMap::from([
+            ("owner".into(), owner_input(owner)),
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+            ("adding".into(), json!(adding)),
+            ("removing".into(), json!(removing)),
+        ])
+    };
+    for (owner, active, amount, adding, removing, before, after, size) in [
+        (0x11, true, 513, true, false, false, true, 1),
+        (0x11, true, 513, true, false, true, true, 1),
+        (0x11, false, 513, true, false, false, true, 2),
+        (0x11, true, 514, false, false, false, false, 2),
+        (0x22, true, 513, true, false, false, true, 1),
+        (0x11, true, 513, false, true, true, false, 1),
+        (0x11, false, 513, false, false, true, true, 1),
+        (0x22, true, 513, false, false, true, true, 1),
+    ] {
+        let args = inputs(owner, active, amount, adding, removing);
+        let step = prepare(&plan, &args, &state, parameters, address)?;
+        assert_eq!(check(&step, &circuit)?, step.activity_schedule);
+        let returns = step.returns_json();
+        assert_eq!(returns["presentBefore"], json!(before));
+        assert_eq!(returns["presentAfter"], json!(after));
+        assert_eq!(returns["bucketSize"], json!(size.to_string()));
+        let StateValue::Array(slots) = step.after.state.get_ref() else {
+            anyhow::bail!("expected a state array");
+        };
+        let Some(StateValue::Map(buckets)) = slots.get(0) else {
+            anyhow::bail!("expected a Map of Sets");
+        };
+        let bucket_key: AlignedValue = [owner; 32].into();
+        let selected = buckets.get(&bucket_key).expect("selected bucket exists");
+        let StateValue::Map(set) = &*selected else {
+            anyhow::bail!("expected a Set-backed map in the selected bucket");
+        };
+        assert_eq!(set.size(), size);
+        state = step.after.state;
+    }
+    assert!(
+        prepare(
+            &plan,
+            &inputs(0x11, true, 65536, true, false),
+            &state,
+            parameters,
+            address
+        )
+        .is_err()
+    );
+    let mut wrong_schema = plan.clone();
+    wrong_schema.state[0].kind["tree"]["map"][1]["set"]["composite"]["fields"]
+        .as_array_mut()
+        .expect("nested typed key schema fields")
+        .swap(0, 1);
+    assert!(
+        prepare(
+            &wrong_schema,
+            &inputs(0x11, true, 513, false, true),
+            &state,
+            parameters,
+            address
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
 fn inputs(
     bucket: u64,
     tag: u8,

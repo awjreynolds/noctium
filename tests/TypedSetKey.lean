@@ -50,7 +50,7 @@ private def typedSetKeyEntry : Entrypoint :=
          .popeq (.bitExpr (.ref _)),
          .indexPath 0 _root_.Bool.true [], .pushFields _ insertValues _root_.Bool.false,
          .push (.field (.native 1)) _root_.Bool.false, .newMap, .insert 2,
-         .mapRemoveRecord 0 _ removeValues] =>
+         .mapRemoveRecord 0 _ [] removeValues] =>
           memberValues.length == 2 && insertValues.length == 2 && removeValues.length == 2 &&
           memberValues.map LedgerFieldExpr.ty == [.bool, .uint 65535] &&
           insertValues.map LedgerFieldExpr.ty == [.bool, .uint 65535] &&
@@ -137,7 +137,7 @@ private def undisclosedRecordSetMember : Entrypoint := {
   circuit := {name := "privateProbe", inputs := [
     {name := "active", ty := .bool, visibility := .«private»},
     {name := "amount", ty := .uint 65535, visibility := .«private»}]}
-  effects := [.memberRecordSet "memoSet" "present" [
+  effects := [.memberRecordSet "memoSet" "present" [] [
     .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")]]
   effectSpans := [{}]
 }

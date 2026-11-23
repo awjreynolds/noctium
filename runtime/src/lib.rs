@@ -1768,6 +1768,8 @@ pub enum Instruction {
     #[serde(rename = "mapRemoveRecord")]
     MapRemoveRecord {
         slot: u32,
+        #[serde(default)]
+        keys: Vec<PathPart>,
         schema: Json,
         expressions: Vec<Expr>,
     },
@@ -2327,16 +2329,26 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
         }
         Instruction::MapRemoveRecord {
             slot,
+            keys,
             schema,
             expressions,
         } => {
+            let expected = if keys.is_empty() {
+                record_collection_key_schema(plan, *slot)
+            } else {
+                ordinary_record_set_schema_at_path(plan, *slot, keys)?
+            };
+            ensure!(
+                expected == Some(schema),
+                "record key removal differs from state schema"
+            );
             let record = checked_typed_record_schema(schema)?;
             ensure!(
                 expressions.len() == record.fields.len(),
                 "record Set key expression count mismatch"
             );
             vec![
-                path_field_count(plan, *slot, &[])?,
+                path_field_count(plan, *slot, keys)?,
                 record.push_impact_width(),
                 1,
                 1,
@@ -2960,7 +2972,10 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             if is_shielded_coin_record_schema(record) {
                 checked_record_schema(record)?;
             } else {
-                ensure!(depth == 0, "record Sets must use a root state slot");
+                ensure!(
+                    depth + 1 < 16,
+                    "record Set path exceeds native insertion depth"
+                );
                 checked_typed_record_schema(record)?;
             }
         } else {
@@ -3896,6 +3911,36 @@ fn ordinary_record_set_schema(plan: &Plan, slot: u32) -> Option<&Json> {
     ordinary_record_key_schema(tree_schema_at_path(plan, slot, 0).ok()?.get("set")?)
 }
 
+fn ordinary_record_set_schema_at_path<'a>(
+    plan: &'a Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<Option<&'a Json>> {
+    ensure!(
+        keys.len() + 1 < 16,
+        "record Set path exceeds native insertion depth"
+    );
+    path_field_count(plan, slot, keys)?;
+    let selected = tree_schema_at_path(plan, slot, keys.len())?;
+    let Some(key) = selected.get("set") else {
+        return Ok(None);
+    };
+    ordinary_record_key_schema(key)
+        .map(Some)
+        .ok_or_else(|| anyhow!("selected Set is not an ordinary record Set"))
+}
+
+fn indexed_record_collection_schema<'a>(
+    plan: &'a Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<Option<&'a Json>> {
+    if !keys.is_empty() {
+        return ordinary_record_set_schema_at_path(plan, slot, keys);
+    }
+    Ok(record_collection_key_schema(plan, slot))
+}
+
 fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
     let parts = tree_schema_at_path(plan, slot, 0)
         .ok()?
@@ -3919,16 +3964,19 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 schema,
                 ..
             } if is_record_schema(schema) => {
-                let indexed_collection = index.checked_sub(1).and_then(|previous| {
-                    let (operation, path_guard) = unguarded_operation(plan.operations.get(previous)?);
-                    let Instruction::IndexPath { slot, keys, .. } = operation else {
-                        return None;
-                    };
-                    if !keys.is_empty() {
-                        return None;
+                let indexed_collection = if let Some(previous) =
+                    index.checked_sub(1).and_then(|previous| plan.operations.get(previous))
+                {
+                    let (previous, path_guard) = unguarded_operation(previous);
+                    if let Instruction::IndexPath { slot, keys, .. } = previous {
+                        indexed_record_collection_schema(plan, *slot, keys)?
+                            .map(|expected| (expected, path_guard))
+                    } else {
+                        None
                     }
-                    record_collection_key_schema(plan, *slot).map(|expected| (expected, path_guard))
-                });
+                } else {
+                    None
+                };
                 if let Some((expected, path_guard)) = indexed_collection {
                     ensure!(
                         expected == schema && path_guard == guard,
@@ -3939,9 +3987,19 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     checked_record_schema(schema)?;
                 }
             }
-            Instruction::MapRemoveRecord { slot, schema, .. } => {
+            Instruction::MapRemoveRecord {
+                slot,
+                keys,
+                schema,
+                ..
+            } => {
+                let expected = if keys.is_empty() {
+                    record_collection_key_schema(plan, *slot)
+                } else {
+                    ordinary_record_set_schema_at_path(plan, *slot, keys)?
+                };
                 ensure!(
-                    record_collection_key_schema(plan, *slot) == Some(schema),
+                    expected == Some(schema),
                     "record key removal differs from state schema"
                 );
                 checked_typed_record_schema(schema)?;
@@ -5648,7 +5706,7 @@ fn validate_map_size_path(plan: &Plan, slot: u32, depth: usize) -> Result<()> {
         }
     };
     if let Some(key) = schema.get("set") {
-        if depth == 0 && let Some(record) = ordinary_record_set_schema(plan, slot) {
+        if let Some(record) = ordinary_record_key_schema(key) {
             checked_typed_record_schema(record)?;
         } else {
             ledger_key_type(key)?;
@@ -6387,8 +6445,17 @@ fn probe_instruction(
         Instruction::PushFields { expressions, .. } => {
             probe_expressions(expressions, plan, env, deferred_outputs)
         }
-        Instruction::MapRemoveRecord { expressions, .. }
-        | Instruction::IndexRecordPath { expressions, .. } => {
+        Instruction::MapRemoveRecord {
+            keys, expressions, ..
+        } => probe_expressions(
+            keys.iter()
+                .map(|part| &part.expression)
+                .chain(expressions.iter()),
+            plan,
+            env,
+            deferred_outputs,
+        ),
+        Instruction::IndexRecordPath { expressions, .. } => {
             probe_expressions(expressions, plan, env, deferred_outputs)
         }
         Instruction::ClaimContractCall {
@@ -8570,10 +8637,11 @@ impl PreparationCursor {
             }
             Instruction::MapRemoveRecord {
                 slot,
+                keys,
                 schema,
                 expressions,
             } => {
-                let (index, _) = native_index(plan, *slot, &[], true, &env)?;
+                let (index, _) = native_index(plan, *slot, keys, true, &env)?;
                 let record = checked_typed_record_schema(schema)?;
                 let fields = record_values_from_expressions(&record, expressions, &env)?;
                 let key = aligned_record_value(&record, &fields)?;
@@ -8585,7 +8653,7 @@ impl PreparationCursor {
                 has_written = true;
                 Op::Ins {
                     cached: false,
-                    n: 1,
+                    n: (keys.len() + 1).try_into()?,
                 }
             }
             Instruction::ListReset { slot, keys } => {

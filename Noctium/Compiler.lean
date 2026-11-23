@@ -323,10 +323,11 @@ private def operationJsonBare : Backend.Impact.Op → Json
   | .mapRemove slot keys => Json.mkObj [
       ("op", toJson ("mapRemove" : String)), ("slot", toJson slot),
       ("keys", toJson (keys.map fun key => Json.mkObj (alignedJson key)))]
-  | .mapRemoveRecord slot schema values => Json.mkObj [
-      ("op", toJson ("mapRemoveRecord" : String)), ("slot", toJson slot),
-      ("schema", schema),
-      ("expressions", toJson (values.map ledgerFieldExprJson))]
+  | .mapRemoveRecord slot schema keys values => Json.mkObj (
+      [("op", toJson ("mapRemoveRecord" : String)), ("slot", toJson slot),
+       ("schema", schema)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => Json.mkObj (alignedJson key)))]) ++
+      [("expressions", toJson (values.map ledgerFieldExprJson))])
   | .claimContractCall address entryPointHash commitment => Json.mkObj [
       ("op", toJson ("claimcontractcall" : String)),
       ("address", nativeExpressionJson address),
@@ -591,10 +592,12 @@ private def effectJson : Effect → Json
       ("destination", toJson destination),
       ("keys", toJson (keys.map fun key => match key with
         | .mk _ value => expressionJson value))]
-  | .memberRecordSet state destination values => Json.mkObj [
-      ("op", toJson ("memberRecordSet" : String)), ("state", toJson state),
-      ("destination", toJson destination),
-      ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .memberRecordSet state destination keys values => Json.mkObj (
+      [("op", toJson ("memberRecordSet" : String)), ("state", toJson state),
+       ("destination", toJson destination)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => match key with
+        | .mk _ value => expressionJson value))]) ++
+      [("values", toJson (values.map sourceLedgerFieldExprJson))])
   | .readRecordMap state destination _ values => Json.mkObj [
       ("op", toJson ("readRecordMap" : String)), ("state", toJson state),
       ("destination", toJson destination),
@@ -732,12 +735,16 @@ private def effectJson : Effect → Json
       ("op", toJson ("setInsert" : String)), ("state", toJson state),
       ("keys", toJson (keys.map fun key => match key with
         | .mk _ value => expressionJson value))]
-  | .setInsertRecord state values => Json.mkObj [
-      ("op", toJson ("setInsertRecord" : String)), ("state", toJson state),
-      ("values", toJson (values.map sourceLedgerFieldExprJson))]
-  | .removeRecordSet state values => Json.mkObj [
-      ("op", toJson ("removeRecordSet" : String)), ("state", toJson state),
-      ("values", toJson (values.map sourceLedgerFieldExprJson))]
+  | .setInsertRecord state keys values => Json.mkObj (
+      [("op", toJson ("setInsertRecord" : String)), ("state", toJson state)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => match key with
+        | .mk _ value => expressionJson value))]) ++
+      [("values", toJson (values.map sourceLedgerFieldExprJson))])
+  | .removeRecordSet state keys values => Json.mkObj (
+      [("op", toJson ("removeRecordSet" : String)), ("state", toJson state)] ++
+      (if keys.isEmpty then [] else [("keys", toJson (keys.map fun key => match key with
+        | .mk _ value => expressionJson value))]) ++
+      [("values", toJson (values.map sourceLedgerFieldExprJson))])
   | .removePath state keys => Json.mkObj [
       ("op", toJson ("removePath" : String)), ("state", toJson state),
       ("keys", toJson (keys.map fun key => match key with

@@ -1492,10 +1492,13 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let evaluated ← evaluatePath ctx env keys
       let some root := next.trees.lookup name | throw s!"missing recursive state map '{name}'"
       env := (destination, .bool (← treeMember root evaluated)) :: env
-    | .memberRecordSet name destination values => do
+    | .memberRecordSet name destination keys values => do
+      let evaluatedKeys ← evaluatePath ctx env keys
       let some root := next.trees.lookup name | throw s!"missing record Set '{name}'"
+      let some selected := treeLookup root evaluatedKeys
+        | throw s!"missing record Set parent '{name}'"
       let key ← evaluateRecordKey ctx env values
-      env := (destination, .bool (← treeMember root [key])) :: env
+      env := (destination, .bool (← treeMember selected [key])) :: env
     | .readRecordMap name destination valueTy values => do
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
       let key ← evaluateRecordKey ctx env values
@@ -1679,12 +1682,14 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       next ← resetMapAt next name evaluated
     | .setInsert name keys => do
       next ← insertSetAt next name (← evaluatePath ctx env keys)
-    | .setInsertRecord name values => do
+    | .setInsertRecord name keys values => do
+      let evaluatedKeys ← evaluatePath ctx env keys
       let key ← evaluateRecordKey ctx env values
-      next ← insertSetAt next name [key]
-    | .removeRecordSet name values => do
+      next ← insertSetAt next name (evaluatedKeys ++ [key])
+    | .removeRecordSet name keys values => do
+      let evaluatedKeys ← evaluatePath ctx env keys
       let key ← evaluateRecordKey ctx env values
-      next ← removeMapAt next name [key]
+      next ← removeMapAt next name (evaluatedKeys ++ [key])
     | .writeRecordMap name values valueTy value => do
       let key ← evaluateRecordKey ctx env values
       let payload := LedgerValue.scalar (Value.pack valueTy (← value.eval ctx env))
