@@ -42,7 +42,7 @@ The first catalog used a bytewise public prologue for the 256-byte memo. Its 19,
 
 The same full-width payload digests passed with each layout. [Public byte inputs](fixed-bytes.md#public-byte-arguments) · [Committed call arguments](committed-returns.md#native-call-arguments) · [Node error codes](https://docs.midnight.network/nodes/error-codes) · [Issue 74](https://github.com/awjreynolds/noctium/issues/74)
 
-The funded isolated localnet accepted the catalog deployment and proved call. The helper event path is qualified through native local simulation. Indexer delivery and helper event emission on localnet still need qualification.
+The funded isolated localnet accepted the catalog deployment and proved call. The checked helper also finalized on Ledger 9.1.0.1. Replay of the exact accepted transaction checked the ordered version 1 logs and their payload bytes. The active call at height 64918 emitted `Paused`, `ShieldedSpend` with the 32-byte nullifier, and `Unpaused`. The inactive call at height 64921 emitted `Paused` and `Unpaused`. [Finalized helper receipts](../../tests/standard-helper-event-localnet-evidence.json)
 
 | Localnet action | Block | Transaction ID |
 | --- | ---: | --- |
@@ -60,3 +60,11 @@ NOCTIUM_EVENT_ARTIFACTS="$PWD/build/experiments/standard-events" \
 ```
 
 Generate keys, assemble the authenticated bundle and submit with the Rust client for localnet qualification. [Bundle workflow](portable-artifacts.md#build-and-use) · [Native client](native-client.md)
+
+To reproduce the funded helper checks, assemble verified bundles for all three `StandardEvents.Token` operations with the pinned target. Point `NOCTIUM_STANDARD_EVENTS_BUNDLES` at a directory with `logSpend/`, `logCatalog/`, and `logHelperSpend/` bundles. Set `NOCTIUM_STANDARD_EVENTS_MANIFESTS` to a JSON map of operation names to trusted manifest hashes. Set `NOCTIUM_STANDARD_EVENTS_PARAMETER_CACHE` to the verified parameter cache and `NOCTIUM_STANDARD_EVENTS_NODE` to the pinned loopback development RPC.
+
+```sh
+cargo test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib \
+  localnet::tests::standard_event_helper_finalizes_logs -- --ignored --exact --nocapture
+```
