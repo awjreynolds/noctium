@@ -78,6 +78,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
                     route: &ChargedState<Db>,
                     routed_to: ContractAddress,
                     child: &noctium_runtime::Execution,
+                    caller_entry: &str,
                     selector: EntryPointBuf| {
         assemble_checked_calls(
             &[
@@ -85,7 +86,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
                     execution: source,
                     circuit,
                     initial_context: QueryContext::new(route.clone(), caller),
-                    entry_point: EntryPointBuf(b"forward".to_vec()),
+                    entry_point: EntryPointBuf(caller_entry.as_bytes().to_vec()),
                     communication_commitment_rand: Fr::from(53u64),
                 },
                 CheckedNativeCall {
@@ -122,6 +123,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
             stored,
             target,
             &target_execution,
+            &forward.entrypoint,
             update.clone(),
         )?;
         let calls = composed.calls().collect::<Vec<_>>();
@@ -135,6 +137,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
                 stored,
                 other_target,
                 &other_execution,
+                &forward.entrypoint,
                 update.clone(),
             )
             .is_err()
@@ -146,6 +149,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
                 stored,
                 target,
                 &target_execution,
+                &forward.entrypoint,
                 EntryPointBuf(b"other".to_vec()),
             )
             .is_err()
@@ -309,13 +313,72 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         }
     }
 
+    let bytes_value = |address: ContractAddress| json!({"kind": "bytes", "values": address.0.0});
+    let key_target = ContractAddress(HashOutput([15; 32]));
+    let (put, put_circuit) = load("RecordKeyCaller.insertRoute")?;
+    let initial = create_state(
+        &put,
+        &BTreeMap::from([
+            ("routes".into(), json!([])),
+            ("direct".into(), json!([])),
+            ("nested".into(), json!([])),
+        ]),
+    )?;
+    let put_inputs = BTreeMap::from([
+        ("keyTarget".into(), bytes_value(key_target)),
+        ("replacement".into(), bytes_value(target)),
+    ]);
+    let inserted = prepare(&put, &put_inputs, &initial, &INITIAL_PARAMETERS, caller)?;
+    check(&inserted, &put_circuit)?;
+    let mut keyed_inputs = forward_inputs.clone();
+    keyed_inputs.insert("keyTarget".into(), bytes_value(key_target));
+    for operation in ["forward", "forwardDirect"] {
+        let (plan, circuit) = load(&format!("RecordKeyCaller.{operation}"))?;
+        assert_route(&plan, &circuit, &inserted.after.state, &keyed_inputs)?;
+        let mut missing = keyed_inputs.clone();
+        missing.insert("keyTarget".into(), bytes_value(target));
+        assert!(
+            prepare(&plan, &missing, &inserted.after.state, &INITIAL_PARAMETERS, caller).is_err(),
+            "{operation} accepted an absent record key"
+        );
+    }
+
+    let (init, init_circuit) = load("RecordKeyCaller.initializeOwner")?;
+    let owner = json!({"kind": "bytes", "values": ([7u8; 32])});
+    let initialized = prepare(
+        &init,
+        &BTreeMap::from([("owner".into(), owner.clone())]),
+        &inserted.after.state,
+        &INITIAL_PARAMETERS,
+        caller,
+    )?;
+    check(&initialized, &init_circuit)?;
+    let (put_nested, put_nested_circuit) = load("RecordKeyCaller.insertNestedRoute")?;
+    let mut nested_put = put_inputs;
+    nested_put.insert("owner".into(), owner.clone());
+    let inserted_nested = prepare(
+        &put_nested,
+        &nested_put,
+        &initialized.after.state,
+        &INITIAL_PARAMETERS,
+        caller,
+    )?;
+    check(&inserted_nested, &put_nested_circuit)?;
+    let (nested_forward, nested_forward_circuit) = load("RecordKeyCaller.forwardNested")?;
+    keyed_inputs.insert("owner".into(), owner);
+    assert_route(
+        &nested_forward,
+        &nested_forward_circuit,
+        &inserted_nested.after.state,
+        &keyed_inputs,
+    )?;
+
     let (echo_target_plan, echo_target_circuit) = load("EchoTarget.echo")?;
     let (echo_caller_plan, echo_caller_circuit) = load("EchoCaller.forward")?;
     let echo_target_address = ContractAddress(HashOutput([11; 32]));
     let echo_caller_address = ContractAddress(HashOutput([12; 32]));
     let echo_value = ContractAddress(HashOutput([13; 32]));
     let substitute = ContractAddress(HashOutput([14; 32]));
-    let bytes_value = |address: ContractAddress| json!({"kind": "bytes", "values": address.0.0});
     let empty_echo_target = create_state(&echo_target_plan, &BTreeMap::new())?;
     let empty_echo_caller = create_state(&echo_caller_plan, &BTreeMap::new())?;
     let echo_target_execution = prepare(

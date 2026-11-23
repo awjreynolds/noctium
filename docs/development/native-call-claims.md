@@ -184,8 +184,18 @@ interface. The paired fixtures store a reference and route `update(7)` through
 each layout. Native assembly rejects an absent key, the wrong target, and the
 wrong selector. Both layouts also work under two Bytes32 Map keys. The
 native checker rejects missing owner and bucket keys independently.
-Record-key Maps and deployed dynamic interface lookup remain open under
-[typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+Record-key Maps preserve interfaces in both key and value fields. The paired
+fixtures store different addresses in the key and the value. Native assembly
+calls the value's `update` method through a root record-valued Map, a root
+scalar-valued Map and a record-valued Map under a Bytes32 parent. The source
+checker rejects a key reference from a different interface.
+
+The funded case deployed the checked root Map state and called `update(7)`
+through the stored value. Ledger 9.1.0.1 finalized both deployments and the
+composed call. The caller state stayed byte-for-byte equal to its initialized
+state, and the callee total became seven. The harness rejected a changed
+target, method selector and expected result before proving.
+[Finalized receipt](typed-reference-record-key-localnet-receipt.json) · [Funded test](../../runtime/tests/native_composition.rs)
 
 ### Bind the entrypoint and read the address from a registry
 

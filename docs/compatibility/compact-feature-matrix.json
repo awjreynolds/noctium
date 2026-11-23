@@ -1524,7 +1524,7 @@
       "layer": "language-ledger",
       "surface": "Contract types and implements",
       "noctiumStatus": "subset",
-      "notes": "Named non-generic interfaces check provable entrypoint names, ordered scalar types and grouped ABI layouts. The prior funded named-interface call updated both contracts and rejected a changed expected return before proving. Compact 0.36.1 returned the same grouped values in memory. Typed references preserve the interface through circuit parameters, scalar Cells and root scalar Lists, and through named record fields in root Cells and Lists. The paired reference forwards update(7) through all four storage routes. Noctium's native assembly checks the stored address and method selector. Pinned Compact accepts and returns a contract reference in its echo method. Noctium preserves the interface identity in method parameters, results and typed call commitments. Source checks reject raw address substitutions and wrong interfaces with the same native ABI. Native assembly accepts the matched echo call and rejects a changed address argument or expected result. Compact and Noctium route update(7) through a record stored in a Bytes32-keyed Map and through a record in a Map-backed List. The compiler rejects a wrong-interface field assignment. Native assembly checks the stored target and selector and rejects an absent key. Both paired layouts also route update(7) through two ordinary Bytes32 Map keys. Native assembly checks the initialized parent and bucket and rejects an absent key at either level. Record-key Maps and deployed dynamic interface qualification remain open.",
+      "notes": "Named non-generic interfaces check provable entrypoint names, ordered scalar types and grouped ABI layouts. The prior funded named-interface call updated both contracts and rejected a changed expected return before proving. Compact 0.36.1 returned the same grouped values in memory. Typed references preserve the interface through circuit parameters, scalar Cells and root scalar Lists, and through named record fields in root Cells and Lists. The paired reference forwards update(7) through all four storage routes. Noctium's native assembly checks the stored address and method selector. Pinned Compact accepts and returns a contract reference in its echo method. Noctium preserves the interface identity in method parameters, results and typed call commitments. Source checks reject raw address substitutions and wrong interfaces with the same native ABI. Native assembly accepts the matched echo call and rejects a changed address argument or expected result. Compact and Noctium route update(7) through a record stored in a Bytes32-keyed Map and through a record in a Map-backed List. The compiler rejects a wrong-interface field assignment. Native assembly checks the stored target and selector and rejects an absent key. Both paired layouts also route update(7) through two ordinary Bytes32 Map keys. Native assembly checks the initialized parent and bucket and rejects an absent key at either level. Record-key Maps accept typed references in the key, in the record value and as a scalar Map value. Pinned Compact and native assembly resolve the value reference when it differs from the key reference. A funded call through a root record-key Map finalized with the caller state unchanged and the callee total set to seven.",
       "source": [
         "reference",
         "release0360"
@@ -1535,6 +1535,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/typed-reference-record-key-localnet-receipt.json",
         "tests/ContractInterfaces.lean",
         "tests/TypedContractReference.lean",
         "tests/compact/typed-contract-reference.mjs",
@@ -1564,6 +1565,7 @@
         "HOST"
       ],
       "observedEvidence": [
+        "docs/development/typed-reference-record-key-localnet-receipt.json",
         "docs/development/native-composition-receipt.json",
         "docs/development/native-aggregate-composition-receipt.json",
         "docs/development/native-aggregate-argument-receipt.json",
