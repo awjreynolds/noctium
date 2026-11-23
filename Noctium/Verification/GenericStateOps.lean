@@ -528,4 +528,13 @@ theorem evalPlan_operations (ctx : EvalContext) (env : EvalEnv)
     evalPlan ctx env {operations := operations} =
       operations.mapM (evalOp ctx env) := rfl
 
+/-- Successful interpretation of an actual Impact plan establishes the exact
+scalar operation support needed to interpret its native schedule. -/
+theorem evalPlan_supported (ctx : EvalContext) (env : EvalEnv)
+    (plan : Impact.Plan) (ops : List Op)
+    (evaluated : evalPlan ctx env plan = .ok ops) :
+    ∀ operation ∈ plan.operations, ScalarOperation operation := by
+  apply evalOperations_supported ctx env plan.operations ops
+  simpa only [evalPlan] using evaluated
+
 end Noctium.Verification.GenericStateOps
