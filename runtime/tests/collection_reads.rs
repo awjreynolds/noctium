@@ -4,7 +4,7 @@ use base_crypto::{fab::AlignedValue, hash::HashOutput};
 use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
     Db, Plan, artifacts, check, create_state,
-    collection_ffi::noctium_ledger_collection_page,
+    collection_ffi::{noctium_ledger_collection_page, noctium_ledger_map_lookup},
     field_value,
     native_ffi::{
         INVALID_ARGUMENT, OK, noctium_native_result_copy, noctium_native_result_free,
@@ -127,6 +127,90 @@ impl Snapshot {
         }
         status
     }
+
+    fn lookup(&self, name: &str, key: Value) -> Value {
+        self.lookup_at(name, Vec::new(), key)
+    }
+
+    fn lookup_at(&self, name: &str, keys: Vec<Value>, key: Value) -> Value {
+        let request = serde_json::to_vec(&json!({
+            "abiVersion": 1,
+            "planSha256": artifacts::digest(&self.plan),
+            "stateSha256": artifacts::digest(&self.state),
+            "name": name,
+            "keys": keys,
+            "key": key,
+        }))
+        .unwrap();
+        let mut token = 0;
+        unsafe {
+            assert_eq!(
+                noctium_ledger_map_lookup(
+                    request.as_ptr(),
+                    request.len(),
+                    self.plan.as_ptr(),
+                    self.plan.len(),
+                    self.state.as_ptr(),
+                    self.state.len(),
+                    &mut token,
+                ),
+                OK
+            );
+            let mut length = 0;
+            assert_eq!(noctium_native_result_length(token, &mut length), OK);
+            let mut output = vec![0; length];
+            let mut written = 0;
+            assert_eq!(
+                noctium_native_result_copy(token, output.as_mut_ptr(), length, &mut written),
+                OK
+            );
+            assert_eq!(written, length);
+            assert_eq!(noctium_native_result_free(token), OK);
+            serde_json::from_slice(&output).unwrap()
+        }
+    }
+
+    fn lookup_status_at(
+        &self,
+        name: &str,
+        keys: Vec<Value>,
+        key: Option<Value>,
+        state_sha256: &str,
+    ) -> i32 {
+        let mut request = json!({
+            "abiVersion": 1,
+            "planSha256": artifacts::digest(&self.plan),
+            "stateSha256": state_sha256,
+            "name": name,
+            "keys": keys,
+        });
+        if let Some(key) = key {
+            request["key"] = key;
+        }
+        self.lookup_status(request)
+    }
+
+    fn lookup_status(&self, request: Value) -> i32 {
+        let request = serde_json::to_vec(&request).unwrap();
+        let mut token = 0;
+        let status = unsafe {
+            noctium_ledger_map_lookup(
+                request.as_ptr(),
+                request.len(),
+                self.plan.as_ptr(),
+                self.plan.len(),
+                self.state.as_ptr(),
+                self.state.len(),
+                &mut token,
+            )
+        };
+        if status == OK {
+            assert_eq!(noctium_native_result_free(token), OK);
+        } else {
+            assert_eq!(token, 0);
+        }
+        status
+    }
 }
 
 fn bytes32_key(value: u8) -> Value {
@@ -178,6 +262,20 @@ fn map_set_snapshot(reverse: bool) -> Snapshot {
             json!({"name":"members","kind":{"tree":{"set":"Bytes<32>"}}}),
         ]),
         state,
+    )
+}
+
+fn corrupt_map_lookup_snapshot() -> Snapshot {
+    let map = HashMap::new().insert(
+        field_value(Fr::from(1u64)),
+        StateValue::Cell(Sp::new(field_value(Fr::from(2u64)))),
+    );
+    Snapshot::new(
+        plan(vec![json!({
+            "name":"flags",
+            "kind":{"map":["Native","Bool"]}
+        })]),
+        ChargedState::new(StateValue::Array(vec![StateValue::Map(map)].into())),
     )
 }
 
@@ -487,6 +585,73 @@ fn map_and_set_pages_are_typed_stable_and_bounded() {
 }
 
 #[test]
+fn map_lookup_returns_typed_root_values_and_null_for_missing_keys() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let snapshot = map_set_snapshot(false);
+
+    assert_eq!(
+        snapshot.lookup("flags", json!("1")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":true
+        })
+    );
+    assert_eq!(
+        snapshot.lookup("flags", json!("2")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":false
+        })
+    );
+    assert_eq!(
+        snapshot.lookup("flags", json!("3")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":false,
+            "value":null
+        })
+    );
+
+    let state_digest = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.lookup_status_at("flags", Vec::new(), Some(json!({"type":"Native","value":"1"})), &state_digest),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.lookup_status_at("flags", Vec::new(), None, &state_digest),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.lookup_status_at("flags", Vec::new(), Some(json!("1")), &"0".repeat(64)),
+        INVALID_ARGUMENT
+    );
+
+    assert_eq!(
+        snapshot.lookup_status(json!({
+            "abiVersion": 1,
+            "planSha256": "0".repeat(64),
+            "stateSha256": state_digest,
+            "name": "flags",
+            "keys": [],
+            "key": "1"
+        })),
+        INVALID_ARGUMENT
+    );
+
+    let corrupt = corrupt_map_lookup_snapshot();
+    let corrupt_digest = artifacts::digest(&corrupt.state);
+    assert_eq!(
+        corrupt.lookup_status_at("flags", Vec::new(), Some(json!("1")), &corrupt_digest),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn qualified_coin_set_pages_decode_records_and_validate_all_members() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let first = (qualified_coin_key(2, 5, 17), StateValue::Null);
@@ -712,6 +877,30 @@ fn composite_record_map_and_list_pages_decode_checked_values() {
         })
     );
     assert_eq!(
+        snapshot.lookup(
+            "records",
+            json!({"kind":"bytes","values":vec![7u8;32]})
+        ),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":map_record
+        })
+    );
+    assert_eq!(
+        snapshot.lookup(
+            "records",
+            json!({"kind":"bytes","values":vec![8u8;32]})
+        ),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":false,
+            "value":null
+        })
+    );
+    assert_eq!(
         snapshot.page("recordList", 0, 2),
         json!({
             "abiVersion":1,
@@ -794,6 +983,33 @@ fn record_key_map_pages_sort_and_validate_typed_keys() -> anyhow::Result<()> {
     assert_eq!(forward.page("memos", 2, 2), second_page);
     assert_eq!(reverse.page("memos", 0, 2), first_page);
     assert_eq!(reverse.page("memos", 2, 2), second_page);
+    assert_eq!(
+        forward.lookup("memos", json!({"active":false,"amount":"513"})),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":"22"
+        })
+    );
+    assert_eq!(
+        forward.lookup("memos", json!({"active":true,"amount":"513"})),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":"33"
+        })
+    );
+    assert_eq!(
+        forward.lookup("memos", json!({"active":true,"amount":"515"})),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":false,
+            "value":null
+        })
+    );
 
     let mut malformed_schema: Value = serde_json::from_slice(&plan_bytes)?;
     malformed_schema["state"][0]["kind"]["tree"]["map"][0]["composite"]["fields"][1]
@@ -863,7 +1079,53 @@ fn nested_scalar_collection_pages_follow_typed_paths() {
         })
     );
 
+    assert_eq!(
+        snapshot.lookup_at("nestedFlags", owner_path.clone(), json!("1")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":true
+        })
+    );
+    assert_eq!(
+        snapshot.lookup_at("nestedFlags", owner_path.clone(), json!("99")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":false,
+            "value":null
+        })
+    );
+
     let state_digest = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.lookup_status_at(
+            "nestedFlags",
+            Vec::new(),
+            Some(json!("1")),
+            &state_digest
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.lookup_status_at(
+            "nestedFlags",
+            vec![native_key(7)],
+            Some(json!("1")),
+            &state_digest
+        ),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        snapshot.lookup_status_at(
+            "nestedFlags",
+            vec![bytes32_key(8)],
+            Some(json!("1")),
+            &state_digest
+        ),
+        INVALID_ARGUMENT
+    );
     assert_eq!(
         snapshot.status_at("nestedFlags", vec![native_key(7)], 0, 2, &state_digest),
         INVALID_ARGUMENT

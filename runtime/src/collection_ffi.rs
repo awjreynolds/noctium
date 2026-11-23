@@ -117,6 +117,17 @@ struct CounterKey {
     value: Json,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MapLookupRequest {
+    abi_version: u32,
+    plan_sha256: String,
+    state_sha256: String,
+    name: String,
+    keys: Vec<Key>,
+    key: Json,
+}
+
 // A read needs only the state declarations, even if the plan uses newer execution opcodes.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -487,6 +498,20 @@ fn collection_value_json(
             let values =
                 crate::decode_record_value(record_schema, value).map_err(|_| INVALID_ARGUMENT)?;
             record_values_json(record_schema, &values)
+        }
+    }
+}
+
+fn collection_map_key(key: &CollectionValueSchema, value: &Json) -> Result<AlignedValue, i32> {
+    match key {
+        CollectionValueSchema::Scalar { ty, name } => {
+            let value = crate::input_value(name, value).map_err(|_| INVALID_ARGUMENT)?;
+            crate::aligned(&value, crate::key_alignment(ty)).map_err(|_| INVALID_ARGUMENT)
+        }
+        CollectionValueSchema::Record(schema) => {
+            let values = crate::record_values_from_json(schema, value)
+                .map_err(|_| INVALID_ARGUMENT)?;
+            crate::aligned_record_value(schema, &values).map_err(|_| INVALID_ARGUMENT)
         }
     }
 }
@@ -907,6 +932,87 @@ pub unsafe extern "C" fn noctium_ledger_counter_get(
             }))
             .map_err(|_| INTERNAL)?,
         )?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}
+
+/// Look up one value in a typed Map from an authenticated, canonical state snapshot.
+/// The request, plan, and snapshot pointers follow the same safety contract as
+/// `noctium_ledger_collection_page`.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_map_lookup(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: MapLookupRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if request.keys.len() > MAX_KEYS {
+            return Err(LIMIT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
+
+        let (final_schema, selected) =
+            typed_state_path(&plan.state, &state.data, &request.name, &keys)
+                .map_err(|_| INVALID_ARGUMENT)?;
+        let Some(CollectionSchema::Map {
+            key: key_schema,
+            value: value_schema,
+        }) = collection_schema(final_schema)?
+        else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let lookup_key = collection_map_key(&key_schema, &request.key)?;
+        let StateValue::Map(map) = &*selected else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let result = if let Some(value) = map.get(&lookup_key) {
+            let StateValue::Cell(value) = &*value else {
+                return Err(INVALID_ARGUMENT);
+            };
+            json!({
+                "abiVersion": 1,
+                "kind": "mapLookup",
+                "found": true,
+                "value": collection_value_json(value, &value_schema)?
+            })
+        } else {
+            json!({
+                "abiVersion": 1,
+                "kind": "mapLookup",
+                "found": false,
+                "value": null
+            })
+        };
+        let result =
+            native_ffi::service_public_bytes(serde_json::to_vec(&result).map_err(|_| INTERNAL)?)?;
         unsafe { out_result.write(result) };
         Ok(())
     })

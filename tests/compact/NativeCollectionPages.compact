@@ -23,6 +23,12 @@ struct RecordMemo {
 export ledger records: Map<Bytes<32>, Ciphertext4>;
 export ledger recordList: List<Ciphertext4>;
 export ledger recordMembers: Set<RecordMemo>;
+export ledger recordFlags: Map<RecordMemo, Uint<16>>;
+
+export circuit putRecordFlag(active: Boolean, amount: Uint<16>, value: Uint<16>): [] {
+  const key = disclose(RecordMemo{active: disclose(active), amount: disclose(amount)});
+  recordFlags.insert(key, disclose(value));
+}
 
 export circuit updateRecordMember(active: Boolean, amount: Uint<16>, adding: Boolean,
                                   removing: Boolean): [Boolean, Uint<64>] {

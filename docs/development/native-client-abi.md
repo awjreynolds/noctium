@@ -133,6 +133,23 @@ in traversal order. The getter returns the UInt64 as a decimal string through
 the native result handle, preserving values above JavaScript’s safe integer
 range. It uses the supplied snapshot for the entire read. [C header](../../runtime/include/noctium_native.h) · [Native tests](../../runtime/tests/counter_snapshot_ffi.rs)
 
+## Look up one Map entry
+
+Call `noctium_ledger_map_lookup` with the emitted plan, exact tagged
+contract-state snapshot and their trusted SHA-256 digests. Use the state
+name and `keys: []` for a root Map. For a nested Map, list the typed keys
+of its enclosing Maps in traversal order. Pass the final key separately
+as `key`. The getter uses the Map declaration to select the scalar or flat
+record key layout.
+
+The result handle contains `kind: "mapLookup"`, a Boolean `found` field
+and `value` in the same encoding as a collection page. A missing final key
+returns `found: false` with a null value. Missing enclosing Maps, invalid
+keys and malformed selected values return an error. The getter reads the
+selected key directly from the supplied immutable snapshot.
+[C header](../../runtime/include/noctium_native.h) ·
+[ABI tests](../../runtime/tests/collection_reads.rs)
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to

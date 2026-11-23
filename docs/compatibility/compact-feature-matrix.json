@@ -2808,7 +2808,7 @@
       "layer": "language-ledger",
       "surface": "Map.lookup",
       "noctiumStatus": "subset",
-      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. ADT-valued lookup results and the host ledger method remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal. The checked native relation reads exact UInt16 values for distinct root Bool/UInt16 record keys and rejects missing keys. A root Map with flat record keys returns the exact Bool/UInt16 record value and rejects strict lookup of a removed key. The native checker rejects a mismatched value schema. The nested Bytes32 owner fixture returns a selected record-key value, skips an inactive read, and rejects an active missing read. The nested record-valued path reads exact typed fields and rejects a missing active lookup.",
+      "notes": "Reads ordered scalar or checked record values from an existing direct or nested Map key. Native evidence includes Bytes32 keys, guarded Native reads, and mixed Native, Bytes32 and JubjubPoint records. An active missing read rejects. Callers use membership and guards for defaults. The native snapshot ABI reads one scalar or checked record entry directly and returns explicit absence for a missing final key. The checked scalar and record values match the pinned Compact reference where measured. ADT-valued lookup results remain open. A flat Bool/UInt16 Map record returns typed fields in declaration order and rejects lookup after removal. The checked native relation reads exact UInt16 values for distinct root Bool/UInt16 record keys and rejects missing keys. A root Map with flat record keys returns the exact Bool/UInt16 record value and rejects strict lookup of a removed key. The native checker rejects a mismatched value schema. The nested Bytes32 owner fixture returns a selected record-key value, skips an inactive read, and rejects an active missing read. The nested record-valued path reads exact typed fields and rejects a missing active lookup.",
       "source": [
         "adt"
       ],
@@ -2829,7 +2829,9 @@
         "tests/StructuredMaps.lean",
         "runtime/tests/structured_maps.rs",
         "tests/MixedLedgerRecord.lean",
-        "runtime/tests/mixed_ledger_record.rs"
+        "runtime/tests/mixed_ledger_record.rs",
+        "runtime/tests/collection_reads.rs",
+        "tests/compact/native-collection-pages.mjs"
       ],
       "equivalence": "unverified",
       "structuredMapUpdate": {
