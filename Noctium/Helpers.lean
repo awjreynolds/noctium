@@ -22,7 +22,7 @@ inductive ResultType where
 
 inductive EffectKind where
   | witness | privateState | ledgerRead | ledgerWrite
-  | assertion | fallibleCast | event | crossCall
+  | assertion | fallibleCast | event | asset | crossCall
   deriving Repr, BEq, DecidableEq
 
 abbrev Effects := List EffectKind
@@ -357,6 +357,8 @@ inductive Statement where
   | readMember (state destination : String) (keyTy valueTy : Ty) (key : Term)
   | writeMap (state : String) (keyTy valueTy : Ty) (key value : Term)
   | emitEvent (kind : EventKind) (payload : Term)
+  /-- Claim a raw shielded receive, spend, or nullifier digest in a native helper. -/
+  | claimShielded (kind : ShieldedClaimKind) (digest : Term)
   deriving Repr
 
 structure Declaration where
@@ -541,6 +543,7 @@ private def statementTerms : Statement → List Term
   | .readMap _ _ _ _ key | .readMember _ _ _ _ key => [key]
   | .writeMap _ _ _ key value => [key, value]
   | .emitEvent _ payload => [payload]
+  | .claimShielded _ digest => [digest]
   | .branch condition _ _ => [condition]
   | .return value => value.toList
   | .forRange .. => []
@@ -1011,6 +1014,7 @@ private partial def freshenStatementWitnessSites (statement : Statement) : Expan
     return .writeMap state keyType valueType (← freshenTermWitnessSites key)
       (← freshenTermWitnessSites value)
   | .emitEvent kind payload => return .emitEvent kind (← freshenTermWitnessSites payload)
+  | .claimShielded kind digest => return .claimShielded kind (← freshenTermWitnessSites digest)
 
 private partial def freshenStatementsWitnessSites (body : List Statement) : ExpansionM (List Statement) :=
   body.mapM freshenStatementWitnessSites
@@ -1679,6 +1683,12 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           unless partialSubtype info.ty (.scalar (.bytes kind.payloadSize)) do
             fail span "helper ledger event payload type mismatch"
           pure {info with ty := some .unit, effects := (.event :: info.effects).eraseDups}
+        | .claimShielded _ digest => do
+          let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span digest
+          unless partialSubtype info.ty (.scalar (.bytes 32)) ||
+              info.ty == some (.composite (.bytes 32)) do
+            fail span "helper shielded claim digest must be Bytes32"
+          pure {info with ty := some .unit, effects := (.asset :: info.effects).eraseDups}
       result := {result with
         calls := result.calls ++ info.calls
         effects := (result.effects ++ info.effects).eraseDups
@@ -2056,12 +2066,12 @@ decreasing_by
   all_goals simp_wf
   omega
 
-private def fabDigestInput (span : SourceSpan) :
+private def typedExprWithByteProjection (span : SourceSpan) :
     (type : Ty) → Lowered → Except Diagnostic (Expr type)
   | .bytes length, value => do
     if value.ty == .composite (.bytes length) then
       let octets ← (components value).mapM (nativeOfScalar span)
-      unless octets.length == length do fail span "FAB byte projection width mismatch"
+      unless octets.length == length do fail span "helper byte projection width mismatch"
       if h : length = 0 then
         pure (h.symm ▸ Expr.bytesLiteral 0 [])
       else if length > 32 then
@@ -2284,6 +2294,7 @@ private def closeLedgerEffect (types : TypeEnv) (bindings : List LocalBinding) :
   | .require condition => .require (closeExpression types bindings condition)
   | .writeCell state ty value => .writeCell state ty (closeExpression types bindings value)
   | .emitEvent kind payload => .emitEvent kind (closeExpression types bindings payload)
+  | .claimShielded kind digest => .claimShielded kind (closeExpression types bindings digest)
   | .readMap state destination keyTy valueTy key =>
       .readMap state destination keyTy valueTy (closeExpression types bindings key)
   | .readMember state destination keyTy valueTy key =>
@@ -2763,7 +2774,7 @@ mutual
           pure (scalarValue (Expr.keccak256Secp256k1Point value))
         | .fabDigest algorithm type parameters, values => do
           let operands ← (parameters.zip values).mapM fun (ty, value) => do
-            pure (Sigma.mk ty (← liftD (fabDigestInput span ty value)))
+            pure (Sigma.mk ty (← liftD (typedExprWithByteProjection span ty value)))
           let checkedLayout := validateFabHashLayout program.composites type operands
           discard (liftD (liftError span checkedLayout))
           match algorithm with
@@ -3087,6 +3098,14 @@ mutual
         let payload ← liftD (typedExpr declaration.span (.bytes kind.payloadSize) payload)
         appendLedgerEffect declaration.span (.emitEvent kind payload)
         lowerBodyWith program declaration env rest continuation
+      | .claimShielded kind digest => do
+        unless (← get).ledgerMode do
+          liftD (fail declaration.span "native helper capability unavailable: shielded claim")
+        let digest ← lowerTerm program declaration.id.scope env declaration.span digest
+        appendLedgerConstraints declaration.span digest.constraints
+        let digest ← liftD (typedExprWithByteProjection declaration.span (.bytes 32) digest)
+        appendLedgerEffect declaration.span (.claimShielded kind digest)
+        lowerBodyWith program declaration env rest continuation
       | .forRange index start stop loopBody => do
         unless flatStaticAssertionSequence loopBody do
           liftD (fail declaration.span "unprepared finite range reached helper lowering")
@@ -3248,7 +3267,7 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
   for summary in summaries do
     for effect in summary.effects do
       unless effect == .assertion || effect == .fallibleCast ||
-          effect == .ledgerRead || effect == .ledgerWrite || effect == .event ||
+          effect == .ledgerRead || effect == .ledgerWrite || effect == .event || effect == .asset ||
           (allowWitnesses && effect == .witness) do
         let declaration ← lookup program summary.id {}
         fail declaration.span s!"native ledger helper capability unavailable: {repr effect}"
@@ -3601,6 +3620,8 @@ mutual
       liftM (fail declaration.span "ledger writes require the native contract runtime")
     | .emitEvent .. :: _ =>
       liftM (fail declaration.span "ledger events require the native contract runtime")
+    | .claimShielded .. :: _ =>
+      liftM (fail declaration.span "shielded claims require the native contract runtime")
     | .stage _ _ _ _ :: _ => liftM (fail declaration.span "private staging requires the portable control runtime")
 end
 

@@ -20,6 +20,8 @@ fn emitted_raw_claims_match_native_effects() -> anyhow::Result<()> {
         ("claimSpend", 8, None, [0, 0, 1]),
         ("guardedClaimReceive", 7, Some(false), [0, 0, 0]),
         ("guardedClaimReceive", 7, Some(true), [0, 1, 0]),
+        ("helperClaimReceive", 7, Some(false), [0, 0, 0]),
+        ("helperClaimReceive", 7, Some(true), [0, 1, 0]),
     ];
     for (entry, byte, enabled, counts) in cases {
         let stem = format!("RawShieldedClaims.{entry}");

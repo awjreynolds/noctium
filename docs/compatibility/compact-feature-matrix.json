@@ -2041,7 +2041,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapCoinReceive",
       "noctiumStatus": "related-subset",
-      "notes": "Finalized native mint-funded receive, wallet-funded receive and partial-spend change each claim one guaranteed contract-owned output. Other offer shapes remain open. A standalone Noctium receive entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. Guarded and duplicate behavior has focused source and native checker evidence. Checked helper propagation and funded raw-claim qualification remain open.",
+      "notes": "Finalized native mint-funded receive, wallet-funded receive and partial-spend change each claim one guaranteed contract-owned output. Other offer shapes remain open. Standalone Noctium receive entrypoints and checked native helpers emit raw Bytes32 digests. The guarded helper matches the pinned Compact reference and native checker for active and inactive inputs. Direct duplicates are deduplicated. Funded raw-claim qualification remains open.",
       "source": [
         "adt"
       ],
@@ -2066,7 +2066,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapCoinSpend",
       "noctiumStatus": "related-subset",
-      "notes": "Whole and partial root Map spends finalize on Ledger 9.1.0.1 with ZKIR 3.2.1. The partial case claims one user output and one contract-owned change output for one qualified input. A standalone Noctium spend entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. Guarded and duplicate behavior has focused source and native checker evidence. Checked helper propagation and funded raw-claim qualification remain open.",
+      "notes": "Whole and partial root Map spends finalize on Ledger 9.1.0.1 with ZKIR 3.2.1. The partial case claims one user output and one contract-owned change output for one qualified input. A standalone Noctium spend entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The shared checked native helper primitive also accepts spend claims. The guarded receive fixture exercises the helper lowering route. Funded raw-claim qualification remains open.",
       "source": [
         "adt"
       ],
@@ -2091,7 +2091,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapNullifier",
       "noctiumStatus": "related-subset",
-      "notes": "The whole-coin Map spend claims the input nullifier derived for the contract-owned coin and finalizes on Ledger 9.1.0.1 with ZKIR 3.2.1. The native harness rejects replay. A standalone Noctium nullifier entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. Guarded and duplicate behavior has focused source and native checker evidence. Checked helper propagation and funded raw-claim qualification remain open.",
+      "notes": "The whole-coin Map spend claims the input nullifier derived for the contract-owned coin and finalizes on Ledger 9.1.0.1 with ZKIR 3.2.1. The native harness rejects replay. A standalone Noctium nullifier entrypoint emits the exact raw Bytes32 digest and matches the pinned Compact native effect. The shared checked native helper primitive also accepts nullifier claims. The guarded receive fixture exercises the helper lowering route. Funded raw-claim qualification remains open.",
       "source": [
         "adt"
       ],

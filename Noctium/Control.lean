@@ -239,6 +239,8 @@ mutual
       liftD (fail target.span "portable control capability unavailable: ledger writes")
     | .emitEvent .. :: _ =>
       liftD (fail target.span "portable control capability unavailable: ledger events")
+    | .claimShielded .. :: _ =>
+      liftD (fail target.span "portable control capability unavailable: shielded claims")
     | .forRange .. :: _ =>
       liftD (fail target.span "unexpanded finite loop reached portable control analysis")
     | .branch condition yes no :: rest =>
@@ -586,6 +588,8 @@ mutual
           emitLift (fail target.span "portable control capability unavailable: ledger writes")
         | .emitEvent .. =>
           emitLift (fail target.span "portable control capability unavailable: ledger events")
+        | .claimShielded .. =>
+          emitLift (fail target.span "portable control capability unavailable: shielded claims")
         | .forRange .. => emitLift (fail target.span "unexpanded finite loop reached portable control emission")
       result := result ++ [item]
     pure result

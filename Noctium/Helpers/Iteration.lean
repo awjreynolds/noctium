@@ -62,6 +62,9 @@ private partial def bodyFreeReferences (bound : List String) : List Statement â†
   | .emitEvent _ payload :: rest =>
     appendUnique (termReferences payload |>.filter fun ref => !bound.contains ref)
       (bodyFreeReferences bound rest)
+  | .claimShielded _ digest :: rest =>
+    appendUnique (termReferences digest |>.filter fun ref => !bound.contains ref)
+      (bodyFreeReferences bound rest)
   | .readCell _ destination _ :: rest => bodyFreeReferences (destination :: bound) rest
   | .readMap _ destination _ _ key :: rest | .readMember _ destination _ _ key :: rest =>
     appendUnique (termReferences key |>.filter fun ref => !bound.contains ref)
@@ -110,6 +113,7 @@ private partial def statementNames : List Statement â†’ List String
   | .stage capability key _ value :: rest =>
     appendMany [[capability, key], termNames value, statementNames rest]
   | .emitEvent _ payload :: rest => appendMany [termNames payload, statementNames rest]
+  | .claimShielded _ digest :: rest => appendMany [termNames digest, statementNames rest]
   | .readCell state destination _ :: rest => appendMany [[state, destination], statementNames rest]
   | .writeCell state _ value :: rest => appendMany [[state], termNames value, statementNames rest]
   | .readMap state destination _ _ key :: rest | .readMember state destination _ _ key :: rest =>
@@ -162,6 +166,9 @@ private partial def bodyCallsHiddenBy (span : SourceSpan) (outer : List String)
     bodyCallsHiddenBy span outer bound rest
   | .emitEvent _ payload :: rest => do
     termCallsHiddenBy (bound ++ outer.filter fun hidden => !bound.contains hidden) span payload
+    bodyCallsHiddenBy span outer bound rest
+  | .claimShielded _ digest :: rest => do
+    termCallsHiddenBy (bound ++ outer.filter fun hidden => !bound.contains hidden) span digest
     bodyCallsHiddenBy span outer bound rest
   | .readCell _ destination _ :: rest => bodyCallsHiddenBy span outer (destination :: bound) rest
   | .readMap _ destination _ _ key :: rest | .readMember _ destination _ _ key :: rest => do
