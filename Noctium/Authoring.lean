@@ -361,13 +361,6 @@ private def quoteSpan (span : SourceSpan) : CommandElabM (TSyntax `term) := do
     line := $(natTerm span.line),
     column := $(natTerm span.column) : Noctium.SourceSpan }))
 
-private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM NominalUIntType := do
-  let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
-  let current := ((← getCurrNamespace) ++ name).toString
-  match registry.find? (·.name == current) <|> registry.find? (·.name == name.toString) with
-  | some declaration => pure declaration
-  | none => throwErrorAt site s!"unknown nominal UInt type '{name}'"
-
 private def nominalUIntTypeIdentifier (stx : TSyntax `nltype) : Option Syntax := do
   if stx.raw.getNumArgs != 1 then none
   let name := stx.raw[0]
@@ -415,8 +408,8 @@ private def readSourceScalarType (stx : TSyntax `nltype) : CommandElabM SourceSc
 
 private def nominalUIntByName (name : String) : CommandElabM NominalUIntType := do
   let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
-  match registry.find? (·.name == name) with
-  | some declaration => pure declaration
+  match registry.find? (·.2.name == name) with
+  | some (_, declaration) => pure declaration
   | none => throwError m!"unknown nominal UInt identity '{name}'"
 
 private def sourceScalarTypeName (source : SourceScalarType) : String :=
