@@ -605,6 +605,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     fail definition.span "duplicate module entrypoint name"
   if definition.entrypoints.length > limits.maxSourceNodes then
     resource definition.span "module entrypoints"
+  let mut recordEffectFields := 0
   for entrypoint in definition.entrypoints do
     validText entrypoint.span entrypoint.name
     let some sourceMember := definition.members.find? (·.id == entrypoint.member)
@@ -619,6 +620,8 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name) ++
         entrypoint.recordCellReturns.map (·.name) ++ entrypoint.returns.map (·.name)) do
       fail entrypoint.span "duplicate module entrypoint return name"
+    if entrypoint.callInputs.length > limits.maxSourceNodes then
+      resource entrypoint.span "module entrypoint call arguments"
     for name in entrypoint.callInputs do
       validText entrypoint.span name
     for returned in entrypoint.opaqueCellHashReturns do
@@ -644,6 +647,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       | .writeRecordCell _ fields =>
         if fields.length > Noctium.maxEntrypointReturnFields then
           resource effect.span "record Cell fields"
+        recordEffectFields := recordEffectFields + fields.length
         for (field, _) in fields do validText effect.span field
       | _ => pure ()
   for sourceMember in definition.members do
@@ -684,9 +688,10 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       validText item.span viewName
       validText item.span localName
   pure (definition.parameters.length + definition.members.length +
-    definition.imports.length + definition.exports.length + definition.entrypoints.length +
+    definition.imports.length + definition.exports.length + definition.entrypoints.length + recordEffectFields +
     definition.entrypoints.foldl (fun count entry =>
-      count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length) 0 +
+      count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length +
+        entry.recordCellReturns.length + entry.callInputs.length) 0 +
     definition.imports.foldl (fun count item => count + item.arguments.length + item.selections.length) 0 +
     definition.members.foldl (fun count member => count + match member.stateSchema? with
       | none => 0
