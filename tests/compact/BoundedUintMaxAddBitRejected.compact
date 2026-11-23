@@ -1,0 +1,5 @@
+pragma language_version 0.28;
+
+export pure circuit addMaxAndBit(value: Uint<248>, bit: Uint<1>): Uint<248> {
+  return value + bit;
+}

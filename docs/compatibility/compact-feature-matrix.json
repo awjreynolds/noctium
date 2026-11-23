@@ -195,7 +195,7 @@
       "layer": "language",
       "surface": "Uint<n> and Uint<0..n>",
       "noctiumStatus": "subset",
-      "notes": "Pinned compiler uses inclusive maxima internally. For ordinary Uint<0..m> and Uint<0..n>, addition returns exclusive bound m+n-1 and multiplication returns (m-1)*(n-1)+1. This contradicts the looser reference prose. Subtraction retains the left maximum and asserts a nonnegative result. Follow pinned implementation parity, not prose equations. Nominal aliases have separate checked-result rules.",
+      "notes": "Pinned compiler uses inclusive maxima internally. For ordinary Uint<0..m> and Uint<0..n>, addition returns exclusive bound m+n-1 and multiplication returns (m-1)*(n-1)+1. Subtraction retains the left maximum and asserts a nonnegative result. Focused Compact 0.36.1 and Noctium source comparisons cover arithmetic, inferred bounds, typed and literal zero, the 248-bit limit, and subtraction underflow. The transparent Compact alias is compared with the underlying Noctium type. Nominal aliases, broader source contexts and complete native proof coverage remain open.",
       "source": [
         "reference",
         "uintNormalization",
@@ -209,10 +209,10 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": ["tests/BoundedScalars.lean", "tests/scalars/constraint-cases.json", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/BoundedUintDeclaredZeroTooNarrow.compact", "tests/compact/BoundedUintMaxAddBitRejected.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
       "equivalence": "unverified",
       "sourceDerivedRules": {
-        "evidenceStatus": "source-inspected-not-executed",
+        "evidenceStatus": "partially-executed",
         "appliesTo": "Ordinary Uint operands and structural aliases, excluding nominal numeric aliases",
         "internalBound": "inclusive maximum",
         "surfaceBound": "exclusive range endpoint",
@@ -233,55 +233,73 @@
           "id": "UINT-ADD-EXCLUSIVE",
           "input": "Parameters x,y: Uint<8>, expression x+y",
           "expected": "Maximum 510. Uint<0..511> accepts, Uint<0..510> rejects. 255+255=510.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact accepted Uint<0..511>, rejected Uint<0..510>, and returned 510 for 255+255. Noctium evaluator accepted the same result and its existing constraints reject an incorrect public sum and out-of-range operand."
         },
         {
           "id": "UINT-MUL-EXCLUSIVE",
           "input": "Parameters x,y: Uint<8>, expression x*y",
           "expected": "Maximum 65025. Uint<0..65026> accepts, Uint<0..65025> rejects.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact accepted Uint<0..65026>, rejected Uint<0..65025>, and returned 65025 for 255*255. Noctium evaluator accepted the same result."
         },
         {
           "id": "UINT-ZERO-LITERAL",
           "input": "Parameter x: Uint<8>, expression x+0; repeat with parameter z: Uint<0..1>",
           "expected": "Result remains Uint<8>.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact and Noctium both return 255 for Uint8(255)+literal 0 and for Uint8(255)+Uint<0..1>(0)."
         },
         {
           "id": "UINT-DECLARED-ZERO",
           "input": "Parameter x: Uint<8>, typed const z: Uint<8> = 0, expression x+z",
           "expected": "Maximum 510. Returning as Uint<8> rejects without a cast.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintDeclaredZeroTooNarrow.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact and Noctium both infer Uint<0..511> from the declared Uint8 binding and reject returning the sum as Uint8."
         },
         {
           "id": "UINT-MAX-MUL-BIT",
           "input": "Parameters x: Uint<248>, b: Uint<1>, expression x*b",
           "expected": "Maximum 2^248-1. Accepted as Uint<248>.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact and Noctium accept the maximum Uint248 multiplied by Uint1(1) and return the maximum. Noctium rejects a noncanonical Uint1 witness."
         },
         {
           "id": "UINT-MAX-ADD-ZERO",
           "input": "Parameters x: Uint<248>, z: Uint<0..1>, expression x+z",
           "expected": "Maximum 2^248-1. Accepted as Uint<248>.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact and Noctium accept the maximum Uint248 plus Uint<0..1>(0) and return the maximum."
         },
         {
           "id": "UINT-MAX-ADD-BIT",
           "input": "Parameters x: Uint<248>, b: Uint<1>, expression x+b",
           "expected": "Maximum 2^248. Rejected by arithmetic inference before result annotation.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintMaxAddBitRejected.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact rejects the sum during arithmetic inference because it exceeds the maximum Uint value. Noctium rejects the matching Uint248 plus Uint1 circuit at authoring time."
         },
         {
           "id": "UINT-SUB-UNDERFLOW",
           "input": "Parameters x,y: Uint<8>, expression x-y",
           "expected": "Result Uint<8>. 0-1 fails, 255-0 succeeds.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "Pinned Compact and the Noctium evaluator returned 255 for 255-0 and 254 for 255-1. Both rejected 0-1."
         },
         {
           "id": "UINT-STRUCTURAL-ALIAS",
           "input": "Two parameters of a structural Uint<8> alias",
           "expected": "Same maxima and assignment decisions as ordinary Uint<8> operands.",
-          "status": "source-derived-not-executed"
+          "status": "executed-pinned-compact-and-noctium",
+          "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+          "result": "The Compact transparent alias and Noctium's underlying ordinary Uint8 both return 510 for two inputs of 255 under Uint<0..511>. This comparison covers the normalized arithmetic behavior."
         },
         {
           "id": "UINT-NOMINAL-ALIAS",
