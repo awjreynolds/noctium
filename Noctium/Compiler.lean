@@ -895,9 +895,10 @@ private def constructorListPushJson (push : ConstructorListPush) : Json :=
     ("value", nativeExpressionJson push.value)]
 
 private def constructorSetInsertJson (insertion : ConstructorSetInsert) : Json :=
-  Json.mkObj [
+  Json.mkObj ([
     ("name", toJson insertion.name),
-    ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression)]
+    ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression)] ++
+    insertion.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
 
 private def constructorActionJson (action : ConstructorAction) : Json :=
   match action with

@@ -83,6 +83,8 @@ pub enum ConstructorAction {
 pub struct SetInsert {
     pub name: String,
     pub key: Expr,
+    #[serde(default)]
+    pub guard: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -607,6 +609,16 @@ fn apply_set_inserts(
             .ok_or_else(|| anyhow!("unknown constructor Set state"))?;
         let key_type = root_scalar_set_type(declaration)?
             .ok_or_else(|| anyhow!("constructor Set insert requires a root scalar Set"))?;
+
+        if let Some(guard) = &insert.guard {
+            let Value::Bool(guard) = evaluate(guard, environment)? else {
+                bail!("constructor Set insert guard must be Bool")
+            };
+            if !guard {
+                continue;
+            }
+        }
+
         let key_value = evaluate(&insert.key, environment)?;
         ensure!(
             key_value.scalar_type() == key_type,
