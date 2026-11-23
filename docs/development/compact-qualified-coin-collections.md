@@ -54,6 +54,12 @@ Source and native plan admission reject a fifth parent. The root and
 two-parent checks pass on the same compiler build. [Lean fixture](../../tests/FourParentQualifiedCoinList.lean) ·
 [Native query-context test](../../runtime/tests/four_parent_qualified_coin_list.rs)
 
+The matching Compact 0.36.1 and Runtime 0.21.0 case also prepends beneath
+four Bytes32 Map parents. The selected List stores the new booked index
+1 ahead of index 0, and two seeded siblings retain their records. The
+case rejects missing and wrong bookings and an absent path.
+[Compact fixture and runner](../../tests/compact/four-parent-qualified-coin-list.mjs)
+
 A funded Ledger 9 run stored one self-minted coin in a Map, root Cell, root
 Set, and one-element root List in the same call. The test compares the Map,
 Cell and Set records and the List head with the finalized contract-owned
