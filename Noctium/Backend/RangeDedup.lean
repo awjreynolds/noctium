@@ -32,7 +32,7 @@ the same immutable SSA operand. Retain earlier checks before any narrowing. -/
 def run (instructions : Array Json) : Array Json :=
   (instructions.foldl step {}).retained
 
-private def assertionOperand? (instruction : Json) : Option String := do
+def assertionOperand? (instruction : Json) : Option String := do
   let object ← instruction.getObj?.toOption
   guard (object.size == 2)
   guard ((← (instruction.getObjVal? "op" >>= Json.getStr?).toOption) == "assert")
@@ -58,6 +58,72 @@ private def assertionStep (state : AssertionState) (instruction : Json) : Assert
 immediate and non-assert instructions pass through unchanged. -/
 def removeDuplicateAssertions (instructions : Array Json) : Array Json :=
   (instructions.foldl assertionStep {}).retained
+
+private theorem assertionStep_retained (state : AssertionState) (item : Json) :
+    (assertionStep state item).retained = state.retained ∨
+      (assertionStep state item).retained = state.retained.push item := by
+  unfold assertionStep
+  split
+  · exact .inr rfl
+  · split
+    · exact .inl rfl
+    · exact .inr rfl
+
+private theorem assertionFold_sublist (items : List Json) (state : AssertionState) :
+    (items.foldl assertionStep state).retained.toList.Sublist
+      (state.retained.toList ++ items) := by
+  induction items generalizing state with
+  | nil => simp
+  | cons item rest ih =>
+    have retained := ih (assertionStep state item)
+    rcases assertionStep_retained state item with dropped | kept
+    · rw [dropped] at retained
+      exact retained.trans ((List.Sublist.cons item (List.Sublist.refl rest)).append_left _)
+    · simpa [kept, List.append_assoc] using retained
+
+/-- Removing repeated assertions keeps every remaining JSON instruction in order. -/
+theorem removeDuplicateAssertions_sublist (instructions : Array Json) :
+    (removeDuplicateAssertions instructions).toList.Sublist instructions.toList := by
+  simpa [removeDuplicateAssertions, Array.foldl_toList] using
+    assertionFold_sublist instructions.toList {}
+
+private theorem assertionStep_observation (observe : Json → List α) (state : AssertionState)
+    (item : Json)
+    (silent : ∀ operand, assertionOperand? item = some operand → observe item = []) :
+    (assertionStep state item).retained.toList.flatMap observe =
+      state.retained.toList.flatMap observe ++ observe item := by
+  cases key : assertionOperand? item with
+  | none => simp [assertionStep, key]
+  | some operand =>
+    rcases assertionStep_retained state item with dropped | kept
+    · simp [dropped, silent operand key]
+    · simp [kept]
+
+private theorem assertionFold_observation (observe : Json → List α) (items : List Json)
+    (state : AssertionState)
+    (silent : ∀ item ∈ items, ∀ operand,
+      assertionOperand? item = some operand → observe item = []) :
+    (items.foldl assertionStep state).retained.toList.flatMap observe =
+      state.retained.toList.flatMap observe ++ items.flatMap observe := by
+  induction items generalizing state with
+  | nil => simp
+  | cons item rest ih =>
+    rw [List.foldl_cons,
+      ih (assertionStep state item) (fun other member =>
+        silent other (List.mem_cons_of_mem _ member)),
+      assertionStep_observation observe state item (silent item List.mem_cons_self)]
+    simp [List.append_assoc]
+
+/-- Any observation silent on recognized direct assertions keeps its ordered
+sequence when repeated assertions are removed. -/
+theorem removeDuplicateAssertions_preserves_observation (instructions : Array Json)
+    (observe : Json → List α)
+    (silent : ∀ item ∈ instructions.toList, ∀ operand,
+      assertionOperand? item = some operand → observe item = []) :
+    (removeDuplicateAssertions instructions).toList.flatMap observe =
+      instructions.toList.flatMap observe := by
+  simpa [removeDuplicateAssertions, Array.foldl_toList] using
+    assertionFold_observation observe instructions.toList {} silent
 
 private def AssertionTracks (state : AssertionState) : Prop :=
   ∀ operand, (state.seen[operand]?).isSome = true →
