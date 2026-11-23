@@ -50,6 +50,114 @@ private def sourceExpected : Native.Expected :=
   (Native.expectedEntrypoint RangeDedupArtifactPilot.state prunedEchoEntrypoint).toOption.getD
     {mode := .ledgerCall, inputs := [], rawInputs := [], groups := [], returns := [], assertions := [], bounds := []}
 
+private def booleanRangeInstruction (opcode : String) (fields : List (String × Json)) : Json :=
+  Json.mkObj (("op", toJson opcode) :: fields)
+
+private def booleanRangeInput : Json := booleanRangeInstruction "private_input" [
+  ("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),
+  ("output", toJson ("%x" : String))]
+
+private def booleanRangeCheck : Json :=
+  booleanRangeInstruction "constrain_to_boolean" [("val", toJson ("%x" : String))]
+
+private def booleanRangeLess (destination : String) : Json := booleanRangeInstruction "less_than" [
+  ("a", toJson ("%x" : String)), ("b", toJson ("0x01" : String)),
+  ("bits", toJson (1 : Nat)), ("output", toJson destination)]
+
+private def booleanRangeOutput : Json := booleanRangeInstruction "output" [
+  ("vals", toJson ([] : List String))]
+
+private def booleanRangeSource : Array Json := #[booleanRangeInput, booleanRangeCheck,
+  booleanRangeLess "%first", booleanRangeLess "%duplicate", booleanRangeOutput]
+
+private def booleanRangeOptimized : Array Json :=
+  Noctium.Backend.RangeDedup.reuseComparisons booleanRangeSource
+
+private def booleanRangeOriginalInstructions : List Instruction := [
+  .input .«private» "%x",
+  .boolean (.reference "%x"),
+  .lessThan (.reference "%x") (.immediate (scalar 1)) 1 "%first",
+  .lessThan (.reference "%x") (.immediate (scalar 1)) 1 "%duplicate",
+  .output []]
+
+private def booleanRangeOptimizedInstructions : List Instruction := [
+  .input .«private» "%x",
+  .boolean (.reference "%x"),
+  .lessThan (.reference "%x") (.immediate (scalar 1)) 1 "%first",
+  .equal (.reference "%first") (.reference "%duplicate"),
+  .output []]
+
+private def booleanRangeOriginalProgram : Program := {
+  instructions := booleanRangeOriginalInstructions
+  outputArity := 0
+  communicationsCommitment := _root_.Bool.false
+}
+
+private theorem booleanRangeSourceDecoded :
+    booleanRangeSource.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
+      .ok booleanRangeOriginalInstructions := by
+  have parsed : (booleanRangeSource.toList.mapM
+      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption =
+      some booleanRangeOriginalInstructions := by
+    decide +kernel
+  cases result : booleanRangeSource.toList.mapM
+      Noctium.Verification.NativeRelationJson.decodeInstruction with
+  | error message => simp [result, Except.toOption] at parsed
+  | ok instructions => simpa [result, Except.toOption] using parsed
+
+private theorem booleanRangeEvidence :
+    Noctium.Verification.RangeDedup.ComparisonBitChecks booleanRangeOriginalInstructions := by
+  unfold Noctium.Verification.RangeDedup.ComparisonBitChecks
+  intro left right width destination hmem
+  simp [booleanRangeOriginalInstructions] at hmem
+  rcases hmem with first | second
+  · rcases first with ⟨rfl, rfl, rfl, rfl⟩
+    constructor
+    · exact Or.inr (Or.inr ⟨by decide, by simp [booleanRangeOriginalInstructions]⟩)
+    · exact Or.inr (Or.inl ⟨scalar 1, rfl, by decide⟩)
+  · rcases second with ⟨rfl, rfl, rfl, rfl⟩
+    constructor
+    · exact Or.inr (Or.inr ⟨by decide, by simp [booleanRangeOriginalInstructions]⟩)
+    · exact Or.inr (Or.inl ⟨scalar 1, rfl, by decide⟩)
+
+theorem booleanRangeReuseKernelPreservation
+    (hash : Hash) (streams : InputStreams) (assignment : Assignment)
+    (groups : List (List Scalar)) (returns : List Scalar) :
+    ∃ optimized : Program,
+      booleanRangeOptimized.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
+        .ok optimized.instructions ∧
+      (Satisfies hash booleanRangeOriginalProgram streams assignment groups returns ↔
+        Satisfies hash optimized streams assignment groups returns) := by
+  obtain ⟨instructions, parsed, _, _⟩ :=
+    Noctium.Verification.RangeDedup.reuseComparisons_preserves_decoded
+      booleanRangeSource booleanRangeOriginalInstructions booleanRangeSourceDecoded booleanRangeEvidence
+  let optimized : Program := {booleanRangeOriginalProgram with instructions}
+  refine ⟨optimized, parsed, ?_⟩
+  exact Noctium.Verification.RangeDedupKernel.parsed_reuseComparisons_preserves_kernel
+    booleanRangeSource booleanRangeOriginalProgram optimized
+    booleanRangeSourceDecoded parsed booleanRangeEvidence hash streams assignment groups returns
+
+#guard (booleanRangeOptimized.toList.mapM
+  Noctium.Verification.NativeRelationJson.decodeInstruction).toOption == some booleanRangeOptimizedInstructions
+
+private def booleanRangeExpected : Native.Expected := {
+  mode := .relation
+  inputs := [{identifier := "%x", visibility := .«private», ty := .native}]
+  groups := []
+  returns := []
+  assertions := []
+  bounds := []
+}
+
+private def booleanRangeRelation (instructions : Array Json) : Json := Json.mkObj [
+  ("version", Json.mkObj [("major", toJson (3 : Nat)), ("minor", toJson (2 : Nat))]),
+  ("inputs", Json.arr #[]), ("outputs", Json.arr #[]),
+  ("do_communications_commitment", Json.bool (_root_.Bool.false)),
+  ("instructions", Json.arr instructions)]
+
+#guard (Native.validate booleanRangeExpected (booleanRangeRelation booleanRangeSource)).isOk
+#guard (Native.validate booleanRangeExpected (booleanRangeRelation booleanRangeOptimized)).isOk
+
 local elab "fixture_bytes " name:str : term => do
   let source := System.FilePath.mk (← readThe Lean.Core.Context).fileName
   let some directory := source.parent | throwError "expected fixture source directory"
