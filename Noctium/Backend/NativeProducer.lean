@@ -149,6 +149,27 @@ def define (state : State) (name : String) (fact : Fact) : Except String State :
 def defineResult (state : State) (instruction : Json) (fact : Fact) : Except String State := do
   define state (← stringField instruction "output") fact
 
+/-- Count the names declared by one checked Native instruction. -/
+def outputDefinitionsInInstruction (instruction : Json) : Nat :=
+  match stringField instruction "op" with
+  | .ok "encode" | .ok "bytes_into_natives" | .ok "into_coordinates" =>
+    (arrayField instruction "outputs").toOption.map Array.size |>.getD 0
+  | _ => if (stringField instruction "output").isOk then 1 else 0
+
+def outputDefinitionsInInstructions : List Json → Nat
+  | [] => 0
+  | instruction :: tail =>
+    outputDefinitionsInInstruction instruction + outputDefinitionsInInstructions tail
+
+private theorem bind_ok {ε α β} {first : Except ε α} {next : α → Except ε β}
+    {value : β} : (first >>= next) = .ok value ↔
+    ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem ensure_ok {condition : Bool} {message : String} :
+    ensure condition message = .ok () ↔ condition = true := by
+  cases condition <;> simp [ensure] <;> rfl
+
 private def defineByteChunks (state : State) (input : Fact) (length : Nat)
     (outputs : Array Json) : Except String State := do
   ensure (0 < length && length ≤ Types.defaultLimits.maxVectorLength)
@@ -161,6 +182,38 @@ private def defineByteChunks (state : State) (input : Fact) (length : Nat)
       (2 ^ (8 * bytesChunkWidth length index) - 1) [input]
     state ← define state name fact
   pure state
+
+private theorem bytesChunkCount_le_maxVectorLength {length : Nat}
+    (lengthBound : length ≤ Types.defaultLimits.maxVectorLength) :
+    bytesChunkCount length ≤ maxVectorLength := by
+  have chunks_le_length : bytesChunkCount length ≤ length := by
+    unfold bytesChunkCount
+    omega
+  have default_le_native : Types.defaultLimits.maxVectorLength ≤ maxVectorLength := by
+    decide
+  exact Nat.le_trans chunks_le_length (Nat.le_trans lengthBound default_le_native)
+
+private theorem foreignEncodedFieldCount_le_maxVectorLength (kind : Foreign.Kind) :
+    kind.encodedFieldCount ≤ maxVectorLength := by
+  cases kind with
+  | base curve => cases curve <;> decide
+  | scalar curve => cases curve <;> decide
+  | point curve => cases curve <;> decide
+
+private theorem defineByteChunks_output_bound
+    {state next : State} {input : Fact} {length : Nat} {outputs : Array Json}
+    (accepted : defineByteChunks state input length outputs = .ok next) :
+    outputs.size ≤ maxVectorLength := by
+  unfold defineByteChunks at accepted
+  rcases bind_ok.mp accepted with ⟨_, rangeOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, countOk, _⟩
+  have range := ensure_ok.mp rangeOk
+  have lengthBool := (Bool.and_eq_true_iff.mp range).2
+  have lengthBound := of_decide_eq_true lengthBool
+  have countBool := ensure_ok.mp countOk
+  have countEq : outputs.size = bytesChunkCount length := eq_of_beq countBool
+  rw [countEq]
+  exact bytesChunkCount_le_maxVectorLength lengthBound
 
 def refine (state : State) (text : String) (maximum : Nat) : Except String State := do
   let fact ← operand state text
@@ -837,6 +890,213 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
     pure state
   | _ => throw "registered native descriptor has no executable validation rule"
 
+/-- The indexed loop used by `validate`, kept named so its successful trace can
+be consumed by producer-side resource proofs. -/
+def validateInstructionLoop (expected : Expected) (items : List (Json × Nat))
+    (initial : State) : Except String State :=
+  forIn items initial fun (instruction, index) state =>
+    match validateInstruction expected state instruction with
+    | .ok next => pure (.yield next)
+    | .error message => do
+      throw s!"native instruction {index}: {message}"
+      pure (.yield state)
+
+theorem validateInstructionLoop_checks {expected : Expected}
+    {items : List (Json × Nat)} {initial final : State}
+    (accepted : validateInstructionLoop expected items initial = .ok final) :
+    ∀ instruction ∈ items.map Prod.fst, ∃ state next,
+      validateInstruction expected state instruction = .ok next := by
+  induction items generalizing initial with
+  | nil => simp
+  | cons head tail ih =>
+    intro instruction member
+    rw [validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : validateInstruction expected initial head.1 with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have member' : instruction = head.1 ∨ instruction ∈ tail.map Prod.fst := by
+        simpa only [List.map_cons, List.mem_cons] using member
+      rcases member' with rfl | member
+      · exact ⟨initial, next, checked⟩
+      · exact ih accepted instruction member
+
+private theorem zipIdx_values {α : Type} (items : List α) (offset : Nat) :
+    (items.zipIdx offset).map Prod.fst = items := by
+  induction items generalizing offset with
+  | nil => rfl
+  | cons head tail ih => simp only [List.zipIdx_cons, List.map_cons, ih]
+
+theorem into_coordinates_output_definitions_eq_two
+    {expected : Expected} {state next : State} {instruction : Json}
+    (opcode : stringField instruction "op" = .ok "into_coordinates")
+    (accepted : validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstruction instruction = 2 := by
+  unfold validateInstruction at accepted
+  rcases bind_ok.mp accepted with ⟨parsedOpcode, parsedOpcodeOk, accepted⟩
+  have parsedOpcodeEq : parsedOpcode = "into_coordinates" := by
+    have h := parsedOpcodeOk.symm.trans opcode
+    injection h
+  subst parsedOpcode
+  rcases bind_ok.mp accepted with ⟨descriptor, descriptorOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, fieldsOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨point, pointOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨outputs, outputsOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨proofUnit, sizeOk, _⟩
+  cases proofUnit
+  have sizeTrue := ensure_ok.mp sizeOk
+  have outputsSize : outputs.size = 2 := eq_of_beq sizeTrue
+  have count : outputDefinitionsInInstruction instruction = outputs.size := by
+    simp [outputDefinitionsInInstruction, opcode, outputsOk, Except.toOption]
+  rw [count, outputsSize]
+
+theorem into_coordinates_output_definitions_bound
+    {expected : Expected} {state next : State} {instruction : Json}
+    (opcode : stringField instruction "op" = .ok "into_coordinates")
+    (accepted : validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstruction instruction ≤ maxVectorLength := by
+  rw [into_coordinates_output_definitions_eq_two opcode accepted]
+  decide
+
+theorem bytes_into_natives_output_definitions_bound
+    {expected : Expected} {state next : State} {instruction : Json}
+    (opcode : stringField instruction "op" = .ok "bytes_into_natives")
+    (accepted : validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstruction instruction ≤ maxVectorLength := by
+  unfold validateInstruction at accepted
+  rcases bind_ok.mp accepted with ⟨parsedOpcode, parsedOpcodeOk, accepted⟩
+  have parsedOpcodeEq : parsedOpcode = "bytes_into_natives" := by
+    injection (parsedOpcodeOk.symm.trans opcode)
+  subst parsedOpcode
+  rcases bind_ok.mp accepted with ⟨descriptor, descriptorOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, fieldsOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨bytes, bytesOk, accepted⟩
+  cases lengthResult : byteLength? bytes.valueType with
+  | none => simp [lengthResult] at accepted
+  | some length =>
+    simp only [lengthResult] at accepted
+    rcases bind_ok.mp accepted with ⟨outputs, outputsOk, accepted⟩
+    have outputsBound := defineByteChunks_output_bound accepted
+    have count : outputDefinitionsInInstruction instruction = outputs.size := by
+      simp [outputDefinitionsInInstruction, opcode, outputsOk, Except.toOption]
+    rw [count]
+    exact outputsBound
+
+theorem encode_output_definitions_bound
+    {expected : Expected} {state next : State} {instruction : Json}
+    (opcode : stringField instruction "op" = .ok "encode")
+    (accepted : validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstruction instruction ≤ maxVectorLength := by
+  unfold validateInstruction at accepted
+  rcases bind_ok.mp accepted with ⟨parsedOpcode, parsedOpcodeOk, accepted⟩
+  have parsedOpcodeEq : parsedOpcode = "encode" := by
+    injection (parsedOpcodeOk.symm.trans opcode)
+  subst parsedOpcode
+  rcases bind_ok.mp accepted with ⟨descriptor, descriptorOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, fieldsOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨input, inputOk, accepted⟩
+  rcases bind_ok.mp accepted with ⟨outputs, outputsOk, accepted⟩
+  have count : outputDefinitionsInInstruction instruction = outputs.size := by
+    simp [outputDefinitionsInInstruction, opcode, outputsOk, Except.toOption]
+  cases valueType : input.valueType with
+  | foreign kind =>
+    simp [valueType] at accepted
+    rcases bind_ok.mp accepted with ⟨_, validOk, accepted⟩
+    rcases bind_ok.mp accepted with ⟨_, sizeOk, _⟩
+    have sizeEq := eq_of_beq (ensure_ok.mp sizeOk)
+    rw [count, sizeEq]
+    exact foreignEncodedFieldCount_le_maxVectorLength kind
+  | bytes32 =>
+    simp [valueType, byteLength?] at accepted
+    rw [count]
+    exact defineByteChunks_output_bound accepted
+  | bytes length =>
+    simp [valueType, byteLength?] at accepted
+    rw [count]
+    exact defineByteChunks_output_bound accepted
+  | bool =>
+    simp [valueType, byteLength?] at accepted
+    rcases bind_ok.mp accepted with ⟨_, sizeOk, _⟩
+    have sizeEq : outputs.size = 1 := eq_of_beq (ensure_ok.mp sizeOk)
+    rw [count, sizeEq]
+    decide
+  | jubjubScalar =>
+    simp [valueType, byteLength?] at accepted
+    rcases bind_ok.mp accepted with ⟨_, sizeOk, _⟩
+    have sizeEq : outputs.size = 1 := eq_of_beq (ensure_ok.mp sizeOk)
+    rw [count, sizeEq]
+    decide
+  | byte =>
+    simp [valueType, byteLength?] at accepted
+    rcases bind_ok.mp accepted with ⟨_, sizeOk, _⟩
+    have sizeEq : outputs.size = 1 := eq_of_beq (ensure_ok.mp sizeOk)
+    rw [count, sizeEq]
+    decide
+  | native => simp [valueType, byteLength?, Bind.bind, Except.bind] at accepted; contradiction
+  | jubjubPoint => simp [valueType, byteLength?, Bind.bind, Except.bind] at accepted; contradiction
+
+theorem validateInstruction_output_definitions_bound
+    {expected : Expected} {state next : State} {instruction : Json}
+    (accepted : validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstruction instruction ≤ maxVectorLength := by
+  cases parsedOpcode : stringField instruction "op" with
+  | error error =>
+    cases parsedOutput : stringField instruction "output" with
+    | error _ => simp [outputDefinitionsInInstruction, parsedOpcode, parsedOutput,
+        Except.isOk, Except.toBool] <;> decide
+    | ok _ => simp [outputDefinitionsInInstruction, parsedOpcode, parsedOutput,
+        Except.isOk, Except.toBool] <;> decide
+  | ok opcode =>
+    by_cases encode : opcode = "encode"
+    · have opcodeOk : stringField instruction "op" = .ok "encode" := by
+        rw [parsedOpcode, encode]
+      exact encode_output_definitions_bound opcodeOk accepted
+    · by_cases bytes : opcode = "bytes_into_natives"
+      · have opcodeOk : stringField instruction "op" = .ok "bytes_into_natives" := by
+          rw [parsedOpcode, bytes]
+        exact bytes_into_natives_output_definitions_bound opcodeOk accepted
+      · by_cases coordinates : opcode = "into_coordinates"
+        · have opcodeOk : stringField instruction "op" = .ok "into_coordinates" := by
+            rw [parsedOpcode, coordinates]
+          exact into_coordinates_output_definitions_bound opcodeOk accepted
+        · cases parsedOutput : stringField instruction "output" with
+          | error _ =>
+            simp [outputDefinitionsInInstruction, parsedOpcode, encode, bytes, coordinates,
+              parsedOutput, Except.isOk, Except.toBool] <;> decide
+          | ok _ =>
+            simp [outputDefinitionsInInstruction, parsedOpcode, encode, bytes, coordinates,
+              parsedOutput, Except.isOk, Except.toBool]
+            decide
+
+theorem validatedInstructions_output_definitions_bound
+    {expected : Expected} {instructions : List Json}
+    (accepted : ∀ instruction ∈ instructions,
+      ∃ state next, validateInstruction expected state instruction = .ok next) :
+    outputDefinitionsInInstructions instructions ≤ instructions.length * maxVectorLength := by
+  induction instructions with
+  | nil => simp [outputDefinitionsInInstructions]
+  | cons instruction tail ih =>
+    obtain ⟨state, next, instructionAccepted⟩ := accepted instruction (by simp)
+    have headBound := validateInstruction_output_definitions_bound instructionAccepted
+    have tailAccepted : ∀ item ∈ tail,
+        ∃ state next, validateInstruction expected state item = .ok next := by
+      intro item member
+      exact accepted item (by simp [member])
+    have tailBound := ih tailAccepted
+    simp only [outputDefinitionsInInstructions, List.length_cons]
+    rw [Nat.succ_mul]
+    omega
+
+theorem validatedInstructions_output_definitions_budget
+    {expected : Expected} {instructions : List Json}
+    (accepted : ∀ instruction ∈ instructions,
+      ∃ state next, validateInstruction expected state instruction = .ok next)
+    (withinExistingInstructionLimit : instructions.length ≤ maxInstructions) :
+    outputDefinitionsInInstructions instructions ≤ maxInstructions * maxVectorLength := by
+  have outputBound := validatedInstructions_output_definitions_bound accepted
+  exact Nat.le_trans outputBound
+    (Nat.mul_le_mul_right maxVectorLength withinExistingInstructionLimit)
+
 def opcode (instruction : Json) : String :=
   (stringField instruction "op").toOption.getD ""
 
@@ -914,10 +1174,7 @@ def validate (expected : Expected) (program : Json) : Except String Unit := do
   ensure ((← (← program.getObjVal? "do_communications_commitment").getBool?) ==
     (expected.mode == .ledgerCall)) "native communication commitment policy mismatch"
   requireFinalOutput instructions.toList
-  for (instruction, index) in instructions.toList.zipIdx do
-    match validateInstruction expected state instruction with
-    | .ok next => state := next
-    | .error message => throw s!"native instruction {index}: {message}"
+  state ← validateInstructionLoop expected instructions.toList.zipIdx state
   ensure (state.inputCount == expected.inputs.length) "missing native transcript input"
   ensure (state.groupCount == expected.groups.length) "missing native transcript activity group"
   ensure (state.assertionCount == expected.assertions.length) "missing or reordered typed source assertion"
@@ -939,6 +1196,45 @@ def validate (expected : Expected) (program : Json) : Except String Unit := do
     ensure (state.establishedCoordinateEqualities.contains pair)
       "Jubjub FromCoordinates lacks exact Native x/y roundtrip constraints"
   for (term, maximum) in expected.bounds do checkBound state term maximum
+
+theorem validate_output_definitions_by_instruction_count {expected : Expected} {program : Json}
+    (accepted : validate expected program = .ok ()) :
+    ∃ instructions : Array Json,
+      arrayField program "instructions" = .ok instructions ∧
+      outputDefinitionsInInstructions instructions.toList ≤ maxInstructions * maxVectorLength := by
+  unfold validate at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨guardValue, guardParsed, programFields, programFieldsParsed,
+    versionJson, versionParsed, versionFields, versionFieldsParsed,
+    major, majorParsed, minor, minorParsed, versionCheck, versionCheckParsed,
+    instructions, parsedInstructions, resources, resourceParsed,
+    rawInputs, rawInputsParsed, rawInputCount, rawInputCountParsed,
+    inputNames, inputNamesParsed, seedState, seedStateParsed,
+    returns, returnsParsed, returnCount, returnCountParsed,
+    outputTypes, outputTypesParsed,
+    commitmentJson, commitmentParsed, commitment, commitmentParsedBool,
+    commitmentCheck, commitmentCheckParsed, finalOutput, finalOutputParsed,
+    finalState, instructionTrace,
+    inputCount, inputCountParsed, groupCount, groupCountParsed,
+    assertionCount, assertionCountParsed,
+    inputChecks, inputChecksParsed, coordinateChecks, coordinateChecksParsed,
+    boundChecks, boundChecksParsed, _⟩
+  have checks := validateInstructionLoop_checks instructionTrace
+  have instructionChecks : ∀ instruction ∈ instructions.toList,
+      ∃ state next, validateInstruction expected state instruction = .ok next := by
+    simpa only [zipIdx_values] using checks
+  have resourcesBool := ensure_ok.mp resourceParsed
+  have resources1 := (Bool.and_eq_true_iff.mp resourcesBool).1
+  have resources2 := (Bool.and_eq_true_iff.mp resources1).1
+  have resources3 := (Bool.and_eq_true_iff.mp resources2).1
+  have instructionCapBool := (Bool.and_eq_true_iff.mp resources3).1
+  have instructionCap := of_decide_eq_true instructionCapBool
+  have instructionCountBound : instructions.toList.length ≤ maxInstructions := by
+    simpa using instructionCap
+  have total := validatedInstructions_output_definitions_budget instructionChecks instructionCountBound
+  refine ⟨instructions, ?_, ?_⟩
+  · exact parsedInstructions
+  · exact total
 
 theorem final_output_required (instructions : List Json) :
     requireFinalOutput instructions = .ok () ↔ finalOutputShape instructions = true := by
