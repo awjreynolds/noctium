@@ -356,8 +356,74 @@ assert.deepEqual(nestedMapImpact.slice(-12), [
   { op: 'impact', guard: '0x01', inputs: ['0xa2'] },
 ]);
 
+const deepMapOwner = new Uint8Array(32).fill(12);
+const deepMapBranch = new Uint8Array(32).fill(13);
+const deepMapLeaf = new Uint8Array(32).fill(14);
+const independentDeepMapLeaf = new Uint8Array(32).fill(15);
+const deepMap = state => ledger(state).coinMapTrees;
+const deepMapBranchFor = state => deepMap(state).lookup(deepMapOwner).lookup(deepMapBranch);
+let deepMapState = currentContractState.data;
+const missingDeepParent = contextFor('putInDeepNestedMap', deepMapState);
+await assert.rejects(
+  contract.circuits.putInDeepNestedMap(
+    missingDeepParent, deepMapOwner, deepMapBranch, deepMapLeaf, coin, true, self,
+  ),
+  /invalid operation for type:/,
+);
+assert.equal(deepMap(missingDeepParent.callContext.currentQueryContext.state).member(deepMapOwner), false);
+
+for (const [entry, args] of [
+  ['initializeCoinMapTree', [deepMapOwner]],
+  ['initializeCoinMapBranch', [deepMapOwner, deepMapBranch]],
+]) {
+  const { context } = await contract.circuits[entry](contextFor(entry, deepMapState), ...args);
+  deepMapState = context.callContext.currentQueryContext.state;
+}
+assert.equal(deepMap(deepMapState).member(deepMapOwner), true);
+assert.equal(deepMap(deepMapState).lookup(deepMapOwner).member(deepMapBranch), true);
+assert.equal(deepMapBranchFor(deepMapState).size(), 0n);
+
+const firstDeepMapCall = await contract.circuits.putInDeepNestedMap(
+  contextFor('putInDeepNestedMap', deepMapState), deepMapOwner, deepMapBranch,
+  deepMapLeaf, coin, true, self,
+);
+const firstDeepMapQuery = firstDeepMapCall.context.callContext.currentQueryContext;
+const firstDeepMapZswap = firstDeepMapCall.context.callContext.currentZswapLocalState;
+const qualifiedDeepMapCoin = { ...coin, mt_index: 0n };
+assert.equal(firstDeepMapZswap.currentIndex, 1n);
+assert.equal(firstDeepMapZswap.outputs.length, 1);
+assert.deepEqual(firstDeepMapZswap.outputs[0].coinInfo, coin);
+assert.equal(firstDeepMapQuery.effects.claimedShieldedReceives.length, 1);
+assert.equal(deepMapBranchFor(firstDeepMapQuery.state).size(), 1n);
+assert.deepEqual(deepMapBranchFor(firstDeepMapQuery.state).lookup(deepMapLeaf), qualifiedDeepMapCoin);
+
+const overwrittenDeepMapCall = await contract.circuits.putInDeepNestedMap(
+  contextFor('putInDeepNestedMap', firstDeepMapQuery.state), deepMapOwner, deepMapBranch,
+  deepMapLeaf, secondCoin, true, self,
+);
+const overwrittenDeepMapState = overwrittenDeepMapCall.context.callContext.currentQueryContext.state;
+const qualifiedOverwrittenDeepMapCoin = { ...secondCoin, mt_index: 0n };
+assert.equal(deepMapBranchFor(overwrittenDeepMapState).size(), 1n);
+assert.deepEqual(
+  deepMapBranchFor(overwrittenDeepMapState).lookup(deepMapLeaf), qualifiedOverwrittenDeepMapCoin,
+);
+
+const independentDeepMapCall = await contract.circuits.putInDeepNestedMap(
+  contextFor('putInDeepNestedMap', overwrittenDeepMapState), deepMapOwner, deepMapBranch,
+  independentDeepMapLeaf, thirdCoin, true, self,
+);
+const independentDeepMapState = independentDeepMapCall.context.callContext.currentQueryContext.state;
+assert.equal(deepMapBranchFor(independentDeepMapState).size(), 2n);
+assert.deepEqual(
+  deepMapBranchFor(independentDeepMapState).lookup(deepMapLeaf), qualifiedOverwrittenDeepMapCoin,
+);
+assert.deepEqual(
+  deepMapBranchFor(independentDeepMapState).lookup(independentDeepMapLeaf),
+  { ...thirdCoin, mt_index: 0n },
+);
+
 console.log(
-  'Pinned Compact 0.36.1 and Runtime 0.21.0 matched direct and nested qualified coin maps, booking, overwrite, missing-owner rejection, and Impact suffix',
+  'Pinned Compact 0.36.1 and Runtime 0.21.0 matched direct, nested and three-level qualified coin maps, booking, overwrite, missing-parent rejection, and Impact suffix',
 );
 console.log(JSON.stringify(receipt, null, 2));
 console.log('Nested Map Impact suffix (last 12 impact instructions):');

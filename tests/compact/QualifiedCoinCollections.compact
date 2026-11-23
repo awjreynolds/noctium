@@ -8,6 +8,7 @@ export ledger coinLists: Map<Bytes<32>, List<QualifiedShieldedCoinInfo>>;
 export ledger coinSets: Map<Bytes<32>, Set<QualifiedShieldedCoinInfo>>;
 export ledger coinMap: Map<Bytes<32>, QualifiedShieldedCoinInfo>;
 export ledger coinMaps: Map<Bytes<32>, Map<Bytes<32>, QualifiedShieldedCoinInfo>>;
+export ledger coinMapTrees: Map<Bytes<32>, Map<Bytes<32>, Map<Bytes<32>, QualifiedShieldedCoinInfo>>>;
 
 circuit bookCoin(coin: ShieldedCoinInfo, book: Boolean): [] {
   if (disclose(book)) {
@@ -67,4 +68,21 @@ export circuit putInNestedMap(owner: Bytes<32>, key: Bytes<32>, coin: ShieldedCo
   bookCoin(coin, book);
   coinMaps.lookup(disclose(owner)).insertCoin(disclose(key), disclose(coin),
     right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: disclose(recipient)}));
+}
+
+export circuit initializeCoinMapTree(owner: Bytes<32>): [] {
+  coinMapTrees.insertDefault(disclose(owner));
+}
+
+export circuit initializeCoinMapBranch(owner: Bytes<32>, branch: Bytes<32>): [] {
+  coinMapTrees.lookup(disclose(owner)).insertDefault(disclose(branch));
+}
+
+export circuit putInDeepNestedMap(owner: Bytes<32>, branch: Bytes<32>, key: Bytes<32>,
+                                  coin: ShieldedCoinInfo, book: Boolean,
+                                  recipient: Bytes<32>): [] {
+  bookCoin(coin, book);
+  coinMapTrees.lookup(disclose(owner)).lookup(disclose(branch)).insertCoin(disclose(key),
+    disclose(coin), right<ZswapCoinPublicKey, ContractAddress>(
+      ContractAddress{bytes: disclose(recipient)}));
 }

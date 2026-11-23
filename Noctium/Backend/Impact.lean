@@ -1511,12 +1511,12 @@ private def insertShieldedCoinMapOp (state : List StateDecl) (name : String)
     (isContract : Expr .bool) (recipient : Expr (.bytes 32)) : Except String Op := do
   let slot ← stateSlot state name
   if slot > 255 then throw "shielded coin map index exceeds native u8 range"
-  match keys with
-  | [] => pure ()
-  | [owner] => unless owner.ty == .bytes 32 do
-      throw "qualified coin Map owner key must be Bytes32"
-  | _ => throw "qualified coin Map supports only one Bytes32 owner key"
-  let .map (.bytes 32) (.composite environment recordType) ← resolveTreeState state name keys
+  if keys.length > 5 then
+    throw "qualified coin Map parent path exceeds five Maps"
+  let selected ← resolveTreeState state name keys
+  unless keys.all (fun parent => parent.ty == .bytes 32) do
+    throw "qualified coin Map parent keys must be Bytes32"
+  let .map (.bytes 32) (.composite environment recordType) := selected
     | throw "path does not select a Bytes32-keyed qualified coin Map"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
   let commitment := shieldedCoinDigestForRecipient
