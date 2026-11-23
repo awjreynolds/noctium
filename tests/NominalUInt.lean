@@ -323,6 +323,11 @@ noctium_contract NominalAmountRecords where
     count : Count
     active : Bool
   }
+  tree deepPositions : Bytes32 => Bytes32 => struct Position {
+    amount : Amount
+    count : Count
+    active : Bool
+  }
   list history : struct Position {
     amount : Amount
     count : Count
@@ -332,23 +337,29 @@ noctium_contract NominalAmountRecords where
   entry writeAmount uses nominalListValues where
     write position := fields(disclose(amount), disclose(count), true)
     insert positions[disclose(owner)] := fields(disclose(amount), disclose(count), true)
+    insert deepPositions[disclose(owner)][disclose(owner)] :=
+      fields(disclose(amount), disclose(count), true)
     pushFront history := fields(disclose(amount), disclose(count), true)
   end
 
   entry writeRaw uses nominalListValues where
     write position := fields(disclose(cast(Amount, raw)), disclose(count), true)
     write positions[disclose(owner)] := fields(disclose(cast(Amount, raw)), disclose(count), true)
+    write deepPositions[disclose(owner)][disclose(owner)] :=
+      fields(disclose(cast(Amount, raw)), disclose(count), true)
     pushFront history := fields(disclose(cast(Amount, raw)), disclose(count), true)
   end
 
   entry inspect uses nominalRecordOwner where
     read position as current
     read positions[disclose(owner)] as stored
+    read deepPositions[disclose(owner)][disclose(owner)] as deeper
     head history as latest
     return activeResult : Bool := current_active
     return cellAmount : Amount := current_amount
     return mapAmount : Amount := stored_amount
     return listAmount : Amount := latest_amount
+    return deepAmount : Amount := deeper_amount
     return countResult : Count := stored_count
   end
 end
@@ -561,7 +572,8 @@ private def nominalRecordRoundTrip : Except String _root_.Bool := do
   let recordType := Types.CompositeType.structure "NominalUInt.NominalAmountRecords.Position"
   let initial : LedgerState := {trees := [
     ("position", .composite recordType [.uint 255 0, .uint 255 0, .bool Bool.false]),
-    ("positions", .map []), ("history", .list [])]}
+    ("positions", .map []), ("deepPositions", .map [(owner, .map [])]),
+    ("history", .list [])]}
   let inputs (amount raw : Nat) : EvalEnv := [
     ("owner", owner), ("amount", .uint 255 amount), ("count", .uint 255 7),
     ("raw", .uint 255 raw)]
@@ -573,7 +585,7 @@ private def nominalRecordRoundTrip : Except String _root_.Bool := do
   let (_, finished) ← writeRaw.run context (inputs 0 255) updated
   let (castOutput, _) ← inspect.run context inspectInputs finished
   let amountsMatch (outputs : EvalEnv) (expected : Nat) :=
-    ["cellAmount", "mapAmount", "listAmount"].all (fun label =>
+    ["cellAmount", "mapAmount", "listAmount", "deepAmount"].all (fun label =>
       outputs.lookup label == some (.uint 255 expected))
   pure (amountsMatch initialOutput 19 && amountsMatch typedOutput 41 &&
     amountsMatch castOutput 255 &&
