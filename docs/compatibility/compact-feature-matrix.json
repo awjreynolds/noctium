@@ -3171,7 +3171,7 @@
       "layer": "language-ledger",
       "surface": "List.pushFrontCoin",
       "noctiumStatus": "subset",
-      "notes": "A root List prepends the fixed QualifiedInfo record using a coin index booked for the current contract. The native query-context fixture checks head-to-tail order and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run matches a single finalized List head to the self-minted output and the other three collection records. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Finalized tests for those recipients remain open. The pinned Compact runtime and native query fixture agree on prepending booked records under a Bytes32 owner, preserving a second owner, and rejecting a missing booking. The native fixture exercises implicit and explicit contract recipients on the nested path. A funded nested List prepend matches the finalized self-minted output and leaves the second owner empty.",
+      "notes": "A root List prepends the fixed QualifiedInfo record using a coin index booked for the current contract. The native query-context fixture checks head-to-tail order and rejects missing or wrong-recipient bookings. A funded development Ledger 9 run matches a single finalized List head to the self-minted output and the other three collection records. The emitted explicit-recipient circuit also accepts matching wallet and other-contract bookings in the native query context. Finalized tests for those recipients remain open. The pinned Compact runtime and native query fixture agree on prepending booked records under a Bytes32 owner, preserving a second owner, and rejecting a missing booking. The native fixture exercises implicit and explicit contract recipients on the nested path. A funded nested List prepend matches the finalized self-minted output and leaves the second owner empty. Noctium also checks a self-recipient prepend under two Bytes32 Map parents with emitted ZKIR 3.2.1 and a native query context. The checked case preserves sibling Lists and rejects missing parents and missing or wrong-recipient bookings.",
       "source": [
         "adt"
       ],
@@ -3182,6 +3182,8 @@
       ],
       "observedEvidence": [
         "tests/NestedQualifiedCoinList.lean",
+        "tests/TwoParentQualifiedCoinList.lean",
+        "runtime/tests/two_parent_qualified_coin_list.rs",
         "tests/FundedNestedQualifiedCoinCollections.lean",
         "tests/compact/qualified-coin-collections.mjs",
         "tests/QualifiedCoinList.lean",

@@ -1931,13 +1931,10 @@ private def lowerQualifiedCoinListPath (schema : List (String × StateKind))
     CommandElabM (TSyntax `ident × TSyntax `term) := do
   let (storage, sourceKeys) ← sourcePathParts path
   let treeSchema ← treeStateSchema schema storage
-  let supportedShape := match treeSchema, sourceKeys with
-    | .«list» .., [] => _root_.Bool.true
-    | .map (.bytes 32) _, [_] => _root_.Bool.true
-    | _, _ => _root_.Bool.false
+  let supportedShape := sourceKeys.length ≤ 2 && bytes32ParentMaps treeSchema sourceKeys
   unless supportedShape do
     throwErrorAt path
-      "pushFrontCoin supports a root qualified coin List or one Bytes32-keyed nested List"
+      "pushFrontCoin supports a qualified coin List under at most two Bytes32-keyed Maps"
   let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
   let .«list» environment recordType := selected
     | throwErrorAt path "pushFrontCoin path must select a qualified coin List"

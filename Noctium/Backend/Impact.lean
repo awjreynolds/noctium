@@ -1501,10 +1501,17 @@ private def resolveListState (state : List StateDecl) (name : String)
   let .tree schema := declaration.kind | throw s!"state '{name}' is not a recursive tree"
   schema.listPath keys
 
+private def validateQualifiedCoinListKeys (keys : List PathKey) : Except String Unit := do
+  unless keys.length ≤ 2 do
+    throw "qualified shielded coin List supports at most two parent Maps"
+  unless keys.all (fun key => key.ty == .bytes 32) do
+    throw "qualified shielded coin List parent keys must be Bytes32"
+
 private def pushFrontCoinOp (state : List StateDecl) (name : String)
     (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (selfAddress : Expr (.bytes 32)) : Except String Op := do
+  validateQualifiedCoinListKeys keys
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
   let (environment, recordType, fields) ← resolveListState state name keys
@@ -1520,6 +1527,7 @@ private def pushFrontCoinToOp (state : List StateDecl) (name : String)
     (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (isContract : Expr .bool) (recipient : Expr (.bytes 32)) : Except String Op := do
+  validateQualifiedCoinListKeys keys
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
   let (environment, recordType, fields) ← resolveListState state name keys
