@@ -444,6 +444,7 @@ scoped syntax "Set" "struct" ident "{" nlcompositefield* "}" : nlmapsettail
 scoped syntax nltype "=>" nlmapsettail : nlmapsettail
 scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "set" ident ":" "Vector(" num "," nltype ")" : nlstate
 declare_syntax_cat nlmerklespec
 scoped syntax num ("of" nltype)? : nlmerklespec
 scoped syntax num "of" "struct" ident "{" nlmerkleafield* "}" : nlmerklespec
@@ -5528,6 +5529,27 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
       if let some (id, _, _, ty) := merkle then
         merkleLeafTypes := (id.getId.toString, ty) :: merkleLeafTypes
       let (id, kind, term) ← if let some (id, kind, term, _) := merkle then pure (id, kind, term) else match state with
+        | `(nlstate| set $id:ident : Vector($length:num, $element:nltype)) => do
+          let element ← readCircuitSourceType element
+          unless element.type == .native && element.nominalUInt.isNone do
+            throwErrorAt state "root Set vectors require Native elements"
+          let length := length.getNat
+          unless 0 < length && length ≤ Types.defaultLimits.maxVectorLength do
+            throwErrorAt state s!"root Set vector length must be between 1 and {Types.defaultLimits.maxVectorLength}"
+          let environment : Types.CompositeEnv := {}
+          let compositeType : Types.CompositeType := .vector length (.scalar .native)
+          let environmentTerm ← `(({} : Noctium.Types.CompositeEnv))
+          let nativeType ← tyTerm .native
+          let compositeTypeTerm ← `(Noctium.Types.CompositeType.vector $(natTerm length)
+            (Noctium.Types.CompositeType.scalar $nativeType))
+          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+          | .error message => throwErrorAt state message
+          | .ok fields =>
+            unless fields.length == length && fields.all (fun field => field.2 == .native) do
+              throwErrorAt state "root Set vector key layout does not match its Native width"
+          let valueSchema := LedgerValueType.recordSet environment compositeType
+          let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm)
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| set $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
