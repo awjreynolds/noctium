@@ -1187,6 +1187,62 @@ impl BoundTransaction {
 pub struct PublicTransactionReference {
     data: BoundData,
 }
+fn decode_public_transaction(
+    policy: &NetworkPolicy,
+    transaction: &[u8],
+    after_height: u64,
+    state_lengths: &[usize],
+) -> Result<SealedTransaction> {
+    policy.validate()?;
+    let state_bytes = state_lengths
+        .iter()
+        .try_fold(0usize, |total, length| total.checked_add(*length))
+        .ok_or(Error::InvalidTransaction)?;
+    require(
+        !transaction.is_empty()
+            && transaction.len() <= MAX_TRANSACTION
+            && state_lengths.iter().all(|length| *length <= MAX_STATE)
+            && state_bytes <= MAX_TRANSACTION
+            && after_height < u64::MAX,
+        Error::InvalidTransaction,
+    )?;
+    let native: SealedTransaction =
+        tagged_deserialize(transaction).map_err(|_| Error::InvalidTransaction)?;
+    require(encode(&native)? == transaction, Error::InvalidTransaction)?;
+    let Transaction::Standard(stx) = &native else {
+        return Err(Error::InvalidTransaction);
+    };
+    require(stx.network_id == policy.network_id, Error::Network)?;
+    require(
+        stx.guaranteed_coins.is_none()
+            && stx.fallible_coins.is_empty()
+            && stx.intents.iter().take(3).count() <= 2,
+        Error::InvalidTransaction,
+    )?;
+    for item in stx.intents.iter() {
+        let segment = &item.0;
+        let intent = &item.1;
+        require(
+            intent.guaranteed_unshielded_offer.is_none()
+                && intent.fallible_unshielded_offer.is_none(),
+            Error::InvalidTransaction,
+        )?;
+        if **segment == CONTRACT_SEGMENT {
+            require(intent.dust_actions.is_none(), Error::InvalidTransaction)?;
+        } else {
+            require(
+                **segment == crate::funding::FUNDING_SEGMENT
+                    && intent.actions.is_empty()
+                    && intent
+                        .dust_actions
+                        .as_ref()
+                        .is_some_and(|dust| dust.registrations.is_empty()),
+                Error::InvalidTransaction,
+            )?;
+        }
+    }
+    Ok(native)
+}
 impl PublicTransactionReference {
     pub fn from_bytes(
         policy: NetworkPolicy,
@@ -1194,49 +1250,11 @@ impl PublicTransactionReference {
         after_height: u64,
         expected_state: &[u8],
     ) -> Result<Self> {
-        policy.validate()?;
-        require(
-            !transaction.is_empty()
-                && transaction.len() <= MAX_TRANSACTION
-                && expected_state.len() <= MAX_STATE
-                && after_height < u64::MAX,
-            Error::InvalidTransaction,
-        )?;
-        let native: SealedTransaction =
-            tagged_deserialize(transaction).map_err(|_| Error::InvalidTransaction)?;
-        require(encode(&native)? == transaction, Error::InvalidTransaction)?;
+        let native =
+            decode_public_transaction(&policy, transaction, after_height, &[expected_state.len()])?;
         let Transaction::Standard(stx) = &native else {
             return Err(Error::InvalidTransaction);
         };
-        require(stx.network_id == policy.network_id, Error::Network)?;
-        require(
-            stx.guaranteed_coins.is_none()
-                && stx.fallible_coins.is_empty()
-                && stx.intents.iter().take(3).count() <= 2,
-            Error::InvalidTransaction,
-        )?;
-        for item in stx.intents.iter() {
-            let segment = &item.0;
-            let intent = &item.1;
-            require(
-                intent.guaranteed_unshielded_offer.is_none()
-                    && intent.fallible_unshielded_offer.is_none(),
-                Error::InvalidTransaction,
-            )?;
-            if **segment == CONTRACT_SEGMENT {
-                require(intent.dust_actions.is_none(), Error::InvalidTransaction)?;
-            } else {
-                require(
-                    **segment == crate::funding::FUNDING_SEGMENT
-                        && intent.actions.is_empty()
-                        && intent
-                            .dust_actions
-                            .as_ref()
-                            .is_some_and(|dust| dust.registrations.is_empty()),
-                    Error::InvalidTransaction,
-                )?;
-            }
-        }
         let intent = stx
             .intents
             .get(&CONTRACT_SEGMENT)
@@ -1282,6 +1300,76 @@ impl PublicTransactionReference {
             },
         })
     }
+    /// Binds exactly two ordered calls to caller-authenticated `(address, entrypoint, state)` slots.
+    /// This read-only reference checks the finalized receipt; it does not verify proofs or submit.
+    pub fn from_composed_calls(
+        policy: NetworkPolicy,
+        transaction: &[u8],
+        after_height: u64,
+        expected_calls: [(&[u8], &[u8], &[u8]); 2],
+    ) -> Result<Self> {
+        let state_lengths = [expected_calls[0].2.len(), expected_calls[1].2.len()];
+        let native = decode_public_transaction(&policy, transaction, after_height, &state_lengths)?;
+        let Transaction::Standard(stx) = &native else {
+            return Err(Error::InvalidTransaction);
+        };
+        let intent = stx
+            .intents
+            .get(&CONTRACT_SEGMENT)
+            .ok_or(Error::InvalidTransaction)?;
+        require(intent.actions.len() == 2, Error::InvalidTransaction)?;
+        let mut actions = intent.actions.iter_deref();
+        let Some(ContractAction::Call(first)) = actions.next() else {
+            return Err(Error::InvalidTransaction);
+        };
+        let Some(ContractAction::Call(second)) = actions.next() else {
+            return Err(Error::InvalidTransaction);
+        };
+        require(actions.next().is_none(), Error::InvalidTransaction)?;
+        let [
+            (first_address, first_entrypoint, first_state),
+            (second_address, second_entrypoint, second_state),
+        ] = expected_calls;
+        require(
+            first_address.len() == 32
+                && second_address.len() == 32
+                && first_address != second_address,
+            Error::Identity,
+        )?;
+        require(
+            first.address.0.0.as_slice() == first_address
+                && first.entry_point.0.as_slice() == first_entrypoint
+                && second.address.0.0.as_slice() == second_address
+                && second.entry_point.0.as_slice() == second_entrypoint,
+            Error::Identity,
+        )?;
+
+        let first_encoded = hex::encode(first.address.0.0);
+        let second_encoded = hex::encode(second.address.0.0);
+        let intent_id = hex::encode(
+            intent
+                .erase_proofs()
+                .erase_signatures()
+                .intent_hash(CONTRACT_SEGMENT)
+                .0
+                .0,
+        );
+        Ok(Self {
+            data: BoundData {
+                policy,
+                transaction: transaction.to_vec(),
+                transaction_id: hex::encode(native.transaction_hash().0.0),
+                intent_id,
+                contract_address: first_encoded.clone(),
+                event: ContractEvent::Call,
+                expected_state: first_state.to_vec(),
+                checkpoint: None,
+                call_counts: [(first_encoded, 1), (second_encoded.clone(), 1)].into(),
+                secondary_states: [(second_encoded, second_state.to_vec())].into(),
+                after_height,
+            },
+        })
+    }
     pub fn transaction_id(&self) -> &str {
         &self.data.transaction_id
     }
@@ -1298,6 +1386,15 @@ impl PublicTransactionReference {
         BoundTransaction {
             data: self.data.clone(),
         }
+    }
+    #[cfg(feature = "localnet")]
+    pub(crate) fn development_submission_view(
+        &self,
+    ) -> std::result::Result<BoundTransaction, HostFailure> {
+        if !self.data.secondary_states.is_empty() {
+            return Err(HostFailure);
+        }
+        Ok(self.bound_view())
     }
 }
 
@@ -3065,6 +3162,8 @@ pub(crate) mod tests {
         assert_eq!(reference.transaction_id(), bound.transaction_id());
         assert_eq!(reference.contract_address(), bound.contract_address());
         assert_eq!(reference.event(), ContractEvent::Deploy);
+        #[cfg(feature = "localnet")]
+        assert!(reference.development_submission_view().is_ok());
         assert!(
             PublicTransactionReference::from_bytes(policy(), bound.bytes(), 20, &[1, 2, 3])
                 .is_err()
@@ -3079,5 +3178,161 @@ pub(crate) mod tests {
         let mut wrong = policy();
         wrong.network_id = "other".into();
         assert!(PublicTransactionReference::from_bytes(wrong, bound.bytes(), 20, &state).is_err());
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    fn public_composed_reference_checks_two_ordered_calls_and_exact_receipt_state() {
+        let transaction =
+            include_bytes!("../tests/fixtures/public-composition-30432/transaction.bin");
+        let caller_state =
+            include_bytes!("../tests/fixtures/public-composition-30432/caller.state");
+        let callee_state =
+            include_bytes!("../tests/fixtures/public-composition-30432/callee.state");
+        let caller =
+            hex::decode("a0cc5e863a975944bf82548438bf527cdeb95c33eba83a7af1230f31e1025695")
+                .unwrap();
+        let callee =
+            hex::decode("50896ca2fa4858b4d0119751331d464e7f44960980b78f24fd4c1575d9d6b41a")
+                .unwrap();
+        assert_eq!(
+            hash(caller_state),
+            "d3c2f809b7c6a6fd56ad7e9e1ff5d1979e0f94a9cc30f1d63d3087ef63e09cbf"
+        );
+        assert_eq!(
+            hash(callee_state),
+            "96c73b9b42978a0411a12a16846d5c1ae6fb5ac544472f0843c29e2e37493bc0"
+        );
+        let fixture_policy = || {
+            let mut p = policy();
+            p.genesis = "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d".into();
+            p
+        };
+        let expected = [
+            (caller.as_slice(), &b"claim"[..], caller_state.as_slice()),
+            (callee.as_slice(), &b"advance"[..], callee_state.as_slice()),
+        ];
+        let reference = PublicTransactionReference::from_composed_calls(
+            fixture_policy(),
+            transaction,
+            30_431,
+            expected,
+        )
+        .unwrap();
+        assert_eq!(
+            reference.transaction_id(),
+            "44da763bbde860dd6057062ee1a7e6e86f9c751ceede1a651bee2de31e7b8583"
+        );
+        assert_eq!(
+            reference.contract_address(),
+            "a0cc5e863a975944bf82548438bf527cdeb95c33eba83a7af1230f31e1025695"
+        );
+        assert_eq!(
+            reference.bound_view().contract_event_counts(),
+            [(hex::encode(&caller), 1), (hex::encode(&callee), 1),].into()
+        );
+
+        let mut chain = chain_identity();
+        chain.genesis = fixture_policy().genesis;
+        let receipt = FinalizedReceipt {
+            chain,
+            block_hash: "e879cd9d45a6889fb7b983ecac8550b7893573b4f63ff999abb39f5eb37ce94b".into(),
+            height: 30_432,
+            finalized_hash: "9b6ef59f11322bf0794e09d837b47d60e40d6f182e85224d9b55b8021d295ae2"
+                .into(),
+            finalized_height: 54_286,
+            extrinsic_hash: "cd6999fc7ec8fbd6a691f8a7ef3311441f278df1c0e20b019a6da89e3ff8bea8"
+                .into(),
+            extrinsic_index: 4,
+            transaction_id: reference.transaction_id().into(),
+            intent_id: "7335e29a2900ed4191e8d052d9ab0c88cfe970d759822c5e3ad6caec59c2c4d5".into(),
+            contract_address: hex::encode(&caller),
+            event: ContractEvent::Call,
+            contract_state: caller_state.to_vec(),
+            secondary_states: [(hex::encode(&callee), callee_state.to_vec())].into(),
+        };
+        reference.check_receipt(&receipt).unwrap();
+        #[cfg(feature = "localnet")]
+        assert!(reference.development_submission_view().is_err());
+
+        let mut wrong_state = receipt.clone();
+        wrong_state.contract_state[0] ^= 1;
+        assert_eq!(reference.check_receipt(&wrong_state), Err(Error::Receipt));
+        let mut crossed_state = receipt.clone();
+        crossed_state
+            .secondary_states
+            .insert(hex::encode(&callee), caller_state.to_vec());
+        assert_eq!(reference.check_receipt(&crossed_state), Err(Error::Receipt));
+        let rejects = |bytes: &[u8], after_height, expected_calls| {
+            PublicTransactionReference::from_composed_calls(
+                fixture_policy(),
+                bytes,
+                after_height,
+                expected_calls,
+            )
+            .is_err()
+        };
+        assert!(
+            rejects(transaction, 30_431, [expected[1], expected[0]])
+        );
+        let wrong_address = [0; 32];
+        assert!(rejects(
+            transaction,
+            30_431,
+            [
+                (wrong_address.as_slice(), expected[0].1, expected[0].2),
+                expected[1],
+            ]
+        ));
+        assert!(rejects(
+            transaction,
+            30_431,
+            [(expected[0].0, &b"wrong"[..], expected[0].2), expected[1]]
+        ));
+        let mut wrong_action: SealedTransaction = tagged_deserialize(&transaction[..]).unwrap();
+        let Transaction::Standard(stx) = &mut wrong_action else {
+            panic!("standard transaction")
+        };
+        let mut intent = (*stx.intents.get(&CONTRACT_SEGMENT).unwrap()).clone();
+        let mut actions: Vec<_> = intent.actions.iter_deref().cloned().collect();
+        actions[0] = ContractAction::Deploy(Sp::new(ContractDeploy {
+            initial_state: ContractState::<Db>::default(),
+            nonce: HashOutput([9; 32]),
+        }));
+        intent.actions = actions.into();
+        stx.intents = stx.intents.insert(CONTRACT_SEGMENT, intent);
+        assert!(rejects(&encode(&wrong_action).unwrap(), 30_431, expected));
+        assert!(rejects(
+            transaction,
+            30_431,
+            [
+                expected[0],
+                (expected[0].0, expected[1].1, expected[1].2),
+            ]
+        ));
+        assert!(rejects(
+            transaction,
+            30_431,
+            [(&caller[..31], expected[0].1, expected[0].2), expected[1]]
+        ));
+        assert!(rejects(bound().bytes(), 20, expected));
+        let oversized_state = vec![0; MAX_STATE + 1];
+        assert!(rejects(
+            transaction,
+            30_431,
+            [
+                (expected[0].0, expected[0].1, &oversized_state),
+                expected[1],
+            ]
+        ));
+        assert!(
+            PublicTransactionReference::from_bytes(
+                fixture_policy(),
+                transaction,
+                30_431,
+                caller_state,
+            )
+            .is_err()
+        );
     }
 }

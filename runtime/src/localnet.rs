@@ -639,7 +639,7 @@ impl Node {
         if self.policy.genesis != DEVELOPMENT_GENESIS {
             return Err(HostFailure);
         }
-        let bound = reference.bound_view();
+        let bound = reference.development_submission_view()?;
         let mut sealed = Vec::new();
         serialize::tagged_serialize(approved, &mut sealed).map_err(|_| HostFailure)?;
         if bound.policy() != &self.policy || bound.bytes() != sealed.as_slice() {
