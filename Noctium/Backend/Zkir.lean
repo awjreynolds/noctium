@@ -315,6 +315,11 @@ def binary (op a b : String) : LowerM String := do
   modify fun s => {s with expressions := (key, output) :: s.expressions}
   return output
 
+/-- Lower Native addition while retaining both operands' eager lowering effects.
+Literal-zero operands need no ZKIR `add` instruction. -/
+def nativeAdd (leftIsZero rightIsZero : Bool) (left right : String) : LowerM String :=
+  if leftIsZero then pure right else if rightIsZero then pure left else binary "add" left right
+
 def unary (op a : String) (operandField : String := "a") : LowerM String := do
   let key : ExpressionKey := (op, [a], none)
   if let some existing := (← get).expressions.lookup key then return existing
@@ -581,6 +586,60 @@ private theorem instruction_scalarOutputDefinitions
     (outputOk : (Native.stringField (instruction opcode fields) "output").isOk = true) :
     Native.outputDefinitionsInInstruction (instruction opcode fields) = 1 := by
   exact nativeOutputDefinitionsInInstruction_single opcodeOk outputOk ordinary
+
+private theorem addInstruction_outputDefinitions (left right output : String) :
+    Native.outputDefinitionsInInstruction
+      (instruction "add" [("a", toJson left), ("b", toJson right),
+        ("output", toJson output)]) = 1 := by
+  let fields := [("a", toJson left), ("b", toJson right),
+    ("output", toJson output)]
+  have opcodeOk : Native.stringField (instruction "add" fields) "op" = .ok "add" := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+      Lean.ToJson.toJson]
+    rfl
+  have outputOk : (Native.stringField (instruction "add" fields) "output").isOk = true := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Lean.ToJson.toJson]
+    rfl
+  simpa [fields] using instruction_scalarOutputDefinitions "add" fields opcodeOk
+    ⟨by decide, by decide, by decide⟩ outputOk
+
+private theorem binaryAdd_preservesOutputCapacityFrame (left right : String) :
+    PreservesOutputCapacityFrame (binary "add" left right) := by
+  intro state
+  cases hit : state.expressions.lookup ("add", [left, right], none) with
+  | some existing =>
+    simp [binary, hit, StateT.run_bind, StateT.run_get, StateT.run_pure]
+    exact OutputCapacityFrame.refl state
+  | none =>
+    simp [binary, hit, fresh, emit, StateT.run_bind, StateT.run_get, StateT.run_modify,
+      StateT.run_set, instruction, toJson]
+    let output := "%v" ++ state.next.repr
+    let fields := [("a", toJson left), ("b", toJson right), ("output", toJson output)]
+    let emitted := instruction "add" fields
+    let afterNext := {state with next := state.next + 1}
+    let afterInstructions := {afterNext with instructions := afterNext.instructions.push emitted}
+    let after := {afterInstructions with
+      expressions := (("add", [left, right], none), output) :: afterInstructions.expressions}
+    change OutputCapacityFrame state after
+    have emittedCount : Native.outputDefinitionsInInstruction emitted = 1 := by
+      simpa [emitted, fields, output, toJson, List.toJson, Array.toJson] using
+        addInstruction_outputDefinitions left right output
+    apply OutputCapacityFrame.of_instruction_push emitted
+    · change state.next ≤ state.next + 1
+      omega
+    · rfl
+    · rw [emittedCount]
+      change state.next + 1 - state.next ≤ 1
+      omega
+
+theorem nativeAdd_preservesOutputCapacityFrame (leftIsZero rightIsZero : Bool)
+    (left right : String) :
+    PreservesOutputCapacityFrame (nativeAdd leftIsZero rightIsZero left right) := by
+  cases leftIsZero <;> cases rightIsZero <;>
+    simp [nativeAdd, pure_preservesOutputCapacityFrame,
+      binaryAdd_preservesOutputCapacityFrame]
 
 private theorem bytesIntoNativesInstruction_outputDefinitions
     (bytes : String) (outputs : List String) :
@@ -1784,7 +1843,12 @@ def lowerExpr : Expr ty → LowerM String
   | .fromBytes (length := length) value => do
     let bytes ← lowerBytes value
     lowerFromBytes ty length bytes
-  | .add a b => do binary "add" (← lowerExpr a) (← lowerExpr b)
+  | .add a b => do
+    let leftIsZero := Native.isLiteralNativeZero a
+    let rightIsZero := Native.isLiteralNativeZero b
+    let left ← lowerExpr a
+    let right ← lowerExpr b
+    nativeAdd leftIsZero rightIsZero left right
   | .mul a b => do binary "mul" (← lowerExpr a) (← lowerExpr b)
   | .sub a b => do binary "add" (← lowerExpr a) (← unary "neg" (← lowerExpr b))
   | .uadd (m := m) (n := n) a b => do

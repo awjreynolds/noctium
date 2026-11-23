@@ -54,6 +54,34 @@ private def semanticMutant (program : Lean.Json) : Lean.Json := Id.run do
   | .ok program, .ok expected => !(Backend.Native.validate expected (semanticMutant program)).isOk
   | _, _ => false
 
+private def nativeZeroFixture : Circuit := {
+  name := "nativeZeroAdd"
+  inputs := [{name := "witness", ty := .native, visibility := .private},
+    {name := "visible", ty := .native, visibility := .«public»}]
+  constraints := [.eq
+    (.add (.native 0)
+      (.assertE (.eq (.ref "witness" : Expr .native) (.native 5)) (.ref "witness")))
+    (.ref "visible")]
+  outputs := [
+    { name := "value"
+      ty := .native
+      value := .add (.letE "alias" (.ref "visible" : Expr .native) (.ref "alias")) (.native 0) }]
+}
+
+#guard match Backend.Zkir.lowerCircuit nativeZeroFixture with
+  | .error _ => false
+  | .ok program => Id.run do
+    let .ok instructions := program.getObjValAs? (Array Lean.Json) "instructions"
+      | return false
+    let opcodes := instructions.map Backend.Native.opcode
+    let inputs := instructions.filter fun instruction =>
+      let op := Backend.Native.opcode instruction
+      op == "private_input" || op == "public_input"
+    let names := inputs.map fun instruction => (instruction.getObjValAs? String "output").toOption
+    let .ok output := instructions.back!.getObjValAs? (Array String) "vals" | return false
+    return !opcodes.contains "add" && (opcodes.filter (· == "assert")).size == 2 &&
+      names == #[some "%input_witness", some "%input_visible"] && output == #["%input_visible"]
+
 /-- Emit the actual relation for before/after byte-parity checks. -/
 def main : IO Unit := do
   match Backend.Zkir.lowerCircuit fixture with

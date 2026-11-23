@@ -474,13 +474,48 @@ theorem normalize_success (ctx : EvalContext) (hash : Hash)
         simp [Expr.eval, ea, eb, implementation.modulus, Field.modulus, bind, pure, Except.bind, Except.map, Except.pure] at success
         cases success
         refine ⟨_, by simp only [normalize, na, nb]; rfl, ?_⟩
-        simp only [arithmetic_eq, requireSourceType_eq]
-        refine ⟨native_canonical _ (Nat.mod_lt _ (show 0 < Field.modulus by decide)),
-          requirements_join _ _ _ _ _ ar br, ?_⟩
-        simp [interpret_add, am, bm, sourceScalar?, sourceNumber?]
-        change scalar ((av % Field.modulus) + (bv % Field.modulus)) = scalar ((av + bv) % Field.modulus)
-        simp [scalar, Nat.mod_eq_of_lt (show av < Field.modulus from ac.1),
-          Nat.mod_eq_of_lt (show bv < Field.modulus from bc.1)]
+        by_cases leftZero : isLiteralNativeZero a = true
+        · have leftIsZero : a = .native 0 :=
+            (isLiteralNativeZero_eq_true_iff a).mp leftZero
+          cases leftIsZero
+          have avZero : av = 0 := by
+            simpa [Expr.eval, implementation.modulus, Field.modulus, pure, Except.pure] using ea.symm
+          simp only [normalizeNativeAdd, isLiteralNativeZero, ↓reduceIte]
+          refine ⟨native_canonical _ (Nat.mod_lt _ (show 0 < Field.modulus by decide)),
+            requirements_join _ _ _ _ _ ar br, ?_⟩
+          simp only [avZero, Nat.zero_add, sourceScalar?, sourceNumber?]
+          change interpret hash inputs bn.term = some (scalar (bv % Field.modulus))
+          rw [Nat.mod_eq_of_lt bc.1]
+          simpa [sourceScalar?, sourceNumber?] using bm
+        · have leftNotZero : isLiteralNativeZero a = false := by
+            cases h : isLiteralNativeZero a with
+            | false => rfl
+            | true => exact False.elim (leftZero h)
+          by_cases rightZero : isLiteralNativeZero b = true
+          · have rightIsZero : b = .native 0 :=
+              (isLiteralNativeZero_eq_true_iff b).mp rightZero
+            cases rightIsZero
+            have bvZero : bv = 0 := by
+              simpa [Expr.eval, implementation.modulus, Field.modulus, pure, Except.pure] using eb.symm
+            simp only [normalizeNativeAdd, leftNotZero, rightZero, Bool.false_eq_true, ↓reduceIte]
+            refine ⟨native_canonical _ (Nat.mod_lt _ (show 0 < Field.modulus by decide)),
+              requirements_join _ _ _ _ _ ar br, ?_⟩
+            simp only [bvZero, Nat.add_zero, sourceScalar?, sourceNumber?]
+            change interpret hash inputs an.term = some (scalar (av % Field.modulus))
+            rw [Nat.mod_eq_of_lt ac.1]
+            simpa [sourceScalar?, sourceNumber?] using am
+          · have rightNotZero : isLiteralNativeZero b = false := by
+              cases h : isLiteralNativeZero b with
+              | false => rfl
+              | true => exact False.elim (rightZero h)
+            simp only [normalizeNativeAdd, leftNotZero, rightNotZero, Bool.false_eq_true,
+              ↓reduceIte]
+            refine ⟨native_canonical _ (Nat.mod_lt _ (show 0 < Field.modulus by decide)),
+              requirements_join _ _ _ _ _ ar br, ?_⟩
+            simp [interpret_add, am, bm, sourceScalar?, sourceNumber?]
+            change scalar ((av % Field.modulus) + (bv % Field.modulus)) = scalar ((av + bv) % Field.modulus)
+            simp [scalar, Nat.mod_eq_of_lt (show av < Field.modulus from ac.1),
+              Nat.mod_eq_of_lt (show bv < Field.modulus from bc.1)]
   | mul a b leftSupported rightSupported ia ib =>
     cases ea : a.eval ctx values with
     | error message => simp [Expr.eval, ea, implementation.modulus, Field.modulus, bind, pure, Except.bind, Except.map, Except.pure] at success
