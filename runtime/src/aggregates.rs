@@ -1083,12 +1083,9 @@ impl Schema {
             LayoutNode::Scalar(Leaf::Native) => Ok(FabHashField::Native),
             LayoutNode::Scalar(Leaf::Bool) => Ok(FabHashField::Bool),
             LayoutNode::Scalar(Leaf::UInt(maximum)) => {
-                let width = maximum.bits();
                 ensure!(
-                    width > 0
-                        && width <= crate::scalars::MAX_UINT_BITS as u64
-                        && maximum + 1u8 == (BigUint::from(1u8) << width as usize),
-                    "FAB unsigned field maximum is outside the supported bit widths"
+                    maximum.bits() <= crate::scalars::MAX_UINT_BITS as u64,
+                    "FAB unsigned field maximum exceeds the supported UInt range"
                 );
                 Ok(FabHashField::UInt(maximum.clone()))
             }

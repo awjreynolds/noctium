@@ -309,9 +309,6 @@ private def validateFabHashFields (fields : List (String × Types.Layout))
     unless fabHashFieldMatches field.2 value do
       throw s!"unsupported or mismatched mixed FAB field '{field.1}'"
     match field.2 with
-    | .scalar (.boundedUnsignedField maximum) =>
-      unless (List.range ScalarPolicy.maxBits).any (fun bits => 2 ^ (bits + 1) - 1 == maximum) do
-        throw s!"mixed FAB unsigned field '{field.1}' must use a whole-byte UInt width"
     | .enumeration _ (.enumTagField maximum) _ 0 _ _ =>
       unless maximum < 256 do
         throw s!"mixed FAB enum field '{field.1}' exceeds the supported one-byte tag width"
