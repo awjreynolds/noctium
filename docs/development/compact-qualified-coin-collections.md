@@ -49,6 +49,21 @@ checks all six emitted relation cases at index `41` and rejects a missing
 booking, a different address, or the same bytes under the other recipient tag.
 The native check uses a query context with prebooked outputs.
 
+The nested Set fixtures initialize two Bytes32 owners and insert the same
+three coin values in owner order A, B, A. Compact and Noctium retain 5 and 7
+under A and 11 under B. Each retains the index assigned by its query context.
+The selected owner must exist. An absent owner, missing booking or wrong
+recipient booking rejects without a Set write.
+[Compact case](../../tests/compact/qualified-coin-collections.mjs),
+[Noctium source](../../tests/NestedQualifiedCoinSet.lean), and
+[native query-context check](../../runtime/tests/qualified_coin_set.rs).
+
+The nested storage suffix uses index opcode `0x71` with the slot and owner
+key, context duplicate `0x36`, and two-level cached reinsertion `0xa2`.
+The native checker accepts both implicit and explicit contract recipient
+paths. The root Set and root explicit-recipient artifacts match their previous
+bytes. The nested Set checks use the query context and emitted relation.
+
 The [pinned VM opcode source](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-vm/src/ops.rs)
 defines opcode names and immediate encoding. The pinned runtime exports the
 corresponding `Cell_write_coin!`, `Set_insert_coin!` and `List_push_front_coin!`
