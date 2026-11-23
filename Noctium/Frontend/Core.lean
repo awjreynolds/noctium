@@ -2384,19 +2384,20 @@ private structure OptionalRecordHead where
   type : Types.CompositeType
   fields : List (String × Ty)
 
-private structure MapNominals where
-  keys : List (Option NominalUIntType) := []
-  value : Option NominalUIntType := none
+private structure CollectionNominals where
+  /-- Nominal identities for each Map key, followed by the member key for a leaf Set. -/
+  pathKeys : List (Option NominalUIntType) := []
+  scalarValue : Option NominalUIntType := none
 
-private def MapNominals.isEmpty (nominals : MapNominals) : _root_.Bool :=
-  nominals.value.isNone && nominals.keys.all Option.isNone
+private def CollectionNominals.isEmpty (nominals : CollectionNominals) : _root_.Bool :=
+  nominals.scalarValue.isNone && nominals.pathKeys.all Option.isNone
 
 private structure EntryEffects where
   env : Bindings
   nominalUIntBindings : CircuitNominalEnv := []
   nominalUIntCells : List (String × NominalUIntType) := []
   nominalUIntLists : List (String × NominalUIntType) := []
-  nominalUIntMaps : List (String × MapNominals) := []
+  nominalUIntCollections : List (String × CollectionNominals) := []
   contractRefBindings : List (String × Name) := []
   contractRefState : List (String × Name) := []
   recordContractRefs : List (String × List (String × Name)) := []
@@ -2411,26 +2412,27 @@ private structure EntryEffects where
   nextLocal : Nat := 0
   usedLocalNames : List String := []
 
-private def EntryEffects.mapNominals (state : EntryEffects) (storage : TSyntax `ident) : MapNominals :=
-  (state.nominalUIntMaps.lookup storage.getId.toString).getD {}
+private def EntryEffects.collectionNominals (state : EntryEffects) (storage : TSyntax `ident) : CollectionNominals :=
+  (state.nominalUIntCollections.lookup storage.getId.toString).getD {}
 
 private def lowerMapPath (state : EntryEffects) (storage : TSyntax `ident) (schema : LedgerValueType)
     (keys : List (TSyntax `nlexpr)) : CommandElabM (List (TSyntax `term) × LedgerValueType) :=
-  lowerTreePath state.env schema keys state.nominalUIntBindings (state.mapNominals storage).keys
+  lowerTreePath state.env schema keys state.nominalUIntBindings (state.collectionNominals storage).pathKeys
 
 private def lowerMapEntryPath (state : EntryEffects) (storage : TSyntax `ident) (schema : LedgerValueType)
     (keys : List (TSyntax `nlexpr)) : CommandElabM (TSyntax `term × LedgerValueType) :=
-  lowerCollectionEntryPath state.env schema keys state.nominalUIntBindings (state.mapNominals storage).keys
+  lowerCollectionEntryPath state.env schema keys state.nominalUIntBindings
+    (state.collectionNominals storage).pathKeys
 
 private def checkedRootMapKey (state : EntryEffects) (storage : TSyntax `ident)
     (key : TSyntax `nlexpr) (ty : Ty) : CommandElabM (TSyntax `term) :=
   checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings key
-    {type := ty, nominalUInt := (state.mapNominals storage).keys.head?.join}
+    {type := ty, nominalUInt := (state.collectionNominals storage).pathKeys.head?.join}
 
 private def checkedMapValue (state : EntryEffects) (storage : TSyntax `ident)
     (value : TSyntax `nlexpr) (ty : Ty) : CommandElabM (TSyntax `term) :=
   checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
-    {type := ty, nominalUInt := (state.mapNominals storage).value}
+    {type := ty, nominalUInt := (state.collectionNominals storage).scalarValue}
 
 private partial def nominalBytes32OfExpression (state : EntryEffects)
     (expression : TSyntax `nlexpr) : Option NominalBytes32 :=
@@ -2804,7 +2806,7 @@ private def bindMapRead (state : EntryEffects) (storage destination : TSyntax `i
     (readName : String) (valueTy : Ty) : CommandElabM EntryEffects := do
   let updated ← bindReadName state destination.getId.toString readName valueTy
   let bindings := bindCircuitNominal updated.nominalUIntBindings destination.getId.toString
-    (state.mapNominals storage).value
+    (state.collectionNominals storage).scalarValue
   pure {updated with nominalUIntBindings := bindings}
 
 private def elaborateTreeRead (storage destination : TSyntax `ident)
@@ -3159,7 +3161,7 @@ private def elaborateSetInsert (schema : List (String × StateKind))
     (path : TSyntax `nlpath) (state : EntryEffects) : CommandElabM EntryEffects := do
   let (storage, sourceKeys) ← sourcePathParts path
   let stateSchema ← statePathSchema schema storage
-  let (keys, parent) ← lowerCollectionEntryPath state.env stateSchema sourceKeys
+  let (keys, parent) ← lowerMapEntryPath state storage stateSchema sourceKeys
   let .set _ := parent | throwErrorAt path "insert without a value requires a Set"
   let term ← `(Noctium.Effect.setInsert $(stringTerm storage.getId.toString) $keys)
   pure {state with terms := state.terms.push term}
@@ -4876,7 +4878,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
     (nominalUIntCells : List (String × NominalUIntType))
     (nominalUIntLists : List (String × NominalUIntType))
-    (nominalUIntMaps : List (String × MapNominals))
+    (nominalUIntCollections : List (String × CollectionNominals))
     (contractRefState : List (String × Name)) : CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
@@ -4928,11 +4930,11 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some (_, .map keyTy valueTy) => do
         let conditionExpression ← checkedCircuitSourceExpression scalarBindings
           nominalUIntBindings condition {type := .bool}
-        let nominal := (nominalUIntMaps.lookup destination).getD {}
+        let nominal := (nominalUIntCollections.lookup destination).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.keys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.value}
+          {type := valueTy, nominalUInt := nominal.scalarValue}
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         let orderedInsert ← `(Noctium.ConstructorOrderedMapInsert.mk $(stringTerm destination)
@@ -4950,9 +4952,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let mapName := mapNameStx.getId.toString
       match schema.find? (·.1 == destination), schema.find? (·.1 == mapName) with
       | some (_, .cell .bool), some (_, .map keyTy _) => do
-        let nominal := (nominalUIntMaps.lookup mapName).getD {}
+        let nominal := (nominalUIntCollections.lookup mapName).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.keys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let mapMemberInitializer ← `(Noctium.ConstructorMapMemberInitializer.mk
           $(stringTerm destination) $(stringTerm mapName) $key)
@@ -4971,7 +4973,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.set keyTy)) => do
-        let keyExpression ← checkedExpression scalarBindings key keyTy
+        let nominal := (nominalUIntCollections.lookup destination).getD {}
+        let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         setInsertTerms := setInsertTerms.push
           (← `(Noctium.ConstructorSetInsert.mk $(stringTerm destination) $key))
@@ -4984,11 +4988,11 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .map keyTy valueTy) => do
-        let nominal := (nominalUIntMaps.lookup destination).getD {}
+        let nominal := (nominalUIntCollections.lookup destination).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.keys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.value}
+          {type := valueTy, nominalUInt := nominal.scalarValue}
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         mapInsertTerms := mapInsertTerms.push
@@ -5191,10 +5195,10 @@ private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
     pure (keyTy :: restTypes, asList, record, recordFields)
   | _ => throwErrorAt tail "expected a nested Map key or record leaf"
 
-private def readMapScalarSourceType (source : TSyntax `nltype) : CommandElabM CircuitSourceType := do
+private def readCollectionScalarSourceType (source : TSyntax `nltype) : CommandElabM CircuitSourceType := do
   let sourceType ← readCircuitSourceType source
   unless sourceType.contractRef.isNone do
-    throwErrorAt source "typed contract references are not supported in scalar Maps"
+    throwErrorAt source "typed contract references are not supported in scalar Maps or Sets"
   pure sourceType
 
 private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
@@ -5215,7 +5219,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let mut schema : List (String × StateKind) := []
     let mut nominalUIntCells : List (String × NominalUIntType) := []
     let mut nominalUIntLists : List (String × NominalUIntType) := []
-    let mut nominalUIntMaps : List (String × MapNominals) := []
+    let mut nominalUIntCollections : List (String × CollectionNominals) := []
     let mut contractRefState : List (String × Name) := []
     let mut recordContractRefs : List (String × List (String × Name)) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
@@ -5323,18 +5327,23 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype)
         | `(nlstate| map $id:ident : $key:nltype => $value:nltype) => do
-          let key ← readMapScalarSourceType key
-          let value ← readMapScalarSourceType value
-          let nominal : MapNominals := {keys := [key.nominalUInt], value := value.nominalUInt}
+          let key ← readCollectionScalarSourceType key
+          let value ← readCollectionScalarSourceType value
+          let nominal : CollectionNominals := {
+            pathKeys := [key.nominalUInt], scalarValue := value.nominalUInt}
           unless nominal.isEmpty do
-            nominalUIntMaps := (id.getId.toString, nominal) :: nominalUIntMaps
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
           pure (id, StateKind.map key.type value.type,
             ← `(Noctium.StateKind.map $(← tyTerm key.type) $(← tyTerm value.type)))
         | `(nlstate| sealed counter $id:ident) =>
           pure (id, StateKind.tree .counter,
             ← `(Noctium.StateKind.tree Noctium.LedgerValueType.counter))
         | `(nlstate| sealed set $id:ident : $element:nltype) => do
-          let keyTy ← readTy element
+          let memberSource ← readCollectionScalarSourceType element
+          let nominal : CollectionNominals := {pathKeys := [memberSource.nominalUInt]}
+          unless nominal.isEmpty do
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
+          let keyTy := memberSource.type
           pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
             (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
         | `(nlstate| sealed $listKind:ident $id:ident : $element:nltype) => do
@@ -5348,12 +5357,22 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let (kind, term) ← elaborateScalarListDecl [] sourceType.type
           pure (id, kind, term)
         | `(nlstate| set $id:ident : $key:nltype) => do
-          let keyTy ← readTy key
+          let memberSource ← readCollectionScalarSourceType key
+          let nominal : CollectionNominals := {pathKeys := [memberSource.nominalUInt]}
+          unless nominal.isEmpty do
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
+          let keyTy := memberSource.type
           pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
             (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
         | `(nlstate| tree $id:ident : $key:nltype => Set $memberType:nltype) => do
-          let mapKeyTy ← readTy key
-          let memberTy ← readTy memberType
+          let mapKey ← readCollectionScalarSourceType key
+          let memberSource ← readCollectionScalarSourceType memberType
+          let nominal : CollectionNominals := {
+            pathKeys := [mapKey.nominalUInt, memberSource.nominalUInt]}
+          unless nominal.isEmpty do
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
+          let mapKeyTy := mapKey.type
+          let memberTy := memberSource.type
           let mapKeyTerm ← tyTerm mapKeyTy
           let memberTerm ← tyTerm memberTy
           let valueSchema := LedgerValueType.map mapKeyTy (.set memberTy)
@@ -5361,9 +5380,16 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
             (Noctium.LedgerValueType.set $memberTerm))
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => Set $memberType:nltype) => do
-          let outerTy ← readTy outer
-          let innerTy ← readTy inner
-          let memberTy ← readTy memberType
+          let outer ← readCollectionScalarSourceType outer
+          let inner ← readCollectionScalarSourceType inner
+          let memberSource ← readCollectionScalarSourceType memberType
+          let nominal : CollectionNominals := {
+            pathKeys := [outer.nominalUInt, inner.nominalUInt, memberSource.nominalUInt]}
+          unless nominal.isEmpty do
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
+          let outerTy := outer.type
+          let innerTy := inner.type
+          let memberTy := memberSource.type
           let outerTerm ← tyTerm outerTy
           let innerTerm ← tyTerm innerTy
           let memberTerm ← tyTerm memberTy
@@ -5586,13 +5612,14 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let (kind, term) ← elaborateScalarListDecl [outer, inner] sourceType.type
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $value:nltype) => do
-          let outer ← readMapScalarSourceType outer
-          let inner ← readMapScalarSourceType inner
-          let value ← readMapScalarSourceType value
-          let nominal : MapNominals := {
-            keys := [outer.nominalUInt, inner.nominalUInt], value := value.nominalUInt}
+          let outer ← readCollectionScalarSourceType outer
+          let inner ← readCollectionScalarSourceType inner
+          let value ← readCollectionScalarSourceType value
+          let nominal : CollectionNominals := {
+            pathKeys := [outer.nominalUInt, inner.nominalUInt],
+            scalarValue := value.nominalUInt}
           unless nominal.isEmpty do
-            nominalUIntMaps := (id.getId.toString, nominal) :: nominalUIntMaps
+            nominalUIntCollections := (id.getId.toString, nominal) :: nominalUIntCollections
           let outerTy := outer.type
           let innerTy := inner.type
           let valueTy := value.type
@@ -5631,7 +5658,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
       | some ctor =>
-        elaborateConstructor ctor schema nominalUIntCells nominalUIntLists nominalUIntMaps contractRefState
+        elaborateConstructor ctor schema nominalUIntCells nominalUIntLists nominalUIntCollections contractRefState
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     for entryStx in entries do
@@ -5674,7 +5701,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
           nominalUIntLists := nominalUIntLists
-          nominalUIntMaps := nominalUIntMaps
+          nominalUIntCollections := nominalUIntCollections
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordContractRefs := recordContractRefs
@@ -5708,7 +5735,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
           nominalUIntLists := nominalUIntLists
-          nominalUIntMaps := nominalUIntMaps
+          nominalUIntCollections := nominalUIntCollections
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordContractRefs := recordContractRefs
@@ -5734,9 +5761,12 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           | .readCell storage _ _ | .writeCell storage _ _ =>
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
-          | .readMap storage .. | .readMember storage .. | .writeMap storage .. =>
-            if (nominalUIntMaps.lookup storage).isSome then
-              throwErrorAt entryStx "structured helpers do not support nominal UInt Maps"
+          | .readMap storage .. | .readMember storage .. | .writeMap storage .. |
+              .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
+              .mapSize storage .. | .insertPath storage .. | .writePath storage .. |
+              .emptyMapPath storage .. | .setInsert storage .. | .removePath storage .. =>
+            if (nominalUIntCollections.lookup storage).isSome then
+              throwErrorAt entryStx "structured helpers do not support nominal UInt collection paths"
           | _ => pure ()
         let localCircuitName := name.getId ++ id.getId ++ `circuit
         let fullCircuitName := (← getCurrNamespace) ++ localCircuitName

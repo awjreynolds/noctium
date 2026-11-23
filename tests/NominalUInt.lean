@@ -163,6 +163,64 @@ noctium_contract NominalAmountMaps where
   end
 end
 
+noctium_circuit nominalSetRawValues where
+  private rawAmount : UInt 8
+end
+
+noctium_contract NominalAmountSets where
+  set amounts : Amount
+  tree amountSets : Count => Set Amount
+  tree deepAmountSets : Count => Count => Set Amount
+
+  constructor(initialKey : Count, initial : Amount) where
+    insert amounts[initial]
+  end
+
+  entry add uses nominalMapValues where
+    insert amounts[disclose(amount)]
+    member amounts[disclose(amount)] as rootPresent
+    member amountSets[disclose(key)] as ownerPresent
+    when eq(ownerPresent, false) insertDefault amountSets[disclose(key)]
+    insert amountSets[disclose(key)][disclose(amount)]
+    member amountSets[disclose(key)][disclose(amount)] as nestedPresent
+    member deepAmountSets[disclose(key)] as deepParentPresent
+    when eq(deepParentPresent, false) insertDefault deepAmountSets[disclose(key)]
+    member deepAmountSets[disclose(key)][disclose(nestedKey)] as deepOwnerPresent
+    when eq(deepOwnerPresent, false)
+      insertDefault deepAmountSets[disclose(key)][disclose(nestedKey)]
+    insert deepAmountSets[disclose(key)][disclose(nestedKey)][disclose(amount)]
+    member deepAmountSets[disclose(key)][disclose(nestedKey)][disclose(amount)]
+      as deepPresent
+    return rootResult : Bool := rootPresent
+    return nestedResult : Bool := nestedPresent
+    return deepResult : Bool := deepPresent
+  end
+
+  entry removeValues uses nominalMapValues where
+    remove amounts[disclose(amount)]
+    member amounts[disclose(amount)] as rootPresent
+    remove amountSets[disclose(key)][disclose(amount)]
+    member amountSets[disclose(key)][disclose(amount)] as nestedPresent
+    remove deepAmountSets[disclose(key)][disclose(nestedKey)][disclose(amount)]
+    member deepAmountSets[disclose(key)][disclose(nestedKey)][disclose(amount)] as deepPresent
+    return rootResult : Bool := rootPresent
+    return nestedResult : Bool := nestedPresent
+    return deepResult : Bool := deepPresent
+  end
+
+  entry clear uses nominalMapValues where
+    reset amounts
+    reset amountSets[disclose(key)]
+    reset deepAmountSets[disclose(key)][disclose(nestedKey)]
+  end
+
+  entry castRaw uses nominalSetRawValues where
+    insert amounts[disclose(cast(Amount, rawAmount))]
+    member amounts[disclose(cast(Amount, rawAmount))] as present
+    return presentResult : Bool := present
+  end
+end
+
 noctium_circuit countLedgerValue where
   private count : Count
 end
@@ -399,6 +457,49 @@ private def nominalMapRoundTrip : Except String _root_.Bool := do
   | none => Bool.false
 #guard NominalAmountMaps.entrypoints.all fun operation =>
   (Backend.Zkir.lowerEntrypoint NominalAmountMaps.state operation).isOk
+
+#guard (NominalAmountSets.validate Capabilities.source).isOk
+#guard NominalAmountSets.entrypoints.all fun operation =>
+  (operation.validate Capabilities.source NominalAmountSets.state).isOk
+#guard NominalAmountSets.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint NominalAmountSets.state operation).isOk
+#guard match NominalAmountSets.state with
+  | [{kind := .tree (.set (.uint 255)), ..},
+     {kind := .tree (.map (.uint 255) (.set (.uint 255))), ..},
+     {kind := .tree (.map (.uint 255) (.map (.uint 255) (.set (.uint 255)))), ..}] =>
+    Bool.true
+  | _ => Bool.false
+#guard match NominalAmountSets.constructor with
+  | some {setInserts := [{name := "amounts", key := .mk (.uint 255) (.ref "initial")}], ..} =>
+    Bool.true
+  | _ => Bool.false
+
+private def nominalSetRoundTrip : Except String _root_.Bool := do
+  let [add, removeValues, clear, castRaw] := NominalAmountSets.entrypoints
+    | throw "expected four Set operations"
+  let key : Value := .uint 255 7
+  let nestedKey : Value := .uint 255 8
+  let amount : Value := .uint 255 19
+  let inputs : EvalEnv := [("key", key), ("nestedKey", nestedKey), ("amount", amount)]
+  let initial : LedgerState := {trees := [
+    ("amounts", .map []), ("amountSets", .map []), ("deepAmountSets", .map [])]}
+  let (added, afterAdd) ← add.run context inputs initial
+  let (removed, afterRemove) ← removeValues.run context inputs afterAdd
+  let (_, cleared) ← clear.run context inputs afterRemove
+  let (castOutputs, finalState) ← castRaw.run context [("rawAmount", amount)] cleared
+  pure (added.lookup "rootResult" == some (.bool Bool.true) &&
+    added.lookup "nestedResult" == some (.bool Bool.true) &&
+    added.lookup "deepResult" == some (.bool Bool.true) &&
+    removed.lookup "rootResult" == some (.bool Bool.false) &&
+    removed.lookup "nestedResult" == some (.bool Bool.false) &&
+    removed.lookup "deepResult" == some (.bool Bool.false) &&
+    castOutputs.lookup "presentResult" == some (.bool Bool.true) &&
+    finalState.trees.lookup "amounts" == some (.map [(amount, .null)]) &&
+    finalState.trees.lookup "amountSets" == some (.map [(key, .map [])]) &&
+    finalState.trees.lookup "deepAmountSets" ==
+      some (.map [(key, .map [(nestedKey, .map [])])]))
+
+#guard nominalSetRoundTrip.toOption == some Bool.true
 
 
 #guard match NominalAmountLedger.constructor with
@@ -658,6 +759,60 @@ noctium_contract rejectsNominalNestedMapKey where
   tree balances : Count => Count => Amount
   entry removeWrong uses nominalMapValues where
     remove balances[disclose(key)][disclose(amount)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalSetConstructorKey where
+  set amounts : Amount
+  constructor(initial : Count) where
+    insert amounts[initial]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalSetCountElement where
+  set amounts : Amount
+  entry insertWrong uses nominalMapValues where
+    insert amounts[disclose(nestedKey)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalSetRawElement where
+  set amounts : Amount
+  entry insertWrong uses nominalSetRawValues where
+    insert amounts[disclose(rawAmount)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalNestedSetCountElement where
+  tree amountSets : Count => Set Amount
+  entry insertWrong uses nominalMapValues where
+    insert amountSets[disclose(key)][disclose(nestedKey)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalNestedSetRawElement where
+  tree amountSets : Count => Set Amount
+  entry insertWrong uses nominalMapRawValues where
+    insert amountSets[disclose(cast(Count, rawKey))][disclose(rawAmount)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalNestedSetParentKey where
+  tree amountSets : Count => Set Amount
+  entry inspect uses nominalMapValues where
+    member amountSets[disclose(amount)] as hasOwner
   end
 end
 
