@@ -93,9 +93,9 @@ private def validateGuardedRecordMapEffect (effect : Effect) : Except Diagnostic
 #guard ((recordMapEntry "lookup").validate Capabilities.source RecordMapKeys.state).isOk
 #guard (validateGuardedRecordMapEffect (.writeRecordMap "memos" [
   .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")]
-  (.uint 65535) (.ref "value"))).isOk
+  (.uint 65535) (.ref "value") [])).isOk
 #guard (validateGuardedRecordMapEffect (.removeRecordMap "memos" [
-  .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")])).isOk
+  .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")] [])).isOk
 
 #guard match RecordMapKeys.state with
   | [{kind := .tree (.recordMapKey environment type (.uint 65535)), ..}] =>
@@ -107,7 +107,7 @@ private def validateGuardedRecordMapEffect (effect : Effect) : Except Diagnostic
 #guard match Backend.Impact.lower RecordMapKeys.state (recordMapEntry "lookup") with
   | .ok plan =>
       plan.operations.any (fun operation => match operation with
-        | .indexRecordPath 0 schema values =>
+        | .indexRecordPath 0 schema values [] =>
             values.map LedgerFieldExpr.ty == [.bool, .uint 65535] &&
             schema != Lean.Json.null
         | _ => _root_.Bool.false) &&
@@ -186,7 +186,7 @@ private def undisclosedRecordMapMember : Entrypoint := {
     {name := "active", ty := .bool, visibility := .«private»},
     {name := "amount", ty := .uint 65535, visibility := .«private»}]}
   effects := [.memberRecordMap "memos" "present" [
-    .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")]]
+    .mk .bool (.ref "active"), .mk (.uint 65535) (.ref "amount")] []]
   effectSpans := [{}]
 }
 

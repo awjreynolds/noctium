@@ -447,7 +447,7 @@ inductive LedgerValueType where
   /-- A root Set keyed by one checked flat typed record. Field order and types
   come from the shared record layout. Nested paths still use scalar PathKeys. -/
   | recordSet (environment : Types.CompositeEnv) (type : Types.CompositeType)
-  /-- A root Map keyed by one checked flat typed record, with scalar values. -/
+  /-- A Map keyed by one checked flat typed record, with scalar values. -/
   | recordMapKey (environment : Types.CompositeEnv) (type : Types.CompositeType) (valueTy : Ty)
   /-- A root Map keyed by one checked flat typed record, with checked flat
   record values. -/
@@ -1045,16 +1045,19 @@ inductive Effect where
   | memberRecordSet (state destination : String) (keys : List PathKey)
       (values : List LedgerFieldExpr)
   | readRecordMap (state destination : String) (valueTy : Ty) (values : List LedgerFieldExpr)
+      (parentKeys : List PathKey)
   | readRecordMapComposite (state destination : String) (valueType : Types.CompositeType)
       (values : List LedgerFieldExpr)
       (destinations : List (String × Ty))
   | memberRecordMap (state destination : String) (values : List LedgerFieldExpr)
+      (parentKeys : List PathKey)
   | writeRecordMap (state : String) (values : List LedgerFieldExpr)
-      (valueTy : Ty) (value : Expr valueTy)
+      (valueTy : Ty) (value : Expr valueTy) (parentKeys : List PathKey)
   | writeRecordMapComposite (state : String) (valueType : Types.CompositeType)
       (keyValues : List LedgerFieldExpr)
       (valueValues : List LedgerFieldExpr)
   | removeRecordMap (state : String) (values : List LedgerFieldExpr)
+      (parentKeys : List PathKey)
   | mapIsEmpty (state destination : String) (keys : List PathKey)
   | mapSize (state destination : String) (keys : List PathKey)
   | counterRead (state destination : String) (keys : List PathKey)
@@ -1592,27 +1595,35 @@ private def resolveRecordSetFields (decls : List StateDecl) (state : String)
     throw "record Set key field type mismatch"
   pure fields
 
-private def resolveRecordMap (decls : List StateDecl) (state : String)
-    (values : List LedgerFieldExpr) : Except String (Types.CompositeEnv × List (String × Ty) × Ty) := do
+private def resolveRecordMapSchema (decls : List StateDecl) (state : String)
+    (parentKeys : List PathKey) : Except String LedgerValueType := do
   let some declaration := decls.find? (·.name == state)
     | throw s!"unknown record-key Map '{state}'"
-  let .tree (.recordMapKey environment type valueTy) := declaration.kind
-    | throw s!"state '{state}' is not a record-key Map"
+  let .tree schema := declaration.kind
+    | throw s!"state '{state}' is not a recursive map"
+  if parentKeys.length > 13 then throw "record Map parent path exceeds the native insertion depth"
+  schema.resolvePath parentKeys
+
+private def resolveRecordMap (decls : List StateDecl) (state : String)
+    (values : List LedgerFieldExpr) (parentKeys : List PathKey) :
+    Except String (Types.CompositeEnv × List (String × Ty) × Ty) := do
+  let .recordMapKey environment type valueTy ← resolveRecordMapSchema decls state parentKeys
+    | throw s!"path does not select a scalar-valued record-key Map in '{state}'"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure (environment, fields, valueTy)
 
 private def resolveAnyRecordMapKeyFields (decls : List StateDecl) (state : String)
-    (values : List LedgerFieldExpr) : Except String (List (String × Ty)) := do
-  let some declaration := decls.find? (·.name == state)
-    | throw s!"unknown record-key Map '{state}'"
-  let fields ← match declaration.kind with
-    | .tree (.recordMapKey environment type _) =>
+    (values : List LedgerFieldExpr) (parentKeys : List PathKey) :
+    Except String (List (String × Ty)) := do
+  let selected ← resolveRecordMapSchema decls state parentKeys
+  let fields ← match selected with
+    | .recordMapKey environment type _ =>
       LedgerValueType.ledgerRecordWriteFields environment type
-    | .tree (.recordMapComposite environment type _ _) =>
+    | .recordMapComposite environment type _ _ =>
       LedgerValueType.ledgerRecordWriteFields environment type
-    | _ => throw s!"state '{state}' is not a record-key Map"
+    | _ => throw s!"path does not select a record-key Map in '{state}'"
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure fields
@@ -1943,10 +1954,11 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         requireState decls state (.map keyTy valueTy)
         key.validate caps env
         pure [(destination, .bool)]
-      | .readRecordMap state destination valueTy values => do
+      | .readRecordMap state destination valueTy values parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let (_, fields, foundValueTy) ← resolveRecordMap decls state values
+        let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
         unless foundValueTy == valueTy do throw "record Map value type mismatch"
+        for key in parentKeys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for value in values do match value with
           | .mk ty expression => ty.validate caps; expression.validate caps env
@@ -1966,9 +1978,10 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         unless destinations.map Prod.snd == valueFields.map Prod.snd do
           throw "record Map read destination field type mismatch"
         pure destinations
-      | .memberRecordMap state destination values => do
+      | .memberRecordMap state destination values parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveAnyRecordMapKeyFields decls state values
+        let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
+        for key in parentKeys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for value in values do match value with
           | .mk ty expression => ty.validate caps; expression.validate caps env
@@ -2176,10 +2189,11 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         key.validate caps env
         value.validate caps env
         pure []
-      | .writeRecordMap state values valueTy value => do
+      | .writeRecordMap state values valueTy value parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let (_, fields, foundValueTy) ← resolveRecordMap decls state values
+        let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
         unless foundValueTy == valueTy do throw "record Map value type mismatch"
+        for key in parentKeys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for field in values do match field with
           | .mk ty expression => ty.validate caps; expression.validate caps env
@@ -2195,9 +2209,10 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         for field in keyValues ++ valueValues do match field with
           | .mk ty expression => ty.validate caps; expression.validate caps env
         pure []
-      | .removeRecordMap state values => do
+      | .removeRecordMap state values parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveAnyRecordMapKeyFields decls state values
+        let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
+        for key in parentKeys do key.validate caps env
         for (_, ty) in fields do ty.validate caps
         for field in values do match field with
           | .mk ty expression => ty.validate caps; expression.validate caps env
