@@ -21,6 +21,7 @@ structure Transformed where
 private structure BuildState where
   source : String
   nominalUIntCells : List (String × NominalUIntType) := []
+  nominalUIntMaps : List (String × NominalUIntMap) := []
   next : Nat := 0
   reserved : List String := []
   calls : List LedgerCall := []
@@ -97,7 +98,11 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
     let resultTy := if kind == "readMember" then .bool else valueTy
     let keyName ← fresh "key"
     let actual ← fresh "read"
-    let (site, name) ← registerCall kind state (some keyTy) valueTy [scalarParameter "key" keyTy]
+    let nominalMap := ((← get).nominalUIntMaps.lookup state).getD {}
+    let keyNominal := nominalMap.key.map (·.name)
+    let resultNominal := if kind == "readMember" then none else nominalMap.value.map (·.name)
+    let (site, name) ← registerCall kind state (some keyTy) valueTy
+      [scalarParameter "key" keyTy keyNominal] resultNominal
     let bindKey := Statement.bind keyName (.scalar keyTy) key
     -- Native equality ties the disclosed provider value to the public ledger read.
     let bindResult := Statement.bind destination (.scalar resultTy)
@@ -118,8 +123,10 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
   | .writeMap state keyTy valueTy key value => do
     let keyName ← fresh "key"
     let valueName ← fresh "value"
+    let nominalMap := ((← get).nominalUIntMaps.lookup state).getD {}
     let (site, name) ← registerCall "writeMap" state (some keyTy) valueTy
-      [scalarParameter "key" keyTy, scalarParameter "value" valueTy]
+      [scalarParameter "key" keyTy (nominalMap.key.map (·.name)),
+        scalarParameter "value" valueTy (nominalMap.value.map (·.name))]
     let bindKey := Statement.bind keyName (.scalar keyTy) key
     let bindValue := Statement.bind valueName (.scalar valueTy) value
     let notify := Statement.evaluate (callTerm site name [.ref keyName, .ref valueName])
@@ -161,6 +168,7 @@ def transform (program : Program) : Except Diagnostic Transformed := do
   let source := reprStr program
   let initial : BuildState := {
     source, nominalUIntCells := program.nominalUIntCells,
+    nominalUIntMaps := program.nominalUIntMaps,
     reserved := program.witnesses.map (·.name)}
   let action : BuildM (List Declaration × List Declaration) := transformDeclarations program.declarations
   let ((hostDeclarations, nativeDeclarations), result) ← action.run initial

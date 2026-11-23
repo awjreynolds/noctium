@@ -221,6 +221,93 @@ noctium_contract NominalAmountSets where
   end
 end
 
+private def nominalMapHelperProgram : Program := {
+  ledger := [{name := "balances", kind := .map (.uint 255) (.uint 255)}]
+  nominalUIntMaps := [("balances", {
+    key := some Count.nominalType, value := some Amount.nominalType})]
+  declarations := [
+    {id := ⟨0, 0⟩, name := "forwardAmount",
+      parameters := [⟨"amount", .uint 255⟩],
+      nominalUIntParameters := [("amount", Amount.nominalType)],
+      result := .scalar (.uint 255), nominalUIntResult := some Amount.nominalType,
+      body := [.return (some (.ref "amount"))]},
+    {id := ⟨0, 1⟩, name := "get",
+      parameters := [⟨"key", .uint 255⟩],
+      nominalUIntParameters := [("key", Count.nominalType)],
+      result := .scalar (.uint 255), nominalUIntResult := some Amount.nominalType,
+      body := [
+        .readMember "balances" "present" (.uint 255) (.uint 255) (.ref "key"),
+        .readMap "balances" "current" (.uint 255) (.uint 255) (.ref "key"),
+        .return (some (.call "forwardAmount" [.ref "current"]))]},
+    {id := ⟨0, 2⟩, name := "set",
+      parameters := [⟨"key", .uint 255⟩, ⟨"amount", .uint 255⟩],
+      nominalUIntParameters := [("key", Count.nominalType), ("amount", Amount.nominalType)],
+      result := .unit,
+      body := [
+        .writeMap "balances" (.uint 255) (.uint 255)
+          (.disclose {} (.ref "key")) (.disclose {} (.ref "amount")),
+        .return none]}]
+  exports := [
+    {name := "get", target := ⟨0, 1⟩, inputs := [
+      {name := "key", ty := .uint 255, visibility := .public}]},
+    {name := "set", target := ⟨0, 2⟩, inputs := [
+      {name := "key", ty := .uint 255, visibility := .public},
+      {name := "amount", ty := .uint 255, visibility := .private}]}]
+}
+
+private def crossedNominalMapReadProgram : Program := {
+  nominalMapHelperProgram with
+  declarations := nominalMapHelperProgram.declarations.map fun declaration =>
+    if declaration.name == "get" then
+      {declaration with nominalUIntResult := some Count.nominalType}
+    else declaration
+}
+
+private def crossedNominalMapKeyProgram : Program := {
+  nominalMapHelperProgram with
+  declarations := nominalMapHelperProgram.declarations.map fun declaration =>
+    if declaration.name == "get" then
+      {declaration with nominalUIntParameters := [("key", Amount.nominalType)]}
+    else declaration
+}
+
+private def crossedNominalMapWriteProgram : Program := {
+  nominalMapHelperProgram with
+  declarations := nominalMapHelperProgram.declarations.map fun declaration =>
+    if declaration.name == "set" then
+      {declaration with nominalUIntParameters := [
+        ("key", Count.nominalType), ("amount", Count.nominalType)]}
+    else declaration
+}
+
+noctium_contract NominalAmountMapHelpers where
+  map balances : Count => Amount
+  entry get from nominalMapHelperProgram entry "get" end
+  entry update from nominalMapHelperProgram entry "set" end
+end
+
+#guard (Witness.compileLedger nominalMapHelperProgram "get" NominalAmountMapHelpers.state).isOk
+#guard (Witness.compileLedger nominalMapHelperProgram "set" NominalAmountMapHelpers.state).isOk
+
+#guard match Witness.Ledger.transform nominalMapHelperProgram with
+  | .ok transformed =>
+      transformed.host.witnesses.any (fun signature =>
+        signature.operation == "noctium.ledger.read.v1" &&
+          signature.result == .scalar (.uint 255) &&
+          signature.parameters.map (·.sourceNominal) == [some Count.nominalType.name] &&
+          signature.resultNominal == some Amount.nominalType.name) &&
+      transformed.host.witnesses.any (fun signature =>
+        signature.operation == "noctium.ledger.read.v1" &&
+          signature.result == .scalar .bool &&
+          signature.parameters.map (·.sourceNominal) == [some Count.nominalType.name] &&
+          signature.resultNominal.isNone) &&
+      transformed.host.witnesses.any (fun signature =>
+        signature.operation == "noctium.ledger.write.v1" &&
+          signature.result == .unit &&
+          signature.parameters.map (·.sourceNominal) ==
+            [some Count.nominalType.name, some Amount.nominalType.name])
+  | .error _ => Bool.false
+
 noctium_circuit countLedgerValue where
   private count : Count
 end
@@ -452,6 +539,55 @@ private def nominalMapRoundTrip : Except String _root_.Bool := do
       (key, .map [(.uint 255 4, .scalar (.uint 255 74)), (.uint 255 3, .scalar (.uint 255 73))])]))
 
 #guard nominalMapRoundTrip.toOption == some Bool.true
+
+#guard match NominalAmountMapHelpers.entrypoints with
+  | [get, update] =>
+      get.circuit.inputs.map (·.ty) == [.uint 255] && get.returns.map (·.ty) == [.uint 255] &&
+        get.effects.any (fun effect => match effect with
+          | .readMember "balances" _ (.uint 255) (.uint 255) _ => Bool.true
+          | _ => Bool.false) &&
+        get.effects.any (fun effect => match effect with
+          | .readMap "balances" _ (.uint 255) (.uint 255) _ => Bool.true
+          | _ => Bool.false) &&
+        update.effects.any (fun effect => match effect with
+          | .writeMap "balances" (.uint 255) (.uint 255) _ _ => Bool.true
+          | _ => Bool.false)
+  | _ => Bool.false
+
+#guard match Helpers.compileEntrypointFor crossedNominalMapReadProgram "get"
+    NominalAmountMapHelpers.state with
+  | .error issue => issue.message ==
+      "nominal UInt values require an explicit cast and must match the target type"
+  | .ok _ => Bool.false
+
+#guard match Helpers.compileEntrypointFor crossedNominalMapKeyProgram "get"
+    NominalAmountMapHelpers.state with
+  | .error issue => issue.message ==
+      "nominal UInt values require an explicit cast and must match the target type"
+  | .ok _ => Bool.false
+
+#guard match Helpers.compileEntrypointFor crossedNominalMapWriteProgram "set"
+    NominalAmountMapHelpers.state with
+  | .error issue => issue.message ==
+      "nominal UInt values require an explicit cast and must match the target type"
+  | .ok _ => Bool.false
+
+private def nominalMapHelperRoundTrip : Except String _root_.Bool := do
+  let [get, update] := NominalAmountMapHelpers.entrypoints
+    | throw "expected two helper Map operations"
+  let key : Value := .uint 255 2
+  let initialAmount : Value := .uint 255 19
+  let nextAmount : Value := .uint 255 41
+  let (before, beforeState) ← get.run context [("key", key)]
+    {maps := [("balances", [(key, initialAmount)])]}
+  let (_, updatedState) ← update.run context [("key", key), ("amount", nextAmount)] beforeState
+  let (after, finalState) ← get.run context [("key", key)] updatedState
+  pure (before.any (fun (_, value) => value == initialAmount) &&
+    after.any (fun (_, value) => value == nextAmount) &&
+    finalState.maps.lookup "balances" == some [(key, nextAmount)])
+
+#guard nominalMapHelperRoundTrip.toOption == some Bool.true
+
 #guard match NominalAmountMaps.constructor with
   | some ctor => ctor.mapInserts.map (·.state) == ["balances", "seededBalances"]
   | none => Bool.false

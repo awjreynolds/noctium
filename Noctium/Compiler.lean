@@ -1174,9 +1174,9 @@ private unsafe def registeredContracts (moduleOutputs : Array (Name × ModuleBui
         let source := (circuitRegistry.getState env).find? fun info =>
           info.declName.toString == compiledEntry.circuit.name && info.stateProgram?.isSome
         let rebuilt : Entrypoint × Option Witness.Compiled ← match source with
-          | some {stateProgram? := some (sourceName, exportName), stateNominalUIntCells, ..} => do
+          | some {stateProgram? := some (sourceName, exportName), stateNominalUIntCells, stateNominalUIntMaps, ..} => do
             let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
-            let program := {program with nominalUIntCells := stateNominalUIntCells}
+            let program := program.withNominalUIntState stateNominalUIntCells stateNominalUIntMaps
             let (fresh, hostWitness) ← match Witness.compileStateEntrypointWithWitness program exportName
                 contract.state compiledEntry.circuit.name rewrites with
               | .ok value => pure value
