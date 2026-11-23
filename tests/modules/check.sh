@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 lake env lean tests/Modules.lean
+lake env lean tests/modules/PublicModuleAliases.lean
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 lake exe noctium compile tests/modules/Native.lean \

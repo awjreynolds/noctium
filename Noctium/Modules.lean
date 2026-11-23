@@ -100,6 +100,10 @@ structure Member where
   stateSchema? : Option ModuleStateKind := none
   typeTemplate? : Option TypeTemplate := none
   typeInfo? : Option TypeInfo := none
+  /-- A module member names a registered generic module definition. The
+  importing module supplies specialization arguments when it selects this
+  member as an import target. -/
+  moduleTarget? : Option Name := none
   deriving Repr, Inhabited
 
 inductive StateTarget where
@@ -130,9 +134,19 @@ structure Selection where
   span : SourceSpan := {}
   deriving Repr, Inhabited
 
+/-- Imports may name a registered module directly or select a module member
+from an import view declared earlier in the same definition. -/
+inductive ImportTarget where
+  | registered (sourceName : Name)
+  | moduleMember (viewName localName : String)
+  deriving Repr, Inhabited
+
+instance : Coe Name ImportTarget where
+  coe := .registered
+
 structure Import where
   viewName : String
-  target : Name
+  target : ImportTarget
   arguments : List ModuleArgument := []
   selections : List Selection := []
   span : SourceSpan := {}
@@ -474,6 +488,14 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
   for sourceMember in definition.members do
     validText sourceMember.span sourceMember.name
     if sourceMember.id > 18446744073709551615 then resource sourceMember.span "module member identity"
+    match sourceMember.kind, sourceMember.moduleTarget? with
+    | .module, none =>
+      fail sourceMember.span s!"module member '{sourceMember.name}' has no target module"
+    | .module, some target =>
+      let _ ← nameEncodingSize sourceMember.span limits.maxSourceDepth target
+    | _, some _ =>
+      fail sourceMember.span "module target is only valid on a module member"
+    | _, none => pure ()
     if sourceMember.typeInfo?.isSome then
       fail sourceMember.span "module source cannot provide pre-resolved type metadata"
     if sourceMember.kind == .type && sourceMember.typeTemplate?.isNone then
@@ -549,7 +571,12 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     fail definition.span "duplicate Noctium module import view"
   for item in definition.imports do
     validText item.span item.viewName
-    let _ ← nameEncodingSize item.span limits.maxSourceDepth item.target
+    match item.target with
+    | .registered target =>
+      let _ ← nameEncodingSize item.span limits.maxSourceDepth target
+    | .moduleMember viewName localName =>
+      validText item.span viewName
+      validText item.span localName
     if item.arguments.length > limits.maxArguments then resource item.span "module import arguments"
     if item.selections.length > limits.maxSourceNodes then resource item.span "module import selections"
     let selectionKeys := item.selections.map fun selection =>
@@ -600,8 +627,15 @@ private def validateRegistry (limits : Limits) (registry : Registry) : Except Di
     if total > limits.maxSourceNodes then resource module.definition.span "module source nodes"
   for module in registry.modules do
     for item in module.definition.imports do
-      unless (lookupRegistered registry item.target).isSome do
-        fail item.span s!"unknown imported module '{sourceSpanName item.target}'"
+      match item.target with
+      | .registered target =>
+        unless (lookupRegistered registry target).isSome do
+          fail item.span s!"unknown imported module '{sourceSpanName target}'"
+      | .moduleMember .. => pure ()
+    for member in module.definition.members do
+      if let some target := member.moduleTarget? then
+        unless (lookupRegistered registry target).isSome do
+          fail member.span s!"unknown target module '{sourceSpanName target}'"
   pure total
 
 private abbrev TypeEnvironment := List (String × Types.CompositeType)
@@ -773,6 +807,21 @@ private def findIdentityMember (state : ExpansionState) (currentKey : ModuleKey)
     moduleInstance.members.find? fun sourceMember =>
       sourceMember.id == identity.member && sourceMember.kind == identity.kind
 
+private def resolveImportTarget (state : ExpansionState) (span : SourceSpan)
+    (currentKey : ModuleKey) (currentMembers : List Member)
+    (views : List ImportedView) : ImportTarget → ExpandM Name
+  | .registered sourceName => pure sourceName
+  | .moduleMember viewName localName => do
+    let identity ← liftE <| resolveTargetInModule span currentKey currentMembers views
+      (.importedMember viewName localName)
+    unless identity.kind == .module do
+      liftE <| fail span s!"module import target '{viewName}.{localName}' is not a module member"
+    let some sourceMember := findIdentityMember state currentKey currentMembers identity
+      | liftE <| fail span s!"module import target '{viewName}.{localName}' is unavailable"
+    let some sourceName := sourceMember.moduleTarget?
+      | liftE <| fail span s!"module member '{sourceMember.name}' has no target module"
+    pure sourceName
+
 private def validateModuleEntrypoints (state : ExpansionState)
     (key : ModuleKey) (members : List Member) (views : List ImportedView)
     (entrypoints : List ModuleEntrypoint) : Except Diagnostic Unit := do
@@ -888,13 +937,16 @@ mutual
     for importSpec in definition.imports do
       let childArguments ← importSpec.arguments.mapM
         (fun argument => liftE (resolveArgument state.limits importSpec.span types naturals argument))
-      let child ← instantiate importSpec.span importSpec.target childArguments
+      let currentState ← get
+      let targetName ← resolveImportTarget currentState importSpec.span key
+        resolvedMembers importedViews importSpec.target
+      let child ← instantiate importSpec.span targetName childArguments
       let mut bindings : List ViewBinding := []
       for selection in importSpec.selections do
         let selectedExports := child.exports.filter (·.name == selection.sourceName)
         if selectedExports.isEmpty then
           liftE (fail selection.span
-            s!"module '{sourceSpanName importSpec.target}' does not export '{selection.sourceName}'")
+            s!"module '{sourceSpanName targetName}' does not export '{selection.sourceName}'")
         for candidate in selectedExports do
           let binding : ViewBinding := {
             name := selection.localName
