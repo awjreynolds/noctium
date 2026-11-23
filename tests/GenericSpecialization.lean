@@ -216,10 +216,9 @@ private def opaqueAggregateProgram : GProgram :=
   identityProgram (.tuple [.opaqueBytes])
 
 #guard match specialize opaqueAggregateProgram "entry" with
-  | .error _ => true
-  | .ok result => match Helpers.compile result.program result.exportName with
-    | .error _ => true
-    | .ok _ => false
+  | .error diagnostic => diagnostic.message.contains "opaque byte strings are not scalar values"
+  | .ok result => messageContains (Helpers.compile result.program result.exportName)
+      "opaque byte strings are not scalar values"
 
 private def genericBox (id : String) : Structure :=
   ⟨id, [⟨"T", .type⟩], [("value", .parameter "T")], {}⟩
