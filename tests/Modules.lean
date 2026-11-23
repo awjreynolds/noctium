@@ -399,6 +399,27 @@ private def forwardingModule : Definition := {
     | .error _ => false
   | .error _ => false
 
+-- Every foreign curve role keeps a distinct, exactly sized canonical module key.
+private def foreignCircuitModule : Definition := {
+  parameters := [⟨"T", .type⟩]
+  members := [moduleMember 0 "identity" .circuit]
+}
+
+#guard match registerAll [(sourceName ["Demo", "Foreign"], foreignCircuitModule)] with
+  | .ok registry =>
+    let foreignInstances := Foreign.kinds.filterMap fun kind =>
+      match expand registry (sourceName ["Demo", "Foreign"])
+          [.type (.scalar (.foreign kind))] with
+      | .ok expansion =>
+        expansion.findInstance expansion.root |>.map (fun item => (kind, item))
+      | .error _ => none
+    foreignInstances.length == 9 &&
+      foreignInstances.all (fun (kind, item) =>
+        item.key.arguments == [.type (.scalar (.foreign kind))]) &&
+      (foreignInstances.map (fun (_, item) => item.digest)).eraseDups.length ==
+        Foreign.kinds.length
+  | .error _ => false
+
 -- GEN-ARITY and GEN-KINDS fail before any instance is emitted.
 #guard match registerAll [(sourceName ["Demo", "Generic"], genericModule)] with
   | .ok registry =>

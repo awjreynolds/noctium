@@ -1,0 +1,54 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+module GenericIdentity<T> {
+  export circuit identity(value: T): T {
+    return value;
+  }
+}
+
+import GenericIdentity<Secp256k1Base> prefix secp256k1Base_;
+import GenericIdentity<Secp256k1Scalar> prefix secp256k1Scalar_;
+import GenericIdentity<Secp256k1Point> prefix secp256k1Point_;
+import GenericIdentity<Secp256r1Base> prefix secp256r1Base_;
+import GenericIdentity<Secp256r1Scalar> prefix secp256r1Scalar_;
+import GenericIdentity<Secp256r1Point> prefix secp256r1Point_;
+import GenericIdentity<Curve25519Base> prefix curve25519Base_;
+import GenericIdentity<Curve25519Scalar> prefix curve25519Scalar_;
+import GenericIdentity<Curve25519Point> prefix curve25519Point_;
+
+export circuit secp256k1BaseIdentity(value: Secp256k1Base): Secp256k1Base {
+  return secp256k1Base_identity(value);
+}
+
+export circuit secp256k1ScalarIdentity(value: Secp256k1Scalar): Secp256k1Scalar {
+  return secp256k1Scalar_identity(value);
+}
+
+export circuit secp256k1PointIdentity(value: Secp256k1Point): Secp256k1Point {
+  return secp256k1Point_identity(value);
+}
+
+export circuit secp256r1BaseIdentity(value: Secp256r1Base): Secp256r1Base {
+  return secp256r1Base_identity(value);
+}
+
+export circuit secp256r1ScalarIdentity(value: Secp256r1Scalar): Secp256r1Scalar {
+  return secp256r1Scalar_identity(value);
+}
+
+export circuit secp256r1PointIdentity(value: Secp256r1Point): Secp256r1Point {
+  return secp256r1Point_identity(value);
+}
+
+export circuit curve25519BaseIdentity(value: Curve25519Base): Curve25519Base {
+  return curve25519Base_identity(value);
+}
+
+export circuit curve25519ScalarIdentity(value: Curve25519Scalar): Curve25519Scalar {
+  return curve25519Scalar_identity(value);
+}
+
+export circuit curve25519PointIdentity(value: Curve25519Point): Curve25519Point {
+  return curve25519Point_identity(value);
+}
