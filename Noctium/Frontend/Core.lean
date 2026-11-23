@@ -440,6 +440,8 @@ declare_syntax_cat nlmaprecordtail
 scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax ident "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
+scoped syntax "map" ident ":" "Vector(" num "," nltype ")" "=>"
+  "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmapsettail
 scoped syntax "Set" "struct" ident "{" nlcompositefield* "}" : nlmapsettail
 scoped syntax nltype "=>" nlmapsettail : nlmapsettail
@@ -5690,6 +5692,27 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
+        | `(nlstate| map $id:ident : Vector($length:num, $element:nltype) =>
+            struct $record:ident { $recordFields:nlcompositefield* }) => do
+          let elementSource ← readCircuitSourceType element
+          unless elementSource.type == .native && elementSource.nominalUInt.isNone do
+            throwErrorAt state "root Map vector keys require Native elements"
+          let length := length.getNat
+          let (keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm) ←
+            checkedRootNativeVectorKeyLayout length state "Map vector key"
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm),
+              sourceValues) ← elaborateTypedLedgerRecord contractName record recordFields state
+          unless sourceValues.isEmpty do
+            recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
+          match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
+          let valueSchema := LedgerValueType.recordMapComposite
+            keyEnvironment keyType valueEnvironment valueType
+          let valueTerm ← `(Noctium.LedgerValueType.recordMapComposite
+            $keyEnvironmentTerm $keyTypeTerm $valueEnvironmentTerm $valueTypeTerm)
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| map $id:ident : Vector($length:num, $element:nltype) => $valueType:nltype) => do
           let elementSource ← readCircuitSourceType element
           unless elementSource.type == .native && elementSource.nominalUInt.isNone do
