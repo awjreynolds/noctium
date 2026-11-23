@@ -308,6 +308,51 @@ end
             [some Count.nominalType.name, some Amount.nominalType.name])
   | .error _ => Bool.false
 
+noctium_circuit nominalRecordOwner where
+  private owner : Bytes32
+end
+
+noctium_contract NominalAmountRecords where
+  cell position : struct Position {
+    amount : Amount
+    count : Count
+    active : Bool
+  }
+  tree positions : Bytes32 => struct Position {
+    amount : Amount
+    count : Count
+    active : Bool
+  }
+  list history : struct Position {
+    amount : Amount
+    count : Count
+    active : Bool
+  }
+
+  entry writeAmount uses nominalListValues where
+    write position := fields(disclose(amount), disclose(count), true)
+    insert positions[disclose(owner)] := fields(disclose(amount), disclose(count), true)
+    pushFront history := fields(disclose(amount), disclose(count), true)
+  end
+
+  entry writeRaw uses nominalListValues where
+    write position := fields(disclose(cast(Amount, raw)), disclose(count), true)
+    write positions[disclose(owner)] := fields(disclose(cast(Amount, raw)), disclose(count), true)
+    pushFront history := fields(disclose(cast(Amount, raw)), disclose(count), true)
+  end
+
+  entry inspect uses nominalRecordOwner where
+    read position as current
+    read positions[disclose(owner)] as stored
+    head history as latest
+    return activeResult : Bool := current_active
+    return cellAmount : Amount := current_amount
+    return mapAmount : Amount := stored_amount
+    return listAmount : Amount := latest_amount
+    return countResult : Count := stored_count
+  end
+end
+
 noctium_circuit countLedgerValue where
   private count : Count
 end
@@ -508,6 +553,37 @@ private def nominalListRoundTrip : Except String _root_.Bool := do
     finalState.trees.lookup "amounts" == some (.list [[.uint 255 255], [.uint 255 41], [.uint 255 19]]))
 
 #guard nominalListRoundTrip.toOption == some Bool.true
+
+private def nominalRecordRoundTrip : Except String _root_.Bool := do
+  let [writeAmount, writeRaw, inspect] := NominalAmountRecords.entrypoints
+    | throw "expected three nominal record operations"
+  let owner : Value := .bytes 32 (List.replicate 32 1)
+  let recordType := Types.CompositeType.structure "NominalUInt.NominalAmountRecords.Position"
+  let initial : LedgerState := {trees := [
+    ("position", .composite recordType [.uint 255 0, .uint 255 0, .bool Bool.false]),
+    ("positions", .map []), ("history", .list [])]}
+  let inputs (amount raw : Nat) : EvalEnv := [
+    ("owner", owner), ("amount", .uint 255 amount), ("count", .uint 255 7),
+    ("raw", .uint 255 raw)]
+  let inspectInputs : EvalEnv := [("owner", owner)]
+  let (_, seeded) ← writeAmount.run context (inputs 19 0) initial
+  let (initialOutput, _) ← inspect.run context inspectInputs seeded
+  let (_, updated) ← writeAmount.run context (inputs 41 0) seeded
+  let (typedOutput, _) ← inspect.run context inspectInputs updated
+  let (_, finished) ← writeRaw.run context (inputs 0 255) updated
+  let (castOutput, _) ← inspect.run context inspectInputs finished
+  let amountsMatch (outputs : EvalEnv) (expected : Nat) :=
+    ["cellAmount", "mapAmount", "listAmount"].all (fun label =>
+      outputs.lookup label == some (.uint 255 expected))
+  pure (amountsMatch initialOutput 19 && amountsMatch typedOutput 41 &&
+    amountsMatch castOutput 255 &&
+    castOutput.lookup "activeResult" == some (.bool Bool.true) &&
+    castOutput.lookup "countResult" == some (.uint 255 7))
+
+#guard nominalRecordRoundTrip.toOption == some Bool.true
+#guard NominalAmountRecords.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint NominalAmountRecords.state operation).isOk
+
 
 private def nominalMapRoundTrip : Except String _root_.Bool := do
   let [inspect, setAmount, setRaw, setNested, removeAmount] := NominalAmountMaps.entrypoints
@@ -1048,6 +1124,65 @@ noctium_contract rejectsNominalCircuitOutputReturn where
   cell balance : Amount
   entry returnRaw uses nominalLedgerValues where
     return rawAmount : UInt 8 := amountResult
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRecordCellWrite where
+  cell position : struct Position { amount : Amount }
+  entry update uses nominalListValues where
+    write position := fields(disclose(count))
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRecordMapRawWrite where
+  tree positions : Bytes32 => struct Position { amount : Amount }
+  entry seed uses nominalListValues where
+    insert positions[disclose(owner)] := fields(disclose(raw))
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRecordReadReturn where
+  tree positions : Bytes32 => struct Position { amount : Amount }
+  entry inspect uses nominalRecordOwner where
+    read positions[disclose(owner)] as stored
+    return wrongAlias : Count := stored_amount
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRecordListRawReturn where
+  list history : struct Position { amount : Amount }
+  entry inspect uses nominalListHeadOnly where
+    head history as latest
+    return rawAmount : UInt 8 := latest_amount
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRecordWriteToPlainField where
+  cell position : struct Position { amount : Amount }
+  cell rawPosition : struct RawPosition { amount : UInt 8 }
+  entry copyAmount uses nominalListHeadOnly where
+    read position as stored
+    write rawPosition := fields(stored_amount)
+  end
+end
+
+/- error: nominal UInt fields require an explicitly typed return -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsErasedNominalRecordMaybeReturn where
+  list history : struct Position { amount : Amount }
+  entry inspect uses nominalListHeadOnly where
+    headOrDefault history as (present, latest)
+    returnMaybe latestPosition as (present, latest)
   end
 end
 

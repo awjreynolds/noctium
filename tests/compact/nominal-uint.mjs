@@ -79,6 +79,14 @@ try {
       'new type Count = Uint<8>; ledger amountSets: Map<Count, Set<Amount>>;',
       'circuit invalid(value: Uint<8>): [] { amountSets.insertDefault(disclose(0 as Count)); amountSets.lookup(disclose(0 as Count)).insert(disclose(value)); return []; }',
       /expected first argument of insert to have type Amount but received Uint<8>/],
+    ['position-amount-wrong-nominal',
+      'new type Count = Uint<8>; struct Position { amount: Amount; count: Count; active: Boolean; } ledger position: Position; constructor() { position = Position { amount: 0 as Amount, count: 0 as Count, active: true }; }',
+      'circuit invalid(value: Count): [] { position = Position { amount: disclose(value), count: 0 as Count, active: true }; return []; }',
+      /mismatch between actual type Count and declared type Amount for field amount of struct/],
+    ['position-amount-implicit-raw',
+      'new type Count = Uint<8>; struct Position { amount: Amount; count: Count; active: Boolean; } ledger position: Position; constructor() { position = Position { amount: 0 as Amount, count: 0 as Count, active: true }; }',
+      'circuit invalid(value: Uint<8>): [] { position = Position { amount: disclose(value), count: 0 as Count, active: true }; return []; }',
+      /mismatch between actual type Uint<8> and declared type Amount for field amount of struct/],
   ];
   for (const [name, extra, circuit, diagnostic] of rejectedCases) {
     const source = join(scratch, name + '.compact');
@@ -102,8 +110,9 @@ try {
   const compactRuntime = await import(pathToFileURL(join(runtime, 'dist/index.js')).href);
   const contract = new Contract({});
   const wallet = '00'.repeat(32);
+  const positionKey = new Uint8Array(32).fill(23);
   const { currentContractState } = await contract.initialState(
-    compactRuntime.createConstructorContext(null, wallet), 2n, 19n,
+    compactRuntime.createConstructorContext(null, wallet), 2n, 19n, positionKey,
   );
   function invoke(name, state, ...args) {
     const context = compactRuntime.createCircuitContext({
@@ -116,6 +125,10 @@ try {
   assert.equal((await invoke('get', initial)).result, 19n);
   assert.equal(ledger(initial).balances.member(2n), true);
   assert.equal(ledger(initial).balances.lookup(2n), 19n);
+  assert.deepEqual(ledger(initial).position, { amount: 19n, count: 2n, active: true });
+  assert.deepEqual(ledger(initial).positions.lookup(positionKey), { amount: 19n, count: 2n, active: true });
+  assert.equal((await invoke('positionAmount', initial)).result, 19n);
+  assert.equal((await invoke('mappedPositionAmount', initial, positionKey)).result, 19n);
   const initialListHead = (await invoke('amountHead', initial)).result;
   assert.deepEqual(Object.keys(initialListHead), ['is_some', 'value']);
   assert.equal(initialListHead.is_some, true);
@@ -126,6 +139,20 @@ try {
   const pushedListHead = (await invoke('amountHead', afterWrite)).result;
   assert.equal(pushedListHead.is_some, true);
   assert.equal(pushedListHead.value, 41n);
+
+  const positionWrite = await invoke('writePositionAmount', initial, positionKey, 41n);
+  const afterPositionWrite = positionWrite.context.callContext.currentQueryContext.state;
+  assert.deepEqual(ledger(afterPositionWrite).position, { amount: 41n, count: 2n, active: true });
+  assert.deepEqual(ledger(afterPositionWrite).positions.lookup(positionKey), { amount: 41n, count: 2n, active: true });
+  assert.equal((await invoke('positionAmount', afterPositionWrite)).result, 41n);
+  assert.equal((await invoke('mappedPositionAmount', afterPositionWrite, positionKey)).result, 41n);
+
+  const positionCast = await invoke('writePositionRaw', afterPositionWrite, positionKey, 255n);
+  const afterPositionCast = positionCast.context.callContext.currentQueryContext.state;
+  assert.deepEqual(ledger(afterPositionCast).position, { amount: 255n, count: 2n, active: true });
+  assert.deepEqual(ledger(afterPositionCast).positions.lookup(positionKey), { amount: 255n, count: 2n, active: true });
+  assert.equal((await invoke('positionAmount', afterPositionCast)).result, 255n);
+  assert.equal((await invoke('mappedPositionAmount', afterPositionCast, positionKey)).result, 255n);
 
   const mapWrite = await invoke('writeBalance', initial, 2n, 41n);
   const afterMapWrite = mapWrite.context.callContext.currentQueryContext.state;
@@ -163,7 +190,7 @@ try {
   const castListHead = (await invoke('amountHead', afterCast)).result;
   assert.equal(castListHead.is_some, true);
   assert.equal(castListHead.value, 255n);
-  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state, List<Amount>, Map<Count, Amount> and Set<Amount> cases`);
+  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state, Position records, List<Amount>, Map<Count, Amount> and Set<Amount> cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

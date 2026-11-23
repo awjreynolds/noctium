@@ -4,17 +4,30 @@ import CompactStandardLibrary;
 export new type Amount = Uint<8>;
 export new type Count = Uint<8>;
 
+export struct Position {
+  amount: Amount;
+  count: Count;
+  active: Boolean;
+}
+
 export ledger balance: Amount;
 export ledger amounts: List<Amount>;
 export ledger balances: Map<Count, Amount>;
 export ledger nestedBalances: Map<Count, Map<Count, Amount>>;
 export ledger amountSet: Set<Amount>;
 export ledger amountSets: Map<Count, Set<Amount>>;
+export ledger position: Position;
+export ledger positions: Map<Bytes<32>, Position>;
 
-constructor(initialKey: Count, initial: Amount) {
+constructor(initialKey: Count, initial: Amount, positionKey: Bytes<32>) {
   balance = disclose(initial);
   amounts.pushFront(disclose(initial));
   balances.insert(disclose(initialKey), disclose(initial));
+  const initialPosition = disclose(Position {
+    amount: disclose(initial), count: disclose(initialKey), active: true,
+  });
+  position = initialPosition;
+  positions.insert(disclose(positionKey), initialPosition);
 }
 
 pure circuit forwardAmount(value: Amount): Amount {
@@ -62,6 +75,35 @@ export circuit writeNestedBalance(owner: Count, key: Count, value: Amount): [] {
   if (!nestedBalances.member(exposedOwner)) { nestedBalances.insertDefault(exposedOwner); }
   nestedBalances.lookup(exposedOwner).insert(disclose(key), disclose(value));
   return [];
+}
+
+export circuit writePositionAmount(key: Bytes<32>, value: Amount): [] {
+  const exposedKey = disclose(key);
+  const mapped = positions.lookup(exposedKey);
+  position = Position { amount: disclose(value), count: position.count, active: position.active };
+  positions.insert(exposedKey, Position {
+    amount: disclose(value), count: mapped.count, active: mapped.active,
+  });
+  return [];
+}
+
+export circuit writePositionRaw(key: Bytes<32>, value: Uint<8>): [] {
+  const exposedKey = disclose(key);
+  const amount = value as Amount;
+  const mapped = positions.lookup(exposedKey);
+  position = Position { amount: disclose(amount), count: position.count, active: position.active };
+  positions.insert(exposedKey, Position {
+    amount: disclose(amount), count: mapped.count, active: mapped.active,
+  });
+  return [];
+}
+
+export circuit positionAmount(): Amount {
+  return position.amount;
+}
+
+export circuit mappedPositionAmount(key: Bytes<32>): Amount {
+  return positions.lookup(disclose(key)).amount;
 }
 
 export circuit add(value: Amount, owner: Count): [Boolean, Boolean] {
