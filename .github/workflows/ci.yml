@@ -239,6 +239,7 @@ jobs:
           lake env lean tests/NativeReturns.lean
           lake env lean tests/TypedCallArguments.lean
           lake env lean tests/ContractInterfaces.lean
+          lake env lean tests/TypedContractReference.lean
           lake env lean tests/ContractInterfaceComposition.lean
           lake env lean tests/NativeCallClaims.lean
           lake env lean tests/NativeCopy.lean
@@ -360,6 +361,9 @@ jobs:
           .lake/build/bin/noctium compile tests/RawShieldedClaims.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/raw-shielded-claims"
+          .lake/build/bin/noctium compile tests/TypedContractReference.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/typed-contract-reference"
           .lake/build/bin/noctium compile tests/AlignedByteConcat.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/aligned-byte-concat"
@@ -394,6 +398,7 @@ jobs:
             NOCTIUM_UNIT_BINDINGS_DIR="$artifacts/readable-unit-bindings" \
             NOCTIUM_NAMED_PROOF_UNIT_DIR="$artifacts/named-proof-unit" \
             NOCTIUM_RAW_SHIELDED_CLAIMS_DIR="$artifacts/raw-shielded-claims" \
+            NOCTIUM_TYPED_CONTRACT_REFERENCE_DIR="$artifacts/typed-contract-reference" \
             NOCTIUM_FIXED_NUMERIC_BYTES_DIR="$artifacts/fixed-numeric-bytes" \
             NOCTIUM_ALIGNED_BYTE_CONCAT_DIR="$artifacts/aligned-byte-concat" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
@@ -411,7 +416,8 @@ jobs:
               --test named_enum_members --test nested_aggregate_equality \
               --test structural_equality_widening \
               --test readable_lazy_conditional --test readable_iteration \
-              --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims -- --ignored
+              --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
+              --test typed_contract_reference -- --ignored
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness

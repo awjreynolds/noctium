@@ -52,6 +52,8 @@ structure CircuitInfo where
   /-- Source-only nominal UInt identities for circuit inputs and outputs. -/
   nominalUIntInputs : List (String × NominalUIntType) := []
   nominalUIntOutputs : List (String × NominalUIntType) := []
+  /-- Interface identities on byte-encoded contract addresses. -/
+  contractRefBindings : List (String × Name) := []
   /-- Logical witness-circuit results retained when a grouped helper result is
   expanded into native leaves. The names point to typed Expr constants. -/
   logicalOutputs : List (String × Ty × Name) := []
@@ -226,6 +228,7 @@ scoped syntax "Bool" : nltype
 scoped syntax "UInt" num : nltype
 scoped syntax "UIntRange" num : nltype
 scoped syntax "Bytes32" : nltype
+scoped syntax "ContractRef" ident : nltype
 scoped syntax "Bytes" num : nltype
 scoped syntax "OpaqueBytes" : nltype
 scoped syntax "OpaqueString" : nltype
@@ -307,6 +310,8 @@ declare_syntax_cat nlcallvalue
 scoped syntax nlexpr : nlcallvalue
 scoped syntax ident ":=" "fields(" nlexpr,* ")" : nlcallvalue
 scoped syntax "callCommitment(" ident "," str "," nlexpr ","
+  "[" nlcallvalue,* "]" "," "[" nlcallvalue,* "]" ")" : nlexpr
+scoped syntax "callCommitment(" str "," nlexpr ","
   "[" nlcallvalue,* "]" "," "[" nlcallvalue,* "]" ")" : nlexpr
 scoped syntax "callCommitment(" ident "," ident "," str "," nlexpr ","
   "[" nlcallvalue,* "]" "," "[" nlcallvalue,* "]" ")" : nlexpr
@@ -696,8 +701,17 @@ private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
 private structure CircuitSourceType where
   type : Ty
   nominalUInt : Option NominalUIntType := none
+  contractRef : Option Name := none
 
 private def readCircuitSourceType (stx : TSyntax `nltype) : CommandElabM CircuitSourceType := do
+  if let `(nltype| ContractRef $interface:ident) := stx then
+    let name ← liftCoreM <| resolveGlobalConstNoOverload interface
+    let declaration ← getConstInfo name
+    unless declaration.type.isConstOf ``ContractInterface do
+      throwErrorAt interface s!"'{name}' is not a declared contract interface"
+    if (← interfaceMethods name).isEmpty then
+      throwErrorAt interface s!"'{name}' is not a declared contract interface"
+    return {type := .bytes 32, contractRef := some name}
   if let some name := nominalUIntTypeIdentifier stx then
     let declaration ← resolveNominalUIntType name.getId name
     return {type := .uint declaration.maximum, nominalUInt := some declaration}
@@ -918,6 +932,33 @@ private def callExpressions (role : String) (ordered : List (String × Ty))
     let some value := supplied.lookup name
       | throwErrorAt site "missing committed {role} field '{name}'"
     pure value
+
+private def commitmentHashWith (env : Bindings)
+    (expected : TSyntax `nlexpr → Ty → CommandElabM (TSyntax `term))
+    (interface : CallInterface) (opening : TSyntax `nlexpr)
+    (inputs outputs : Array (TSyntax `nlcallvalue)) (stx : TSyntax `nlexpr) :
+    CommandElabM (Ty × TSyntax `term) := do
+  let arguments ← callExpressions "argument" interface.argumentFields interface.argumentViews inputs stx
+  let results ← callExpressions "result" interface.resultFields interface.resultViews outputs stx
+  let payload := [(opening, Ty.native)] ++ arguments ++ results
+  let mut bindings := []
+  let mut fields : Array (TSyntax `term) := #[]
+  for ((part, ty), index) in payload.zipIdx do
+    let value ← expected part ty
+    -- Pick a local name outside the incoming environment before expanding ABI projections.
+    let name := ((List.range (env.length + 1)).map fun suffix =>
+      s!"_noctium_call_{index}_{suffix}").find? fun name =>
+        !env.any (fun binding => binding.1 == name)
+    let some name := name | throwErrorAt part "cannot allocate call commitment binding"
+    let nameTerm := stringTerm name
+    let typeTerm ← tyTerm ty
+    let ref ← `(Noctium.Expr.ref (ty := $typeTerm) $nameTerm)
+    fields := fields.push (← `(Noctium.Expr.nativeCallFields $ref))
+    bindings := (nameTerm, value) :: bindings
+  let body ← `(Noctium.Expr.transientHash (List.flatten [$fields,*]))
+  let result ← bindings.foldlM (init := body) fun body (name, value) =>
+    `(Noctium.Expr.letE $name $value $body)
+  pure (.native, result)
 
 private def coerceExpression (stx : Syntax) (found target : Ty) (value : TSyntax `term) :
     CommandElabM (TSyntax `term) := do
@@ -1767,28 +1808,8 @@ where
     coerceExpression stx found ty value
   commitmentHash (env : Bindings) (interface : CallInterface)
       (opening : TSyntax `nlexpr) (inputs outputs : Array (TSyntax `nlcallvalue))
-      (stx : TSyntax `nlexpr) : CommandElabM (Ty × TSyntax `term) := do
-    let arguments ← callExpressions "argument" interface.argumentFields interface.argumentViews inputs stx
-    let results ← callExpressions "result" interface.resultFields interface.resultViews outputs stx
-    let payload := [(opening, Ty.native)] ++ arguments ++ results
-    let mut bindings := []
-    let mut fields : Array (TSyntax `term) := #[]
-    for ((part, ty), index) in payload.zipIdx do
-      let value ← expected env part ty
-      -- Pick a local name outside the incoming environment before expanding ABI projections.
-      let name := ((List.range (env.length + 1)).map fun suffix =>
-        s!"_noctium_call_{index}_{suffix}").find? fun name =>
-          !env.any (fun binding => binding.1 == name)
-      let some name := name | throwErrorAt part "cannot allocate call commitment binding"
-      let nameTerm := stringTerm name
-      let typeTerm ← tyTerm ty
-      let ref ← `(Noctium.Expr.ref (ty := $typeTerm) $nameTerm)
-      fields := fields.push (← `(Noctium.Expr.nativeCallFields $ref))
-      bindings := (nameTerm, value) :: bindings
-    let body ← `(Noctium.Expr.transientHash (List.flatten [$fields,*]))
-    let result ← bindings.foldlM (init := body) fun body (name, value) =>
-      `(Noctium.Expr.letE $name $value $body)
-    pure (.native, result)
+      (stx : TSyntax `nlexpr) : CommandElabM (Ty × TSyntax `term) :=
+    commitmentHashWith env (expected env) interface opening inputs outputs stx
   arithmetic (env : Bindings) (stx : Syntax) (op : ScalarPolicy.Binary)
       (left right : TSyntax `nlexpr) : CommandElabM (Ty × TSyntax `term) := do
     let (lt, left) ← expression env left
@@ -1965,6 +1986,43 @@ private def checkedCircuitSourceExpression (env : Bindings) (nominalEnv : Circui
   unless nominalUInt == target.nominalUInt do
     throwErrorAt stx "nominal UInt values require an explicit cast and must match the target type"
   coerceExpression stx found target.type value
+
+private def bindContractRef (bindings : List (String × Name)) (name : String)
+    (interface : Option Name) : List (String × Name) :=
+  let rest := bindings.filter (·.1 != name)
+  match interface with
+  | none => rest
+  | some interface => (name, interface) :: rest
+
+private partial def checkedContractRef (bindings : List (String × Name))
+    (expression : TSyntax `nlexpr) : CommandElabM (Option Name) := do
+  if bindings.isEmpty then return none
+  match expression with
+  | `(nlexpr| $name:ident) => pure (bindings.lookup name.getId.toString)
+  | `(nlexpr| disclose($value)) | `(nlexpr| copyValue($value)) =>
+    checkedContractRef bindings value
+  | `(nlexpr| select($condition, $yes, $no)) => do
+    if (← checkedContractRef bindings condition).isSome then
+      throwErrorAt condition "a contract reference cannot be a selection condition"
+    let yesInterface ← checkedContractRef bindings yes
+    let noInterface ← checkedContractRef bindings no
+    unless yesInterface == noInterface do
+      throwErrorAt expression "selected contract references must use the same interface"
+    pure yesInterface
+  | `(nlexpr| let $name:ident := $value:nlexpr in $body:nlexpr) => do
+    let interface ← checkedContractRef bindings value
+    checkedContractRef (bindContractRef bindings name.getId.toString interface) body
+  | _ =>
+    if (syntaxIdentifiers expression.raw).any (fun name => (bindings.lookup name).isSome) then
+      throwErrorAt expression "unsupported operation on a typed contract reference"
+    pure none
+
+private def checkedSourceValue (env : Bindings) (nominalEnv : CircuitNominalEnv)
+    (contractRefs : List (String × Name)) (value : TSyntax `nlexpr)
+    (target : CircuitSourceType) : CommandElabM (TSyntax `term) := do
+  unless (← checkedContractRef contractRefs value) == target.contractRef do
+    throwErrorAt value "contract reference must match the declared interface"
+  checkedCircuitSourceExpression env nominalEnv value target
 
 private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
     (fields : List (String × Ty)) : CommandElabM (List (Ty × TSyntax `term)) := do
@@ -2199,6 +2257,8 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
     let mut inputInfo := []
     let mut publicInputInfo := []
     let mut nominalUIntInputInfo := []
+    let mut contractRefEnv : List (String × Name) := []
+    let mut contractRefInfo : List (String × Name) := []
     let mut outputs : Array (TSyntax `term) := #[]
     let mut outputInfo : List (String × Ty) := []
     let mut nominalUIntOutputInfo := []
@@ -2217,6 +2277,9 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
         inputs := inputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
         env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
+        if let some interface := sourceType.contractRef then
+          contractRefInfo := (id.getId.toString, interface) :: contractRefInfo
         inputInfo := inputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntInputInfo := nominalUIntInputInfo ++ [(id.getId.toString, nominalUInt)]
@@ -2226,7 +2289,7 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
         let sourceType ← readCircuitSourceType ty
         let t := sourceType.type
         let retain := (match t with | .uint _ => Bool.true | _ => Bool.false) || hasPartialScalar value
-        let value ← checkedCircuitSourceExpression env nominalEnv value sourceType
+        let value ← checkedSourceValue env nominalEnv contractRefEnv value sourceType
         if retain then
           -- Equality keeps partial range/underflow checks in unused bindings.
           -- Byte expressions have no equality operator on the source surface, so
@@ -2239,8 +2302,9 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
             constraints := constraints.push (← `(Noctium.Expr.eq $value $value))
         env := (id.getId.toString, t, value) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
       | `(nlcstmt| assert $value:nlexpr) =>
-        constraints := constraints.push (← checkedCircuitSourceExpression env nominalEnv value
+        constraints := constraints.push (← checkedSourceValue env nominalEnv contractRefEnv value
           {type := .bool})
       | `(nlcstmt| output $id:ident : $ty:nltype := $value:nlexpr) =>
         if outputInfo.any (fun p => p.1 == id.getId.toString) || inputInfo.any (fun p => p.1 == id.getId.toString) then
@@ -2248,12 +2312,14 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
         let sourceType ← readCircuitSourceType ty
         let t := sourceType.type
         let tt ← tyTerm t
-        let value ← checkedCircuitSourceExpression env nominalEnv value sourceType
+        let value ← checkedSourceValue env nominalEnv contractRefEnv value sourceType
         let span ← spanTerm stmt
         outputs := outputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, value := $value, span := $span : Noctium.Output }))
         outputInfo := outputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntOutputInfo := nominalUIntOutputInfo ++ [(id.getId.toString, nominalUInt)]
+        if let some interface := sourceType.contractRef then
+          contractRefInfo := (id.getId.toString, interface) :: contractRefInfo
       | _ => throwErrorAt stmt "unsupported Noctium circuit statement"
     let span ← spanTerm stx
     let fullName := (← getCurrNamespace) ++ name.getId
@@ -2266,6 +2332,7 @@ private unsafe def checkGeneratedContract (name : Name) : CommandElabM Unit := d
       outputs := outputInfo
       nominalUIntInputs := nominalUIntInputInfo
       nominalUIntOutputs := nominalUIntOutputInfo
+      contractRefBindings := contractRefInfo
     }
   | _ => throwUnsupportedSyntax
 
@@ -2313,6 +2380,8 @@ private structure EntryEffects where
   env : Bindings
   nominalUIntBindings : CircuitNominalEnv := []
   nominalUIntCells : List (String × NominalUIntType) := []
+  contractRefBindings : List (String × Name) := []
+  contractRefState : List (String × Name) := []
   nominalBytes32Bindings : List (String × NominalBytes32) := []
   merkleLeafTypes : List (String × MerkleLeafType) := []
   optionalRecordHeads : List OptionalRecordHead := []
@@ -2440,8 +2509,8 @@ private def effectGuardTerm (state : EntryEffects) (parent : Option (TSyntax `te
     (effect : TSyntax `nleffect) : CommandElabM (TSyntax `term) := do
   let explicit ← match explicitEffectGuard effect with
     | none => pure none
-    | some condition => pure (some (← checkedCircuitSourceExpression state.env
-        state.nominalUIntBindings condition {type := .bool}))
+    | some condition => pure (some (← checkedSourceValue state.env state.nominalUIntBindings
+        state.contractRefBindings condition {type := .bool}))
   match parent, explicit with
   | none, none => `(none)
   | none, some condition => `(some $condition)
@@ -2779,6 +2848,9 @@ private def elaborateListHead (schema : List (String × StateKind))
   let (updated, destinations) ← match type with
     | .scalar ty => do
       let updated ← bindReadName updated destination.getId.toString readName ty
+      let interface := state.contractRefState.lookup storage.getId.toString
+      let contractRefBindings := bindContractRef updated.contractRefBindings destination.getId.toString interface
+      let updated := {updated with contractRefBindings}
       pure (updated, ← `([($(stringTerm readName), $(← tyTerm ty))]))
     | _ => bindLedgerRecordFields updated destination depth fields
   let typeTerm ← listElementTypeTerm path type
@@ -2842,7 +2914,8 @@ private def elaborateListPushFront (schema : List (String × StateKind))
     | `(nlledgervalue| $item:nlexpr) => do
       let .scalar ty := type
         | throwErrorAt payload "record List pushFront expects fields(...)"
-      let value ← checkedExpression state.env item ty
+      let contractRef := state.contractRefState.lookup storage.getId.toString
+      let value ← checkedSourceValue state.env [] state.contractRefBindings item {type := ty, contractRef}
       `([Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value])
     | `(nlledgervalue| $items:nlleaves) => do
       if let .scalar _ := type then
@@ -3293,8 +3366,10 @@ private def elaborateNamedPathRead (schema : List (String × StateKind))
       let updated := {updated with terms := updated.terms.push term}
       let updated ← bindReadName updated destination.getId.toString readName ty
       let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
-      pure {updated with nominalUIntBindings :=
-        (bindCircuitNominal updated.nominalUIntBindings destination.getId.toString nominalUInt)}
+      let contractRef := state.contractRefState.lookup storage.getId.toString
+      pure {updated with
+        nominalUIntBindings := bindCircuitNominal updated.nominalUIntBindings destination.getId.toString nominalUInt
+        contractRefBindings := bindContractRef updated.contractRefBindings destination.getId.toString contractRef}
     | some (.map keyTy valueTy) => do
       let [key] := sourceKeys | throwErrorAt path "map reads require exactly one key"
       let (readName, updated) ← freshReadName depth state destination
@@ -3339,6 +3414,23 @@ private partial def typedClaimOperation (value : TSyntax `nlexpr) : Option Strin
     some operation.getString
   | `(nlexpr| disclose($inner)) => typedClaimOperation inner
   | _ => none
+
+private partial def typedClaimCall (value : TSyntax `nlexpr) :
+    Option (String × TSyntax `nlexpr × Array (TSyntax `nlcallvalue) ×
+      Array (TSyntax `nlcallvalue) × TSyntax `nlexpr) :=
+  match value with
+  | `(nlexpr| callCommitment($operation:str, $opening, [$inputs,*], [$outputs,*])) =>
+    some (operation.getString, opening, inputs.getElems, outputs.getElems, value)
+  | `(nlexpr| disclose($inner)) => typedClaimCall inner
+  | _ => none
+
+private partial def wrapClaimDisclosures (source : TSyntax `nlexpr)
+    (value : TSyntax `term) : CommandElabM (TSyntax `term) := do
+  match source with
+  | `(nlexpr| disclose($inner)) => do
+    let value ← wrapClaimDisclosures inner value
+    `(Noctium.Expr.disclose $(← spanTerm source) $value)
+  | _ => pure value
 
 private def eventKind (name : TSyntax `ident) : CommandElabM (EventKind × TSyntax `term) := do
   match name.getId.toString with
@@ -3535,14 +3627,34 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| when $_:nlexpr $update:nlupdate) =>
     match update with
     | `(nlupdate| claimContractCall($address:nlexpr, $payload:nlexpr)) => do
-      let some operation := typedClaimOperation payload
-        | throwErrorAt payload "two-argument claimContractCall requires callCommitment, optionally wrapped in disclose"
+      let targetInterface ← checkedContractRef state.contractRefBindings address
+      let (operation, commitment) ← match targetInterface with
+        | some interfaceName => do
+          let some (operation, opening, inputs, outputs, call) := typedClaimCall payload
+            | throwErrorAt payload "typed contract references require callCommitment(\"operation\", opening, [arguments], [results])"
+          let methods ← interfaceMethods interfaceName
+          let some method := methods.find? (·.operation == operation)
+            | throwErrorAt call s!"contract interface '{interfaceName}' has no entry '{operation}'"
+          let (_, commitment) ← commitmentHashWith state.env
+            (fun value ty => checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings
+              value {type := ty})
+            method opening inputs outputs call
+          pure (operation, ← wrapClaimDisclosures payload commitment)
+        | none => do
+          if (typedClaimCall payload).isSome then
+            throwErrorAt payload "interface callCommitment requires a typed contract reference"
+          let some operation := typedClaimOperation payload
+            | throwErrorAt payload "two-argument claimContractCall requires callCommitment, optionally wrapped in disclose"
+          pure (operation, ← checkedExpression state.env payload .native)
       let address ← checkedExpression state.env address (.bytes 32)
-      let commitment ← checkedExpression state.env payload .native
       let digest ← natListTerm (EntryPointHash.hash operation)
       let term ← `(Noctium.Effect.claimContractCall $address (Noctium.Expr.bytes32Literal $digest) $commitment)
       state := {state with terms := state.terms.push term}
     | `(nlupdate| claimContractCall($address:nlexpr, $entryPointHash:nlexpr, $commitment:nlexpr)) => do
+      if (← checkedContractRef state.contractRefBindings address).isSome then
+        throwErrorAt address "typed contract references require the interface-based claimContractCall form"
+      if (typedClaimCall commitment).isSome then
+        throwErrorAt commitment "interface callCommitment requires a typed contract reference"
       let address ← checkedExpression state.env address (.bytes 32)
       let entryPointHash ← checkedExpression state.env entryPointHash (.bytes 32)
       let commitment ← checkedExpression state.env commitment .native
@@ -4094,8 +4206,9 @@ private def elaborateEffect (schema : List (String × StateKind))
     let some (.cell ty) := schema.lookup storage.getId.toString
       | throwErrorAt storage "write requires a declared state cell"
     let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
-    let loweredValue ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value
-      {type := ty, nominalUInt}
+    let contractRef := state.contractRefState.lookup storage.getId.toString
+    let loweredValue ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
+      {type := ty, nominalUInt, contractRef}
     let term ← `(Noctium.Effect.writeCell
       $(stringTerm storage.getId.toString) $(← tyTerm ty) $loweredValue)
     state := {state with terms := state.terms.push term}
@@ -4275,7 +4388,7 @@ private partial def elaborateStatements (schema : List (String × StateKind))
       state ← elaborateEffect schema parent depth state effect
     | `(nlstatement| if $condition:nlexpr then { $thenStatements:nlstatement* }
         else { $elseStatements:nlstatement* }) => do
-      let condition ← checkedCircuitSourceExpression state.env state.nominalUIntBindings condition
+      let condition ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings condition
         {type := .bool}
       let parentExpression ← match parent with
         | some expression => pure expression
@@ -4289,6 +4402,7 @@ private partial def elaborateStatements (schema : List (String × StateKind))
           $parentExpression $negated))
       let branchEnv := state.env
       let branchNominalUIntBindings := state.nominalUIntBindings
+      let branchContractRefs := state.contractRefBindings
       let branchNominalBytes32Bindings := state.nominalBytes32Bindings
       let branchOptionalRecordHeads := state.optionalRecordHeads
       let afterThen ← elaborateStatements schema thenPath (depth + 1) thenStatements state
@@ -4296,11 +4410,13 @@ private partial def elaborateStatements (schema : List (String × StateKind))
         {afterThen with
           env := branchEnv
           nominalUIntBindings := branchNominalUIntBindings
+          contractRefBindings := branchContractRefs
           nominalBytes32Bindings := branchNominalBytes32Bindings
           optionalRecordHeads := branchOptionalRecordHeads}
       state := {afterElse with
         env := branchEnv
         nominalUIntBindings := branchNominalUIntBindings
+        contractRefBindings := branchContractRefs
         nominalBytes32Bindings := branchNominalBytes32Bindings
         optionalRecordHeads := branchOptionalRecordHeads}
     | _ => throwErrorAt statement "unsupported Noctium state statement"
@@ -4575,7 +4691,7 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
       labels := labelName :: labels
       let sourceType ← readCircuitSourceType returnTy
       let ty := sourceType.type
-      let value ← checkedCircuitSourceExpression state.env state.nominalUIntBindings value sourceType
+      let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value sourceType
       let span ← spanTerm statement
       state := {state with returns := state.returns.push (← `({
         name := $(stringTerm labelName), ty := $(← tyTerm ty), value := $value,
@@ -4674,9 +4790,8 @@ private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
   let environment : Types.CompositeEnv := {structures := [{id := typeId, fields := fieldValues}]}
   pure (environment, compositeType, environmentTerm, compositeTypeTerm)
 
-private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (element : TSyntax `nltype) :
+private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy : Ty) :
     CommandElabM (StateKind × TSyntax `term) := do
-  let elementTy ← readTy element
   let mut valueSchema := LedgerValueType.«list» {} (.scalar elementTy)
   let mut valueTerm ← `(Noctium.LedgerValueType.«list» {}
     (Noctium.Types.CompositeType.scalar $(← tyTerm elementTy)))
@@ -4688,12 +4803,14 @@ private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (element : T
 
 private def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
-    (nominalUIntCells : List (String × NominalUIntType)) : CommandElabM (TSyntax `term) := do
+    (nominalUIntCells : List (String × NominalUIntType))
+    (contractRefState : List (String × Name)) : CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
   let mut parameterTerms : Array (TSyntax `term) := #[]
   let mut scalarBindings : Bindings := []
   let mut nominalUIntBindings : CircuitNominalEnv := []
+  let mut contractRefs : List (String × Name) := []
   let mut opaqueParameters : List String := []
   let mut parameterNames : List String := []
   for parameter in parameters.getElems.toList do
@@ -4703,6 +4820,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         let sourceType ← readCircuitSourceType sourceTy
         let ty := sourceType.type
         nominalUIntBindings := bindCircuitNominal nominalUIntBindings name sourceType.nominalUInt
+        contractRefs := bindContractRef contractRefs name sourceType.contractRef
         if ty == .opaqueString then
           pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString))
         else
@@ -4827,7 +4945,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.«list» _ (.scalar valueTy))) => do
-        let valueExpression ← checkedExpression scalarBindings value valueTy
+        let contractRef := contractRefState.lookup destination
+        let valueExpression ← checkedSourceValue scalarBindings [] contractRefs value {type := valueTy, contractRef}
         listPushTerms := listPushTerms.push
           (← `(Noctium.ConstructorListPush.mk $(stringTerm destination)
             $(← tyTerm valueTy) $valueExpression))
@@ -4850,8 +4969,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
             | _ => throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
           | some (_, .cell ty) => do
             let nominalUInt := nominalUIntCells.lookup destination
-            let expression ← checkedCircuitSourceExpression scalarBindings nominalUIntBindings value
-              {type := ty, nominalUInt}
+            let contractRef := contractRefState.lookup destination
+            let expression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
+              {type := ty, nominalUInt, contractRef}
             let typeTerm ← `(Noctium.ConstructorType.scalar $(← tyTerm ty))
             let valueTerm ← `(Noctium.ConstructorValue.scalar $expression)
             pure (destination, ConstructorType.scalar ty, (typeTerm, valueTerm))
@@ -5005,6 +5125,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let mut stateTerms : Array (TSyntax `term) := #[]
     let mut schema : List (String × StateKind) := []
     let mut nominalUIntCells : List (String × NominalUIntType) := []
+    let mut contractRefState : List (String × Name) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
     let mut concreteSchema : List StateDecl := []
     let mut stateDeclarations : Array (TSyntax `nlstate) := #[]
@@ -5084,6 +5205,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let t := sourceType.type
           if let some nominalUInt := sourceType.nominalUInt then
             nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
+          if let some interface := sourceType.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
           if t == .opaqueString then
             pure (id, StateKind.opaqueString, ← `(Noctium.StateKind.opaqueString))
           else
@@ -5101,6 +5224,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let t := sourceType.type
           if let some nominalUInt := sourceType.nominalUInt then
             nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
+          if let some interface := sourceType.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype) => do
           let k ← readTy key
@@ -5120,7 +5245,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| sealed $listKind:ident $id:ident : $element:nltype) => do
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a sealed scalar List declaration"
-          let (kind, term) ← elaborateScalarListDecl [] element
+          let sourceType ← readCircuitSourceType element
+          if let some interface := sourceType.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
+          let (kind, term) ← elaborateScalarListDecl [] sourceType.type
           pure (id, kind, term)
         | `(nlstate| set $id:ident : $key:nltype) => do
           let keyTy ← readTy key
@@ -5331,17 +5459,20 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| $listKind:ident $id:ident : $element:nltype) => do
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a scalar List declaration"
-          let (kind, term) ← elaborateScalarListDecl [] element
+          let sourceType ← readCircuitSourceType element
+          if let some interface := sourceType.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
+          let (kind, term) ← elaborateScalarListDecl [] sourceType.type
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $key:nltype => $listKind:ident $element:nltype) => do
           unless listKind.getId.toString == "List" do
             throwErrorAt listKind "expected a List value in the recursive tree"
-          let (kind, term) ← elaborateScalarListDecl [key] element
+          let (kind, term) ← elaborateScalarListDecl [key] (← readTy element)
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $listKind:ident $element:nltype) => do
           unless listKind.getId.toString == "List" do
             throwErrorAt listKind "expected a List value in the recursive tree"
-          let (kind, term) ← elaborateScalarListDecl [outer, inner] element
+          let (kind, term) ← elaborateScalarListDecl [outer, inner] (← readTy element)
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $value:nltype) => do
           let outerTy ← readTy outer
@@ -5381,7 +5512,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         $term $sealedTerm $(← spanTerm state) $cellAlignmentTerm))
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
-      | some ctor => elaborateConstructor ctor schema nominalUIntCells
+      | some ctor => elaborateConstructor ctor schema nominalUIntCells contractRefState
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     for entryStx in entries do
@@ -5423,6 +5554,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
+          contractRefBindings := info.contractRefBindings
+          contractRefState := contractRefState
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5452,6 +5585,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
           nominalUIntCells := nominalUIntCells
+          contractRefBindings := info.contractRefBindings
+          contractRefState := contractRefState
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5469,6 +5604,12 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
+        for effect in value.effects do
+          match effect with
+          | .readCell storage _ _ | .writeCell storage _ _ =>
+            if (contractRefState.lookup storage).isSome then
+              throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
+          | _ => pure ()
         let localCircuitName := name.getId ++ id.getId ++ `circuit
         let fullCircuitName := (← getCurrNamespace) ++ localCircuitName
         let circuitId := mkIdent localCircuitName
