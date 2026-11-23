@@ -230,6 +230,20 @@ int32_t noctium_ledger_map_lookup(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Test one member of a pinned root or nested Set snapshot.
+   Use the same request fields as noctium_ledger_map_lookup. The keys array
+   contains only enclosing Map keys. Key encoding follows the Set declaration.
+   The result token owns copied public JSON:
+     {"abiVersion":1,"kind":"setMember","member":true}
+   A valid key missing from the Set returns member:false. A missing enclosing
+   Map, wrong schema, invalid key, or non-null value for the selected key
+   returns an error. The snapshot and request limits match the Map lookup. */
+int32_t noctium_ledger_set_member(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 /* Read the optional head of a pinned root or nested List snapshot.
    Request UTF-8 JSON (unknown fields reject):
      {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
