@@ -2,6 +2,16 @@ import Noctium.Field
 import Noctium.Foreign
 import Lean
 
+namespace Noctium
+
+/-- A source-level bounded unsigned type with the ordinary UInt wire representation. -/
+structure NominalUIntType where
+  name : String
+  maximum : Nat
+  deriving Repr, BEq, DecidableEq
+
+end Noctium
+
 namespace Noctium.ScalarPolicy
 
 /-- Source-derived scalar policy for the pinned feature reference. Bounds are

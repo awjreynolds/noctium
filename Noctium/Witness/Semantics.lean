@@ -21,6 +21,7 @@ def expressionSchedule : List Statement → List Term
   | .writeMap _ _ _ key value :: rest => key :: value :: expressionSchedule rest
   | .forRange _ _ _ body :: rest => expressionSchedule body ++ expressionSchedule rest
   | .emitEvent _ payload :: rest => payload :: expressionSchedule rest
+  | .claimShielded _ digest :: rest => digest :: expressionSchedule rest
   | .branch condition yes no :: rest =>
       condition :: expressionSchedule yes ++ expressionSchedule no ++ expressionSchedule rest
 termination_by body => sizeOf body
@@ -35,7 +36,7 @@ def witnessOccurrences : Term → List (String × String)
   | .andThen left right | .orElse left right | .index left right =>
       witnessOccurrences left ++ witnessOccurrences right
   | .curve _ arguments | .bytes _ arguments => arguments.flatMap witnessOccurrences
-  | .cast _ value | .disclose _ value | .effect _ _ value | .bytesAt value _
+  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .bytesAt value _
   | .at _ value | .project value _ => witnessOccurrences value
   | .select condition yes no | .ite condition yes no =>
       witnessOccurrences condition ++ witnessOccurrences yes ++ witnessOccurrences no
@@ -102,6 +103,9 @@ theorem eraseStages_preserves_expressionSchedule (body : List Statement) :
             (by rw [← sizeEq]; simp [statementWeight]; omega) rest rfl
           simp [eraseStages, expressionSchedule, hb, hr]
         | emitEvent kind payload =>
+          have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
+          simpa [eraseStages, expressionSchedule] using hr
+        | claimShielded kind digest =>
           have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
           simpa [eraseStages, expressionSchedule] using hr
         | branch condition yes no =>
@@ -184,6 +188,7 @@ def stageObservations : List Statement → List Observation
       .evaluate key :: .evaluate value :: stageObservations rest
   | .forRange _ _ _ body :: rest => stageObservations body ++ stageObservations rest
   | .emitEvent _ payload :: rest => .evaluate payload :: stageObservations rest
+  | .claimShielded _ digest :: rest => .evaluate digest :: stageObservations rest
   | .branch condition yes no :: rest =>
       .evaluate condition :: stageObservations yes ++ stageObservations no ++ stageObservations rest
 termination_by body => sizeOf body
@@ -245,6 +250,9 @@ theorem stageObservations_preserve_evaluations (body : List Statement) :
           simp only [stageObservations, expressionSchedule]
           rw [evaluatedObservations_append, hb, hr]
         | emitEvent kind payload =>
+          have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
+          simpa [stageObservations, evaluatedObservations, expressionSchedule] using hr
+        | claimShielded kind digest =>
           have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
           simpa [stageObservations, evaluatedObservations, expressionSchedule] using hr
         | branch condition yes no =>
@@ -335,6 +343,9 @@ theorem stageObservations_preserve_exact_write_frame (body : List Statement) :
         | emitEvent kind payload =>
             have hr := ih (statementWeight rest) (by rw [← weightEq]; simp [statementWeight]) rest rfl
             simpa [stageObservations, privateWrites, sourceStageEvents] using hr
+        | claimShielded kind digest =>
+            have hr := ih (statementWeight rest) (by rw [← weightEq]; simp [statementWeight]) rest rfl
+            simpa [stageObservations, privateWrites, sourceStageEvents] using hr
         | branch condition yes no =>
             have hy := ih (statementWeight yes) (by rw [← weightEq]; simp [statementWeight]; omega) yes rfl
             have hn := ih (statementWeight no) (by rw [← weightEq]; simp [statementWeight]; omega) no rfl
@@ -373,12 +384,13 @@ private def eligibilityChildren : EligibilityNode → Option (List EligibilityNo
     | .readCell .. | .writeCell .. | .readMap .. | .readMember .. | .writeMap .. => none
     | .return none => some []
     | .return (some value) => some [.term value]
-    | .branch .. | .forRange .. | .emitEvent .. => none
+    | .branch .. | .forRange .. | .emitEvent .. | .claimShielded .. => none
   | .term term => match term with
     | .unit | .native _ | .bool _ | .uint _ _ | .ref _ => some []
     | .binary _ left right | .eq left right | .poseidon2 _ left right | .index left right =>
         some [.term left, .term right]
-    | .cast _ value | .disclose _ value | .at _ value | .project value _ => some [.term value]
+    | .cast _ value | .castNominalUInt _ value | .disclose _ value | .at _ value
+    | .project value _ => some [.term value]
     | .select condition yes no => some [.term condition, .term yes, .term no]
     | .witnessCall _ _ arguments | .call _ arguments | .composite _ arguments =>
         some (arguments.map EligibilityNode.term)
@@ -1334,6 +1346,9 @@ mutual
       | .cast target value => do
           let value ← evalTerm fuel program context grants provider scope environment value
           liftResult (castRuntime context target value)
+      | .castNominalUInt target value => do
+          let value ← evalTerm fuel program context grants provider scope environment value
+          liftResult (castRuntime context (.uint target.maximum) value)
       | .disclose _ value | .at _ value =>
           evalTerm fuel program context grants provider scope environment value
       | .select condition yes no => do
@@ -1468,6 +1483,8 @@ mutual
               fail "structured control is outside the bounded native replay semantics"
           | .emitEvent .. =>
               fail "event statements are outside the bounded native replay semantics"
+          | .claimShielded .. =>
+              fail "shielded claim statements are outside the bounded native replay semantics"
   termination_by fuel _ _ _ _ _ _ _ => fuel
   decreasing_by all_goals omega
 end
@@ -2032,6 +2049,9 @@ private theorem body_recordSafe_step (fuel : Nat)
     | emitEvent kind payload =>
       simp only [evalBody]
       exact recordSafe_fail _
+    | claimShielded kind digest =>
+      simp only [evalBody]
+      exact recordSafe_fail _
     | readCell state destination ty =>
       simp only [evalBody]
       exact recordSafe_fail _
@@ -2130,6 +2150,12 @@ private theorem evaluator_recordSafe (fuel : Nat) :
             · exact termSafe value
             · intro result
               exact recordSafe_liftResult (castRuntime context target result)
+        | castNominalUInt target value =>
+            simp only [evalTerm]
+            apply recordSafe_bind
+            · exact termSafe value
+            · intro result
+              exact recordSafe_liftResult (castRuntime context (.uint target.maximum) result)
         | disclose span value => simp only [evalTerm]; exact termSafe value
         | select condition yes no =>
             simp only [evalTerm]
@@ -3723,6 +3749,15 @@ private theorem evalTerm_successSim_step (fuel : Nat) (program : Program)
   | cast target value =>
       exact evalTerm_cast_successSim_step fuel program context grants sourceProvider replayProvider scope environment
         value target (termSafe scope environment value) (termSim scope environment value)
+  | castNominalUInt target value =>
+      simp only [evalTerm]
+      apply successSim_bind
+      · exact termSafe scope environment value
+      · intro _
+        exact recordSafe_liftResult _
+      · exact termSim scope environment value
+      · intro result
+        exact successSim_liftResult (castRuntime context (.uint target.maximum) result)
   | disclose span value =>
       simp only [evalTerm]
       exact termSim scope environment value
@@ -4005,6 +4040,9 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact successSim_fail _
     | emitEvent kind payload =>
+      simp only [Noctium.Witness.eraseStages, evalBody]
+      exact successSim_fail _
+    | claimShielded kind digest =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact successSim_fail _
     | readCell state destination ty =>
@@ -4854,6 +4892,9 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
     | emitEvent kind payload =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact failureSim_fail _
+    | claimShielded kind digest =>
+      simp only [Noctium.Witness.eraseStages, evalBody]
+      exact failureSim_fail _
     | readCell state destination ty =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact failureSim_fail _
@@ -5448,6 +5489,16 @@ private theorem evalTerm_failureSim_step (fuel : Nat) (program : Program)
       · exact termSuccess scope environment value
       · intro result
         exact failureSim_liftResult (castRuntime context target result)
+  | castNominalUInt target value =>
+      simp only [evalTerm]
+      apply failureSim_bind
+      · exact termSafe scope environment value
+      · intro _
+        exact recordSafe_liftResult _
+      · exact termFailure scope environment value
+      · exact termSuccess scope environment value
+      · intro result
+        exact failureSim_liftResult (castRuntime context (.uint target.maximum) result)
   | disclose span value | «at» span value =>
       simp only [evalTerm]
       exact termFailure scope environment value

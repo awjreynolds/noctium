@@ -31,7 +31,7 @@ private partial def termReferences (term : Term) : List String :=
   | .binary _ left right | .boolAnd left right | .boolOr left right | .boolXor left right
   | .eq left right | .poseidon2 _ left right | .andThen left right | .orElse left right =>
     appendUnique (termReferences left) (termReferences right)
-  | .cast _ value | .disclose _ value | .effect _ _ value | .at _ value
+  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
   | .project value _ | .bytesAt value _ => termReferences value
   | .select condition yes no | .ite condition yes no =>
     appendMany [termReferences condition, termReferences yes, termReferences no]
@@ -96,7 +96,7 @@ private partial def termNames (term : Term) : List String :=
   | .binary _ left right | .boolAnd left right | .boolOr left right | .boolXor left right
   | .eq left right | .poseidon2 _ left right | .andThen left right | .orElse left right
   | .index left right => appendUnique (termNames left) (termNames right)
-  | .cast _ value | .disclose _ value | .at _ value | .bytesAt value _ => termNames value
+  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .at _ value | .bytesAt value _ => termNames value
   | .select condition yes no | .ite condition yes no =>
     appendMany [termNames condition, termNames yes, termNames no]
   | .curve _ arguments | .bytes _ arguments => appendMany (arguments.map termNames)
@@ -133,7 +133,7 @@ private partial def termCallsHiddenBy (hidden : List String) (span : SourceSpan)
   | .index left right => do
     termCallsHiddenBy hidden span left
     termCallsHiddenBy hidden span right
-  | .cast _ value | .disclose _ value | .effect _ _ value | .at _ value
+  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
   | .project value _ | .bytesAt value _ => termCallsHiddenBy hidden span value
   | .select condition yes no | .ite condition yes no => do
     termCallsHiddenBy hidden span condition
