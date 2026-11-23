@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "network": "undeployed",
+  "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "runtimeSpecVersion": 2001100,
+  "targetProfile": "midnight-ledger-9-zkir-3.2.1",
+  "compilerRevision": "90d2a07aeeb449b0e9392d71b54b79293095f89f",
+  "source": "tests/RawShieldedClaims.lean",
+  "sourceSha256": "af4b31ca56c9a698ff6a15c03fc3e5c5817d00898c8f27d674108ab7b52c940e",
+  "contract": "FundedRawShieldedClaim",
+  "zkirSha256": "a27beb872c81d4ab1bae5e79b47d6b58d648be35c8b1850c75c51e3e1b72473c",
+  "circuitK": 8,
+  "circuitRows": 201,
+  "ledgerParametersSha256": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
+  "bundleManifestSha256": {
+    "rawReceive": "c9748812eb41259b320c6952c54fcefde664793148e5402a680d48bb5fbff19f",
+    "seedTip": "34c7fb006b3a0739a5d74b9168bac12b84eeb0f9f064542edfe85d386c569135",
+    "seedSpend": "029b0f86701623f98d627322bc3859884f3ac0c96c7068ef6d0205796b62a718"
+  },
+  "finalizedBlockHash": "0x8b6f6c7df45543f539a454b46312eaf8e83aa4c218991da005e05bbbe1d85aff",
+  "changedDigestRejectedBeforeSubmit": true,
+  "contractStateUnchanged": true,
+  "entrypoint": "helperClaimReceive",
+  "inputNullifier": "09c0d1682c9d5793506826d7f3a0f37e2124b87b8212f196b7bf9bd20836abf5",
+  "outputCommitment": "21cc7835e018169f8f0fe0b2251adace611c17fdce0ff14881cf9c4f2efee05a",
+  "outputIndex": 30,
+  "receiveHeight": 66,
+  "receiveTransaction": "c7a3e24f4e8ed2675f781cd49e9887a872d65e912bb2f6b18adc93d620218b65",
+  "seedTipHeight": 59
+}
