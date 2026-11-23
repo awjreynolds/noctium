@@ -170,9 +170,17 @@ checks every typed field against the destination's interface.
 
 The [typed reference fixture](../../tests/TypedContractReference.lean) and
 [Compact comparison](../../tests/compact/typed-contract-reference.mjs) exercise
-scalar and record Cell and List routing. Deployed interface lookup and typed
-method arguments and results remain open under
-[typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+scalar and record Cell and List routing. The same fixtures cover an
+`echo` method that accepts and returns a `ContractRef`. Noctium checks the
+declared interface on both sides of the call while the native ABI carries
+the usual 32-byte address. An implementation with a raw or wrong-interface
+argument or result fails the interface check. The typed caller also checks
+its supplied arguments and expected results before lowering. Native call
+assembly matches the returned address and rejects a substituted argument
+or expected result.
+
+Nested record storage and deployed dynamic interface lookup remain open
+under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
 
 ### Bind the entrypoint and read the address from a registry
 
