@@ -259,6 +259,34 @@ theorem lessThanCopyPreservesWithRanges (hash : Hash) (witness : Assignment)
         leftBound rightBound).mpr ⟨firstHolds, duplicateHolds⟩
     exact ⟨leftRange, rightRange, firstHolds, copied⟩
 
+/-- Connect the actual two-item comparison fold to the decoded scalar
+relation under the operand range constraints. The Copy contributes equality
+between the destination and the retained result. -/
+theorem reuseComparisons_pair_bridge_with_ranges (hash : Hash) (witness : Assignment)
+    (earlier later : Json) (leftKey rightKey : String) (width : Nat)
+    (firstOutput duplicateOutput : String) (left right : Operand)
+    (earlierKey : comparison? earlier = some ((leftKey, rightKey, width), firstOutput))
+    (laterKey : comparison? later = some ((leftKey, rightKey, width), duplicateOutput))
+    (earlierDecoded : decodeInstruction earlier =
+      .ok (.lessThan left right width firstOutput))
+    (laterDecoded : decodeInstruction later =
+      .ok (.lessThan left right width duplicateOutput))
+    (leftRange : Instruction.Holds hash witness (.bits left width))
+    (rightRange : Instruction.Holds hash witness (.bits right width)) :
+    reuseComparisons #[earlier, later] =
+        #[earlier, comparisonCopyJson firstOutput duplicateOutput] ∧
+      (match decodeInstruction earlier, decodeInstruction later with
+      | .ok first, .ok second =>
+          (first.Holds hash witness ∧ copyHolds witness firstOutput duplicateOutput) ↔
+          (first.Holds hash witness ∧ second.Holds hash witness)
+      | _, _ => False) := by
+  refine ⟨reuseComparisons_pair earlier later (leftKey, rightKey, width)
+    firstOutput duplicateOutput earlierKey laterKey, ?_⟩
+  rw [earlierDecoded, laterDecoded]
+  exact lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
+    (by simpa [Instruction.Holds] using leftRange)
+    (by simpa [Instruction.Holds] using rightRange)
+
 /-- The actual JSON range pass preserves decode success, ordered non-range
 instructions and field-level satisfaction for every assignment accepted or
 rejected by the existing scalar relation model. -/
