@@ -13,6 +13,18 @@ circuit recordSpend(digest: Bytes<32>): [] {
   kernel.claimZswapCoinSpend(disclose(digest));
 }
 
+circuit guardedNullifier(digest: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    recordNullifier(digest);
+  }
+}
+
+circuit guardedSpend(digest: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    recordSpend(digest);
+  }
+}
+
 export circuit rawClaims(
   nullifierDigest: Bytes<32>,
   receiveDigest: Bytes<32>,
@@ -37,6 +49,19 @@ export circuit guardedReceive(digest: Bytes<32>, enabled: Boolean): [] {
   if (disclose(enabled)) {
     recordReceive(digest);
   }
+}
+
+export circuit guardedHelperClaimSpendNullifier(
+  enabled: Boolean,
+  digest: Bytes<32>,
+  otherDigest: Bytes<32>,
+): [] {
+  guardedNullifier(digest, enabled);
+  guardedNullifier(otherDigest, enabled);
+  guardedNullifier(digest, enabled);
+  guardedSpend(digest, enabled);
+  guardedSpend(otherDigest, enabled);
+  guardedSpend(digest, enabled);
 }
 
 export circuit duplicateClaims(

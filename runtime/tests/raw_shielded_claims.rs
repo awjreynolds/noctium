@@ -70,5 +70,68 @@ fn emitted_raw_claims_match_native_effects() -> anyhow::Result<()> {
             "{entry}"
         );
     }
+
+    let entry = "guardedHelperClaimSpendNullifier";
+    let stem = format!("RawShieldedClaims.{entry}");
+    let plan: Plan =
+        serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+    let digest = [0x61; 32];
+    let other_digest = [0x62; 32];
+    assert_ne!(digest, other_digest);
+    for enabled in [false, true] {
+        let inputs = BTreeMap::from([
+            ("enabled".into(), json!(enabled)),
+            ("digest".into(), json!({"kind": "bytes", "values": digest})),
+            (
+                "otherDigest".into(),
+                json!({"kind": "bytes", "values": other_digest}),
+            ),
+        ]);
+        let state = create_state(&plan, &BTreeMap::new())?;
+        let execution = prepare(
+            &plan,
+            &inputs,
+            &state,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress(HashOutput([4; 32])),
+        )?;
+        assert_eq!(
+            check(&execution, &circuit)?,
+            execution.activity_schedule,
+            "{entry}, enabled={enabled}"
+        );
+        let effects = &execution.after.effects;
+        let count = if enabled { 2 } else { 0 };
+        assert_eq!(
+            [
+                effects.claimed_nullifiers.size(),
+                effects.claimed_shielded_receives.size(),
+                effects.claimed_shielded_spends.size(),
+            ],
+            [count, 0, count],
+            "{entry}, enabled={enabled}"
+        );
+        let digest = HashOutput(digest);
+        let other_digest = HashOutput(other_digest);
+        assert_eq!(
+            [
+                effects.claimed_nullifiers.member(&Nullifier(digest)),
+                effects.claimed_nullifiers.member(&Nullifier(other_digest)),
+                effects
+                    .claimed_shielded_receives
+                    .member(&Commitment(digest)),
+                effects
+                    .claimed_shielded_receives
+                    .member(&Commitment(other_digest)),
+                effects.claimed_shielded_spends.member(&Commitment(digest)),
+                effects
+                    .claimed_shielded_spends
+                    .member(&Commitment(other_digest)),
+            ],
+            [enabled, enabled, false, false, enabled, enabled],
+            "{entry}, enabled={enabled}"
+        );
+    }
     Ok(())
 }
