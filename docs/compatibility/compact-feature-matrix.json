@@ -164,7 +164,7 @@
       "layer": "language",
       "surface": "Field arithmetic",
       "noctiumStatus": "subset",
-      "notes": "Native canonical field literals, add, subtract and multiply exist. Scalar Native/Bool/UInt conversions are implemented. Full operator/context and foreign-field equivalence remain unverified.",
+      "notes": "Native canonical Field inputs, add, subtract, multiply, equality and inequality have focused source, Compact runtime and native relation evidence. Pinned Compact 0.36.1 and the Ledger 9 ZKIR 3.2.1 checker agree at zero/one and modulus-boundary vectors. Compact rejects ordered Field comparison, inv(Field) and neg(Field). Full operator/context and foreign-field equivalence remain unverified.",
       "source": [
         "reference"
       ],
@@ -175,17 +175,25 @@
       "observedEvidence": [
         "Noctium/Field.lean",
         "Noctium/IR.lean",
-        "tests/Field.lean"
+        "tests/Field.lean",
+        "tests/FieldArithmetic.lean",
+        "tests/compact/FieldArithmetic.compact",
+        "tests/compact/field-arithmetic.mjs",
+        "runtime/tests/native_field_arithmetic.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
-        "checkedOn": "2026-11-16",
-        "scope": "Published scalar semantics and native producer checks cover modular subtraction and mixed UInt/Native scalar conversions. This does not qualify every Compact field operation.",
+        "checkedOn": "2026-11-23",
+        "scope": "Focused Lean, pinned Compact and native relation checks cover modular addition, subtraction, multiplication, equality and inequality at zero/one and modulus-boundary vectors. Compact rejects ordered Field comparison, inv(Field) and neg(Field). The native checker rejects a forged private field input. Broader operator contexts, proof generation, ledger deployment and foreign-field equivalence remain unqualified.",
         "evidence": [
           "Noctium/Semantics.lean",
           "Noctium/ScalarPolicy.lean",
           "tests/BoundedScalars.lean",
-          "docs/development/native-producer-safety.md"
+          "docs/development/native-producer-safety.md",
+          "tests/FieldArithmetic.lean",
+          "tests/compact/FieldArithmetic.compact",
+          "tests/compact/field-arithmetic.mjs",
+          "runtime/tests/native_field_arithmetic.rs"
         ],
         "fullEquivalence": "unverified"
       }

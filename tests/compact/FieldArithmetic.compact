@@ -1,0 +1,15 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit arithmetic(left: Field, right: Field): [
+  Field, Field, Field, Field, Boolean, Boolean
+] {
+  return [
+    left + right,
+    left - right,
+    left * right,
+    0 - left,
+    left == right,
+    left != right
+  ];
+}
