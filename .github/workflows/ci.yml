@@ -384,6 +384,9 @@ jobs:
           .lake/build/bin/noctium compile tests/modules/ImportedModuleTypes.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/imported-module-types"
+          .lake/build/bin/noctium compile tests/OrderedConstructorCounterRead.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/ordered-constructor-counter-read"
           .lake/build/bin/noctium compile tests/GuardedConstructorListCounter.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-constructor-list-counter"
@@ -457,9 +460,11 @@ jobs:
               --test readable_nominal_uint --test generic_foreign_curve_module -- --ignored
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
+            NOCTIUM_ORDERED_CONSTRUCTOR_COUNTER_READ_DIR="$artifacts/ordered-constructor-counter-read" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
-              --test guarded_constructor_set --test guarded_constructor_list_counter -- --ignored
+              --test guarded_constructor_set --test guarded_constructor_list_counter \
+              --test ordered_constructor_counter_read -- --ignored
           NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_record_cell \

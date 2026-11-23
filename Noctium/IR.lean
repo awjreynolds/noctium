@@ -876,6 +876,8 @@ inductive ConstructorAction where
   | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
   | initializeRecordCell (state : String) (fields : List LedgerFieldExpr)
   | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
+  | counterIncrement (action : ConstructorCounterIncrement)
+  | initializeCellFromCounter (state counter : String)
   deriving Repr
 
 /-- Fresh-deployment inputs and cell values. This metadata never enters a circuit. -/
@@ -1805,6 +1807,12 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     throw {span, message := "constructor collection action limit exceeded"}
   if !constructor.actions.isEmpty && !constructor.mapInserts.isEmpty then
     throw {span, message := "ordered constructor Map actions cannot be mixed with legacy Map inserts"}
+  if !constructor.counterIncrements.isEmpty && constructor.actions.any (fun action =>
+      match action with
+      | .counterIncrement _ | .initializeCellFromCounter .. => true
+      | _ => false) then
+    throw {span, message :=
+      "ordered constructor Counter actions cannot be mixed with legacy Counter increments"}
   for initializer in constructor.initializers do
     unless Types.validFieldName initializer.state do
       throw {span, message := s!"invalid constructor state name '{initializer.state}'"}
@@ -1869,6 +1877,36 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
         match guard.validate caps scalarEnvironment with
         | .error message => throw {span, message}
         | .ok _ => pure ()
+    | .counterIncrement increment => do
+      unless Types.validFieldName increment.state do
+        throw {span, message := s!"invalid constructor Counter state name '{increment.state}'"}
+      let some state := states.find? (·.name == increment.state)
+        | throw {span, message := s!"constructor increments unknown Counter '{increment.state}'"}
+      unless state.kind == .tree .counter do
+        throw {span := state.span, message := s!"constructor increment requires a root Counter '{increment.state}'"}
+      match increment.amount.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      if let some guard := increment.guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
+    | .initializeCellFromCounter stateName counterName => do
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor initializes unknown state '{stateName}'"}
+      unless destination.kind == .cell (.uint (2 ^ 64 - 1)) do
+        throw {span := destination.span, message := s!"counter snapshot requires a UInt64 Cell '{stateName}'"}
+      if initializerNames.contains stateName || orderedInitializerNames.contains stateName then
+        throw {span, message := s!"duplicate constructor state initializer for '{stateName}'"}
+      orderedInitializerNames := stateName :: orderedInitializerNames
+      unless Types.validFieldName counterName do
+        throw {span, message := s!"invalid constructor Counter state name '{counterName}'"}
+      let some source := states.find? (·.name == counterName)
+        | throw {span, message := s!"constructor reads unknown Counter '{counterName}'"}
+      unless source.kind == .tree .counter do
+        throw {span := source.span, message := s!"counter snapshot requires a root Counter '{counterName}'"}
     | .initializeCellFromMapMember initializer => do
       unless Types.validFieldName initializer.state do
         throw {span, message := s!"invalid constructor state name '{initializer.state}'"}

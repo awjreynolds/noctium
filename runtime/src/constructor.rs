@@ -62,6 +62,16 @@ pub enum ConstructorAction {
         #[serde(default)]
         guard: Option<Expr>,
     },
+    CounterIncrement {
+        state: String,
+        amount: Expr,
+        #[serde(default)]
+        guard: Option<Expr>,
+    },
+    InitializeCellFromCounter {
+        state: String,
+        counter: String,
+    },
     InitializeCellFromMapMember {
         state: String,
         map: String,
@@ -236,6 +246,36 @@ fn constructor_counter(decl: &StateDecl) -> bool {
     decl.kind == json!({"tree":{"counter":true}})
 }
 
+fn constructor_counter_slot(plan: &Plan, name: &str) -> Result<usize> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor Counter state"))?;
+    ensure!(
+        constructor_counter(declaration),
+        "constructor Counter operation requires a root Counter"
+    );
+    Ok(slot)
+}
+
+fn constructor_counter_cell_slot(plan: &Plan, name: &str) -> Result<usize> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor state cell"))?;
+    ensure!(
+        declaration.kind.as_object().is_some_and(|kind| {
+            kind.len() == 1 && kind.contains_key("cell")
+        }) && cell_type(declaration)? == "UIntRange<18446744073709551616>",
+        "constructor Counter initializer requires a root UInt64 cell"
+    );
+    Ok(slot)
+}
+
 fn flat_scalar_list_type(decl: &StateDecl) -> Result<Option<ScalarType>> {
     let Some(tree) = decl.kind.get("tree") else {
         return Ok(None);
@@ -269,7 +309,6 @@ fn counter_totals(
     increments: &[CounterIncrement],
     environment: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, u64>> {
-    let amount_type = ScalarType::parse("UIntRange<4294967296>")?;
     let mut totals = BTreeMap::<String, u64>::new();
     for increment in increments {
         let declaration = plan
@@ -281,36 +320,51 @@ fn counter_totals(
             constructor_counter(declaration),
             "constructor Counter increment requires a root Counter"
         );
-        if let Some(guard) = &increment.guard {
-            let guard = evaluate(guard, environment)?;
-            ensure!(
-                guard.scalar_type() == ScalarType::Bool,
-                "constructor Counter increment guard must be Bool"
-            );
-            let Value::Bool(guard) = guard else {
-                bail!("constructor Counter increment guard must be Bool")
-            };
-            if !guard {
-                continue;
-            }
+        if !counter_increment_enabled(increment.guard.as_ref(), environment)? {
+            continue;
         }
-        let amount = evaluate(&increment.amount, environment)?;
-        ensure!(
-            amount.scalar_type() == amount_type,
-            "constructor Counter increment amount must use the native UInt32 width"
-        );
-        amount.validate()?;
-        let Value::UInt { number, .. } = amount else {
-            bail!("constructor Counter increment amount must use the native UInt32 width")
-        };
-        let amount = u64::try_from(number)
-            .map_err(|_| anyhow!("constructor Counter amount exceeds UInt64"))?;
+        let amount = counter_increment_amount(&increment.amount, environment)?;
         let total = totals.entry(increment.state.clone()).or_default();
         *total = total
             .checked_add(amount)
             .ok_or_else(|| anyhow!("constructor Counter sum exceeds UInt64"))?;
     }
     Ok(totals)
+}
+
+fn counter_increment_enabled(
+    guard: Option<&Expr>,
+    environment: &BTreeMap<String, Value>,
+) -> Result<bool> {
+    let Some(guard) = guard else {
+        return Ok(true);
+    };
+    let guard = evaluate(guard, environment)?;
+    ensure!(
+        guard.scalar_type() == ScalarType::Bool,
+        "constructor Counter increment guard must be Bool"
+    );
+    let Value::Bool(guard) = guard else {
+        bail!("constructor Counter increment guard must be Bool")
+    };
+    Ok(guard)
+}
+
+fn counter_increment_amount(
+    expression: &Expr,
+    environment: &BTreeMap<String, Value>,
+) -> Result<u64> {
+    let amount_type = ScalarType::parse("UIntRange<4294967296>")?;
+    let amount = evaluate(expression, environment)?;
+    ensure!(
+        amount.scalar_type() == amount_type,
+        "constructor Counter increment amount must use the native UInt32 width"
+    );
+    amount.validate()?;
+    let Value::UInt { number, .. } = amount else {
+        bail!("constructor Counter increment amount must use the native UInt32 width")
+    };
+    u64::try_from(number).map_err(|_| anyhow!("constructor Counter amount exceeds UInt64"))
 }
 
 fn apply_map_inserts(
@@ -461,6 +515,17 @@ fn validate_ordered_action_targets(
             ConstructorAction::MapInsert { state, .. } => {
                 flat_map_slot(plan, state)?;
             }
+            ConstructorAction::CounterIncrement { state, .. } => {
+                constructor_counter_slot(plan, state)?;
+            }
+            ConstructorAction::InitializeCellFromCounter { state, counter } => {
+                constructor_counter_slot(plan, counter)?;
+                constructor_counter_cell_slot(plan, state)?;
+                ensure!(
+                    initialized.insert(state.clone()),
+                    "duplicate constructor initializer"
+                );
+            }
             ConstructorAction::InitializeRecordCell { state, .. } => {
                 record_cell_slot(plan, state)?;
                 ensure!(
@@ -541,6 +606,47 @@ fn apply_ordered_actions(
                     .insert(slot, StateValue::Map(map))
                     .ok_or_else(|| anyhow!("constructor Map slot is outside state"))?;
             }
+            ConstructorAction::CounterIncrement {
+                state: counter_name,
+                amount,
+                guard,
+            } => {
+                if !counter_increment_enabled(guard.as_ref(), environment)? {
+                    continue;
+                }
+                let amount = counter_increment_amount(amount, environment)?;
+
+                let slot = constructor_counter_slot(plan, counter_name)?;
+                let current = slots
+                    .get(slot)
+                    .ok_or_else(|| anyhow!("constructor Counter slot is outside state"))?;
+                let current = constructor_counter_value(current)?;
+                let total = current
+                    .checked_add(amount)
+                    .ok_or_else(|| anyhow!("constructor Counter sum exceeds UInt64"))?;
+                slots = slots
+                    .insert(slot, StateValue::Cell(Sp::new(AlignedValue::from(total))))
+                    .ok_or_else(|| anyhow!("constructor Counter slot is outside state"))?;
+            }
+            ConstructorAction::InitializeCellFromCounter {
+                state: cell_name,
+                counter: counter_name,
+            } => {
+                let counter_slot = constructor_counter_slot(plan, counter_name)?;
+                let counter = slots
+                    .get(counter_slot)
+                    .ok_or_else(|| anyhow!("constructor Counter slot is outside state"))?;
+                let counter = constructor_counter_value(counter)?;
+                let value = input_value(
+                    "UIntRange<18446744073709551616>",
+                    &json!(counter.to_string()),
+                )?;
+                let value = crate::aligned_storage_cell(&value)?;
+                let cell_slot = constructor_counter_cell_slot(plan, cell_name)?;
+                slots = slots
+                    .insert(cell_slot, StateValue::Cell(Sp::new(value)))
+                    .ok_or_else(|| anyhow!("constructor UInt64 Cell slot is outside state"))?;
+            }
             ConstructorAction::InitializeRecordCell {
                 state: cell_name,
                 fields,
@@ -605,6 +711,21 @@ fn apply_ordered_actions(
         }
     }
     Ok(ChargedState::new(StateValue::Array(slots)))
+}
+
+fn constructor_counter_value(value: &StateValue<Db>) -> Result<u64> {
+    let StateValue::Cell(value) = value else {
+        bail!("constructor Counter state requires cell storage")
+    };
+    let value = crate::decode_state_cell(
+        value,
+        "UIntRange<18446744073709551616>",
+        "u64",
+    )?;
+    let Value::UInt { number, .. } = value else {
+        bail!("constructor Counter state requires a UInt64 counter")
+    };
+    u64::try_from(number).map_err(|_| anyhow!("constructor Counter value exceeds UInt64"))
 }
 
 fn apply_set_inserts(
@@ -759,6 +880,17 @@ pub fn construct_state(
     ensure!(
         constructor.actions.is_empty() || constructor.map_inserts.is_empty(),
         "ordered constructor actions cannot be mixed with legacy Map inserts"
+    );
+    let ordered_counter_actions = constructor.actions.iter().any(|action| {
+        matches!(
+            action,
+            ConstructorAction::CounterIncrement { .. }
+                | ConstructorAction::InitializeCellFromCounter { .. }
+        )
+    });
+    ensure!(
+        constructor.counter_increments.is_empty() || !ordered_counter_actions,
+        "ordered constructor Counter actions cannot be mixed with legacy Counter increments"
     );
     for declaration in &plan.state {
         if declaration.kind.get("map").is_some() {
