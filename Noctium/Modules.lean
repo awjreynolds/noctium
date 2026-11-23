@@ -176,6 +176,7 @@ structure ModuleEntrypoint where
   effects : List ModuleEffectSpec := []
   span : SourceSpan := {}
   opaqueCellHashReturns : List OpaqueCellHashReturn := []
+  returns : List Output := []
   deriving Repr
 
 structure Export where
@@ -576,12 +577,22 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       resource entrypoint.span "module entrypoint effects"
     if entrypoint.opaqueCellHashReturns.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint returns"
-    unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name)) do
+    if entrypoint.returns.length > limits.maxSourceNodes then
+      resource entrypoint.span "module entrypoint returns"
+    unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name) ++
+        entrypoint.returns.map (·.name)) do
       fail entrypoint.span "duplicate module entrypoint return name"
     for returned in entrypoint.opaqueCellHashReturns do
       validText returned.span returned.name
       unless Types.validFieldName returned.name do
         fail returned.span s!"invalid module return name '{returned.name}'"
+    for returned in entrypoint.returns do
+      validText returned.span returned.name
+      unless Types.validFieldName returned.name do
+        fail returned.span s!"invalid module return name '{returned.name}'"
+      match returned.ty.validate Capabilities.crypto with
+      | .ok _ => pure ()
+      | .error message => fail returned.span message
     for effect in entrypoint.effects do
       if effect.span.file.utf8ByteSize > 4096 then resource effect.span "module source span"
       match effect.effect with
@@ -626,7 +637,8 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       validText item.span localName
   pure (definition.parameters.length + definition.members.length +
     definition.imports.length + definition.exports.length + definition.entrypoints.length +
-    definition.entrypoints.foldl (fun count entry => count + entry.effects.length) 0 +
+    definition.entrypoints.foldl (fun count entry =>
+      count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length) 0 +
     definition.imports.foldl (fun count item => count + item.arguments.length + item.selections.length) 0 +
     definition.members.foldl (fun count member => count + match member.stateSchema? with
       | none => 0
@@ -1240,7 +1252,7 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
     identity := exported.identity
     circuit
     effects := resolvedEffects.map Prod.fst ++ resolvedReturns.map fun (_, read, _) => read
-    returns := resolvedReturns.map fun (output, _, _) => output
+    returns := entrypoint.returns ++ resolvedReturns.map fun (output, _, _) => output
     stateIdentities := (resolvedEffects.flatMap Prod.snd ++ returnStateIdentities).eraseDups
     span := entrypoint.span
     effectSpans := entrypoint.effects.map (·.span) ++
@@ -1302,12 +1314,12 @@ private partial def genericTypeOfConcrete : Types.CompositeType → Except Strin
   | .unit => pure .unit
   | .scalar .native => pure .native
   | .scalar .bool => pure .bool
+  | .scalar .opaqueBytes => pure .opaqueBytes
+  | .scalar .opaqueString => pure .opaqueString
   | .scalar .jubjubScalar => pure .jubjubScalar
   | .scalar .jubjubPoint => pure .jubjubPoint
   | .scalar (.uint maximum) => pure (.uint (.literal maximum))
   | .scalar (.bytes _) => throw "scalar byte types cannot enter module specialization"
-  | .scalar .opaqueBytes => throw "OpaqueBytes cannot enter module specialization"
-  | .scalar .opaqueString => throw "OpaqueString cannot enter module specialization"
   | .scalar (.foreign kind) => pure (.foreign kind)
   | .tuple items => .tuple <$> items.mapM genericTypeOfConcrete
   | .structure id => pure (.structure id [])
