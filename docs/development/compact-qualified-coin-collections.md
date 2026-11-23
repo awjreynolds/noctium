@@ -76,6 +76,16 @@ The native checker accepts both implicit and explicit contract recipient
 paths. The root Set and root explicit-recipient artifacts match their previous
 bytes. The nested Set checks use the query context and emitted relation.
 
+Noctium source admits qualified Set insertion under up to five Bytes32 Map
+parents. The ZKIR 3.2.1 fixture checks self-recipient insertion at depth two
+and explicit contract-recipient insertion at depth five. It stores the
+booked indices 41 and 42, preserves the seeded sibling Sets, and rejects
+missing parents or missing and wrong-recipient bookings. A sixth parent
+rejects at source and native plan admission. The root and one-parent
+artifacts match the earlier bytes. The deeper cases use a native query
+context. [Lean fixture](../../tests/DeepQualifiedCoinSet.lean) ·
+[Native query check](../../runtime/tests/qualified_coin_set.rs)
+
 ## Booked coin Map
 
 `insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.

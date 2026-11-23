@@ -386,6 +386,9 @@ scoped syntax ident ":" "struct" ident "{" nlmerkleafield* "}" : nlmerkleafield
 declare_syntax_cat nlmaprecordtail
 scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
+declare_syntax_cat nlmapsettail
+scoped syntax "Set" "struct" ident "{" nlcompositefield* "}" : nlmapsettail
+scoped syntax nltype "=>" nlmapsettail : nlmapsettail
 scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmerklespec
@@ -402,6 +405,7 @@ scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" "st
 scoped syntax "tree" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nltype "=>" nlmaprecordtail : nlstate
+scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nlmapsettail : nlstate
 scoped syntax ident ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" ident "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" ident "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -1878,29 +1882,6 @@ private def lowerListPath (schema : List (String × StateKind)) (env : Bindings)
     | .error message => throwErrorAt path message
   pure (storage, ← pathKeysTerm keys, environment, type, fields)
 
-private def lowerQualifiedCoinSetPath (schema : List (String × StateKind))
-    (env : Bindings) (path : TSyntax `nlpath) :
-    CommandElabM (TSyntax `ident × TSyntax `term) := do
-  let (storage, sourceKeys) ← sourcePathParts path
-  let treeSchema ← treeStateSchema schema storage
-  let supportedShape := match treeSchema, sourceKeys with
-    | .shieldedCoinSet .., [] => _root_.Bool.true
-    | .map (.bytes 32) (.recordSet ..), [_] => _root_.Bool.true
-    | .map (.bytes 32) (.shieldedCoinSet ..), [_] => _root_.Bool.true
-    | _, _ => _root_.Bool.false
-  unless supportedShape do
-    throwErrorAt path
-      "insertShieldedCoinSet requires a root QualifiedShieldedCoinInfo Set or one Bytes32-keyed nested record Set"
-  let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
-  let (environment, recordType) ← match selected with
-    | .shieldedCoinSet environment recordType => pure (environment, recordType)
-    | .recordSet environment recordType => pure (environment, recordType)
-    | _ => throwErrorAt path "insertShieldedCoinSet path must select a qualified coin Set"
-  match LedgerValueType.shieldedCoinRecordFields environment recordType with
-  | .ok _ => pure ()
-  | .error message => throwErrorAt path message
-  pure (storage, ← pathKeysTerm keys)
-
 private partial def bytes32ParentMaps (schema : LedgerValueType)
     (keys : List (TSyntax `nlexpr)) : _root_.Bool :=
   match keys with
@@ -1909,6 +1890,29 @@ private partial def bytes32ParentMaps (schema : LedgerValueType)
     match schema with
     | .map (.bytes 32) value => bytes32ParentMaps value rest
     | _ => _root_.Bool.false
+
+private def lowerQualifiedCoinSetPath (schema : List (String × StateKind))
+    (env : Bindings) (path : TSyntax `nlpath) :
+    CommandElabM (TSyntax `ident × TSyntax `term) := do
+  let (storage, sourceKeys) ← sourcePathParts path
+  unless sourceKeys.length ≤ 5 do
+    throwErrorAt path "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  let treeSchema ← treeStateSchema schema storage
+  unless bytes32ParentMaps treeSchema sourceKeys do
+    throwErrorAt path
+      "insertShieldedCoinSet requires a qualified coin Set under Bytes32-keyed Map parents"
+  let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
+  let (environment, recordType) ← match selected with
+    | .shieldedCoinSet environment recordType => pure (environment, recordType)
+    | .recordSet environment recordType =>
+      if sourceKeys.isEmpty then
+        throwErrorAt path "insertShieldedCoinSet root path must select a qualified coin Set"
+      pure (environment, recordType)
+    | _ => throwErrorAt path "insertShieldedCoinSet path must select a qualified coin Set"
+  match LedgerValueType.shieldedCoinRecordFields environment recordType with
+  | .ok _ => pure ()
+  | .error message => throwErrorAt path message
+  pure (storage, ← pathKeysTerm keys)
 
 private def lowerQualifiedCoinMapPath (schema : List (String × StateKind))
     (env : Bindings) (path : TSyntax `nlpath) :
@@ -2645,8 +2649,8 @@ private def collectionResetTerm (path : TSyntax `nlpath) (storage : TSyntax `ide
   | .map .. | .set _ | .recordSet .. | .recordMapKey .. | .recordMapComposite .. =>
     `(Noctium.Effect.emptyMapPath $name $keys)
   | .shieldedCoinSet .. => do
-    unless keyCount == 1 do
-      throwErrorAt path "qualified shielded coin Set reset requires one Bytes32 map key"
+    unless 1 ≤ keyCount && keyCount ≤ 5 do
+      throwErrorAt path "qualified shielded coin Set reset supports one to five Map keys"
     `(Noctium.Effect.emptyMapPath $name $keys)
   | .merkleTree depth historic =>
     unless 1 ≤ keyCount && keyCount ≤ 12 do
@@ -4682,6 +4686,17 @@ private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
     pure (keyTy :: restTypes, record, recordFields)
   | _ => throwErrorAt tail "expected a nested Map key or record leaf"
 
+private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
+    CommandElabM (List Ty × TSyntax `ident × Array (TSyntax `nlcompositefield)) := do
+  match tail with
+  | `(nlmapsettail| Set struct $record:ident { $recordFields:nlcompositefield* }) =>
+    pure ([], record, recordFields)
+  | `(nlmapsettail| $key:nltype => $rest:nlmapsettail) => do
+    let keyTy ← readTy key
+    let (restTypes, record, recordFields) ← readMapSetTail rest
+    pure (keyTy :: restTypes, record, recordFields)
+  | _ => throwErrorAt tail "expected a nested Map key or record Set leaf"
+
 @[command_elab contractCommand] unsafe def elabContract : CommandElab := fun stx => do
   match stx with
   | `(noctium_contract $name:ident where $states:nlstate* $entries:nlentry* end) =>
@@ -4868,6 +4883,27 @@ private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
           let valueTerm ← `(Noctium.LedgerValueType.map $outerTerm
             (Noctium.LedgerValueType.map $innerTerm
               (Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+        | `(nlstate| tree $id:ident : $first:nltype => $second:nltype =>
+            $tail:nlmapsettail) => do
+          let firstTy ← readTy first
+          let secondTy ← readTy second
+          let (tailTypes, record, recordFields) ← readMapSetTail tail
+          let keyTypes := [firstTy, secondTy] ++ tailTypes
+          let some finalKey := keyTypes.getLast?
+            | throwErrorAt state "nested record Set requires at least two Map keys"
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            elaborateNamedRecord contractName record recordFields state
+          let (leafSchema, leafTerm) ← nestedRecordSetSchema finalKey environment compositeType
+            environmentTerm compositeTypeTerm state
+          let parentTypes := keyTypes.dropLast
+          let valueSchema := parentTypes.reverse.foldl
+            (fun value keyType => LedgerValueType.map keyType value) leafSchema
+          let mut valueTerm := leafTerm
+          for keyType in parentTypes.reverse do
+            let keyTerm ← tyTerm keyType
+            valueTerm ← `(Noctium.LedgerValueType.map $keyTerm $valueTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $first:nltype => $second:nltype =>
             $third:nltype => $tail:nlmaprecordtail) => do

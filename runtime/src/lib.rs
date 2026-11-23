@@ -3282,14 +3282,15 @@ fn validate_shielded_coin_set(plan: &Plan, slot: u32, keys: &[PathPart]) -> Resu
         "shielded coin Set slot exceeds the native state limit"
     );
     ensure!(
-        keys.len() <= 1,
-        "shielded coin Set supports at most one parent key"
+        keys.len() <= 5,
+        "shielded coin Set supports at most five parent keys"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
         ensure!(
-            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
-            "shielded coin Set parent key must be Bytes32"
+            key_types.len() == keys.len()
+                && key_types.iter().all(|ty| *ty == ScalarType::Bytes32),
+            "shielded coin Set parent keys must all be Bytes32"
         );
     }
     path_field_count(plan, slot, keys)?;

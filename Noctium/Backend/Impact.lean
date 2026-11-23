@@ -401,7 +401,7 @@ private def shieldedCoinSetFieldGroups (slot : Nat) (keys : List Aligned)
     (commitment : Expr (.bytes 32)) : List (List Scalar) :=
   [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
       keys.flatMap Aligned.fields
-  , [.native (if keys.isEmpty then 0x34 else 0x36)]
+  , [.native (0x34 + 2 * keys.length)]
   , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
   , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
   , shieldedCoinPushFields nonce color amount
@@ -1558,16 +1558,27 @@ private def insertShieldedCoinMapOp (state : List StateDecl) (name : String)
   pure (.insertShieldedCoinMap slot key nonce color amount isContract recipient commitment
     (← nativePathKeys keys))
 
+private def validateQualifiedCoinSetKeys (keys : List PathKey) : Except String Unit := do
+  unless keys.length ≤ 5 do
+    throw "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  unless keys.all (fun key => key.ty == .bytes 32) do
+    throw "qualified coin Set parent keys must be Bytes32"
+  unless 4 + 2 * keys.length ≤ 15 do
+    throw "qualified coin Set parent path exceeds the native Dup immediate range"
+  unless keys.length + 1 ≤ 15 && keys.length + 2 ≤ 15 do
+    throw "qualified coin Set parent path exceeds the native Ins immediate range"
+
 private def shieldedCoinSetPath (state : List StateDecl) (name : String)
     (keys : List PathKey) : Except String (Nat × List Aligned) := do
+  validateQualifiedCoinSetKeys keys
   let slot ← stateSlot state name
-  match keys with
-  | [] => pure ()
-  | [key] => unless key.ty == .bytes 32 do
-      throw "qualified coin Set parent key must be Bytes32"
-  | _ => throw "qualified coin Set supports only one Bytes32 parent key"
-  let .shieldedCoinSet environment recordType ← resolveTreeState state name keys
-    | throw "path does not select a qualified coin Set"
+  let selected ← resolveTreeState state name keys
+  let (environment, recordType) ← match selected with
+    | .shieldedCoinSet environment recordType => pure (environment, recordType)
+    | .recordSet environment recordType =>
+      if keys.isEmpty then throw "qualified coin Set root must be a shielded coin Set"
+      pure (environment, recordType)
+    | _ => throw "path does not select a qualified coin Set"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
   pure (slot, ← nativePathKeys keys)
 

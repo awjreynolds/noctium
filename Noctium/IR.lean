@@ -768,7 +768,8 @@ def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
   let some schema := kind.pathSchema | throw "path must select a Map or Set"
   let selected ← schema.resolvePath keys
   let nestedShieldedCoinSet := match selected with
-    | .shieldedCoinSet .. => keys.length == 1
+    | .shieldedCoinSet .. => 1 ≤ keys.length && keys.length ≤ 5 &&
+        keys.all (fun key => key.ty == .bytes 32)
     | _ => false
   unless selected.isCollection || nestedShieldedCoinSet do
     throw "path must select a Map or Set"
@@ -975,14 +976,14 @@ inductive Effect where
   | receiveShieldedToMap (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
   /-- Insert a coin whose self-recipient commitment is already booked in the
-  current transaction into a root qualified-record Set or a one-level
-  Bytes32-keyed nested record Set. The runtime gets its index from context. -/
+  current transaction into a root qualified-record Set or one selected under
+  up to five Bytes32-keyed Map parents. The runtime gets its index from context. -/
   | insertShieldedCoinSet (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
       (keys : List PathKey)
   /-- Insert a transaction-booked coin for an explicit wallet or contract
-  recipient into a root qualified-record Set or a one-level Bytes32-keyed
-  nested record Set. The runtime gets its index from context. -/
+  recipient into a root qualified-record Set or one selected under up to five
+  Bytes32-keyed Map parents. The runtime gets its index from context. -/
   | insertShieldedCoinSetTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient : Expr (.bytes 32)) (keys : List PathKey)
@@ -1676,18 +1677,26 @@ private def resolveListState (decls : List StateDecl) (state : String)
 
 private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
+  unless keys.length ≤ 5 do
+    throw "insertShieldedCoinSet supports at most five Bytes32 Map parents"
+  unless keys.all (fun key => key.ty == .bytes 32) do
+    throw "qualified coin Set parent keys must be Bytes32"
+  unless 4 + 2 * keys.length ≤ 15 do
+    throw "qualified coin Set parent path exceeds the native Dup immediate range"
+  unless keys.length + 1 ≤ 15 && keys.length + 2 ≤ 15 do
+    throw "qualified coin Set parent path exceeds the native Ins immediate range"
   let some declaration := decls.find? (·.name == state)
     | throw s!"unknown qualified shielded coin Set '{state}'"
   let .tree schema := declaration.kind
-    | throw s!"qualified coin insertion requires a root record Set or one-level nested record Set '{state}'"
-  let (environment, recordType) ← match schema, keys with
-    | .shieldedCoinSet environment recordType, [] => pure (environment, recordType)
-    | .map (.bytes 32) (.recordSet environment recordType), [.mk (.bytes 32) _] =>
+    | throw s!"qualified coin insertion requires a recursive Set tree '{state}'"
+  let selected ← if keys.isEmpty then pure schema else schema.resolvePath keys
+  let (environment, recordType) ← match selected with
+    | .shieldedCoinSet environment recordType => pure (environment, recordType)
+    | .recordSet environment recordType =>
+      if keys.isEmpty then
+        throw s!"qualified coin insertion root must be a shielded coin Set '{state}'"
       pure (environment, recordType)
-    | .map (.bytes 32) (.shieldedCoinSet environment recordType), [.mk (.bytes 32) _] =>
-      pure (environment, recordType)
-    | _, _ =>
-      throw s!"qualified coin insertion requires a root record Set or one-level Bytes32-keyed nested record Set '{state}'"
+    | _ => throw s!"qualified coin insertion requires a root record Set or nested qualified coin Set '{state}'"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
 
 private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String)
