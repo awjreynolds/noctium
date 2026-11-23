@@ -1254,10 +1254,18 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let (valueTy, value) ← expression env value
     match valueTy with
     | .bytes _ => pure (.bytes 32, ← `(Noctium.Expr.keccak256 $value))
+    | .native => do
+      let environment ← `(({} : Noctium.Types.CompositeEnv))
+      let nativeType ← tyTerm .native
+      let payloadType ← `(Noctium.Types.CompositeType.tuple
+        [Noctium.Types.CompositeType.scalar $nativeType])
+      let payloadValue ← `(Sigma.mk $nativeType $value)
+      let payloadValues ← sigmaExprListTerm [payloadValue]
+      pure (.bytes 32, ← `(Noctium.Expr.keccak256Fab $environment $payloadType $payloadValues))
     | .foreign (.point .secp256k1) =>
       pure (.bytes 32, ← `(Noctium.Expr.keccak256Secp256k1Point $value))
     | .foreign (.point _) => throwErrorAt stx "keccak256 point overload supports Secp256k1Point"
-    | _ => throwErrorAt stx "keccak256 requires a Bytes or Secp256k1Point expression"
+    | _ => throwErrorAt stx "keccak256 requires a Bytes, Native, or Secp256k1Point expression"
   | `(nlexpr| secp256k1EcdsaVerify($msgHash, $r, $s, $pk)) => do
     let msgHash ← expected env msgHash (.bytes 32)
     let r ← expected env r (.foreign (.scalar .secp256k1))

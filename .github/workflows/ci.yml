@@ -132,6 +132,7 @@ jobs:
           lake env lean --run tests/NativeProducer.lean
           lake env lean tests/ByteHashes.lean
           lake env lean tests/TypedPointKeccak.lean
+          lake env lean tests/FieldKeccak.lean
           lake env lean tests/BooleanGates.lean
           lake env lean tests/LazyBoolean.lean
           lake env lean tests/LazyConditional.lean

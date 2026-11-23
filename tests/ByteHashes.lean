@@ -137,10 +137,10 @@ noctium_circuit invalidSha512Input where
   output digest : Bytes 64 := sha512(payload)
 end
 
-/-- error: keccak256 requires a Bytes or Secp256k1Point expression -/
+/-- error: keccak256 requires a Bytes, Native, or Secp256k1Point expression -/
 #guard_msgs in
 noctium_circuit invalidKeccakInput where
-  private payload : Native
+  private payload : Bool
   output digest : Bytes32 := keccak256(payload)
 end
 
