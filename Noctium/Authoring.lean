@@ -37,13 +37,6 @@ structure WitnessParameterCodec where
   codec : Name
   deriving Repr, BEq
 
-/-- A source-level bounded unsigned type. Its native representation remains the
-underlying UInt maximum, while this identity stays distinct during elaboration. -/
-structure NominalUIntType where
-  name : String
-  maximum : Nat
-  deriving Repr, BEq, DecidableEq
-
 private structure SourceScalarType where
   type : Ty
   nominalUInt : Option NominalUIntType := none
@@ -120,13 +113,6 @@ initialize noctiumWitnessParameterCodecRegistry : SimplePersistentEnvExtension
     addEntryFn := Array.push
   }
 
-initialize noctiumNominalUIntTypeRegistry : SimplePersistentEnvExtension
-    Noctium.Authoring.NominalUIntType (Array Noctium.Authoring.NominalUIntType) ←
-  registerSimplePersistentEnvExtension {
-    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
-    addEntryFn := Array.push
-  }
-
 end Noctium.Authoring
 
 namespace Noctium
@@ -137,7 +123,6 @@ open Noctium.Helpers
 open Noctium.Authoring
 open scoped Noctium
 
-scoped syntax (priority := low) ident : nltype
 declare_syntax_cat noctium_witness_input_type
 scoped syntax nltype : noctium_witness_input_type
 scoped syntax "Payload" ident : noctium_witness_input_type
@@ -146,8 +131,6 @@ declare_syntax_cat noctium_private_field
 scoped syntax "cell" ident ":" noctium_witness_input_type : noctium_private_field
 scoped syntax (name := noctiumPrivateStateCommand) "noctium_private_state" ident
   "where" noctium_private_field* "end" : command
-scoped syntax (name := noctiumUIntTypeCommand) "noctium_uint_type" ident ":="
-  "UInt" num : command
 
 declare_syntax_cat noctium_witness_parameter
 scoped syntax ident ":" nltype : noctium_witness_parameter
@@ -435,23 +418,6 @@ private def nominalUIntByName (name : String) : CommandElabM NominalUIntType := 
   match registry.find? (·.name == name) with
   | some declaration => pure declaration
   | none => throwError m!"unknown nominal UInt identity '{name}'"
-
-@[command_elab noctiumUIntTypeCommand] unsafe def elabNoctiumUIntType : CommandElab := fun stx => do
-  match stx with
-  | `(noctium_uint_type $name:ident := UInt $bits:num) => do
-    let fullName := ((← getCurrNamespace) ++ name.getId).toString
-    unless Helpers.validWitnessIdentifier fullName do
-      throwErrorAt name s!"nominal UInt identity is invalid or too long: {fullName}"
-    let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
-    if registry.any (·.name == fullName) then
-      throwErrorAt name s!"duplicate nominal UInt type '{name.getId}'"
-    let maximum ← match ScalarPolicy.sized bits.getNat with
-      | .ok (.uint maximum) => pure maximum
-      | .error message => throwErrorAt bits message
-      | _ => throwErrorAt bits "invalid nominal UInt width"
-    let declaration : NominalUIntType := {name := fullName, maximum}
-    modifyEnv fun env => noctiumNominalUIntTypeRegistry.addEntry env declaration
-  | _ => throwUnsupportedSyntax
 
 private def sourceScalarTypeName (source : SourceScalarType) : String :=
   match source.nominalUInt with
