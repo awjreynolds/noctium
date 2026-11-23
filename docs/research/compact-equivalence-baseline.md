@@ -1,12 +1,12 @@
 # Compact feature-equivalence baseline
 
-Research checked on 2026-11-16. This document records the baseline for a fully featured Noctium compiler written in Lean, targeting ZKIR and native Midnight ledger artifacts without a Compact compiler or runtime dependency. The host-neutral witness runtime is a separate implementation track. This research adds no compiler code and certifies no new capability.
+Research checked on 2026-11-16. The public support matrix was checked again on 2026-11-23. Noctium compiles Lean to ZKIR and native Midnight ledger artifacts. The host-neutral witness runtime is a separate implementation track.
 
-The machine-readable inventory is [compact-feature-matrix.json](../compatibility/compact-feature-matrix.json). Its 221 stable IDs cover language families, every method heading in the pinned ledger ADT reference, every named type/function/event heading in the pinned standard-library API reference, and artifact/runtime obligations. These are inventory entries, not 221 independent features or a completeness score. Every equivalence result is `unverified`. Overloads, negative cases, compositions and runtime boundaries still need finer acceptance cases.
+The [Noctium feature register](../compatibility/compact-feature-matrix.json) tracks 221 inventory entries across language families, pinned ledger ADT methods, standard-library types, functions and events, and artifact/runtime obligations. Each entry records its current evidence. Equivalence requires evidence for overloads, rejection cases, composition and runtime boundaries.
 
 ## Baseline decision and provenance
 
-Use Compact toolchain 0.36.1, language 0.28.0, as the current stable feature reference. The official release was published on 2026-11-11 and is marked non-prerelease. Its reference runtime is 0.21.0. The public-network support matrix still lists toolchain 0.36.0. Record both facts rather than treating the matrix as a latest-release index. Release notes describe 0.36.1 as a ledger 9 release, but this research does not establish public-network qualification beyond the matrix. [Stable release](https://github.com/LFDT-Minokawa/compact/releases/tag/compactc-v0.36.1), [network matrix](https://docs.midnight.network/relnotes/support-matrix).
+Compact toolchain 0.36.1, language 0.28.0, is the stable feature reference. The official release was published on 2026-11-11 and uses reference runtime 0.21.0. Midnight's 2026-11-17 client patch lists the same compiler for Preview, Preprod and Mainnet. Noctium's local qualification follows the exact pins recorded in each receipt. [Stable release](https://github.com/LFDT-Minokawa/compact/releases/tag/compactc-v0.36.1) · [Network matrix](https://docs.midnight.network/relnotes/support-matrix)
 
 | Component | Pinned value | Meaning |
 | --- | --- | --- |
@@ -15,10 +15,10 @@ Use Compact toolchain 0.36.1, language 0.28.0, as the current stable feature ref
 | Compact runtime | 0.21.0 | Reference behavior only, forbidden Noctium dependency |
 | Emitted circuit format | ZKIR 3.1 | Producer format, distinct from executable version |
 | Bundled key generator | ZKIR 3.2.1, `7a51b3385bbf4bce3604df87a7c70867c9ab43c0` | Latest patch fixes a Jubjub key-generation failure |
-| Public-network matrix | Toolchain 0.36.0, on-chain runtime 4.0.0, proof server 9.0.0 | Documented tested combination on research date |
+| Public-network matrix | Toolchain 0.36.1, Compact.js 3.0.2, Midnight.js 5.0.1, on-chain runtime 4.0.2, proof server 9.0.2 | Official 2026-11-17 Ledger 9 client patch |
 | Ledger source | 9.1.0.1, `a2b30128ca4b660b73a068e29b56b48ede8c9a74` | Ledger contract/maintenance interface inspected |
 | Existing Noctium observation | `da3ffa3b61b0948768ca370b2abc391575e1dbae` | Local source inspected during research |
-| Existing Noctium local proof of concept | ZKIR 3.2.0, on-chain runtime profile 4.0.1 | Existing evidence, different from both upstream combinations |
+| Original Noctium local proof of concept | ZKIR 3.2.0, on-chain runtime profile 4.0.1 | Historical evidence tied to the inspected revision |
 
 Sources: [Compact tag](https://api.github.com/repos/LFDT-Minokawa/compact/git/ref/tags/compactc-v0.36.1), [pinned lockfile](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/flake.lock), [patch comparison and ZKIR 3.1 regression output](https://github.com/LFDT-Minokawa/compact/compare/compactc-v0.36.0...compactc-v0.36.1), [ledger tag](https://api.github.com/repos/midnightntwrk/midnight-ledger/git/ref/tags/ledger-9.1.0.1), [local profile](../../profiles/midnight-ledger-9.json), [existing native evidence](../development/native-localnet.md).
 

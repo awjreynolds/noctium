@@ -4,9 +4,9 @@ Context pointer: [ticket 13, Inventory ledger 9 circuit and contract capabilitie
 
 Research checked on 2026-11-16 against the official Midnight documentation and repositories cited below. This is a bounded inventory of public interfaces reviewed so far, not a complete opcode or contract-feature catalogue.
 
-## Current compatibility profile
+## Compatibility profile recorded on 2026-11-16
 
-The current public-network profile is ledger 9.1.0.1, node 2.1.101, proof server 9.0.0, Midnight.js 5.0.0, and Compact toolchain 0.36.0. The compatibility matrix pairs Compact language 0.28.0, Compact runtime 0.21.0, and on-chain runtime 4.0.0 with ledger 9. The ledger notes identify `midnight-circuits` 7.3.0 and `midnight-zk-stdlib` 2.4.0. [Ledger 9 compatibility notes](https://docs.midnight.network/relnotes/ledger-9) [Ledger 9.1.0.1 release](https://github.com/midnightntwrk/midnight-ledger/releases/tag/ledger-9.1.0.1) [Compatibility matrix](https://docs.midnight.network/relnotes/support-matrix)
+The compatibility matrix checked on 2026-11-16 listed ledger 9.1.0.1, node 2.1.101, proof server 9.0.0, Midnight.js 5.0.0, Compact toolchain 0.36.0, language 0.28.0, Compact runtime 0.21.0, and on-chain runtime 4.0.0. The [updated baseline](compact-equivalence-baseline.md) records the 2026-11-17 client patch. [Current compatibility matrix](https://docs.midnight.network/relnotes/support-matrix) [Ledger 9 compatibility notes](https://docs.midnight.network/relnotes/ledger-9) [Ledger 9.1.0.1 release](https://github.com/midnightntwrk/midnight-ledger/releases/tag/ledger-9.1.0.1)
 
 At the circuit boundary, ledger 9 documents ZKIR 3.2.0. Compact 0.36 emits ZKIR 3.1 and bundles a `zkir-v3` binary from `midnight-zkir` 3.2.0-rc.2. Treat these as separate producer and target identifiers until an exact emitted artifact passes the ledger's checks. [Ledger 9.1.0.1 release](https://github.com/midnightntwrk/midnight-ledger/releases/tag/ledger-9.1.0.1) [Compact 0.36 release notes](https://docs.midnight.network/relnotes/compact/toolchain-0.36.0)
 

@@ -14,12 +14,16 @@
     "emittedZkir": "3.1",
     "bundledZkir": "3.2.1",
     "bundledZkirCommit": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
-    "networkMatrixToolchain": "0.36.0",
+    "networkMatrixPatch": "2026-11-17",
+    "networkMatrixToolchain": "0.36.1",
+    "networkCompactJs": "3.0.2",
+    "networkMidnightJs": "5.0.1",
+    "networkNode": "2.1.101",
     "ledger": "9.1.0.1",
     "ledgerCommit": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
-    "networkOnchainRuntime": "4.0.0",
-    "proofServer": "9.0.0",
-    "qualification": "Latest stable release and network matrix differ. Network qualification of 0.36.1 is not established by matrix."
+    "networkOnchainRuntime": "4.0.2",
+    "proofServer": "9.0.2",
+    "qualification": "The official matrix lists Compact 0.36.1 for Preview, Preprod and Mainnet. Noctium qualification follows the exact profile and network recorded in each retained receipt."
   },
   "noctiumObservation": {
     "commit": "da3ffa3b61b0948768ca370b2abc391575e1dbae",
@@ -49,7 +53,7 @@
     },
     "matrix": {
       "url": "https://docs.midnight.network/relnotes/support-matrix",
-      "retrieved": "2026-11-16",
+      "retrieved": "2026-11-23",
       "mutable": true
     },
     "reference": {
