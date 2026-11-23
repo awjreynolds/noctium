@@ -46,6 +46,8 @@ for (const reverse of [false, true]) {
   const actualFlags = [...snapshot.flags].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   const actualMembers = [...snapshot.members].sort((a, b) => Buffer.compare(a, b));
   assert.deepEqual(actualFlags, [[1n, true], [2n, false], [10n, true]]);
+  assert.equal(snapshot.flags.lookup(2n), false);
+  assert.equal(snapshot.flags.member(3n), false);
   assert.deepEqual(actualMembers, [1, 4, 9].map(value => new Uint8Array(32).fill(value)));
 }
 let listState = currentContractState.data;
@@ -70,6 +72,8 @@ const nested = ledger(nestedState);
 const nestedFlags = [...nested.nestedFlags.lookup(owner)].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
 const nestedMembers = [...nested.nestedMembers.lookup(owner)].sort((a, b) => Buffer.compare(a, b));
 assert.deepEqual(nestedFlags, [[1n, true], [2n, false], [10n, true]]);
+assert.equal(nested.nestedFlags.lookup(owner).lookup(10n), true);
+assert.equal(nested.nestedFlags.lookup(owner).member(3n), false);
 assert.deepEqual(nestedMembers, [1, 4, 9].map(value => new Uint8Array(32).fill(value)));
 assert.deepEqual([...nested.nestedValues.lookup(owner)], [11n, 22n, 33n]);
 const mapped = { c1x: 1n, c1y: 2n, c2x: 3n, c2y: 4n };
@@ -77,6 +81,7 @@ const listed = { c1x: 5n, c1y: 6n, c2x: 7n, c2y: 8n };
 const recordState = await call(currentContractState.data, 'seedRecords', owner, mapped, listed);
 const records = ledger(recordState);
 assert.deepEqual([...records.records], [[owner, mapped]]);
+assert.deepEqual(records.records.lookup(owner), mapped);
 assert.deepEqual([...records.recordList], [listed]);
 
 assert.deepEqual([...ledger(currentContractState.data).recordMembers], []);
@@ -84,6 +89,16 @@ let recordMemberState = currentContractState.data;
 const memoTrue513 = { active: true, amount: 513n };
 const memoFalse513 = { active: false, amount: 513n };
 const memoTrue514 = { active: true, amount: 514n };
+let recordMapState = currentContractState.data;
+for (const [key, value] of [[memoTrue513, 33n], [memoFalse513, 22n], [memoTrue514, 44n]]) {
+  recordMapState = await call(recordMapState, 'putRecordFlag', key.active, key.amount, value);
+}
+const recordFlags = ledger(recordMapState).recordFlags;
+assert.equal(recordFlags.lookup(memoTrue513), 33n);
+assert.equal(recordFlags.lookup(memoFalse513), 22n);
+assert.equal(recordFlags.lookup(memoTrue514), 44n);
+assert.equal(recordFlags.member({ active: false, amount: 514n }), false);
+
 const normalizedRecordMembers = (state) => [...ledger(state).recordMembers]
   .map(({ active, amount }) => ({ active, amount }))
   .sort((left, right) => Number(left.active) - Number(right.active) ||

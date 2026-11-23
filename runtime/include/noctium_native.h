@@ -207,6 +207,29 @@ int32_t noctium_ledger_collection_page(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Read one entry from a pinned, canonical Map snapshot.
+   Request UTF-8 JSON (unknown fields reject):
+     {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
+      "stateSha256":"<lowercase SHA-256>","name":"<state name>",
+      "keys":[{"type":"<Noctium scalar type>","value":<canonical JSON>}],
+      "key":<canonical JSON>}
+   The keys array contains only enclosing Map keys, or is empty for a root
+   Map. The final key uses the resolved Map declaration for its type. Scalar
+   keys use native input JSON. Flat record keys use an object of named fields,
+   with one value for every field in the declaration.
+   Missing enclosing Maps, invalid keys and malformed selected values return
+   an error. A valid final key with no entry returns found:false and null.
+   The result token owns copied public JSON:
+     {"abiVersion":1,"kind":"mapLookup","found":true,"value":<canonical JSON>}
+   Value formats, snapshot provenance and input limits match
+   noctium_ledger_collection_page. This getter reads the immutable snapshot
+   without contacting or changing the ledger. */
+int32_t noctium_ledger_map_lookup(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 /* Read one UInt64 Counter from a pinned, canonical contract-state snapshot.
    Request UTF-8 JSON (unknown fields reject):
      {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
