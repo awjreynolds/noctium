@@ -718,13 +718,17 @@ private theorem decodedComparisonPair (earlier later : Json)
   · simpa only [sameLeft, sameRight] using laterShape
   · exact NativeRelationJson.decodeInstruction_copyJson first output firstValid outputValid
 
-/-- A comparison operand's range follows from a literal or a retained bit check. -/
+/-- A comparison operand's range follows from a literal, a retained bit check,
+or a retained Boolean check when the comparison width is positive. -/
 def ComparisonOperandRange (instructions : List Instruction) (operand : Operand)
     (width : Nat) : Prop :=
   (∃ narrow ≤ width, .bits operand narrow ∈ instructions) ∨
-    (∃ literal, operand = .immediate literal ∧ literal.val < 2 ^ width)
+    (∃ literal, operand = .immediate literal ∧ literal.val < 2 ^ width) ∨
+    (0 < width ∧ .boolean operand ∈ instructions)
 
-/-- Arithmetic-derived producer bounds require a separate admission proof. -/
+/-- Every comparison in the source relation has independently evidenced bounds
+for both operands. Arithmetic-derived producer bounds require a separate
+admission proof. -/
 def ComparisonBitChecks (instructions : List Instruction) : Prop :=
   ∀ left right width output, .lessThan left right width output ∈ instructions →
     ComparisonOperandRange instructions left width ∧
@@ -734,12 +738,28 @@ private theorem ComparisonOperandRange.bound {instructions : List Instruction}
     {operand : Operand} {width : Nat} (range : ComparisonOperandRange instructions operand width)
     (hash : Hash) (witness : Assignment)
     (bitRanges : ∀ operand width, .bits operand width ∈ instructions →
-      Instruction.Holds hash witness (.bits operand width)) :
+      Instruction.Holds hash witness (.bits operand width))
+    (booleanRanges : ∀ operand, .boolean operand ∈ instructions →
+      Instruction.Holds hash witness (.boolean operand)) :
     (operand.read witness).val < 2 ^ width := by
-  rcases range with ⟨narrow, smaller, member⟩ | ⟨literal, rfl, bounded⟩
+  rcases range with ⟨narrow, smaller, member⟩ | ⟨literal, rfl, bounded⟩ |
+      ⟨positive, member⟩
   · exact Nat.lt_of_lt_of_le (bitRanges operand narrow member)
       (Nat.pow_le_pow_right (by decide) smaller)
   · exact bounded
+  · have booleanHolds := booleanRanges operand member
+    have belowTwo : (operand.read witness).val < 2 := by
+      rcases booleanHolds with isZero | isOne
+      · rw [isZero]
+        simp [zero]
+      · rw [isOne]
+        simp [one]
+    have oneLE : 1 ≤ width := by omega
+    have twoLE : 2 ≤ 2 ^ width := by
+      calc
+        2 = 2 ^ 1 := by decide
+        _ ≤ 2 ^ width := Nat.pow_le_pow_right (by decide) oneLE
+    exact Nat.lt_of_lt_of_le belowTwo twoLE
 
 /-- Apply the exact Copy relation throughout the real compiler fold. The range
 hypothesis refers to constraints present in the decoded source relation. -/
@@ -795,7 +815,9 @@ theorem reuseComparisons_preserves_decoded (source : Array Json) (original : Lis
   let satisfies (instructions : List Instruction) :=
     ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction
   have fold (bitRanges : ∀ operand width, .bits operand width ∈ original →
-        Instruction.Holds hash witness (.bits operand width)) :
+        Instruction.Holds hash witness (.bits operand width))
+      (booleanRanges : ∀ operand, .boolean operand ∈ original →
+        Instruction.Holds hash witness (.boolean operand)) :
       satisfies optimized ↔ satisfies original := by
     unfold satisfies
     change (∀ instruction ∈ reduced.toList.map decodedItem, _) ↔ _
@@ -814,14 +836,21 @@ theorem reuseComparisons_preserves_decoded (source : Array Json) (original : Lis
     obtain ⟨leftRange, rightRange⟩ := ranges left right key.2.2 first earlierInOriginal
     rw [earlierShape, laterShape, copyShape]
     exact lessThanEqualCopyPreserves hash witness left right key.2.2 first output
-      (leftRange.bound hash witness bitRanges) (rightRange.bound hash witness bitRanges)
-  refine ⟨fun optimizedHolds => ?_, fun originalHolds => (fold fun _ _ member =>
-    originalHolds _ member).mpr originalHolds⟩
-  apply (fold ?_).mp optimizedHolds
-  intro operand width member
-  have inStable : .bits operand width ∈ original.filter stableOutsideComparisons := by
-    exact List.mem_filter.mpr ⟨member, rfl⟩
-  rw [← stable] at inStable
-  exact optimizedHolds _ (List.mem_filter.mp inStable).1
+      (leftRange.bound hash witness bitRanges booleanRanges)
+      (rightRange.bound hash witness bitRanges booleanRanges)
+  refine ⟨fun optimizedHolds => ?_, fun originalHolds =>
+    (fold (fun _ _ member => originalHolds _ member)
+      (fun _ member => originalHolds _ member)).mpr originalHolds⟩
+  apply (fold ?_ ?_).mp optimizedHolds
+  · intro operand width member
+    have inStable : .bits operand width ∈ original.filter stableOutsideComparisons := by
+      exact List.mem_filter.mpr ⟨member, rfl⟩
+    rw [← stable] at inStable
+    exact optimizedHolds _ (List.mem_filter.mp inStable).1
+  · intro operand member
+    have inStable : .boolean operand ∈ original.filter stableOutsideComparisons := by
+      exact List.mem_filter.mpr ⟨member, rfl⟩
+    rw [← stable] at inStable
+    exact optimizedHolds _ (List.mem_filter.mp inStable).1
 
 end Noctium.Verification.RangeDedup
