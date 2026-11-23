@@ -45,6 +45,15 @@ in the same circuit execution. [Compact runtime case](../../tests/compact/two-pa
 [Lean fixture](../../tests/TwoParentQualifiedCoinList.lean) ·
 [Native check](../../runtime/tests/two_parent_qualified_coin_list.rs)
 
+The four-parent Noctium fixture accepts a List below four existing Bytes32
+Maps. The native ZKIR 3.2.1 check prepends a coin booked to an explicit
+contract at index 42 ahead of the self-recipient coin at index 31. Two
+seeded sibling Lists stay intact. Missing and wrong bookings and absent
+paths reject. The pinned context `Dup` uses depth 15 at four parents.
+Source and native plan admission reject a fifth parent. The root and
+two-parent checks pass on the same compiler build. [Lean fixture](../../tests/FourParentQualifiedCoinList.lean) ·
+[Native query-context test](../../runtime/tests/four_parent_qualified_coin_list.rs)
+
 A funded Ledger 9 run stored one self-minted coin in a Map, root Cell, root
 Set, and one-element root List in the same call. The test compares the Map,
 Cell and Set records and the List head with the finalized contract-owned
