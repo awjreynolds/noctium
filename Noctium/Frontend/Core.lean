@@ -380,6 +380,9 @@ scoped syntax "sealed" "counter" ident : nlstate
 scoped syntax "sealed" ident ident ":" nltype : nlstate
 declare_syntax_cat nlcompositefield
 scoped syntax ident ":" nltype : nlcompositefield
+declare_syntax_cat nlmerkleafield
+scoped syntax ident ":" nltype : nlmerkleafield
+scoped syntax ident ":" "struct" ident "{" nlmerkleafield* "}" : nlmerkleafield
 declare_syntax_cat nlmaprecordtail
 scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
@@ -387,7 +390,7 @@ scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstat
 scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmerklespec
 scoped syntax num ("of" nltype)? : nlmerklespec
-scoped syntax num "of" "struct" ident "{" nlcompositefield* "}" : nlmerklespec
+scoped syntax num "of" "struct" ident "{" nlmerkleafield* "}" : nlmerklespec
 scoped syntax "merkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "historicMerkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -4370,6 +4373,41 @@ private def readCompositeField (field : TSyntax `nlcompositefield) :
     | throwErrorAt field "unsupported composite record field"
   pure (fieldName.getId.toString, ← readTy fieldType)
 
+private partial def readMerkleCompositeField (rootId path : String)
+    (field : TSyntax `nlmerkleafield) :
+    CommandElabM (Types.Field × List Types.StructDecl × List (String × Ty)) := do
+  match field with
+  | `(nlmerkleafield| $fieldName:ident : $fieldType:nltype) => do
+    let name := fieldName.getId.toString
+    let ty ← readTy fieldType
+    let compositeType := match ty with
+      | .bytes length => Types.CompositeType.bytes length
+      | _ => Types.CompositeType.scalar ty
+    let leafName := if path.isEmpty then name else path ++ "." ++ name
+    pure ({name, type := compositeType}, [], [(leafName, ty)])
+  | `(nlmerkleafield| $fieldName:ident : struct $recordName:ident { $fields:nlmerkleafield* }) => do
+    let name := fieldName.getId.toString
+    let fieldPath := if path.isEmpty then name else path ++ "." ++ name
+    let nestedId := rootId ++ "." ++ fieldPath ++ "." ++ recordName.getId.toString
+    let mut nestedFields : Array Types.Field := #[]
+    let mut nestedDeclarations : Array Types.StructDecl := #[]
+    let mut leafFields : Array (String × Ty) := #[]
+    for nestedField in fields do
+      let (layoutField, declarations, leaves) ←
+        readMerkleCompositeField rootId fieldPath nestedField
+      nestedFields := nestedFields.push layoutField
+      for declaration in declarations do
+        nestedDeclarations := nestedDeclarations.push declaration
+      for leaf in leaves do
+        leafFields := leafFields.push leaf
+    let declaration : Types.StructDecl := {
+      id := nestedId
+      fields := nestedFields.toList
+    }
+    let parent : Types.Field := {name, type := .structure nestedId}
+    pure (parent, declaration :: nestedDeclarations.toList, leafFields.toList)
+  | _ => throwErrorAt field "expected a scalar or nested struct MerkleTree field"
+
 private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
     (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax) :
     CommandElabM (Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) := do
@@ -4560,15 +4598,25 @@ private def readMerkleSpec (spec : TSyntax `nlmerklespec) : CommandElabM (Nat ×
       let ty ← match leaf with | none => pure Ty.native | some source => readTy source
       checkMerkleLeafWidth spec [ty]
       pure (depth.getNat, MerkleLeafType.scalar ty)
-    | `(nlmerklespec| $depth:num of struct $name:ident { $fields:nlcompositefield* }) => do
-      let fields ← fields.toList.mapM readCompositeField
-      checkMerkleLeafWidth spec (fields.map Prod.snd)
+    | `(nlmerklespec| $depth:num of struct $name:ident { $fields:nlmerkleafield* }) => do
       let id := name.getId.toString
-      let layoutFields : List Types.Field := fields.map fun (field, ty) =>
-        {name := field, type := match ty with | .bytes length => .bytes length | _ => .scalar ty}
-      let environment : Types.CompositeEnv := {structures := [{id, fields := layoutFields}]}
+      let mut layoutFields : Array Types.Field := #[]
+      let mut nestedDeclarations : Array Types.StructDecl := #[]
+      let mut leafFields : Array (String × Ty) := #[]
+      for field in fields do
+        let (layoutField, nested, leaves) ← readMerkleCompositeField id "" field
+        layoutFields := layoutFields.push layoutField
+        for declaration in nested do
+          nestedDeclarations := nestedDeclarations.push declaration
+        for leaf in leaves do
+          leafFields := leafFields.push leaf
+      let flattenedFields := leafFields.toList
+      checkMerkleLeafWidth spec (flattenedFields.map Prod.snd)
+      let environment : Types.CompositeEnv := {
+        structures := {id, fields := layoutFields.toList} :: nestedDeclarations.toList
+      }
       match Types.checkedLayout Types.defaultLimits environment (.structure id) with
-      | .ok _ => pure (depth.getNat, MerkleLeafType.record fields)
+      | .ok _ => pure (depth.getNat, MerkleLeafType.record flattenedFields)
       | .error diagnostic => throwErrorAt spec diagnostic.message
     | _ => throwErrorAt spec "expected a MerkleTree depth and optional leaf type"
   unless 2 ≤ depth && depth ≤ 32 do
