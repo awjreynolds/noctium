@@ -1,0 +1,36 @@
+pragma language_version >= 0.28;
+
+module Inner<T> {
+  export new type Count = Uint<8>;
+
+  export struct Packet {
+    value: T;
+    valid: Boolean;
+  }
+
+  export new type Unselected = Uint<16>;
+
+  struct Hidden {
+    value: T;
+  }
+}
+
+module Outer<T> {
+  import {Packet as InnerPacket, Count as InnerCount} from Inner<T>;
+  export {InnerPacket, InnerCount};
+}
+
+module Bridge<T> {
+  import {InnerPacket as BridgePacket, InnerCount as BridgeCount} from Outer<T>;
+  export {BridgePacket, BridgeCount};
+}
+
+import {BridgePacket as LocalPacket, BridgeCount as LocalCount} from Bridge<Field>;
+
+export pure circuit inspect(packet: LocalPacket): Boolean {
+  return packet.valid;
+}
+
+export pure circuit echoCount(count: LocalCount): LocalCount {
+  return count;
+}
