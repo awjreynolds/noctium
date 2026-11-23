@@ -1,0 +1,35 @@
+pragma language_version 0.28;
+
+export pure circuit add8(left: Uint<8>, right: Uint<8>): Uint<0..511> {
+  return left + right;
+}
+
+export pure circuit multiply8(left: Uint<8>, right: Uint<8>): Uint<0..65026> {
+  return left * right;
+}
+
+export pure circuit subtract8(left: Uint<8>, right: Uint<8>): Uint<8> {
+  return left - right;
+}
+
+export pure circuit addZeroLiteral(value: Uint<8>): Uint<8> {
+  return value + 0;
+}
+
+export pure circuit addZeroRange(value: Uint<8>, zero: Uint<0..1>): Uint<8> {
+  return value + zero;
+}
+
+export pure circuit multiplyMaxByBit(value: Uint<248>, bit: Uint<1>): Uint<248> {
+  return value * bit;
+}
+
+export pure circuit addMaxToZero(value: Uint<248>, zero: Uint<0..1>): Uint<248> {
+  return value + zero;
+}
+
+type Small = Uint<8>;
+
+export pure circuit addSmall(left: Small, right: Small): Uint<0..511> {
+  return left + right;
+}

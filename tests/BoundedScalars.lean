@@ -25,6 +25,27 @@ noctium_circuit unsignedDifference where
   output result : UInt 8 := disclose(sub(left, right))
 end
 
+noctium_circuit unsignedOrdinaryBoundaries where
+  private value : UInt 8
+  private zeroRange : UIntRange 1
+  let typedZero : UInt 8 := uint(0)
+  output literalZero : UInt 8 := disclose(add(value, uint(0)))
+  output rangeZero : UInt 8 := disclose(add(value, zeroRange))
+  output typedZeroSum : UIntRange 511 := disclose(add(value, typedZero))
+end
+
+noctium_circuit unsignedMaximumMultiplyBit where
+  private value : UInt 248
+  private bit : UInt 1
+  output result : UInt 248 := disclose(mul(value, bit))
+end
+
+noctium_circuit unsignedMaximumAddZero where
+  private value : UInt 248
+  private zero : UIntRange 1
+  output result : UInt 248 := disclose(add(value, zero))
+end
+
 noctium_circuit scalarCasts where
   private field : Native
   private flag : Bool
@@ -130,6 +151,21 @@ private def goodSum : EvalEnv := [
   | .error "unsigned subtraction underflow" => Bool.true | _ => Bool.false
 #guard match unsignedDifference.run ctx [("left", .uint 255 255), ("right", .uint 255 1)] with
   | .ok [("result", .uint 255 254)] => Bool.true | _ => Bool.false
+#guard match unsignedDifference.run ctx [("left", .uint 255 255), ("right", .uint 255 0)] with
+  | .ok [("result", .uint 255 255)] => Bool.true | _ => Bool.false
+#guard match unsignedOrdinaryBoundaries.run ctx [
+    ("value", .uint 255 255), ("zeroRange", .uint 0 0)] with
+  | .ok [("literalZero", .uint 255 255), ("rangeZero", .uint 255 255),
+      ("typedZeroSum", .uint 510 255)] => Bool.true | _ => Bool.false
+#guard match unsignedMaximumMultiplyBit.run ctx [
+    ("value", .uint ScalarPolicy.maxUint ScalarPolicy.maxUint), ("bit", .uint 1 1)] with
+  | .ok [("result", .uint maximum actual)] => maximum == ScalarPolicy.maxUint && actual == ScalarPolicy.maxUint | _ => Bool.false
+#guard match unsignedMaximumMultiplyBit.run ctx [
+    ("value", .uint ScalarPolicy.maxUint ScalarPolicy.maxUint), ("bit", .uint 1 2)] with
+  | .error _ => Bool.true | _ => Bool.false
+#guard match unsignedMaximumAddZero.run ctx [
+    ("value", .uint ScalarPolicy.maxUint ScalarPolicy.maxUint), ("zero", .uint 0 0)] with
+  | .ok [("result", .uint maximum actual)] => maximum == ScalarPolicy.maxUint && actual == ScalarPolicy.maxUint | _ => Bool.false
 #guard match scalarCasts.run ctx [("field", .native 255), ("flag", .bool Bool.true)] with
   | .ok [("narrowed", .uint 255 255), ("truthy", .bool Bool.true),
       ("bit", .uint 1 1), ("widened", .native 255)] => Bool.true | _ => Bool.false
@@ -225,6 +261,22 @@ end
 noctium_circuit typeOverflow where
   private left : UInt 248
   output result : UInt 248 := add(left, uint(1))
+end
+
+/-- error: Noctium expression type mismatch; use an explicit narrowing cast -/
+#guard_msgs in
+noctium_circuit declaredZeroTooNarrow where
+  private value : UInt 8
+  let zero : UInt 8 := uint(0)
+  output result : UInt 8 := add(value, zero)
+end
+
+/-- error: unsigned type exceeds target maximum -/
+#guard_msgs in
+noctium_circuit maxWidthAddBitOverflow where
+  private value : UInt 248
+  private bit : UInt 1
+  output result : UInt 248 := add(value, bit)
 end
 
 end SourceFailures

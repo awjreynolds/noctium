@@ -1,0 +1,6 @@
+pragma language_version 0.28;
+
+export pure circuit addDeclaredZero(value: Uint<8>): Uint<8> {
+  const zero: Uint<8> = 0;
+  return value + zero;
+}
