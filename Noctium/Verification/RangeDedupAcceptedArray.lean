@@ -114,6 +114,16 @@ Other producer opcodes need their own state-meaning step before they enter this
 induction. -/
 inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) : Prop where
   | native (steps : NativeStepHolds hash witness raw) : AcceptedMeaningStep hash witness raw
+  | boolean {value : Operand}
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.boolean value))
+      (holds : Instruction.Holds hash witness (.boolean value)) :
+      AcceptedMeaningStep hash witness raw
+  | bits {value : Operand} {width : Nat}
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.bits value width))
+      (holds : Instruction.Holds hash witness (.bits value width)) :
+      AcceptedMeaningStep hash witness raw
   | lessThan {left right : Operand} {width : Nat} {output : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.lessThan left right width output))
@@ -156,6 +166,60 @@ private theorem decodedLessThanFields {raw : Json} {left right : Operand}
   injection resultEq with leftEq rightEq widthEq outputEq
   subst left right width output
   exact ⟨leftParsed, rightParsed, bitsParsed⟩
+
+private theorem decodedBooleanField {raw : Json} {value : Operand}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.boolean value)) :
+    NativeRelationJson.decodeOperandField raw "val" = .ok value := by
+  simp [NativeRelationJson.decodeInstruction,
+    ScalarValidationOutputMeaning.nativeJson_stringField_eq, opcode,
+    ScalarValidationMeaning.bind_ok, ScalarValidationOutputMeaning.map_ok] at decoded
+  rcases decoded with ⟨_, valueParsed⟩
+  exact valueParsed
+
+private theorem decodedBitsFields {raw : Json} {value : Operand} {width : Nat}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.bits value width)) :
+    NativeRelationJson.decodeOperandField raw "val" = .ok value ∧
+      NativeRelationJson.naturalField raw "bits" = .ok width := by
+  simp [NativeRelationJson.decodeInstruction,
+    ScalarValidationOutputMeaning.nativeJson_stringField_eq, opcode,
+    ScalarValidationMeaning.bind_ok, ScalarValidationOutputMeaning.map_ok] at decoded
+  rcases decoded with ⟨_, foundWidth, widthParsed, _, foundValue, valueParsed, result⟩
+  rcases result with ⟨valueEq, widthEq⟩
+  cases valueEq
+  cases widthEq
+  exact ⟨valueParsed, widthParsed⟩
+
+private theorem reference_not_immediate {text : String}
+    (reference : text.startsWith "%" = true) : text.startsWith "0x" = false := by
+  have prefixed : ['%'] <+: text.toList := by simpa using reference
+  rcases prefixed with ⟨tail, equal⟩
+  apply String.startsWith_string_eq_false_iff.mpr
+  rw [← equal]
+  simp
+
+private theorem decodedReference {raw : Json} {name text : String} {value : Operand}
+    (textParsed : Backend.Native.stringField raw name = .ok text)
+    (decoded : NativeRelationJson.decodeOperandField raw name = .ok value)
+    (reference : text.startsWith "%" = true) : value = .reference text := by
+  unfold Backend.Native.stringField at textParsed
+  unfold NativeRelationJson.decodeOperandField at decoded
+  simp only [ScalarValidationMeaning.bind_ok] at textParsed decoded
+  rcases textParsed with ⟨json, jsonParsed, textParsed⟩
+  rcases decoded with ⟨same, sameParsed, decoded⟩
+  rw [jsonParsed] at sameParsed
+  cases sameParsed
+  unfold NativeRelationJson.decodeOperand at decoded
+  simp only [ScalarValidationMeaning.bind_ok] at decoded
+  rcases decoded with ⟨sameText, sameTextParsed, decoded⟩
+  rw [textParsed] at sameTextParsed
+  cases sameTextParsed
+  simp only [reference_not_immediate reference, Bool.false_eq_true, ↓reduceIte,
+    ScalarValidationMeaning.bind_ok] at decoded
+  rcases decoded with ⟨_, _, result⟩
+  cases result
+  rfl
 
 /-- The accepted producer loop's per-item bounds become concrete bounds for
 each decoded comparison under that occurrence's checked prefix meaning. This
@@ -232,6 +296,61 @@ private theorem acceptedMeaningStep_preserves
         exact accepted_native_mul_step_meaning meaning definitions opcode accepted decoded holds
       | neg _ _ opcode decoded holds =>
         exact accepted_native_neg_step_meaning meaning definitions opcode accepted decoded holds
+  | boolean opcode decoded holds =>
+    unfold Backend.Native.validateInstruction at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
+      registry, fieldsParsed, accepted⟩
+    have opcodeEq : opcodeName = "constrain_to_boolean" :=
+      Except.ok.inj (opcodeParsed.symm.trans opcode)
+    subst opcodeName
+    simp at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨text, textParsed, refined⟩
+    have valueParsed := decodedBooleanField opcode decoded
+    have bounded : text.startsWith "%" = true → (witness text).val ≤ 1 := by
+      intro reference
+      have valueEq := decodedReference textParsed valueParsed reference
+      rw [valueEq] at holds
+      change witness text = zero ∨ witness text = one at holds
+      rcases holds with equal | equal
+      · have valueBound : (witness text).val = 0 := by
+          simpa [zero] using congrArg (fun value : Scalar => value.val) equal
+        omega
+      · have valueBound : (witness text).val = 1 := by
+          simpa [one] using congrArg (fun value : Scalar => value.val) equal
+        omega
+    exact ⟨RangeDedupAssertMeaning.refineMeaning meaning bounded refined,
+      refine_nativeDefinitions definitions refined⟩
+  | @bits value bitsWidth opcode decoded holds =>
+    unfold Backend.Native.validateInstruction at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
+      registry, fieldsParsed, accepted⟩
+    have opcodeEq : opcodeName = "constrain_bits" :=
+      Except.ok.inj (opcodeParsed.symm.trans opcode)
+    subst opcodeName
+    simp at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨text, textParsed, producerWidth, widthParsed, refined⟩
+    have fields := decodedBitsFields opcode decoded
+    have widthAgreement := ScalarParserAgreement.natField_naturalField_agree raw "bits"
+      producerWidth bitsWidth (by
+        unfold Backend.Native.width at widthParsed
+        simp only [ScalarValidationMeaning.bind_ok] at widthParsed
+        rcases widthParsed with ⟨found, fieldParsed, _, _, result⟩
+        cases result
+        exact fieldParsed) fields.2
+    have bounded : text.startsWith "%" = true →
+        (witness text).val ≤ 2 ^ producerWidth - 1 := by
+      intro reference
+      have valueEq := decodedReference textParsed fields.1 reference
+      rw [valueEq] at holds
+      have valueBound := NativeRelation.range_constraint_bound hash witness
+        (.reference text) bitsWidth holds
+      simpa [Operand.read, widthAgreement] using valueBound
+    exact ⟨RangeDedupAssertMeaning.refineMeaning meaning bounded refined,
+      refine_nativeDefinitions definitions refined⟩
   | lessThan opcode decoded holds =>
     exact ⟨RangeDedupComparisonMeaning.lessThanStepMeaning meaning opcode decoded holds accepted,
       accepted_lessThan_nativeDefinitions definitions opcode accepted⟩
