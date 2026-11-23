@@ -2,12 +2,14 @@ import Noctium.Verification.RangeDedup
 import Noctium.Backend.NativeProducer
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarParserAgreement
+import Noctium.Verification.ScalarValidationMeaning
 
 namespace Noctium.Verification.RangeDedupProducer
 
 open Lean Backend.Native NativeRelation NativeRelationJson
 open Noctium.Backend.RangeDedup
 open Noctium.Verification.RangeDedup
+open Noctium.Verification.ScalarValidationMeaning
 
 private theorem producerBindOk {ε α β} {first : Except ε α} {next : α → Except ε β}
     {value : β} : (first >>= next) = .ok value ↔
@@ -17,6 +19,32 @@ private theorem producerBindOk {ε α β} {first : Except ε α} {next : α → 
 private theorem producerEnsureOk {condition : Bool} {message : String} :
     Backend.Native.ensure condition message = .ok () ↔ condition = true := by
   cases condition <;> simp [Backend.Native.ensure] <;> rfl
+
+private theorem decodedLessThanOperands {raw : Json} {left right : Operand}
+    {width : Nat} {output : String}
+    (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
+    (decoded : decodeInstruction raw = .ok (.lessThan left right width output)) :
+    NativeRelationJson.decodeOperandField raw "a" = .ok left ∧
+      NativeRelationJson.decodeOperandField raw "b" = .ok right := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [producerBindOk, ScalarValidationMeaning.nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
+  have opcodeEq : opcodeName = "less_than" := Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp only [producerBindOk] at body
+  rcases body with ⟨_, _, body⟩
+  rcases body with ⟨decodedWidth, widthParsed, body⟩
+  rcases body with ⟨_, rangeChecked, body⟩
+  rcases body with ⟨decodedLeft, leftDecoded, body⟩
+  rcases body with ⟨decodedRight, rightDecoded, body⟩
+  rcases body with ⟨decodedOutput, outputParsed, body⟩
+  rcases body with ⟨_, outputChecked, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq : Instruction.lessThan decodedLeft decodedRight decodedWidth decodedOutput =
+      Instruction.lessThan left right width output := Except.ok.inj result
+  injection resultEq with leftEq rightEq widthEq outputEq
+  subst left right
+  exact ⟨leftDecoded, rightDecoded⟩
 
 /-- Facts returned by one successful NativeProducer `less_than` check.
 `bits` is the producer's strict parser result, and both operand maxima pass
@@ -171,9 +199,9 @@ theorem reuseComparisons_pair_bridge_with_bounds (hash : Hash) (witness : Assign
     leftBound rightBound
 
 /-- Compose the accepted producer bounds for both comparison occurrences with
-their partial fact meanings and the exact emitted-Copy relation. The meanings
-are supplied by a prefix StateMeaning proof at each producer pre-state. -/
-theorem acceptedProducerPairCopyBridge (hash : Hash) (witness : Assignment)
+the exact emitted-Copy relation. Each operand bound comes from the actual
+ScalarValidationMeaning invariant at that occurrence's producer pre-state. -/
+theorem acceptedProducerPairCopyBridge (hash : Hash) (inputs witness : Assignment)
     (expected : Backend.Native.Expected)
     (earlier later : Json) (state₁ next₁ state₂ next₂ : Backend.Native.State)
     (leftKey rightKey : String) (width : Nat) (firstOutput duplicateOutput : String)
@@ -189,18 +217,8 @@ theorem acceptedProducerPairCopyBridge (hash : Hash) (witness : Assignment)
       .ok (.lessThan left₁ right₁ width₁ output₁))
     (laterDecoded : decodeInstruction later =
       .ok (.lessThan left₂ right₂ width₂ output₂))
-    (earlierMeaning : ∀ bits leftFact rightFact,
-      Backend.Native.natField earlier "bits" = .ok bits →
-      Backend.Native.argument state₁ earlier "a" = .ok leftFact →
-      Backend.Native.argument state₁ earlier "b" = .ok rightFact →
-      (left₁.read witness).val ≤ leftFact.maximum ∧
-      (right₁.read witness).val ≤ rightFact.maximum)
-    (laterMeaning : ∀ bits leftFact rightFact,
-      Backend.Native.natField later "bits" = .ok bits →
-      Backend.Native.argument state₂ later "a" = .ok leftFact →
-      Backend.Native.argument state₂ later "b" = .ok rightFact →
-      (left₂.read witness).val ≤ leftFact.maximum ∧
-      (right₂.read witness).val ≤ rightFact.maximum) :
+    (earlierMeaning : StateMeaning hash inputs witness state₁)
+    (laterMeaning : StateMeaning hash inputs witness state₂) :
     reuseComparisons #[earlier, later] =
         #[earlier, comparisonCopyJson firstOutput duplicateOutput] ∧
       decodeInstruction (comparisonCopyJson firstOutput duplicateOutput) =
@@ -231,12 +249,26 @@ theorem acceptedProducerPairCopyBridge (hash : Hash) (witness : Assignment)
     earlierBits width earlierWidthParsed earlierDecoderWidth
   have laterWidthEq := ScalarParserAgreement.natField_naturalField_agree later "bits"
     laterBits width laterWidthParsed laterDecoderWidth
-  obtain ⟨earlierLeftValueBound, earlierRightValueBound⟩ :=
-    earlierMeaning earlierBits earlierLeft earlierRight earlierWidthParsed
-      earlierLeftParsed earlierRightParsed
-  obtain ⟨laterLeftValueBound, laterRightValueBound⟩ :=
-    laterMeaning laterBits laterLeft laterRight laterWidthParsed
-      laterLeftParsed laterRightParsed
+  obtain ⟨earlierLeftDecoded, earlierRightDecoded⟩ :=
+    decodedLessThanOperands earlierOpcode earlierDecoded
+  obtain ⟨laterLeftDecoded, laterRightDecoded⟩ :=
+    decodedLessThanOperands laterOpcode laterDecoded
+  have earlierLeftFactMeaning := argument_decoded_meaning earlierMeaning
+    earlierLeftParsed earlierLeftDecoded
+  have earlierRightFactMeaning := argument_decoded_meaning earlierMeaning
+    earlierRightParsed earlierRightDecoded
+  have laterLeftFactMeaning := argument_decoded_meaning laterMeaning
+    laterLeftParsed laterLeftDecoded
+  have laterRightFactMeaning := argument_decoded_meaning laterMeaning
+    laterRightParsed laterRightDecoded
+  have earlierLeftValueBound : (left₁.read witness).val ≤ earlierLeft.maximum :=
+    earlierLeftFactMeaning.bound
+  have earlierRightValueBound : (right₁.read witness).val ≤ earlierRight.maximum :=
+    earlierRightFactMeaning.bound
+  have laterLeftValueBound : (left₂.read witness).val ≤ laterLeft.maximum :=
+    laterLeftFactMeaning.bound
+  have laterRightValueBound : (right₂.read witness).val ≤ laterRight.maximum :=
+    laterRightFactMeaning.bound
   have earlierLeftBound : (left₁.read witness).val < 2 ^ width := by
     have bound := Nat.lt_of_le_of_lt earlierLeftValueBound earlierLeftMaximum
     rw [earlierWidthEq] at bound
@@ -259,5 +291,62 @@ theorem acceptedProducerPairCopyBridge (hash : Hash) (witness : Assignment)
     earlierLeftBound earlierRightBound
   exact ⟨pair.1, pair.2.1, pair.2.2, earlierLeftBound, earlierRightBound,
     laterLeftBound, laterRightBound⟩
+
+/-- Lift the checked pair bridge to two actual visits in one accepted producer
+loop. The invariant preservation premise supplies soundness at both visit
+pre-states through the #719 prefix theorem. -/
+theorem acceptedLoopProducerPairCopyBridge (hash : Hash) (inputs witness : Assignment)
+    (expected : Backend.Native.Expected) (items : List (Json × Nat))
+    (initial final : Backend.Native.State)
+    (earlier later : Json) (earlierIndex laterIndex : Nat)
+    (leftKey rightKey : String) (width : Nat) (firstOutput duplicateOutput : String)
+    (left₁ right₁ : Operand) (width₁ : Nat) (output₁ : String)
+    (left₂ right₂ : Operand) (width₂ : Nat) (output₂ : String)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final)
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (meaningPreserved : ∀ {state next instruction},
+      StateMeaning hash inputs witness state →
+      Backend.Native.validateInstruction expected state instruction = .ok next →
+      StateMeaning hash inputs witness next)
+    (earlierMember : (earlier, earlierIndex) ∈ items)
+    (laterMember : (later, laterIndex) ∈ items)
+    (earlierOpcode : Backend.Native.stringField earlier "op" = .ok "less_than")
+    (laterOpcode : Backend.Native.stringField later "op" = .ok "less_than")
+    (earlierKey : comparison? earlier = some ((leftKey, rightKey, width), firstOutput))
+    (laterKey : comparison? later = some ((leftKey, rightKey, width), duplicateOutput))
+    (earlierDecoded : decodeInstruction earlier =
+      .ok (.lessThan left₁ right₁ width₁ output₁))
+    (laterDecoded : decodeInstruction later =
+      .ok (.lessThan left₂ right₂ width₂ output₂)) :
+    reuseComparisons #[earlier, later] =
+        #[earlier, comparisonCopyJson firstOutput duplicateOutput] ∧
+      decodeInstruction (comparisonCopyJson firstOutput duplicateOutput) =
+        .ok (.equal (.reference firstOutput) (.reference duplicateOutput)) ∧
+      ((Instruction.Holds hash witness
+          (.lessThan left₁ right₁ width firstOutput) ∧
+        Instruction.Holds hash witness
+          (.equal (.reference firstOutput) (.reference duplicateOutput))) ↔
+        (Instruction.Holds hash witness
+          (.lessThan left₁ right₁ width firstOutput) ∧
+        Instruction.Holds hash witness
+          (.lessThan left₁ right₁ width duplicateOutput))) ∧
+      (left₁.read witness).val < 2 ^ width ∧
+      (right₁.read witness).val < 2 ^ width ∧
+      (left₂.read witness).val < 2 ^ width ∧
+      (right₂.read witness).val < 2 ^ width := by
+  obtain ⟨_, visits⟩ := Backend.Native.validateInstructionLoop_prefixInvariant
+    (expected := expected) (items := items) (initial := initial) (final := final)
+    (property := StateMeaning hash inputs witness) initialMeaning
+    (by intro state next instruction stateMeaning checked; exact meaningPreserved stateMeaning checked)
+    accepted
+  obtain ⟨state₁, next₁, earlierMeaning, earlierAccepted, _⟩ :=
+    visits earlier earlierIndex earlierMember
+  obtain ⟨state₂, next₂, laterMeaning, laterAccepted, _⟩ :=
+    visits later laterIndex laterMember
+  exact acceptedProducerPairCopyBridge hash inputs witness expected earlier later
+    state₁ next₁ state₂ next₂ leftKey rightKey width firstOutput duplicateOutput
+    left₁ right₁ width₁ output₁ left₂ right₂ width₂ output₂ earlierOpcode laterOpcode
+    earlierAccepted laterAccepted earlierKey laterKey earlierDecoded laterDecoded
+    earlierMeaning laterMeaning
 
 end Noctium.Verification.RangeDedupProducer
