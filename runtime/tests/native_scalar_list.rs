@@ -290,22 +290,54 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
     let empty = cleared.after.state;
     assert_state(&empty, &clear, &[], 0, &[]);
 
-    assert!(prepare(
-        &pop_root,
-        &inputs(&pop_root, 7, 0, &vec![0; 128], true),
-        &empty,
-        &ledger::structure::INITIAL_PARAMETERS,
-        coin_structure::contract::ContractAddress::default(),
-    )
-    .is_err());
-    assert!(prepare(
-        &pop_nested,
-        &inputs(&pop_nested, 7, 0, &vec![0; 128], true),
-        &empty,
-        &ledger::structure::INITIAL_PARAMETERS,
-        coin_structure::contract::ContractAddress::default(),
-    )
-    .is_err());
+    let zeros = [0; 128];
+    let root_pop = run(&pop_root, &pop_root_circuit, 0, &zeros, &empty);
+    let StateValue::Array(empty_root) = empty.get_ref() else {
+        panic!("expected initial state array")
+    };
+    let StateValue::Array(popped_root) = root_pop.after.state.get_ref() else {
+        panic!("expected state array after root pop")
+    };
+    let values = pop_root
+        .state
+        .iter()
+        .position(|decl| decl.name == "values")
+        .unwrap();
+    assert!(matches!(popped_root.get(values), Some(StateValue::Null)));
+    for slot in (0..empty_root.len()).filter(|slot| *slot != values) {
+        assert_eq!(popped_root.get(slot), empty_root.get(slot));
+    }
+    assert!(native_query_succeeds(&empty, &root_pop));
+
+    let nested_pop = run(&pop_nested, &pop_nested_circuit, 0, &zeros, &empty);
+    let StateValue::Array(popped_nested) = nested_pop.after.state.get_ref() else {
+        panic!("expected state array after nested pop")
+    };
+    let memos = pop_nested
+        .state
+        .iter()
+        .position(|decl| decl.name == "memos")
+        .unwrap();
+    let StateValue::Map(owners) = popped_nested.get(memos).unwrap() else {
+        panic!("expected memo map")
+    };
+    assert!(matches!(
+        owners.get(&AlignedValue::from([7u8; 32])),
+        Some(value) if matches!(&*value, StateValue::Null)
+    ));
+    assert_eq!(popped_nested.get(values), empty_root.get(values));
+    assert!(native_query_succeeds(&empty, &nested_pop));
+
+    for after in [&root_pop.after.state, &nested_pop.after.state] {
+        assert!(prepare(
+            &inspect,
+            &inputs(&inspect, 7, 0, &zeros, true),
+            after,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )
+        .is_err());
+    }
 
     let guarded_empty_or_absent = execute(
         &guarded_pop,
@@ -393,7 +425,6 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
         2,
         &[second.clone(), first.clone()],
     );
-    assert!(!native_query_succeeds(&empty, &root_only_pop));
 
     let nested_only_pop = run(&pop_nested, &pop_nested_circuit, 0, &vec![0; 128], &state);
     assert_state(
@@ -403,7 +434,6 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
         2,
         &[first.clone()],
     );
-    assert!(!native_query_succeeds(&empty, &nested_only_pop));
     assert!(!native_query_succeeds(&base, &nested_only_pop));
 
     let malformed = replace_nested_payload_head(&state, &append, &second);

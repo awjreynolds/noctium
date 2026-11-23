@@ -823,7 +823,7 @@ def Op.fields : Op → List Scalar
       (listPushFrontCoinFieldGroups slot keys nonce color amount commitment).flatten
   | .listPopFront slot keys =>
       indexPathFields slot true keys ++ [.native 0x30] ++ listIndexFields 2 ++
-      [.native 0x0f, .native 1, .native 0x0b] ++ listIndexFields 1 ++
+      [.native 0x0b] ++ listIndexFields 1 ++
       [.native (0x90 + keys.length + 1)]
   | .listReset slot keys =>
       match keys with
@@ -950,7 +950,7 @@ def Op.fieldGroups : Op → List (List Scalar)
       listPushFrontCoinFieldGroups slot keys nonce color amount commitment
   | .listPopFront slot keys =>
       [indexPathFields slot true keys, [.native 0x30], listIndexFields 2,
-        [.native 0x0f, .native 1], [.native 0x0b], listIndexFields 1,
+        [.native 0x0b], listIndexFields 1,
         [.native (0x90 + keys.length + 1)]]
   | .listReset slot [] =>
       [[.native 0x10, .native 1] ++ (Aligned.field (.native slot)).fields,

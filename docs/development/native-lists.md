@@ -23,9 +23,16 @@ The source operations are:
 - `headOrDefault path as (present, memo)` binds a Bool and the same record fields. An empty List returns `false` with typed defaults. Every present record returns `true`.
 - `pushFront path := value` prepends a scalar. Use
   `pushFront path := fields(...)` for a named record.
-- `popFront path` removes the first record.
+- `popFront path` replaces the selected List with its tail.
 
-Strict `head` and `popFront` reject empty Lists. Pop includes a native length decrement check before selecting the tail. `headOrDefault` reads the native length and guards the head read with the nonempty result. Noctium binds both reads to the ordered ledger state. An inactive statement returns `false` and typed defaults without looking up its path. A missing active path still rejects.
+Strict `head` rejects an empty List. `headOrDefault` reads the native length
+and guards the head read with the nonempty result. Noctium binds both reads to
+the ordered ledger state. An inactive statement returns `false` and typed
+defaults without looking up its path. A missing active path still rejects.
+
+An active pop of an initialized empty List writes native `Null` to the
+selected slot or Map entry. Typed reads reject that value. Use `reset` to
+restore the empty List node.
 
 Each List effect emits one guarded native sequence. Each VM opcode retains its
 own activity entry, with the same source guard across the sequence. An inactive operation skips
@@ -43,15 +50,14 @@ reuses the record schemas needed by the confidential-token memo workload.
 
 The focused source/native example is `tests/NativeList.lean` plus
 `runtime/tests/native_list.rs`. It covers prepend order, reads, removal, reset,
-separate nested paths, inactive guards, exact storage alignment and rejection
-of empty operations and malformed record payloads. The empty-pop rejection also
-runs against the emitted native program without host preparation.
+separate nested paths, inactive guards, exact storage alignment, empty pop
+and rejection of malformed record payloads. The emitted program also checks
+that an active pop through an absent nested path rejects.
 
 The recipes follow the pinned ledger's
 [List fragments](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-runtime/vendored/program_fragments.rs#L434-L527)
 and [StateValue field encoding](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-state/src/state.rs#L401-L435).
-The compiler uses uncached native operations and an explicit nonempty guard for
-pop. It does not depend on the Compact compiler or runtime.
+The compiler emits uncached native operations for pop.
 
 [OptionalListHead.lean](../../tests/OptionalListHead.lean) checks the optional form on standalone and nested paths. [MixedLedgerRecord.lean](../../tests/MixedLedgerRecord.lean) uses the same memo shape in map cells and List nodes. `fields(...)` takes one typed expression per declared field. Reads bind names such as `memo_payload` and `memo_ephemeral` with their declared types.
 
@@ -61,13 +67,11 @@ standalone Native and nested Bytes128 Lists. The
 [Compact 0.36.1 oracle](../../tests/compact/native-scalar-list.mjs)
 checks the corresponding empty, prepend, pop and reset transitions.
 
-A pinned Compact 0.36.1 and Runtime 0.21.0 empty-pop case records a
-behavioral difference. An active pop returns success and replaces an
-initialized empty List with native `Null`. A subsequent head read fails.
-This happens at a root slot and at a selected Map entry. Noctium rejects
-the same active pop and preserves the original typed state. Both skip an
-inactive pop through an absent parent and remove one item from a populated
-List. [Compact case and state assertions](../../tests/compact/list-pop-front.mjs)
+Pinned Compact 0.36.1 and Runtime 0.21.0 agree with the Noctium source
+interpreter and emitted ZKIR 3.2.1 case. An active pop writes `Null` to an
+empty root List or selected Map entry. A subsequent head read fails. An
+inactive pop through an absent parent leaves the state unchanged. An
+active pop from a populated List removes one item. [Compact case and state assertions](../../tests/compact/list-pop-front.mjs)
 
 The pinned Ledger 9 `List_pop_front!` fragment independently produces the
 same `Null` at an empty root or selected Map entry when run directly in

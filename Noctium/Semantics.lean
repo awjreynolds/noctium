@@ -1578,10 +1578,10 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let evaluated ← evaluatePath ctx env keys
       let some root := next.trees.lookup name | throw s!"missing recursive List state '{name}'"
       let entries ← listPayloadAt root evaluated
-      let rest ← match entries with
-        | [] => throw "cannot pop from an empty List"
-        | _ :: rest => pure rest
-      let some updated := treeSet root evaluated (.list rest)
+      let updatedValue := match entries with
+        | [] => LedgerValue.null
+        | _ :: rest => .list rest
+      let some updated := treeSet root evaluated updatedValue
         | throw s!"nested List parent is missing or not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
     | .listReset name keys => do
@@ -1971,10 +1971,10 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           let evaluated ← evaluatePath ctx env keys
           let some root := next.trees.lookup name | throw s!"missing recursive List state '{name}'"
           let entries ← listPayloadAt root evaluated
-          let rest ← match entries with
-            | [] => throw "cannot pop from an empty List"
-            | _ :: rest => pure rest
-          let some updated := treeSet root evaluated (.list rest)
+          let updatedValue := match entries with
+            | [] => LedgerValue.null
+            | _ :: rest => .list rest
+          let some updated := treeSet root evaluated updatedValue
             | throw s!"nested List parent is missing or not a map '{name}'"
           next := {next with trees := updateAssoc name updated next.trees}
         | .listReset name keys => do

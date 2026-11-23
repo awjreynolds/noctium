@@ -2384,7 +2384,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             }
         }
         Instruction::ListPopFront { slot, keys } => {
-            vec![path_field_count(plan, *slot, keys)?, 1, 4, 2, 1, 4, 1]
+            vec![path_field_count(plan, *slot, keys)?, 1, 4, 1, 4, 1]
         }
         Instruction::MapRemove { slot, keys } => {
             let (_, parents) = keys
@@ -9065,7 +9065,7 @@ impl PreparationCursor {
             Instruction::ListPopFront { slot, keys } => {
                 let schema = list_element_schema_at_path(plan, *slot, keys.len())?;
                 let (index, values) = native_index(plan, *slot, keys, true, &env)?;
-                let (length, _) = native_list_value(
+                native_list_value(
                     if has_written {
                         &prefix_context
                     } else {
@@ -9075,16 +9075,8 @@ impl PreparationCursor {
                     &values,
                     schema,
                 )?;
-                ensure!(length > 0, "pop of empty List");
-                // Subi enforces nonempty in the ledger VM as well as host preparation.
-                program.extend([
-                    index,
-                    Op::Dup { n: 0 },
-                    list_index(2),
-                    Op::Subi { immediate: 1 },
-                    Op::Pop,
-                    list_index(1),
-                ]);
+                // On an empty List the Ledger fragment replaces the node with its Null tail.
+                program.extend([index, Op::Dup { n: 0 }, list_index(2), Op::Pop, list_index(1)]);
                 has_written = true;
                 Op::Ins {
                     cached: false,

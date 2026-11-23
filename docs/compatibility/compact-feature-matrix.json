@@ -3126,7 +3126,7 @@
       "layer": "language-ledger",
       "surface": "List.popFront",
       "noctiumStatus": "subset",
-      "notes": "Removes a nonempty head from a standalone or nested scalar or named-record List. The matched Native and Bytes128 case checks the next value and length. Pinned Compact 0.36.1 and Runtime 0.21.0 accept an active pop from an initialized empty root or nested List and store native Null, after which head rejects. The pinned Ledger 9 List_pop_front fragment independently writes Null to the selected slot or Map entry when executed directly in QueryContext. Sibling state is preserved and an absent Map key fails. Noctium rejects the empty pop and preserves the typed state. Both skip a guarded-off pop through an absent parent and reject an active lookup of an absent parent.",
+      "notes": "Removes a nonempty head from a standalone or nested scalar or named-record List. The matched Native and Bytes128 case checks the next value and length. Pinned Compact 0.36.1 and Runtime 0.21.0 accept an active pop from an initialized empty root or nested List and store native Null, after which head rejects. The pinned Ledger 9 List_pop_front fragment independently writes Null to the selected slot or Map entry when executed directly in QueryContext. Sibling state is preserved and an absent Map key fails. Noctium source evaluation and the emitted ZKIR 3.2.1 native case also write Null for an active empty pop and reject typed reads of the resulting value. Both skip a guarded-off pop through an absent parent and reject an active lookup of an absent parent.",
       "source": [
         "adt"
       ],
