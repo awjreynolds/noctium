@@ -205,7 +205,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
     let list_owner_inputs = BTreeMap::from([("owner".into(), owner.clone())]);
     let mut nested_write_inputs = inputs;
     nested_write_inputs.insert("owner".into(), owner.clone());
-    let mut nested_call_inputs = forward_inputs;
+    let mut nested_call_inputs = forward_inputs.clone();
     nested_call_inputs.insert("owner".into(), owner);
     let mut missing_owner_inputs = nested_call_inputs.clone();
     missing_owner_inputs.insert(
