@@ -1502,6 +1502,15 @@ pub struct ReturnView {
     pub name: String,
     pub schema: Json,
     pub fields: Vec<String>,
+    #[serde(default, rename = "nominalUIntFields")]
+    pub nominal_uint_fields: Vec<NominalUIntReturnField>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NominalUIntReturnField {
+    pub path: Vec<String>,
+    pub name: String,
+    pub maximum: String,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Circuit {
@@ -5449,6 +5458,19 @@ fn validate_return_views_specs<'a>(
             schema.counts().leaves == view.fields.len(),
             "composite return field count differs from its schema"
         );
+        let mut nominal_paths = BTreeSet::new();
+        for nominal_field in &view.nominal_uint_fields {
+            ensure!(!nominal_field.name.is_empty(), "missing nominal UInt return identity");
+            ensure!(
+                nominal_paths.insert(nominal_field.path.as_slice()),
+                "duplicate nominal UInt return field path"
+            );
+            let schema_maximum = schema.uint_leaf_maximum(&nominal_field.path)?;
+            ensure!(
+                schema_maximum.to_str_radix(10) == nominal_field.maximum,
+                "nominal UInt return field maximum differs from its checked schema"
+            );
+        }
         let mut previous_index = None;
         for field in &view.fields {
             let (index, ty) = physical

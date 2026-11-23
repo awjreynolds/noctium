@@ -1227,10 +1227,16 @@ private def returnViewsJson (views : List ReturnView) : Json :=
       let compiled ← (Types.compileType view.environment view.type).mapError
         fun diagnostic => diagnostic.message
       Types.schemaJson compiled
-    Json.mkObj [
+    let nominalUIntFields := view.nominalUIntFields.map fun field => Json.mkObj [
+      ("path", toJson field.path),
+      ("name", toJson field.nominalUInt.name),
+      ("maximum", toJson (toString field.nominalUInt.maximum))]
+    let nominalFields := if nominalUIntFields.isEmpty then [] else [
+      ("nominalUIntFields", toJson nominalUIntFields)]
+    Json.mkObj ([
       ("name", toJson view.name),
       ("schema", schema.toOption.getD Json.null),
-      ("fields", toJson view.fields)])
+      ("fields", toJson view.fields)] ++ nominalFields))
 
 /-- The exact symbolic plan tree written by the compiler. This pure function
 also gives proof modules a kernel-visible artifact boundary. -/

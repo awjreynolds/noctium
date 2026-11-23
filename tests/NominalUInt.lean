@@ -1188,16 +1188,6 @@ noctium_contract rejectsNominalRecordWriteToPlainField where
   end
 end
 
-/- error: nominal UInt fields require an explicitly typed return -/
-#guard_msgs (substring := true) in
-noctium_contract rejectsErasedNominalRecordMaybeReturn where
-  list history : struct Position { amount : Amount }
-  entry inspect uses nominalListHeadOnly where
-    headOrDefault history as (present, latest)
-    returnMaybe latestPosition as (present, latest)
-  end
-end
-
 /- error: nominal UInt arithmetic requires matching nominal operands -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsDistinctAliases where
