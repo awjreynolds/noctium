@@ -784,17 +784,20 @@ private theorem ComparisonOperandRange.bound {instructions : List Instruction}
         _ ≤ 2 ^ width := Nat.pow_le_pow_right (by decide) oneLE
     exact Nat.lt_of_lt_of_le belowTwo twoLE
 
-/-- Apply the exact Copy relation throughout the real compiler fold. The range
-hypothesis refers to constraints present in the decoded source relation. -/
-theorem reuseComparisons_preserves_decoded (source : Array Json) (original : List Instruction)
-    (decoded : source.toList.mapM decodeInstruction = .ok original)
-    (ranges : ComparisonBitChecks original) :
+private theorem reuseComparisons_decoded_shape (source : Array Json) (original : List Instruction)
+    (decoded : source.toList.mapM decodeInstruction = .ok original) :
     ∃ optimized,
       (reuseComparisons source).toList.mapM decodeInstruction = .ok optimized ∧
       optimized.filter stableOutsideComparisons = original.filter stableOutsideComparisons ∧
-      ∀ hash witness,
-        (∀ instruction ∈ optimized, instruction.Holds hash witness) ↔
-        (∀ instruction ∈ original, instruction.Holds hash witness) := by
+      optimized = (reuseComparisons source).toList.map decodedItem ∧
+      ∀ earlier ∈ source.toList, ∀ later ∈ source.toList,
+        ∀ key first output,
+        comparison? earlier = some (key, first) → comparison? later = some (key, output) →
+        ∃ left right,
+          decodedItem earlier = .lessThan left right key.2.2 first ∧
+          decodedItem later = .lessThan left right key.2.2 output ∧
+          decodeInstruction (comparisonCopyJson first output) =
+            .ok (.equal (.reference first) (.reference output)) := by
   obtain ⟨originalForm, admitted⟩ := (decode_list _ _).mp decoded
   let reduced := reuseComparisons source
   let optimized := reduced.toList.map decodedItem
@@ -833,7 +836,23 @@ theorem reuseComparisons_preserves_decoded (source : Array Json) (original : Lis
         .equal (.reference first) (.reference output) := by
       simp [decodedItem, copied, Except.toOption]
     simp [laterShape, copyShape, stableOutsideComparisons]
-  refine ⟨optimized, (decode_list _ _).mpr ⟨rfl, admittedReduced⟩, stable, ?_⟩
+  refine ⟨optimized, (decode_list _ _).mpr ⟨rfl, admittedReduced⟩, stable, rfl, pairs⟩
+
+/-- Apply the exact Copy relation throughout the real compiler fold. The range
+hypothesis refers to constraints present in the decoded source relation. -/
+theorem reuseComparisons_preserves_decoded (source : Array Json) (original : List Instruction)
+    (decoded : source.toList.mapM decodeInstruction = .ok original)
+    (ranges : ComparisonBitChecks original) :
+    ∃ optimized,
+      (reuseComparisons source).toList.mapM decodeInstruction = .ok optimized ∧
+      optimized.filter stableOutsideComparisons = original.filter stableOutsideComparisons ∧
+      ∀ hash witness,
+        (∀ instruction ∈ optimized, instruction.Holds hash witness) ↔
+        (∀ instruction ∈ original, instruction.Holds hash witness) := by
+  obtain ⟨optimized, optimizedDecoded, stable, optimizedForm, pairs⟩ :=
+    reuseComparisons_decoded_shape source original decoded
+  obtain ⟨originalForm, _⟩ := (decode_list _ _).mp decoded
+  refine ⟨optimized, optimizedDecoded, stable, ?_⟩
   intro hash witness
   let satisfies (instructions : List Instruction) :=
     ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction
@@ -843,8 +862,8 @@ theorem reuseComparisons_preserves_decoded (source : Array Json) (original : Lis
         Instruction.Holds hash witness (.boolean operand)) :
       satisfies optimized ↔ satisfies original := by
     unfold satisfies
-    change (∀ instruction ∈ reduced.toList.map decodedItem, _) ↔ _
-    rw [← originalForm]
+    change (∀ instruction ∈ optimized, _) ↔ _
+    rw [optimizedForm, ← originalForm]
     simp only [List.forall_mem_map]
     apply reuseComparisons_preserves_source_satisfaction source
     intro earlier earlierMember later laterMember key first output earlierKey laterKey
@@ -875,5 +894,121 @@ theorem reuseComparisons_preserves_decoded (source : Array Json) (original : Lis
       exact List.mem_filter.mpr ⟨member, rfl⟩
     rw [← stable] at inStable
     exact optimizedHolds _ (List.mem_filter.mp inStable).1
+
+/-- Reusing comparisons preserves the decoded relation when each repeated
+comparison is bounded by checks or other constraints in its preceding prefix. -/
+theorem reuseComparisons_preserves_decoded_of_prefix_ranges (source : Array Json)
+    (original : List Instruction)
+    (decoded : source.toList.mapM decodeInstruction = .ok original)
+    (ranges : ∀ (hash : Hash) (witness : Assignment) (prior : List Json)
+      (raw : Json) (rest : List Json) (left right : Operand) (width : Nat)
+      (output : String),
+      source.toList = prior ++ raw :: rest →
+      (∀ item ∈ prior, ∀ instruction,
+        decodeInstruction item = .ok instruction → Instruction.Holds hash witness instruction) →
+      stringField raw "op" = .ok "less_than" →
+      decodeInstruction raw = .ok (.lessThan left right width output) →
+      (left.read witness).val < 2 ^ width ∧ (right.read witness).val < 2 ^ width) :
+    ∃ optimized,
+      (reuseComparisons source).toList.mapM decodeInstruction = .ok optimized ∧
+      optimized.filter stableOutsideComparisons = original.filter stableOutsideComparisons ∧
+      ∀ hash witness,
+        (∀ instruction ∈ optimized, instruction.Holds hash witness) ↔
+        (∀ instruction ∈ original, instruction.Holds hash witness) := by
+  obtain ⟨optimized, decodedReduced, stable, optimizedForm, pairs⟩ :=
+    reuseComparisons_decoded_shape source original decoded
+  obtain ⟨originalForm, admitted⟩ := (decode_list _ _).mp decoded
+  refine ⟨optimized, decodedReduced, stable, ?_⟩
+  intro hash witness
+  let holds (item : Json) : Prop :=
+    Instruction.Holds hash witness (decodedItem item)
+  have satisfaction :
+      (∀ instruction ∈ optimized, Instruction.Holds hash witness instruction) ↔
+      (∀ instruction ∈ original, Instruction.Holds hash witness instruction) := by
+    change (∀ instruction ∈ optimized, Instruction.Holds hash witness instruction) ↔ _
+    rw [optimizedForm, ← originalForm]
+    simp only [List.forall_mem_map]
+    apply reuseComparisons_preserves_prefix_satisfaction source holds
+    intro prior later rest sourceOrder priorHolds earlier earlierInPrior key first output
+      earlierKey laterKey
+    have earlierMember : earlier ∈ source.toList := by
+      rw [sourceOrder]
+      exact List.mem_append_left _ earlierInPrior
+    have laterMember : later ∈ source.toList := by
+      rw [sourceOrder]
+      simp
+    obtain ⟨left, right, earlierShape, laterShape, copied⟩ :=
+      pairs earlier earlierMember later laterMember key first output earlierKey laterKey
+    have earlierDecoded : decodeInstruction earlier =
+        .ok (.lessThan left right key.2.2 first) := by
+      rw [admitted earlier earlierMember, earlierShape]
+    have laterDecoded : decodeInstruction later =
+        .ok (.lessThan left right key.2.2 output) := by
+      rw [admitted later laterMember, laterShape]
+    obtain ⟨opcodeField, _, _, _, _⟩ :=
+      comparison_fields later key.1 key.2.1 output key.2.2 laterKey
+    have priorAccepted : ∀ item ∈ prior, ∀ instruction,
+        decodeInstruction item = .ok instruction → Instruction.Holds hash witness instruction := by
+      intro item itemIn instruction itemDecoded
+      have itemMember : item ∈ source.toList := by
+        rw [sourceOrder]
+        exact List.mem_append_left _ itemIn
+      have itemAdmitted := admitted item itemMember
+      have same : instruction = decodedItem item := Except.ok.inj (itemDecoded.symm.trans itemAdmitted)
+      subst instruction
+      have itemPriorHolds := priorHolds item itemIn
+      change Instruction.Holds hash witness (decodedItem item) at itemPriorHolds
+      exact itemPriorHolds
+    obtain ⟨leftBound, rightBound⟩ := ranges hash witness prior later rest left right
+      key.2.2 output sourceOrder priorAccepted opcodeField laterDecoded
+    have copyDecoded : decodeInstruction (comparisonCopyJson first output) =
+        .ok (.equal (.reference first) (.reference output)) := copied
+    have copyShape : decodedItem (comparisonCopyJson first output) =
+        .equal (.reference first) (.reference output) := by
+      simp [decodedItem, copyDecoded, Except.toOption]
+    constructor
+    · rintro ⟨earlierHolds, copyHolds⟩
+      change Instruction.Holds hash witness (decodedItem earlier) at earlierHolds
+      change Instruction.Holds hash witness (decodedItem (comparisonCopyJson first output)) at copyHolds
+      have firstHolds : Instruction.Holds hash witness
+          (.lessThan left right key.2.2 first) := by
+        rw [earlierShape] at earlierHolds
+        exact earlierHolds
+      have equalHolds : Instruction.Holds hash witness
+          (.equal (.reference first) (.reference output)) := by
+        rw [copyShape] at copyHolds
+        exact copyHolds
+      obtain ⟨firstHolds, laterHolds⟩ :=
+        (lessThanEqualCopyPreserves hash witness left right key.2.2 first output
+          leftBound rightBound).mp ⟨firstHolds, equalHolds⟩
+      constructor
+      · change Instruction.Holds hash witness (decodedItem earlier)
+        rw [earlierShape]
+        exact firstHolds
+      · change Instruction.Holds hash witness (decodedItem later)
+        rw [laterShape]
+        exact laterHolds
+    · rintro ⟨earlierHolds, laterHolds⟩
+      change Instruction.Holds hash witness (decodedItem earlier) at earlierHolds
+      change Instruction.Holds hash witness (decodedItem later) at laterHolds
+      have firstHolds : Instruction.Holds hash witness
+          (.lessThan left right key.2.2 first) := by
+        rw [earlierShape] at earlierHolds
+        exact earlierHolds
+      have laterTypedHolds : Instruction.Holds hash witness
+          (.lessThan left right key.2.2 output) := by
+        rw [laterShape] at laterHolds
+        exact laterHolds
+      obtain ⟨firstHolds, equalHolds⟩ :=
+        (lessThanEqualCopyPreserves hash witness left right key.2.2 first output
+          leftBound rightBound).mpr ⟨firstHolds, laterTypedHolds⟩
+      constructor
+      · change Instruction.Holds hash witness (decodedItem earlier)
+        rw [earlierShape]
+        exact firstHolds
+      · change Instruction.Holds hash witness (decodedItem (comparisonCopyJson first output))
+        rw [copyShape]
+        exact equalHolds
+  exact satisfaction
 
 end Noctium.Verification.RangeDedup

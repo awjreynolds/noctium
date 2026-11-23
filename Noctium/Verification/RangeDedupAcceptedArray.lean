@@ -2,6 +2,7 @@ import Noctium.Verification.RangeDedupProducer
 import Noctium.Verification.RangeDedupComparisonMeaning
 import Noctium.Verification.RangeDedupAssertMeaning
 import Noctium.Verification.RangeDedupWholeTrace
+import Noctium.Verification.RangeDedupKernel
 import Noctium.Verification.ScalarValidationNativeLoop
 import Noctium.Verification.ScalarValidationOutputMeaning
 
@@ -358,5 +359,129 @@ theorem acceptedArrayWholeFold
   · intro raw index member values opcode decodedOutput
     obtain ⟨state, next, before, _, checked, _, _⟩ := visits raw index member
     exact (accepted_output_meaning before checked opcode decodedOutput).2
+
+private theorem acceptedLoopCut {expected : Backend.Native.Expected}
+    {prelude rest : List (Json × Nat)} {item : Json × Nat}
+    {initial final : Backend.Native.State}
+    (accepted : Backend.Native.validateInstructionLoop expected (prelude ++ item :: rest)
+      initial = .ok final) :
+    ∃ before after,
+      Backend.Native.validateInstructionLoop expected prelude initial = .ok before ∧
+      Backend.Native.validateInstruction expected before item.1 = .ok after := by
+  induction prelude generalizing initial with
+  | nil =>
+    rw [List.nil_append, Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial item.1 with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok after => exact ⟨initial, after, rfl, checked⟩
+  | cons head tail ih =>
+    rw [List.cons_append, Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial head.1 with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      obtain ⟨before, after, prefixChecked, itemChecked⟩ := ih accepted
+      refine ⟨before, after, ?_, itemChecked⟩
+      rw [Backend.Native.validateInstructionLoop, List.forIn_cons]
+      simp only [checked, bind_pure_comp]
+      exact prefixChecked
+
+/-- An instruction is in the producer meaning proof's supported step class
+when its decoded relation supplies the corresponding step premise. -/
+def SupportsMeaning (raw : Json) : Prop :=
+  ∀ hash witness,
+    (∀ instruction, decodeInstruction raw = .ok instruction →
+      Instruction.Holds hash witness instruction) →
+    AcceptedMeaningStep hash witness raw
+
+/-- Bounds for one accepted comparison follow from satisfaction of its
+original prefix. No condition on the comparison result or suffix is needed. -/
+theorem acceptedComparisonBoundsFromPrefix
+    {hash : Hash} {witness : Assignment} {expected : Backend.Native.Expected}
+    {source : Array Json} {initial final : Backend.Native.State}
+    (initialMeaning : StateMeaning hash witness witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty = .native ∧ requirement.activityGuard = none)
+    (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
+    (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
+      initial = .ok final)
+    {prelude rest : List Json} {raw : Json} {left right : Operand}
+    {width : Nat} {output : String}
+    (split : source.toList = prelude ++ raw :: rest)
+    (prefixHolds : ∀ item ∈ prelude, ∀ instruction,
+      decodeInstruction item = .ok instruction → Instruction.Holds hash witness instruction)
+    (opcode : NativeRelationJson.stringField raw "op" = .ok "less_than")
+    (decoded : decodeInstruction raw = .ok (.lessThan left right width output)) :
+    (left.read witness).val < 2 ^ width ∧ (right.read witness).val < 2 ^ width := by
+  rw [split, List.zipIdx_append, List.zipIdx_cons] at accepted
+  obtain ⟨before, _, checkedPrefix, checkedComparison⟩ := acceptedLoopCut accepted
+  have prefixSteps : ∀ item ∈ prelude.zipIdx, AcceptedMeaningStep hash witness item.1 := by
+    intro item indexed
+    have member : item.1 ∈ prelude := by
+      rw [← List.zipIdx_map_fst 0 prelude]
+      exact List.mem_map_of_mem indexed
+    have sourceMember : item.1 ∈ source.toList := by
+      rw [split]
+      exact List.mem_append_left _ member
+    exact steps item.1 sourceMember hash witness (prefixHolds item.1 member)
+  have ⟨beforeMeaning, _, _⟩ := accepted_loop_meaning_at_steps initialMeaning
+    initialDefinitions inputSchema (fun _ _ => rfl) prefixSteps checkedPrefix
+  exact accepted_lessThan_witnessBounds beforeMeaning
+    (by simpa only [ScalarValidationOutputMeaning.nativeJson_stringField_eq] using opcode)
+    decoded checkedComparison
+
+/-- The exact comparison rewrite preserves satisfaction for every assignment on
+an accepted array in the stated producer step class. Each rewrite uses bounds
+from the original prefix as the pass advances. -/
+theorem acceptedArrayReusePreserves
+    {expected : Backend.Native.Expected} {source : Array Json}
+    {original : List Instruction} {initial final : Backend.Native.State}
+    (initialMeaning : ∀ hash witness, StateMeaning hash witness witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty = .native ∧ requirement.activityGuard = none)
+    (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
+    (decoded : source.toList.mapM decodeInstruction = .ok original)
+    (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
+      initial = .ok final) :
+    ∃ optimized,
+      (reuseComparisons source).toList.mapM decodeInstruction = .ok optimized ∧
+      optimized.filter stableOutsideComparisons = original.filter stableOutsideComparisons ∧
+      ∀ hash witness,
+        (∀ instruction ∈ optimized, Instruction.Holds hash witness instruction) ↔
+        (∀ instruction ∈ original, Instruction.Holds hash witness instruction) := by
+  apply reuseComparisons_preserves_decoded_of_prefix_ranges source original decoded
+  intro hash witness prelude raw rest left right width output split prefixHolds opcode comparison
+  exact acceptedComparisonBoundsFromPrefix (initialMeaning hash witness) initialDefinitions
+    inputSchema steps accepted split prefixHolds opcode comparison
+
+/-- The accepted producer prefix also preserves the full kernel interface,
+including ordered inputs, Impact groups and returns. -/
+theorem acceptedArrayReusePreservesKernel
+    {expected : Backend.Native.Expected} {source : Array Json}
+    {initial final : Backend.Native.State} {left right : Program}
+    (initialMeaning : ∀ hash witness, StateMeaning hash witness witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty = .native ∧ requirement.activityGuard = none)
+    (steps : ∀ raw ∈ source.toList, SupportsMeaning raw)
+    (sourceDecoded : source.toList.mapM decodeInstruction = .ok left.instructions)
+    (runDecoded : (reuseComparisons source).toList.mapM decodeInstruction = .ok right.instructions)
+    (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
+      initial = .ok final) :
+    ∀ hash streams witness groups returns,
+      (Satisfies hash left streams witness groups returns ↔
+        Satisfies hash right streams witness groups returns) := by
+  obtain ⟨optimized, optimizedDecoded, stable, holds⟩ :=
+    acceptedArrayReusePreserves initialMeaning initialDefinitions inputSchema steps
+      sourceDecoded accepted
+  have equality : optimized = right.instructions :=
+    Except.ok.inj (optimizedDecoded.symm.trans runDecoded)
+  apply RangeDedupKernel.comparisonRewrite_preserves_kernel left right
+  · rw [← equality]
+    exact stable.symm
+  · intro hash witness
+    simpa only [equality] using (holds hash witness).symm
 
 end Noctium.Verification.RangeDedupAcceptedArray

@@ -358,23 +358,6 @@ private theorem reuseComparisons_duplicate_step (priorItems : List Json) (item :
       intro prior result found
       simp at found)
 
-private theorem holds_after_duplicate (holds : Json → Prop) (retainedPrefix : List Json)
-    (earlier copy later : Json) (rest : List Json) (earlierMember : earlier ∈ retainedPrefix)
-    (bridge : (holds earlier ∧ holds copy) ↔ (holds earlier ∧ holds later)) :
-    (∀ item ∈ retainedPrefix ++ [copy] ++ rest, holds item) ↔
-      (∀ item ∈ retainedPrefix ++ later :: rest, holds item) := by
-  simp only [List.forall_mem_append, List.forall_mem_singleton, List.forall_mem_cons,
-    List.append_assoc]
-  constructor
-  · rintro ⟨prefixHolds, copyHolds, restHolds⟩
-    have earlierHolds := prefixHolds earlier earlierMember
-    obtain ⟨_, laterHolds⟩ := bridge.mp ⟨earlierHolds, copyHolds⟩
-    exact ⟨prefixHolds, laterHolds, restHolds⟩
-  · rintro ⟨prefixHolds, laterHolds, restHolds⟩
-    have earlierHolds := prefixHolds earlier earlierMember
-    obtain ⟨_, copyHolds⟩ := bridge.mpr ⟨earlierHolds, laterHolds⟩
-    exact ⟨prefixHolds, copyHolds, restHolds⟩
-
 private theorem comparisonCopy_no_key (prior output : String) :
     comparison? (comparisonCopyJson prior output) = none := by
   rfl
@@ -406,39 +389,110 @@ private theorem comparisonStep_sources (source : List Json) (state : ComparisonS
       · exact sources retained (by simpa using next) recognized
       · simp [next, comparisonCopy_no_key] at recognized
 
-private theorem comparisonFold_source_satisfaction (source items : List Json)
-    (state : ComparisonState) (tracks : ComparisonTracks state)
-    (sources : ComparisonSources source state) (remaining : ∀ item ∈ items, item ∈ source)
+private theorem comparisonStep_prefix_satisfaction (source : Array Json)
+    (prior rest : List Json) (state : ComparisonState) (item : Json)
+    (tracks : ComparisonTracks state) (sources : ComparisonSources prior state)
     (holds : Json → Prop)
-    (bridge : ∀ earlier ∈ source, ∀ later ∈ source, ∀ key first output,
-      comparison? earlier = some (key, first) → comparison? later = some (key, output) →
-      ((holds earlier ∧ holds (comparisonCopyJson first output)) ↔ (holds earlier ∧ holds later))) :
-    (∀ item ∈ (items.foldl comparisonStep state).retained.toList, holds item) ↔
-      (∀ item ∈ state.retained.toList ++ items, holds item) := by
-  induction items generalizing state with
-  | nil => simp
+    (invariant : (∀ output ∈ state.retained.toList, holds output) ↔
+      (∀ original ∈ prior, holds original))
+    (sourceSplit : source.toList = prior ++ item :: rest)
+    (bridge : ∀ prior later rest, source.toList = prior ++ later :: rest →
+      (∀ original ∈ prior, holds original) →
+      ∀ earlier ∈ prior, ∀ key first output,
+        comparison? earlier = some (key, first) → comparison? later = some (key, output) →
+        ((holds earlier ∧ holds (comparisonCopyJson first output)) ↔
+          (holds earlier ∧ holds later))) :
+    (∀ output ∈ (comparisonStep state item).retained.toList, holds output) ↔
+      (∀ original ∈ prior ++ [item], holds original) := by
+  cases recognized : comparison? item with
+  | none =>
+    simpa only [comparisonStep, recognized, Array.toList_push,
+      List.forall_mem_append, List.forall_mem_singleton] using
+        (and_congr invariant Iff.rfl)
+  | some entry =>
+    obtain ⟨key, output⟩ := entry
+    cases cached : state.seen[key]? with
+    | none =>
+      simpa only [comparisonStep, recognized, cached, Array.toList_push,
+        List.forall_mem_append, List.forall_mem_singleton] using
+          (and_congr invariant Iff.rfl)
+    | some first =>
+      obtain ⟨earlier, earlierMember, earlierKey, pushed⟩ :=
+        comparisonStep_duplicate state item key output first recognized cached tracks
+      have earlierInPrefix := sources earlier earlierMember (by simp [earlierKey])
+      rw [pushed, Array.toList_push]
+      simp only [List.forall_mem_append, List.forall_mem_singleton]
+      constructor
+      · rintro ⟨retainedHolds, copyHolds⟩
+        have prefixHolds := invariant.mp retainedHolds
+        have earlierHolds := prefixHolds earlier earlierInPrefix
+        have bridgeHolds := bridge prior item rest sourceSplit prefixHolds
+          earlier earlierInPrefix key first output earlierKey recognized
+        obtain ⟨_, itemHolds⟩ := bridgeHolds.mp ⟨earlierHolds, copyHolds⟩
+        exact ⟨prefixHolds, itemHolds⟩
+      · rintro ⟨prefixHolds, itemHolds⟩
+        have retainedHolds := invariant.mpr prefixHolds
+        have earlierHolds := retainedHolds earlier earlierMember
+        have bridgeHolds := bridge prior item rest sourceSplit prefixHolds
+          earlier earlierInPrefix key first output earlierKey recognized
+        obtain ⟨_, copyHolds⟩ := bridgeHolds.mpr ⟨earlierHolds, itemHolds⟩
+        exact ⟨retainedHolds, copyHolds⟩
+
+private theorem comparisonFold_prefix_satisfaction (source : Array Json)
+    (holds : Json → Prop)
+    (bridge : ∀ prior later rest, source.toList = prior ++ later :: rest →
+      (∀ original ∈ prior, holds original) →
+      ∀ earlier ∈ prior, ∀ key first output,
+        comparison? earlier = some (key, first) → comparison? later = some (key, output) →
+        ((holds earlier ∧ holds (comparisonCopyJson first output)) ↔
+          (holds earlier ∧ holds later))) :
+    ∀ (prior items : List Json) (state : ComparisonState),
+      ComparisonTracks state → ComparisonSources prior state →
+      ((∀ output ∈ state.retained.toList, holds output) ↔
+        (∀ original ∈ prior, holds original)) →
+      source.toList = prior ++ items →
+      ((∀ output ∈ (items.foldl comparisonStep state).retained.toList, holds output) ↔
+        (∀ original ∈ prior ++ items, holds original)) := by
+  intro prior items
+  induction items generalizing prior with
+  | nil =>
+    intro state tracks sources invariant sourceSplit
+    simpa using invariant
   | cons item rest ih =>
+    intro state tracks sources invariant sourceSplit
+    have sourceStep : source.toList = prior ++ item :: rest := by
+      simpa using sourceSplit
     let next := comparisonStep state item
-    have itemInSource := remaining item List.mem_cons_self
     have nextTracks := comparisonStep_tracks state item tracks
-    have nextSources := comparisonStep_sources source state item itemInSource sources
-    rw [List.foldl_cons, ih next nextTracks nextSources
-      (fun other member => remaining other (List.mem_cons_of_mem _ member))]
-    cases key : comparison? item with
-    | none => simp [next, comparisonStep, key, Array.toList_push, List.append_assoc]
-    | some found =>
-      obtain ⟨keyValue, output⟩ := found
-      cases cached : state.seen[keyValue]? with
-      | none => simp [next, comparisonStep, key, cached, Array.toList_push, List.append_assoc]
-      | some first =>
-        obtain ⟨earlier, earlierMember, earlierKey, pushed⟩ :=
-          comparisonStep_duplicate state item keyValue output first key cached tracks
-        change (∀ x ∈ (comparisonStep state item).retained.toList ++ rest, holds x) ↔ _
-        rw [pushed, Array.toList_push]
-        have earlierInSource := sources earlier earlierMember (by simp [earlierKey])
-        exact holds_after_duplicate holds state.retained.toList earlier
-          (comparisonCopyJson first output) item rest earlierMember
-          (bridge earlier earlierInSource item itemInSource keyValue first output earlierKey key)
+    have nextSources : ComparisonSources (prior ++ [item]) next := by
+      apply comparisonStep_sources (prior ++ [item]) state item
+      · exact List.mem_append_right _ (List.mem_singleton_self item)
+      · intro retained retainedMember recognized
+        exact List.mem_append_left _ (sources retained retainedMember recognized)
+    have nextInvariant := comparisonStep_prefix_satisfaction source prior rest state item
+      tracks sources holds invariant sourceStep bridge
+    have nextSplit : source.toList = (prior ++ [item]) ++ rest := by
+      simpa [List.append_assoc] using sourceSplit
+    have restResult := ih (prior := prior ++ [item]) next nextTracks nextSources
+      nextInvariant nextSplit
+    simpa [next, List.append_assoc] using restResult
+
+/-- Replacing repeated comparisons preserves satisfaction when the copy and
+original comparison agree under facts from the raw prefix. -/
+theorem reuseComparisons_preserves_prefix_satisfaction (source : Array Json)
+    (holds : Json → Prop)
+    (bridge : ∀ prior later rest, source.toList = prior ++ later :: rest →
+      (∀ item ∈ prior, holds item) →
+      ∀ earlier ∈ prior, ∀ key first output,
+        comparison? earlier = some (key, first) → comparison? later = some (key, output) →
+        ((holds earlier ∧ holds (comparisonCopyJson first output)) ↔
+          (holds earlier ∧ holds later))) :
+    (∀ item ∈ (reuseComparisons source).toList, holds item) ↔
+      (∀ item ∈ source.toList, holds item) := by
+  simpa [reuseComparisons, Array.foldl_toList] using
+    comparisonFold_prefix_satisfaction source holds bridge [] source.toList {} (by
+      intro key first found
+      simp at found) (by simp [ComparisonSources]) (by simp) (by simp)
 
 /-- Every comparison pair used by the fold comes from the exact input vector. -/
 theorem reuseComparisons_preserves_source_satisfaction (source : Array Json)
@@ -448,10 +502,15 @@ theorem reuseComparisons_preserves_source_satisfaction (source : Array Json)
       ((holds earlier ∧ holds (comparisonCopyJson first output)) ↔ (holds earlier ∧ holds later))) :
     (∀ item ∈ (reuseComparisons source).toList, holds item) ↔
       (∀ item ∈ source.toList, holds item) := by
-  simpa [reuseComparisons, Array.foldl_toList] using
-    comparisonFold_source_satisfaction source.toList source.toList {} (by
-      intro key first found
-      simp at found) (by simp [ComparisonSources]) (fun _ member => member) holds bridge
+  apply reuseComparisons_preserves_prefix_satisfaction source holds
+  intro prior later rest split _ earlier earlierMember key first output earlierKey laterKey
+  have inSource : earlier ∈ source.toList := by
+    rw [split]
+    exact List.mem_append_left _ earlierMember
+  have laterInSource : later ∈ source.toList := by
+    rw [split]
+    simp
+  exact bridge earlier inSource later laterInSource key first output earlierKey laterKey
 
 private theorem comparisonFold_observations (source items : List Json) (state : ComparisonState)
     (tracks : ComparisonTracks state) (sources : ComparisonSources source state)
