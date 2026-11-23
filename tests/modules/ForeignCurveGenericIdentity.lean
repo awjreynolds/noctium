@@ -69,7 +69,7 @@ private def foreignIdentityEntrypoint (kind : Foreign.Kind) (index : Nat) :
     Modules.ModuleEntrypoint := Id.run do
   let effects := match kind with
     | .scalar .secp256k1 =>
-      [⟨.writeCellOutput (.localMember Foreign.kinds.length) "result", {}⟩]
+      [{effect := .writeCellOutput (.localMember Foreign.kinds.length) "result"}]
     | _ => []
   return {
     «member» := index

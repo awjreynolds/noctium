@@ -1,0 +1,38 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Ledger {
+  issued: Field;
+  spent: Field;
+}
+
+module GenericCell<T> {
+  export ledger value: T;
+
+  export circuit inspect(): T {
+    return value;
+  }
+
+  export circuit update(enabled: Boolean, next: T): T {
+    if (disclose(enabled)) {
+      value = disclose(next);
+    }
+    return value;
+  }
+}
+
+import GenericCell<Ledger> prefix cell_;
+export {cell_value};
+
+constructor() {
+  cell_value = disclose(Ledger { issued: 5 as Field, spent: 42 as Field });
+}
+
+export circuit inspect(): Ledger {
+  return cell_inspect();
+}
+
+export circuit update(enabled: Boolean, nextIssued: Field, nextSpent: Field): Ledger {
+  const next = Ledger { issued: disclose(nextIssued), spent: disclose(nextSpent) };
+  return cell_update(disclose(enabled), next);
+}

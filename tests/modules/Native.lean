@@ -49,7 +49,7 @@ def genericLedgerModule : Noctium.Modules.Definition := {
     «member» := 2
     name := "update"
     circuit := .localMember 1
-    effects := [⟨.writeCellOutput (.localMember 0) "result", {}⟩]}]
+    effects := [{effect := .writeCellOutput (.localMember 0) "result"}]}]
   exports := [
     {name := "balance", target := .localMember 0},
     {name := "update", target := .localMember 2}]
@@ -82,8 +82,8 @@ def moduleContractRoot : Noctium.Modules.Definition := {
     name := "againRead"
     circuit := .localMember 0
     effects := [
-      ⟨.readCell (.importedMember "again" "mirror") "observed" .native, {}⟩,
-      ⟨.require (.eq (.ref "observed" : Noctium.Expr .native) (.ref "value")), {}⟩]}]
+      {effect := .readCell (.importedMember "again" "mirror") "observed" .native},
+      {effect := .require (.eq (.ref "observed" : Noctium.Expr .native) (.ref "value"))}]}]
   exports := [
     {name := "firstBalance", target := .importedMember "first" "balance"},
     {name := "againBalance", target := .importedMember "again" "mirror"},

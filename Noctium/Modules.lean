@@ -28,6 +28,7 @@ inductive MemberVisibility where
 module may forward one of its own parameters to a nested import. -/
 inductive ModuleArgument where
   | typeValue (value : Types.CompositeType)
+  | checkedTypeValue (value : Types.CompositeType) (environment : Types.CompositeEnv)
   | typeParameter (name : String)
   | naturalValue (value : Nat)
   | naturalParameter (name : String)
@@ -66,6 +67,7 @@ structure ResolvedSourceExport where
   program : Name
   exportName : String
   arguments : List SpecializationArgument := []
+  typeEnvironments : List (Option Types.CompositeEnv) := []
   span : SourceSpan := {}
   deriving Repr, BEq, Inhabited
 
@@ -88,6 +90,15 @@ structure TypeInfo where
   deriving Repr, BEq, DecidableEq
 
 instance : Inhabited TypeInfo := ⟨{value := .unit, environment := {}}⟩
+
+/-- A module type parameter's checked value and the declarations reachable from
+that value. Module arguments keep this closure with the nominal type ID. -/
+structure ModuleTypeValue where
+  value : Types.CompositeType
+  environment : Types.CompositeEnv := {}
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited ModuleTypeValue := ⟨{value := .unit, environment := {}}⟩
 
 structure Member where
   id : Nat
@@ -113,8 +124,10 @@ inductive StateTarget where
 
 structure ConstructorInputBinding where
   state : StateTarget
-  parameterName : String
+  parameterName : String := ""
   span : SourceSpan := {}
+  /-- Checked record field names paired with constructor parameter names. -/
+  recordFields : List (String × String) := []
   deriving Repr, Inhabited
 
 structure OpaqueCellHashReturn where
@@ -123,13 +136,21 @@ structure OpaqueCellHashReturn where
   span : SourceSpan := {}
   deriving Repr, Inhabited
 
+structure RecordCellReturn where
+  name : String
+  state : StateTarget
+  span : SourceSpan := {}
+  deriving Repr, Inhabited
+
 inductive ModuleEffect where
   | readCell (state : StateTarget) (destination : String) (ty : Ty)
+  | readRecordCell (state : StateTarget) (destination : String)
   | readMap (state : StateTarget) (destination : String) (keyTy valueTy : Ty)
       (key : Expr keyTy)
   | require (condition : Expr .bool)
   | writeCell (state : StateTarget) (ty : Ty) (value : Expr ty)
   | writeCellOutput (state : StateTarget) (outputName : String)
+  | writeRecordCell (state : StateTarget) (fields : List (String × LedgerFieldExpr))
   | writeMap (state : StateTarget) (keyTy valueTy : Ty)
       (key : Expr keyTy) (value : Expr valueTy)
   | requireAbsent (state : StateTarget) (keyTy : Ty) (key : Expr keyTy)
@@ -138,6 +159,7 @@ inductive ModuleEffect where
 structure ModuleEffectSpec where
   effect : ModuleEffect
   span : SourceSpan := {}
+  guard : Option (Expr .bool) := none
   deriving Repr
 
 structure Selection where
@@ -177,6 +199,8 @@ structure ModuleEntrypoint where
   span : SourceSpan := {}
   opaqueCellHashReturns : List OpaqueCellHashReturn := []
   returns : List Output := []
+  recordCellReturns : List RecordCellReturn := []
+  callInputs : List String := []
   deriving Repr
 
 structure Export where
@@ -217,6 +241,9 @@ and structural. -/
 structure ModuleKey where
   sourceName : Name
   arguments : List SpecializationArgument
+  /-- Checked reachable layouts for type arguments, aligned with `arguments`.
+  Scalar and otherwise closed types use `none`. -/
+  typeEnvironments : List (Option Types.CompositeEnv) := []
   deriving Repr, BEq, Inhabited
 
 structure MemberIdentity where
@@ -267,7 +294,10 @@ structure ResolvedEntrypoint where
   identity : MemberIdentity
   circuit : MemberIdentity
   effects : List Effect
+  effectGuards : List (Option (Expr .bool)) := []
   returns : List Output := []
+  returnViews : List ReturnView := []
+  callInputs : List String := []
   stateIdentities : List MemberIdentity
   span : SourceSpan
   effectSpans : List SourceSpan
@@ -291,6 +321,8 @@ structure ModuleContractPlan where
 structure ModuleSpecializationGroup where
   sourceProgram : Name
   requests : List ExportRequest
+  /-- Checked external layouts needed to specialize this source's type arguments. -/
+  typeEnvironment : Types.CompositeEnv := {}
   deriving Repr, Inhabited
 
 structure SpecializedModule where
@@ -410,13 +442,19 @@ private def encodeType : Types.CompositeType → String
   | .vector length element => "v" ++ encodeNat length ++ "[" ++ encodeType element ++ "]"
   | .bytes length => "b" ++ encodeNat length
 
-private def encodeArgument : SpecializationArgument → String
-  | .type value => "T" ++ encodeType value
+private def encodeArgument (environment : Option Types.CompositeEnv) :
+    SpecializationArgument → String
+  | .type value =>
+    let layout := match environment with
+      | none => ""
+      | some environment => "C" ++ encodeText (Types.CompositeType.fingerprint environment value)
+    "T" ++ encodeType value ++ layout
   | .natural value => "N" ++ encodeNat value
 
 private def encodeKey (key : ModuleKey) : String :=
   "K1" ++ encodeName key.sourceName ++ "L" ++ encodeNat key.arguments.length ++ "[" ++
-    String.join (key.arguments.map encodeArgument) ++ "]"
+    String.join (key.arguments.zipIdx.map fun (argument, index) =>
+      encodeArgument (key.typeEnvironments[index]?.join) argument) ++ "]"
 
 /-- Fixed, non-cryptographic digest. Exact structural keys remain authoritative
 and every digest collision is rejected before emission. -/
@@ -551,7 +589,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
         resource sourceExport.span "source export argument count"
       for argument in sourceExport.arguments do
         match argument with
-        | .typeValue value =>
+        | .typeValue value | .checkedTypeValue value _ =>
           let nodeLimit := min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes
           let remaining ← consumeTypeNodes sourceExport.span nodeLimit value
           sourceExportTypeNodes := sourceExportTypeNodes + (nodeLimit - remaining)
@@ -567,6 +605,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     fail definition.span "duplicate module entrypoint name"
   if definition.entrypoints.length > limits.maxSourceNodes then
     resource definition.span "module entrypoints"
+  let mut recordEffectFields := 0
   for entrypoint in definition.entrypoints do
     validText entrypoint.span entrypoint.name
     let some sourceMember := definition.members.find? (·.id == entrypoint.member)
@@ -575,13 +614,16 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       fail entrypoint.span "module entrypoint metadata does not match its member declaration"
     if entrypoint.effects.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint effects"
-    if entrypoint.opaqueCellHashReturns.length > limits.maxSourceNodes then
-      resource entrypoint.span "module entrypoint returns"
-    if entrypoint.returns.length > limits.maxSourceNodes then
+    if entrypoint.opaqueCellHashReturns.length + entrypoint.returns.length +
+        entrypoint.recordCellReturns.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint returns"
     unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name) ++
-        entrypoint.returns.map (·.name)) do
+        entrypoint.recordCellReturns.map (·.name) ++ entrypoint.returns.map (·.name)) do
       fail entrypoint.span "duplicate module entrypoint return name"
+    if entrypoint.callInputs.length > limits.maxSourceNodes then
+      resource entrypoint.span "module entrypoint call arguments"
+    for name in entrypoint.callInputs do
+      validText entrypoint.span name
     for returned in entrypoint.opaqueCellHashReturns do
       validText returned.span returned.name
       unless Types.validFieldName returned.name do
@@ -593,10 +635,20 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       match returned.ty.validate Capabilities.crypto with
       | .ok _ => pure ()
       | .error message => fail returned.span message
+    for returned in entrypoint.recordCellReturns do
+      validText returned.span returned.name
+      unless Types.validFieldName returned.name do
+        fail returned.span s!"invalid module return name '{returned.name}'"
     for effect in entrypoint.effects do
       if effect.span.file.utf8ByteSize > 4096 then resource effect.span "module source span"
       match effect.effect with
       | .writeCellOutput _ outputName => validText effect.span outputName
+      | .readRecordCell _ destination => validText effect.span destination
+      | .writeRecordCell _ fields =>
+        if fields.length > Noctium.maxEntrypointReturnFields then
+          resource effect.span "record Cell fields"
+        recordEffectFields := recordEffectFields + fields.length
+        for (field, _) in fields do validText effect.span field
       | _ => pure ()
   for sourceMember in definition.members do
     if sourceMember.kind == .entrypoint && !entrypointIds.contains sourceMember.id then
@@ -636,9 +688,10 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       validText item.span viewName
       validText item.span localName
   pure (definition.parameters.length + definition.members.length +
-    definition.imports.length + definition.exports.length + definition.entrypoints.length +
+    definition.imports.length + definition.exports.length + definition.entrypoints.length + recordEffectFields +
     definition.entrypoints.foldl (fun count entry =>
-      count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length) 0 +
+      count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length +
+        entry.recordCellReturns.length + entry.callInputs.length) 0 +
     definition.imports.foldl (fun count item => count + item.arguments.length + item.selections.length) 0 +
     definition.members.foldl (fun count member => count + match member.stateSchema? with
       | none => 0
@@ -673,48 +726,142 @@ private def validateRegistry (limits : Limits) (registry : Registry) : Except Di
           fail member.span s!"unknown target module '{sourceSpanName target}'"
   pure total
 
-private abbrev TypeEnvironment := List (String × Types.CompositeType)
+private abbrev TypeEnvironment := List (String × ModuleTypeValue)
 private abbrev NaturalEnvironment := List (String × Nat)
 
+private def canonicalField (field : Types.Field) : Types.Field :=
+  {field with span := {}}
+
+private def canonicalVariant (variant : Types.VariantDecl) : Types.VariantDecl :=
+  {variant with
+    span := {}
+    fields := variant.fields.map canonicalField}
+
+private def canonicalCompositeEnvironment (environment : Types.CompositeEnv) : Types.CompositeEnv :=
+  let structures := (environment.structures.map fun declaration =>
+    {declaration with
+      span := {}
+      fields := declaration.fields.map canonicalField}).mergeSort fun left right => decide (left.id < right.id)
+  let enumerations := (environment.enumerations.map fun declaration =>
+    {declaration with
+      span := {}
+      variants := declaration.variants.map canonicalVariant}).mergeSort fun left right => decide (left.id < right.id)
+  {structures, enumerations}
+
+private def normalizeModuleTypeValue (limits : Limits) (span : SourceSpan)
+    (value : Types.CompositeType) (environment : Option Types.CompositeEnv) :
+    Except Diagnostic (ModuleTypeValue × Option Types.CompositeEnv) := do
+  let _ ← consumeTypeNodes span
+    (min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes) value
+  let reachable := canonicalCompositeEnvironment ((environment.getD {}).reachable value)
+  unless value.referencedIds.isEmpty do
+    match Types.checkedLayout Types.defaultLimits reachable value with
+    | .ok _ => pure ()
+    | .error diagnostic => fail span diagnostic.message
+  let reachable? := if reachable.structures.isEmpty && reachable.enumerations.isEmpty then
+      none else some reachable
+  pure ({value, environment := reachable}, reachable?)
+
+private def normalizeTypeEnvironments (limits : Limits) (span : SourceSpan)
+    (arguments : List SpecializationArgument) (environments : List (Option Types.CompositeEnv)) :
+    Except Diagnostic (List (Option Types.CompositeEnv)) := do
+  let environments := if environments.isEmpty then
+      List.replicate arguments.length none else environments
+  unless environments.length == arguments.length do
+    fail span "Noctium module type environment count does not match its arguments"
+  (arguments.zip environments).mapM fun (argument, environment) =>
+    match argument, environment with
+    | .type value, environment => do
+      let (_, environment) ← normalizeModuleTypeValue limits span value environment
+      pure environment
+    | .natural _, none => pure none
+    | .natural _, some _ => fail span "Noctium natural arguments cannot carry a type environment"
+
+private def mergeCompositeEnvironments (span : SourceSpan)
+    (left right : Types.CompositeEnv) : Except Diagnostic Types.CompositeEnv := do
+  let mut structures := left.structures
+  let mut enumerations := left.enumerations
+  for candidate in right.structures do
+    if enumerations.any (·.id == candidate.id) then
+      fail span s!"conflicting module composite declaration '{candidate.id}'"
+    if let some prior := structures.find? (·.id == candidate.id) then
+      let priorLayout := Types.CompositeType.fingerprint left (.structure prior.id)
+      let candidateLayout := Types.CompositeType.fingerprint right (.structure candidate.id)
+      unless priorLayout == candidateLayout do
+        fail span s!"conflicting module structure layout '{candidate.id}'"
+    else
+      structures := structures ++ [candidate]
+  for candidate in right.enumerations do
+    if structures.any (·.id == candidate.id) then
+      fail span s!"conflicting module composite declaration '{candidate.id}'"
+    if let some prior := enumerations.find? (·.id == candidate.id) then
+      let priorLayout := Types.CompositeType.fingerprint left (.enumeration prior.id)
+      let candidateLayout := Types.CompositeType.fingerprint right (.enumeration candidate.id)
+      unless priorLayout == candidateLayout do
+        fail span s!"conflicting module enumeration layout '{candidate.id}'"
+    else
+      enumerations := enumerations ++ [candidate]
+  pure (canonicalCompositeEnvironment {structures, enumerations})
+
+private def mergeTypeEnvironments (span : SourceSpan)
+    (environments : List (Option Types.CompositeEnv)) :
+    Except Diagnostic Types.CompositeEnv := do
+  environments.foldlM (fun accumulated environment =>
+    mergeCompositeEnvironments span accumulated (environment.getD {})) {}
+
+private def moduleTypesEnvironment (span : SourceSpan) (types : TypeEnvironment) :
+    Except Diagnostic Types.CompositeEnv :=
+  mergeTypeEnvironments span (types.map fun (_, value) =>
+    if value.environment.structures.isEmpty && value.environment.enumerations.isEmpty then none
+    else some value.environment)
+
 private def bindArguments (limits : Limits) (span : SourceSpan)
-    (parameters : List TypeParameter) (arguments : List SpecializationArgument) :
-    Except Diagnostic (TypeEnvironment × NaturalEnvironment) := do
+    (parameters : List TypeParameter) (arguments : List SpecializationArgument)
+    (typeEnvironments : List (Option Types.CompositeEnv) := []) :
+    Except Diagnostic (TypeEnvironment × NaturalEnvironment × List (Option Types.CompositeEnv)) := do
   if parameters.length > limits.maxArguments || arguments.length > limits.maxArguments then
     resource span "module argument count"
   unless parameters.length == arguments.length do
     fail span "Noctium module specialization arity mismatch"
+  let typeEnvironments ← normalizeTypeEnvironments limits span arguments typeEnvironments
   let mut types : TypeEnvironment := []
   let mut naturals : NaturalEnvironment := []
   let mut remainingNodes := min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes
-  for (parameter, argument) in parameters.zip arguments do
+  let bindings := (parameters.zip arguments).zip typeEnvironments
+  for ((parameter, argument), environment) in bindings do
     match parameter.kind, argument with
     | .type, .type value => do
       remainingNodes ← consumeTypeNodes span remainingNodes value
-      types := (parameter.name, value) :: types
+      let (moduleType, _) ← normalizeModuleTypeValue limits span value environment
+      types := (parameter.name, moduleType) :: types
     | .natural, .natural value => do
       if value > limits.maxNaturalValue then resource span "module natural argument"
       naturals := (parameter.name, value) :: naturals
     | _, _ => fail span s!"Noctium module specialization kind mismatch for '{parameter.name}'"
-  pure (types, naturals)
+  pure (types, naturals, typeEnvironments)
 
 private def resolveArgument (limits : Limits) (span : SourceSpan)
     (types : TypeEnvironment) (naturals : NaturalEnvironment) :
-    ModuleArgument → Except Diagnostic SpecializationArgument
+    ModuleArgument → Except Diagnostic (SpecializationArgument × Option Types.CompositeEnv)
   | .typeValue value => do
-    let maxNodes := min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes
-    let _ ← consumeTypeNodes span maxNodes value
-    pure (.type value)
+    let (moduleType, environment) ← normalizeModuleTypeValue limits span value none
+    pure (.type moduleType.value, environment)
+  | .checkedTypeValue value environment => do
+    let (moduleType, environment) ← normalizeModuleTypeValue limits span value (some environment)
+    pure (.type moduleType.value, environment)
   | .typeParameter name => do
-    let some value := types.lookup name
+    let some moduleType := types.lookup name
       | fail span s!"unbound Noctium module type parameter '{name}'"
-    pure (.type value)
+    let environment := if moduleType.environment.structures.isEmpty &&
+        moduleType.environment.enumerations.isEmpty then none else some moduleType.environment
+    pure (.type moduleType.value, environment)
   | .naturalValue value => do
     if value > limits.maxNaturalValue then resource span "module natural argument"
-    pure (.natural value)
+    pure (.natural value, none)
   | .naturalParameter name => do
     let some value := naturals.lookup name
       | fail span s!"unbound Noctium module natural parameter '{name}'"
-    pure (.natural value)
+    pure (.natural value, none)
 
 private def resolveStateScalar (limits : Limits) (span : SourceSpan)
     (types : TypeEnvironment) (naturals : NaturalEnvironment) :
@@ -734,9 +881,9 @@ private def resolveStateScalar (limits : Limits) (span : SourceSpan)
     | .ok _ => pure (.uint maximum)
     | .error message => fail span message
   | .parameter name => do
-    let some value := types.lookup name
+    let some moduleType := types.lookup name
       | fail span s!"unbound Noctium module type parameter '{name}'"
-    match value with
+    match moduleType.value with
     | .scalar ty =>
       match ty with
       | .native => pure .native
@@ -753,10 +900,25 @@ private def resolveStateScalar (limits : Limits) (span : SourceSpan)
       | .foreign _ => fail span "foreign state parameters are not supported by module specialization"
     | _ => fail span s!"Noctium ledger state parameter '{name}' must specialize to a scalar; aggregate ledger state is not supported"
 
+private def resolveModuleCellKind (limits : Limits) (span : SourceSpan)
+    (types : TypeEnvironment) (naturals : NaturalEnvironment)
+    (value : ModuleScalarType) : Except Diagnostic StateKind := do
+  match value with
+  | .parameter name =>
+    let some moduleType := types.lookup name
+      | fail span s!"unbound Noctium module type parameter '{name}'"
+    match moduleType.value with
+    | .structure _ => do
+      match LedgerValueType.cellRecordFields moduleType.environment moduleType.value with
+      | .ok _ => pure (.tree (.composite moduleType.environment moduleType.value))
+      | .error message => fail span message
+    | _ => .cell <$> resolveStateScalar limits span types naturals value
+  | _ => .cell <$> resolveStateScalar limits span types naturals value
+
 private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
     (types : TypeEnvironment) (naturals : NaturalEnvironment) :
     ModuleStateKind → Except Diagnostic StateKind
-  | .cell value => .cell <$> resolveStateScalar limits span types naturals value
+  | .cell value => resolveModuleCellKind limits span types naturals value
   | .map key value => do
     let keyTy ← resolveStateScalar limits span types naturals key
     let valueTy ← resolveStateScalar limits span types naturals value
@@ -768,22 +930,20 @@ private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
 private def keyEncodingSize (limits : Limits) (span : SourceSpan) (key : ModuleKey) :
     Except Diagnostic Nat := do
   if key.arguments.length > limits.maxArguments then resource span "module argument count"
+  let typeEnvironments ← normalizeTypeEnvironments limits span key.arguments key.typeEnvironments
   let sourceSize ← nameEncodingSize span limits.maxSourceDepth key.sourceName
   let mut remainingNodes := min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes
-  let mut argumentBytes := 0
-  for argument in key.arguments do
+  for (argument, environment) in key.arguments.zip typeEnvironments do
     match argument with
     | .type value => do
       remainingNodes ← consumeTypeNodes span remainingNodes value
-      let nodeLimit := min limits.maxExpandedNodes Types.defaultLimits.maxLayoutNodes
-      let used := nodeLimit - remainingNodes
-      let some size := canonicalTypeSize (used + 1) value
-        | resource span "canonical module type size"
-      argumentBytes := argumentBytes + 1 + size
+      let _ ← normalizeModuleTypeValue limits span value environment
     | .natural value => do
       if value > limits.maxNaturalValue then resource span "module natural argument"
-      argumentBytes := argumentBytes + 1 + natEncodingSize value
-  pure (2 + sourceSize + 3 + natEncodingSize key.arguments.length + argumentBytes)
+  let key := {key with typeEnvironments}
+  let encodedArguments := String.join (key.arguments.zipIdx.map fun (argument, index) =>
+    encodeArgument (key.typeEnvironments[index]?.join) argument)
+  pure (2 + sourceSize + 3 + natEncodingSize key.arguments.length + encodedArguments.utf8ByteSize)
 
 private def checkDigestCollision (span : SourceSpan) (digest : Nat) (key : ModuleKey)
     (known : List (Nat × ModuleKey)) : Except Diagnostic Unit := do
@@ -872,6 +1032,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
       let stateTarget? := match effectSpec.effect with
         | .readCell target _ _ | .readMap target _ _ _ _
         | .writeCell target _ _ | .writeCellOutput target _ | .writeMap target _ _ _ _
+        | .readRecordCell target _ | .writeRecordCell target _
         | .requireAbsent target _ _ => some target
         | .require _ => none
       if let some stateTarget := stateTarget? then
@@ -885,6 +1046,8 @@ private def validateModuleEntrypoints (state : ExpansionState)
           unless ty == actual do
             fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
         | .writeCellOutput .., some (.cell _) => pure ()
+        | .readRecordCell .., some (.tree (.composite ..))
+        | .writeRecordCell .., some (.tree (.composite ..)) => pure ()
         | .readMap _ _ keyTy valueTy _, some (.map actualKeyTy actualValueTy)
         | .writeMap _ keyTy valueTy _ _, some (.map actualKeyTy actualValueTy) =>
           unless keyTy == actualKeyTy && valueTy == actualValueTy do
@@ -895,6 +1058,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | _, none => fail effectSpec.span s!"state member '{stateMember.name}' has no declared type"
         | .require _ , _ => pure ()
         | .readCell .., _ | .writeCell .., _ | .writeCellOutput .., _ |
+            .readRecordCell .., _ | .writeRecordCell .., _ |
             .readMap .., _ | .writeMap .., _ |
             .requireAbsent .., _ =>
           fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
@@ -914,13 +1078,15 @@ private def validateModuleEntrypoints (state : ExpansionState)
 
 mutual
   private partial def instantiate (span : SourceSpan) (sourceName : Name)
-      (arguments : List SpecializationArgument) : ExpandM ModuleInstance := do
+      (arguments : List SpecializationArgument)
+      (typeEnvironments : List (Option Types.CompositeEnv) := []) : ExpandM ModuleInstance := do
     let state ← get
     let some registered := lookupRegistered state.registry sourceName
       | liftE (fail span s!"unknown imported module '{sourceSpanName sourceName}'")
     let definition := registered.definition
-    let key : ModuleKey := ⟨sourceName, arguments⟩
-    let (_types, _naturals) ← liftE (bindArguments state.limits span definition.parameters arguments)
+    let (types, naturals, typeEnvironments) ← liftE (bindArguments state.limits span
+      definition.parameters arguments typeEnvironments)
+    let key : ModuleKey := {sourceName, arguments, typeEnvironments}
     if state.active.contains sourceName then
       liftE (fail span s!"Noctium module import cycle at '{sourceSpanName sourceName}'")
     if let some cachedInstance := lookupInstance state.instances key then return cachedInstance
@@ -948,7 +1114,6 @@ mutual
       digests := (digest, key) :: state.digests
       canonicalBytes := state.canonicalBytes + keyBytes
       expandedNodes := state.expandedNodes + nodeCost}
-    let (types, naturals) ← liftE (bindArguments state.limits span definition.parameters arguments)
     let mut resolvedMembers : List Member := []
     for sourceMember in definition.members do
       let mut resolvedMember := sourceMember
@@ -962,8 +1127,14 @@ mutual
           maxExpandedNodes := state.limits.maxExpandedNodes
           maxTypeArguments := state.limits.maxArguments
           maxNaturalValue := state.limits.maxNaturalValue}
+        let moduleEnvironment ← liftE (moduleTypesEnvironment template.span types)
+        let composites ← liftE (mergeCompositeEnvironments template.span
+          template.source.base.composites moduleEnvironment)
+        let typeSource := {template.source with
+          base := {template.source.base with composites}}
+        let typeArguments := types.map fun (name, moduleType) => (name, moduleType.value)
         let specialized ← liftE (Noctium.Helpers.Specialization.specializeTypeWithEnvironment typeLimits
-          template.source types naturals template.value)
+          typeSource typeArguments naturals template.value)
         let info : TypeInfo := {
           value := specialized.value
           environment := specialized.environment
@@ -974,23 +1145,31 @@ mutual
     let mut sourceExports : List (Nat × ResolvedSourceExport) := []
     for sourceMember in definition.members do
       if let some sourceExport := sourceMember.sourceExport? then
-        let sourceArguments ← sourceExport.arguments.mapM
+        let resolvedArguments ← sourceExport.arguments.mapM
           (fun argument => liftE (resolveArgument state.limits sourceExport.span types naturals argument))
-        let sourceKey : ModuleKey := ⟨sourceExport.program, sourceArguments⟩
+        let sourceArguments := resolvedArguments.map Prod.fst
+        let sourceTypeEnvironments := resolvedArguments.map Prod.snd
+        let sourceKey : ModuleKey := {
+          sourceName := sourceExport.program
+          arguments := sourceArguments
+          typeEnvironments := sourceTypeEnvironments}
         let _ ← liftE (keyEncodingSize state.limits sourceExport.span sourceKey)
         sourceExports := sourceExports ++ [(sourceMember.id, {
           program := sourceExport.program
           exportName := sourceExport.exportName
           arguments := sourceArguments
+          typeEnvironments := sourceTypeEnvironments
           span := sourceExport.span})]
     let mut importedViews : List ImportedView := []
     for importSpec in definition.imports do
-      let childArguments ← importSpec.arguments.mapM
+      let resolvedArguments ← importSpec.arguments.mapM
         (fun argument => liftE (resolveArgument state.limits importSpec.span types naturals argument))
+      let childArguments := resolvedArguments.map Prod.fst
+      let childTypeEnvironments := resolvedArguments.map Prod.snd
       let currentState ← get
       let targetName ← resolveImportTarget currentState importSpec.span key
         resolvedMembers importedViews importSpec.target
-      let child ← instantiate importSpec.span targetName childArguments
+      let child ← instantiate importSpec.span targetName childArguments childTypeEnvironments
       let mut bindings : List ViewBinding := []
       for selection in importSpec.selections do
         let selectedExports := child.exports.filter (·.name == selection.sourceName)
@@ -1111,71 +1290,124 @@ def Expansion.stateFieldName (expansion : Expansion) (identity : MemberIdentity)
     Option String :=
   if identity.kind == .state then expansion.moduleMemberName identity else none
 
-private def resolveConstructorInput (expansion : Expansion) (root : ModuleInstance)
-    (binding : ConstructorInputBinding) :
-    Except Diagnostic (ConstructorParameter × ConstructorInitializer × MemberIdentity) := do
-  validText binding.span binding.parameterName
-  unless Types.validFieldName binding.parameterName do
-    fail binding.span s!"invalid module constructor parameter '{binding.parameterName}'"
-  let identity ← resolveStateTargetInModule binding.span root.key
-    root.members root.imports binding.state
+private def resolveContractState (expansion : Expansion) (moduleInstance : ModuleInstance)
+    (span : SourceSpan) (target : StateTarget) :
+    Except Diagnostic (MemberIdentity × String × StateKind) := do
+  let identity ← resolveStateTargetInModule span moduleInstance.key
+    moduleInstance.members moduleInstance.imports target
   unless identity.kind == .state do
-    fail binding.span "module constructor input target is not a state member"
+    fail span "module target is not a state member"
   let some fieldName := expansion.stateFieldName identity
-    | fail binding.span "module constructor target has no canonical ledger field"
+    | fail span "module state target has no canonical ledger field"
   let some member := expansion.findMember identity
-    | fail binding.span "module constructor target state declaration is missing"
-  let some (.cell ty) := member.stateKind?
-    | fail binding.span "module constructor inputs require opaque root Cells"
+    | fail span "module state declaration identity is missing"
+  let some kind := member.stateKind?
+    | fail span s!"state member '{member.name}' has no declared type"
+  pure (identity, fieldName, kind)
+
+private def validateConstructorParameter (span : SourceSpan) (name : String) :
+    Except Diagnostic Unit := do
+  validText span name
+  unless Types.validFieldName name do
+    fail span s!"invalid module constructor parameter '{name}'"
+
+private def resolveScalarConstructorInput (span : SourceSpan) (fieldName parameterName : String)
+    (ty : Ty) : Except Diagnostic (ConstructorParameter × ConstructorInitializer) := do
+  validateConstructorParameter span parameterName
   let parameterType ← match ty with
     | .opaqueString => pure .opaqueString
     | .opaqueBytes => pure (.scalar .opaqueBytes)
-    | _ => fail binding.span "module constructor inputs only support OpaqueBytes or OpaqueString root Cells"
+    | _ => fail span "module scalar constructor inputs only support OpaqueBytes or OpaqueString root Cells"
   let initializerValue ← match ty with
-    | .opaqueString => pure (.opaqueStringParameter binding.parameterName)
-    | .opaqueBytes => pure (.scalar (.ref binding.parameterName : Expr .opaqueBytes))
-    | _ => fail binding.span "module constructor inputs only support OpaqueBytes or OpaqueString root Cells"
+    | .opaqueString => pure (.opaqueStringParameter parameterName)
+    | .opaqueBytes => pure (.scalar (.ref parameterName : Expr .opaqueBytes))
+    | _ => fail span "module scalar constructor inputs only support OpaqueBytes or OpaqueString root Cells"
   pure (
-    {name := binding.parameterName, type := parameterType},
-    {state := fieldName, type := parameterType, value := initializerValue},
-    identity)
+    {name := parameterName, type := parameterType},
+    {state := fieldName, type := parameterType, value := initializerValue})
+
+private def orderRecordFields (span : SourceSpan) (fields : List (String × Ty))
+    (values : List (String × α)) : Except Diagnostic (List (Ty × α)) := do
+  unless values.length == fields.length && uniqueStrings (values.map Prod.fst) do
+    fail span "module record Cell requires exactly one value per field"
+  fields.mapM fun (name, ty) => do
+    let some value := values.lookup name
+      | fail span s!"module record Cell is missing field '{name}'"
+    pure (ty, value)
 
 private def resolveConstructorInputs (expansion : Expansion) (root : ModuleInstance)
     (bindings : List ConstructorInputBinding) :
     Except Diagnostic (Option Constructor × List MemberIdentity) := do
   let mut parameters : List ConstructorParameter := []
   let mut initializers : List ConstructorInitializer := []
+  let mut actions : List ConstructorAction := []
   let mut identities : List MemberIdentity := []
   for binding in bindings do
-    let (parameter, initializer, identity) ← resolveConstructorInput expansion root binding
-    if let some previous := parameters.find? (·.name == parameter.name) then
-      unless previous.type == parameter.type do
-        fail binding.span s!"module constructor parameter '{parameter.name}' has conflicting cell types"
-    else
-      parameters := parameters ++ [parameter]
-    if initializers.any (·.state == initializer.state) then
-      fail binding.span s!"duplicate module constructor initializer for '{initializer.state}'"
-    initializers := initializers ++ [initializer]
+    let (identity, fieldName, kind) ← resolveContractState expansion root binding.span binding.state
+    if identities.contains identity then
+      fail binding.span s!"duplicate module constructor initializer for '{fieldName}'"
+    let newParameters ← match kind with
+      | .cell ty => do
+        unless binding.recordFields.isEmpty do
+          fail binding.span "scalar module constructor inputs use a single parameter"
+        let (parameter, initializer) ←
+          resolveScalarConstructorInput binding.span fieldName binding.parameterName ty
+        initializers := initializers ++ [initializer]
+        pure [parameter]
+      | .tree (.composite environment type) => do
+        unless binding.parameterName.isEmpty do
+          fail binding.span "record module constructor inputs use named field parameters"
+        let fields ← match LedgerValueType.cellWriteRecordFields environment type with
+          | .ok fields => pure fields
+          | .error message => fail binding.span message
+        let ordered ← orderRecordFields binding.span fields binding.recordFields
+        let params : List ConstructorParameter ← ordered.mapM fun (ty, name) => do
+          validateConstructorParameter binding.span name
+          pure {name, type := .scalar ty}
+        let values := ordered.map fun (ty, name) => LedgerFieldExpr.mk ty (.ref name)
+        actions := actions ++ [.initializeRecordCell fieldName values]
+        pure params
+      | _ => fail binding.span "module constructor inputs require an opaque or record root Cell"
+    for parameter in newParameters do
+      if let some previous := parameters.find? (·.name == parameter.name) then
+        unless previous.type == parameter.type do
+          fail binding.span s!"module constructor parameter '{parameter.name}' has conflicting cell types"
+      else
+        parameters := parameters ++ [parameter]
     identities := identities ++ [identity]
-  let constructor? := if bindings.isEmpty then none else some {parameters, initializers : Constructor}
-  pure (constructor?, identities.eraseDups)
+  let constructor? := if bindings.isEmpty then none else
+    some {parameters, initializers, actions : Constructor}
+  pure (constructor?, identities)
+
+private def recordCellType (span : SourceSpan) (kind : StateKind) :
+    Except Diagnostic (Types.CompositeEnv × Types.CompositeType) :=
+  match kind with
+  | .tree (.composite environment type) => pure (environment, type)
+  | _ => fail span "module effect requires a checked root record Cell"
+
+private def recordCellReadFields (span : SourceSpan) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except Diagnostic (List (String × Ty)) :=
+  match LedgerValueType.cellRecordFields environment type with
+  | .ok fields => pure fields
+  | .error message => fail span message
+
+private def recordCellDestinations (destination : String) (fields : List (String × Ty)) :
+    List (String × Ty) :=
+  fields.map fun (name, ty) => (s!"{destination}_{name}", ty)
 
 private def resolveContractEffect (expansion : Expansion) (moduleInstance : ModuleInstance)
     (effectSpec : ModuleEffectSpec) : Except Diagnostic (Effect × List MemberIdentity) := do
-  let resolveState (target : StateTarget) : Except Diagnostic (MemberIdentity × String × Member) := do
-    let identity ← resolveStateTargetInModule effectSpec.span moduleInstance.key
-      moduleInstance.members moduleInstance.imports target
-    unless identity.kind == .state do
-      fail effectSpec.span "module state effect target is not a state member"
-    let some fieldName := expansion.stateFieldName identity
-      | fail effectSpec.span "module state target has no canonical ledger field"
-    let some member := expansion.findMember identity
-      | fail effectSpec.span "module state declaration identity is missing"
-    pure (identity, fieldName, member)
+  let resolveState := resolveContractState expansion moduleInstance effectSpec.span
   match effectSpec.effect with
   | .readCell target destination ty => do
     let (identity, fieldName, _) ← resolveState target
     pure (.readCell fieldName destination ty, [identity])
+  | .readRecordCell target destination => do
+    let (identity, fieldName, kind) ← resolveState target
+    let (environment, type) ← recordCellType effectSpec.span kind
+    let fields ← recordCellReadFields effectSpec.span environment type
+    pure (.readCompositePath fieldName destination [] type (recordCellDestinations destination fields),
+      [identity])
   | .readMap target destination keyTy valueTy key => do
     let (identity, fieldName, _) ← resolveState target
     pure (.readMap fieldName destination keyTy valueTy key, [identity])
@@ -1184,14 +1416,21 @@ private def resolveContractEffect (expansion : Expansion) (moduleInstance : Modu
     let (identity, fieldName, _) ← resolveState target
     pure (.writeCell fieldName ty value, [identity])
   | .writeCellOutput target outputName => do
-    let (identity, fieldName, member) ← resolveState target
-    match member.stateKind? with
-    | some (.cell ty) => pure (.writeCell fieldName ty (.ref outputName), [identity])
-    | some (.map ..) => fail effectSpec.span "module output write requires a cell state"
-    | some (.tree ..) | some (.merkleTree ..) | some (.historicMerkleTree ..) =>
-      fail effectSpec.span "module output write requires a cell state"
-    | some .opaqueString => fail effectSpec.span "module output write does not support opaque string state"
-    | none => fail effectSpec.span s!"state member '{member.name}' has no declared type"
+    let (identity, fieldName, kind) ← resolveState target
+    match kind with
+    | .cell ty => pure (.writeCell fieldName ty (.ref outputName), [identity])
+    | .opaqueString => fail effectSpec.span "module output write does not support opaque string state"
+    | _ => fail effectSpec.span "module output write requires a cell state"
+  | .writeRecordCell target values => do
+    let (identity, fieldName, kind) ← resolveState target
+    let (environment, type) ← recordCellType effectSpec.span kind
+    let fields ← match LedgerValueType.cellWriteRecordFields environment type with
+      | .ok fields => pure fields
+      | .error message => fail effectSpec.span message
+    let ordered ← orderRecordFields effectSpec.span fields values
+    for (ty, value) in ordered do
+      unless ty == value.ty do fail effectSpec.span "module record Cell write field type mismatch"
+    pure (.writeCompositePath fieldName [] type (ordered.map Prod.snd), [identity])
   | .writeMap target keyTy valueTy key value => do
     let (identity, fieldName, _) ← resolveState target
     pure (.writeMap fieldName keyTy valueTy key value, [identity])
@@ -1224,6 +1463,24 @@ private def resolveOpaqueCellHashReturn (expansion : Expansion)
     span := returned.span}
   pure (output, .readCell fieldName destination ty, identity)
 
+private def resolveRecordCellReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
+    (returned : RecordCellReturn) :
+    Except Diagnostic (List Output × ReturnView × Effect × MemberIdentity) := do
+  let (identity, fieldName, kind) ←
+    resolveContractState expansion moduleInstance returned.span returned.state
+  let (environment, type) ← recordCellType returned.span kind
+  let fields ← recordCellReadFields returned.span environment type
+  let destination := s!"moduleRecordValue_{returned.name}"
+  let destinations := recordCellDestinations destination fields
+  let read := Effect.readCompositePath fieldName destination [] type destinations
+  let values := destinations.flatMap fun (name, ty) =>
+    (Expr.ref name : Expr ty).nativeCallFields
+  let outputs : List Output := values.zipIdx.map fun (value, index) =>
+    {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
+      value, span := returned.span}
+  pure (outputs, {name := returned.name, environment, type, fields := outputs.map (·.name)},
+    read, identity)
+
 /-- Resolve a root-exported module entrypoint. Aliases affect only its visible
 name. Circuit and state references retain their original member identities. -/
 def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
@@ -1245,18 +1502,26 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
   let resolvedEffects ← entrypoint.effects.mapM (resolveContractEffect expansion origin)
   let resolvedReturns ← entrypoint.opaqueCellHashReturns.mapM
     (resolveOpaqueCellHashReturn expansion origin)
-  let returnStateIdentities : List MemberIdentity :=
-    resolvedReturns.map fun returned => returned.2.2
+  let recordReturns ← entrypoint.recordCellReturns.mapM
+    (resolveRecordCellReturn expansion origin)
+  let returnStateIdentities := resolvedReturns.map (·.2.2) ++ recordReturns.map (·.2.2.2)
+  let guards := entrypoint.effects.map (·.guard)
   pure {
     name := exportName
     identity := exported.identity
     circuit
-    effects := resolvedEffects.map Prod.fst ++ resolvedReturns.map fun (_, read, _) => read
-    returns := entrypoint.returns ++ resolvedReturns.map fun (output, _, _) => output
+    effects := resolvedEffects.map Prod.fst ++ resolvedReturns.map (·.2.1) ++
+      recordReturns.map (·.2.2.1)
+    effectGuards := if guards.any Option.isSome then
+      guards ++ List.replicate (resolvedReturns.length + recordReturns.length) none
+      else []
+    returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ recordReturns.flatMap (·.1)
+    returnViews := recordReturns.map (·.2.1)
+    callInputs := entrypoint.callInputs
     stateIdentities := (resolvedEffects.flatMap Prod.snd ++ returnStateIdentities).eraseDups
     span := entrypoint.span
     effectSpans := entrypoint.effects.map (·.span) ++
-      entrypoint.opaqueCellHashReturns.map (·.span)}
+      entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.recordCellReturns.map (·.span)}
 
 /-- Build canonical state declarations and entrypoint templates for one module
 root. The frontend attaches checked monomorphic circuit values before creating
@@ -1341,6 +1606,8 @@ def ModuleContractPlan.specializationGroups (plan : ModuleContractPlan) :
   for circuit in plan.circuits do
     let arguments ← (circuit.source.arguments.mapM genericArgumentOfConcrete).mapError fun message =>
       {span := circuit.source.span, message}
+    let typeEnvironment ← mergeTypeEnvironments circuit.source.span
+      circuit.source.typeEnvironments
     let request : ExportRequest := {
       sourceExport := circuit.source.exportName
       outputName := circuit.outputName
@@ -1349,12 +1616,16 @@ def ModuleContractPlan.specializationGroups (plan : ModuleContractPlan) :
     if let some prior := groups.find? (·.sourceProgram == circuit.source.program) then
       if prior.requests.any (·.outputName == request.outputName) then
         fail request.span "duplicate canonical module circuit identity"
+      let mergedEnvironment ← mergeCompositeEnvironments circuit.source.span
+        prior.typeEnvironment typeEnvironment
       groups := groups.map fun group =>
         if group.sourceProgram == circuit.source.program then
-          {group with requests := group.requests ++ [request]}
+          {group with
+            requests := group.requests ++ [request]
+            typeEnvironment := mergedEnvironment}
         else group
     else
-      groups := groups ++ [{sourceProgram := circuit.source.program, requests := [request]}]
+      groups := groups ++ [{sourceProgram := circuit.source.program, requests := [request], typeEnvironment}]
   let orderedGroups := groups.map fun group => {
     group with
     requests := group.requests.mergeSort fun left right =>
@@ -1375,6 +1646,8 @@ def ModuleContractPlan.specializeWithSources (plan : ModuleContractPlan)
   for group in groups do
     let some (_, source) := sources.find? (·.1 == group.sourceProgram)
       | fail {} s!"missing registered generic source program '{sourceSpanName group.sourceProgram}'"
+    let composites ← mergeCompositeEnvironments {} source.base.composites group.typeEnvironment
+    let source := {source with base := {source.base with composites}}
     let batch ← Noctium.Helpers.Specialization.specializeRequestsWithLimits
       specializationLimits source group.requests
     batches := batches ++ [(group.sourceProgram, batch)]
@@ -1410,7 +1683,10 @@ def ModuleContractPlan.assembleContract (plan : ModuleContractPlan) (name : Stri
       name := template.name
       circuit
       effects := template.effects
+      effectGuards := template.effectGuards
       returns := template.returns
+      returnViews := template.returnViews
+      callInputs := template.callInputs
       span := template.span
       effectSpans := template.effectSpans}]
   pure {name, state := plan.state, constructor := plan.constructor?, entrypoints}
