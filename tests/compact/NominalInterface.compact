@@ -1,0 +1,28 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Uint<8>;
+export new type Count = Uint<8>;
+
+contract AmountService {
+  circuit update(amount: Amount): Amount;
+}
+
+contract implements AmountService;
+
+export ledger saved: Amount;
+export ledger service: AmountService;
+
+constructor(initialService: AmountService) {
+  saved = 0 as Amount;
+  service = disclose(initialService);
+}
+
+export circuit update(amount: Amount): Amount {
+  saved = disclose(amount);
+  return saved;
+}
+
+export circuit forward(amount: Amount): Amount {
+  return service.update(disclose(amount));
+}

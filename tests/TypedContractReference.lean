@@ -36,17 +36,165 @@ noctium_interface TypedRefGroupedEcho where
 end
 
 noctium_uint_type TypedRefAmount := UInt 8
+noctium_uint_type TypedRefCount := UInt 8
 
-/- error: nominal UInt values are not supported in contract interfaces -/
-#guard_msgs (substring := true) in
-noctium_interface NominalUIntMethodParameter where
-  entry amount accepts [amount : TypedRefAmount] yields []
+noctium_interface NominalUIntInterface where
+  entry update accepts [amount : TypedRefAmount] yields [updated : TypedRefAmount]
 end
 
-/- error: nominal UInt values are not supported in contract interfaces -/
+noctium_interface NominalUIntGroupedInterface where
+  entry update accepts [payload := fields(amount : TypedRefAmount)]
+    yields [reply := fields(updated : TypedRefAmount)]
+end
+
+noctium_circuit nominalUIntInterfaceTargetInput where
+  private amount : TypedRefAmount
+end
+
+noctium_contract NominalUIntInterfaceTarget where
+  cell total : TypedRefAmount
+  constructor(initial : TypedRefAmount) where
+    initialize total := initial
+  end
+  entry update uses nominalUIntInterfaceTargetInput arguments [amount] where
+    write total := disclose(amount)
+    return updated : TypedRefAmount := disclose(amount)
+  end
+end
+
+noctium_implements NominalUIntInterfaceTarget implements NominalUIntInterface
+
+/- error: nominal UInt interface values require a typed contract reference -/
 #guard_msgs (substring := true) in
-noctium_interface NominalUIntMethodView where
-  entry amount accepts [payload := fields(amount : TypedRefAmount)] yields []
+noctium_circuit rawNominalInterfaceCommitment where
+  output commitment : Native :=
+    callCommitment(NominalUIntInterfaceTarget, NominalUIntInterface, "update", 1, [7], [7])
+end
+
+noctium_circuit nominalUIntInterfaceCallInputs where
+  private amount : TypedRefAmount
+  private expected : TypedRefAmount
+end
+
+noctium_contract NominalUIntInterfaceCaller where
+  cell route : ContractRef NominalUIntInterface
+  constructor(initial : ContractRef NominalUIntInterface) where
+    initialize route := initial
+  end
+  entry call uses nominalUIntInterfaceCallInputs where
+    read route as target
+    claimContractCall(target, disclose(callCommitment("update", 1, [amount], [expected])))
+  end
+end
+
+noctium_circuit wrongNominalInterfaceArgument where
+  private amount : TypedRefCount
+end
+
+noctium_contract WrongNominalInterfaceArgument where
+  entry update uses wrongNominalInterfaceArgument arguments [amount] where
+    return updated : TypedRefAmount := disclose(cast(TypedRefAmount, amount))
+  end
+end
+
+/- error: entry 'update' does not match interface 'NominalUIntInterface' -/
+#guard_msgs (substring := true) in
+noctium_implements WrongNominalInterfaceArgument implements NominalUIntInterface
+
+noctium_circuit wrongNominalInterfaceResult where
+  private amount : TypedRefAmount
+  private otherResult : TypedRefCount
+end
+
+noctium_contract WrongNominalInterfaceResult where
+  entry update uses wrongNominalInterfaceResult arguments [amount] where
+    return updated : TypedRefCount := disclose(otherResult)
+  end
+end
+
+/- error: entry 'update' does not match interface 'NominalUIntInterface' -/
+#guard_msgs (substring := true) in
+noctium_implements WrongNominalInterfaceResult implements NominalUIntInterface
+
+noctium_circuit nominalInterfaceCallerInputs where
+  private target : ContractRef NominalUIntInterface
+  private amount : TypedRefAmount
+  private expected : TypedRefAmount
+end
+
+noctium_contract NominalUIntInterfaceDirectCaller where
+  entry call uses nominalInterfaceCallerInputs where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1, [amount], [expected])))
+  end
+end
+
+/- error: Noctium expression type mismatch -/
+noctium_circuit wrongNominalInterfaceCallArgument where
+  private target : ContractRef NominalUIntInterface
+  private amount : TypedRefCount
+  private expected : TypedRefAmount
+end
+
+#guard_msgs (substring := true) in
+noctium_contract WrongNominalInterfaceCallArgument where
+  entry call uses wrongNominalInterfaceCallArgument where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1, [amount], [expected])))
+  end
+end
+
+/- error: Noctium expression type mismatch -/
+noctium_circuit wrongNominalInterfaceCallResult where
+  private target : ContractRef NominalUIntInterface
+  private amount : TypedRefAmount
+  private expected : TypedRefCount
+end
+
+#guard_msgs (substring := true) in
+noctium_contract WrongNominalInterfaceCallResult where
+  entry call uses wrongNominalInterfaceCallResult where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1, [amount], [expected])))
+  end
+end
+
+noctium_circuit nominalGroupedInterfaceCallerInputs where
+  private target : ContractRef NominalUIntGroupedInterface
+  private amount : TypedRefAmount
+  private expected : TypedRefAmount
+end
+
+noctium_contract NominalUIntGroupedInterfaceCaller where
+  entry call uses nominalGroupedInterfaceCallerInputs where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1,
+      [payload := fields(amount)], [reply := fields(expected)])))
+  end
+end
+
+noctium_circuit wrongNominalGroupedInterfaceCallArgument where
+  private target : ContractRef NominalUIntGroupedInterface
+  private amount : TypedRefCount
+  private expected : TypedRefAmount
+end
+
+#guard_msgs (substring := true) in
+noctium_contract WrongNominalGroupedInterfaceCallArgument where
+  entry call uses wrongNominalGroupedInterfaceCallArgument where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1,
+      [payload := fields(amount)], [reply := fields(expected)])))
+  end
+end
+
+noctium_circuit wrongNominalGroupedInterfaceCallResult where
+  private target : ContractRef NominalUIntGroupedInterface
+  private amount : TypedRefAmount
+  private expected : TypedRefCount
+end
+
+#guard_msgs (substring := true) in
+noctium_contract WrongNominalGroupedInterfaceCallResult where
+  entry call uses wrongNominalGroupedInterfaceCallResult where
+    claimContractCall(disclose(target), disclose(callCommitment("update", 1,
+      [payload := fields(amount)], [reply := fields(expected)])))
+  end
 end
 
 noctium_implements TypedRefTarget implements TypedRefUpdate
