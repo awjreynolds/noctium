@@ -260,6 +260,15 @@ operands. Keep output identifiers, check ordering and per-use assertions. -/
 def reuseComparisons (instructions : Array Json) : Array Json :=
   (instructions.foldl comparisonStep {}).retained
 
+/-- Two comparisons with the same recognized cache key retain the first JSON
+instruction and emit the exact Copy object for the second result. -/
+theorem reuseComparisons_pair (first later : Json)
+    (key : String × String × Nat) (firstOutput laterOutput : String)
+    (firstKey : comparison? first = some (key, firstOutput))
+    (laterKey : comparison? later = some (key, laterOutput)) :
+    reuseComparisons #[first, later] = #[first, comparisonCopyJson firstOutput laterOutput] := by
+  simp [reuseComparisons, comparisonStep, firstKey, laterKey]
+
 /-- The cache key is the ordered pair of operand spellings and bit width. -/
 theorem comparison_key_vector :
     comparison? (Json.mkObj [("op", toJson ("less_than" : String)),
