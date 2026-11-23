@@ -100,57 +100,11 @@ private theorem decodeOperandField_from_string (item : Json) (field text : Strin
       simp [decodeOperandField, found, toJson, bind, Except.bind]
     | _ => simp [stringField, found, bind, Except.bind, Json.getStr?] at parsed
 
-theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutput : String)
-    (keyWidth : Nat) (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
-    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
-    (decoded : decodeInstruction item =
-      .ok (.lessThan left right decodedWidth decodedOutput)) :
-    decodeOperand (toJson leftKey) = .ok left ∧
-      decodeOperand (toJson rightKey) = .ok right ∧
-      decodedWidth = keyWidth ∧ decodedOutput = keyOutput ∧
-      NativeRelationJson.validIdentifier keyOutput = true := by
-  obtain ⟨opcodeField, leftField, rightField, widthField, outputField⟩ :=
-    comparison_fields item leftKey rightKey keyOutput keyWidth key
-  have leftDecoded := decodeOperandField_from_string item "a" leftKey leftField
-  have rightDecoded := decodeOperandField_from_string item "b" rightKey rightField
-  unfold decodeInstruction at decoded
-  simp only [opcodeField, bind, Except.bind] at decoded
-  cases exact : exactFields item ["op", "a", "b", "bits", "output"] with
-  | error message => simp [exact] at decoded
-  | ok _ =>
-    simp only [exact, widthField] at decoded
-    cases bounded : ensure (0 < keyWidth && keyWidth ≤ ScalarPolicy.maxBits)
-        "unsupported native bit width" with
-    | error message => simp [bounded] at decoded
-    | ok _ =>
-      simp only [bounded, leftDecoded, rightDecoded, outputField] at decoded
-      cases leftValue : decodeOperand (toJson leftKey) with
-      | error message => simp [leftValue] at decoded
-      | ok decodedLeft =>
-        simp only [leftValue] at decoded
-        cases rightValue : decodeOperand (toJson rightKey) with
-        | error message => simp [rightValue] at decoded
-        | ok decodedRight =>
-          simp only [rightValue] at decoded
-          cases outputValid : ensure (validIdentifier keyOutput) "invalid native SSA definition" with
-          | error message => simp [outputValid] at decoded
-          | ok _ =>
-            have keyOutputValid : NativeRelationJson.validIdentifier keyOutput = true := by
-              simpa [NativeRelationJson.ensure] using outputValid
-            simp only [outputValid, pure, Except.pure] at decoded
-            simp only [Except.ok.injEq, Instruction.lessThan.injEq] at decoded
-            rcases decoded with ⟨leftEq, rightEq, widthEq, outputEq⟩
-            subst left
-            subst right
-            subst decodedWidth
-            subst decodedOutput
-            exact ⟨rfl, rfl, rfl, rfl, keyOutputValid⟩
-
 /-- A recognized comparison that decodes successfully has exactly the keyed
 operand width and output. This form does not assume the decoded instruction's
 constructor in advance, and also carries the output identifier check needed by
 native SSA admission. -/
-theorem exists_comparison_decode (item : Json) (leftKey rightKey keyOutput : String)
+private theorem exists_comparison_decode (item : Json) (leftKey rightKey keyOutput : String)
     (keyWidth : Nat) (instruction : Instruction)
     (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
     (decoded : decodeInstruction item = .ok instruction) :
@@ -188,16 +142,22 @@ theorem exists_comparison_decode (item : Json) (leftKey rightKey keyOutput : Str
             have keyOutputValid : NativeRelationJson.validIdentifier keyOutput = true := by
               simpa [NativeRelationJson.ensure] using outputValid
             simp only [outputValid, pure, Except.pure, Except.ok.injEq] at decoded
-            cases instruction with
-            | lessThan left right decodedWidth decodedOutput =>
-              simp only [Instruction.lessThan.injEq] at decoded
-              rcases decoded with ⟨leftEq, rightEq, widthEq, outputEq⟩
-              subst left
-              subst right
-              subst decodedWidth
-              subst decodedOutput
-              exact ⟨decodedLeft, decodedRight, rfl, rfl, rfl, keyOutputValid⟩
-            | _ => cases decoded
+            exact ⟨decodedLeft, decodedRight, decoded.symm, rfl, rfl, keyOutputValid⟩
+
+private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutput : String)
+    (keyWidth : Nat) (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
+    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
+    (decoded : decodeInstruction item =
+      .ok (.lessThan left right decodedWidth decodedOutput)) :
+    decodeOperand (toJson leftKey) = .ok left ∧
+      decodeOperand (toJson rightKey) = .ok right ∧
+      decodedWidth = keyWidth ∧ decodedOutput = keyOutput ∧
+      NativeRelationJson.validIdentifier keyOutput = true := by
+  obtain ⟨decodedLeft, decodedRight, shape, leftParsed, rightParsed, valid⟩ :=
+    exists_comparison_decode item leftKey rightKey keyOutput keyWidth _ key decoded
+  simp only [Instruction.lessThan.injEq] at shape
+  rcases shape with ⟨rfl, rfl, rfl, rfl⟩
+  exact ⟨leftParsed, rightParsed, rfl, rfl, valid⟩
 
 /-- Successful native decoding of two equal comparison keys yields the same
 ordered typed operands and width. Decoded output names follow their respective
@@ -586,51 +546,6 @@ theorem reuseComparisons_pair_bridge_from_decodes (hash : Hash) (witness : Assig
     earlier later leftKey rightKey width firstOutput duplicateOutput left₁ right₁
     earlierKey laterKey earlierCanonical laterCanonical leftRange rightRange
   simpa only [earlierCanonical, laterCanonical] using bridge
-
-/-- The decoded two-item optimization relation using the accepted native
-`equal` form of Copy. The required bounds are exactly the preceding bit-range
-constraints on both comparison operands. -/
-theorem reuseComparisons_pair_bridge_from_decodes_equal (hash : Hash) (witness : Assignment)
-    (earlier later : Json) (leftKey rightKey : String) (width : Nat)
-    (firstOutput duplicateOutput : String)
-    (left₁ right₁ : Operand) (width₁ : Nat) (output₁ : String)
-    (left₂ right₂ : Operand) (width₂ : Nat) (output₂ : String)
-    (earlierKey : comparison? earlier = some ((leftKey, rightKey, width), firstOutput))
-    (laterKey : comparison? later = some ((leftKey, rightKey, width), duplicateOutput))
-    (earlierDecoded : decodeInstruction earlier =
-      .ok (.lessThan left₁ right₁ width₁ output₁))
-    (laterDecoded : decodeInstruction later =
-      .ok (.lessThan left₂ right₂ width₂ output₂))
-    (leftRange : Instruction.Holds hash witness (.bits left₁ width))
-    (rightRange : Instruction.Holds hash witness (.bits right₁ width)) :
-    reuseComparisons #[earlier, later] =
-        #[earlier, comparisonCopyJson firstOutput duplicateOutput] ∧
-      (match decodeInstruction earlier, decodeInstruction later with
-      | .ok first, .ok second =>
-          (first.Holds hash witness ∧
-            Instruction.Holds hash witness
-              (.equal (.reference firstOutput) (.reference duplicateOutput))) ↔
-          (first.Holds hash witness ∧ second.Holds hash witness)
-      | _, _ => False) := by
-  obtain ⟨leftEq, rightEq, widthEq₁, widthEq₂, outputEq₁, outputEq₂⟩ :=
-    equalComparisonKeys_decode_agree earlier later leftKey rightKey width
-      firstOutput duplicateOutput left₁ right₁ width₁ output₁ left₂ right₂ width₂ output₂
-      earlierKey laterKey earlierDecoded laterDecoded
-  have earlierCanonical : decodeInstruction earlier =
-      .ok (.lessThan left₁ right₁ width firstOutput) := by
-    rw [widthEq₁, outputEq₁] at earlierDecoded
-    exact earlierDecoded
-  have laterCanonical : decodeInstruction later =
-      .ok (.lessThan left₁ right₁ width duplicateOutput) := by
-    rw [widthEq₂, outputEq₂, ← leftEq, ← rightEq] at laterDecoded
-    exact laterDecoded
-  refine ⟨reuseComparisons_pair earlier later (leftKey, rightKey, width)
-    firstOutput duplicateOutput earlierKey laterKey, ?_⟩
-  rw [earlierCanonical, laterCanonical]
-  exact lessThanEqualCopyPreserves hash witness left₁ right₁ width
-    firstOutput duplicateOutput
-    (by simpa [Instruction.Holds] using leftRange)
-    (by simpa [Instruction.Holds] using rightRange)
 
 /-- The actual JSON range pass preserves decode success, ordered non-range
 instructions and field-level satisfaction for every assignment accepted or
