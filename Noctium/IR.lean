@@ -710,13 +710,62 @@ private def listRecordFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   LedgerValueType.ledgerRecordFields environment type
 
-/-- Describe a List element as its typed scalar value or as the fields of its
-existing checked record representation. -/
-def LedgerValueType.listElementFields (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+/-- Describe each leaf in a checked List record. The first component records
+its nested field path. The second gives the unique physical field name used by
+the ledger List ABI. -/
+def LedgerValueType.listElementFieldPaths (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (List String × String × Ty)) := do
   match type with
-  | .scalar ty => pure [("value", ty)]
-  | _ => listRecordFields environment type
+  | .scalar ty => pure [(["value"], "value", ty)]
+  | .structure _ => do
+    let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+    let .structure id := type | throw "List records must be named structures"
+    let some declaration := environment.structures.find? (·.id == id)
+      | throw s!"List record declaration '{id}' is missing"
+    let isNested := declaration.fields.any fun field =>
+      match field.type with
+      | .structure _ => true
+      | _ => false
+    let fields ← if !isNested then do
+      let flatFields ← listRecordFields environment type
+      pure (flatFields.map fun (name, ty) => ([name], name, ty))
+    else do
+      unless !declaration.fields.isEmpty do
+        throw "List records must contain at least one field"
+      let groups ← declaration.fields.mapM fun field => do
+        match field.type with
+        | .scalar .native => pure [([field.name], field.name, Ty.native)]
+        | .scalar .bool => pure [([field.name], field.name, Ty.bool)]
+        | .structure childId => do
+          let some child := environment.structures.find? (·.id == childId)
+            | throw s!"nested List record declaration '{childId}' is missing"
+          unless !child.fields.isEmpty do
+            throw "nested List records must contain at least one field"
+          child.fields.mapM fun nestedField => do
+            let ty ← match nestedField.type with
+              | .scalar .native => pure Ty.native
+              | .scalar .bool => pure Ty.bool
+              | .structure _ => throw "nested List records support one nested level"
+              | _ => throw "nested List record fields must be Native or Bool"
+            pure ([field.name, nestedField.name],
+              s!"{field.name}_{nestedField.name}", ty)
+        | .scalar _ => throw "nested List record fields must be Native or Bool"
+        | _ => throw "nested List records support one nested level"
+      pure groups.flatten
+    let names := fields.map (fun (_, name, _) => name)
+    unless names.eraseDups.length == names.length do
+      throw "nested List record fields produce duplicate physical names"
+    unless checked.expandedLeaves == fields.length do
+      throw "List record leaf count does not match its checked schema"
+    pure fields
+  | _ => throw "List elements must be scalar values or named records"
+
+/-- Describe a List element as its typed scalar value or as the flattened leaves
+of its checked record representation. -/
+def LedgerValueType.listElementFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+  return (← LedgerValueType.listElementFieldPaths environment type).map fun (_, name, ty) =>
+    (name, ty)
 
 def LedgerValueType.listPath (schema : LedgerValueType) (keys : List PathKey) :
     Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
