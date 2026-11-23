@@ -586,7 +586,7 @@
       "layer": "language",
       "surface": "Opaque string and Uint8Array",
       "noctiumStatus": "subset",
-      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open.",
+      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type.",
       "source": [
         "reference"
       ],
@@ -595,6 +595,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/modules/OpaqueModuleCells.lean",
+        "tests/compact/opaque-module-cells.mjs",
+        "runtime/tests/opaque_module_cells.rs",
         "docs/development/opaque-cells-localnet-receipt.json",
         "tests/OpaqueCells.lean",
         "runtime/tests/opaque_cells.rs",
@@ -1104,7 +1107,7 @@
       "layer": "language",
       "surface": "Modules, imports, exports, includes",
       "noctiumStatus": "subset",
-      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Selected imports and re-exports now carry checked record, enum and nominal UInt types into Lean authoring. The pinned Compact and native cases agree on an imported generic record and UInt. The fixture checks alias identity, a distinct record specialization and rejection of an unselected type. Public generic module members retain their declaration identity through a bridge re-export. The paired Compact and Lean fixtures specialize the selected module and use its exported record and nominal UInt in checked circuits. Lean rejects private members and imports from later views. Generic circuit modules accept the nine Secp256k1, Secp256r1 and Curve25519 base, scalar and point types. The pinned Compact runtime executes identity circuits at each type. Noctium emits nine distinct typed specializations and the native checker confirms the Secp256k1 scalar result written to a Cell.",
+      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Selected imports and re-exports now carry checked record, enum and nominal UInt types into Lean authoring. The pinned Compact and native cases agree on an imported generic record and UInt. The fixture checks alias identity, a distinct record specialization and rejection of an unselected type. Public generic module members retain their declaration identity through a bridge re-export. The paired Compact and Lean fixtures specialize the selected module and use its exported record and nominal UInt in checked circuits. Lean rejects private members and imports from later views. Generic circuit modules accept the nine Secp256k1, Secp256r1 and Curve25519 base, scalar and point types. The pinned Compact runtime executes identity circuits at each type. Noctium emits nine distinct typed specializations and the native checker confirms the Secp256k1 scalar result written to a Cell. Generic root Cells accept OpaqueString and OpaqueBytes as distinct type arguments. In the paired case, constructor storage and transient hashes match pinned Compact for a string with embedded NUL and bytes containing zero and 255.",
       "source": [
         "reference"
       ],
@@ -1113,6 +1116,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/modules/OpaqueModuleCells.lean",
+        "tests/compact/opaque-module-cells.mjs",
+        "runtime/tests/opaque_module_cells.rs",
         "tests/modules/ForeignCurveGenericIdentity.lean",
         "tests/modules/check-foreign-curve-generic.sh",
         "tests/compact/GenericForeignCurveModule.compact",

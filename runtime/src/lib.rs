@@ -560,7 +560,7 @@ pub enum Expr {
     },
     #[serde(rename = "transientHash")]
     TransientHash {
-        values: Vec<Expr>,
+        values: Vec<TransientHashOperand>,
     },
     #[serde(rename = "hashToCurve")]
     HashToCurve {
@@ -685,6 +685,20 @@ pub enum FabHashInput {
 }
 
 pub type Environment = BTreeMap<String, Value>;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum TransientHashOperand {
+    OpaqueProjection(OpaqueProjection),
+    Expression(Expr),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "tag", deny_unknown_fields)]
+pub enum OpaqueProjection {
+    #[serde(rename = "opaqueProjection")]
+    OpaqueProjection { value: Box<Expr> },
+}
 
 #[derive(Debug)]
 struct UnboundReference(String);
@@ -1207,7 +1221,26 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             );
             let fields = values
                 .iter()
-                .map(|value| evaluate(value, env)?.field())
+                .map(|operand| match operand {
+                    TransientHashOperand::Expression(value) => evaluate(value, env)?.field(),
+                    TransientHashOperand::OpaqueProjection(OpaqueProjection::OpaqueProjection {
+                        value,
+                    }) => {
+                        let value = evaluate(value, env)?;
+                        let aligned = match &value {
+                            Value::OpaqueBytes(_) => aligned_opaque_bytes(&value)?,
+                            Value::OpaqueString(_) => aligned_opaque_string(&value)?,
+                            _ => bail!("opaque projection requires an opaque value"),
+                        };
+                        let mut fields = Vec::new();
+                        aligned.value_only_field_repr(&mut fields);
+                        ensure!(
+                            fields.len() == 1,
+                            "opaque Compress projection must produce one field"
+                        );
+                        Ok(fields[0])
+                    }
+                })
                 .collect::<Result<Vec<_>>>()?;
             Value::Native(transient_hash(&fields))
         }

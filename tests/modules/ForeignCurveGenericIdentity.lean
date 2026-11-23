@@ -71,8 +71,12 @@ private def foreignIdentityEntrypoint (kind : Foreign.Kind) (index : Nat) :
     | .scalar .secp256k1 =>
       [⟨.writeCellOutput (.localMember Foreign.kinds.length) "result", {}⟩]
     | _ => []
-  return ⟨index, foreignEntryName kind,
-    .importedMember (foreignKindViewName kind) "identity", effects, {}⟩
+  return {
+    «member» := index
+    name := foreignEntryName kind
+    circuit := .importedMember (foreignKindViewName kind) "identity"
+    effects
+    span := {}}
 
 private def foreignIdentityExport (kind : Foreign.Kind) (index : Nat) : Modules.Export := {
   name := foreignEntryName kind

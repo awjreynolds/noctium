@@ -111,6 +111,18 @@ inductive StateTarget where
   | importedMember (viewName localName : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
+structure ConstructorInputBinding where
+  state : StateTarget
+  parameterName : String
+  span : SourceSpan := {}
+  deriving Repr, Inhabited
+
+structure OpaqueCellHashReturn where
+  name : String
+  state : StateTarget
+  span : SourceSpan := {}
+  deriving Repr, Inhabited
+
 inductive ModuleEffect where
   | readCell (state : StateTarget) (destination : String) (ty : Ty)
   | readMap (state : StateTarget) (destination : String) (keyTy valueTy : Ty)
@@ -163,6 +175,7 @@ structure ModuleEntrypoint where
   circuit : ExportTarget
   effects : List ModuleEffectSpec := []
   span : SourceSpan := {}
+  opaqueCellHashReturns : List OpaqueCellHashReturn := []
   deriving Repr
 
 structure Export where
@@ -195,6 +208,7 @@ structure Registry where
 structure Request where
   sourceName : Name
   arguments : List SpecializationArgument
+  constructorInputs : List ConstructorInputBinding := []
   deriving Repr, Inhabited
 
 /-- The canonical specialization identity. Arguments are ordered, normalized,
@@ -252,6 +266,7 @@ structure ResolvedEntrypoint where
   identity : MemberIdentity
   circuit : MemberIdentity
   effects : List Effect
+  returns : List Output := []
   stateIdentities : List MemberIdentity
   span : SourceSpan
   effectSpans : List SourceSpan
@@ -269,6 +284,7 @@ structure ModuleContractPlan where
   state : List StateDecl
   entrypoints : List ResolvedEntrypoint
   circuits : List ModuleCircuitSource
+  constructor? : Option Constructor := none
   deriving Repr
 
 structure ModuleSpecializationGroup where
@@ -336,8 +352,7 @@ private partial def canonicalTypeSize (fuel : Nat) (value : Types.CompositeType)
     | .scalar .bool => some 3
     | .scalar (.uint maximum) => some (2 + natSize maximum)
     | .scalar (.bytes length) => some (2 + natSize length)
-    | .scalar .opaqueBytes => none
-    | .scalar .opaqueString => none
+    | .scalar .opaqueBytes | .scalar .opaqueString => some 3
     | .scalar .jubjubScalar => some 3
     | .scalar .jubjubPoint => some 3
     | .scalar (.foreign kind) =>
@@ -372,8 +387,7 @@ private partial def consumeTypeNodes (span : SourceSpan) (remaining : Nat)
     if maximum > ScalarPolicy.maxUint then resource span "module unsigned type bound"
     pure remaining
   | .scalar (.bytes _) => fail span "module byte types require a composite bytes layout"
-  | .scalar .opaqueBytes => fail span "OpaqueBytes are not supported by module type parameters"
-  | .scalar .opaqueString => fail span "OpaqueString is not supported by module type parameters"
+  | .scalar .opaqueBytes | .scalar .opaqueString => pure remaining
   | .scalar .jubjubScalar | .scalar .jubjubPoint => pure remaining
   | .scalar (.foreign _) => pure remaining
   | .scalar .native | .scalar .bool | .unit => pure remaining
@@ -560,6 +574,14 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       fail entrypoint.span "module entrypoint metadata does not match its member declaration"
     if entrypoint.effects.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint effects"
+    if entrypoint.opaqueCellHashReturns.length > limits.maxSourceNodes then
+      resource entrypoint.span "module entrypoint returns"
+    unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name)) do
+      fail entrypoint.span "duplicate module entrypoint return name"
+    for returned in entrypoint.opaqueCellHashReturns do
+      validText returned.span returned.name
+      unless Types.validFieldName returned.name do
+        fail returned.span s!"invalid module return name '{returned.name}'"
     for effect in entrypoint.effects do
       if effect.span.file.utf8ByteSize > 4096 then resource effect.span "module source span"
       match effect.effect with
@@ -713,8 +735,7 @@ private def resolveStateScalar (limits : Limits) (span : SourceSpan)
         | .ok _ => pure (.uint maximum)
         | .error message => fail span message
       | .bytes _ => fail span "module byte state parameters require a composite bytes type"
-      | .opaqueBytes => fail span "OpaqueBytes state parameters are unsupported by module specialization"
-      | .opaqueString => fail span "OpaqueString state parameters are unsupported by module specialization"
+      | .opaqueBytes | .opaqueString => pure ty
       | .jubjubScalar | .jubjubPoint =>
         fail span "Jubjub state parameters are not supported by module specialization"
       | .foreign _ => fail span "foreign state parameters are not supported by module specialization"
@@ -727,6 +748,9 @@ private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
   | .map key value => do
     let keyTy ← resolveStateScalar limits span types naturals key
     let valueTy ← resolveStateScalar limits span types naturals value
+    if keyTy.isOpaqueBytes || keyTy.isOpaqueString ||
+        valueTy.isOpaqueBytes || valueTy.isOpaqueString then
+      fail span "opaque types are not supported by module Map state specialization"
     pure (.map keyTy valueTy)
 
 private def keyEncodingSize (limits : Limits) (span : SourceSpan) (key : ModuleKey) :
@@ -862,6 +886,19 @@ private def validateModuleEntrypoints (state : ExpansionState)
             .readMap .., _ | .writeMap .., _ |
             .requireAbsent .., _ =>
           fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
+    for returned in entrypoint.opaqueCellHashReturns do
+      let identity ← resolveStateTargetInModule returned.span key members views returned.state
+      unless identity.kind == .state do
+        fail returned.span "module hash return target is not a state member"
+      let some stateMember := findIdentityMember state key members identity
+        | fail returned.span "module hash return state declaration identity is unavailable"
+      match stateMember.stateKind? with
+      | some (.cell .opaqueBytes) | some (.cell .opaqueString) => pure ()
+      | some (.cell _) => fail returned.span "module hash return requires an OpaqueBytes or OpaqueString root Cell"
+      | some (.map ..) | some (.tree ..) | some (.merkleTree _) |
+          some (.historicMerkleTree _) | some .opaqueString =>
+        fail returned.span "module hash return requires an OpaqueBytes or OpaqueString root Cell"
+      | none => fail returned.span "module hash return state has no declared type"
 
 mutual
   private partial def instantiate (span : SourceSpan) (sourceName : Name)
@@ -1062,6 +1099,55 @@ def Expansion.stateFieldName (expansion : Expansion) (identity : MemberIdentity)
     Option String :=
   if identity.kind == .state then expansion.moduleMemberName identity else none
 
+private def resolveConstructorInput (expansion : Expansion) (root : ModuleInstance)
+    (binding : ConstructorInputBinding) :
+    Except Diagnostic (ConstructorParameter × ConstructorInitializer × MemberIdentity) := do
+  validText binding.span binding.parameterName
+  unless Types.validFieldName binding.parameterName do
+    fail binding.span s!"invalid module constructor parameter '{binding.parameterName}'"
+  let identity ← resolveStateTargetInModule binding.span root.key
+    root.members root.imports binding.state
+  unless identity.kind == .state do
+    fail binding.span "module constructor input target is not a state member"
+  let some fieldName := expansion.stateFieldName identity
+    | fail binding.span "module constructor target has no canonical ledger field"
+  let some member := expansion.findMember identity
+    | fail binding.span "module constructor target state declaration is missing"
+  let some (.cell ty) := member.stateKind?
+    | fail binding.span "module constructor inputs require opaque root Cells"
+  let parameterType ← match ty with
+    | .opaqueString => pure .opaqueString
+    | .opaqueBytes => pure (.scalar .opaqueBytes)
+    | _ => fail binding.span "module constructor inputs only support OpaqueBytes or OpaqueString root Cells"
+  let initializerValue ← match ty with
+    | .opaqueString => pure (.opaqueStringParameter binding.parameterName)
+    | .opaqueBytes => pure (.scalar (.ref binding.parameterName : Expr .opaqueBytes))
+    | _ => fail binding.span "module constructor inputs only support OpaqueBytes or OpaqueString root Cells"
+  pure (
+    {name := binding.parameterName, type := parameterType},
+    {state := fieldName, type := parameterType, value := initializerValue},
+    identity)
+
+private def resolveConstructorInputs (expansion : Expansion) (root : ModuleInstance)
+    (bindings : List ConstructorInputBinding) :
+    Except Diagnostic (Option Constructor × List MemberIdentity) := do
+  let mut parameters : List ConstructorParameter := []
+  let mut initializers : List ConstructorInitializer := []
+  let mut identities : List MemberIdentity := []
+  for binding in bindings do
+    let (parameter, initializer, identity) ← resolveConstructorInput expansion root binding
+    if let some previous := parameters.find? (·.name == parameter.name) then
+      unless previous.type == parameter.type do
+        fail binding.span s!"module constructor parameter '{parameter.name}' has conflicting cell types"
+    else
+      parameters := parameters ++ [parameter]
+    if initializers.any (·.state == initializer.state) then
+      fail binding.span s!"duplicate module constructor initializer for '{initializer.state}'"
+    initializers := initializers ++ [initializer]
+    identities := identities ++ [identity]
+  let constructor? := if bindings.isEmpty then none else some {parameters, initializers : Constructor}
+  pure (constructor?, identities.eraseDups)
+
 private def resolveContractEffect (expansion : Expansion) (moduleInstance : ModuleInstance)
     (effectSpec : ModuleEffectSpec) : Except Diagnostic (Effect × List MemberIdentity) := do
   let resolveState (target : StateTarget) : Except Diagnostic (MemberIdentity × String × Member) := do
@@ -1101,6 +1187,31 @@ private def resolveContractEffect (expansion : Expansion) (moduleInstance : Modu
     let (identity, fieldName, _) ← resolveState target
     pure (.requireAbsent fieldName keyTy key, [identity])
 
+private def resolveOpaqueCellHashReturn (expansion : Expansion)
+    (moduleInstance : ModuleInstance) (returned : OpaqueCellHashReturn) :
+    Except Diagnostic (Output × Effect × MemberIdentity) := do
+  let identity ← resolveStateTargetInModule returned.span moduleInstance.key
+    moduleInstance.members moduleInstance.imports returned.state
+  unless identity.kind == .state do
+    fail returned.span "module hash return target is not a state member"
+  let some fieldName := expansion.stateFieldName identity
+    | fail returned.span "module hash return target has no canonical ledger field"
+  let some member := expansion.findMember identity
+    | fail returned.span "module hash return state declaration identity is missing"
+  let some (.cell ty) := member.stateKind?
+    | fail returned.span "module hash return requires an opaque root Cell"
+  let destination := s!"moduleHashValue_{returned.name}"
+  let projection : Expr .native ← match ty with
+    | .opaqueBytes => pure (.opaqueBytesProjection (.ref destination))
+    | .opaqueString => pure (.opaqueStringProjection (.ref destination))
+    | _ => fail returned.span "module hash return requires an OpaqueBytes or OpaqueString root Cell"
+  let output : Output := {
+    name := returned.name
+    ty := .native
+    value := .transientHash [projection]
+    span := returned.span}
+  pure (output, .readCell fieldName destination ty, identity)
+
 /-- Resolve a root-exported module entrypoint. Aliases affect only its visible
 name. Circuit and state references retain their original member identities. -/
 def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
@@ -1120,22 +1231,32 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
   unless circuit.kind == .circuit || circuit.kind == .witness do
     fail entrypoint.span "module entrypoint must use a circuit or witness member"
   let resolvedEffects ← entrypoint.effects.mapM (resolveContractEffect expansion origin)
+  let resolvedReturns ← entrypoint.opaqueCellHashReturns.mapM
+    (resolveOpaqueCellHashReturn expansion origin)
+  let returnStateIdentities : List MemberIdentity :=
+    resolvedReturns.map fun returned => returned.2.2
   pure {
     name := exportName
     identity := exported.identity
     circuit
-    effects := resolvedEffects.map Prod.fst
-    stateIdentities := (resolvedEffects.flatMap Prod.snd).eraseDups
+    effects := resolvedEffects.map Prod.fst ++ resolvedReturns.map fun (_, read, _) => read
+    returns := resolvedReturns.map fun (output, _, _) => output
+    stateIdentities := (resolvedEffects.flatMap Prod.snd ++ returnStateIdentities).eraseDups
     span := entrypoint.span
-    effectSpans := entrypoint.effects.map (·.span)}
+    effectSpans := entrypoint.effects.map (·.span) ++
+      entrypoint.opaqueCellHashReturns.map (·.span)}
 
 /-- Build canonical state declarations and entrypoint templates for one module
 root. The frontend attaches checked monomorphic circuit values before creating
 the ordinary `Contract` consumed by existing analysis and native lowering. -/
-def Expansion.contractPlan (expansion : Expansion) (root : ModuleKey) :
+def Expansion.contractPlan (expansion : Expansion) (root : ModuleKey)
+    (constructorInputs : List ConstructorInputBinding := []) :
     Except Diagnostic ModuleContractPlan := do
+  if constructorInputs.length > 64 then resource {} "module constructor input count"
   let some rootInstance := expansion.findInstance root
     | fail {} "unknown root module specialization"
+  let (constructor?, constructorStateIdentities) ←
+    resolveConstructorInputs expansion rootInstance constructorInputs
   let exportedEntrypoints := rootInstance.exports.filter (·.kind == .entrypoint)
   if exportedEntrypoints.isEmpty then
     fail rootInstance.span "module root exposes no entrypoints"
@@ -1147,7 +1268,7 @@ def Expansion.contractPlan (expansion : Expansion) (root : ModuleKey) :
     decide (left.name < right.name)
   let exportedStates := rootInstance.exports.filter (·.kind == .state) |>.map (·.identity)
   let stateIdentities := (exportedStates ++
-    resolvedEntrypoints.flatMap (·.stateIdentities)).eraseDups
+    resolvedEntrypoints.flatMap (·.stateIdentities) ++ constructorStateIdentities).eraseDups
   let stateIdentities := stateIdentities.mergeSort fun left right =>
     decide ((expansion.stateFieldName left).getD "" <
       (expansion.stateFieldName right).getD "")
@@ -1175,7 +1296,7 @@ def Expansion.contractPlan (expansion : Expansion) (root : ModuleKey) :
     let some outputName := expansion.moduleMemberName identity
       | fail sourceMember.span "module circuit has no canonical generated name"
     circuits := circuits ++ [{identity, outputName, source, kind := identity.kind}]
-  pure {root, state := states, entrypoints := resolvedEntrypoints, circuits}
+  pure {root, state := states, entrypoints := resolvedEntrypoints, circuits, constructor?}
 
 private partial def genericTypeOfConcrete : Types.CompositeType → Except String GenericType
   | .unit => pure .unit
@@ -1259,7 +1380,7 @@ def specializeRequestWithSources (moduleLimits : Limits)
   unless (sources.map (·.1)).eraseDups.length == sources.length do
     fail {} "duplicate source program identity in module request"
   let expansion ← expandWithLimits moduleLimits registry request.sourceName request.arguments
-  let plan ← expansion.contractPlan expansion.root
+  let plan ← expansion.contractPlan expansion.root request.constructorInputs
   plan.specializeWithSources specializationLimits sources
 
 /-- Attach freshly compiled circuits to a checked module contract plan. -/
@@ -1277,9 +1398,10 @@ def ModuleContractPlan.assembleContract (plan : ModuleContractPlan) (name : Stri
       name := template.name
       circuit
       effects := template.effects
+      returns := template.returns
       span := template.span
       effectSpans := template.effectSpans}]
-  pure {name, state := plan.state, entrypoints}
+  pure {name, state := plan.state, constructor := plan.constructor?, entrypoints}
 
 def Expansion.resolveImport (expansion : Expansion) (module : ModuleKey)
     (viewName localName : String) : List ViewBinding := Id.run do

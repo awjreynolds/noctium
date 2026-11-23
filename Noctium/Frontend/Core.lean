@@ -6510,7 +6510,7 @@ unsafe def rebuildModuleBuild (buildInfo : ModuleBuildInfo) : CommandElabM Modul
   let expansion ← match Modules.expand registry request.sourceName request.arguments with
     | .ok value => pure value
     | .error diagnostic => failDisclosure diagnostic *> throwError "module expansion failed"
-  let plan ← match expansion.contractPlan expansion.root with
+  let plan ← match expansion.contractPlan expansion.root request.constructorInputs with
     | .ok value => pure value
     | .error diagnostic => failDisclosure diagnostic *> throwError "module contract planning failed"
   let groups ← match plan.specializationGroups with

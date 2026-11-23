@@ -46,6 +46,12 @@ private def unsignedJson (tag : String) (maximum : Nat) (left right : Json) : Js
   Json.mkObj [("tag", toJson tag), ("maximum", toJson (toString maximum)),
     ("left", left), ("right", right)]
 
+private def transientHashOperandJson (expression : Expr .native) (encoded : Json) : Json :=
+  match expression with
+  | .opaqueBytesProjection _ | .opaqueStringProjection _ => Json.mkObj [
+      ("tag", toJson ("opaqueProjection" : String)), ("value", encoded)]
+  | _ => encoded
+
 mutual
 private def nativeExpressionJson : Expr ty → Json
   | .copyValue value => nativeExpressionJson value
@@ -195,8 +201,10 @@ private def nativeExpressionJson : Expr ty → Json
       return Json.mkObj [
         ("tag", toJson ("transientHashFab" : String)),
         ("schema", schema), ("values", encodedValues)]
-  | .transientHash values => Json.mkObj [("tag", toJson ("transientHash" : String)),
-      ("values", toJson (values.map nativeExpressionJson))]
+  | .transientHash values =>
+      let encodedValues := values.map nativeExpressionJson
+      Json.mkObj [("tag", toJson ("transientHash" : String)),
+        ("values", toJson (List.zipWith transientHashOperandJson values encodedValues))]
   | .toBytes32 value => Json.mkObj [("tag", toJson ("toBytes32" : String)),
       ("value", nativeExpressionJson value)]
   | .fromBytes32 (target := target) value => Json.mkObj [("tag", toJson ("fromBytes32" : String)),
@@ -228,6 +236,7 @@ private def nativeExpressionJson : Expr ty → Json
   | .foreignEncodedField (kind := kind) value index => Json.mkObj [
       ("tag", toJson ("foreignEncodedField" : String)),
       ("value", nativeExpressionJson value), ("index", toJson index)]
+
   | .foreignUnary operation value => Json.mkObj [
       ("tag", toJson ("foreignUnary" : String)),
       ("operation", toJson operation.name), ("value", nativeExpressionJson value)]

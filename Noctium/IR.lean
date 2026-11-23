@@ -1881,6 +1881,11 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       unless constructor.parameters.any (fun parameter =>
         parameter.name == parameterName && parameter.type == .opaqueString) do
         throw {span, message := s!"unknown OpaqueString constructor parameter '{parameterName}'"}
+    | .cell .opaqueString, .opaqueString, .opaqueStringLiteral _ => pure ()
+    | .cell .opaqueString, .opaqueString, .opaqueStringParameter parameterName =>
+      unless constructor.parameters.any (fun parameter =>
+        parameter.name == parameterName && parameter.type == .opaqueString) do
+        throw {span, message := s!"unknown OpaqueString constructor parameter '{parameterName}'"}
     | _, _, _ =>
       throw {span := state.span, message := s!"constructor initializer does not match cell '{initializer.state}'"}
   for insertion in constructor.mapInserts do
