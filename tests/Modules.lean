@@ -466,7 +466,10 @@ private def cycleB : Definition := {
     typeResolved && naturalResolved && typeIdentityDistinct && messageContains
       (expand registry (sourceName ["Demo", "TypeState"])
         [.type (.tuple [.scalar .native])])
-      "aggregate ledger state is not supported"
+      "aggregate ledger state is not supported" &&
+      messageContains (expand registry (sourceName ["Demo", "TypeState"])
+        [.type (.scalar .jubjubScalar)])
+        "Jubjub state parameters are not supported by module specialization"
   | .error _ => false
 
 -- Instance and normalized-type budgets stop before expansion or key encoding.

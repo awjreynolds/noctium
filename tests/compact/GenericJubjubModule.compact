@@ -1,0 +1,13 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+module GenericIdentity<T> {
+  export circuit identity(value: T): T {
+    return value;
+  }
+}
+
+import GenericIdentity<JubjubScalar> prefix scalar_;
+import GenericIdentity<JubjubPoint> prefix point_;
+
+export {scalar_identity, point_identity};

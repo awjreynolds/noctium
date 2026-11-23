@@ -73,6 +73,16 @@ does not affect generated identities. General cross-contract calls are
 separate issue50 work. Runtime execution of general typed witness functions is
 issue62 and is not provided by module expansion.
 
+## Jubjub circuit specialization
+
+Supply `.typeValue (.scalar .jubjubScalar)` or
+`.typeValue (.scalar .jubjubPoint)` when importing a generic circuit member.
+They resolve to distinct instances and retain their public input and output
+types in the emitted native relations. The fixture imports both versions of
+one identity circuit and stores each result in a fixed, typed Cell. Generic
+ledger state type substitution is a separate scope.
+[Lean fixture](../../tests/modules/JubjubGenericIdentity.lean) · [Compact comparison](../../tests/compact/generic-jubjub-module.mjs)
+
 ## Focused checks
 
 Run the pure expansion cases and deterministic source CLI fixture with:
