@@ -233,6 +233,22 @@ private theorem OutputCapacityFrame.of_instruction_push
 def PreservesOutputCapacityFrame (operation : StateM LowerState α) : Prop :=
   ∀ state, OutputCapacityFrame state (operation.run state).2
 
+private theorem modify_preservesOutputCapacityFrame (update : LowerState → LowerState)
+    (next : ∀ state, (update state).next = state.next)
+    (instructions : ∀ state, (update state).instructions = state.instructions) :
+    PreservesOutputCapacityFrame (modify update) := by
+  intro state
+  change OutputCapacityFrame state (update state)
+  constructor
+  · rw [next state]
+    exact Nat.le_refl _
+  · change state.outputDefinitions + ((update state).next - state.next) ≤
+      (update state).outputDefinitions
+    rw [next state, Nat.sub_self]
+    unfold LowerState.outputDefinitions
+    rw [instructions state]
+    omega
+
 theorem pure_preservesOutputCapacityFrame (value : α) :
     PreservesOutputCapacityFrame (pure value) := by
   intro state
@@ -268,6 +284,17 @@ private abbrev LowerM := StateM LowerState
 
 def emit (op : String) (fields : List (String × Json)) : LowerM Unit :=
   modify fun s => { s with instructions := s.instructions.push (instruction op fields) }
+
+private theorem emit_preservesOutputCapacityFrame (op : String)
+    (fields : List (String × Json)) :
+    PreservesOutputCapacityFrame (emit op fields) := by
+  intro state
+  apply OutputCapacityFrame.of_instruction_push (instruction op fields)
+  · change state.next ≤ state.next
+    exact Nat.le_refl _
+  · rfl
+  · change state.next - state.next ≤ Native.outputDefinitionsInInstruction (instruction op fields)
+    omega
 
 /-- Keep the state-only lowering monad total while ensuring rejected source
 shapes still fail the mandatory native validator. -/
@@ -319,6 +346,19 @@ def constrainType (ty : Ty) (value : String) : LowerM Unit :=
   | .opaqueBytes => pure ()
   | .opaqueString => pure ()
   | .jubjubScalar | .jubjubPoint | .foreign _ => rejectLowering "opaque values require their typed input bridge"
+
+private def lowerInputRequirement (op : String) (raw : Bool)
+    (spec : Native.InputRequirement) : LowerM Unit := do
+  unless raw do
+    emit op [("guard", Json.null), ("type", nativeType), ("output", toJson spec.identifier)]
+  constrainType spec.ty spec.identifier
+
+private def lowerInputRequirements (op : String) (raw : Bool) :
+    List Native.InputRequirement → LowerM Unit
+  | [] => pure ()
+  | spec :: rest => do
+    lowerInputRequirement op raw spec
+    lowerInputRequirements op raw rest
 
 private def lowerJubjubScalarFromNative (native : String) : LowerM String := do
   let key : ExpressionKey := ("jubjub_scalar_from_native", [native], none)
@@ -564,6 +604,134 @@ private theorem bytesIntoNativesInstruction_outputDefinitions
       Lean.ToJson.toJson, Lean.List.toJson, Lean.Array.toJson]
     rfl
   simp [Native.outputDefinitionsInInstruction, opcodeOk, outputsOk, Except.toOption]
+
+private theorem freshLessThan_preservesOutputCapacityFrame (a b : String) (bits : Nat) :
+    PreservesOutputCapacityFrame (do
+      let output ← fresh
+      emit "less_than" [("a", toJson a), ("b", toJson b), ("bits", toJson bits),
+        ("output", toJson output)]
+      pure output) := by
+  intro state
+  simp [fresh, emit, StateT.run_bind, StateT.run_get, StateT.run_modify,
+    StateT.run_set, instruction, toJson, List.toJson, Array.toJson]
+  let output := "%v" ++ state.next.repr
+  let fields := [("a", toJson a), ("b", toJson b), ("bits", toJson bits),
+    ("output", toJson output)]
+  let emitted := instruction "less_than"
+    [("a", toJson a), ("b", toJson b), ("bits", toJson bits), ("output", toJson output)]
+  change OutputCapacityFrame state
+    {state with next := state.next + 1, instructions := state.instructions.push emitted}
+  have opcodeOk : Native.stringField (instruction "less_than" fields) "op" =
+      .ok "less_than" := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+      Lean.ToJson.toJson]
+    rfl
+  have outputOk :
+      (Native.stringField (instruction "less_than" fields) "output").isOk = true := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Lean.ToJson.toJson]
+    rfl
+  have outputCount := instruction_scalarOutputDefinitions "less_than" fields opcodeOk
+    ⟨by decide, by decide, by decide⟩ outputOk
+  have emittedCount : Native.outputDefinitionsInInstruction emitted = 1 := by
+    simpa [emitted, fields, output, toJson, List.toJson, Array.toJson] using outputCount
+  apply OutputCapacityFrame.of_instruction_push emitted
+  · change state.next ≤ state.next + 1
+    omega
+  · rfl
+  · rw [emittedCount]
+    change state.next + 1 - state.next ≤ 1
+    omega
+
+private theorem constrainUnsigned_preservesOutputCapacityFrame (maximum : Nat)
+    (value : String) : PreservesOutputCapacityFrame (constrainUnsigned maximum value) := by
+  intro state
+  by_cases isZero : maximum = 0
+  · simpa [constrainUnsigned, isZero] using
+      (emit_preservesOutputCapacityFrame "constrain_eq"
+        [("a", toJson value), ("b", toJson ("0x00" : String))] state)
+  · by_cases exactPower : maximum + 1 = 2 ^ (maximum.log2 + 1)
+    · simpa [constrainUnsigned, isZero, exactPower] using
+        (emit_preservesOutputCapacityFrame "constrain_bits"
+          [("val", toJson value), ("bits", toJson (maximum.log2 + 1))] state)
+    · have suffixFrame : PreservesOutputCapacityFrame (do
+          let output ← fresh
+          emit "less_than" [("a", toJson value),
+            ("b", toJson (fieldImmediate (maximum + 1))),
+            ("bits", toJson (maximum.log2 + 1)), ("output", toJson output)]
+          emit "assert" [("cond", toJson output)]) := by
+        have combined := bind_preservesOutputCapacityFrame _ _
+          (freshLessThan_preservesOutputCapacityFrame value
+            (fieldImmediate (maximum + 1)) (maximum.log2 + 1))
+          (fun output => emit_preservesOutputCapacityFrame "assert" [("cond", toJson output)])
+        simpa [StateT.run_bind, StateT.run_pure] using combined
+      have bodyFrame : PreservesOutputCapacityFrame (do
+          emit "constrain_bits" [("val", toJson value), ("bits", toJson (maximum.log2 + 1))]
+          let output ← fresh
+          emit "less_than" [("a", toJson value),
+            ("b", toJson (fieldImmediate (maximum + 1))),
+            ("bits", toJson (maximum.log2 + 1)), ("output", toJson output)]
+          emit "assert" [("cond", toJson output)]) := by
+        apply bind_preservesOutputCapacityFrame _ _
+          (emit_preservesOutputCapacityFrame "constrain_bits"
+            [("val", toJson value), ("bits", toJson (maximum.log2 + 1))])
+        intro _
+        exact suffixFrame
+      simpa [constrainUnsigned, isZero, exactPower] using bodyFrame state
+
+private theorem constrainType_preservesOutputCapacityFrame (ty : Ty) (value : String) :
+    PreservesOutputCapacityFrame (constrainType ty value) := by
+  cases ty with
+  | native => exact pure_preservesOutputCapacityFrame ()
+  | bool => exact emit_preservesOutputCapacityFrame "constrain_to_boolean" [("val", toJson value)]
+  | uint maximum => exact constrainUnsigned_preservesOutputCapacityFrame maximum value
+  | bytes _ =>
+    simpa [constrainType, rejectLowering] using
+      emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "Bytes32 must be expanded into byte inputs")]
+  | opaqueBytes => exact pure_preservesOutputCapacityFrame ()
+  | opaqueString => exact pure_preservesOutputCapacityFrame ()
+  | jubjubScalar =>
+    simpa [constrainType, rejectLowering] using
+      emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "opaque values require their typed input bridge")]
+  | jubjubPoint =>
+    simpa [constrainType, rejectLowering] using
+      emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "opaque values require their typed input bridge")]
+  | foreign _ =>
+    simpa [constrainType, rejectLowering] using
+      emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "opaque values require their typed input bridge")]
+
+private theorem lowerInputRequirement_preservesOutputCapacityFrame (op : String)
+    (raw : Bool) (spec : Native.InputRequirement) :
+    PreservesOutputCapacityFrame (lowerInputRequirement op raw spec) := by
+  by_cases isRaw : raw
+  · simpa [lowerInputRequirement, isRaw] using
+      (constrainType_preservesOutputCapacityFrame spec.ty spec.identifier)
+  · have bodyFrame : PreservesOutputCapacityFrame (do
+        emit op [("guard", Json.null), ("type", nativeType),
+          ("output", toJson spec.identifier)]
+        constrainType spec.ty spec.identifier) := by
+      apply bind_preservesOutputCapacityFrame _ _
+        (emit_preservesOutputCapacityFrame op
+          [("guard", Json.null), ("type", nativeType), ("output", toJson spec.identifier)])
+      intro _
+      exact constrainType_preservesOutputCapacityFrame spec.ty spec.identifier
+    simpa [lowerInputRequirement, isRaw] using bodyFrame
+
+private theorem lowerInputRequirements_preservesOutputCapacityFrame (op : String)
+    (raw : Bool) (requirements : List Native.InputRequirement) :
+    PreservesOutputCapacityFrame (lowerInputRequirements op raw requirements) := by
+  induction requirements with
+  | nil => exact pure_preservesOutputCapacityFrame ()
+  | cons spec rest ih =>
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerInputRequirement_preservesOutputCapacityFrame op raw spec)
+    intro _
+    exact ih
 
 /-- Emit the two Native limbs of one Bytes32 value. The native validator reads
 both names from this instruction's `outputs` vector. -/
@@ -1040,8 +1208,7 @@ private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit :
   if raw then
     if let .bytes _ := input.ty then
       let requirements := Native.Input.callArgumentRequirements input
-      for spec in requirements do
-        constrainType spec.ty spec.identifier
+      lowerInputRequirements op true requirements
       modify fun state => {state with byteAliases := (input.name,
         {values := (requirements.map (·.identifier)).reverse, packed := true}) :: state.byteAliases}
       return
@@ -1056,9 +1223,7 @@ private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit :
     modify fun state => {state with aliases := (input.name, output) :: state.aliases}
   | .bytes _ => do
     let requirements := Native.Input.requirements input
-    for spec in requirements do
-      read spec.identifier
-      constrainType spec.ty spec.identifier
+    lowerInputRequirements op raw requirements
     let values := requirements.map (·.identifier)
     let packed := input.visibility == .«public»
     modify fun state => {state with byteAliases := (input.name,
@@ -1081,6 +1246,53 @@ private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit :
     let output := input.nativeIdentifiers.head!
     read output
     constrainType input.ty output
+
+theorem lowerByteInput_fixedBytes_preservesOutputCapacityFrame (name : String)
+    (length : Nat) (visibility : Visibility) (raw : Bool) (span : SourceSpan := {}) :
+    PreservesOutputCapacityFrame
+      (lowerByteInput {name, ty := .bytes length, visibility, span} raw) := by
+  intro state
+  let input : Input := {name, ty := .bytes length, visibility, span}
+  let op := if visibility == .«public» then "public_input" else "private_input"
+  cases raw with
+  | false =>
+    let requirements := Native.Input.requirements input
+    let values := requirements.map (·.identifier)
+    let byteOperands : ByteOperands := {
+      values := if visibility == .«public» then values.reverse else values,
+      packed := visibility == .«public»}
+    let update (state : LowerState) :=
+      {state with byteAliases := (name, byteOperands) :: state.byteAliases}
+    have updateNext : ∀ state, (update state).next = state.next := by
+      intro state
+      rfl
+    have updateInstructions : ∀ state, (update state).instructions = state.instructions := by
+      intro state
+      rfl
+    have updateFrame := modify_preservesOutputCapacityFrame update updateNext updateInstructions
+    have combined := bind_preservesOutputCapacityFrame
+      (lowerInputRequirements op false requirements) (fun _ => modify update)
+      (lowerInputRequirements_preservesOutputCapacityFrame op false requirements)
+      (fun _ => updateFrame)
+    simpa [lowerByteInput, input, requirements, values, op, update] using combined state
+  | true =>
+    let requirements := Native.Input.callArgumentRequirements input
+    let byteOperands : ByteOperands := {
+      values := (requirements.map (·.identifier)).reverse, packed := true}
+    let update (state : LowerState) :=
+      {state with byteAliases := (name, byteOperands) :: state.byteAliases}
+    have updateNext : ∀ state, (update state).next = state.next := by
+      intro state
+      rfl
+    have updateInstructions : ∀ state, (update state).instructions = state.instructions := by
+      intro state
+      rfl
+    have updateFrame := modify_preservesOutputCapacityFrame update updateNext updateInstructions
+    have combined := bind_preservesOutputCapacityFrame
+      (lowerInputRequirements op true requirements) (fun _ => modify update)
+      (lowerInputRequirements_preservesOutputCapacityFrame op true requirements)
+      (fun _ => updateFrame)
+    simpa [lowerByteInput, input, requirements, op, update] using combined state
 
 private theorem publicBytes32Requirements (name : String) :
     Native.Input.requirements {name, ty := .bytes 32, visibility := .«public»} = [
@@ -1671,19 +1883,49 @@ end
 def bindPublic (values : List String) : LowerM Unit :=
   emit "impact" [("guard", toJson ("0x01" : String)), ("inputs", toJson values)]
 
+/-- The public fixed-byte input prefix used by `lowerBody`, including its
+Impact binding. It keeps the original input record and source span. -/
+def lowerPublicFixedBytesInputPrefix (input : Input) : LowerM Unit := do
+  lowerByteInput input
+  match input.ty with
+  | .bytes 0 => pure ()
+  | .bytes _ => bindPublic input.nativeIdentifiers
+  | _ => pure ()
+
+theorem lowerPublicFixedBytesInputPrefix_preservesOutputCapacityFrame
+    (name : String) (length : Nat) (span : SourceSpan := {}) :
+    PreservesOutputCapacityFrame
+      (lowerPublicFixedBytesInputPrefix {name, ty := .bytes length, visibility := .«public», span}) := by
+  unfold lowerPublicFixedBytesInputPrefix
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerByteInput_fixedBytes_preservesOutputCapacityFrame name length .«public» false span)
+  intro _
+  by_cases empty : length = 0
+  · simpa [empty, bindPublic] using pure_preservesOutputCapacityFrame ()
+  · simpa [empty, bindPublic] using
+      (emit_preservesOutputCapacityFrame "impact"
+        [("guard", toJson ("0x01" : String)),
+          ("inputs", toJson (Input.nativeIdentifiers
+            {name, ty := .bytes length, visibility := .«public», span}))])
+
 def bindPublicGuarded (guard : Expr .bool) (values : List String) : LowerM Unit := do
   emit "impact" [("guard", toJson (← lowerExpr guard)), ("inputs", toJson values)]
 
 def lowerBody (c : Circuit) : LowerM Unit := do
   for input in c.inputs do
-    lowerByteInput input
     if input.visibility == .«public» then
       match input.ty with
-      | .foreign kind => do
-        for output in (← encodeForeign kind ("%input_" ++ input.name)) do bindPublic [output]
-      | .bytes 0 => pure ()
-      | .bytes _ => bindPublic input.nativeIdentifiers
-      | _ => for output in input.nativeIdentifiers do bindPublic [output]
+      | .bytes _ => lowerPublicFixedBytesInputPrefix input
+      | _ => do
+        lowerByteInput input
+        match input.ty with
+        | .foreign kind => do
+          for output in (← encodeForeign kind ("%input_" ++ input.name)) do bindPublic [output]
+        | .bytes 0 => pure ()
+        | .bytes _ => bindPublic input.nativeIdentifiers
+        | _ => for output in input.nativeIdentifiers do bindPublic [output]
+    else
+      lowerByteInput input
   for condition in c.constraints do
     let value ← lowerExpr condition
     emit "assert" [("cond", toJson value)]

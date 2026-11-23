@@ -29,6 +29,22 @@ private def packedInputHashCircuit : Circuit := {
 private def packedInputHashState : Zkir.LowerState :=
   ((Zkir.lowerBody (Passes.pruneCircuit packedInputHashCircuit)).run {}).2
 
+private def publicFixedBytesInputPrefixState (length : Nat) : Zkir.LowerState :=
+  (Zkir.lowerPublicFixedBytesInputPrefix
+    {name := "preimage", ty := .bytes length, visibility := .«public»}).run {} |>.2
+
+theorem publicFixedBytesInputPrefix_has_actual_output_capacity_frame (length : Nat) :
+    Zkir.OutputCapacityFrame {} (publicFixedBytesInputPrefixState length) := by
+  simpa [publicFixedBytesInputPrefixState] using
+    (Zkir.lowerPublicFixedBytesInputPrefix_preservesOutputCapacityFrame "preimage" length {}) {}
+
+theorem publicFixedBytesInputPrefix_names_fit_actual_output_count (length : Nat) :
+    (publicFixedBytesInputPrefixState length).next ≤
+      (publicFixedBytesInputPrefixState length).outputDefinitions := by
+  exact Zkir.OutputCapacityFrame.next_le_outputDefinitions
+    (publicFixedBytesInputPrefix_has_actual_output_capacity_frame length)
+    (by simp [Zkir.LowerState.outputDefinitions])
+
 theorem packedInputHash_counts :
     packedInputHashState.next = 3 ∧ packedInputHashState.instructions.size = 9 ∧
       packedInputHashState.outputDefinitions = 5 := by
