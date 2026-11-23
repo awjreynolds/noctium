@@ -84,6 +84,20 @@
     "height": 72382,
     "blockHash": "58dc96f323ab8954a56c50daedb25ac8302cccabefae607dfb341f39f73b3e9c"
   },
+  "readOnlyReplayInvestigation": {
+    "noctiumRevision": "a17474ab25e2dafa7a1ae746d9111b23bfc54bd1",
+    "lastMatchingLedgerRootHeight": 72224,
+    "lastMatchingLedgerRootBlockHash": "0a90b27db9f2f9fe950af87b556c28dc107e25b25f8739247aee878cad5341dd",
+    "firstDivergentLedgerRootHeight": 72225,
+    "nodeLedgerRoot": "00ea870928f4115a604b217e0e9511f7a5e872f86a6aa812d0e4f8d01a7a156534",
+    "nodeZswapMerkleRoot": "73e043e25e5c9d87c74dd9135c278fb188163abab42ca72a5dcae7fbc69bddc516",
+    "replayedZswapMerkleRootMatchesNode": true,
+    "replayedLeavesMatchBothFinalizedCommitmentsAndContractOwner": true,
+    "replayedContractStateSha256": "d801b2b2434f557d3ae8d45439c009684e0675b70d1b9a160170fec1c4f6a6f0",
+    "contractStateValueOperationsAuthorityAndBalanceMatchNode": true,
+    "contractChargedStateMatchesNode": false,
+    "ledgerRootMatchesAfterDiagnosticContractStateSubstitution": true
+  },
   "verified": {
     "newestFirstIndices": [
       48,
