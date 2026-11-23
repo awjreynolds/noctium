@@ -227,6 +227,49 @@ fn qualified_coin_json(nonce: u8, value: u128, mt_index: u64) -> Value {
     })
 }
 
+fn flat_record_set_schema() -> Value {
+    json!({
+        "id":"RecordSetCollections.Memo",
+        "fields":[
+            {"name":"active","type":"Bool"},
+            {"name":"amount","type":"UIntRange<65536>"}
+        ]
+    })
+}
+
+fn flat_record_set_key(active: bool, amount: u16) -> AlignedValue {
+    AlignedValue::concat(
+        [
+            field_value(Fr::from(u8::from(active))),
+            field_value(Fr::from(u64::from(amount))),
+        ]
+        .iter(),
+    )
+}
+
+fn flat_record_set_snapshot(entries: Vec<(AlignedValue, StateValue<Db>)>) -> Snapshot {
+    let set = entries
+        .into_iter()
+        .fold(HashMap::new(), |set, (key, marker)| set.insert(key, marker));
+    Snapshot::new(
+        plan(vec![json!({
+            "name":"memoSet",
+            "kind":{"tree":{"set":{"composite":flat_record_set_schema()}}}
+        })]),
+        ChargedState::new(StateValue::Array(vec![StateValue::Map(set)].into())),
+    )
+}
+
+fn flat_record_set_snapshot_from_rows(rows: &[(bool, u16)]) -> Snapshot {
+    flat_record_set_snapshot(
+        rows.iter()
+            .map(|(active, amount)| {
+                (flat_record_set_key(*active, *amount), StateValue::Null)
+            })
+            .collect(),
+    )
+}
+
 fn scalar_list(values: &[u64]) -> StateValue<Db> {
     let mut list = StateValue::Array(
         vec![
@@ -502,6 +545,111 @@ fn qualified_coin_set_pages_decode_records_and_validate_all_members() {
 }
 
 #[test]
+fn flat_record_set_pages_follow_declared_typed_order_after_removal() {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let rows = [(true, 513), (false, 513), (true, 514)];
+    let snapshot = flat_record_set_snapshot_from_rows(&rows);
+    let reverse = flat_record_set_snapshot_from_rows(&[
+        (true, 514),
+        (false, 513),
+        (true, 513),
+    ]);
+
+    let first_page = json!({
+        "abiVersion":1,
+        "kind":"set",
+        "entries":[
+            {"active":false,"amount":"513"},
+            {"active":true,"amount":"513"}
+        ],
+        "nextOffset":2
+    });
+    let second_page = json!({
+        "abiVersion":1,
+        "kind":"set",
+        "entries":[{"active":true,"amount":"514"}],
+        "nextOffset":null
+    });
+    assert_eq!(snapshot.page("memoSet", 0, 2), first_page);
+    assert_eq!(snapshot.page("memoSet", 2, 2), second_page);
+    assert_eq!(reverse.page("memoSet", 0, 2), first_page);
+    assert_eq!(reverse.page("memoSet", 2, 2), second_page);
+
+    let empty = flat_record_set_snapshot_from_rows(&[]);
+    assert_eq!(
+        empty.page("memoSet", 0, 2),
+        json!({
+            "abiVersion":1,
+            "kind":"set",
+            "entries":[],
+            "nextOffset":null
+        })
+    );
+
+    let after_remove_rows = rows
+        .iter()
+        .copied()
+        .filter(|row| *row != (false, 513))
+        .collect::<Vec<_>>();
+    let after_remove = flat_record_set_snapshot_from_rows(&after_remove_rows);
+    assert_eq!(
+        after_remove.page("memoSet", 0, 1),
+        json!({
+            "abiVersion":1,
+            "kind":"set",
+            "entries":[{"active":true,"amount":"513"}],
+            "nextOffset":1
+        })
+    );
+    assert_eq!(
+        after_remove.page("memoSet", 1, 1),
+        json!({
+            "abiVersion":1,
+            "kind":"set",
+            "entries":[{"active":true,"amount":"514"}],
+            "nextOffset":null
+        })
+    );
+
+    let malformed_marker = flat_record_set_snapshot(vec![
+        (flat_record_set_key(true, 513), StateValue::Null),
+        (flat_record_set_key(false, 513), StateValue::Null),
+        (
+            flat_record_set_key(true, 514),
+            StateValue::Cell(Sp::new(field_value(Fr::from(1u64)))),
+        ),
+    ]);
+    assert_eq!(
+        malformed_marker.status(
+            "memoSet",
+            0,
+            1,
+            &artifacts::digest(&malformed_marker.state)
+        ),
+        INVALID_ARGUMENT
+    );
+
+    let mut swapped_schema: Value = serde_json::from_slice(&snapshot.plan).unwrap();
+    swapped_schema["state"][0]["kind"]["tree"]["set"]["composite"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    let malformed_record = Snapshot {
+        plan: serde_json::to_vec(&swapped_schema).unwrap(),
+        state: snapshot.state.clone(),
+    };
+    assert_eq!(
+        malformed_record.status(
+            "memoSet",
+            0,
+            1,
+            &artifacts::digest(&malformed_record.state)
+        ),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn scalar_list_pages_validate_count_and_empty_sentinel() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let snapshot = list_snapshot(&[11, 22, 33]);
@@ -659,10 +807,10 @@ fn record_key_map_pages_sort_and_validate_typed_keys() -> anyhow::Result<()> {
         INVALID_ARGUMENT
     );
 
-    let malformed_key = field_value(Fr::from(513u16));
+    let malformed_key = field_value(Fr::from(513u64));
     let malformed_map = HashMap::new().insert(
         malformed_key,
-        StateValue::Cell(Sp::new(field_value(Fr::from(33u16)))),
+        StateValue::Cell(Sp::new(field_value(Fr::from(33u64)))),
     );
     let malformed_payload = Snapshot::from_plan_bytes(
         plan_bytes,

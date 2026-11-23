@@ -2646,7 +2646,7 @@
       "layer": "host-ledger-view",
       "surface": "Set.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path and decodes qualified shielded coin records from a root Set. Qualified records page deterministically by nonce, color, numeric value and Merkle tree index. Pinned Compact fixtures confirm membership values. General composite Set keys and wider SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path and decodes qualified shielded coin records from a root Set. Qualified records page deterministically by nonce, color, numeric value and Merkle tree index. Root flat record Set pages return named typed fields in declared field order. The pinned Compact Bool/UInt16 reference and the native ABI agree on member values for empty, inserted and removed states. The ABI returns its own stable order and rejects a malformed record or marker anywhere in the selected Set. Wider composite layouts and SDK adapters remain open.",
       "source": [
         "adt"
       ],

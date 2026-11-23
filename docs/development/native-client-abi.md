@@ -147,6 +147,16 @@ numeric Merkle tree index. Use the same snapshot and plan for every page.
 The reader checks each member's canonical FAB record and null Set marker
 before returning any entries. [C header](../../runtime/include/noctium_native.h) · [Native checks](../../runtime/tests/collection_reads.rs)
 
+## Read record Set pages
+
+A root Set with ordinary flat record keys uses the same page request and
+returns one object of named fields per member. Fields sort in declared
+schema order. Native and UInt values sort numerically, Bool sorts false
+before true, and Bytes32 sorts lexicographically. The reader checks every
+member's canonical alignment and null marker before applying the page bounds.
+The pinned Compact fixture compares member values after sorting by the same
+fields. [ABI tests](../../runtime/tests/collection_reads.rs) · [Compact fixture](../../tests/compact/native-collection-pages.mjs)
+
 ## Read Merkle snapshots
 
 `noctium_ledger_collection_page` reads ordinary and historic Merkle trees
