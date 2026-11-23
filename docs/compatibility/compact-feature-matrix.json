@@ -1104,7 +1104,7 @@
       "layer": "language",
       "surface": "Modules, imports, exports, includes",
       "noctiumStatus": "subset",
-      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Public exported type imports are tracked in #851.",
+      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Selected imports and re-exports now carry checked record, enum and nominal UInt types into Lean authoring. The pinned Compact and native cases agree on an imported generic record and UInt. The fixture checks alias identity, a distinct record specialization and rejection of an unselected type.",
       "source": [
         "reference"
       ],
@@ -1113,6 +1113,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/modules/ImportedModuleTypes.lean",
+        "tests/compact/module-type-exports.mjs",
+        "runtime/tests/imported_module_types.rs",
         "tests/modules/JubjubGenericIdentity.lean",
         "tests/compact/generic-jubjub-module.mjs",
         "runtime/tests/generic_jubjub_module.rs",

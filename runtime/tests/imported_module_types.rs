@@ -39,7 +39,7 @@ fn check_entrypoint(
 
 #[test]
 #[ignore = "requires fresh artifacts in NOCTIUM_IMPORTED_MODULE_TYPES_DIR"]
-fn imported_record_and_nominal_uint_types_pass_the_native_checker() -> Result<()> {
+fn imported_record_enum_and_nominal_uint_types_pass_the_native_checker() -> Result<()> {
     let directory = artifact_directory();
 
     let packet_returns = check_entrypoint(
@@ -47,10 +47,20 @@ fn imported_record_and_nominal_uint_types_pass_the_native_checker() -> Result<()
         "inspect",
         BTreeMap::from([
             ("packet.value".into(), json!("19")),
-            ("packet.valid".into(), json!(true)),
+            ("packet.valid".into(), json!("1")),
         ]),
     )?;
     assert_eq!(packet_returns, [("accepted".into(), Value::Bool(true))]);
+
+    let flag_returns = check_entrypoint(
+        &directory,
+        "flagOrdinal",
+        BTreeMap::from([("flag.$tag".into(), json!("1"))]),
+    )?;
+    assert_eq!(
+        flag_returns,
+        [("flagTag".into(), Value::Native(transient_crypto::curve::Fr::from(1u64)))]
+    );
 
     let count_returns = check_entrypoint(
         &directory,
