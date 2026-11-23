@@ -1542,7 +1542,7 @@
       "layer": "language-ledger",
       "surface": "Standard event emission",
       "noctiumStatus": "subset",
-      "notes": "All eleven standard event layouts compile in ledger entrypoint bodies with named, typed fields and payload and guard disclosure checks. The catalog matches Compact 0.36.1 payloads and finalized on the selected Ledger 9.1.0.1 profile. A native simulation checks ordered ShieldedSpend emission from a guarded reusable helper. Funded helper emission and indexer delivery need separate evidence.",
+      "notes": "All eleven standard event layouts compile in ledger entrypoint bodies with named, typed fields and payload and guard disclosure checks. The catalog matches Compact 0.36.1 payloads and finalized on the selected Ledger 9.1.0.1 profile. The guarded helper finalized on Ledger 9.1.0.1. Replay of the exact accepted transactions reproduced the ordered tags and payloads for both guard outcomes. The native checker rejected a substituted helper event tape. Indexer delivery remains open.",
       "source": [
         "reference",
         "events"
@@ -1555,6 +1555,7 @@
       "observedEvidence": [
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
+        "tests/standard-helper-event-localnet-evidence.json",
         "docs/development/standard-events.md"
       ],
       "equivalence": "unverified"

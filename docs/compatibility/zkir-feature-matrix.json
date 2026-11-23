@@ -266,6 +266,25 @@
     }
   },
   "evidenceRegister": {
+    "E-NATIVE321-HELPER-EVENTS": {
+      "kind": "executed-workload",
+      "refs": [
+        "../development/standard-events.md",
+        "../../tests/standard-helper-event-localnet-evidence.json"
+      ],
+      "zkirPin": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+      "scope": "The accepted active and inactive calls to a single checked ShieldedSpend helper on the pinned local development ledger.",
+      "keygen": true,
+      "checker": true,
+      "proof": true,
+      "ledger": true,
+      "ledgerHeights": [
+        64915,
+        64918,
+        64921
+      ],
+      "negativeEvidence": "The native checker rejects a substituted public event tape."
+    },
     "E-NOCTIUM321-COPY": {
       "kind": "executed-native-checker-test",
       "zkirPin": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
@@ -4958,7 +4977,9 @@
         "ZKIR-REQ-LEDGERTRANSCRIPT",
         "ZKIR-REQ-DISCLOSURE"
       ],
-      "evidenceIds": [],
+      "evidenceIds": [
+        "E-NATIVE321-HELPER-EVENTS"
+      ],
       "expectedCases": [
         {
           "id": "ZKIR-LEDGER-EVENTS-P",

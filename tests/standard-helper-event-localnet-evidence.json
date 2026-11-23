@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-23",
+  "scope": "One deployment and two finalized calls of logHelperSpend on the pinned local development chain.",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "network": {
+    "networkId": "undeployed",
+    "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "specVersion": 2001100,
+    "transactionVersion": 4
+  },
+  "compiler": {
+    "implementation": "Lean4",
+    "sourceRevision": "77f88b816cf34d2e6f56ef203469c8af3f42ed63",
+    "sourceSha256": "1c49d8de7bffb1d439c0996f666ba4bcaafa56c60674655cf640f2b5c2705447",
+    "leanSource": "examples/StandardEvents.lean"
+  },
+  "nativeToolchain": {
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "binarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "release": "3.2.1"
+  },
+  "artifacts": {
+    "entrypoint": "logHelperSpend",
+    "circuitSha256": "882d353ba864bbb2e71542f16c200b170db682492c2c63303de8fbe8822ab3b1",
+    "impactPlanSha256": "758fe1b56a51c6735bf583c40d86070354dcdc706c48f4a16d5bcf89be9413f9",
+    "bundleManifestSha256ByOperation": {
+      "logHelperSpend": "38491197d6c328cec9c7b1b5856cec54440f84202c551a2945aeff373a531d52",
+      "logSpend": "d3e4178a3f3beb478f0f60c2efa054a67e4603baf58ca4a3293ab04fd775fa13",
+      "logCatalog": "b472af944101f028133403640be84c04e1a87c15a84b9208ded82e87f0ea0f00"
+    },
+    "k": 9,
+    "rows": 258
+  },
+  "receipts": {
+    "contractAddress": "eca33a4eafa04b27db9dc2dd1dbf72468044e57b2d0830af210c831f86d4a9e9",
+    "deployment": {
+      "height": 64915,
+      "transactionId": "b0a3090ea945d0eeabfa7e5c2a6d3cdd9cb3a427d22a54c5296a9b0304d02861"
+    },
+    "active": {
+      "blockHash": "7214b15b048835acdd4ea25fb93bc8b34ae0fc93f34daf99a2c27a9d65983349",
+      "events": [
+        {
+          "payloadLength": 0,
+          "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag": 8,
+          "version": 1
+        },
+        {
+          "payloadLength": 32,
+          "payloadSha256": "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9",
+          "tag": 0,
+          "version": 1
+        },
+        {
+          "payloadLength": 0,
+          "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag": 9,
+          "version": 1
+        }
+      ],
+      "height": 64918,
+      "transactionId": "86fe0e6ef85f373139be899a8b3516a7173601c5b82bce00a5260a218b8807ab"
+    },
+    "inactive": {
+      "blockHash": "d6f77101d87b9263e8ddc9dba6627b6fb954cbc112a379004b7e4e1f936c0a1b",
+      "events": [
+        {
+          "payloadLength": 0,
+          "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag": 8,
+          "version": 1
+        },
+        {
+          "payloadLength": 0,
+          "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag": 9,
+          "version": 1
+        }
+      ],
+      "height": 64921,
+      "transactionId": "c9a35c261353aef961e93f6a6889f12118a4bd7b313577cab96fb10f7d544dbf"
+    }
+  },
+  "checks": {
+    "exactFinalizedEventBytesChecked": true,
+    "nativeCheckerRejectedSubstitutedEventTape": true,
+    "fundedTest": "localnet::tests::standard_event_helper_finalizes_logs",
+    "nativeTest": "standard_event_from_checked_helper_preserves_activity_and_order"
+  }
+}
