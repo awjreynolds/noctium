@@ -715,23 +715,21 @@ its nested field path. The second gives the unique physical field name used by
 the ledger List ABI. -/
 def LedgerValueType.listElementFieldPaths (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (List String × String × Ty)) := do
+  let flatPaths := do
+    let fields ← listRecordFields environment type
+    pure (fields.map fun (name, ty) => ([name], name, ty))
   match type with
   | .scalar ty => pure [(["value"], "value", ty)]
-  | .structure _ => do
-    let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
-    let .structure id := type | throw "List records must be named structures"
+  | .structure id => do
     let some declaration := environment.structures.find? (·.id == id)
       | throw s!"List record declaration '{id}' is missing"
     let isNested := declaration.fields.any fun field =>
       match field.type with
       | .structure _ => true
       | _ => false
-    let fields ← if !isNested then do
-      let flatFields ← listRecordFields environment type
-      pure (flatFields.map fun (name, ty) => ([name], name, ty))
+    if !isNested then flatPaths
     else do
-      unless !declaration.fields.isEmpty do
-        throw "List records must contain at least one field"
+      let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
       let groups ← declaration.fields.mapM fun field => do
         match field.type with
         | .scalar .native => pure [([field.name], field.name, Ty.native)]
@@ -751,14 +749,14 @@ def LedgerValueType.listElementFieldPaths (environment : Types.CompositeEnv)
               s!"{field.name}_{nestedField.name}", ty)
         | .scalar _ => throw "nested List record fields must be Native or Bool"
         | _ => throw "nested List records support one nested level"
-      pure groups.flatten
-    let names := fields.map (fun (_, name, _) => name)
-    unless names.eraseDups.length == names.length do
-      throw "nested List record fields produce duplicate physical names"
-    unless checked.expandedLeaves == fields.length do
-      throw "List record leaf count does not match its checked schema"
-    pure fields
-  | _ => throw "List elements must be scalar values or named records"
+      let fields := groups.flatten
+      let names := fields.map (fun (_, name, _) => name)
+      unless names.eraseDups.length == names.length do
+        throw "nested List record fields produce duplicate physical names"
+      unless checked.expandedLeaves == fields.length do
+        throw "List record leaf count does not match its checked schema"
+      pure fields
+  | _ => flatPaths
 
 /-- Describe a List element as its typed scalar value or as the flattened leaves
 of its checked record representation. -/
