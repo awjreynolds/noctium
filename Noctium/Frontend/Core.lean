@@ -2661,9 +2661,6 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
       let value ← `(Noctium.GuardedExpression.zeroValue $type)
       `(Noctium.Effect.writeRecordMap $name $keyValues $type $value $parentKeys)
     | .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
-      unless parentPath.isEmpty do
-        throwErrorAt storage
-          "nested insertDefault with fields(...) requires a scalar-valued record-key Map"
       let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
@@ -2676,13 +2673,13 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
         | throwErrorAt storage "record Map values require a named structure"
       let type ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
       `(Noctium.Effect.writeRecordMapComposite $name $type $keyValues [$values,*]
-        ([] : List Noctium.PathKey))
+        $parentKeys)
     | _ =>
       if parentPath.isEmpty then
         throwErrorAt storage "insertDefault with fields(...) requires a root record-key Map"
       else
         throwErrorAt storage
-          "insertDefault with fields(...) requires a nested scalar-valued record-key Map"
+          "insertDefault with fields(...) requires a nested scalar- or record-valued record-key Map"
   pure {state with terms := state.terms.push term}
 
 private def elaborateCompositePathWrite (schema : List (String × StateKind))

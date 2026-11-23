@@ -523,6 +523,8 @@ fn nested_record_key_map_reads_and_writes_typed_record_values() -> anyhow::Resul
     let upsert = load("upsert")?;
     let lookup = load("lookup")?;
     let remove = load("removeMemo")?;
+    let default = load("defaultMemo")?;
+    let default_unconditional = load("defaultMemoUnconditional")?;
     let mut state = create_state(&upsert.0, &BTreeMap::from([("memos".into(), json!([]))]))?;
     let parameters = &ledger::structure::INITIAL_PARAMETERS;
     let address = coin_structure::contract::ContractAddress::default();
@@ -584,6 +586,11 @@ fn nested_record_key_map_reads_and_writes_typed_record_values() -> anyhow::Resul
         args.insert("shouldRead".into(), json!(should_read));
         args
     };
+    let default_args = |owner_byte, active, amount: u16, should_default| {
+        let mut args = key_args(owner_byte, active, amount);
+        args.insert("shouldDefault".into(), json!(should_default));
+        args
+    };
     for (owner_byte, active, accepted, code) in [
         (1, true, true, 41u16),
         (1, false, false, 22),
@@ -598,6 +605,7 @@ fn nested_record_key_map_reads_and_writes_typed_record_values() -> anyhow::Resul
         assert_eq!(step.returns_json()["storedAccepted"], json!(accepted));
         assert_eq!(step.returns_json()["storedCode"], json!(code.to_string()));
     }
+    let default_state = state.clone();
 
     let mut remove_args = key_args(1, false, 513);
     remove_args.insert("removeIt".into(), json!(true));
@@ -632,6 +640,92 @@ fn nested_record_key_map_reads_and_writes_typed_record_values() -> anyhow::Resul
     let mut invalid_miss = miss;
     invalid_miss.insert("shouldRead".into(), json!(true));
     assert!(prepare(&lookup.0, &invalid_miss, &state, parameters, address).is_err());
+
+    let inactive_default = run(
+        &default,
+        &default_args(1, true, 513, false),
+        &default_state,
+    )?;
+    assert_eq!(inactive_default.after.state.get_ref(), default_state.get_ref());
+    assert_eq!(inactive_default.returns_json()["presentBefore"], json!(true));
+    assert_eq!(inactive_default.returns_json()["presentAfter"], json!(true));
+    assert_eq!(inactive_default.returns_json()["storedAccepted"], json!(true));
+    assert_eq!(inactive_default.returns_json()["storedCode"], json!("41"));
+    assert_eq!(inactive_default.returns_json()["bucketSize"], json!("2"));
+
+    let cleared = run(
+        &default,
+        &default_args(1, true, 513, true),
+        &inactive_default.after.state,
+    )?;
+    let mut clear_args = key_args(1, true, 513);
+    clear_args.insert("accepted".into(), json!(false));
+    clear_args.insert("code".into(), json!("0"));
+    let expected_cleared = run(&upsert, &clear_args, &inactive_default.after.state)?;
+    assert_eq!(
+        cleared.after.state.get_ref(),
+        expected_cleared.after.state.get_ref()
+    );
+    assert_eq!(cleared.returns_json()["presentBefore"], json!(true));
+    assert_eq!(cleared.returns_json()["presentAfter"], json!(true));
+    assert_eq!(cleared.returns_json()["storedAccepted"], json!(false));
+    assert_eq!(cleared.returns_json()["storedCode"], json!("0"));
+    assert_eq!(cleared.returns_json()["bucketSize"], json!("2"));
+
+    let missing = run(
+        &default,
+        &default_args(1, true, 514, true),
+        &cleared.after.state,
+    )?;
+    let mut insert_args = key_args(1, true, 514);
+    insert_args.insert("accepted".into(), json!(false));
+    insert_args.insert("code".into(), json!("0"));
+    let expected_inserted = run(&upsert, &insert_args, &cleared.after.state)?;
+    assert_eq!(
+        missing.after.state.get_ref(),
+        expected_inserted.after.state.get_ref()
+    );
+    assert_eq!(missing.returns_json()["presentBefore"], json!(false));
+    assert_eq!(missing.returns_json()["presentAfter"], json!(true));
+    assert_eq!(missing.returns_json()["storedAccepted"], json!(false));
+    assert_eq!(missing.returns_json()["storedCode"], json!("0"));
+    assert_eq!(missing.returns_json()["bucketSize"], json!("3"));
+
+    let mut unconditional_args = key_args(2, true, 514);
+    let unconditional = run(
+        &default_unconditional,
+        &unconditional_args,
+        &missing.after.state,
+    )?;
+    unconditional_args.insert("accepted".into(), json!(false));
+    unconditional_args.insert("code".into(), json!("0"));
+    let expected_unconditional = run(&upsert, &unconditional_args, &missing.after.state)?;
+    assert_eq!(
+        unconditional.after.state.get_ref(),
+        expected_unconditional.after.state.get_ref()
+    );
+    assert_eq!(unconditional.returns_json()["presentBefore"], json!(false));
+    assert_eq!(unconditional.returns_json()["presentAfter"], json!(true));
+    assert_eq!(unconditional.returns_json()["storedAccepted"], json!(false));
+    assert_eq!(unconditional.returns_json()["storedCode"], json!("0"));
+    assert_eq!(unconditional.returns_json()["bucketSize"], json!("2"));
+
+    for (owner_byte, active, amount, accepted, code) in [
+        (1, true, 513, false, 0u16),
+        (1, false, 513, false, 22),
+        (1, true, 514, false, 0),
+        (2, true, 513, true, 99),
+        (2, true, 514, false, 0),
+    ] {
+        let retained = run(
+            &lookup,
+            &lookup_args(owner_byte, active, amount, true),
+            &unconditional.after.state,
+        )?;
+        assert_eq!(retained.returns_json()["present"], json!(true));
+        assert_eq!(retained.returns_json()["storedAccepted"], json!(accepted));
+        assert_eq!(retained.returns_json()["storedCode"], json!(code.to_string()));
+    }
     Ok(())
 }
 

@@ -33,6 +33,19 @@ noctium_circuit nestedRecordMapRecordsRemoveInputs where
   public removeIt : Bool
 end
 
+noctium_circuit nestedRecordMapRecordsDefaultInputs where
+  public owner : Bytes32
+  private active : Bool
+  private amount : UInt 16
+  public shouldDefault : Bool
+end
+
+noctium_circuit nestedRecordMapRecordsDefaultUnconditionalInputs where
+  public owner : Bytes32
+  private active : Bool
+  private amount : UInt 16
+end
+
 noctium_contract NestedRecordMapRecords where
   tree memos : Bytes32 => struct Memo {
     active : Bool
@@ -72,6 +85,32 @@ noctium_contract NestedRecordMapRecords where
     member memos[owner][fields(disclose(active), disclose(amount))] as isPresent
     return presentBefore : Bool := wasPresent
     return presentAfter : Bool := isPresent
+  end
+
+  entry defaultMemo uses nestedRecordMapRecordsDefaultInputs where
+    member memos[owner][fields(disclose(active), disclose(amount))] as wasPresent
+    when shouldDefault insertDefault memos[owner][fields(disclose(active), disclose(amount))]
+    member memos[owner][fields(disclose(active), disclose(amount))] as isPresent
+    read memos[owner][fields(disclose(active), disclose(amount))] as selected
+    size memos[owner] as currentSize
+    return presentBefore : Bool := wasPresent
+    return presentAfter : Bool := isPresent
+    return storedAccepted : Bool := selected_accepted
+    return storedCode : UInt 16 := selected_code
+    return bucketSize : UInt 64 := currentSize
+  end
+
+  entry defaultMemoUnconditional uses nestedRecordMapRecordsDefaultUnconditionalInputs where
+    member memos[owner][fields(disclose(active), disclose(amount))] as wasPresent
+    insertDefault memos[owner][fields(disclose(active), disclose(amount))]
+    member memos[owner][fields(disclose(active), disclose(amount))] as isPresent
+    read memos[owner][fields(disclose(active), disclose(amount))] as selected
+    size memos[owner] as currentSize
+    return presentBefore : Bool := wasPresent
+    return presentAfter : Bool := isPresent
+    return storedAccepted : Bool := selected_accepted
+    return storedCode : UInt 16 := selected_code
+    return bucketSize : UInt 64 := currentSize
   end
 end
 
@@ -127,6 +166,21 @@ private def nestedRecordMapRecordsRemove (owner : Nat) (active : _root_.Bool)
     ("amount", .uint 65535 amount),
     ("removeIt", .bool removeIt)] state
 
+private def nestedRecordMapRecordsDefault (owner : Nat) (active : _root_.Bool)
+    (amount : Nat) (shouldDefault : _root_.Bool) (state : LedgerState) :=
+  (nestedRecordMapRecordsEntry "defaultMemo").run nestedRecordMapRecordsContext [
+    ("owner", nestedRecordMapRecordsOwner owner),
+    ("active", .bool active),
+    ("amount", .uint 65535 amount),
+    ("shouldDefault", .bool shouldDefault)] state
+
+private def nestedRecordMapRecordsDefaultUnconditional (owner : Nat) (active : _root_.Bool)
+    (amount : Nat) (state : LedgerState) :=
+  (nestedRecordMapRecordsEntry "defaultMemoUnconditional").run nestedRecordMapRecordsContext [
+    ("owner", nestedRecordMapRecordsOwner owner),
+    ("active", .bool active),
+    ("amount", .uint 65535 amount)] state
+
 private def nestedRecordMapRecordsOutputsMatch (outputs : List (String × Value))
     (expected : List (String × Value)) : _root_.Bool :=
   expected.all fun (name, value) => outputs.lookup name == some value
@@ -140,6 +194,39 @@ private def nestedRecordMapRecordsExpected : LedgerState := {
       (nestedRecordMapRecordsKey _root_.Bool.true 513,
         nestedRecordMapRecordsReceipt _root_.Bool.true 99)])])]
 }
+
+private def nestedRecordMapRecordsDefaultsExpected : LedgerState := {
+  trees := [("memos", .map [
+    (nestedRecordMapRecordsOwner 2, .map [
+      (nestedRecordMapRecordsKey _root_.Bool.true 514,
+        nestedRecordMapRecordsReceipt _root_.Bool.false 0),
+      (nestedRecordMapRecordsKey _root_.Bool.true 513,
+        nestedRecordMapRecordsReceipt _root_.Bool.true 99)]),
+    (nestedRecordMapRecordsOwner 1, .map [
+      (nestedRecordMapRecordsKey _root_.Bool.true 514,
+        nestedRecordMapRecordsReceipt _root_.Bool.false 0),
+      (nestedRecordMapRecordsKey _root_.Bool.true 513,
+        nestedRecordMapRecordsReceipt _root_.Bool.false 0),
+      (nestedRecordMapRecordsKey _root_.Bool.false 513,
+        nestedRecordMapRecordsReceipt _root_.Bool.true 22)])])]
+}
+
+private def nestedRecordMapRecordsDefaultsScenario : Except String _root_.Bool := do
+  let (_, state) ← nestedRecordMapRecordsInitialize 1 nestedRecordMapRecordsInitial
+  let (_, state) ← nestedRecordMapRecordsInitialize 2 state
+  let (_, state) ← nestedRecordMapRecordsUpsert 1 _root_.Bool.true 513 _root_.Bool.true 41 state
+  let (_, state) ← nestedRecordMapRecordsUpsert 1 _root_.Bool.false 513 _root_.Bool.true 22 state
+  let (_, state) ← nestedRecordMapRecordsUpsert 2 _root_.Bool.true 513 _root_.Bool.true 99 state
+  let beforeInactive := state
+  let (_, state) ← nestedRecordMapRecordsDefault 1 _root_.Bool.true 513 _root_.Bool.false state
+  unless state == beforeInactive do
+    throw "inactive nested composite insertDefault changed ledger state"
+  let (_, state) ← nestedRecordMapRecordsDefault 1 _root_.Bool.true 513 _root_.Bool.true state
+  let (_, state) ← nestedRecordMapRecordsDefault 1 _root_.Bool.true 514 _root_.Bool.true state
+  let (_, state) ← nestedRecordMapRecordsDefaultUnconditional 2 _root_.Bool.true 514 state
+  unless state == nestedRecordMapRecordsDefaultsExpected do
+    throw "nested composite insertDefault failed to zero selected records or preserve siblings"
+  pure _root_.Bool.true
 
 private def nestedRecordMapRecordsScenario : Except String _root_.Bool := do
   let (_, state) ← nestedRecordMapRecordsInitialize 1 nestedRecordMapRecordsInitial
@@ -210,9 +297,15 @@ private def nestedRecordMapRecordsScenario : Except String _root_.Bool := do
   Capabilities.source NestedRecordMapRecords.state).isOk
 #guard ((nestedRecordMapRecordsEntry "removeMemo").validate
   Capabilities.source NestedRecordMapRecords.state).isOk
+#guard ((nestedRecordMapRecordsEntry "defaultMemo").validate
+  Capabilities.source NestedRecordMapRecords.state).isOk
+#guard ((nestedRecordMapRecordsEntry "defaultMemoUnconditional").validate
+  Capabilities.source NestedRecordMapRecords.state).isOk
 #guard (Disclosure.entrypoint (nestedRecordMapRecordsEntry "upsert")).isOk
 #guard (Disclosure.entrypoint (nestedRecordMapRecordsEntry "lookup")).isOk
 #guard (Disclosure.entrypoint (nestedRecordMapRecordsEntry "removeMemo")).isOk
+#guard (Disclosure.entrypoint (nestedRecordMapRecordsEntry "defaultMemo")).isOk
+#guard (Disclosure.entrypoint (nestedRecordMapRecordsEntry "defaultMemoUnconditional")).isOk
 
 #guard match Backend.Impact.lower NestedRecordMapRecords.state
     (nestedRecordMapRecordsEntry "upsert") with
@@ -225,5 +318,9 @@ private def nestedRecordMapRecordsScenario : Except String _root_.Bool := do
   | .error _ => _root_.Bool.false
 
 #guard match nestedRecordMapRecordsScenario with
+  | .ok _root_.Bool.true => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+#guard match nestedRecordMapRecordsDefaultsScenario with
   | .ok _root_.Bool.true => _root_.Bool.true
   | _ => _root_.Bool.false
