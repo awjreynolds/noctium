@@ -388,6 +388,7 @@ scoped syntax num "of" "struct" ident "{" nlcompositefield* "}" : nlmerklespec
 scoped syntax "merkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "historicMerkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "tree" ident ":" nltype "=>" "Set" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -456,6 +457,7 @@ scoped syntax "read" nlpath "as" ident : nleffect
 scoped syntax "readSelf" "as" ident : nleffect
 scoped syntax "member" nlpath "as" ident : nleffect
 scoped syntax "member" ident "[" nlleaves "]" "as" ident : nleffect
+scoped syntax "member" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "read" ident "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "checkRoot" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "tokenBalance(" nlexpr "," nlexpr ")" "as" ident : nleffect
@@ -492,7 +494,9 @@ scoped syntax "pushFront" nlpath ":=" nlledgervalue : nleffect
 scoped syntax "popFront" nlpath : nleffect
 scoped syntax "remove" nlpath : nleffect
 scoped syntax "remove" ident "[" nlleaves "]" : nleffect
+scoped syntax "remove" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "remove" ident "[" nlleaves "]" : nleffect
+scoped syntax "when" nlexpr "remove" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
 scoped syntax "blockTimeBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "blockTimeAfter(" nlexpr ")" "as" ident : nleffect
 scoped syntax "blockTimeAtOrAfter(" nlexpr ")" "as" ident : nleffect
@@ -500,6 +504,7 @@ scoped syntax "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "counterLessThan" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "insert" nlpath : nleffect
 scoped syntax "insert" ident "[" nlleaves "]" : nleffect
+scoped syntax "insert" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "write" ident ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlexpr : nleffect
@@ -508,6 +513,7 @@ scoped syntax "when" nlexpr "read" nlpath "as" ident : nleffect
 scoped syntax "when" nlexpr "readSelf" "as" ident : nleffect
 scoped syntax "when" nlexpr "member" nlpath "as" ident : nleffect
 scoped syntax "when" nlexpr "member" ident "[" nlleaves "]" "as" ident : nleffect
+scoped syntax "when" nlexpr "member" ident "[" nlexpr "]" "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "when" nlexpr "read" ident "[" nlleaves "]" "as" ident : nleffect
 scoped syntax "when" nlexpr "checkRoot" nlpath "against" nlexpr "as" ident : nleffect
 scoped syntax "when" nlexpr "tokenBalance(" nlexpr "," nlexpr ")" "as" ident : nleffect
@@ -542,6 +548,7 @@ scoped syntax "when" nlexpr "blockTimeAtOrAfter(" nlexpr ")" "as" ident : nleffe
 scoped syntax "when" nlexpr "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleffect
 scoped syntax "when" nlexpr "insert" nlpath : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" : nleffect
+scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
 
 declare_syntax_cat nlstatement
 scoped syntax nleffect : nlstatement
@@ -2061,8 +2068,11 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr mintUnshieldedTo($_:nlexpr, $_:nlexpr, $_:nlexpr, $_:nlexpr) as $_:ident) =>
     some condition
   | `(nleffect| when $condition:nlexpr member $_path:nlpath as $_dest:ident) => some condition
+  | `(nleffect| when $condition:nlexpr member $_state:ident [$_owner:nlexpr] [$_payload:nlleaves] as $_dest:ident) => some condition
   | `(nleffect| when $condition:nlexpr member $_state:ident [$_payload:nlleaves] as $_dest:ident) => some condition
+  | `(nleffect| when $condition:nlexpr insert $_state:ident [$_owner:nlexpr] [$_payload:nlleaves]) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [$_payload:nlleaves]) => some condition
+  | `(nleffect| when $condition:nlexpr remove $_state:ident [$_owner:nlexpr] [$_payload:nlleaves]) => some condition
   | `(nleffect| when $condition:nlexpr remove $_state:ident [$_payload:nlleaves]) => some condition
   | `(nleffect| when $condition:nlexpr checkRoot $_path:nlpath against $_expected:nlexpr as $_dest:ident) =>
     some condition
@@ -2647,16 +2657,24 @@ private def elaborateSetInsert (schema : List (String × StateKind))
   let term ← `(Noctium.Effect.setInsert $(stringTerm storage.getId.toString) $keys)
   pure {state with terms := state.terms.push term}
 
-private def recordSetKeyValues (schema : List (String × StateKind))
-    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
-    CommandElabM (List (String × Ty) × TSyntax `term) := do
-  let valueSchema ← statePathSchema schema storage
+private def recordSetKeyValuesAt (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
+    (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM (TSyntax `term × List (String × Ty) × TSyntax `term) := do
+  let treeSchema ← treeStateSchema schema storage
+  let (keys, valueSchema) ← lowerTreePath state.env treeSchema parentKeys
   let .recordSet environment type := valueSchema
-    | throwErrorAt storage "typed record key operation requires a root record Set"
+    | throwErrorAt storage "typed record key operation requires a record Set"
   let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   let values ← elaborateLedgerFieldValues state.env payload fields
+  pure (← pathKeysTerm keys, fields, values)
+
+private def recordSetKeyValues (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM (List (String × Ty) × TSyntax `term) := do
+  let (_, fields, values) ← recordSetKeyValuesAt schema storage [] payload state
   pure (fields, values)
 
 private def elaborateRecordSetMember (schema : List (String × StateKind))
@@ -2665,7 +2683,7 @@ private def elaborateRecordSetMember (schema : List (String × StateKind))
   let (_, values) ← recordSetKeyValues schema storage payload state
   let (readName, updated) ← freshReadName depth state destination
   let term ← `(Noctium.Effect.memberRecordSet
-    $(stringTerm storage.getId.toString) $(stringTerm readName) $values)
+    $(stringTerm storage.getId.toString) $(stringTerm readName) ([] : List Noctium.PathKey) $values)
   bindReadName {updated with terms := updated.terms.push term}
     destination.getId.toString readName .bool
 
@@ -2674,9 +2692,30 @@ private def elaborateRecordSetMutation (schema : List (String × StateKind))
     (state : EntryEffects) : CommandElabM EntryEffects := do
   let (_, values) ← recordSetKeyValues schema storage payload state
   let term ← if inserting then
-    `(Noctium.Effect.setInsertRecord $(stringTerm storage.getId.toString) $values)
+    `(Noctium.Effect.setInsertRecord $(stringTerm storage.getId.toString) ([] : List Noctium.PathKey) $values)
   else
-    `(Noctium.Effect.removeRecordSet $(stringTerm storage.getId.toString) $values)
+    `(Noctium.Effect.removeRecordSet $(stringTerm storage.getId.toString) ([] : List Noctium.PathKey) $values)
+  pure {state with terms := state.terms.push term}
+
+private def elaborateNestedRecordSetMember (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (owner : TSyntax `nlexpr) (payload : TSyntax `nlleaves)
+    (destination : TSyntax `ident) (depth : Nat) (state : EntryEffects) :
+    CommandElabM EntryEffects := do
+  let (keys, _, values) ← recordSetKeyValuesAt schema storage [owner] payload state
+  let (readName, updated) ← freshReadName depth state destination
+  let term ← `(Noctium.Effect.memberRecordSet
+    $(stringTerm storage.getId.toString) $(stringTerm readName) $keys $values)
+  bindReadName {updated with terms := updated.terms.push term}
+    destination.getId.toString readName .bool
+
+private def elaborateNestedRecordSetMutation (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (owner : TSyntax `nlexpr) (payload : TSyntax `nlleaves)
+    (inserting : _root_.Bool) (state : EntryEffects) : CommandElabM EntryEffects := do
+  let (keys, _, values) ← recordSetKeyValuesAt schema storage [owner] payload state
+  let term ← if inserting then
+    `(Noctium.Effect.setInsertRecord $(stringTerm storage.getId.toString) $keys $values)
+  else
+    `(Noctium.Effect.removeRecordSet $(stringTerm storage.getId.toString) $keys $values)
   pure {state with terms := state.terms.push term}
 
 private def recordMapKeyValues (schema : List (String × StateKind))
@@ -3524,6 +3563,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| mintUnshieldedTo($domain, $amount, $isContract, $recipient) as $destination:ident)
   | `(nleffect| when $_:nlexpr mintUnshieldedTo($domain, $amount, $isContract, $recipient) as $destination:ident) =>
     state := ← elaborateUnshieldedMintTo state domain amount isContract recipient destination guard span
+  | `(nleffect| member $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident)
+  | `(nleffect| when $_:nlexpr member $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) =>
+    state ← elaborateNestedRecordSetMember schema storage owner payload destination depth state
   | `(nleffect| member $storage:ident [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr member $storage:ident [ $payload:nlleaves ] as $destination:ident) =>
     match (← statePathSchema schema storage) with
@@ -3627,7 +3669,7 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| insert $storage:ident [$owner:nlexpr] := emptyMap) => do
     let schema ← treeStateSchema schema storage
     let (path, result) ← lowerTreePath state.env schema [owner]
-    let .map _ _ := result | throwErrorAt effect "emptyMap assignment must select a map value"
+    unless result.isCollection do throwErrorAt effect "emptyMap assignment must select a map or Set value"
     let keys ← pathKeysTerm path
     let term ← `(Noctium.Effect.emptyMapPath $(stringTerm storage.getId.toString) $keys)
     state := {state with terms := state.terms.push term}
@@ -3662,6 +3704,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| popFront $path:nlpath)
   | `(nleffect| when $_:nlexpr popFront $path:nlpath) =>
     state := ← elaborateListPopFront schema path state
+  | `(nleffect| remove $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ])
+  | `(nleffect| when $_:nlexpr remove $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) =>
+    state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.false state
   | `(nleffect| remove $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr remove $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
@@ -3670,6 +3715,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| remove $path:nlpath)
   | `(nleffect| when $_:nlexpr remove $path:nlpath) =>
     state := ← elaborateMapRemove schema path state
+  | `(nleffect| insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ])
+  | `(nleffect| when $_:nlexpr insert $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ]) =>
+    state ← elaborateNestedRecordSetMutation schema storage owner payload Bool.true state
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
@@ -4459,6 +4507,18 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
             (Noctium.LedgerValueType.map $innerTerm
               (Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)))
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+        | `(nlstate| tree $id:ident : $key:nltype => Set struct $record:ident { $recordFields:nlcompositefield* }) => do
+          let keyTy ← readTy key
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            elaborateNamedRecord contractName record recordFields state
+          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+          | .ok _ => pure ()
+          | .error message => throwErrorAt state message
+          let valueSchema := LedgerValueType.map keyTy (.recordSet environment compositeType)
+          let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
+            (Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| $listKind:ident $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "unsupported recursive List state declaration"
@@ -4469,16 +4529,25 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
           let valueTerm ← `(Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $key:nltype => $listKind:ident struct $record:ident { $recordFields:nlcompositefield* }) => do
-          unless listKind.getId.toString == "List" do
-            throwErrorAt listKind "unsupported recursive tree value declaration"
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
             elaborateNamedRecord contractName record recordFields state
-          let valueSchema := LedgerValueType.map keyTy (.«list» environment compositeType)
-          let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
-            (Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm))
-          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+          if listKind.getId.toString == "List" then
+            let valueSchema := LedgerValueType.map keyTy (.«list» environment compositeType)
+            let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
+              (Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm))
+            pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+          else if listKind.getId.toString == "Set" then
+            match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+            | .ok _ => pure ()
+            | .error message => throwErrorAt state message
+            let valueSchema := LedgerValueType.map keyTy (.recordSet environment compositeType)
+            let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
+              (Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm))
+            pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+          else
+            throwErrorAt listKind "unsupported recursive tree value declaration"
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $listKind:ident struct $record:ident { $recordFields:nlcompositefield* }) => do
           unless listKind.getId.toString == "List" do
             throwErrorAt listKind "unsupported recursive tree value declaration"
