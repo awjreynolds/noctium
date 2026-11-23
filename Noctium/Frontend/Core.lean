@@ -385,6 +385,7 @@ scoped syntax ident ":" nltype : nlmerkleafield
 scoped syntax ident ":" "struct" ident "{" nlmerkleafield* "}" : nlmerkleafield
 declare_syntax_cat nlmaprecordtail
 scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
+scoped syntax ident "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
 declare_syntax_cat nlmapsettail
 scoped syntax "Set" "struct" ident "{" nlcompositefield* "}" : nlmapsettail
@@ -1935,10 +1936,10 @@ private def lowerQualifiedCoinListPath (schema : List (String × StateKind))
     CommandElabM (TSyntax `ident × TSyntax `term) := do
   let (storage, sourceKeys) ← sourcePathParts path
   let treeSchema ← treeStateSchema schema storage
-  let supportedShape := sourceKeys.length ≤ 2 && bytes32ParentMaps treeSchema sourceKeys
+  let supportedShape := sourceKeys.length ≤ 4 && bytes32ParentMaps treeSchema sourceKeys
   unless supportedShape do
     throwErrorAt path
-      "pushFrontCoin supports a qualified coin List under at most two Bytes32-keyed Maps"
+      "pushFrontCoin supports a qualified coin List under at most four Bytes32-keyed Maps"
   let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
   let .«list» environment recordType := selected
     | throwErrorAt path "pushFrontCoin path must select a qualified coin List"
@@ -4676,14 +4677,18 @@ private def nestedRecordSetSchema (keyTy : Ty)
     pure (schema, term)
 
 private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
-    CommandElabM (List Ty × TSyntax `ident × Array (TSyntax `nlcompositefield)) := do
+    CommandElabM (List Ty × _root_.Bool × TSyntax `ident × Array (TSyntax `nlcompositefield)) := do
   match tail with
   | `(nlmaprecordtail| struct $record:ident { $recordFields:nlcompositefield* }) =>
-    pure ([], record, recordFields)
+    pure ([], _root_.Bool.false, record, recordFields)
+  | `(nlmaprecordtail| $kind:ident struct $record:ident { $recordFields:nlcompositefield* }) => do
+    unless kind.getId.toString == "List" do
+      throwErrorAt kind "unsupported recursive tree value declaration"
+    pure ([], _root_.Bool.true, record, recordFields)
   | `(nlmaprecordtail| $key:nltype => $rest:nlmaprecordtail) => do
     let keyTy ← readTy key
-    let (restTypes, record, recordFields) ← readMapRecordTail rest
-    pure (keyTy :: restTypes, record, recordFields)
+    let (restTypes, asList, record, recordFields) ← readMapRecordTail rest
+    pure (keyTy :: restTypes, asList, record, recordFields)
   | _ => throwErrorAt tail "expected a nested Map key or record leaf"
 
 private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
@@ -4910,16 +4915,19 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let firstTy ← readTy first
           let secondTy ← readTy second
           let thirdTy ← readTy third
-          let (tailTypes, record, recordFields) ← readMapRecordTail tail
+          let (tailTypes, asList, record, recordFields) ← readMapRecordTail tail
           let keyTypes := [firstTy, secondTy, thirdTy] ++ tailTypes
           let contractName := (← getCurrNamespace) ++ name.getId
           let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
             elaborateNamedRecord contractName record recordFields state
+          let leafSchema := if asList then LedgerValueType.«list» environment compositeType
+            else .composite environment compositeType
           let valueSchema := keyTypes.reverse.foldl
-            (fun value keyType => LedgerValueType.map keyType value)
-            (.composite environment compositeType)
-          let mut valueTerm ← `(Noctium.LedgerValueType.composite
-            $environmentTerm $compositeTypeTerm)
+            (fun value keyType => LedgerValueType.map keyType value) leafSchema
+          let mut valueTerm ← if asList then
+            `(Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm)
+          else
+            `(Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)
           for keyType in keyTypes.reverse do
             let keyTerm ← tyTerm keyType
             valueTerm ← `(Noctium.LedgerValueType.map $keyTerm $valueTerm)

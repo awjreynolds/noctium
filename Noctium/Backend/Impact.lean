@@ -1502,8 +1502,9 @@ private def resolveListState (state : List StateDecl) (name : String)
   schema.listPath keys
 
 private def validateQualifiedCoinListKeys (keys : List PathKey) : Except String Unit := do
-  unless keys.length ≤ 2 do
-    throw "qualified shielded coin List supports at most two parent Maps"
+  -- The pinned fragment duplicates the context at depth 7 + 2 * keys.length.
+  unless keys.length ≤ 4 do
+    throw "qualified shielded coin List parent path exceeds the native Dup immediate range"
   unless keys.all (fun key => key.ty == .bytes 32) do
     throw "qualified shielded coin List parent keys must be Bytes32"
 

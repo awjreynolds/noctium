@@ -3241,9 +3241,10 @@ fn validate_shielded_coin_list(
         slot < 16 && (slot as usize) < plan.state.len(),
         "qualified coin List slot exceeds the native state limit"
     );
+    // The pinned fragment uses a four-bit context Dup at depth 7 + 2 * keys.len().
     ensure!(
-        keys.len() <= 2,
-        "qualified coin List supports at most two parent keys"
+        keys.len() <= 4,
+        "qualified coin List supports at most four parent keys"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
