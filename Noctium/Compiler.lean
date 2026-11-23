@@ -606,11 +606,13 @@ private def effectJson : Effect → Json
        ("values", toJson (values.map sourceLedgerFieldExprJson))] ++
       (if parentKeys.isEmpty then [] else [("keys", toJson (parentKeys.map fun key =>
         match key with | .mk _ value => expressionJson value))]))
-  | .readRecordMapComposite state destination _ values destinations => Json.mkObj [
-      ("op", toJson ("readRecordMapComposite" : String)), ("state", toJson state),
-      ("destination", toJson destination),
-      ("values", toJson (values.map sourceLedgerFieldExprJson)),
-      ("destinations", toJson (destinations.map Prod.fst))]
+  | .readRecordMapComposite state destination _ values destinations parentKeys => Json.mkObj (
+      [("op", toJson ("readRecordMapComposite" : String)), ("state", toJson state),
+       ("destination", toJson destination),
+       ("values", toJson (values.map sourceLedgerFieldExprJson)),
+       ("destinations", toJson (destinations.map Prod.fst))] ++
+      (if parentKeys.isEmpty then [] else [("keys", toJson (parentKeys.map fun key =>
+        match key with | .mk _ value => expressionJson value))]))
   | .memberRecordMap state destination values parentKeys => Json.mkObj (
       [("op", toJson ("memberRecordMap" : String)), ("state", toJson state),
        ("destination", toJson destination),
@@ -623,10 +625,12 @@ private def effectJson : Effect → Json
        ("value", expressionJson value)] ++
       (if parentKeys.isEmpty then [] else [("keys", toJson (parentKeys.map fun key =>
         match key with | .mk _ pathValue => expressionJson pathValue))]))
-  | .writeRecordMapComposite state _ keyValues valueValues => Json.mkObj [
-      ("op", toJson ("writeRecordMapComposite" : String)), ("state", toJson state),
-      ("keyValues", toJson (keyValues.map sourceLedgerFieldExprJson)),
-      ("valueValues", toJson (valueValues.map sourceLedgerFieldExprJson))]
+  | .writeRecordMapComposite state _ keyValues valueValues parentKeys => Json.mkObj (
+      [("op", toJson ("writeRecordMapComposite" : String)), ("state", toJson state),
+       ("keyValues", toJson (keyValues.map sourceLedgerFieldExprJson)),
+       ("valueValues", toJson (valueValues.map sourceLedgerFieldExprJson))] ++
+      (if parentKeys.isEmpty then [] else [("keys", toJson (parentKeys.map fun key =>
+        match key with | .mk _ value => expressionJson value))]))
   | .removeRecordMap state values parentKeys => Json.mkObj (
       [("op", toJson ("removeRecordMap" : String)), ("state", toJson state),
        ("values", toJson (values.map sourceLedgerFieldExprJson))] ++

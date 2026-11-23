@@ -168,6 +168,7 @@ jobs:
           lake env lean tests/TypedRecordMapKey.lean
           lake env lean tests/TypedRecordMapComposition.lean
           lake env lean tests/NestedRecordMap.lean
+          lake env lean tests/NestedRecordMapRecords.lean
           lake env lean tests/RecordMapCollections.lean
           lake env lean tests/NativeCaller.lean
           lake env lean tests/NativeCallerComposition.lean

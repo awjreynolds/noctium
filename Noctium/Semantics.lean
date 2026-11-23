@@ -1508,10 +1508,11 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some value := raw.as valueTy | throw s!"record Map value type mismatch '{name}'"
       if !canonical ctx valueTy value then throw s!"noncanonical record Map value '{name}'"
       env := (destination, Value.pack valueTy value) :: env
-    | .readRecordMapComposite name _destination valueType values destinations => do
+    | .readRecordMapComposite name _destination valueType values destinations parentKeys => do
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env values
-      let some (.composite foundType leaves) := treeLookup root [key]
+      let some (.composite foundType leaves) := treeLookup root (evaluatedKeys ++ [key])
         | throw s!"missing record Map key in '{name}'"
       unless foundType == valueType do throw s!"record Map value type mismatch '{name}'"
       env := env ++ (← checkedRecordBindings ctx destinations leaves
@@ -1709,11 +1710,12 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       let some updated := treeSet root (evaluatedKeys ++ [key]) payload
         | throw s!"record Map root is not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
-    | .writeRecordMapComposite name valueType keyValues valueValues => do
+    | .writeRecordMapComposite name valueType keyValues valueValues parentKeys => do
+      let evaluatedKeys ← evaluatePath ctx env parentKeys
       let key ← evaluateRecordKey ctx env keyValues
       let leaves ← valueValues.mapM (evalLedgerField ctx env)
       let some root := next.trees.lookup name | throw s!"missing record Map '{name}'"
-      let some updated := treeSet root [key] (.composite valueType leaves)
+      let some updated := treeSet root (evaluatedKeys ++ [key]) (.composite valueType leaves)
         | throw s!"record Map root is not a map '{name}'"
       next := {next with trees := updateAssoc name updated next.trees}
     | .removeRecordMap name values parentKeys => do
@@ -2141,7 +2143,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
         | .readCompositePath _ _ _ _ destinations =>
           env := env ++ destinations.map fun (destination, ty) =>
             (destination, defaultValue ty)
-        | .readRecordMapComposite _ _ _ _ destinations =>
+        | .readRecordMapComposite _ _ _ _ destinations _ =>
           env := env ++ destinations.map fun (destination, ty) =>
             (destination, defaultValue ty)
         | .readCaller destinations =>
