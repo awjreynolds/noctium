@@ -412,7 +412,13 @@ fn selected_compiler_inventory_binds_ledger_and_witness_files() {
 fn rust_binding_payload_matches_exact_inventory_bytes_and_selected_control() {
     let fixture = Fixture::new();
     let recipe = rust_binding_recipe(&fixture);
-    let manifest = artifacts::assemble(recipe, &fixture.path("rust-binding")).unwrap();
+    let assembled = artifacts::assemble(recipe, &fixture.path("rust-binding"));
+    if cfg!(feature = "zkir-320") {
+        // The retained binding and plan name the 3.2.1 target.
+        assert_eq!(failure(assembled), "profile_mismatch");
+        return;
+    }
+    let manifest = assembled.unwrap();
     let pin = artifacts::digest(&artifacts::manifest_bytes(&manifest).unwrap());
     let bundle = artifacts::verify(&fixture.path("rust-binding"), Some(&pin)).unwrap();
     assert_eq!(
