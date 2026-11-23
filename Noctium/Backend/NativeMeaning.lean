@@ -121,10 +121,20 @@ def littleEndian : List Nat → Nat
   | [] => 0
   | first :: rest => first + 256 * littleEndian rest
 
-def packByteTerms : List Term → Term
+def packByteTermsRaw : List Term → Term
   | [] => .constant 0
   | [byte] => byte
-  | byte :: rest => .binary "add" byte (.binary "mul" (.constant 256) (packByteTerms rest))
+  | byte :: rest => .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRaw rest))
+
+def allLiteralZeroTerms : List Term → Bool
+  | [] => true
+  | .constant 0 :: rest => allLiteralZeroTerms rest
+  | _ => false
+
+/-- Pack a normalized byte chunk, collapsing an all-zero chunk while retaining
+the original symbolic fold for every mixed or dynamic chunk. -/
+def packByteTerms (values : List Term) : Term :=
+  if allLiteralZeroTerms values then .constant 0 else packByteTermsRaw values
 
 /-- Canonical typed source term for persistent_hash(Bytes32). The operands are
 the exact FAB-aligned fields: the high byte, then the packed low 31 bytes. -/

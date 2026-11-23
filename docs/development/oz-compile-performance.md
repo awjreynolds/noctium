@@ -194,6 +194,26 @@ an all-zero chunk emits 30 adds and 30 multiplies. [UInt fold](https://github.co
 [Packing ticket](https://github.com/awjreynolds/noctium/issues/775) ·
 [Focused regression](../../tests/ScalarCseParity.lean)
 
+## Fold all-zero FAB chunks
+
+The packer emits a zero immediate for a chunk of already-lowered zero bytes.
+Mixed and dynamic chunks retain symbolic packing. The independent producer
+checks the matching expected term.
+
+| ConfidentialToken entrypoint | Instructions before → after | Rows before → after | K before → after |
+| --- | ---: | ---: | ---: |
+| `balanceOf` | 116 → 56 | 264 → 234 | 9 → 8 |
+| `pendingOf` | 116 → 56 | 264 → 234 | 9 → 8 |
+| `transferFrom` | 1,005 → 945 | 61,522 → 61,492 | 16 → 16 |
+
+Pinned ZKIR 3.2.1 `mock-compile` measured 30 fewer rows in each of nine
+changed relations. The whole suite's raw ZKIR went from 617,257 to 582,980
+bytes. Seven relations and all 16 Impact plans matched byte for byte.
+The native workload accepted transfer and rejected overspend with the
+matching witness files. The PrivateClaim relation matched its baseline
+SHA-256. [Packing ticket](https://github.com/awjreynolds/noctium/issues/775) ·
+[Focused packing checks](../../tests/NativeBytePacking.lean)
+
 ## Reuse existing byte leaves
 
 Static slices select byte leaves directly when the inputs already use that

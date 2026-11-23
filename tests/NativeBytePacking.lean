@@ -51,6 +51,11 @@ private def nativeBytePackingFabCircuit : Noctium.Circuit := {
       ⟨.bytes 32, .ref "payload"⟩])}]
 }
 
+private def zeroPackedReturnCircuit : Noctium.Circuit := {
+  name := "zero_packed_return"
+  outputs := [{name := "zeros", ty := .bytes 32, value := .bytes32Literal (List.replicate 32 0)}]
+}
+
 private def narrowPackedByte (maximum value : Nat) : Noctium.Expr (.bytes 1) :=
   .sliceBytes (.toBytes32 (.cast .native (.uint maximum value))) 0 1
 
@@ -118,6 +123,12 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
 #guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingFabCircuit with
   | .ok relation =>
       nativeBytePackingCount relation "add" == 30 && nativeBytePackingCount relation "mul" == 30
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit zeroPackedReturnCircuit with
+  | .ok relation =>
+      (nativeBytePackingInstructions relation).map nativeBytePackingOpcode ==
+        [some "impact", some "output"]
   | .error _ => _root_.Bool.false
 
 #guard match Noctium.Backend.Zkir.lowerCircuit narrowLiteralPackingCircuit with
