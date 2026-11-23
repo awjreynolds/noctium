@@ -1,0 +1,37 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger coinLists: Map<Bytes<32>, Map<Bytes<32>, List<QualifiedShieldedCoinInfo>>>;
+export ledger paddingSlot: QualifiedShieldedCoinInfo;
+
+circuit destination(isContract: Boolean, bytes: Bytes<32>): Either<ZswapCoinPublicKey, ContractAddress> {
+  return isContract ? right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: bytes})
+                    : left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey{bytes: bytes});
+}
+
+export circuit initializeOwner(owner: Bytes<32>): [] {
+  coinLists.insertDefault(disclose(owner));
+}
+
+export circuit initializeBucket(owner: Bytes<32>, bucket: Bytes<32>): [] {
+  coinLists.lookup(disclose(owner)).insertDefault(disclose(bucket));
+}
+
+export circuit pushCoin(owner: Bytes<32>, bucket: Bytes<32>, domain: Bytes<32>, nonce: Bytes<32>,
+                        value: Uint<64>, book: Boolean, bookingIsContract: Boolean,
+                        bookingAddress: Bytes<32>, prefixMint: Boolean,
+                        paddingNonce: Bytes<32>, paddingValue: Uint<64>): ShieldedCoinInfo {
+  if (disclose(prefixMint)) {
+    const padding = mintShieldedToken(disclose(domain), disclose(paddingValue),
+      disclose(paddingNonce), right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+    paddingSlot.writeCoin(disclose(padding),
+      right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+  }
+  const coin = disclose(book)
+    ? mintShieldedToken(disclose(domain), disclose(value), disclose(nonce),
+                       disclose(destination(bookingIsContract, bookingAddress)))
+    : ShieldedCoinInfo{nonce: nonce, color: tokenType(domain, kernel.self()), value: value};
+  coinLists.lookup(disclose(owner)).lookup(disclose(bucket)).pushFrontCoin(
+    disclose(coin), right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+  return disclose(coin);
+}

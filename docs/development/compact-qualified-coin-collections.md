@@ -37,8 +37,11 @@ Noctium also checks a self-recipient List prepend under two Bytes32 Map
 parents. The emitted ZKIR 3.2.1 relation accepts booked index 42 ahead of
 index 31 and preserves the neighboring bucket and the other owner's List.
 Missing parents, a missing booking and a wrong-recipient booking reject
-in the native query context. The pinned Compact comparison here covers
-the root and one-parent forms.
+in the native query context. The matched Compact 0.36.1 and Runtime 0.21.0
+case uses two owners and two groups. It checks the same List order and
+sibling preservation, assigned indices 0 and 1, and the same rejection
+cases. The index-1 case mints a distinct output before the selected coin
+in the same circuit execution. [Compact runtime case](../../tests/compact/two-parent-qualified-coin-list.mjs)
 [Lean fixture](../../tests/TwoParentQualifiedCoinList.lean) ·
 [Native check](../../runtime/tests/two_parent_qualified_coin_list.rs)
 
