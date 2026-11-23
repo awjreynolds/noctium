@@ -19,7 +19,7 @@ namespace Noctium
 open Lean Elab Command
 
 initialize noctiumNominalUIntTypeRegistry : SimplePersistentEnvExtension
-    Noctium.NominalUIntType (Array Noctium.NominalUIntType) ←
+    (String × Noctium.NominalUIntType) (Array (String × Noctium.NominalUIntType)) ←
   registerSimplePersistentEnvExtension {
     addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
     addEntryFn := Array.push
@@ -662,11 +662,11 @@ private def nominalUIntTypeIdentifier (stx : TSyntax `nltype) : Option Syntax :=
   let `(nltype| $name:ident) := stx | none
   pure name.raw
 
-private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM NominalUIntType := do
+def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM NominalUIntType := do
   let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
   let current := ((← getCurrNamespace) ++ name).toString
-  match registry.find? (·.name == current) <|> registry.find? (·.name == name.toString) with
-  | some declaration => pure declaration
+  match registry.find? (·.1 == current) <|> registry.find? (·.1 == name.toString) with
+  | some (_, declaration) => pure declaration
   | none => throwErrorAt site s!"unknown nominal UInt type '{name}'"
 
 @[command_elab noctiumUIntTypeCommand] unsafe def elabNoctiumUIntType : CommandElab := fun stx => do
@@ -676,7 +676,7 @@ private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM 
     unless Helpers.validWitnessIdentifier fullName do
       throwErrorAt name s!"nominal UInt identity is invalid or too long: {fullName}"
     let registry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
-    if registry.any (·.name == fullName) then
+    if registry.any (·.1 == fullName) then
       throwErrorAt name s!"duplicate nominal UInt type '{name.getId}'"
     let maximum ← match ScalarPolicy.sized bits.getNat with
       | .ok (.uint maximum) => pure maximum
@@ -687,7 +687,7 @@ private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM 
     let bound : TSyntax `term := ⟨Syntax.mkNumLit (toString maximum)⟩
     elabCommand (← `(def $typeIdent : Noctium.NominalUIntType :=
       {name := $(⟨Syntax.mkStrLit fullName⟩), maximum := $bound}))
-    modifyEnv fun env => noctiumNominalUIntTypeRegistry.addEntry env declaration
+    modifyEnv fun env => noctiumNominalUIntTypeRegistry.addEntry env (fullName, declaration)
   | _ => throwUnsupportedSyntax
 
 private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
@@ -6525,6 +6525,33 @@ open scoped Noctium
     modifyEnv fun env => moduleSourceRegistry.addEntry env {
       sourceName
       definitionName := sourceName}
+  | _ => throwUnsupportedSyntax
+
+scoped syntax (name := moduleTypeCommand) "noctium_module_type" ident "from" ident
+  "with" str "," str : command
+
+@[command_elab moduleTypeCommand] unsafe def elabModuleType : CommandElab := fun stx => do
+  match stx with
+  | `(noctium_module_type $binding:ident from $requestSource:ident with $viewName:str, $memberName:str) => do
+    let aliasName := (← getCurrNamespace) ++ binding.getId.eraseMacroScopes
+    let types := noctiumNominalUIntTypeRegistry.getState (← getEnv)
+    if (← getEnv).contains aliasName || types.any (·.1 == aliasName.toString) then
+      throwErrorAt binding s!"duplicate imported type name '{aliasName}'"
+    let requestName ← liftCoreM <| resolveGlobalConstNoOverload requestSource
+    let request ← evalConstCheck Modules.Request ``Modules.Request requestName
+    let registry ← moduleRegistryForBuild
+    let info ← match Modules.importedType registry request viewName.getString memberName.getString with
+      | .ok info => pure info
+      | .error diagnostic => failDisclosure diagnostic *> throwError "module type import failed"
+    let registryTerm ← moduleRegistryTerm
+    let requestTerm := mkIdent requestName
+    elabCommand (← `(def $binding : Noctium.Modules.TypeInfo :=
+      match Noctium.Modules.importedType $registryTerm $requestTerm $viewName $memberName with
+      | .ok info => info
+      | .error _ => default))
+    if let some nominalUInt := info.nominalUInt? then
+      modifyEnv fun env =>
+        noctiumNominalUIntTypeRegistry.addEntry env (aliasName.toString, nominalUInt)
   | _ => throwUnsupportedSyntax
 
 scoped syntax (name := moduleContractCommand) "noctium_module_contract" ident

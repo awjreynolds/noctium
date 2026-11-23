@@ -1,0 +1,31 @@
+pragma language_version >= 0.28;
+
+module GenericTypes<T> {
+  export new type Count = Uint<8>;
+  export new type Unselected = Uint<16>;
+
+  export struct Packet {
+    value: T;
+    valid: Boolean;
+  }
+
+  struct Hidden {
+    value: T;
+  }
+}
+
+module PublicTypes {
+  import {Packet as LocalPacket, Count as LocalCount} from GenericTypes<Field>;
+  export {LocalCount, LocalPacket};
+}
+
+import PublicTypes;
+export {LocalCount, LocalPacket};
+
+export pure circuit inspect(packet: LocalPacket): Boolean {
+  return packet.valid;
+}
+
+export pure circuit echoCount(count: LocalCount): LocalCount {
+  return count;
+}

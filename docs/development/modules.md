@@ -83,6 +83,30 @@ one identity circuit and stores each result in a fixed, typed Cell. Generic
 ledger state type substitution is a separate scope.
 [Lean fixture](../../tests/modules/JubjubGenericIdentity.lean) · [Compact comparison](../../tests/compact/generic-jubjub-module.mjs)
 
+## Import exported types
+
+Select the source member in your module definition, then bind the selected
+name for your circuit. This example reads `LocalPacket` from the `selected`
+view of the requested module.
+
+```lean
+noctium_module_type LocalPacket from importedModuleTypesRequest with "selected", "LocalPacket"
+
+def packetWire : Noctium.Helpers.Wire.Codec := {
+  payload := LocalPacket.value
+  composites := LocalPacket.environment
+  frameBytes := 33}
+```
+
+Use `Payload packetWire` for the aggregate input. The imported environment
+contains the checked declarations reachable from the selected type. Aliases
+and re-exports retain the originating identity. Instantiating the generic
+record at another type gives a distinct type. An imported nominal UInt also
+binds its local name for scalar circuit signatures, with the original UInt
+identity and bound. Private and unselected types are unavailable through
+the view.
+[Lean fixture](../../tests/modules/ImportedModuleTypes.lean) · [Compact comparison](../../tests/compact/module-type-exports.mjs)
+
 ## Focused checks
 
 Run the pure expansion cases and deterministic source CLI fixture with:

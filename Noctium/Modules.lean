@@ -69,6 +69,26 @@ structure ResolvedSourceExport where
   span : SourceSpan := {}
   deriving Repr, BEq, Inhabited
 
+/-- The generic source declaration for one module type member. `source` owns
+the existing generic structure and alias templates. The concrete checked
+type and environment are produced for each module specialization. -/
+structure TypeTemplate where
+  source : Noctium.Helpers.Specialization.Program
+  value : GenericType
+  nominalUInt? : Option NominalUIntType := none
+  span : SourceSpan := {}
+  deriving Repr
+
+instance : Inhabited TypeTemplate := ⟨{source := {}, value := .unit}⟩
+
+structure TypeInfo where
+  value : Types.CompositeType
+  environment : Types.CompositeEnv
+  nominalUInt? : Option NominalUIntType := none
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited TypeInfo := ⟨{value := .unit, environment := {}}⟩
+
 structure Member where
   id : Nat
   name : String
@@ -78,6 +98,8 @@ structure Member where
   sourceExport? : Option SourceExportRef := none
   stateKind? : Option StateKind := none
   stateSchema? : Option ModuleStateKind := none
+  typeTemplate? : Option TypeTemplate := none
+  typeInfo? : Option TypeInfo := none
   deriving Repr, Inhabited
 
 inductive StateTarget where
@@ -427,6 +449,15 @@ private def validateLimits (limits : Limits) : Except Diagnostic Unit := do
       limits.maxCanonicalBytes > hard.maxCanonicalBytes then
     resource {} "requested limits exceed hard policy"
 
+private def validateNominalUInt (span : SourceSpan) (value : Types.CompositeType)
+    (nominalUInt? : Option NominalUIntType) : Except Diagnostic Unit := do
+  if let some nominalUInt := nominalUInt? then
+    validText span nominalUInt.name
+    if nominalUInt.maximum > ScalarPolicy.maxUint then
+      resource span "module nominal UInt bound"
+    unless value == .scalar (.uint nominalUInt.maximum) do
+      fail span "module nominal UInt identity does not match its scalar type"
+
 private def validateDefinition (limits : Limits) (definition : Definition) :
     Except Diagnostic Nat := do
   if definition.parameters.length > limits.maxArguments then resource definition.span "module parameter count"
@@ -443,6 +474,12 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
   for sourceMember in definition.members do
     validText sourceMember.span sourceMember.name
     if sourceMember.id > 18446744073709551615 then resource sourceMember.span "module member identity"
+    if sourceMember.typeInfo?.isSome then
+      fail sourceMember.span "module source cannot provide pre-resolved type metadata"
+    if sourceMember.kind == .type && sourceMember.typeTemplate?.isNone then
+      fail sourceMember.span s!"type member '{sourceMember.name}' has no checked type template"
+    if sourceMember.typeTemplate?.isSome && sourceMember.kind != .type then
+      fail sourceMember.span "type template is only valid on a type module member"
     if (sourceMember.stateKind?.isSome || sourceMember.stateSchema?.isSome) &&
         sourceMember.kind != .state then
       fail sourceMember.span "state kind is only valid on a state module member"
@@ -813,13 +850,28 @@ mutual
       canonicalBytes := state.canonicalBytes + keyBytes
       expandedNodes := state.expandedNodes + nodeCost}
     let (types, naturals) ← liftE (bindArguments state.limits span definition.parameters arguments)
-    let resolvedMembers ← definition.members.mapM fun sourceMember => do
-      match sourceMember.stateSchema? with
-      | none => pure sourceMember
-      | some schema => do
+    let mut resolvedMembers : List Member := []
+    for sourceMember in definition.members do
+      let mut resolvedMember := sourceMember
+      if let some schema := sourceMember.stateSchema? then
         let kind ← liftE (resolveModuleStateKind state.limits sourceMember.span
           types naturals schema)
-        pure {sourceMember with stateKind? := some kind}
+        resolvedMember := {resolvedMember with stateKind? := some kind}
+      if let some template := sourceMember.typeTemplate? then
+        let typeLimits : Noctium.Helpers.Specialization.Limits := {
+          maxSourceNodes := state.limits.maxSourceNodes
+          maxExpandedNodes := state.limits.maxExpandedNodes
+          maxTypeArguments := state.limits.maxArguments
+          maxNaturalValue := state.limits.maxNaturalValue}
+        let specialized ← liftE (Noctium.Helpers.Specialization.specializeTypeWithEnvironment typeLimits
+          template.source types naturals template.value)
+        let info : TypeInfo := {
+          value := specialized.value
+          environment := specialized.environment
+          nominalUInt? := template.nominalUInt?}
+        liftE (validateNominalUInt template.span info.value info.nominalUInt?)
+        resolvedMember := {resolvedMember with typeInfo? := some info}
+      resolvedMembers := resolvedMembers ++ [resolvedMember]
     let mut sourceExports : List (Nat × ResolvedSourceExport) := []
     for sourceMember in definition.members do
       if let some sourceExport := sourceMember.sourceExport? then
@@ -864,19 +916,26 @@ mutual
     for exportSpec in definition.exports do
       let resolved ← match exportSpec.target with
         | .localMember id => do
-          let some sourceMember := definition.members.find? (·.id == id)
+          let some sourceMember := resolvedMembers.find? (·.id == id)
             | liftE (fail exportSpec.span s!"unknown module member identity '{id}'")
           if sourceMember.visibility != .«public» then
             liftE (fail exportSpec.span s!"private module member '{sourceMember.name}' cannot be exported")
-          pure [⟨exportSpec.name, memberIdentity key sourceMember, sourceMember.kind, exportSpec.span⟩]
+          pure [{
+            name := exportSpec.name
+            identity := memberIdentity key sourceMember
+            kind := sourceMember.kind
+            span := exportSpec.span}]
         | .importedMember viewName localName => do
           let some view := importedViews.find? (·.name == viewName)
             | liftE (fail exportSpec.span s!"unknown module import view '{viewName}'")
           let members := view.members.filter (·.name == localName)
           if members.isEmpty then
             liftE (fail exportSpec.span s!"module view '{viewName}' does not expose '{localName}'")
-          pure (members.map fun binding =>
-            ⟨exportSpec.name, binding.identity, binding.kind, exportSpec.span⟩)
+          pure (members.map fun binding => {
+            name := exportSpec.name
+            identity := binding.identity
+            kind := binding.kind
+            span := exportSpec.span})
       for resolvedMember in resolved do
         if exports.any (fun prior => prior.name == resolvedMember.name &&
             prior.identity == resolvedMember.identity) then
@@ -930,6 +989,13 @@ def Expansion.findMember (expansion : Expansion) (identity : MemberIdentity) : O
   let moduleInstance ← expansion.findInstance identity.module
   moduleInstance.members.find? fun sourceMember =>
     sourceMember.id == identity.member && sourceMember.kind == identity.kind
+
+/-- Return the checked concrete type carried by the exact exported member.
+Aliases and re-exports resolve through their retained `MemberIdentity`. -/
+def Expansion.typeInfo (expansion : Expansion) (identity : MemberIdentity) : Option TypeInfo := do
+  if identity.kind != .type then none
+  let member ← expansion.findMember identity
+  member.typeInfo?
 
 /-- Resolve original source program metadata by declaration identity. Imported
 and re-exported names point through this lookup without cloning the metadata. -/
@@ -1167,6 +1233,25 @@ def Expansion.resolveImport (expansion : Expansion) (module : ModuleKey)
   let some moduleInstance := expansion.findInstance module | return []
   let some view := moduleInstance.imports.find? (·.name == viewName) | return []
   return view.members.filter (·.name == localName)
+
+/-- Resolve one selected public type import to its checked specialization data.
+The returned type keeps the original member identity through any import alias
+or re-export spelling. -/
+def importedType (registry : Registry) (request : Request)
+    (viewName localName : String) : Except Diagnostic TypeInfo := do
+  let expansion ← expandWithLimits {} registry request.sourceName request.arguments
+  let some root := expansion.findInstance expansion.root
+    | fail {} "Noctium imported type root instance is unavailable"
+  let some view := root.imports.find? (·.name == viewName)
+    | fail root.span s!"unknown module import view '{viewName}'"
+  let binding ← match view.members.filter (fun member =>
+      member.name == localName && member.kind == .type) with
+    | [binding] => pure binding
+    | [] => fail view.span s!"module view '{viewName}' does not expose '{localName}' as a type"
+    | _ => fail view.span s!"module view '{viewName}' exposes ambiguous type '{localName}'"
+  let some info := expansion.typeInfo binding.identity
+    | fail binding.span s!"module type member '{localName}' has no checked type data"
+  pure info
 
 def Expansion.resolveExport (expansion : Expansion) (module : ModuleKey)
     (exportName : String) : List ExportedMember := Id.run do

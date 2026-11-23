@@ -189,6 +189,32 @@ private def genericNaturalStateModule : Definition := {
     stateSchema? := some (.cell (.uint (.parameter "N")))}]
   exports := [{name := "value", target := .localMember 0}]}
 
+private def genericTypeSourceWithUnrelatedDeclaration :
+    Noctium.Helpers.Specialization.Program := {
+  base := {composites := {structures := [{id := "Demo.Type.Private", fields := []}]}}
+  structures := [⟨"Demo.Type.Packet", [⟨"Field", .type⟩],
+    [("value", .parameter "Field"), ("valid", .bool)], {}⟩]}
+
+private def selectedTypeEnvironmentIsPruned : Bool :=
+  match Noctium.Helpers.Specialization.specializeTypeWithEnvironment {}
+      genericTypeSourceWithUnrelatedDeclaration
+      [("Field", .scalar (.uint 255))] []
+      (.structure "Demo.Type.Packet" [.type (.parameter "Field")]) with
+  | .error _ => false
+  | .ok specialized =>
+    match specialized.value with
+    | .structure id =>
+      match specialized.environment.structures.find? (·.id == id) with
+      | some packet =>
+        packet.fields.map (fun field => (field.name, field.type)) == [
+          ("value", .scalar (.uint 255)), ("valid", .scalar .bool)] &&
+        specialized.environment.structures.map (·.id) == [id]
+      | none => false
+    | _ => false
+
+-- Generic type expansion retains its checked layout and hides unrelated types.
+#guard selectedTypeEnvironmentIsPruned
+
 private def exportIdentity (expansion : Expansion) (module : Name) (name : String) :
     Option MemberIdentity := do
   let moduleInstance ← expansion.instances.find? (·.key.sourceName == module)

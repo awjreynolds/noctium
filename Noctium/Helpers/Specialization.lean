@@ -965,6 +965,36 @@ private def initialOrdinal (program : Program) : Nat :=
 private def sourceNames (program : Program) : List String :=
   program.declarations.map (·.name) ++ program.base.scopes.flatMap (·.values)
 
+structure SpecializedType where
+  value : Types.CompositeType
+  environment : Types.CompositeEnv
+  deriving Repr
+
+instance : Inhabited SpecializedType := ⟨{value := .unit, environment := {}}⟩
+
+/-- Resolve one generic type template with concrete surrounding arguments.
+The result retains checked composite declarations produced while expanding
+generic structures, so callers can use the type in a consuming signature. -/
+def specializeTypeWithEnvironment (limits : Limits) (source : Program)
+    (types : List (String × Types.CompositeType)) (naturals : List (String × Nat))
+    (value : GenericType) : Except Diagnostic SpecializedType := do
+  let (declarationCosts, structureCosts) ← preflight limits source
+  let initial : State := {
+    source
+    declarationCosts
+    structureCosts
+    usedNames := sourceNames source
+    nextOrdinal := initialOrdinal source
+    remainingSteps := limits.maxExpandedNodes}
+  let (value, state) ← (normalizeType limits {} types naturals value).run initial
+  let expandedEnvironment : Types.CompositeEnv := {
+    structures := source.base.composites.structures ++ state.structures
+    enumerations := source.base.composites.enumerations}
+  let environment := Types.CompositeEnv.reachable expandedEnvironment value
+  match Types.checkedLayout Types.defaultLimits environment value with
+  | .ok _ => pure {value, environment}
+  | .error diagnostic => fail diagnostic.span diagnostic.message
+
 /- Specialize requested exports in one bounded session. The declaration and
 type caches are shared across roots. Output names are sorted before expansion,
 so the same request set produces the same generated declaration IDs regardless

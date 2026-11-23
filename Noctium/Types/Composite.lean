@@ -782,6 +782,12 @@ private def reachableEnvironment (environment : CompositeEnv) (type : CompositeT
     enumerations := environment.enumerations.filter fun declaration => reachable.contains declaration.id
   }
 
+/-- Keep only the declarations reachable from one checked source-visible type.
+This prevents unrelated declarations in a shared environment from crossing a
+type import boundary. -/
+def CompositeEnv.reachable (environment : CompositeEnv) (type : CompositeType) : CompositeEnv :=
+  reachableEnvironment environment type
+
 /-- The fingerprint is the full canonical descriptor encoding. It is injective
 under the length-prefixed grammar and is deliberately not called a cryptographic hash. -/
 def CompositeEnv.fingerprint (environment : CompositeEnv) : String :=
