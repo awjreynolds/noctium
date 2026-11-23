@@ -171,6 +171,99 @@ structure LowerState where
   byteAliases : List (String × ByteOperands) := []
   pointCoordinates : List (String × (String × String)) := []
 
+/-- Count the result names described by this state's actual native instructions.
+This stays derived from the emitted vector, rather than a second mutable counter. -/
+def LowerState.outputDefinitions (state : LowerState) : Nat :=
+  Native.outputDefinitionsInInstructions state.instructions.toList
+
+private theorem outputDefinitionsInInstructions_append (first second : List Json) :
+    Native.outputDefinitionsInInstructions (first ++ second) =
+      Native.outputDefinitionsInInstructions first +
+        Native.outputDefinitionsInInstructions second := by
+  induction first with
+  | nil => simp [Native.outputDefinitionsInInstructions]
+  | cons instruction rest ih =>
+    simp [Native.outputDefinitionsInInstructions, ih, Nat.add_assoc]
+
+theorem LowerState.outputDefinitions_append (state : LowerState) (suffix : List Json) :
+    ({state with instructions := state.instructions ++ suffix.toArray}).outputDefinitions =
+      state.outputDefinitions + Native.outputDefinitionsInInstructions suffix := by
+  simp only [LowerState.outputDefinitions, Array.toList_append]
+  rw [outputDefinitionsInInstructions_append]
+
+theorem LowerState.outputDefinitions_push (state : LowerState) (value : Json) :
+    ({state with instructions := state.instructions.push value}).outputDefinitions =
+      state.outputDefinitions + Native.outputDefinitionsInInstruction value := by
+  simpa [Array.toList_push, Native.outputDefinitionsInInstructions] using
+    LowerState.outputDefinitions_append state [value]
+
+/-- A lowering step allocates no more fresh SSA names than the output slots in
+its actual emitted native instructions. -/
+structure OutputCapacityFrame (before after : LowerState) : Prop where
+  next : before.next ≤ after.next
+  definitions : before.outputDefinitions + (after.next - before.next) ≤
+    after.outputDefinitions
+
+theorem OutputCapacityFrame.refl (state : LowerState) :
+    OutputCapacityFrame state state := by
+  constructor <;> simp
+
+theorem OutputCapacityFrame.trans {before middle after : LowerState}
+    (first : OutputCapacityFrame before middle)
+    (second : OutputCapacityFrame middle after) :
+    OutputCapacityFrame before after := by
+  rcases first with ⟨firstNext, firstDefinitions⟩
+  rcases second with ⟨secondNext, secondDefinitions⟩
+  constructor <;> omega
+
+private theorem OutputCapacityFrame.of_instruction_push
+    {before after : LowerState} (emitted : Json)
+    (next : before.next ≤ after.next)
+    (instructions : after.instructions = before.instructions.push emitted)
+    (definitions : after.next - before.next ≤ Native.outputDefinitionsInInstruction emitted) :
+    OutputCapacityFrame before after := by
+  constructor
+  · exact next
+  · change before.outputDefinitions + (after.next - before.next) ≤ after.outputDefinitions
+    unfold LowerState.outputDefinitions at *
+    rw [instructions, Array.toList_push, outputDefinitionsInInstructions_append]
+    simp only [Native.outputDefinitionsInInstructions]
+    omega
+
+def PreservesOutputCapacityFrame (operation : StateM LowerState α) : Prop :=
+  ∀ state, OutputCapacityFrame state (operation.run state).2
+
+theorem pure_preservesOutputCapacityFrame (value : α) :
+    PreservesOutputCapacityFrame (pure value) := by
+  intro state
+  exact OutputCapacityFrame.refl state
+
+theorem bind_preservesOutputCapacityFrame (first : StateM LowerState α)
+    (next : α → StateM LowerState β)
+    (firstFrame : PreservesOutputCapacityFrame first)
+    (nextFrame : ∀ value, PreservesOutputCapacityFrame (next value)) :
+    PreservesOutputCapacityFrame (first >>= next) := by
+  intro state
+  change OutputCapacityFrame state ((next (first.run state).1).run (first.run state).2).2
+  exact (firstFrame state).trans (nextFrame _ _)
+
+theorem OutputCapacityFrame.next_le_outputDefinitions
+    {before after : LowerState} (frame : OutputCapacityFrame before after)
+    (beforeBound : before.next ≤ before.outputDefinitions) :
+    after.next ≤ after.outputDefinitions := by
+  rcases frame with ⟨next, definitions⟩
+  omega
+
+/-- Apply the producer's checked output-capacity bound to a state reached from
+the empty allocator state. The producer's instruction-count cap remains the
+source of `capacity`, while this frame accounts for generated SSA names. -/
+theorem OutputCapacityFrame.next_le_producerCapacity
+    {after : LowerState} (frame : OutputCapacityFrame {} after)
+    (capacity : after.outputDefinitions ≤ Native.maxInstructions * Native.maxVectorLength) :
+    after.next ≤ Native.maxInstructions * Native.maxVectorLength := by
+  have names := frame.next_le_outputDefinitions (by simp [LowerState.outputDefinitions])
+  exact Nat.le_trans names capacity
+
 private abbrev LowerM := StateM LowerState
 
 def emit (op : String) (fields : List (String × Json)) : LowerM Unit :=
@@ -429,6 +522,171 @@ private def nativeFieldAlignment : Json := Json.arr #[nativeFieldAtom]
 private def nativeFieldVectorAlignment (length : Nat) : Json :=
   Json.arr ((List.replicate length nativeFieldAtom).toArray)
 
+private theorem nativeOutputDefinitionsInInstruction_single
+    {value : Json} {opcode : String}
+    (opcodeOk : Native.stringField value "op" = .ok opcode)
+    (outputOk : (Native.stringField value "output").isOk = true)
+    (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
+      opcode ≠ "into_coordinates") :
+    Native.outputDefinitionsInInstruction value = 1 := by
+  unfold Native.outputDefinitionsInInstruction
+  rw [opcodeOk]
+  simp [ordinary, outputOk]
+
+private theorem instruction_scalarOutputDefinitions
+    (opcode : String) (fields : List (String × Json))
+    (opcodeOk : Native.stringField (instruction opcode fields) "op" = .ok opcode)
+    (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
+      opcode ≠ "into_coordinates")
+    (outputOk : (Native.stringField (instruction opcode fields) "output").isOk = true) :
+    Native.outputDefinitionsInInstruction (instruction opcode fields) = 1 := by
+  exact nativeOutputDefinitionsInInstruction_single opcodeOk outputOk ordinary
+
+private theorem bytesIntoNativesInstruction_outputDefinitions
+    (bytes : String) (outputs : List String) :
+    Native.outputDefinitionsInInstruction
+      (instruction "bytes_into_natives"
+        [("bytes", toJson bytes), ("outputs", toJson outputs)]) = outputs.length := by
+  have opcodeOk : Native.stringField
+      (instruction "bytes_into_natives"
+        [("bytes", toJson bytes), ("outputs", toJson outputs)]) "op" =
+      .ok "bytes_into_natives" := by
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+      Lean.ToJson.toJson]
+    rfl
+  have outputsOk : Native.arrayField
+      (instruction "bytes_into_natives"
+        [("bytes", toJson bytes), ("outputs", toJson outputs)]) "outputs" =
+      .ok ((outputs.map Json.str).toArray) := by
+    simp [Native.arrayField, instruction, Json.getObjVal?, Json.mkObj, Json.getArr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+      Lean.ToJson.toJson, Lean.List.toJson, Lean.Array.toJson]
+    rfl
+  simp [Native.outputDefinitionsInInstruction, opcodeOk, outputsOk, Except.toOption]
+
+/-- Emit the two Native limbs of one Bytes32 value. The native validator reads
+both names from this instruction's `outputs` vector. -/
+private def encodeBytes32Fresh (bytes : String) : LowerM (String × String) := do
+  let lowKey : ExpressionKey := ("encode_bytes32", [bytes], some 0)
+  let highKey : ExpressionKey := ("encode_bytes32", [bytes], some 1)
+  let low ← fresh
+  let high ← fresh
+  emit "bytes_into_natives" [("bytes", toJson bytes), ("outputs", toJson [low, high])]
+  modify fun state => {state with expressions :=
+    (lowKey, low) :: (highKey, high) :: state.expressions}
+  pure (low, high)
+
+private theorem encodeBytes32Fresh_preservesOutputCapacityFrame (bytes : String) :
+    PreservesOutputCapacityFrame (encodeBytes32Fresh bytes) := by
+  intro state
+  simp [encodeBytes32Fresh, fresh, emit, StateT.run_bind, StateT.run_get,
+    StateT.run_modify, StateT.run_set, toJson, List.toJson, Array.toJson]
+  let low := "%v" ++ state.next.repr
+  let high := "%v" ++ (state.next + 1).repr
+  let emitted := instruction "bytes_into_natives"
+    [("bytes", Json.str bytes), ("outputs", Json.arr #[Json.str low, Json.str high])]
+  change OutputCapacityFrame state
+    {state with
+      next := state.next + 1 + 1
+      instructions := state.instructions.push emitted
+      expressions := (("encode_bytes32", [bytes], some 0), low) ::
+        (("encode_bytes32", [bytes], some 1), high) :: state.expressions}
+  have emittedCount : Native.outputDefinitionsInInstruction emitted = 2 := by
+    have count := bytesIntoNativesInstruction_outputDefinitions bytes [low, high]
+    simpa [emitted, low, high, toJson, List.toJson, Array.toJson] using count
+  apply OutputCapacityFrame.of_instruction_push emitted
+  · change state.next ≤ state.next + 2
+    omega
+  · rfl
+  · rw [emittedCount]
+    change state.next + 1 + 1 - state.next ≤ 2
+    omega
+
+/-- Emit the one native SHA-256 result before encoding its Bytes32 chunks. -/
+private def lowerPersistentHashFresh (alignment : Json) (operands : List String)
+    (hashKey : ExpressionKey) : LowerM String := do
+  let output ← fresh
+  emit "persistent_hash" [
+    ("alignment", alignment),
+    ("inputs", toJson operands),
+    ("output", toJson output)]
+  modify fun state => {state with expressions := (hashKey, output) :: state.expressions}
+  pure output
+
+private theorem lowerPersistentHashFresh_preservesOutputCapacityFrame
+    (alignment : Json) (operands : List String) (hashKey : ExpressionKey) :
+    PreservesOutputCapacityFrame (lowerPersistentHashFresh alignment operands hashKey) := by
+  intro state
+  simp [lowerPersistentHashFresh, fresh, emit, StateT.run_bind, StateT.run_get,
+    StateT.run_modify, StateT.run_set, toJson, List.toJson, Array.toJson]
+  let output := "%v" ++ state.next.repr
+  let fields := [
+    ("alignment", alignment),
+    ("inputs", toJson operands),
+    ("output", toJson output)]
+  let emitted := instruction "persistent_hash"
+    [("alignment", alignment), ("inputs", Json.arr (operands.map Json.str).toArray),
+      ("output", Json.str output)]
+  change OutputCapacityFrame state
+    {state with
+      next := state.next + 1
+      instructions := state.instructions.push emitted
+      expressions := (hashKey, output) :: state.expressions}
+  have opcodeOk : Native.stringField (instruction "persistent_hash" fields) "op" =
+      .ok "persistent_hash" := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+      Lean.ToJson.toJson]
+    rfl
+  have outputOk : (Native.stringField (instruction "persistent_hash" fields) "output").isOk =
+      true := by
+    simp [fields, Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Lean.ToJson.toJson]
+    rfl
+  have outputCount := instruction_scalarOutputDefinitions "persistent_hash" fields
+    opcodeOk ⟨by decide, by decide, by decide⟩ outputOk
+  have emittedCount : Native.outputDefinitionsInInstruction emitted = 1 := by
+    simpa [emitted, fields, output, toJson, List.toJson, Array.toJson] using outputCount
+  apply OutputCapacityFrame.of_instruction_push emitted
+  · change state.next ≤ state.next + 1
+    omega
+  · rfl
+  · rw [emittedCount]
+    change state.next + 1 - state.next ≤ 1
+    omega
+
+private def encodeBytes32 (bytes : String) : LowerM (String × String) := do
+  let lowKey : ExpressionKey := ("encode_bytes32", [bytes], some 0)
+  let highKey : ExpressionKey := ("encode_bytes32", [bytes], some 1)
+  match ((← get).expressions.lookup lowKey, (← get).expressions.lookup highKey) with
+  | (some low, some high) => pure (low, high)
+  | _ => encodeBytes32Fresh bytes
+
+private theorem encodeBytes32_preservesOutputCapacityFrame (bytes : String) :
+    PreservesOutputCapacityFrame (encodeBytes32 bytes) := by
+  intro state
+  let lowKey : ExpressionKey := ("encode_bytes32", [bytes], some 0)
+  let highKey : ExpressionKey := ("encode_bytes32", [bytes], some 1)
+  cases lowHit : state.expressions.lookup lowKey with
+  | some low =>
+    cases highHit : state.expressions.lookup highKey with
+    | some high =>
+      simp [encodeBytes32, lowKey, highKey, lowHit, highHit,
+        StateT.run_bind, StateT.run_get, StateT.run_pure]
+      exact OutputCapacityFrame.refl state
+    | none =>
+      simpa [encodeBytes32, lowKey, highKey, lowHit, highHit] using
+        (encodeBytes32Fresh_preservesOutputCapacityFrame bytes state)
+  | none =>
+    cases highHit : state.expressions.lookup highKey with
+    | some _ =>
+      simpa [encodeBytes32, lowKey, highKey, lowHit, highHit] using
+        (encodeBytes32Fresh_preservesOutputCapacityFrame bytes state)
+    | none =>
+      simpa [encodeBytes32, lowKey, highKey, lowHit, highHit] using
+        (encodeBytes32Fresh_preservesOutputCapacityFrame bytes state)
+
 /-- Emit/reuse one typed aligned SHA-256 operation and its typed byte-packing outputs.
 The key includes the preimage kind, so identical field strings under different
 FAB alignments never share a digest. The returned chunks use Encode order. -/
@@ -437,38 +695,40 @@ private def lowerPersistentHash (preimageKind : String) (alignment : Json)
   let hashKey : ExpressionKey := ("persistent_hash:" ++ preimageKind, operands, none)
   let hashOutput ← match (← get).expressions.lookup hashKey with
     | some existing => pure existing
-    | none => do
-      let output ← fresh
-      emit "persistent_hash" [
-        ("alignment", alignment),
-        ("inputs", toJson operands),
-        ("output", toJson output)]
-      modify fun state => {state with expressions := (hashKey, output) :: state.expressions}
-      pure output
-  let lowKey : ExpressionKey := ("encode_bytes32", [hashOutput], some 0)
-  let highKey : ExpressionKey := ("encode_bytes32", [hashOutput], some 1)
-  match ((← get).expressions.lookup lowKey, (← get).expressions.lookup highKey) with
-  | (some low, some high) => pure [low, high]
-  | _ => do
-    let low ← fresh
-    let high ← fresh
-    emit "bytes_into_natives" [("bytes", toJson hashOutput), ("outputs", toJson [low, high])]
-    modify fun state => {state with expressions :=
-      (lowKey, low) :: (highKey, high) :: state.expressions}
-    pure [low, high]
+    | none => lowerPersistentHashFresh alignment operands hashKey
+  let chunks ← encodeBytes32 hashOutput
+  pure [chunks.1, chunks.2]
 
-private def encodeBytes32 (bytes : String) : LowerM (String × String) := do
-  let lowKey : ExpressionKey := ("encode_bytes32", [bytes], some 0)
-  let highKey : ExpressionKey := ("encode_bytes32", [bytes], some 1)
-  match ((← get).expressions.lookup lowKey, (← get).expressions.lookup highKey) with
-  | (some low, some high) => pure (low, high)
-  | _ => do
-    let low ← fresh
-    let high ← fresh
-    emit "bytes_into_natives" [("bytes", toJson bytes), ("outputs", toJson [low, high])]
-    modify fun state => {state with expressions :=
-      (lowKey, low) :: (highKey, high) :: state.expressions}
-    pure (low, high)
+private theorem lowerPersistentHash_preservesOutputCapacityFrame (preimageKind : String)
+    (alignment : Json) (operands : List String) :
+    PreservesOutputCapacityFrame (lowerPersistentHash preimageKind alignment operands) := by
+  intro state
+  let hashKey : ExpressionKey := ("persistent_hash:" ++ preimageKind, operands, none)
+  cases hashHit : state.expressions.lookup hashKey with
+  | some hashOutput =>
+    have tailFrame : PreservesOutputCapacityFrame (do
+      let chunks ← encodeBytes32 hashOutput
+      pure [chunks.1, chunks.2]) := by
+      apply bind_preservesOutputCapacityFrame _ _
+        (encodeBytes32_preservesOutputCapacityFrame hashOutput)
+      intro chunks
+      exact pure_preservesOutputCapacityFrame [chunks.1, chunks.2]
+    simpa [lowerPersistentHash, hashKey, hashHit, StateT.run_bind,
+      StateT.run_get, StateT.run_pure] using tailFrame state
+  | none =>
+    have tailFrame : PreservesOutputCapacityFrame (do
+      let hashOutput ← lowerPersistentHashFresh alignment operands hashKey
+      let chunks ← encodeBytes32 hashOutput
+      pure [chunks.1, chunks.2]) := by
+      apply bind_preservesOutputCapacityFrame _ _
+        (lowerPersistentHashFresh_preservesOutputCapacityFrame alignment operands hashKey)
+      intro hashOutput
+      apply bind_preservesOutputCapacityFrame _ _
+        (encodeBytes32_preservesOutputCapacityFrame hashOutput)
+      intro chunks
+      exact pure_preservesOutputCapacityFrame [chunks.1, chunks.2]
+    simpa [lowerPersistentHash, hashKey, hashHit, StateT.run_bind,
+      StateT.run_get, StateT.run_pure] using tailFrame state
 
 private def encodeByte (byte : String) : LowerM String := do
   let key : ExpressionKey := ("encode_byte", [byte], none)
