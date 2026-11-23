@@ -215,6 +215,7 @@ jobs:
           lake env lean tests/NativeScalarEitherReturns.lean
           lake env lean tests/NativeMapDefault.lean
           lake env lean tests/RecordMapDefaults.lean
+          lake env lean tests/NestedRecordMapDefaults.lean
           lake env lean tests/NativeMapRemove.lean
           lake env lean tests/NativeMapReset.lean
           lake env lean tests/OptionalListHead.lean
