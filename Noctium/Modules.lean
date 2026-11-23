@@ -337,8 +337,7 @@ private partial def consumeTypeNodes (span : SourceSpan) (remaining : Nat)
   | .scalar (.bytes _) => fail span "module byte types require a composite bytes layout"
   | .scalar .opaqueBytes => fail span "OpaqueBytes are not supported by module type parameters"
   | .scalar .opaqueString => fail span "OpaqueString is not supported by module type parameters"
-  | .scalar .jubjubScalar | .scalar .jubjubPoint =>
-    fail span "Jubjub types are not supported by module type parameters"
+  | .scalar .jubjubScalar | .scalar .jubjubPoint => pure remaining
   | .scalar (.foreign _) => fail span "foreign types are not supported by module type parameters"
   | .scalar .native | .scalar .bool | .unit => pure remaining
 
@@ -1063,12 +1062,12 @@ private partial def genericTypeOfConcrete : Types.CompositeType → Except Strin
   | .unit => pure .unit
   | .scalar .native => pure .native
   | .scalar .bool => pure .bool
+  | .scalar .jubjubScalar => pure .jubjubScalar
+  | .scalar .jubjubPoint => pure .jubjubPoint
   | .scalar (.uint maximum) => pure (.uint (.literal maximum))
   | .scalar (.bytes _) => throw "scalar byte types cannot enter module specialization"
   | .scalar .opaqueBytes => throw "OpaqueBytes cannot enter module specialization"
   | .scalar .opaqueString => throw "OpaqueString cannot enter module specialization"
-  | .scalar .jubjubScalar | .scalar .jubjubPoint =>
-    throw "Jubjub types are not supported by module specialization"
   | .scalar (.foreign kind) => pure (.foreign kind)
   | .tuple items => .tuple <$> items.mapM genericTypeOfConcrete
   | .structure id => pure (.structure id [])

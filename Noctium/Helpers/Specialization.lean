@@ -30,6 +30,8 @@ mutual
     | unit
     | native
     | bool
+    | jubjubScalar
+    | jubjubPoint
     | uint (maximum : Natural)
     | parameter (name : String)
     | tuple (items : List GenericType)
@@ -392,6 +394,8 @@ mutual
         | .unit => pure .unit
         | .native => pure (.scalar .native)
         | .bool => pure (.scalar .bool)
+        | .jubjubScalar => pure (.scalar .jubjubScalar)
+        | .jubjubPoint => pure (.scalar .jubjubPoint)
         | .foreign kind => pure (.scalar (.foreign kind))
         | .uint maximum => do
           let maximum ← evalNatural limits span naturals maximum
@@ -565,7 +569,8 @@ private def sourceChildren (limits : Limits) (span : SourceSpan) :
   | .argument (.type value) => pure [.typeExpr value]
   | .argument (.natural value) => pure [.natural value]
   | .typeExpr type => match type with
-    | .unit | .native | .bool | .parameter _ | .enumeration _ | .foreign _ => pure []
+    | .unit | .native | .bool | .jubjubScalar | .jubjubPoint | .parameter _
+    | .enumeration _ | .foreign _ => pure []
     | .uint maximum | .bytes maximum => pure [.natural maximum]
     | .tuple items => do
       if items.length > limits.maxSourceNodes then resource span "source nodes"
@@ -1257,8 +1262,7 @@ private partial def validateSignatureType (fuel : Nat) (value : SignatureType) :
   | 0 => throw "signature type nesting exceeds the parser limit"
   | fuel + 1 => match value with
     | .unit | .native | .bool => pure ()
-    | .jubjubScalar | .jubjubPoint =>
-      throw "Jubjub helper signatures are not supported by specialization"
+    | .jubjubScalar | .jubjubPoint => pure ()
     | .opaqueBytes =>
       throw "OpaqueBytes helper signatures are not supported by specialization"
     | .opaqueString =>
