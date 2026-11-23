@@ -199,11 +199,15 @@ inductive Op where
   | claimContractCall (address entryPointHash : Expr (.bytes 32)) (commitment : Scalar)
   | receiveShieldedToMap (slot : Nat) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
-  | insertShieldedCoinSet (slot : Nat) (nonce color : Expr (.bytes 32))
-      (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
-  | insertShieldedCoinSetTo (slot : Nat) (nonce color : Expr (.bytes 32))
+  | insertShieldedCoinMap (slot : Nat) (key nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient commitment : Expr (.bytes 32))
+  | insertShieldedCoinSet (slot : Nat) (nonce color : Expr (.bytes 32))
+      (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
+      (keys : List Aligned)
+  | insertShieldedCoinSetTo (slot : Nat) (nonce color : Expr (.bytes 32))
+      (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
+      (recipient commitment : Expr (.bytes 32)) (keys : List Aligned)
   | writeShieldedCoinCell (slot : Nat) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32))
   | writeShieldedCoinCellTo (slot : Nat) (nonce color : Expr (.bytes 32))
@@ -392,10 +396,12 @@ private def shieldedCoinCellFieldGroups (slot : Nat) (nonce color : Expr (.bytes
   , [.native 0x91]
   ]
 
-private def shieldedCoinSetFieldGroups (slot : Nat) (nonce color : Expr (.bytes 32))
-    (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32)) : List (List Scalar) :=
-  [ [.native 0x70, .native 1, .native 1, .native slot]
-  , [.native 0x34]
+private def shieldedCoinSetFieldGroups (slot : Nat) (keys : List Aligned)
+    (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
+    (commitment : Expr (.bytes 32)) : List (List Scalar) :=
+  [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
+      keys.flatMap Aligned.fields
+  , [.native (if keys.isEmpty then 0x34 else 0x36)]
   , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
   , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
   , shieldedCoinPushFields nonce color amount
@@ -403,20 +409,23 @@ private def shieldedCoinSetFieldGroups (slot : Nat) (nonce color : Expr (.bytes 
   , [.native 0x17, .native 91]
   , [.native 0x11, .native 0]
   , [.native 0x91]
-  , [.native 0xa1]
+  , [.native (0xa1 + keys.length)]
   ]
+
+private def shieldedCoinMapInsertFieldGroups (slot : Nat) (key nonce color : Expr (.bytes 32))
+    (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32)) : List (List Scalar) :=
+  [[.native 0x70, .native 1, .native 1, .native slot],
+    [.native 0x10, .native 1] ++ (Aligned.bytes32 key).fields,
+    [.native 0x35],
+    [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields,
+    [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)],
+    shieldedCoinPushFields nonce color amount,
+    [.native 0x40], [.native 0x17, .native 91], [.native 0x91], [.native 0xa1]]
 
 private def receiveShieldedFieldGroups (slot : Nat) (nonce color : Expr (.bytes 32))
     (amount : Expr (.uint (2 ^ 128 - 1))) (commitment : Expr (.bytes 32)) : List (List Scalar) :=
-  let coin := shieldedCoinPushFields nonce color amount
-  let insert :=
-    [[.native 0x70, .native 1, .native 1, .native slot],
-      [.native 0x10, .native 1] ++ (Aligned.bytes32 nonce).fields,
-      [.native 0x35],
-      [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields,
-      [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)],
-      coin, [.native 0x40], [.native 0x17, .native 91], [.native 0x91], [.native 0xa1]]
-  shieldedClaimFieldGroups 1 commitment ++ insert
+  shieldedClaimFieldGroups 1 commitment ++
+    shieldedCoinMapInsertFieldGroups slot nonce nonce color amount commitment
 
 private def listIndexFields (index : Nat) : List Scalar :=
   [.native 0x50, .native 1, .native 1, .native index]
@@ -810,16 +819,18 @@ def Op.fields : Op → List Scalar
         ledgerFieldSequence values ++ [.native 0x19, .native (0x91 + keys.length)]
   | .claimContractCall address entryPointHash commitment =>
       (claimContractCallFieldGroups address entryPointHash commitment).flatten
-  | .insertShieldedCoinSet slot nonce color amount commitment =>
-      (shieldedCoinSetFieldGroups slot nonce color amount commitment).flatten
-  | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment =>
-      (shieldedCoinSetFieldGroups slot nonce color amount commitment).flatten
+  | .insertShieldedCoinSet slot nonce color amount commitment keys =>
+      (shieldedCoinSetFieldGroups slot keys nonce color amount commitment).flatten
+  | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment keys =>
+      (shieldedCoinSetFieldGroups slot keys nonce color amount commitment).flatten
   | .writeShieldedCoinCell slot nonce color amount commitment =>
       (shieldedCoinCellFieldGroups slot nonce color amount commitment).flatten
   | .writeShieldedCoinCellTo slot nonce color amount _isContract _recipient commitment =>
       (shieldedCoinCellFieldGroups slot nonce color amount commitment).flatten
   | .receiveShieldedToMap slot nonce color amount commitment =>
       (receiveShieldedFieldGroups slot nonce color amount commitment).flatten
+  | .insertShieldedCoinMap slot key nonce color amount _ _ commitment =>
+      (shieldedCoinMapInsertFieldGroups slot key nonce color amount commitment).flatten
   | .spendShieldedFromMap _ _ _ _ nullifier output =>
       (shieldedClaimFieldGroups 0 nullifier ++ shieldedClaimFieldGroups 2 output).flatten
   | .mergeShieldedFromMap _ _ _ _ _ _ _ _ _ nullifierA nullifierB output staged =>
@@ -940,16 +951,18 @@ def Op.fieldGroups : Op → List (List Scalar)
       ]
   | .claimContractCall address entryPointHash commitment =>
       claimContractCallFieldGroups address entryPointHash commitment
-  | .insertShieldedCoinSet slot nonce color amount commitment =>
-      shieldedCoinSetFieldGroups slot nonce color amount commitment
-  | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment =>
-      shieldedCoinSetFieldGroups slot nonce color amount commitment
+  | .insertShieldedCoinSet slot nonce color amount commitment keys =>
+      shieldedCoinSetFieldGroups slot keys nonce color amount commitment
+  | .insertShieldedCoinSetTo slot nonce color amount _isContract _recipient commitment keys =>
+      shieldedCoinSetFieldGroups slot keys nonce color amount commitment
   | .writeShieldedCoinCell slot nonce color amount commitment =>
       shieldedCoinCellFieldGroups slot nonce color amount commitment
   | .writeShieldedCoinCellTo slot nonce color amount _isContract _recipient commitment =>
       shieldedCoinCellFieldGroups slot nonce color amount commitment
   | .receiveShieldedToMap slot nonce color amount commitment =>
       receiveShieldedFieldGroups slot nonce color amount commitment
+  | .insertShieldedCoinMap slot key nonce color amount _ _ commitment =>
+      shieldedCoinMapInsertFieldGroups slot key nonce color amount commitment
   | .spendShieldedFromMap _ _ _ _ nullifier output =>
       shieldedClaimFieldGroups 0 nullifier ++ shieldedClaimFieldGroups 2 output
   | .mergeShieldedFromMap _ _ _ _ _ _ _ _ _ nullifierA nullifierB output staged =>
@@ -1461,31 +1474,78 @@ private def resolveListState (state : List StateDecl) (name : String)
   schema.listPath keys
 
 private def pushFrontCoinOp (state : List StateDecl) (name : String)
+    (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (selfAddress : Expr (.bytes 32)) : Except String Op := do
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
-  let (environment, recordType, fields) ← resolveListState state name []
+  let (environment, recordType, fields) ← resolveListState state name keys
   let expectedFields ← LedgerValueType.shieldedCoinRecordFields environment recordType
   unless fields == expectedFields do
     throw "qualified shielded coin List must use the exact shielded coin record"
   let schema ← listElementOperationSchema environment recordType
+  let keys ← nativePathKeys keys
   let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
-  pure (.listPushFrontCoin slot [] schema nonce color amount commitment)
+  pure (.listPushFrontCoin slot keys schema nonce color amount commitment)
 
 private def pushFrontCoinToOp (state : List StateDecl) (name : String)
+    (keys : List PathKey)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (isContract : Expr .bool) (recipient : Expr (.bytes 32)) : Except String Op := do
   let slot ← stateSlot state name
   if slot > 255 then throw "qualified shielded coin List index exceeds native u8 range"
-  let (environment, recordType, fields) ← resolveListState state name []
+  let (environment, recordType, fields) ← resolveListState state name keys
   let expectedFields ← LedgerValueType.shieldedCoinRecordFields environment recordType
   unless fields == expectedFields do
     throw "qualified shielded coin List must use the exact shielded coin record"
   let schema ← listElementOperationSchema environment recordType
+  let keys ← nativePathKeys keys
   let commitment := shieldedCoinDigestForRecipient
     "midnight:zswap-cc[v1]" nonce color amount isContract recipient
-  pure (.listPushFrontCoinTo slot [] schema nonce color amount isContract recipient commitment)
+  pure (.listPushFrontCoinTo slot keys schema nonce color amount isContract recipient commitment)
+
+private def insertShieldedCoinMapOp (state : List StateDecl) (name : String)
+    (key nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
+    (isContract : Expr .bool) (recipient : Expr (.bytes 32)) : Except String Op := do
+  let slot ← stateSlot state name
+  if slot > 255 then throw "shielded coin map index exceeds native u8 range"
+  let .map (.bytes 32) (.composite environment recordType) ← resolveTreeState state name []
+    | throw "path does not select a Bytes32-keyed qualified coin Map"
+  discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
+  let commitment := shieldedCoinDigestForRecipient
+    "midnight:zswap-cc[v1]" nonce color amount isContract recipient
+  pure (.insertShieldedCoinMap slot key nonce color amount isContract recipient commitment)
+
+private def shieldedCoinSetPath (state : List StateDecl) (name : String)
+    (keys : List PathKey) : Except String (Nat × List Aligned) := do
+  let slot ← stateSlot state name
+  match keys with
+  | [] => pure ()
+  | [key] => unless key.ty == .bytes 32 do
+      throw "qualified coin Set parent key must be Bytes32"
+  | _ => throw "qualified coin Set supports only one Bytes32 parent key"
+  let .shieldedCoinSet environment recordType ← resolveTreeState state name keys
+    | throw "path does not select a qualified coin Set"
+  discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
+  pure (slot, ← nativePathKeys keys)
+
+private def insertShieldedCoinSetOp (state : List StateDecl) (name : String)
+    (keys : List PathKey) (nonce color : Expr (.bytes 32))
+    (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32)) : Except String Op := do
+  let (slot, keys) ← shieldedCoinSetPath state name keys
+  if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
+  let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
+  pure (.insertShieldedCoinSet slot nonce color amount commitment keys)
+
+private def insertShieldedCoinSetToOp (state : List StateDecl) (name : String)
+    (keys : List PathKey) (nonce color : Expr (.bytes 32))
+    (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
+    (recipient : Expr (.bytes 32)) : Except String Op := do
+  let (slot, keys) ← shieldedCoinSetPath state name keys
+  if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
+  let commitment := shieldedCoinDigestForRecipient
+    "midnight:zswap-cc[v1]" nonce color amount isContract recipient
+  pure (.insertShieldedCoinSetTo slot nonce color amount isContract recipient commitment keys)
 
 private def mapSizeOp (state : List StateDecl) (name destination : String)
     (keys : List PathKey) : Except String Op := do
@@ -1831,19 +1891,16 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
     pure {plan with operations := plan.operations ++ [
       .receiveShieldedToMap slot nonce color amount commitment]}
-  | .insertShieldedCoinSet stateName nonce color amount selfAddress => do
-    let slot ← stateSlot state stateName
-    if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
-    let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
-    pure {plan with operations := plan.operations ++ [
-      .insertShieldedCoinSet slot nonce color amount commitment]}
-  | .insertShieldedCoinSetTo stateName nonce color amount isContract recipient => do
-    let slot ← stateSlot state stateName
-    if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
-    let commitment := shieldedCoinDigestForRecipient
-      "midnight:zswap-cc[v1]" nonce color amount isContract recipient
-    pure {plan with operations := plan.operations ++ [
-      .insertShieldedCoinSetTo slot nonce color amount isContract recipient commitment]}
+  | .insertShieldedCoinMap stateName key nonce color amount isContract recipient => do
+    let operation ← insertShieldedCoinMapOp state stateName key nonce color amount isContract recipient
+    pure {plan with operations := plan.operations ++ [operation]}
+  | .insertShieldedCoinSet stateName nonce color amount selfAddress keys => do
+    let operation ← insertShieldedCoinSetOp state stateName keys nonce color amount selfAddress
+    pure {plan with operations := plan.operations ++ [operation]}
+  | .insertShieldedCoinSetTo stateName nonce color amount isContract recipient keys => do
+    let operation ← insertShieldedCoinSetToOp state stateName keys nonce color amount
+      isContract recipient
+    pure {plan with operations := plan.operations ++ [operation]}
   | .writeShieldedCoinCell stateName nonce color amount selfAddress => do
     let slot ← stateSlot state stateName
     if slot > 255 then throw "shielded coin Cell index exceeds native u8 range"
@@ -1857,11 +1914,11 @@ def appendEffect (state : List StateDecl) (effect : Effect)
       "midnight:zswap-cc[v1]" nonce color amount isContract recipient
     pure {plan with operations := plan.operations ++ [
       .writeShieldedCoinCellTo slot nonce color amount isContract recipient commitment]}
-  | .pushFrontCoin stateName nonce color amount selfAddress => do
-    let operation ← pushFrontCoinOp state stateName nonce color amount selfAddress
+  | .pushFrontCoin stateName nonce color amount selfAddress keys => do
+    let operation ← pushFrontCoinOp state stateName keys nonce color amount selfAddress
     pure {plan with operations := plan.operations ++ [operation]}
-  | .pushFrontCoinTo stateName nonce color amount isContract recipient => do
-    let operation ← pushFrontCoinToOp state stateName nonce color amount isContract recipient
+  | .pushFrontCoinTo stateName nonce color amount isContract recipient keys => do
+    let operation ← pushFrontCoinToOp state stateName keys nonce color amount isContract recipient
     pure {plan with operations := plan.operations ++ [operation]}
   | .spendShieldedFromMap _ nonce color amount recipient selfAddress =>
     pure {plan with operations := plan.operations ++ [
@@ -2619,19 +2676,16 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
     let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
     plan := {plan with operations := plan.operations ++ [
       .receiveShieldedToMap slot nonce color amount commitment]}
-  | .insertShieldedCoinSet stateName nonce color amount selfAddress => do
-    let slot ← stateSlot state stateName
-    if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
-    let commitment := shieldedCoinDigest "midnight:zswap-cc[v1]" 0 nonce color amount selfAddress
-    plan := {plan with operations := plan.operations ++ [
-      .insertShieldedCoinSet slot nonce color amount commitment]}
-  | .insertShieldedCoinSetTo stateName nonce color amount isContract recipient => do
-    let slot ← stateSlot state stateName
-    if slot > 255 then throw "qualified shielded coin Set index exceeds native u8 range"
-    let commitment := shieldedCoinDigestForRecipient
-      "midnight:zswap-cc[v1]" nonce color amount isContract recipient
-    plan := {plan with operations := plan.operations ++ [
-      .insertShieldedCoinSetTo slot nonce color amount isContract recipient commitment]}
+  | .insertShieldedCoinMap stateName key nonce color amount isContract recipient => do
+    let operation ← insertShieldedCoinMapOp state stateName key nonce color amount isContract recipient
+    plan := {plan with operations := plan.operations ++ [operation]}
+  | .insertShieldedCoinSet stateName nonce color amount selfAddress keys => do
+    let operation ← insertShieldedCoinSetOp state stateName keys nonce color amount selfAddress
+    plan := {plan with operations := plan.operations ++ [operation]}
+  | .insertShieldedCoinSetTo stateName nonce color amount isContract recipient keys => do
+    let operation ← insertShieldedCoinSetToOp state stateName keys nonce color amount
+      isContract recipient
+    plan := {plan with operations := plan.operations ++ [operation]}
   | .writeShieldedCoinCell stateName nonce color amount selfAddress => do
     let slot ← stateSlot state stateName
     if slot > 255 then throw "shielded coin Cell index exceeds native u8 range"
@@ -2645,11 +2699,11 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
       "midnight:zswap-cc[v1]" nonce color amount isContract recipient
     plan := {plan with operations := plan.operations ++ [
       .writeShieldedCoinCellTo slot nonce color amount isContract recipient commitment]}
-  | .pushFrontCoin stateName nonce color amount selfAddress => do
-    let operation ← pushFrontCoinOp state stateName nonce color amount selfAddress
+  | .pushFrontCoin stateName nonce color amount selfAddress keys => do
+    let operation ← pushFrontCoinOp state stateName keys nonce color amount selfAddress
     plan := {plan with operations := plan.operations ++ [operation]}
-  | .pushFrontCoinTo stateName nonce color amount isContract recipient => do
-    let operation ← pushFrontCoinToOp state stateName nonce color amount isContract recipient
+  | .pushFrontCoinTo stateName nonce color amount isContract recipient keys => do
+    let operation ← pushFrontCoinToOp state stateName keys nonce color amount isContract recipient
     plan := {plan with operations := plan.operations ++ [operation]}
   | .spendShieldedFromMap _ nonce color amount recipient selfAddress =>
     plan := {plan with operations := plan.operations ++ [
@@ -3176,6 +3230,7 @@ def Op.toJson (ctx : EvalContext) (env : EvalEnv) : Op → Except String Lean.Js
         [("values", Lean.toJson values)]))])
   | .claimContractCall .. => throw "claimContractCall uses its dedicated native-plan operation JSON"
   | .receiveShieldedToMap .. => throw "shielded coin receive uses its dedicated native-plan operation JSON"
+  | .insertShieldedCoinMap .. => throw "qualified shielded coin Map insertion uses its dedicated native-plan operation JSON"
   | .insertShieldedCoinSet .. => throw "qualified shielded coin Set insertion uses its dedicated native-plan operation JSON"
   | .insertShieldedCoinSetTo .. => throw "qualified shielded coin Set recipient insertion uses its dedicated native-plan operation JSON"
   | .writeShieldedCoinCell .. => throw "shielded coin Cell write uses its dedicated native-plan operation JSON"

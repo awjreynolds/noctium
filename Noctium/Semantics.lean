@@ -1413,9 +1413,7 @@ def runEffectWithEnv (ctx : EvalContext) (effect : Effect) (env : EvalEnv)
       throw "reference evaluator does not execute cross-contract claims"
     | .receiveShieldedToMap .. =>
       throw "reference evaluator cannot determine the native shielded receive index"
-    | .insertShieldedCoinSet .. =>
-      throw "reference evaluator cannot determine the booked shielded coin index"
-    | .insertShieldedCoinSetTo .. =>
+    | .insertShieldedCoinMap .. | .insertShieldedCoinSet .. | .insertShieldedCoinSetTo .. =>
       throw "reference evaluator cannot determine the booked shielded coin index"
     | .writeShieldedCoinCell .. =>
       throw "reference evaluator cannot determine the booked shielded coin index"
@@ -1841,9 +1839,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
           throw "reference evaluator does not execute cross-contract claims"
         | .receiveShieldedToMap .. =>
           throw "reference evaluator cannot determine the native shielded receive index"
-        | .insertShieldedCoinSet .. =>
-          throw "reference evaluator cannot determine the booked shielded coin index"
-        | .insertShieldedCoinSetTo .. =>
+        | .insertShieldedCoinMap .. | .insertShieldedCoinSet .. | .insertShieldedCoinSetTo .. =>
           throw "reference evaluator cannot determine the booked shielded coin index"
         | .writeShieldedCoinCell .. =>
           throw "reference evaluator cannot determine the booked shielded coin index"
@@ -2124,7 +2120,8 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .claimUnshieldedCoinSpend .. | .emitEvent .. |
             .insertPath .. | .writePath .. |
             .writeCompositePath .. | .emptyMapPath .. | .listPushFront .. | .pushFrontCoin .. |
-            .insertShieldedCoinSetTo .. | .writeShieldedCoinCellTo .. | .pushFrontCoinTo .. |
+            .insertShieldedCoinMap .. | .insertShieldedCoinSetTo .. | .writeShieldedCoinCellTo .. |
+            .pushFrontCoinTo .. |
             .listPopFront .. | .listReset .. | .setInsert .. | .setInsertRecord .. |
             .removeRecordMap .. | .removeRecordSet .. | .removePath .. => pure ()
         | .readPath _ destination _ ty =>

@@ -122,7 +122,7 @@ private def qualifiedCoinRecipientGuarded : Entrypoint :=
   | .ok plan =>
       match plan.operations.filterMap fun operation =>
           match operation with
-          | .insertShieldedCoinSetTo slot _ _ _ _ _ _ =>
+          | .insertShieldedCoinSetTo slot _ _ _ _ _ _ [] =>
               some (slot, operation.fieldGroups.map List.length)
           | _ => none with
       | [(1, widths)] => widths == [4, 1, 6, 5, 11, 1, 2, 2, 1, 1]

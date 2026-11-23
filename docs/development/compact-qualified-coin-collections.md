@@ -49,6 +49,62 @@ checks all six emitted relation cases at index `41` and rejects a missing
 booking, a different address, or the same bytes under the other recipient tag.
 The native check uses a query context with prebooked outputs.
 
+The nested Set fixtures initialize two Bytes32 owners and insert the same
+three coin values in owner order A, B, A. Compact and Noctium retain 5 and 7
+under A and 11 under B. Each retains the index assigned by its query context.
+The selected owner must exist. An absent owner, missing booking or wrong
+recipient booking rejects without a Set write.
+[Compact case](../../tests/compact/qualified-coin-collections.mjs),
+[Noctium source](../../tests/NestedQualifiedCoinSet.lean), and
+[native query-context check](../../runtime/tests/qualified_coin_set.rs).
+
+The nested storage suffix uses index opcode `0x71` with the slot and owner
+key, context duplicate `0x36`, and two-level cached reinsertion `0xa2`.
+The native checker accepts both implicit and explicit contract recipient
+paths. The root Set and root explicit-recipient artifacts match their previous
+bytes. The nested Set checks use the query context and emitted relation.
+
+## Booked coin Map
+
+`insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.
+The key and nonce are independent. The recipient tag and address select the
+commitment whose index the ledger assigned. Compact and Noctium accept
+replacement at the same key. A missing or wrong-recipient booking rejects,
+and the insertion adds no receive claim. The Noctium query-context test
+checks both wallet and contract recipients. The emitted wallet case passed
+the native relation check. The pinned ZKIR tool measured K13 and 6,856 rows.
+[Lean fixture](../../tests/BookedCoinMap.lean) ·
+[Compact fixture and runner](../../tests/compact/qualified-coin-collections.mjs)
+
+This fixture covers a root Map in a native query context. Nested paths and
+finalized independent-key calls remain open.
+
+## Funded nested Set and List
+
+The funded fixture initializes two Bytes32 owners, then self-mints five units
+and writes the qualified coin to both collections for the selected owner.
+Ledger 9.1.0.1 finalized the call at block 68,113. The selected Set member and
+List head match the Zswap output at index 36. The other owner's Set and List
+stayed empty. The harness also rejects missing and mismatched offers before
+submission. [Lean fixture](../../tests/FundedNestedQualifiedCoinCollections.lean)
+· [Finalized receipt](nested-qualified-coin-collections-localnet-receipt.json)
+
+Compile the fixture for the pinned ZKIR 3.2.1 profile and assemble both
+entrypoint bundles. The initializer measured 250 rows at K9. The funded
+`tip` measured 18,616 rows at K15. The localnet test uses the manifest pins
+and a parameter cache with the pinned DUST and Zswap output material.
+[Bundle setup](portable-artifacts.md) · [Localnet setup](../../scripts/localnet/README.md)
+
+```sh
+NOCTIUM_RECEIVE_NODE=http://127.0.0.1:19944 \
+NOCTIUM_RECEIVE_PARAMETER_CACHE=/path/to/verified/parameter-cache \
+NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_BUNDLES=/path/to/bundle-parent \
+NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS='{"initializeOwners":"INITIALIZER_SHA256","tip":"TIP_SHA256"}' \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --lib \
+  --no-default-features --features zkir-321,localnet \
+  localnet::shielded_receive::tests::funded_shielded_receive_localnet -- --exact --ignored --nocapture
+```
+
 The [pinned VM opcode source](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-vm/src/ops.rs)
 defines opcode names and immediate encoding. The pinned runtime exports the
 corresponding `Cell_write_coin!`, `Set_insert_coin!` and `List_push_front_coin!`

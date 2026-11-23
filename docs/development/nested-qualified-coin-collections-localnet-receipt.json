@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "scope": "One development Ledger 9 self-mint with a funded write to one owner-keyed qualified coin Set and List",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "ledger": "9.1.0.1",
+  "zkir": "3.2.1",
+  "compilerRevision": "1e583e0087467e385567e44e40db471ac51bfbf6",
+  "source": {
+    "path": "tests/FundedNestedQualifiedCoinCollections.lean",
+    "sha256": "054df6b56cdcb18abc2b590ff43b605bd6951ed45b07073832859f3b8b19a0af"
+  },
+  "artifacts": {
+    "initializeOwners": {
+      "k": 9,
+      "rows": 250,
+      "manifestSha256": "3268def1d132f4746148a96baba7bf1bd9dfbdc45f47069c5d9f271587ee3fea",
+      "circuitSha256": "66824bdab5ff0a12500a799e44614afb90bd237b6ea59a5ed1cd8f8c686115c9",
+      "impactPlanSha256": "194d3a281828d17a8bf3208c2ebed8bed3e5520ad9ec3f5d5197e3d8f3b78616",
+      "verifierKeySha256": "7498edcb34bac6fe43314a4bcf98aada6e9a19bc69beda2c22fb9b0245811c67",
+      "proverKeySha256": "075f476611c8031182b92f63e88b498f32f1b61b9a0164473ff5c8df75da2d7d"
+    },
+    "tip": {
+      "k": 15,
+      "rows": 18616,
+      "manifestSha256": "dfd791219b0ec6137b5f6c3b6255f457f50c30c6d73a8453d6decb298d0e85cb",
+      "circuitSha256": "8a562aeb087938c010c763f11598d2fc728040579b38281729702384b13e3f49",
+      "impactPlanSha256": "6cc7c7c0da14c52da3e97053016cb1bdb29d58755e7911ec22ef55969598993a",
+      "verifierKeySha256": "e04ba83b0482a34a5dde90a61f6e37445d7f2719858cdd356f4b16e65b4a29b0",
+      "proverKeySha256": "446f1b5062f3844f3f64ab7654cc14b5bf5ea0e15bdc3f0962f7a3dee2ced831"
+    }
+  },
+  "ledgerParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+  "nativeCliBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "srsSha256": {
+    "k9": "b9009f1098bcefffec3c461ab3a5e3a17f7e5599f0f08c70fcdc55a89227bcbd",
+    "k15": "724c7c3d779148bb113c7ee9c034b2f27db16e6bdf315fde90105a9bad00b1de"
+  },
+  "deployment": {
+    "height": 68106,
+    "blockHash": "f9524095bd83114e0f317e02c3ebe85b101e02865ca4c74791ee011216e37448"
+  },
+  "initialization": {
+    "bothOwnersInitialized": true,
+    "height": 68109,
+    "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+    "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+    "stateSha256": "6f19111a18c1ae3c4a633088746c1a9c376735289a1047bd0eeb29bb71efed41",
+    "transactionId": "591deb56700c4ed8fef4b79d04c6a04ca018758ebac5fedd32f000be385325bf",
+    "blockHash": "719aab17ad223d907d5edc8626e679205359c16cb74da44cceb4d63d4d7e7657"
+  },
+  "call": {
+    "callHeight": 68113,
+    "callTransaction": "8fd673962180102313c18c02aee890c89ad6e2fbfea44912d849d14a0c184ba5",
+    "color": "a21d228c1700da9ef5fd5eb2c3b359431d5ca85025565e6c9810e1e096c2b8d8",
+    "commitment": "79c695db7ac82439f550c8295e018a52368f39f5e916b228c7ea4dd6f7f2fa62",
+    "contractAddress": "e0e89a4812c89a566a01d86a5151d77187167b2fa054902b24f97c978a7a9a0a",
+    "finalizedBlockHash": "fa6eba1abd62439e7e117be6c5d52f0555d89d1c5f18b7882d02be0dd02bcad6",
+    "k": 15,
+    "mapCoinMatchesFinalizedOutput": true,
+    "mtIndex": 36,
+    "nestedListHeadMatchesFinalizedOutput": true,
+    "nestedSetMatchesFinalizedOutput": true,
+    "nonce": "5265cc1b1b6d44a6e6cf2ede5ad4d131881d2cc6d2a547cd88d39b4e15322cbc",
+    "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+    "otherOwnerListEmpty": true,
+    "otherOwnerSetEmpty": true,
+    "rejected": [
+      "missingOffer",
+      "mismatchedOffer"
+    ],
+    "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+    "stateSha256": "236ffe01dafc30092debdb712540231a6fe6dd0c1ea3cedc2d994f6008c0b47c",
+    "value": "5"
+  },
+  "test": {
+    "name": "localnet::shielded_receive::tests::funded_shielded_receive_localnet",
+    "sourcePath": "runtime/src/localnet/shielded_receive.rs",
+    "sourceSha256": "5b0ef061187457f59b3a2d2434f92697e72b53bc9b67e42632b85d7ac795f230",
+    "binarySha256": "54e071d7bc7a062ad4c88b9f3ce4dc8cbb1421a155c63c2f59c75a3ca387d873",
+    "result": "passed",
+    "durationSeconds": 164.55
+  }
+}

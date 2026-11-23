@@ -37,7 +37,7 @@ private def qualifiedCoinSetEntry : Entrypoint :=
   qualifiedCoinSetEntry.effectGuards.all Option.isNone
 #guard match qualifiedCoinSetEntry.effects with
   | [.readContractAddress addressName,
-      .insertShieldedCoinSet "coinSet" _ _ _ (.ref selfAddressName)] =>
+      .insertShieldedCoinSet "coinSet" _ _ _ (.ref selfAddressName) []] =>
       addressName == "noctium_coin_set_address_0" && addressName == selfAddressName
   | _ => Bool.false
 #guard (Disclosure.entrypoint qualifiedCoinSetEntry).isOk
