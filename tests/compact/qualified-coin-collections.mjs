@@ -113,4 +113,45 @@ assert.deepEqual(nestedLists(), [
   [{ ...thirdCoin, mt_index: 0n }],
 ]);
 
+const self = Uint8Array.from(Buffer.from(own, 'hex'));
+let nestedSetState = currentContractState.data;
+const missingOwner = contextFor('putInNestedSet', nestedSetState);
+await assert.rejects(
+  contract.circuits.putInNestedSet(missingOwner, owners[0], coin, true, self),
+  /invalid operation for type: attempted to ins/,
+);
+assert.equal(ledger(missingOwner.callContext.currentQueryContext.state).coinSets.member(owners[0]), false);
+for (const owner of owners) {
+  const { context } = await contract.circuits.initializeSetOwner(
+    contextFor('initializeSetOwner', nestedSetState), owner,
+  );
+  nestedSetState = context.callContext.currentQueryContext.state;
+}
+for (const [owner, entry] of [[owners[0], coin], [owners[1], thirdCoin], [owners[0], secondCoin]]) {
+  const { context } = await contract.circuits.putInNestedSet(
+    contextFor('putInNestedSet', nestedSetState), owner, entry, true, self,
+  );
+  assert.equal(context.callContext.currentQueryContext.effects.claimedShieldedReceives.length, 1);
+  nestedSetState = context.callContext.currentQueryContext.state;
+}
+const nestedMembers = state => owners.map(owner =>
+  [...ledger(state).coinSets.lookup(owner)].sort(compareQualified));
+const expectedSets = [[qualifiedFirst, qualifiedSecond], [{ ...thirdCoin, mt_index: 0n }]];
+assert.deepEqual(nestedMembers(nestedSetState), expectedSets);
+for (const [book, recipient] of [[false, self], [true, new Uint8Array(32).fill(10)]]) {
+  const context = contextFor('putInNestedSet', nestedSetState);
+  await assert.rejects(
+    contract.circuits.putInNestedSet(context, owners[0], secondCoin, book, recipient),
+    /Coin commitment not found/,
+  );
+  assert.deepEqual(nestedMembers(context.callContext.currentQueryContext.state), expectedSets);
+}
+const nestedRelation = JSON.parse(await readFile(
+  new URL('./compact/zkir/putInNestedSet.zkir', import.meta.url), 'utf8',
+));
+const storage = nestedRelation.instructions.filter(({ op }) => op === 'impact').slice(-10);
+assert.deepEqual(storage[0].inputs.slice(0, 6), ['0x71', '0x01', '0x01', '0x04', '0x01', '0x20']);
+assert.deepEqual(storage[1].inputs, ['0x36']);
+assert.deepEqual(storage.at(-1).inputs, ['0xa2']);
+
 console.log(JSON.stringify(receipt, null, 2));

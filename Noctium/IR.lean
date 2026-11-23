@@ -766,7 +766,11 @@ def StateKind.validateCollectionPath (kind : StateKind) (keys : List PathKey) :
     Except String Unit := do
   if keys.length >= 16 then throw "collection path exceeds the native index limit"
   let some schema := kind.pathSchema | throw "path must select a Map or Set"
-  unless (← schema.resolvePath keys).isCollection do
+  let selected ← schema.resolvePath keys
+  let nestedShieldedCoinSet := match selected with
+    | .shieldedCoinSet .. => keys.length == 1
+    | _ => false
+  unless selected.isCollection || nestedShieldedCoinSet do
     throw "path must select a Map or Set"
 
 def StateKind.merkleTreeDepth? : StateKind → Option Nat
@@ -971,16 +975,17 @@ inductive Effect where
   | receiveShieldedToMap (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
   /-- Insert a coin whose self-recipient commitment is already booked in the
-  current transaction into a qualified-record Set. The runtime gets its index
-  from the transaction context. -/
+  current transaction into a root qualified-record Set or a one-level
+  Bytes32-keyed nested record Set. The runtime gets its index from context. -/
   | insertShieldedCoinSet (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
+      (keys : List PathKey)
   /-- Insert a transaction-booked coin for an explicit wallet or contract
-  recipient into a qualified-record Set. The runtime gets its index from the
-  current transaction context. -/
+  recipient into a root qualified-record Set or a one-level Bytes32-keyed
+  nested record Set. The runtime gets its index from context. -/
   | insertShieldedCoinSetTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
-      (recipient : Expr (.bytes 32))
+      (recipient : Expr (.bytes 32)) (keys : List PathKey)
   /-- Store a coin whose self-recipient commitment is already booked in the
   current transaction. The runtime obtains its Ledger index from context. -/
   | writeShieldedCoinCell (state : String) (nonce color : Expr (.bytes 32))
@@ -1663,6 +1668,22 @@ private def resolveListState (decls : List StateDecl) (state : String)
   let .tree schema := decl.kind | throw s!"state '{state}' is not a recursive tree"
   schema.listPath keys
 
+private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : String)
+    (keys : List PathKey) : Except String Unit := do
+  let some declaration := decls.find? (·.name == state)
+    | throw s!"unknown qualified shielded coin Set '{state}'"
+  let .tree schema := declaration.kind
+    | throw s!"qualified coin insertion requires a root record Set or one-level nested record Set '{state}'"
+  let (environment, recordType) ← match schema, keys with
+    | .shieldedCoinSet environment recordType, [] => pure (environment, recordType)
+    | .map (.bytes 32) (.recordSet environment recordType), [.mk (.bytes 32) _] =>
+      pure (environment, recordType)
+    | .map (.bytes 32) (.shieldedCoinSet environment recordType), [.mk (.bytes 32) _] =>
+      pure (environment, recordType)
+    | _, _ =>
+      throw s!"qualified coin insertion requires a root record Set or one-level Bytes32-keyed nested record Set '{state}'"
+  discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
+
 private def validateCounterEffect (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
   let some decl := decls.find? (·.name == state) | throw s!"unknown tree state '{state}'"
@@ -2077,25 +2098,19 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         isContract.validate caps env
         recipient.validate caps env
         pure []
-      | .insertShieldedCoinSet state nonce color amount selfAddress => do
+      | .insertShieldedCoinSet state nonce color amount selfAddress keys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin Set '{state}'"
-        let .tree (.shieldedCoinSet compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin insertion requires a root record Set '{state}'"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+        validateQualifiedCoinSetTarget decls state keys
+        for key in keys do key.validate caps env
         nonce.validate caps env
         color.validate caps env
         amount.validate caps env
         selfAddress.validate caps env
         pure []
-      | .insertShieldedCoinSetTo state nonce color amount isContract recipient => do
+      | .insertShieldedCoinSetTo state nonce color amount isContract recipient keys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin Set '{state}'"
-        let .tree (.shieldedCoinSet compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin insertion requires a root record Set '{state}'"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+        validateQualifiedCoinSetTarget decls state keys
+        for key in keys do key.validate caps env
         nonce.validate caps env
         color.validate caps env
         amount.validate caps env

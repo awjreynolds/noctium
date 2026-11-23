@@ -1854,6 +1854,8 @@ pub enum Instruction {
     #[serde(rename = "insertShieldedCoinSet", rename_all = "camelCase")]
     InsertShieldedCoinSet {
         slot: u32,
+        #[serde(default)]
+        keys: Vec<PathPart>,
         nonce: Expr,
         color: Expr,
         amount: Expr,
@@ -1862,6 +1864,8 @@ pub enum Instruction {
     #[serde(rename = "insertShieldedCoinSetTo", rename_all = "camelCase")]
     InsertShieldedCoinSetTo {
         slot: u32,
+        #[serde(default)]
+        keys: Vec<PathPart>,
         nonce: Expr,
         color: Expr,
         amount: Expr,
@@ -2191,13 +2195,11 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
         Instruction::ListPushFrontCoinTo { .. } => {
             bail!("qualified coin List push must be unguarded")
         }
-        Instruction::InsertShieldedCoinSet { slot, .. } => {
-            validate_shielded_coin_set(plan, *slot)?;
-            INSERT_SHIELDED_COIN_SET_FIELD_COUNTS.to_vec()
+        Instruction::InsertShieldedCoinSet { slot, keys, .. } => {
+            shielded_coin_set_field_counts(plan, *slot, keys)?
         }
-        Instruction::InsertShieldedCoinSetTo { slot, .. } => {
-            validate_shielded_coin_set(plan, *slot)?;
-            INSERT_SHIELDED_COIN_SET_FIELD_COUNTS.to_vec()
+        Instruction::InsertShieldedCoinSetTo { slot, keys, .. } => {
+            shielded_coin_set_field_counts(plan, *slot, keys)?
         }
         Instruction::SpendShieldedFromMap { .. } => SPEND_SHIELDED_FROM_MAP_FIELD_COUNTS.to_vec(),
         Instruction::SendShieldedFromMap { .. } => SEND_SHIELDED_FROM_MAP_FIELD_COUNTS.to_vec(),
@@ -2580,6 +2582,13 @@ const MERGE_SHIELDED_FROM_MAP_FIELD_COUNTS: [usize; 18] =
     [1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1];
 const RELAY_SHIELDED_IMMEDIATE_FIELD_COUNTS: [usize; 18] =
     [1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1];
+
+fn shielded_coin_set_field_counts(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<Vec<usize>> {
+    validate_shielded_coin_set(plan, slot, keys)?;
+    let mut counts = INSERT_SHIELDED_COIN_SET_FIELD_COUNTS.to_vec();
+    counts[0] = path_field_count(plan, slot, keys)?;
+    Ok(counts)
+}
 
 fn token_accumulation_fields(key_push: usize) -> [usize; 16] {
     [1, 4, key_push, 1, 1, 1, 5, 1, 1, 2, 1, 1, 2, 1, 1, 1]
@@ -3181,17 +3190,29 @@ fn validate_shielded_coin_list(
     Ok(())
 }
 
-fn validate_shielded_coin_set(plan: &Plan, slot: u32) -> Result<()> {
+fn validate_shielded_coin_set(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<()> {
     ensure!(
         plan.state.len() <= 16 && slot < 16,
         "shielded coin Set slot exceeds the native state limit"
     );
+    ensure!(
+        keys.len() <= 1,
+        "shielded coin Set supports at most one parent key"
+    );
+    if !keys.is_empty() {
+        let key_types = map_path_key_types(plan, slot, keys.len())?;
+        ensure!(
+            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
+            "shielded coin Set parent key must be Bytes32"
+        );
+    }
+    path_field_count(plan, slot, keys)?;
     let declaration = plan
         .state
         .get(slot as usize)
         .ok_or_else(|| anyhow!("shielded coin Set slot out of range"))?;
     ensure!(!declaration.sealed, "shielded coin Set is sealed");
-    let schema = tree_schema_at_path(plan, slot, 0)?;
+    let schema = tree_schema_at_path(plan, slot, keys.len())?;
     let set = schema
         .as_object()
         .filter(|object| object.len() == 1)
@@ -3206,6 +3227,7 @@ fn validate_shielded_coin_set(plan: &Plan, slot: u32) -> Result<()> {
         is_shielded_coin_record_schema(record),
         "shielded coin Set must use the fixed qualified coin record schema"
     );
+    checked_record_schema(record)?;
     Ok(())
 }
 
@@ -4370,9 +4392,10 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 ensure!(guard.is_none(), "shielded coin Cell write must be unguarded");
                 validate_shielded_coin_cell(plan, *slot)?;
             }
-            Instruction::InsertShieldedCoinSetTo { slot, .. } => {
+            Instruction::InsertShieldedCoinSet { slot, keys, .. }
+            | Instruction::InsertShieldedCoinSetTo { slot, keys, .. } => {
                 ensure!(guard.is_none(), "shielded coin Set insertion must be unguarded");
-                validate_shielded_coin_set(plan, *slot)?;
+                validate_shielded_coin_set(plan, *slot, keys)?;
             }
             Instruction::ListHead {
                 slot,
@@ -6727,29 +6750,27 @@ fn probe_instruction(
             amount,
             commitment,
             ..
-        }
-        | Instruction::InsertShieldedCoinSet {
-            nonce,
-            color,
-            amount,
-            commitment,
-            ..
         } => probe_expressions(
             [nonce, color, amount, commitment],
             plan,
             env,
             deferred_outputs,
         ),
-        Instruction::WriteShieldedCoinCellTo {
+        Instruction::InsertShieldedCoinSet {
+            slot: _,
+            keys,
             nonce,
             color,
             amount,
-            is_contract,
-            recipient,
             commitment,
-            ..
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions([nonce, color, amount, commitment], plan, env, deferred_outputs)
+            }
         }
-        | Instruction::InsertShieldedCoinSetTo {
+        Instruction::WriteShieldedCoinCellTo {
             nonce,
             color,
             amount,
@@ -6763,6 +6784,27 @@ fn probe_instruction(
             env,
             deferred_outputs,
         ),
+        Instruction::InsertShieldedCoinSetTo {
+            slot: _,
+            keys,
+            nonce,
+            color,
+            amount,
+            is_contract,
+            recipient,
+            commitment,
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions(
+                    [nonce, color, amount, is_contract, recipient, commitment],
+                    plan,
+                    env,
+                    deferred_outputs,
+                )
+            }
+        }
         Instruction::SpendShieldedFromMap {
             nonce,
             color,
@@ -9342,6 +9384,7 @@ impl PreparationCursor {
             }
             Instruction::InsertShieldedCoinSet {
                 slot,
+                keys,
                 nonce,
                 color,
                 amount,
@@ -9349,13 +9392,14 @@ impl PreparationCursor {
             }
             | Instruction::InsertShieldedCoinSetTo {
                 slot,
+                keys,
                 nonce,
                 color,
                 amount,
                 commitment,
                 ..
             } => {
-                validate_shielded_coin_set(plan, *slot)?;
+                validate_shielded_coin_set(plan, *slot, keys)?;
                 let coin = ShieldedCoinInfo {
                     nonce: Nonce(claim_hash_output(
                         evaluate(nonce, &env)?,
@@ -9400,7 +9444,8 @@ impl PreparationCursor {
                 } else {
                     &context
                 };
-                let set_state = read_state_value(current, *slot, &[])?;
+                let (_, parent_keys) = native_index(plan, *slot, keys, false, &env)?;
+                let set_state = read_state_value(current, *slot, &parent_keys)?;
                 let StateValue::Map(members) = &set_state else {
                     bail!("shielded coin Set state is not a Map")
                 };
@@ -9411,11 +9456,22 @@ impl PreparationCursor {
                     );
                 }
 
-                let path = vec![Key::Value(
+                let mut path = vec![Key::Value(
                     AlignedValue::from(u8::try_from(*slot)?)
                         .try_into()
                         .map_err(|_| anyhow!("invalid shielded coin Set slot"))?,
                 )];
+                path.extend(
+                    parent_keys
+                        .iter()
+                        .cloned()
+                        .map(|key| {
+                            key.try_into()
+                                .map(Key::Value)
+                                .map_err(|_| anyhow!("invalid shielded coin Set parent key"))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                );
                 let set_ops = onchain_runtime::program_fragments::Set_insert_coin!(
                     path,
                     false,
