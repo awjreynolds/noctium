@@ -3456,6 +3456,7 @@ private partial def lowerReadableStatement (programName path : String)
       witnesses := (attached.map (·.witnesses)).getD []}
     let mut parameters : List Parameter := []
     let mut inputs : List Input := []
+    let mut nominalUIntInputs : List (String × NominalUIntType) := []
     let mut aggregateInputs : List AggregateInput := []
     let mut outputName := ""
     let mut outputType : ResultType := .unit
@@ -3477,6 +3478,8 @@ private partial def lowerReadableStatement (programName path : String)
             let sourceType ← readSourceScalarType scalar
             parameters := parameters ++ [{name := valueName, ty := sourceType.type}]
             inputs := inputs ++ [{name := valueName, ty := sourceType.type, visibility, span}]
+            if let some nominalUInt := sourceType.nominalUInt then
+              nominalUIntInputs := nominalUIntInputs ++ [(valueName, nominalUInt)]
             pure (.scalar sourceType.type, sourceScalarTypeName sourceType, sourceType.nominalUInt)
           | `(noctium_witness_input_type| Payload $codecName:ident) => do
             let (codec, _) ← (selectedCodec codecName).run' exprState
@@ -3660,6 +3663,7 @@ private partial def lowerReadableStatement (programName path : String)
         let value ← `(@Noctium.Expr.ref $(← tyTerm input.ty) $(stringTerm input.name))
         logicalEnv := logicalEnv ++ [(input.name, input.ty, value)]
       let mut logicalOutputAliases : List (String × Ty × Name) := []
+      let mut nominalUIntOutputs : List (String × NominalUIntType) := []
       let nominalBytes32Outputs := authoredOutputs.filterMap fun item =>
         item.nominalBytes32.map fun nominal => (item.name, nominal)
       let defineAlias (item : AuthoredOutput) (ty : Ty) (value : TSyntax `term) : CommandElabM Name := do
@@ -3712,6 +3716,11 @@ private partial def lowerReadableStatement (programName path : String)
           unless fields.length == layout.checked.value.leafCount do
             throwErrorAt stx "circuit output layout exceeds the compiled Native fields"
           remaining := rest
+          if let some nominalUInt := item.value.nominalUInt then
+            let [physicalName] := fields
+              | throwErrorAt stx "nominal UInt scalar output must have one Native field"
+            nominalUIntOutputs := nominalUIntOutputs ++ [
+              (item.name, nominalUInt), (physicalName, nominalUInt)]
           match item.value.type with
           | .composite payload =>
             let suffix := if grouped then s!"__returnView_{item.ordinal}" else "__returnView"
@@ -3744,7 +3753,24 @@ private partial def lowerReadableStatement (programName path : String)
           | .unit => throwErrorAt stx "unexpected Unit circuit output"
         unless remaining.isEmpty do
           throwErrorAt stx "circuit output layout did not consume the compiled Native fields"
-      pure (logicalOutputAliases, registeredAggregates, nominalBytes32Outputs)
+      else if authoredOutputs.any (·.value.nominalUInt.isSome) then
+        let mut remaining := compiled.circuit.outputs.map (·.name)
+        for item in authoredOutputs do
+          let .ok layout := Types.compileType program.composites item.layoutType
+            | throwErrorAt stx s!"invalid circuit output layout for '{item.name}'"
+          let (fields, rest) := remaining.splitAt layout.checked.value.leafCount
+          unless fields.length == layout.checked.value.leafCount do
+            throwErrorAt stx "circuit output layout exceeds the compiled Native fields"
+          remaining := rest
+          if let some nominalUInt := item.value.nominalUInt then
+            let [physicalName] := fields
+              | throwErrorAt stx "nominal UInt scalar output must have one Native field"
+            nominalUIntOutputs := nominalUIntOutputs ++ [
+              (item.name, nominalUInt), (physicalName, nominalUInt)]
+        unless remaining.isEmpty do
+          throwErrorAt stx "circuit output layout did not consume the compiled Native fields"
+      pure (logicalOutputAliases, registeredAggregates, nominalBytes32Outputs,
+        nominalUIntOutputs.eraseDups)
     let signatureTerms ← witnesses.mapM quoteSignature
     let signatureTerms := signatureTerms.toArray
     let inputTerms ← inputs.mapM fun input => inputTerm input.name input.ty input.visibility input.span
@@ -3858,6 +3884,7 @@ private partial def lowerReadableStatement (programName path : String)
       Noctium.registerWitnessCircuit name.raw programName exportName outputName
         (some observation.toJson.compress) describeOutputs
         (useCheckedCircuitValue := quoteCheckedCircuit)
+        (nominalUIntInputs := nominalUIntInputs)
     catch error =>
       modifyEnv fun _ => envBefore
       throw error
