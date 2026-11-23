@@ -1442,7 +1442,7 @@
       "layer": "language-ledger",
       "surface": "Contract constructor",
       "noctiumStatus": "subset",
-      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open. A checked ordered constructor guards an insert into a sealed Field-to-Field Map, then initializes a sealed Bool from its updated membership. Pinned Compact 0.36.1 and native construction from the emitted plan agree on the empty/false and seeded/true outcomes. Ordered constructor actions also initialize a flat record Cell and overwrite a record under a root Bytes32 Map key. Compact 0.36.1 and the native checker agree on the nominal UInt and Bool values. Funded deployment and inspect finalized on Ledger 9.1.0.1 with matching constructor state and unchanged read state. A checked Bool guard conditionally inserts a Bytes32 owner into a root Set. Compact 0.36.1 and the native relation agree on the enabled and disabled initial membership. A constructor guard also controls root Counter increments and scalar List pushes. The pinned reference and native relation agree on zero and empty state when disabled and the supplied amount and head when enabled. A root UInt64 Cell reads the current Counter value at its constructor action. Reads before and after a guarded increment expose the corresponding snapshots in the paired Compact and native fixtures.",
+      "notes": "Lean source constructors accept public scalar and OpaqueString arguments, typed Cell initializers, direct flat scalar Map inserts, root Counter increments, ordered root scalar List pushes, and root scalar Set inserts. Funded deployment at localnet height 50646 matched the native seeded Field-to-UInt64 Map state. A lookup finalized at 50649 with the same state digest. Compact 0.36.1 and the native checker agree on the seeded Counter and Native List reads. Funded deployment at height 51062 matched the exact constructor state, and a call at 51065 preserved the state bytes. A sealed Set deployment at height 51343 matched the exact deduplicated state, and its read at 51346 preserved the bytes. Other layouts, helper initialization, and private constructor callbacks remain open. A checked ordered constructor guards an insert into a sealed Field-to-Field Map, then initializes a sealed Bool from its updated membership. Pinned Compact 0.36.1 and native construction from the emitted plan agree on the empty/false and seeded/true outcomes. Ordered constructor actions also initialize a flat record Cell and overwrite a record under a root Bytes32 Map key. Compact 0.36.1 and the native checker agree on the nominal UInt and Bool values. Funded deployment and inspect finalized on Ledger 9.1.0.1 with matching constructor state and unchanged read state. A checked Bool guard conditionally inserts a Bytes32 owner into a root Set. Compact 0.36.1 and the native relation agree on the enabled and disabled initial membership. A constructor guard also controls root Counter increments and scalar List pushes. The pinned reference and native relation agree on zero and empty state when disabled and the supplied amount and head when enabled. A root UInt64 Cell reads the current Counter value at its constructor action. Reads before and after a guarded increment expose the corresponding snapshots in the paired Compact and native fixtures. The paired record List constructor seeds two Native and Bool records, preserves prepend order and skips a disabled third push.",
       "source": [
         "reference"
       ],
@@ -1452,6 +1452,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/ConstructorRecordList.lean",
+        "tests/compact/constructor-record-list.mjs",
+        "runtime/tests/constructor_record_list.rs",
         "tests/OrderedConstructorCounterRead.lean",
         "tests/compact/OrderedConstructorCounterRead.compact",
         "tests/compact/ordered-constructor-counter-read.mjs",
@@ -3333,7 +3336,7 @@
       "layer": "language-ledger",
       "surface": "List.pushFront",
       "noctiumStatus": "subset",
-      "notes": "Prepends a scalar or named record to a standalone or nested List. Public writes require explicit disclosure of private values and activity. The scalar fixture covers Native, Bytes0 and Bytes128, including a present zero-byte element. Named-record evidence covers Native, Bytes32 and JubjubPoint fields. General aggregate and coin element shapes remain open. The paired one-parent Map/List fixture starts with A [5] and B [99], then pushes 11 and 22 onto A. Both pinned Compact and the native checker observe A [22,11,5] with B [99] intact. A paired root List case checks writes and LIFO order for one nested record level with Native and Bool leaves.",
+      "notes": "Prepends a scalar or named record to a standalone or nested List. Public writes require explicit disclosure of private values and activity. The scalar fixture covers Native, Bytes0 and Bytes128, including a present zero-byte element. Named-record evidence covers Native, Bytes32 and JubjubPoint fields. General aggregate and coin element shapes remain open. The paired one-parent Map/List fixture starts with A [5] and B [99], then pushes 11 and 22 onto A. Both pinned Compact and the native checker observe A [22,11,5] with B [99] intact. A paired root List case checks writes and LIFO order for one nested record level with Native and Bool leaves. The paired root record List constructor also checks ordered initial pushes and an inactive guarded push.",
       "source": [
         "adt"
       ],
@@ -3343,6 +3346,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/ConstructorRecordList.lean",
+        "tests/compact/constructor-record-list.mjs",
+        "runtime/tests/constructor_record_list.rs",
         "tests/NestedRecordList.lean",
         "tests/compact/nested-record-list.mjs",
         "runtime/tests/nested_record_list.rs",

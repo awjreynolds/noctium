@@ -1,0 +1,25 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Position {
+  owner: Field;
+  active: Boolean;
+}
+
+export ledger history: List<Position>;
+
+constructor(firstOwner: Field, secondOwner: Field, includeThird: Boolean) {
+  history.pushFront(disclose(Position { owner: firstOwner, active: false }));
+  history.pushFront(disclose(Position { owner: secondOwner, active: true }));
+  if (disclose(includeThird)) {
+    history.pushFront(disclose(Position { owner: 99 as Field, active: false }));
+  }
+}
+
+export circuit head(): Maybe<Position> {
+  return history.head();
+}
+
+export circuit pop(): [] {
+  history.popFront();
+}

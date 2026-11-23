@@ -482,6 +482,8 @@ declare_syntax_cat nlleaves
 scoped syntax "fields(" nlexpr,* ")" : nlleaves
 scoped syntax "initialize" ident ":=" nlleaves : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
+scoped syntax "pushFront" ident ":=" nlleaves : nlconstructorinit
+scoped syntax "when" nlexpr "pushFront" ident ":=" nlleaves : nlconstructorinit
 
 declare_syntax_cat nlledgervalue
 scoped syntax nlexpr : nlledgervalue
@@ -2505,6 +2507,27 @@ private def elaborateLedgerFieldValues (state : EntryEffects) (payload : TSyntax
     `(Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value)
   let values := values.toArray
   `(([$values,*] : List Noctium.LedgerFieldExpr))
+
+private def elaborateConstructorRecordListPush (schema : List (String × StateKind))
+    (bindings : EntryEffects) (initializer : TSyntax `nlconstructorinit)
+    (stateName : TSyntax `ident) (payload : TSyntax `nlleaves) :
+    CommandElabM (TSyntax `term) := do
+  let destination := stateName.getId.toString
+  let guard ← match initializer with
+    | `(nlconstructorinit| when $condition:nlexpr pushFront $_:ident := $_:nlleaves) => do
+      let conditionExpression ← checkedCircuitSourceExpression bindings.env
+        bindings.nominalUIntBindings condition {type := .bool}
+      `(some $conditionExpression)
+    | `(nlconstructorinit| pushFront $_:ident := $_:nlleaves) => `(none)
+    | _ => throwErrorAt initializer "invalid constructor record List pushFront"
+  let some (.tree (.«list» environment (.structure recordType))) := schema.lookup destination
+    | throwErrorAt stateName "constructor record pushFront requires a root record List"
+  let fields ← match LedgerValueType.listElementFields environment (.structure recordType) with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt stateName message
+  let values ← elaborateLedgerFieldValues bindings payload fields
+    ((bindings.recordFieldTypes.lookup destination).getD [])
+  `(Noctium.ConstructorAction.pushRecordList $(stringTerm destination) $values $guard)
 
 private def elaborateRecordMapKeyFields (state : EntryEffects) (storage : TSyntax `ident)
     (payload : TSyntax `nlleaves) (fields : List (String × Ty)) : CommandElabM (TSyntax `term) :=
@@ -5066,6 +5089,7 @@ private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy :
     valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy) $valueTerm)
   pure (.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
 
+set_option maxHeartbeats 1000000 in
 private def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
     (nominalUIntCells : List (String × NominalUIntType))
@@ -5118,7 +5142,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut setInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
   let bindings : EntryEffects := {
-    env := scalarBindings, nominalUIntBindings, contractRefBindings := contractRefs
+    env := scalarBindings, nominalUIntBindings, contractRefBindings := contractRefs,
+    recordFieldTypes := recordFieldTypes
   }
   for initializer in initializers do
     match initializer with
@@ -5225,6 +5250,15 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _, some _ => throwErrorAt stateName "counter snapshot requires a root Counter and a UInt64 Cell"
       | none, _ => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
       | _, none => throwErrorAt counterName s!"constructor reads unknown Counter '{counterState}'"
+    | `(nlconstructorinit| when $condition:nlexpr pushFront $stateName:ident := $payload:nlleaves)
+    | `(nlconstructorinit| pushFront $stateName:ident := $payload:nlleaves) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let action ← elaborateConstructorRecordListPush schema bindings initializer stateName payload
+      orderedActionTerms := orderedActionTerms.push
+        action
+      hasOrderedActions := _root_.Bool.true
     | `(nlconstructorinit| when $_:nlexpr insert $stateName:ident [ $key:nlexpr ])
     | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
