@@ -8,6 +8,8 @@ export ledger balance: Amount;
 export ledger amounts: List<Amount>;
 export ledger balances: Map<Count, Amount>;
 export ledger nestedBalances: Map<Count, Map<Count, Amount>>;
+export ledger amountSet: Set<Amount>;
+export ledger amountSets: Map<Count, Set<Amount>>;
 
 constructor(initialKey: Count, initial: Amount) {
   balance = disclose(initial);
@@ -60,6 +62,24 @@ export circuit writeNestedBalance(owner: Count, key: Count, value: Amount): [] {
   if (!nestedBalances.member(exposedOwner)) { nestedBalances.insertDefault(exposedOwner); }
   nestedBalances.lookup(exposedOwner).insert(disclose(key), disclose(value));
   return [];
+}
+
+export circuit add(value: Amount, owner: Count): [Boolean, Boolean] {
+  const exposedValue = disclose(value);
+  const exposedOwner = disclose(owner);
+  amountSet.insert(exposedValue);
+  if (!amountSets.member(exposedOwner)) { amountSets.insertDefault(exposedOwner); }
+  amountSets.lookup(exposedOwner).insert(exposedValue);
+  return [amountSet.member(exposedValue), amountSets.lookup(exposedOwner).member(exposedValue)];
+}
+
+export circuit remove(value: Amount, owner: Count): [Boolean, Boolean] {
+  const exposedValue = disclose(value);
+  const exposedOwner = disclose(owner);
+  amountSet.remove(exposedValue);
+  if (amountSets.member(exposedOwner)) { amountSets.lookup(exposedOwner).remove(exposedValue); }
+  return [amountSet.member(exposedValue), amountSets.member(exposedOwner)
+    && amountSets.lookup(exposedOwner).member(exposedValue)];
 }
 
 export circuit amountHead(): Maybe<Amount> {

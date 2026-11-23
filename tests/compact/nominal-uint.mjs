@@ -63,6 +63,22 @@ try {
       'new type Count = Uint<8>; ledger balances: Map<Count, Amount>;',
       'circuit invalid(value: Uint<8>): [] { balances.insert(disclose(0 as Count), disclose(value)); return []; }',
       /expected second argument of insert to have type Amount but received Uint<8>/],
+    ['set-map-wrong-nominal-key',
+      'new type Count = Uint<8>; new type OtherCount = Uint<8>; ledger amountSets: Map<Count, Set<Amount>>;',
+      'circuit invalid(key: OtherCount): [] { amountSets.insertDefault(disclose(key)); return []; }',
+      /expected first argument of insertDefault to have type Count but received OtherCount/],
+    ['set-map-implicit-raw-key',
+      'new type Count = Uint<8>; ledger amountSets: Map<Count, Set<Amount>>;',
+      'circuit invalid(key: Uint<8>): [] { amountSets.insertDefault(disclose(key)); return []; }',
+      /expected first argument of insertDefault to have type Count but received Uint<8>/],
+    ['nested-set-wrong-nominal-element',
+      'new type Count = Uint<8>; new type OtherAmount = Uint<8>; ledger amountSets: Map<Count, Set<Amount>>;',
+      'circuit invalid(value: OtherAmount): [] { amountSets.insertDefault(disclose(0 as Count)); amountSets.lookup(disclose(0 as Count)).insert(disclose(value)); return []; }',
+      /expected first argument of insert to have type Amount but received OtherAmount/],
+    ['nested-set-implicit-raw-element',
+      'new type Count = Uint<8>; ledger amountSets: Map<Count, Set<Amount>>;',
+      'circuit invalid(value: Uint<8>): [] { amountSets.insertDefault(disclose(0 as Count)); amountSets.lookup(disclose(0 as Count)).insert(disclose(value)); return []; }',
+      /expected first argument of insert to have type Amount but received Uint<8>/],
   ];
   for (const [name, extra, circuit, diagnostic] of rejectedCases) {
     const source = join(scratch, name + '.compact');
@@ -135,13 +151,19 @@ try {
   const afterRemove = removed.context.callContext.currentQueryContext.state;
   assert.equal((await invoke('balanceMember', afterRemove, 2n)).result, false);
   assert.equal((await invoke('balanceMember', afterRemove, 255n)).result, true);
+
+  const addedToSets = await invoke('add', initial, 19n, 7n);
+  assert.deepEqual(addedToSets.result, [true, true]);
+  const removedFromSets = await invoke('remove', addedToSets.context.callContext.currentQueryContext.state, 19n, 7n);
+  assert.deepEqual(removedFromSets.result, [false, false]);
+
   const cast = await invoke('setRaw', afterWrite, 255n);
   const afterCast = cast.context.callContext.currentQueryContext.state;
   assert.equal((await invoke('get', afterCast)).result, 255n);
   const castListHead = (await invoke('amountHead', afterCast)).result;
   assert.equal(castListHead.is_some, true);
   assert.equal(castListHead.value, 255n);
-  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state, List<Amount> and Map<Count, Amount> cases`);
+  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state, List<Amount>, Map<Count, Amount> and Set<Amount> cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
