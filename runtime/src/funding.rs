@@ -1,6 +1,9 @@
 //! Bounded native DUST fee construction. The host owns wallet state, keys and approval.
 #[cfg(feature = "localnet")]
-use crate::client::{Snapshot, shielded_merge_shape_valid, shielded_relay_shape_valid};
+use crate::client::{
+    Snapshot, shielded_immediate_change_shape_valid, shielded_merge_shape_valid,
+    shielded_relay_shape_valid,
+};
 use crate::{
     Db,
     proof::{ProvedNativeIntent, TrustedParameters},
@@ -389,6 +392,49 @@ impl DustFunding {
         rng: StdRng,
     ) -> Result<FundedTransaction> {
         if !shielded_relay_shape_valid(contract, &offer, relay_mint, mint_domain) {
+            return Err(Error::Intent);
+        }
+
+        self.fund_shielded_offer(
+            contract,
+            offer,
+            offer_binding_randomness,
+            network_id,
+            parameters,
+            material,
+            srs,
+            now,
+            policy,
+            rng,
+        )
+        .await
+    }
+
+    /// Fund a minted contract transient split into the exact user output and contract change.
+    #[cfg(feature = "localnet")]
+    pub(crate) async fn fund_shielded_immediate_change(
+        &self,
+        contract: &ProvedNativeIntent,
+        offer: ZswapOffer<Proof, Db>,
+        offer_binding_randomness: PedersenRandomness,
+        mint: &Info,
+        mint_domain: HashOutput,
+        recipient: PublicKey,
+        network_id: &str,
+        parameters: &LedgerParameters,
+        material: &DustMaterial,
+        srs: &TrustedParameters,
+        now: Timestamp,
+        policy: FeePolicy,
+        rng: StdRng,
+    ) -> Result<FundedTransaction> {
+        if !shielded_immediate_change_shape_valid(
+            contract,
+            &offer,
+            mint,
+            mint_domain,
+            recipient,
+        ) {
             return Err(Error::Intent);
         }
 

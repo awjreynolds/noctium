@@ -6213,7 +6213,7 @@
       "layer": "standard-library",
       "surface": "sendImmediateShielded",
       "noctiumStatus": "related-subset",
-      "notes": "A pinned Compact runner checks a full-value receive-and-relay with a destination call commitment. The native host finalizes one five-unit Relay transient and equal-value Destination output on Ledger 9.1.0.1, and rejects a wrong recipient and color. Other amounts and call shapes remain open.",
+      "notes": "A pinned Compact runner checks a full-value receive-and-relay with a destination call commitment. The native host finalizes one five-unit Relay transient and equal-value Destination output on Ledger 9.1.0.1, and rejects a wrong recipient and color. The pinned partial-send fixture spends a five-unit transient in the same call, sends two units to a user, and returns three units of change. The matching funded Noctium case finalized one call with the user output and booked change, and rejected an overspend on the host route. Other amounts and call shapes remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6227,6 +6227,11 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/compact/ImmediateShieldedChange.compact",
+        "tests/compact/immediate-shielded-change.mjs",
+        "tests/ShieldedImmediateChange.lean",
+        "runtime/src/localnet/shielded_transfer/tests/immediate_change_tests.rs",
+        "docs/development/shielded-immediate-change-localnet-receipt.json",
         "tests/compact/ShieldedCoinMap.compact",
         "tests/compact/shielded-coin-map.mjs",
         "tests/ShieldedImmediateRelay.lean",
