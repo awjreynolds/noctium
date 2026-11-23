@@ -2044,7 +2044,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimZswapCoinReceive",
       "noctiumStatus": "related-subset",
-      "notes": "Finalized native mint-funded receive, wallet-funded receive and partial-spend change each claim one guaranteed contract-owned output. Other offer shapes remain open. Standalone Noctium receive entrypoints and checked native helpers emit raw Bytes32 digests. The guarded helper matches the pinned Compact reference and native checker for active and inactive inputs. Direct duplicates are deduplicated. Funded raw-claim qualification remains open.",
+      "notes": "Finalized native mint-funded receive, wallet-funded receive and partial-spend change each claim one guaranteed contract-owned output. Standalone Noctium receive entrypoints and checked native helpers emit raw Bytes32 digests. The guarded helper matches the pinned Compact reference and native checker for active and inactive inputs. A wallet-funded standalone helper finalized on Ledger 9.1.0.1 with the exact indexed output and spent wallet nullifier and unchanged contract state. A changed digest was rejected before submission. Direct duplicates are deduplicated. Other offer shapes remain open.",
       "source": [
         "adt"
       ],
@@ -2058,6 +2058,7 @@
         "tests/compact/RawShieldedClaims.compact",
         "tests/compact/raw-shielded-claims.mjs",
         "runtime/tests/raw_shielded_claims.rs",
+        "docs/development/funded-raw-shielded-receive-localnet-receipt.json",
         "docs/development/wallet-shielded-receive-localnet-receipt.json",
         "docs/development/shielded-partial-spend-localnet-receipt.json",
         "docs/development/shielded-receive-localnet-receipt.json"

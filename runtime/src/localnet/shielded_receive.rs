@@ -2752,14 +2752,33 @@ mod tests {
         })
     }
 
-    #[test]
-    #[ignore = "requires generated receive and whole-spend bundles and an isolated development node"]
-    fn funded_wallet_shielded_receive_localnet() -> Result<()> {
+    #[derive(Clone, Copy)]
+    enum FundedWalletReceiveCase {
+        Map,
+        RawHelper,
+    }
+
+    fn run_funded_wallet_shielded_receive_localnet(case: FundedWalletReceiveCase) -> Result<()> {
         futures::executor::block_on(async {
             let setting = |name| env::var(name).with_context(|| format!("missing {name}"));
+            let (receive_bundle_env, receive_manifest_env, receive_entrypoint, receive_state) =
+                match case {
+                    FundedWalletReceiveCase::Map => (
+                        "NOCTIUM_WALLET_RECEIVE_DEPOSIT_BUNDLE",
+                        "NOCTIUM_WALLET_RECEIVE_DEPOSIT_MANIFEST_SHA256",
+                        "tip",
+                        &br#"{"state":{"pot":[]}}"#[..],
+                    ),
+                    FundedWalletReceiveCase::RawHelper => (
+                        "NOCTIUM_RAW_SHIELDED_CLAIMS_HELPER_RECEIVE_BUNDLE",
+                        "NOCTIUM_RAW_SHIELDED_CLAIMS_HELPER_RECEIVE_MANIFEST_SHA256",
+                        "helperClaimReceive",
+                        &br#"{"state":{}}"#[..],
+                    ),
+                };
             let deposit_bundle = artifacts::verify(
-                Path::new(&setting("NOCTIUM_WALLET_RECEIVE_DEPOSIT_BUNDLE")?),
-                Some(&setting("NOCTIUM_WALLET_RECEIVE_DEPOSIT_MANIFEST_SHA256")?),
+                Path::new(&setting(receive_bundle_env)?),
+                Some(&setting(receive_manifest_env)?),
             )?;
             let seed_tip_bundle = artifacts::verify(
                 Path::new(&setting("NOCTIUM_WALLET_RECEIVE_SEED_TIP_BUNDLE")?),
@@ -2804,7 +2823,7 @@ mod tests {
             let ttl = node.sync()?.block.tblock.to_secs() + 1800;
             let deposit_target = WitnessContractTarget::from_state_config(
                 ContractBundleSet::new(vec![deposit_bundle])?,
-                br#"{"state":{"pot":[]}}"#,
+                receive_state,
                 ttl,
                 &mut OsRng,
             )?;
@@ -2814,7 +2833,7 @@ mod tests {
                 ttl,
                 &mut OsRng,
             )?;
-            let deposit = deposit_target.operation("tip", &deposit_parameters, ttl)?;
+            let deposit = deposit_target.operation(receive_entrypoint, &deposit_parameters, ttl)?;
             let seed_tip = seed_target.operation("tip", &seed_tip_parameters, ttl)?;
             let seed_spend = seed_target.operation("spend", &seed_spend_parameters, ttl)?;
             let make_funding = || {
@@ -2897,7 +2916,7 @@ mod tests {
                 .await
                 .context("finalize deposit contract")?;
             let deposit_current = deposit_target
-                .deployment_binding("tip")?
+                .deployment_binding(receive_entrypoint)?
                 .admit_committed_state(
                     &deposit_deployed.contract_state,
                     deposit_deploy.expected_state(),
@@ -3038,6 +3057,143 @@ mod tests {
                 wallet_qualified == wallet_coin.qualify(wallet_output_index),
                 "wallet state assigned the wrong output index"
             );
+            if matches!(case, FundedWalletReceiveCase::RawHelper) {
+                let receive_index = node.sync()?.state.zswap.first_free;
+                let receive_commitment =
+                    wallet_coin.commitment(&Recipient::Contract(deposit_address));
+                let raw_inputs = |digest| {
+                    BTreeMap::from([
+                        ("enabled".into(), json!(true)),
+                        ("digest".into(), json!({"kind":"bytes", "values":digest})),
+                    ])
+                };
+                let state_before_receive = node
+                    .finalized_contract_state(deposit_target.contract_address())?
+                    .bytes;
+                ensure!(
+                    state_before_receive == deposit_deployed.contract_state,
+                    "raw receive contract state changed before the wallet claim"
+                );
+
+                let (_, mismatched_input) = wallet_state
+                    .spend(
+                        &mut shielded_rng,
+                        &wallet_keys,
+                        &wallet_qualified,
+                        Some(GUARANTEED_SEGMENT),
+                    )
+                    .context("prepare raw receive digest mismatch input")?;
+                let mut mismatched_digest = receive_commitment.0.0;
+                mismatched_digest[0] ^= 1;
+                ensure!(
+                    mismatched_digest != receive_commitment.0.0,
+                    "raw receive mismatch digest equals the output commitment"
+                );
+                let mismatch = make_funding()
+                    .bind_wallet_shielded_receive(
+                        &deposit,
+                        &deposit_current,
+                        raw_inputs(mismatched_digest),
+                        &wallet_coin,
+                        mismatched_input,
+                        &deposit_parameters,
+                        &cache,
+                        &make_signer(),
+                        StdRng::from_entropy(),
+                    )
+                    .await;
+                ensure!(
+                    matches!(mismatch, Err(Error::State)),
+                    "one-byte raw receive digest mismatch did not fail with localnet State before submission"
+                );
+                ensure!(
+                    node.finalized_contract_state(deposit_target.contract_address())?
+                        .bytes
+                        == state_before_receive,
+                    "rejected raw receive digest changed contract state"
+                );
+
+                let (_, input) = wallet_state
+                    .spend(
+                        &mut shielded_rng,
+                        &wallet_keys,
+                        &wallet_qualified,
+                        Some(GUARANTEED_SEGMENT),
+                    )
+                    .context("prepare raw receive wallet input")?;
+                let input_nullifier = input.nullifier;
+                let bound = make_funding()
+                    .bind_wallet_shielded_receive(
+                        &deposit,
+                        &deposit_current,
+                        raw_inputs(receive_commitment.0.0),
+                        &wallet_coin,
+                        input,
+                        &deposit_parameters,
+                        &cache,
+                        &make_signer(),
+                        StdRng::from_entropy(),
+                    )
+                    .await
+                    .context("bind wallet-funded raw shielded receive claim")?;
+                let receipt = finalize(&node, &bound)
+                    .await
+                    .context("finalize wallet-funded raw shielded receive claim")?;
+                ensure!(
+                    receipt.contract_state == state_before_receive,
+                    "raw receive helper changed contract state"
+                );
+
+                let final_snapshot = node.sync()?;
+                let (leaf, owner) = final_snapshot
+                    .state
+                    .zswap
+                    .coin_coms
+                    .index(receive_index)
+                    .context("raw receive output leaf missing")?;
+                ensure!(
+                    leaf == receive_commitment.0 && owner.as_deref() == Some(&deposit_address),
+                    "raw receive output commitment has the wrong owner or index"
+                );
+                ensure!(
+                    final_snapshot
+                        .state
+                        .zswap
+                        .coin_coms_set
+                        .contains_key(&receive_commitment),
+                    "raw receive output commitment is missing from finalized state"
+                );
+                ensure!(
+                    final_snapshot
+                        .state
+                        .zswap
+                        .nullifiers
+                        .contains_key(&input_nullifier),
+                    "raw receive input nullifier missing after finalization"
+                );
+                ensure!(
+                    node.finalized_contract_state(deposit_target.contract_address())?
+                        .bytes
+                        == state_before_receive,
+                    "finalized raw receive helper state differs from deployment"
+                );
+                println!(
+                    "{}",
+                    json!({
+                        "entrypoint": "helperClaimReceive",
+                        "seedTipHeight": seed_tip_receipt.height,
+                        "receiveHeight": receipt.height,
+                        "receiveTransaction": receipt.transaction_id,
+                        "inputNullifier": hex::encode(input_nullifier.0.0),
+                        "outputCommitment": hex::encode(receive_commitment.0.0),
+                        "outputIndex": receive_index,
+                        "changedDigestRejectedBeforeSubmit": true,
+                        "contractStateUnchanged": true
+                    })
+                );
+                return Ok(());
+            }
+
             let (_, mismatched_input) = wallet_state
                 .spend(
                     &mut shielded_rng,
@@ -3203,5 +3359,17 @@ mod tests {
             );
             Ok(())
         })
+    }
+
+    #[test]
+    #[ignore = "requires generated receive and whole-spend bundles and an isolated development node"]
+    fn funded_wallet_shielded_receive_localnet() -> Result<()> {
+        run_funded_wallet_shielded_receive_localnet(FundedWalletReceiveCase::Map)
+    }
+
+    #[test]
+    #[ignore = "requires RawShieldedClaims.helperClaimReceive and ShieldedSpend bundles on an isolated development node"]
+    fn funded_wallet_raw_shielded_receive_helper_localnet() -> Result<()> {
+        run_funded_wallet_shielded_receive_localnet(FundedWalletReceiveCase::RawHelper)
     }
 }

@@ -57,6 +57,10 @@ noctium_contract RawShieldedClaims where
   entry helperClaimReceive from rawShieldedReceiveHelper entry "guardedReceive" end
 end
 
+noctium_contract FundedRawShieldedClaim where
+  entry helperClaimReceive from rawShieldedReceiveHelper entry "guardedReceive" end
+end
+
 private def rawClaimEntry (name : String) : Entrypoint :=
   (RawShieldedClaims.entrypoints.find? fun candidate => candidate.name == name).getD
     {name := "missing", circuit := {name := "missing"}}

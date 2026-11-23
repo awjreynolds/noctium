@@ -89,6 +89,24 @@ NOCTIUM_WALLET_RECEIVE_SEED_SPEND_MANIFEST_SHA256=YOUR_SEED_SPEND_MANIFEST_SHA25
   funded_wallet_shielded_receive_localnet -- --ignored --nocapture
 ```
 
+## Wallet-funded standalone receive
+
+`FundedRawShieldedClaim.helperClaimReceive` calls the checked raw receive
+helper with the exact contract-owned output commitment. The isolated
+Ledger 9.1.0.1 chain finalized the call at block 66. The test confirmed the
+output owner and commitment at index 30, the wallet input nullifier, and
+unchanged contract state. Changing one digest byte rejected before submission.
+[Receipt](funded-raw-shielded-receive-localnet-receipt.json)
+
+Use the same development node, parameter cache and seed bundles as the
+wallet-funded Map test above. Compile `tests/RawShieldedClaims.lean` for
+ZKIR 3.2.1 and assemble a bundle for the single exported
+`FundedRawShieldedClaim.helperClaimReceive` operation. Set
+`NOCTIUM_RAW_SHIELDED_CLAIMS_HELPER_RECEIVE_BUNDLE` and
+`NOCTIUM_RAW_SHIELDED_CLAIMS_HELPER_RECEIVE_MANIFEST_SHA256` in place of the
+Map deposit bundle variables. Run the same filtered Cargo command with
+`funded_wallet_raw_shielded_receive_helper_localnet` as the test name.
+
 ## Whole-coin spend from a Map
 
 `tests/ShieldedSpend.lean` defines two entries. `tip` mints and receives five units into the Map. `spend` consumes the recorded coin, derives its nullifier and a commitment to one user-owned output, then removes the old key. The native host builds the spend proof from the coin's assigned index and the finalized Zswap tree. The Compact runner also checks the exact effects, output nonce, Map removal and replay rejection for a deterministic full-value send.
