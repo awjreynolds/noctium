@@ -1107,7 +1107,7 @@ private unsafe def registeredCircuits (moduleOutputs : Array (Name × ModuleBuil
   return circuits
 
 private unsafe def registeredContracts (moduleOutputs : Array (Name × ModuleBuildOutput))
-    (dedupRangeChecks : _root_.Bool) :
+    (rewrites : Backend.Zkir.Rewrites) :
     CommandElabM (Array (Name × Contract) × Array (Name × String × Witness.Compiled)) := do
   let env ← getEnv
   let mut contracts : Array (Name × Contract) := #[]
@@ -1126,7 +1126,7 @@ private unsafe def registeredContracts (moduleOutputs : Array (Name × ModuleBui
           | some (sourceName, exportName) => do
             let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
             let (fresh, hostWitness) ← match Witness.compileStateEntrypointWithWitness program exportName
-                contract.state compiledEntry.circuit.name dedupRangeChecks with
+                contract.state compiledEntry.circuit.name rewrites with
               | .ok value => pure value
               | .error d => failDiagnostic d
             let namedCircuit := {fresh.circuit with name := compiledEntry.circuit.name}
@@ -1226,11 +1226,11 @@ def nativePlanJson (profile : TargetProfile) (contractName : Name)
     ("guards", toJson (plan.guards.map nativeExpressionJson))])
 
 private unsafe def inspectWithModules (moduleOutputs : Array (Name × ModuleBuildOutput))
-    (dedupRangeChecks : _root_.Bool := Bool.false) :
+    (rewrites : Backend.Zkir.Rewrites := .disabled) :
     CommandElabM (Array (Name × Circuit) × Array (Name × Contract) × Array (Name × String × Witness.Compiled)) := do
   if (← get).messages.hasErrors then
     throwError "cannot export Noctium artifacts after source elaboration errors"
-  let (contracts, hosted) ← registeredContracts moduleOutputs dedupRangeChecks
+  let (contracts, hosted) ← registeredContracts moduleOutputs rewrites
   let circuits ← registeredCircuits moduleOutputs contracts
   let sourceEnv ← getEnv
   let controls := (controlRegistry.getState sourceEnv).filter (!sourceEnv.isImportedConst ·)
@@ -1286,8 +1286,12 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       throwError "--ledger-read-bound requires the pinned ZKIR 3.2.1 profile"
     if dedupRangeChecks then
       throwError "--ledger-read-bound and --dedup-range-checks require separate builds"
+  let rewrites : Backend.Zkir.Rewrites :=
+    if dedupRangeChecks then .includingComparisons
+    else if profile == TargetProfile.selected321 && ledgerReadBound.isEmpty then .rangeAndAssertions
+    else .disabled
   let moduleOutputs ← unsafe rebuildModuleOutputs
-  let (circuits, contracts, hosted) ← unsafe inspectWithModules moduleOutputs dedupRangeChecks
+  let (circuits, contracts, hosted) ← unsafe inspectWithModules moduleOutputs rewrites
   let emit := fun role => roles.isEmpty || roles.contains role
   let contracts := if emit .ledger then contracts else #[]
   let bindPlanBytes := !(emit .standalone) && !contracts.isEmpty
@@ -1307,7 +1311,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
     let plan ← unsafe evalConstCheck Json ``Lean.Json name
     lowered := lowered.push (.control, artifactName name ++ ".control.json", plan.pretty)
   for (name, circuit) in (if emit .standalone then circuits else #[]) do
-    match Backend.Zkir.lowerCircuit circuit dedupRangeChecks with
+    match Backend.Zkir.lowerCircuit circuit rewrites with
     | .error d => failDiagnostic d
     | .ok json => lowered := lowered.push (.standalone, artifactName name ++ ".zkir", json.pretty)
   for (name, _) in (if emit .specialization then circuits else #[]) do
@@ -1326,7 +1330,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
     if emit .witness && (emit .standalone || entryCircuits.contains info.circuitName.toString) then
       let moduleProgram := moduleWitnessProgramFor moduleOutputs info
       -- Ledger-only bindings replace the standalone relation with the checked ledger relation.
-      let cached := if moduleProgram.isNone && !(dedupRangeChecks && emit .standalone) then
+      let cached := if moduleProgram.isNone && !(rewrites != .disabled && emit .standalone) then
         (checkedWitnesses.getState sourceEnv).find? info.circuitName
         else none
       let compiled ← match cached with
@@ -1335,7 +1339,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           let program ← match moduleProgram with
             | some fresh => pure fresh
             | none => unsafe evalConstCheck Helpers.Program ``Helpers.Program info.sourceName
-          match Witness.compile program info.exportName info.circuitName.toString info.outputName dedupRangeChecks with
+          match Witness.compile program info.exportName info.circuitName.toString info.outputName rewrites with
           | .ok value => pure value
           | .error diagnostic => failDiagnostic diagnostic
       standaloneWitnesses := standaloneWitnesses.push (info.circuitName.toString, compiled)
@@ -1373,7 +1377,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
             ("encoding", toJson ("Bytes(16)" : String))])
           pure (optimized.plan, optimized.optimized)
       else
-        match Backend.Zkir.lowerPrunedEntrypoint contract.state ep dedupRangeChecks with
+        match Backend.Zkir.lowerPrunedEntrypoint contract.state ep rewrites with
         | .error d => failDiagnostic d
         | .ok artifacts => pure artifacts
       lowered := lowered.push (.ledger, nativeCircuitFile name ep, json.pretty)

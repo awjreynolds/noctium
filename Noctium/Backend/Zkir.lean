@@ -26,14 +26,22 @@ theorem validateProduced_ok (span : SourceSpan) (expected : Native.Expected) (pr
   cases checked : Native.validate expected program <;> simp [validateProduced, checked]
   constructor <;> intro equal <;> exact equal.symm
 
-private def optimizedInstructions (enabled : Bool) (instructions : Array Json) : Array Json :=
-  if enabled then
-    RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons (RangeDedup.run instructions))
-  else instructions
+inductive Rewrites where
+  | disabled
+  | rangeAndAssertions
+  | includingComparisons
+  deriving BEq
 
-private def optimizedExpected (enabled : Bool) (expected : Native.Expected) : Native.Expected :=
-  if enabled then {expected with assertions := expected.assertions.eraseDups}
-  else expected
+private def optimizedInstructions (rewrites : Rewrites) (instructions : Array Json) : Array Json :=
+  match rewrites with
+  | .disabled => instructions
+  | .rangeAndAssertions => RangeDedup.removeDuplicateAssertions (RangeDedup.run instructions)
+  | .includingComparisons =>
+    RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons (RangeDedup.run instructions))
+
+private def optimizedExpected (rewrites : Rewrites) (expected : Native.Expected) : Native.Expected :=
+  if rewrites == .disabled then expected
+  else {expected with assertions := expected.assertions.eraseDups}
 
 private theorem bind_ok (first : Except ε α) (next : α → Except ε β) (value : β) :
     Except.bind first next = .ok value ↔ ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
@@ -1426,7 +1434,7 @@ private def loweringCapabilities : Capabilities :=
     persistentHashVector32 := true, persistentHashNative := true,
     bytes32Conversions := true, sha512 := true, keccak256 := true, typedBoolean := true, hashToCurve := true, foreignValues := true, foreignArithmetic := true, foreignByteConversions := true, jubjub := true }
 
-def lowerCircuit (c : Circuit) (dedupRangeChecks : Bool := false) : Except Diagnostic Json := do
+def lowerCircuit (c : Circuit) (rewrites : Rewrites := .disabled) : Except Diagnostic Json := do
   Disclosure.circuit c
   let c := Passes.pruneCircuit c
   c.validate loweringCapabilities
@@ -1445,9 +1453,9 @@ def lowerCircuit (c : Circuit) (dedupRangeChecks : Bool := false) : Except Diagn
     ("outputs", Json.arr ((c.outputs.flatMap fun output =>
       List.replicate output.nativeReturnFieldCount nativeType).toArray)),
     ("do_communications_commitment", toJson false),
-    ("instructions", Json.arr (optimizedInstructions dedupRangeChecks result.instructions))]
+    ("instructions", Json.arr (optimizedInstructions rewrites result.instructions))]
   let expected ← Native.expectedCircuit c
-  validateProduced c.span (optimizedExpected dedupRangeChecks expected) program
+  validateProduced c.span (optimizedExpected rewrites expected) program
 
 /-- Successful lowering necessarily passes the existing mandatory validation
 against the independently reconstructed statement of the actual pruned source. -/
@@ -1570,7 +1578,7 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
 /-- Lower an already-pruned entrypoint and return its plan with the checked
 ledger relation. The producer check still derives its schedule from source. -/
 def lowerPrunedEntrypoint (state : List StateDecl) (entry : Entrypoint)
-    (dedupRangeChecks : Bool := false) : Except Diagnostic (Impact.Plan × Json) := do
+    (rewrites : Rewrites := .disabled) : Except Diagnostic (Impact.Plan × Json) := do
   let plan ← Impact.lower state entry
   let (_, result) := (lowerEntrypointBody entry plan).run {}
   let callInputs := (entry.callArguments.flatMap Native.Input.callArgumentRequirements).map fun input =>
@@ -1584,17 +1592,17 @@ def lowerPrunedEntrypoint (state : List StateDecl) (entry : Entrypoint)
     -- Ledger ContractCall.public_inputs always includes the commitment after
     -- binding input. Standalone relations above deliberately keep it disabled.
     ("do_communications_commitment", toJson true),
-    ("instructions", Json.arr (optimizedInstructions dedupRangeChecks result.instructions))]
+    ("instructions", Json.arr (optimizedInstructions rewrites result.instructions))]
   let expected ← Native.expectedEntrypoint state entry
-  let relation ← validateProduced entry.span (optimizedExpected dedupRangeChecks expected) program
+  let relation ← validateProduced entry.span (optimizedExpected rewrites expected) program
   pure (plan, relation)
 
 /-- Compile a native ledger transcript relation. Public-input binding includes
 all opcode, alignment, key, read-result and write-value fields. The caller must
 execute the matching Impact plan, not the standalone circuit artifact. -/
 def lowerEntrypoint (state : List StateDecl) (entry : Entrypoint)
-    (dedupRangeChecks : Bool := false) : Except Diagnostic Json := do
-  let result ← lowerPrunedEntrypoint state (Passes.pruneEntrypoint entry) dedupRangeChecks
+    (rewrites : Rewrites := .disabled) : Except Diagnostic Json := do
+  let result ← lowerPrunedEntrypoint state (Passes.pruneEntrypoint entry) rewrites
   pure result.2
 
 /-- Accepted ledger-call JSON retains the exact instruction vector emitted by
