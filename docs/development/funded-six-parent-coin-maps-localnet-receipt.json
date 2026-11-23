@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "scope": "Independent-key insertion and replacement below six existing Bytes32 Map parents on development Ledger 9.1.0.1",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "mapParentCount": 6,
+  "source": {
+    "path": "tests/FundedSixParentQualifiedCoinMaps.lean",
+    "sha256": "2dd8c35886b3ceba471811e25fd8e1237f34bbb55f1e35a94b5cff1713b61c80"
+  },
+  "artifacts": {
+    "initializeOwners": {
+      "k": 11,
+      "rows": 1018,
+      "compilerRevision": "0058cae360bd4df0a93723c8e3ee54e8c0782e11",
+      "manifestSha256": "20c10ba1cef9b6c24cfbeffc5087a8378cb08e38333ca2743a9b1c37a5b62ae2",
+      "circuitSha256": "8c46ca6cd0335adc0cf4f15c19ff1b3439cf773b566952ebed150c3322b9adda",
+      "impactPlanSha256": "34f85c767d7f8c638f1379914c4af790e37f858699b13da35fc2f07f8f150140",
+      "verifierKeySha256": "238525eb22616856e937c7a61186a6e64be0f5f075fab807a323b1b49c2667de",
+      "proverKeySha256": "1389eb711447aa729f2880d0a19950af7f30e4091beae84966ad173664121120"
+    },
+    "tip": {
+      "k": 15,
+      "rows": 25079,
+      "compilerRevision": "0058cae360bd4df0a93723c8e3ee54e8c0782e11",
+      "manifestSha256": "76f26092209c351eacd03afc1175e56040b4732df01ee56f61bb87b90b214e15",
+      "circuitSha256": "6469da1b85fb7ee920aebf9dd2403c02b08947f8b86bf63f09de9da08008eeac",
+      "impactPlanSha256": "2330229f8abf0318ffb50b26801123183a31a3442d6e9b5d2d26c54f5bbe2664",
+      "verifierKeySha256": "10e4f526eea0481048e4472925c9cc779d2d5f2be3b41f9f642fefab8117f3fd",
+      "proverKeySha256": "2d3e180c19cf6ee1e1a2cefe24110ae3a600ab2f353b34259329256ec0a120b7"
+    }
+  },
+  "ledgerParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+  "nativeCliBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "srsSha256": {
+    "k11": "9901589d7956ff58be0d85569b2f455b77b58c3758026ffb5bbe4807000b96d1",
+    "k15": "724c7c3d779148bb113c7ee9c034b2f27db16e6bdf315fde90105a9bad00b1de"
+  },
+  "contractAddress": "378dc4b945f45c65b0e71b2e48b9a95bd3e3020dc08376991a9e285fb6d7bc1d",
+  "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+  "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+  "selectedGroup": "0505050505050505050505050505050505050505050505050505050505050505",
+  "siblingGroup": "0606060606060606060606060606060606060606060606060606060606060606",
+  "mapKey": "0404040404040404040404040404040404040404040404040404040404040404",
+  "deployment": {
+    "blockHash": "a4ec437707bcf972e1d37fb54078c004b7333b68eabdf4154491f1ff058133ac",
+    "finalizedBlockHash": "a4ec437707bcf972e1d37fb54078c004b7333b68eabdf4154491f1ff058133ac",
+    "finalizedHeight": 69750,
+    "height": 69750,
+    "transactionId": "d9110799fe558dcf772301a24a222337c6d394f3908b245dba578ba7d73d6ab0"
+  },
+  "firstCall": {
+    "blockHash": "1d5a4131e93c6d49ec08938cc196cd7179911bb9eebbc0bad9335a1d237a718a",
+    "finalizedBlockHash": "1d5a4131e93c6d49ec08938cc196cd7179911bb9eebbc0bad9335a1d237a718a",
+    "finalizedHeight": 69757,
+    "height": 69757,
+    "transactionId": "1681921d8c003d3e6505bb0a86f3b98c646582ded9bb798756cc069f1c6c2810",
+    "stateSha256": "e33cd0fee378bad27498a60ce1ad45f4d878639a1d7f86c9fe4098dce53f48c8",
+    "coin": {
+      "nonce": "3aa2654120f2c751d69dc7fcf4ecc39a1c808480879944976cf085ab21c2b735",
+      "color": "8616d318b93da73410c02f03c3792b50547452dc98f5ed1a6dc612ce73827b74",
+      "value": "5",
+      "commitment": "389fc5e7a92d24d39d1f0600b6ba19f8f4061ed8cd50e38dc33b53f03c5f49ca",
+      "mtIndex": 42
+    }
+  },
+  "initialization": {
+    "blockHash": "e17a49ec0b383b74e5f4eaeda9ef9cc3e444b5d09068ccc66ee37f9445b76738",
+    "finalizedBlockHash": "e17a49ec0b383b74e5f4eaeda9ef9cc3e444b5d09068ccc66ee37f9445b76738",
+    "finalizedHeight": 69753,
+    "height": 69753,
+    "transactionId": "3265ff7abe995421f2c7bcb09fbee01c4e10bb1d51f36c4c65af3aa4c486ab38",
+    "stateSha256": "79d6041f71ea811de0971b39c2d93fb75c87eb69f4fbefe51b32558790bdcb20"
+  },
+  "replacementCall": {
+    "blockHash": "ed3682e61a443234db0f4fd26438bcf4de9d2944a1dce4835ba20e1f0ccbfcd0",
+    "finalizedBlockHash": "ed3682e61a443234db0f4fd26438bcf4de9d2944a1dce4835ba20e1f0ccbfcd0",
+    "finalizedHeight": 69760,
+    "height": 69760,
+    "transactionId": "2dff765db9bc8bc756b27f91db11a7b5db4cf01c6368d2d55813d78ce3caa10e",
+    "stateSha256": "98f2d553212b9401690dee8a1cd2cbeb93d753117fbc4184f92b12486a133152",
+    "coin": {
+      "nonce": "0599f0751b54379e938305f9d3503a1a52cfc41194dd86e4cd41578c29aea2ad",
+      "color": "8616d318b93da73410c02f03c3792b50547452dc98f5ed1a6dc612ce73827b74",
+      "value": "5",
+      "commitment": "7ef9f13f9fec2f85a0bf405fca8d8e3330bb826df6b351d6d70e0160988731d2",
+      "mtIndex": 43
+    }
+  },
+  "verified": {
+    "deepCoinMapMatchesFinalizedOutput": true,
+    "siblingGroupsUnchanged": true,
+    "otherOwnerGroupsUnchanged": true,
+    "rootCoinMapContainsReplacementOnly": true,
+    "deepCoinMapContainsReplacementOnly": true,
+    "originalNonceRemainsInPot": true,
+    "selectedSetContainsBothCoins": true,
+    "selectedListNewestFirst": true,
+    "siblingGroupsRemainEmpty": true,
+    "otherOwnerGroupsRemainEmpty": true
+  },
+  "rejectedBeforeFirstCall": [
+    "missingOffer",
+    "mismatchedOffer"
+  ],
+  "test": {
+    "name": "localnet::shielded_receive::tests::funded_shielded_receive_localnet",
+    "sourceSha256": "75123399716d55a49847bc41a13c289b71e4bc12260af5d333d08d108519193f",
+    "binarySha256": "07cb147a673d6d7427e40ca9c9f82a84e018e76095eea13d1a0b5ba64029b231",
+    "result": "passed",
+    "durationSeconds": 150.37
+  }
+}

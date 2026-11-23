@@ -1692,8 +1692,8 @@ private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : Str
 
 private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
-  if keys.length > 5 then
-    throw "qualified coin Map parent path exceeds five Maps"
+  if keys.length > 14 then
+    throw "qualified coin Map parent path exceeds fourteen Maps"
   let selected ← if keys.isEmpty then do
     let some declaration := decls.find? (·.name == state)
       | throw s!"unknown qualified shielded coin Map '{state}'"

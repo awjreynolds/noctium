@@ -1,3 +1,4 @@
+import Noctium.Backend.Impact
 import Noctium.Disclosure
 import Noctium.Frontend
 
@@ -67,6 +68,17 @@ private def deepBookedCoinMapStore : Entrypoint := deepBookedCoinMapEntry "store
       [.mk (.bytes 32) (.ref "owner"), .mk (.bytes 32) (.ref "group")]] => Bool.true
   | _ => Bool.false
 
+#guard match Backend.Impact.lower DeepBookedCoinMap.state deepBookedCoinMapStore with
+  | .ok plan =>
+      match plan.operations.filterMap fun operation =>
+          match operation with
+          | .insertShieldedCoinMap slot _ _ _ _ _ _ _ keys =>
+              some (slot, keys, operation.fieldGroups.map List.length)
+          | _ => none with
+      | [(0, [_, _], [12, 6, 1, 6, 5, 11, 1, 2, 1, 1])] => Bool.true
+      | _ => Bool.false
+  | .error _ => Bool.false
+
 private def deepBookedCoinMapWrongParentKey : Entrypoint :=
   {deepBookedCoinMapStore with effects := deepBookedCoinMapStore.effects.map fun effect =>
     match effect with
@@ -119,29 +131,96 @@ private def deepBookedCoinMapWrongCoinLayout : List StateDecl :=
   | .error diagnostic => diagnostic.message.contains "must be flat nonce: Bytes32"
   | .ok _ => Bool.false
 
-private def deepBookedCoinMapSixParentState : List StateDecl :=
+private def deepBookedCoinMapWrapParents : Nat → LedgerValueType → LedgerValueType
+  | 0, value => value
+  | count + 1, value => .map (.bytes 32) (deepBookedCoinMapWrapParents count value)
+
+private def deepBookedCoinMapParentState (parentCount : Nat) : List StateDecl :=
   DeepBookedCoinMap.state.map fun declaration =>
     match declaration.kind with
     | .tree (.map ownerKey (.map groupKey (.map leafKey (.composite environment recordType)))) =>
         let coinValue := .composite environment recordType
         let schema := .map ownerKey (.map groupKey
-          (.map (.bytes 32) (.map (.bytes 32) (.map (.bytes 32)
-            (.map (.bytes 32) (.map leafKey coinValue))))))
+          (deepBookedCoinMapWrapParents (parentCount - 2) (.map leafKey coinValue)))
         {declaration with kind := .tree schema}
     | _ => declaration
 
-private def deepBookedCoinMapSixParentKeys : List PathKey :=
-  List.replicate 6 (.mk (.bytes 32) (.bytes32Literal []))
+private def deepBookedCoinMapParentKeys (count : Nat) : List PathKey :=
+  List.replicate count (.mk (.bytes 32) (.bytes32Literal (List.replicate 32 0)))
 
-private def deepBookedCoinMapSixParentInsert : Entrypoint :=
+private def deepBookedCoinMapInsertWithParents (count : Nat) : Entrypoint :=
   {deepBookedCoinMapStore with effects := deepBookedCoinMapStore.effects.map fun effect =>
     match effect with
       | .insertShieldedCoinMap state key nonce color amount isContract recipient _ =>
           .insertShieldedCoinMap state key nonce color amount isContract recipient
-            deepBookedCoinMapSixParentKeys
+            (deepBookedCoinMapParentKeys count)
       | _ => effect}
 
-#guard match deepBookedCoinMapSixParentInsert.validate
-    Capabilities.source deepBookedCoinMapSixParentState with
-  | .error diagnostic => diagnostic.message.contains "exceeds five Maps"
+private def deepBookedCoinMapFieldGroupOpcodes
+    (groups : List (List Backend.Impact.Scalar)) : List Nat :=
+  groups.map fun group => match group with
+    | .native opcode :: _ => opcode
+    | _ => 0
+
+private def deepBookedCoinMapSixParentInsert : Entrypoint :=
+  deepBookedCoinMapInsertWithParents 6
+
+#guard (deepBookedCoinMapSixParentInsert.validate Capabilities.source
+  (deepBookedCoinMapParentState 6)).isOk
+
+#guard match Backend.Impact.lower (deepBookedCoinMapParentState 6)
+    deepBookedCoinMapSixParentInsert with
+  | .ok plan =>
+      match plan.operations.filterMap fun operation =>
+          match operation with
+          | .insertShieldedCoinMap slot _ _ _ _ _ _ _ keys =>
+              some (slot, keys, operation.fieldGroups)
+          | _ => none with
+      | [(slot, keys, groups)] =>
+          slot == 0 && keys.length == 6 && groups.length == 51 &&
+          groups.map List.length ==
+            [1, 6, 5, 11, 1, 2, 1, 28, 6, 1, 1, 1,
+              1, 24, 6, 1, 1, 1, 1, 20, 6, 1, 1, 1,
+              1, 16, 6, 1, 1, 1, 1, 12, 6, 1, 1, 1,
+              1, 8, 6, 1, 1, 1, 1, 4, 6, 1, 1, 1,
+              5, 1, 1] &&
+          deepBookedCoinMapFieldGroupOpcodes groups ==
+            [0x32, 0x10, 0x61, 0x10, 0x40, 0x17,
+              0x31, 0x56, 0x10, 0x40, 0x41, 0x91,
+              0x31, 0x65, 0x10, 0x40, 0x41, 0xa1,
+              0x31, 0x64, 0x10, 0x40, 0x41, 0xa1,
+              0x31, 0x63, 0x10, 0x40, 0x41, 0xa1,
+              0x31, 0x62, 0x10, 0x40, 0x41, 0xa1,
+              0x31, 0x61, 0x10, 0x40, 0x41, 0xa1,
+              0x31, 0x60, 0x10, 0x40, 0x41, 0xa1,
+              0x10, 0x40, 0xa1]
+      | _ => Bool.false
+  | .error _ => Bool.false
+
+private def deepBookedCoinMapFourteenParentInsert : Entrypoint :=
+  deepBookedCoinMapInsertWithParents 14
+
+#guard match Backend.Impact.lower (deepBookedCoinMapParentState 14)
+    deepBookedCoinMapFourteenParentInsert with
+  | .ok plan =>
+      match plan.operations.filterMap fun operation =>
+          match operation with
+          | .insertShieldedCoinMap _ _ _ _ _ _ _ _ keys =>
+              some (keys.length, operation.fieldGroups.length)
+          | _ => none with
+      | [(14, 99)] => Bool.true
+      | _ => Bool.false
+  | .error _ => Bool.false
+
+private def deepBookedCoinMapFifteenParentInsert : Entrypoint :=
+  deepBookedCoinMapInsertWithParents 15
+
+#guard match deepBookedCoinMapFifteenParentInsert.validate Capabilities.source
+    (deepBookedCoinMapParentState 15) with
+  | .error diagnostic => diagnostic.message.contains "exceeds fourteen Maps"
+  | .ok _ => Bool.false
+
+#guard match Backend.Impact.lower (deepBookedCoinMapParentState 15)
+    deepBookedCoinMapFifteenParentInsert with
+  | .error diagnostic => diagnostic.message.contains "exceeds fourteen Maps"
   | .ok _ => Bool.false
