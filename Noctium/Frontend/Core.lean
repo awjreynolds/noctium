@@ -414,6 +414,7 @@ scoped syntax ident ":" nltype : nlconstructorparam
 declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
+scoped syntax "initializeCounter" ident "from" ident : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" : nlconstructorinit
@@ -5021,6 +5022,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
+  let hasCounterReads := initializers.any fun initializer =>
+    match initializer with
+    | `(nlconstructorinit| initializeCounter $_:ident from $_:ident) => _root_.Bool.true
+    | _ => _root_.Bool.false
   let mut parameterTerms : Array (TSyntax `term) := #[]
   let mut scalarBindings : Bindings := []
   let mut nominalUIntBindings : CircuitNominalEnv := []
@@ -5144,6 +5149,28 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _, some _ => throwErrorAt mapNameStx "constructor membership read requires a Map"
       | none, _ => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
       | _, none => throwErrorAt mapNameStx s!"constructor reads unknown Map '{mapName}'"
+    | `(nlconstructorinit| initializeCounter $stateName:ident from $counterName:ident) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let counterState := counterName.getId.toString
+      unless (nominalUIntCells.lookup destination).isNone do
+        throwErrorAt stateName "counter snapshot requires a plain UInt64 Cell"
+      match schema.find? (·.1 == destination), schema.find? (·.1 == counterState) with
+      | some (_, .cell (.uint maximum)), some (_, .tree .counter) => do
+        unless maximum == 2 ^ 64 - 1 do
+          throwErrorAt stateName "counter snapshot requires a UInt64 Cell"
+        if initializedNames.contains destination then
+          throwErrorAt initializer s!"duplicate constructor initializer for '{destination}'"
+        initializedNames := destination :: initializedNames
+        orderedActionTerms := orderedActionTerms.push
+          (← `(Noctium.ConstructorAction.initializeCellFromCounter
+            $(stringTerm destination) $(stringTerm counterState)))
+        hasOrderedActions := _root_.Bool.true
+      | some _, some _ => throwErrorAt stateName "counter snapshot requires a root Counter and a UInt64 Cell"
+      | none, _ => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
+      | _, none => throwErrorAt counterName s!"constructor reads unknown Counter '{counterState}'"
     | `(nlconstructorinit| when $_:nlexpr insert $stateName:ident [ $key:nlexpr ])
     | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
@@ -5213,9 +5240,14 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         | _ => throwErrorAt initializer "invalid constructor Counter increment"
       match schema.find? (·.1 == destination) with
       | some (_, .tree .counter) => do
-        counterIncrementTerms := counterIncrementTerms.push
-          (← `(Noctium.ConstructorCounterIncrement.mk $(stringTerm destination)
-            $amountExpression $guard))
+        let incrementTerm ← `(Noctium.ConstructorCounterIncrement.mk $(stringTerm destination)
+          $amountExpression $guard)
+        if hasCounterReads then
+          orderedActionTerms := orderedActionTerms.push
+            (← `(Noctium.ConstructorAction.counterIncrement $incrementTerm))
+          hasOrderedActions := _root_.Bool.true
+        else
+          counterIncrementTerms := counterIncrementTerms.push incrementTerm
       | some _ => throwErrorAt stateName "constructor increment requires a root Counter"
       | none => throwErrorAt stateName s!"constructor increments unknown Counter '{destination}'"
     | `(nlconstructorinit| when $_:nlexpr pushFront $stateName:ident := $value:nlexpr)

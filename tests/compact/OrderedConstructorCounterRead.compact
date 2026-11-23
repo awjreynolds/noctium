@@ -1,0 +1,18 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export sealed ledger total: Counter;
+export sealed ledger snapshotBefore: Uint<64>;
+export sealed ledger snapshotAfter: Uint<64>;
+
+constructor(enabled: Boolean, amount: Uint<16>) {
+  snapshotBefore = total.read();
+  if (disclose(enabled)) {
+    total.increment(disclose(amount));
+  }
+  snapshotAfter = total.read();
+}
+
+export circuit readBack(): [Uint<64>, Uint<64>, Uint<64>] {
+  return [snapshotBefore, snapshotAfter, total.read()];
+}

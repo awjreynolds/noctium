@@ -910,6 +910,15 @@ private def constructorActionJson (action : ConstructorAction) : Json :=
       ("key", match insertion.key with | .mk _ expression => nativeExpressionJson expression),
       ("value", nativeExpressionJson insertion.value)] ++
       insertion.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
+  | .counterIncrement counterAction => Json.mkObj ([
+      ("kind", toJson ("counterIncrement" : String)),
+      ("state", toJson counterAction.state),
+      ("amount", nativeExpressionJson counterAction.amount)] ++
+      counterAction.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
+  | .initializeCellFromCounter state counterName => Json.mkObj [
+      ("kind", toJson ("initializeCellFromCounter" : String)),
+      ("state", toJson state),
+      ("counter", toJson counterName)]
   | .initializeCellFromMapMember initializer => Json.mkObj [
       ("kind", toJson ("initializeCellFromMapMember" : String)),
       ("state", toJson initializer.state),
