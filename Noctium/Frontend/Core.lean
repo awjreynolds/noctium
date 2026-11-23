@@ -2452,6 +2452,7 @@ private structure EntryEffects where
   contractRefBindings : List (String × Name) := []
   contractRefState : List (String × Name) := []
   recordFieldTypes : List (String × List (String × CircuitSourceType)) := []
+  recordKeyFieldTypes : List (String × List (String × CircuitSourceType)) := []
   nominalBytes32Bindings : List (String × NominalBytes32) := []
   merkleLeafTypes : List (String × MerkleLeafType) := []
   optionalRecordHeads : List OptionalRecordHead := []
@@ -2473,6 +2474,11 @@ private def elaborateLedgerFieldValues (state : EntryEffects) (payload : TSyntax
     `(Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value)
   let values := values.toArray
   `(([$values,*] : List Noctium.LedgerFieldExpr))
+
+private def elaborateRecordMapKeyFields (state : EntryEffects) (storage : TSyntax `ident)
+    (payload : TSyntax `nlleaves) (fields : List (String × Ty)) : CommandElabM (TSyntax `term) :=
+  elaborateLedgerFieldValues state payload fields
+    ((state.recordKeyFieldTypes.lookup storage.getId.toString).getD [])
 
 private def EntryEffects.collectionNominals (state : EntryEffects) (storage : TSyntax `ident) : CollectionNominals :=
   (state.nominalUIntCollections.lookup storage.getId.toString).getD {}
@@ -3168,7 +3174,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
       let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
-      let keyValues ← elaborateLedgerFieldValues state payload keyFields
+      let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
       let type ← tyTerm valueTy
       let value ← `(Noctium.GuardedExpression.zeroValue $type)
       `(Noctium.Effect.writeRecordMap $name $keyValues $type $value $parentKeys)
@@ -3176,7 +3182,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
       let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
-      let keyValues ← elaborateLedgerFieldValues state payload keyFields
+      let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
       let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
@@ -3307,7 +3313,7 @@ private def recordMapFieldsAt (schema : List (String × StateKind))
   let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let values ← elaborateLedgerFieldValues state payload fields
+  let values ← elaborateRecordMapKeyFields state storage payload fields
   pure (← pathKeysTerm keys, valueSchema, fields, values)
 
 private def recordMapKeyValuesAt (schema : List (String × StateKind))
@@ -3356,8 +3362,14 @@ private def elaborateRecordMapRead (schema : List (String × StateKind))
   let (readName, updated) ← freshReadName depth state destination
   let term ← `(Noctium.Effect.readRecordMap
     $(stringTerm storage.getId.toString) $(stringTerm readName) $(← tyTerm valueTy) $values $keys)
-  bindReadName {updated with terms := updated.terms.push term}
-    destination.getId.toString readName valueTy
+  let destinationName := destination.getId.toString
+  let updated ← bindReadName {updated with terms := updated.terms.push term}
+    destinationName readName valueTy
+  pure {updated with
+    nominalUIntBindings := bindCircuitNominal updated.nominalUIntBindings destinationName
+      (state.collectionNominals storage).scalarValue
+    contractRefBindings := bindContractRef updated.contractRefBindings destinationName
+      (state.contractRefState.lookup storage.getId.toString)}
 
 private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
     (storage : TSyntax `ident) (parentKeys : List (TSyntax `nlexpr))
@@ -3382,9 +3394,10 @@ private def elaborateRecordMapCompositeRead (schema : List (String × StateKind)
     (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
   let (parentPathTerm, _, keyFields, valueType, valueFields) ←
     recordMapCompositeFieldsAt schema storage parentKeys state
-  let keyValues ← elaborateLedgerFieldValues state payload keyFields
+  let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
   let (readName, updated) ← freshReadName depth state destination
-  let (updated, destinations) ← bindLedgerRecordFields updated destination depth valueFields
+  let fieldTypes := (state.recordFieldTypes.lookup storage.getId.toString).getD []
+  let (updated, destinations) ← bindLedgerRecordFields updated destination depth valueFields fieldTypes
   let .structure valueTypeId := valueType
     | throwErrorAt storage "record Map values require a named structure"
   let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
@@ -3399,8 +3412,9 @@ private def elaborateRecordMapCompositeWrite (schema : List (String × StateKind
     (state : EntryEffects) : CommandElabM EntryEffects := do
   let (parentPathTerm, _, keyFields, valueType, valueFields) ←
     recordMapCompositeFieldsAt schema storage parentKeys state
-  let keyValues ← elaborateLedgerFieldValues state payload keyFields
-  let valueValues ← elaborateLedgerFieldValues state valuePayload valueFields
+  let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
+  let fieldTypes := (state.recordFieldTypes.lookup storage.getId.toString).getD []
+  let valueValues ← elaborateLedgerFieldValues state valuePayload valueFields fieldTypes
   let .structure valueTypeId := valueType
     | throwErrorAt storage "record Map values require a named structure"
   let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
@@ -3413,7 +3427,9 @@ private def elaborateRecordMapWrite (schema : List (String × StateKind))
     (payload : TSyntax `nlleaves) (value : TSyntax `nlexpr)
     (state : EntryEffects) : CommandElabM EntryEffects := do
   let (keys, _, valueTy, values) ← recordMapKeyValuesAt schema storage parentKeys payload state
-  let value ← checkedExpression state.env value valueTy
+  let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
+    {type := valueTy, nominalUInt := (state.collectionNominals storage).scalarValue,
+      contractRef := state.contractRefState.lookup storage.getId.toString}
   let term ← `(Noctium.Effect.writeRecordMap
     $(stringTerm storage.getId.toString) $values $(← tyTerm valueTy) $value $keys)
   pure {state with terms := state.terms.push term}
@@ -5340,6 +5356,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let mut nominalUIntCollections : List (String × CollectionNominals) := []
     let mut contractRefState : List (String × Name) := []
     let mut recordFieldTypes : List (String × List (String × CircuitSourceType)) := []
+    let mut recordKeyFieldTypes : List (String × List (String × CircuitSourceType)) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
     let mut concreteSchema : List StateDecl := []
     let mut stateDeclarations : Array (TSyntax `nlstate) := #[]
@@ -5376,12 +5393,20 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
             | .error message => throwErrorAt state message
         | `(nlstate| tree $id:ident : struct $record:ident { $recordFields:nlcompositefield* } => $valueType:nltype) => do
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), sourceKeys) ←
+            elaborateTypedLedgerRecord contractName record recordFields state
+          unless sourceKeys.isEmpty do
+            recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           match LedgerValueType.ledgerRecordWriteFields environment compositeType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
-          let valueTy ← readTy valueType
+          let valueSource ← readCircuitSourceType valueType
+          let valueTy := valueSource.type
+          if let some interface := valueSource.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
+          if valueSource.nominalUInt.isSome then
+            nominalUIntCollections := (id.getId.toString, {scalarValue := valueSource.nominalUInt}) ::
+              nominalUIntCollections
           let valueSchema := LedgerValueType.recordMapKey environment compositeType valueTy
           let valueTerm ← `(Noctium.LedgerValueType.recordMapKey
             $environmentTerm $compositeTypeTerm $(← tyTerm valueTy))
@@ -5389,10 +5414,14 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| tree $id:ident : struct $keyRecord:ident { $keyFields:nlcompositefield* } =>
             struct $valueRecord:ident { $valueFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm) ←
-            elaborateNamedRecord contractName keyRecord keyFields state
-          let (valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm) ←
-            elaborateNamedRecord contractName valueRecord valueFields state
+          let ((keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm), sourceKeys) ←
+            elaborateTypedLedgerRecord contractName keyRecord keyFields state
+          let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
+            elaborateTypedLedgerRecord contractName valueRecord valueFields state
+          unless sourceKeys.isEmpty do
+            recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
+          unless sourceValues.isEmpty do
+            recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
           match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
@@ -5615,10 +5644,18 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| tree $id:ident : $outer:nltype => struct $keyRecord:ident
             { $keyFields:nlcompositefield* } => $valueType:nltype) => do
           let outerTy ← readTy outer
-          let valueTy ← readTy valueType
+          let valueSource ← readCircuitSourceType valueType
+          let valueTy := valueSource.type
+          if let some interface := valueSource.contractRef then
+            contractRefState := (id.getId.toString, interface) :: contractRefState
+          if valueSource.nominalUInt.isSome then
+            nominalUIntCollections := (id.getId.toString, {scalarValue := valueSource.nominalUInt}) ::
+              nominalUIntCollections
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName keyRecord keyFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), sourceKeys) ←
+            elaborateTypedLedgerRecord contractName keyRecord keyFields state
+          unless sourceKeys.isEmpty do
+            recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           match LedgerValueType.ledgerRecordWriteFields environment compositeType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
@@ -5635,10 +5672,14 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
             { $valueFields:nlcompositefield* }) => do
           let outerTy ← readTy outer
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm) ←
-            elaborateNamedRecord contractName keyRecord keyFields state
-          let (valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm) ←
-            elaborateNamedRecord contractName valueRecord valueFields state
+          let ((keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm), sourceKeys) ←
+            elaborateTypedLedgerRecord contractName keyRecord keyFields state
+          let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
+            elaborateTypedLedgerRecord contractName valueRecord valueFields state
+          unless sourceKeys.isEmpty do
+            recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
+          unless sourceValues.isEmpty do
+            recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
           match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
@@ -5835,6 +5876,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordFieldTypes := recordFieldTypes
+          recordKeyFieldTypes := recordKeyFieldTypes
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5875,6 +5917,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
           recordFieldTypes := recordFieldTypes
+          recordKeyFieldTypes := recordKeyFieldTypes
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs

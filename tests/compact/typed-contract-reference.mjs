@@ -70,6 +70,22 @@ export circuit update(amount: Uint<8>): Uint<8> {
   assert.equal(deepRouteListMapLedger?.value.value['type-name'], 'List');
   assert.equal(deepRouteListMapLedger?.value.value.type['type-name'], 'Struct');
   assert.equal(deepRouteListMapLedger?.value.value.type.name, 'Route');
+  const recordKeyRouteLedger = contractInfo.ledger.find(({name}) => name === 'recordKeyRoutes');
+  assert.equal(recordKeyRouteLedger?.storage, 'Map');
+  assert.equal(recordKeyRouteLedger?.key['type-name'], 'Struct');
+  assert.equal(recordKeyRouteLedger?.key.name, 'RouteKey');
+  assert.equal(recordKeyRouteLedger?.value['type-name'], 'Struct');
+  assert.equal(recordKeyRouteLedger?.value.name, 'Route');
+  const recordKeyTargetLedger = contractInfo.ledger.find(({name}) => name === 'recordKeyTargets');
+  assert.equal(recordKeyTargetLedger?.storage, 'Map');
+  assert.equal(recordKeyTargetLedger?.key.name, 'RouteKey');
+  assert.equal(recordKeyTargetLedger?.value['type-name'], 'Contract');
+  assert.equal(recordKeyTargetLedger?.value.name, 'TypedRefUpdate');
+  const nestedRecordKeyRouteLedger = contractInfo.ledger.find(({name}) => name === 'nestedRecordKeyRoutes');
+  assert.equal(nestedRecordKeyRouteLedger?.storage, 'Map');
+  assert.equal(nestedRecordKeyRouteLedger?.value['type-name'], 'Map');
+  assert.equal(nestedRecordKeyRouteLedger?.value.key.name, 'RouteKey');
+  assert.equal(nestedRecordKeyRouteLedger?.value.value.name, 'Route');
   const echoCircuit = contractInfo.circuits.find(({name}) => name === 'echo');
   assert.equal(echoCircuit?.arguments[0]?.type['type-name'], 'Contract');
   assert.equal(echoCircuit?.arguments[0]?.type.name, 'TypedRefValue');
@@ -200,6 +216,17 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
   return routes.lookup(disclose(key)).target.update(disclose(amount));
 }
 `, /mismatch between actual type contract OtherRef[\s\S]*declared type\s+contract TypedRefUpdate[\s\S]*field target of struct Route/);
+  await compileRejected('WrongRecordKeyReference', `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefUpdate { circuit update(amount: Uint<8>): Uint<8>; }
+contract OtherRef { circuit update(amount: Uint<8>): Uint<8>; }
+struct RouteKey { target: TypedRefUpdate, enabled: Boolean }
+export ledger targets: Map<RouteKey, TypedRefUpdate>;
+constructor(targetRef: OtherRef) {
+  const key = RouteKey{target: disclose(targetRef), enabled: disclose(true)};
+  targets.insert(disclose(key), disclose(targetRef));
+}
+`, /mismatch between actual type contract OtherRef[\s\S]*declared type\s+contract TypedRefUpdate[\s\S]*field target of struct RouteKey/);
 
   for (const output of [calleeOutput, callerOutput, routeOutput, listOutput, routeListOutput, echoCallerOutput]) {
     const scopedRuntime = join(output, 'node_modules/@midnight-ntwrk/compact-runtime');
@@ -222,8 +249,13 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
 
   const calleeAddress = runtime.sampleContractAddress();
   const reference = {bytes: Uint8Array.from(Buffer.from(calleeAddress, 'hex'))};
+  const keyTargetAddress = runtime.sampleContractAddress();
+  assert.notEqual(keyTargetAddress, calleeAddress);
+  const keyReference = {bytes: Uint8Array.from(Buffer.from(keyTargetAddress, 'hex'))};
   const forwarder = new Forwarder({});
-  const callerState = await forwarder.initialState(runtime.createConstructorContext(null, key), reference);
+  const callerState = await forwarder.initialState(
+    runtime.createConstructorContext(null, key), keyReference, reference,
+  );
   assert.deepEqual(ledger(callerState.currentContractState.data).target.bytes, reference.bytes);
   const routeKey = new Uint8Array(32);
   const mappedRoute = ledger(callerState.currentContractState.data).routes.lookup(routeKey);
@@ -243,12 +275,28 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
     .lookup(deepRouteParentKey).lookup(deepRouteKey);
   assert.deepEqual(mappedDeepRouteList.head().value.target.bytes, reference.bytes);
   assert.equal(mappedDeepRouteList.head().value.enabled, true);
+  const mappedRecordKeyRoute = ledger(callerState.currentContractState.data).recordKeyRoutes
+    .lookup({target: keyReference, enabled: true});
+  assert.deepEqual(mappedRecordKeyRoute.target.bytes, reference.bytes);
+  assert.equal(mappedRecordKeyRoute.enabled, true);
+  assert.deepEqual(ledger(callerState.currentContractState.data).recordKeyTargets
+    .lookup({target: keyReference, enabled: true}).bytes, reference.bytes);
+  const mappedNestedRecordKeyRoute = ledger(callerState.currentContractState.data).nestedRecordKeyRoutes
+    .lookup(deepRouteParentKey).lookup({target: keyReference, enabled: true});
+  assert.deepEqual(mappedNestedRecordKeyRoute.target.bytes, reference.bytes);
+  assert.equal(mappedNestedRecordKeyRoute.enabled, true);
 
   const crossContract = {
-    stateProvider: {async getContractState() { return calleeState.currentContractState; }},
+    stateProvider: {
+      async getContractState(_blockHash, address) {
+        return address === calleeAddress ? calleeState.currentContractState : undefined;
+      },
+    },
     moduleProvider: {
-      resolve() {
-        return async () => import(pathToFileURL(join(calleeOutput, 'contract/index.js')).href);
+      resolve(address) {
+        return address === calleeAddress
+          ? async () => import(pathToFileURL(join(calleeOutput, 'contract/index.js')).href)
+          : undefined;
       },
     },
   };
@@ -279,6 +327,18 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
     contextFor(callerState.currentContractState.data), deepRouteParentKey, deepRouteKey, 7n,
   );
   assert.equal(mappedDeepRouteListResult, 7n);
+  const {result: mappedRecordKeyRouteResult} = await forwarder.circuits.forwardRecordKeyRoute(
+    contextFor(callerState.currentContractState.data), keyReference, 7n,
+  );
+  assert.equal(mappedRecordKeyRouteResult, 7n);
+  const {result: mappedRecordKeyTargetResult} = await forwarder.circuits.forwardRecordKeyTarget(
+    contextFor(callerState.currentContractState.data), keyReference, 7n,
+  );
+  assert.equal(mappedRecordKeyTargetResult, 7n);
+  const {result: mappedNestedRecordKeyRouteResult} = await forwarder.circuits.forwardNestedRecordKeyRoute(
+    contextFor(callerState.currentContractState.data), deepRouteParentKey, keyReference, 7n,
+  );
+  assert.equal(mappedNestedRecordKeyRouteResult, 7n);
 
   const routeForwarder = new RouteForwarder({});
   const routeState = await routeForwarder.initialState(runtime.createConstructorContext(null, key), reference);
@@ -303,7 +363,9 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
   assert.equal(routeListResult, 7n);
 
   const echoService = new Forwarder({});
-  const echoServiceState = await echoService.initialState(runtime.createConstructorContext(null, key), reference);
+  const echoServiceState = await echoService.initialState(
+    runtime.createConstructorContext(null, key), keyReference, reference,
+  );
   const echoVerifierKey = Uint8Array.from(await readFile(join(callerOutput, 'keys/echo.verifier')));
   const echoOperation = new runtime.ContractOperation();
   echoOperation.verifierKey = echoVerifierKey;
@@ -337,7 +399,7 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
   };
   const {result: echoedReference} = await echoCaller.circuits.roundTrip(echoContext, valueReference);
   assert.deepEqual(echoedReference.bytes, valueReference.bytes);
-  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, Map<Bytes<32>, Route>, Map<Bytes<32>, List<Route>>, Map<Bytes<32>, Map<Bytes<32>, Route>>, Map<Bytes<32>, Map<Bytes<32>, List<Route>>>, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
+  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, map-value Route and List<Route> under scalar and nested keys, root and nested Map<RouteKey, Route>, Map<RouteKey, TypedRefUpdate>, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; wrong-interface key fields were rejected`);
 } finally {
   await rm(scratch, {recursive: true, force: true});
   try {

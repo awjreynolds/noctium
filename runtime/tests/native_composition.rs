@@ -714,6 +714,13 @@ fn composed_call_claims_typed_caller_outputs_and_rejects_a_wrong_parent() {
 
 #[cfg(feature = "localnet")]
 #[test]
+#[ignore = "uses the isolated development wallet and typed-reference caller/callee bundles"]
+fn stored_typed_contract_reference_finalizes_record_key_route() {
+    run_local_composition(LocalCase::TypedReference);
+}
+
+#[cfg(feature = "localnet")]
+#[test]
 #[ignore = "uses the isolated development wallet and aggregate result bundles"]
 fn composed_call_finalizes_with_named_aggregate_results() {
     run_local_composition(LocalCase::Aggregate);
@@ -733,6 +740,7 @@ enum LocalCase {
     Registry,
     Caller,
     TypedCaller,
+    TypedReference,
     Aggregate,
     Interface,
 }
@@ -836,6 +844,9 @@ fn run_local_composition(case: LocalCase) {
             LocalCase::Registry => return qualify_registry(&node, deploy, submit).await,
             LocalCase::Caller => return qualify_caller(&node, deploy, submit).await,
             LocalCase::TypedCaller => return qualify_typed_caller(&node, deploy, submit).await,
+            LocalCase::TypedReference => {
+                return qualify_stored_typed_reference(&node, deploy, submit).await
+            }
         }
         let independent = matches!(case, LocalCase::Independent);
         let aggregate = matches!(case, LocalCase::Aggregate);
@@ -1358,6 +1369,256 @@ async fn qualify_typed_caller(
             "calleeRecorded": true,
             "typedCallerReturnsMatched": true,
             "wrongExpectedParentRejectedBeforeSubmission": true,
+        })
+    );
+}
+
+#[cfg(feature = "localnet")]
+async fn qualify_stored_typed_reference(
+    node: &noctium_runtime::localnet::Node,
+    deploy: impl AsyncFn(&ContractDeploy<Db>) -> noctium_runtime::client::FinalizedReceipt,
+    submit: impl AsyncFn(
+        &noctium_runtime::proof::ProvedNativeIntent,
+    ) -> noctium_runtime::client::FinalizedReceipt,
+) {
+    use futures::future::pending;
+
+    let callee = Operation::load(
+        "callee",
+        "update",
+        BTreeMap::from([("total".into(), json!("0"))]),
+    );
+    let mut caller = Operation::load(
+        "caller",
+        "forward",
+        BTreeMap::from([
+            ("routes".into(), json!([])),
+            ("direct".into(), json!([])),
+            ("nested".into(), json!([])),
+        ]),
+    );
+    // The same source contract emits insertRoute and forward plans. Seed all
+    // of its collection slots through insertRoute before deploying forward.
+    let artifacts = PathBuf::from(env::var_os("NOCTIUM_TYPED_CONTRACT_REFERENCE_DIR").unwrap());
+    let put_plan: Plan = serde_json::from_slice(
+        &fs::read(artifacts.join("TypedRefRecordKeyCaller.insertRoute.impact.json")).unwrap(),
+    )
+    .unwrap();
+    let put_circuit = IrSource::load(
+        fs::read(artifacts.join("TypedRefRecordKeyCaller.insertRoute.zkir"))
+            .unwrap()
+            .as_slice(),
+    )
+    .unwrap();
+
+    let live = node.sync().unwrap();
+    let target_address = callee.deploy.address();
+    let key_target = ContractAddress(HashOutput([0xa7; 32]));
+    assert_ne!(key_target, target_address);
+    let reference = bytes32(target_address.0);
+    let put_inputs = BTreeMap::from([
+        ("keyTarget".into(), bytes32(key_target.0)),
+        ("replacement".into(), reference.clone()),
+    ]);
+    let put_execution = prepare(
+        &put_plan,
+        &put_inputs,
+        &caller.deploy.initial_state.data,
+        &live.state.parameters,
+        caller.deploy.address(),
+    )
+    .unwrap();
+    check(&put_execution, &put_circuit).unwrap();
+
+    let mut seeded_caller = caller.deploy.initial_state.clone();
+    seeded_caller.data = put_execution.after.state.clone();
+    caller.deploy = ContractDeploy::new(&mut OsRng, seeded_caller);
+    let caller_address = caller.deploy.address();
+    let deployments = [deploy(&callee.deploy).await, deploy(&caller.deploy).await];
+    assert_eq!(
+        deployments[0].contract_address,
+        hex::encode(target_address.0.0)
+    );
+    assert_eq!(
+        deployments[1].contract_address,
+        hex::encode(caller_address.0.0)
+    );
+
+    let live = node.sync().unwrap();
+    let ttl = live.block.tblock.to_secs() + 1800;
+    let caller_data = live
+        .state
+        .contract
+        .get(&caller_address)
+        .expect("deployed typed-reference caller")
+        .data
+        .clone();
+    assert_eq!(caller_data, put_execution.after.state);
+    let callee_data = live
+        .state
+        .contract
+        .get(&target_address)
+        .expect("deployed typed-reference callee")
+        .data
+        .clone();
+    let forward_inputs = BTreeMap::from([
+        ("keyTarget".into(), bytes32(key_target.0)),
+        ("opening".into(), json!("101")),
+        ("amount".into(), json!("7")),
+        ("expected".into(), json!("7")),
+    ]);
+    let callee_inputs = BTreeMap::from([("amount".into(), json!("7"))]);
+    let forward = prepare(
+        &caller.plan,
+        &forward_inputs,
+        &caller_data,
+        &live.state.parameters,
+        caller_address,
+    )
+    .unwrap();
+    check(&forward, &caller.circuit).unwrap();
+    let update = prepare(
+        &callee.plan,
+        &callee_inputs,
+        &callee_data,
+        &live.state.parameters,
+        target_address,
+    )
+    .unwrap();
+    check(&update, &callee.circuit).unwrap();
+    let expected_callee = create_state(
+        &callee.plan,
+        &BTreeMap::from([("total".into(), json!("7"))]),
+    )
+    .unwrap();
+    assert_eq!(update.after.state, expected_callee);
+    assert_eq!(
+        update.returns_json(),
+        BTreeMap::from([("stored".into(), json!("7"))])
+    );
+
+    let assemble = |parent: &noctium_runtime::Execution,
+                    child: &noctium_runtime::Execution,
+                    child_address: ContractAddress,
+                    child_entry: EntryPointBuf| {
+        assemble_checked_calls(
+            &[
+                checked_call(
+                    parent,
+                    &caller.circuit,
+                    caller_data.clone(),
+                    caller_address,
+                    EntryPointBuf(b"forward".to_vec()),
+                    Fr::from(53u64),
+                ),
+                checked_call(
+                    child,
+                    &callee.circuit,
+                    callee_data.clone(),
+                    child_address,
+                    child_entry,
+                    Fr::from(101u64),
+                ),
+            ],
+            &live.state.parameters,
+            ttl,
+            &mut OsRng,
+        )
+    };
+    let wrong_target = prepare(
+        &callee.plan,
+        &callee_inputs,
+        &callee_data,
+        &live.state.parameters,
+        key_target,
+    )
+    .unwrap();
+    check(&wrong_target, &callee.circuit).unwrap();
+    assert!(
+        assemble(
+            &forward,
+            &wrong_target,
+            key_target,
+            callee.entry.clone(),
+        )
+        .is_err(),
+        "the record key is not the stored call target"
+    );
+    assert!(
+        assemble(
+            &forward,
+            &update,
+            target_address,
+            EntryPointBuf(b"other".to_vec()),
+        )
+        .is_err(),
+        "a stored reference must select its declared operation"
+    );
+    let mut wrong_expected_inputs = forward_inputs.clone();
+    wrong_expected_inputs.insert("expected".into(), json!("8"));
+    let wrong_expected = prepare(
+        &caller.plan,
+        &wrong_expected_inputs,
+        &caller_data,
+        &live.state.parameters,
+        caller_address,
+    )
+    .unwrap();
+    check(&wrong_expected, &caller.circuit).unwrap();
+    assert!(
+        assemble(
+            &wrong_expected,
+            &update,
+            target_address,
+            callee.entry.clone(),
+        )
+        .is_err(),
+        "a stored typed-reference call must match the expected result"
+    );
+
+    let intent = assemble(
+        &forward,
+        &update,
+        target_address,
+        callee.entry.clone(),
+    )
+    .unwrap();
+    let selected = [caller.proof_selection(), callee.proof_selection()];
+    let prepared = PreparedComposition::from_intent(intent, &live.state, &selected).unwrap();
+    let proved = prepared.prove_locally(OsRng, pending()).await.unwrap();
+    let receipt = submit(proved.native()).await;
+
+    assert_eq!(receipt.contract_address, hex::encode(caller_address.0.0));
+    assert_eq!(receipt.secondary_states.len(), 1);
+    let target_bytes = &receipt.secondary_states[&hex::encode(target_address.0.0)];
+    let finalized_target =
+        serialize::tagged_deserialize::<ContractState<Db>>(&mut target_bytes.as_slice()).unwrap();
+    assert_eq!(finalized_target.data, expected_callee);
+    assert_eq!(
+        receipt.contract_state,
+        deployments[1].contract_state,
+        "forward leaves the caller's stored route unchanged"
+    );
+    eprintln!(
+        "{}",
+        json!({
+            "genesis": receipt.chain.genesis,
+            "profile": receipt.chain.profile,
+            "height": receipt.height,
+            "blockHash": receipt.block_hash,
+            "transactionId": receipt.transaction_id,
+            "extrinsicHash": receipt.extrinsic_hash,
+            "deployments": [
+                {"role":"callee","address":hex::encode(target_address.0.0),"height":deployments[0].height,"transactionId":deployments[0].transaction_id},
+                {"role":"caller","address":hex::encode(caller_address.0.0),"height":deployments[1].height,"transactionId":deployments[1].transaction_id},
+            ],
+            "keyTarget": hex::encode(key_target.0.0),
+            "replacement": hex::encode(target_address.0.0),
+            "callerStateUnchanged": true,
+            "calleeTotal": "7",
+            "wrongTargetRejectedBeforeProof": true,
+            "wrongSelectorRejectedBeforeProof": true,
+            "wrongExpectedResultRejectedBeforeProof": true,
         })
     );
 }
