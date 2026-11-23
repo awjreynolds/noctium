@@ -1,0 +1,9 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger buckets: Map<Field, List<Field>>;
+
+export circuit push(owner: Field, value: Field): [] {
+  const selected = buckets.lookup(disclose(owner));
+  selected.pushFront(disclose(value));
+}
