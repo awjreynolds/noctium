@@ -159,6 +159,29 @@ private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutp
   rcases shape with ⟨rfl, rfl, rfl, rfl⟩
   exact ⟨leftParsed, rightParsed, rfl, rfl, valid⟩
 
+/-- A comparison with a recognized optimizer key and a successful native
+decode has a destination name accepted by the exact emitted-Copy decoder. -/
+theorem comparison_decode_output_valid (item : Json)
+    (leftKey rightKey keyOutput : String) (keyWidth : Nat)
+    (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
+    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
+    (decoded : decodeInstruction item = .ok
+      (.lessThan left right decodedWidth decodedOutput)) :
+    NativeRelationJson.validIdentifier keyOutput = true := by
+  obtain ⟨_, _, _, _, valid⟩ := comparison_decode_agrees item leftKey rightKey keyOutput keyWidth
+    left right decodedWidth decodedOutput key decoded
+  exact valid
+
+/-- A recognized comparison key carries the exact decoder's natural-width
+field, which lets producer-side `natField` bounds meet the decoded width. -/
+theorem comparison_key_width_field (item : Json)
+    (leftKey rightKey keyOutput : String) (keyWidth : Nat)
+    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput)) :
+    NativeRelationJson.naturalField item "bits" = .ok keyWidth := by
+  obtain ⟨_, _, _, widthField, _⟩ :=
+    comparison_fields item leftKey rightKey keyOutput keyWidth key
+  exact widthField
+
 /-- Successful native decoding of two equal comparison keys yields the same
 ordered typed operands and width. Decoded output names follow their respective
 recognized JSON fields, so this statement also permits distinct destinations.
