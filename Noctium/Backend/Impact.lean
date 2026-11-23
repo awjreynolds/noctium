@@ -464,36 +464,78 @@ private def shieldedCoinInfoFields (nonce color : Expr (.bytes 32))
     .bytesField nonce 0, .bytesField nonce 1,
     .bytesField color 0, .bytesField color 1, .cast .native amount]
 
-/-- Ledger 9 list prepend with a transaction-local qualified index. The new
-node precedes the zero key so cached Ins pops key and node in VM order. -/
+/-- Ledger 9 list prepend with a transaction-local qualified index. Paths up
+to four parents retain the compact cached fragment. Deeper paths build the
+List node and rebuild parent Maps with one-key Ins operations. -/
 private def listPushFrontCoinFieldGroups (slot : Nat) (keys : List Aligned)
     (nonce color : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 128 - 1)))
     (commitment : Expr (.bytes 32)) : List (List Scalar) :=
   let pushU8 (value : Nat) : List Scalar :=
     [.native 0x10, .native 1, .native 1, .native 1, .native value]
-  [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
-      keys.flatMap Aligned.fields
-  , [.native 0x30]
-  , listIndexFields 2
-  , [.native 0x0e, .native 1]
-  , [.native 0x11, .native 51, .native 0, .native 0, .native 0]
-  , pushU8 0
-  , [.native (0x30 + 7 + keys.length * 2)]
-  , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
-  , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
-  , [.native 0x10, .native 1] ++ shieldedCoinInfoFields nonce color amount
-  , [.native 0x40]
-  , [.native 0x17, .native 91]
-  , [.native 0xa1]
-  , [.native 0x40]
-  , pushU8 2
-  , [.native 0x40]
-  , [.native 0xa1]
-  , [.native 0x40]
-  , pushU8 1
-  , [.native 0x40]
-  , [.native (0xa0 + keys.length + 2)]
-  ]
+  if keys.length ≤ 4 then
+    [ [.native (0x70 + keys.length), .native 1, .native 1, .native slot] ++
+        keys.flatMap Aligned.fields
+    , [.native 0x30]
+    , listIndexFields 2
+    , [.native 0x0e, .native 1]
+    , [.native 0x11, .native 51, .native 0, .native 0, .native 0]
+    , pushU8 0
+    , [.native (0x30 + 7 + keys.length * 2)]
+    , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
+    , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
+    , [.native 0x10, .native 1] ++ shieldedCoinInfoFields nonce color amount
+    , [.native 0x40]
+    , [.native 0x17, .native 91]
+    , [.native 0xa1]
+    , [.native 0x40]
+    , pushU8 2
+    , [.native 0x40]
+    , [.native 0xa1]
+    , [.native 0x40]
+    , pushU8 1
+    , [.native 0x40]
+    , [.native (0xa0 + keys.length + 2)]
+    ]
+  else
+    let cachedIndexPath (parents : List Aligned) : List Scalar :=
+      [.native (0x60 + parents.length), .native 1, .native 1, .native slot] ++
+        parents.flatMap Aligned.fields
+    let pushAlignedBytes32 (value : Aligned) : List Scalar :=
+      [.native 0x10, .native 1] ++ value.fields
+    let insertParentGroups (nextParent : Aligned) (parents : List Aligned) :
+        List (List Scalar) :=
+      [[.native 0x31], cachedIndexPath parents, pushAlignedBytes32 nextParent,
+        [.native 0x40], [.native 0x41], [.native 0xa1]]
+    let parentGroups := keys.reverse.zipIdx.flatMap fun (nextParent, reverseIndex) =>
+      let parents := keys.take (keys.length - reverseIndex - 1)
+      insertParentGroups nextParent parents
+    [ [.native 0x32]
+    , [.native 0x10, .native 1] ++ (Aligned.bytes32 commitment).fields
+    , [.native 0x61, .native 1, .native 1, .native 1, .native (Field.modulus - 1)]
+    , shieldedCoinPushFields nonce color amount
+    , [.native 0x40]
+    , [.native 0x17, .native 91]
+    , [.native 0x31]
+    , [.native (0x50 + keys.length), .native 1, .native 1, .native slot] ++
+        keys.flatMap Aligned.fields
+    , [.native 0x30]
+    , listIndexFields 2
+    , [.native 0x0e, .native 1]
+    , [.native 0x11, .native 51, .native 0, .native 0, .native 0]
+    , [.native 0x40]
+    , pushU8 2
+    , [.native 0x40]
+    , [.native 0x91]
+    , [.native 0x40]
+    , pushU8 1
+    , [.native 0x40]
+    , [.native 0x91]
+    , [.native 0x40]
+    , pushU8 0
+    , [.native 0x40]
+    , [.native 0x91]
+    ] ++ parentGroups ++
+    [pushU8 slot, [.native 0x40], [.native 0xa1]]
 
 private def mapIsEmptyFieldGroups (slot : Nat) (keys : List Aligned)
     (destination : String) : List (List Scalar) :=
@@ -1502,9 +1544,8 @@ private def resolveListState (state : List StateDecl) (name : String)
   schema.listPath keys
 
 private def validateQualifiedCoinListKeys (keys : List PathKey) : Except String Unit := do
-  -- The pinned fragment duplicates the context at depth 7 + 2 * keys.length.
-  unless keys.length ≤ 4 do
-    throw "qualified shielded coin List parent path exceeds the native Dup immediate range"
+  unless keys.length ≤ 13 do
+    throw "qualified shielded coin List supports at most thirteen parent Maps"
   unless keys.all (fun key => key.ty == .bytes 32) do
     throw "qualified shielded coin List parent keys must be Bytes32"
 
