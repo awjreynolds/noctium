@@ -2409,6 +2409,7 @@ fn confidential_token_registration_pending_sweep_and_transfer_use_native_relatio
         state_slot(&register_plan, &state, "initialized"),
         &StateValue::Cell(storage::arena::Sp::new(field_value(Fr::from(1u64))))
     );
+    assert_eq!(view("totalSupply", None, &state)["supply"], "0");
 
     for (sequence, account, account_secret, encryption_secret, public_key) in [
         (

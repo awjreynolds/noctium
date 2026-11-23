@@ -65,6 +65,7 @@ def main() -> int:
             if expected_error:
                 assert checked.returncode != 0, result
                 assert expected_error in result["error"], result
+                assert "proofRoles" not in result, result
             else:
                 assert checked.returncode == 0, result
                 assert result["compiledContractVerified"] is False
@@ -81,12 +82,31 @@ def main() -> int:
         proofs = export("legitimate.ndjson", ["VerificationFixture.functional", "VerificationFixture.privacy",
                                                "VerificationFixture.releasingFunctional"])
         accepted = audit(model, proofs, pin, privacy=True)
+        roles = accepted.get("proofRoles")
+        assert isinstance(roles, list), accepted
+        assert [role.get("role") for role in roles] == ["functional", "privacy"], roles
+        expected_roles = [
+            ("Noctium.Verification.FunctionalObligation", "VerificationFixture.functional",
+             ["propext", "Classical.choice", "Quot.sound"]),
+            ("Noctium.Verification.PrivacyObligation", "VerificationFixture.privacy",
+             ["propext", "Classical.choice", "Quot.sound"]),
+        ]
+        assert accepted["axioms"] == expected_roles[0][2], accepted
+        for role, (obligation, proof, axioms) in zip(roles, expected_roles):
+            assert role.get("schemaVersion") == 1, role
+            assert role.get("obligation") == obligation, role
+            assert role.get("policy") == "VerificationFixture.policy", role
+            assert role.get("proof") == proof, role
+            assert role.get("axioms") == axioms, role
         missing_privacy = audit(model, proofs, pin)
         assert missing_privacy["status"] == "source-functional-only"
+        assert missing_privacy.get("proofRoles") == roles[:1], missing_privacy
         audit(model, proofs, pin, policy_name="wrongContractPolicy", expected_error="wrong_obligation")
         audit(model, proofs, pin, policy_name="wrongSpecPolicy", expected_error="wrong_obligation")
         release_only = audit(model, proofs, pin, name="releasingFunctional", policy_name="releasingPolicy")
         assert release_only["sourcePrivacyChecked"] is False
+        assert [role.get("role") for role in release_only.get("proofRoles", [])] == ["functional"], release_only
+        assert release_only["proofRoles"][0]["axioms"] == release_only["axioms"], release_only
         audit(model, proofs, pin, name="releasingFunctional", policy_name="releasingPolicy",
               privacy=True, privacy_name="releasingFunctional", expected_error="wrong_obligation")
         run(["lake", "env", "leanchecker", "--from-export", str(proofs)])
@@ -119,7 +139,9 @@ def main() -> int:
             bad = export(f"{name}.ndjson", [f"VerificationFixture.{name}"])
             # Replay alone accepts these valid derivations relative to bad axioms.
             run(["lake", "env", "leanchecker", "--from-export", str(bad)])
-            audit(model, bad, pin, name=name, expected_error="forbidden_axiom:")
+            expected_error = ("forbidden_axiom: VerificationFixture.nativeTruth._native.native_decide."
+                              if name == "fromNativeComputation" else "forbidden_axiom:")
+            audit(model, bad, pin, name=name, expected_error=expected_error)
         irrelevant = export("irrelevant.ndjson", ["VerificationFixture.irrelevant"])
         audit(model, irrelevant, pin, name="irrelevant", expected_error="wrong_obligation")
         audit(model, proofs, "0" * 64, expected_error="model_pin_mismatch")

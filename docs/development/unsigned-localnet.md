@@ -27,6 +27,16 @@ Each receipt contains exactly one `TxApplied` and the expected contract event at
 
 A wrong public sum and an out-of-range private input reject before submission. After acceptance, the native CLI decodes the fetched state and runs the plan plus official checker again. The initially-zero guard rejects reuse. No replay transaction was submitted. A second fetch confirms unchanged bytes.
 
+## Offline source proof
+
+Replay the registered proof roles for the actual `BoundedScalars.apply` entrypoint with the pinned Lean toolchain.
+
+```sh
+python3 scripts/proofs/check-private-claim-audit.py --report --operation BoundedScalars.apply
+```
+
+The functional proof checks that accepted calls add the two bounded private inputs, match the declared public total and update the cell to that total. The successful-only privacy proof compares source outputs and final state for calls with equal public inputs, starting state and evaluation context. The JSON report names the checked policy and theorems, model digest, axioms and target profile. The runtime receipts above record separate executions at their pinned revisions.
+
 ## Adversarial circuit checks
 
 The [34 raw-witness cases](../../tests/scalars/constraint-cases.json) run against actual source-generated circuits with both official 3.2.0 and 3.2.1 checkers. They bypass the Noctium evaluator and ABI, so host input checks do not mask missing circuit constraints. Cases cover zero and 248-bit bounds, non-power-of-two ranges, addition/multiplication, wrong public statements, field-wrapped subtraction underflow, casts and malformed Boolean values.
