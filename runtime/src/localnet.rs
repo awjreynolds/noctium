@@ -1012,7 +1012,9 @@ impl Node {
         )
         .map_err(|_| Error::Response)?;
         check(height <= self.max_replay_blocks, Error::Limit)?;
-        if cache.is_none() {
+        let mut replay = if let Some(cached) = cache.as_ref() {
+            cached.clone()
+        } else {
             self.check_runtime(&self.policy.genesis)?;
             let properties = self.rpc.call("system_properties", json!([]))?;
             let initial: LedgerState<Db> =
@@ -1039,9 +1041,8 @@ impl Node {
                 None,
             )?;
             replay.state = initial;
-            *cache = Some(replay);
-        }
-        let replay = cache.as_mut().ok_or(Error::State)?;
+            replay
+        };
         check(height >= replay.height, Error::Replay)?;
         for heights in ((replay.height + 1)..=height)
             .collect::<Vec<_>>()
@@ -1103,7 +1104,7 @@ impl Node {
                 } else {
                     None
                 };
-                self.apply_block(replay, context, transactions, capture)?;
+                self.apply_block(&mut replay, context, transactions, capture)?;
                 replay.height = heights[index];
                 replay.hash = hash.clone();
             }
@@ -1128,13 +1129,15 @@ impl Node {
             .arena
             .alloc(replay.state.clone());
         check(native_bytes(&stored.as_typed_key())? == root, Error::Replay)?;
-        Ok(Snapshot {
+        let snapshot = Snapshot {
             chain: identity,
             finalized_hash: final_hash.into(),
             height,
             state: replay.state.clone(),
             block: replay.block.clone(),
-        })
+        };
+        *cache = Some(replay);
+        Ok(snapshot)
     }
     /// Observe a bound transaction at one canonical finalized block.
     pub fn finalized_receipt(
