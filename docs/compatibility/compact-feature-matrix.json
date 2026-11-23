@@ -2178,7 +2178,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order. The native checker reads the exact four-byte payload and UInt16 field from a root record Cell.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order. The native checker reads the exact four-byte payload and UInt16 field from a root record Cell. The native C ABI reads typed root Cells from pinned snapshots, with scalar and checked record encodings.",
       "source": [
         "adt"
       ],
@@ -2188,6 +2188,8 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "runtime/tests/collection_reads.rs",
+        "docs/development/native-client-abi.md",
         "tests/FixedBytesRecordCell.lean",
         "tests/TypedRecordCell.lean",
         "runtime/tests/flat_record_cell.rs",

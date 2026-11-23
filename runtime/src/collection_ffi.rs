@@ -206,6 +206,68 @@ fn counter_value(node: &StateValue<Db>) -> Result<u64, i32> {
     u64::try_from(number).map_err(|_| INVALID_ARGUMENT)
 }
 
+fn root_cell_value(declaration: &StateDecl, node: &StateValue<Db>) -> Result<Json, i32> {
+    let StateValue::Cell(value) = node else {
+        return Err(INVALID_ARGUMENT);
+    };
+    let cell_alignment =
+        crate::declared_cell_alignment(declaration).map_err(|_| INVALID_ARGUMENT)?;
+    let kind = declaration.kind.as_object().ok_or(INVALID_ARGUMENT)?;
+    if kind.len() != 1 {
+        return Err(INVALID_ARGUMENT);
+    }
+
+    if let Some(ty) = kind.get("cell").and_then(Json::as_str) {
+        let parsed = crate::ScalarType::parse(ty).map_err(|_| INVALID_ARGUMENT)?;
+        let alignment = match cell_alignment {
+            Some(alignment) => alignment.to_owned(),
+            None if parsed == ScalarType::OpaqueString => "compress".to_owned(),
+            None => crate::scalar_storage_alignment(&parsed),
+        };
+        return crate::decode_state_cell(value, ty, &alignment)
+            .map(|value| value.public_json())
+            .map_err(|_| INVALID_ARGUMENT);
+    }
+
+    if kind.get("opaqueString") == Some(&Json::Bool(true)) {
+        if cell_alignment.is_some() {
+            return Err(INVALID_ARGUMENT);
+        }
+        return crate::decode_state_cell(value, "OpaqueString", "compress")
+            .map(|value| value.public_json())
+            .map_err(|_| INVALID_ARGUMENT);
+    }
+
+    if let Some(tree) = kind.get("tree") {
+        if cell_alignment.is_some() {
+            return Err(INVALID_ARGUMENT);
+        }
+        crate::validate_tree_schema(tree, 0).map_err(|_| INVALID_ARGUMENT)?;
+        let tree = tree
+            .as_object()
+            .filter(|tree| tree.len() == 1)
+            .ok_or(INVALID_ARGUMENT)?;
+        if let Some(ty) = tree.get("scalar").and_then(Json::as_str) {
+            let parsed = crate::validate_tree_scalar_type(ty).map_err(|_| INVALID_ARGUMENT)?;
+            return crate::decode_state_cell(
+                value,
+                ty,
+                &crate::scalar_storage_alignment(&parsed),
+            )
+            .map(|value| value.public_json())
+            .map_err(|_| INVALID_ARGUMENT);
+        }
+        if let Some(schema) = tree.get("composite") {
+            let schema =
+                crate::checked_cell_record_schema(schema).map_err(|_| INVALID_ARGUMENT)?;
+            let values = crate::decode_record_value(&schema, value).map_err(|_| INVALID_ARGUMENT)?;
+            return record_values_json(&schema, &values);
+        }
+    }
+
+    Err(INVALID_ARGUMENT)
+}
+
 fn canonical_index(value: &str) -> Result<u64, i32> {
     let index = value.parse::<u64>().map_err(|_| INVALID_ARGUMENT)?;
     if index.to_string() != value {
@@ -970,6 +1032,68 @@ pub unsafe extern "C" fn noctium_ledger_counter_get(
                 "abiVersion": 1,
                 "kind": "counter",
                 "value": value.to_string(),
+            }))
+            .map_err(|_| INTERNAL)?,
+        )?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}
+
+/// Read one root Cell from an authenticated, canonical state snapshot.
+/// This getter accepts only an empty key path.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_cell_get(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: SnapshotReadRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if !request.keys.is_empty() {
+            return Err(INVALID_ARGUMENT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, .. } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            std::iter::empty(),
+        )?;
+
+        let (_, selected) = typed_state_path(&plan.state, &state.data, &request.name, &[])
+            .map_err(|_| INVALID_ARGUMENT)?;
+        let declaration = plan
+            .state
+            .iter()
+            .find(|declaration| declaration.name == request.name)
+            .ok_or(INVALID_ARGUMENT)?;
+        let value = root_cell_value(declaration, &selected)?;
+        let result = native_ffi::service_public_bytes(
+            serde_json::to_vec(&json!({
+                "abiVersion": 1,
+                "kind": "cell",
+                "value": value,
             }))
             .map_err(|_| INTERNAL)?,
         )?;

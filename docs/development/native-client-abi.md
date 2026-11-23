@@ -124,6 +124,17 @@ count and private fixture value to 9. The test rejected a crossed callback
 reply and retried the same valid response after releasing a full result
 queue. [Finalized typed witness receipts and artifact pins](typed-multi-entry-cpp-receipts.json)
 
+## Read a Cell
+
+Call `noctium_ledger_cell_get` with the emitted plan, tagged snapshot, and
+their trusted SHA-256 digests. Pass the root Cell name and `keys: []`.
+The getter checks the declared type and FAB alignment before returning
+`kind: "cell"` and the canonical scalar or checked record `value` in a
+native result handle. Numeric values use decimal strings. A wrong state
+kind or invalid encoding returns an error.
+[C header](../../runtime/include/noctium_native.h) ·
+[ABI tests](../../runtime/tests/collection_reads.rs)
+
 ## Read Counter snapshots
 
 `noctium_ledger_counter_get` reads a root or nested Counter from the tagged
