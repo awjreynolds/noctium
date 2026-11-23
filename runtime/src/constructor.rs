@@ -92,6 +92,8 @@ pub struct SetInsert {
 pub struct CounterIncrement {
     pub state: String,
     pub amount: Expr,
+    #[serde(default)]
+    pub guard: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +101,8 @@ pub struct CounterIncrement {
 pub struct ListPush {
     pub state: String,
     pub value: Expr,
+    #[serde(default)]
+    pub guard: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -277,6 +281,19 @@ fn counter_totals(
             constructor_counter(declaration),
             "constructor Counter increment requires a root Counter"
         );
+        if let Some(guard) = &increment.guard {
+            let guard = evaluate(guard, environment)?;
+            ensure!(
+                guard.scalar_type() == ScalarType::Bool,
+                "constructor Counter increment guard must be Bool"
+            );
+            let Value::Bool(guard) = guard else {
+                bail!("constructor Counter increment guard must be Bool")
+            };
+            if !guard {
+                continue;
+            }
+        }
         let amount = evaluate(&increment.amount, environment)?;
         ensure!(
             amount.scalar_type() == amount_type,
@@ -665,6 +682,19 @@ fn apply_list_pushes(
             .ok_or_else(|| anyhow!("unknown constructor List state"))?;
         let element_type = flat_scalar_list_type(declaration)?
             .ok_or_else(|| anyhow!("constructor List push requires a flat scalar List"))?;
+        if let Some(guard) = &push.guard {
+            let guard = evaluate(guard, environment)?;
+            ensure!(
+                guard.scalar_type() == ScalarType::Bool,
+                "constructor List push guard must be Bool"
+            );
+            let Value::Bool(guard) = guard else {
+                bail!("constructor List push guard must be Bool")
+            };
+            if !guard {
+                continue;
+            }
+        }
         let value = evaluate(&push.value, environment)?;
         ensure!(
             value.scalar_type() == element_type,

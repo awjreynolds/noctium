@@ -834,12 +834,14 @@ structure ConstructorMapInsert where
 structure ConstructorCounterIncrement where
   state : String
   amount : Expr (.uint (2 ^ 32 - 1))
+  guard : Option (Expr .bool) := none
   deriving Repr
 
 structure ConstructorListPush where
   state : String
   valueType : Ty
   value : Expr valueType
+  guard : Option (Expr .bool) := none
   deriving Repr
 
 structure ConstructorSetInsert where
@@ -1941,6 +1943,10 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     match increment.amount.validate caps scalarEnvironment with
     | .error message => throw {span, message}
     | .ok _ => pure ()
+    if let some guard := increment.guard then
+      match guard.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
   for push in constructor.listPushes do
     unless Types.validFieldName push.state do
       throw {span, message := s!"invalid constructor List state name '{push.state}'"}
@@ -1953,6 +1959,10 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     match push.value.validate caps scalarEnvironment with
     | .error message => throw {span, message}
     | .ok _ => pure ()
+    if let some guard := push.guard then
+      match guard.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
   for insertion in constructor.setInserts do
     unless Types.validFieldName insertion.name do
       throw {span, message := s!"invalid constructor Set state name '{insertion.name}'"}

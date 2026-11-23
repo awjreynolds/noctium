@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export sealed ledger total: Counter;
+export sealed ledger items: List<Field>;
+
+constructor(enabled: Boolean, amount: Uint<16>, first: Field) {
+  if (disclose(enabled)) {
+    total.increment(disclose(amount));
+    items.pushFront(disclose(first));
+  }
+}
+
+export circuit readBack(): [Uint<64>, Uint<64>, Maybe<Field>] {
+  return [total.read(), items.length(), items.head()];
+}
