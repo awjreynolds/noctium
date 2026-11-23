@@ -4,6 +4,9 @@ use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue
 use noctium_runtime::{Db, Plan, check, create_state, field_value, prepare, zkir::IrSource};
 use onchain_runtime::{
     context::QueryContext,
+    ops::{Key, Op, expect_checked},
+    program_fragments::List_pop_front,
+    result_mode::ResultModeGather,
     state::{ChargedState, StateValue},
 };
 use serde_json::{Value as Json, json};
@@ -13,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use storage::arena::Sp;
+use storage::storage::HashMap;
 use transient_crypto::curve::Fr;
 
 fn artifacts() -> PathBuf {
@@ -460,4 +464,81 @@ fn replace_nested_payload_head(
     ChargedState::new(StateValue::Array(
         root.insert(slot, StateValue::Map(invalid_memos)).unwrap(),
     ))
+}
+
+fn ledger_empty_list() -> StateValue<Db> {
+    StateValue::Array(
+        vec![
+            StateValue::Null,
+            StateValue::Null,
+            StateValue::Cell(Sp::new(AlignedValue::from(0u64))),
+        ]
+        .into(),
+    )
+}
+
+fn ledger_list_pop_program(keys: Vec<Key>) -> [Op<ResultModeGather, Db>; 3] {
+    List_pop_front!(keys, false, u64)
+}
+
+#[test]
+fn pinned_ledger_empty_pop_writes_null_and_preserves_siblings() {
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let cost = &parameters.cost_model.runtime_cost_model;
+    let address = coin_structure::contract::ContractAddress::default();
+    let empty = ledger_empty_list();
+
+    let root_sibling = ledger_empty_list();
+    let root_context = QueryContext::new(
+        ChargedState::new(StateValue::Array(
+            vec![empty.clone(), root_sibling.clone()].into(),
+        )),
+        address,
+    );
+    let root_program =
+        ledger_list_pop_program(vec![Key::Value(expect_checked(AlignedValue::from(0u8)))]);
+    let root_result = root_context.query(&root_program, None, cost).unwrap();
+    let StateValue::Array(root) = root_result.context.state.get_ref() else {
+        panic!("expected root contract state")
+    };
+    assert!(matches!(root.get(0), Some(StateValue::Null)));
+    assert_eq!(root.get(1), Some(&root_sibling));
+
+    let owner = AlignedValue::from([1u8; 32]);
+    let sibling_owner = AlignedValue::from([2u8; 32]);
+    let missing_owner = AlignedValue::from([3u8; 32]);
+    let mut owners: HashMap<AlignedValue, StateValue<Db>, Db> = HashMap::default();
+    owners = owners.insert(owner.clone(), empty.clone());
+    owners = owners.insert(sibling_owner.clone(), empty.clone());
+    let unrelated_root = empty.clone();
+    let nested_context = QueryContext::new(
+        ChargedState::new(StateValue::Array(
+            vec![unrelated_root.clone(), StateValue::Map(owners)].into(),
+        )),
+        address,
+    );
+    let nested_program = ledger_list_pop_program(vec![
+        Key::Value(expect_checked(AlignedValue::from(1u8))),
+        Key::Value(expect_checked(owner.clone())),
+    ]);
+    let nested_result = nested_context.query(&nested_program, None, cost).unwrap();
+    let StateValue::Array(nested_root) = nested_result.context.state.get_ref() else {
+        panic!("expected nested root contract state")
+    };
+    assert_eq!(nested_root.get(0), Some(&unrelated_root));
+    let StateValue::Map(nested_owners) = nested_root.get(1).unwrap() else {
+        panic!("expected owner Map to stay typed")
+    };
+    assert!(
+        matches!(nested_owners.get(&owner), Some(value) if matches!(&*value, StateValue::Null))
+    );
+    assert!(matches!(nested_owners.get(&sibling_owner), Some(value) if &*value == &empty));
+
+    let missing_context = nested_context.clone();
+    let missing_program = ledger_list_pop_program(vec![
+        Key::Value(expect_checked(AlignedValue::from(1u8))),
+        Key::Value(expect_checked(missing_owner)),
+    ]);
+    assert!(missing_context.query(&missing_program, None, cost).is_err());
+    assert_eq!(missing_context.state, nested_context.state);
 }

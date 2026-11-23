@@ -69,6 +69,13 @@ the same active pop and preserves the original typed state. Both skip an
 inactive pop through an absent parent and remove one item from a populated
 List. [Compact case and state assertions](../../tests/compact/list-pop-front.mjs)
 
+The pinned Ledger 9 `List_pop_front!` fragment independently produces the
+same `Null` at an empty root or selected Map entry when run directly in
+`QueryContext`. Siblings stay intact. A missing Map key causes the query to
+fail. This evidence covers the native VM fragment and the selected state
+paths. [Pinned fragment](https://github.com/midnightntwrk/midnight-ledger/blob/a2b30128ca4b660b73a068e29b56b48ede8c9a74/onchain-runtime/vendored/program_fragments.rs#L497) ·
+[Native VM check](../../runtime/tests/native_scalar_list.rs)
+
 The [pinned Compact `Maybe` oracle](../../tests/compact/ListHeadMaybe.compact)
 and [runner](../../tests/compact/list-head-maybe.mjs) check `head()` on
 `List<Uint<8>>`: an empty List returns `is_some = false, value = 0`, and a
