@@ -57,6 +57,19 @@ export circuit update(amount: Uint<8>): Uint<8> {
   assert.equal(routeListMapLedger?.value['type-name'], 'List');
   assert.equal(routeListMapLedger?.value.type['type-name'], 'Struct');
   assert.equal(routeListMapLedger?.value.type.name, 'Route');
+  const deepRouteMapLedger = contractInfo.ledger.find(({name}) => name === 'deepRoutes');
+  assert.equal(deepRouteMapLedger?.storage, 'Map');
+  assert.equal(deepRouteMapLedger?.value['type-name'], 'Map');
+  assert.equal(deepRouteMapLedger?.value.key['type-name'], 'Bytes');
+  assert.equal(deepRouteMapLedger?.value.value['type-name'], 'Struct');
+  assert.equal(deepRouteMapLedger?.value.value.name, 'Route');
+  const deepRouteListMapLedger = contractInfo.ledger.find(({name}) => name === 'deepRouteLists');
+  assert.equal(deepRouteListMapLedger?.storage, 'Map');
+  assert.equal(deepRouteListMapLedger?.value['type-name'], 'Map');
+  assert.equal(deepRouteListMapLedger?.value.key['type-name'], 'Bytes');
+  assert.equal(deepRouteListMapLedger?.value.value['type-name'], 'List');
+  assert.equal(deepRouteListMapLedger?.value.value.type['type-name'], 'Struct');
+  assert.equal(deepRouteListMapLedger?.value.value.type.name, 'Route');
   const echoCircuit = contractInfo.circuits.find(({name}) => name === 'echo');
   assert.equal(echoCircuit?.arguments[0]?.type['type-name'], 'Contract');
   assert.equal(echoCircuit?.arguments[0]?.type.name, 'TypedRefValue');
@@ -219,6 +232,17 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
   const mappedRouteList = ledger(callerState.currentContractState.data).routeLists.lookup(routeKey);
   assert.deepEqual(mappedRouteList.head().value.target.bytes, reference.bytes);
   assert.equal(mappedRouteList.head().value.enabled, true);
+  const deepRouteParentKey = new Uint8Array(32);
+  const deepRouteKey = new Uint8Array(32);
+  deepRouteKey[0] = 1;
+  const mappedDeepRoute = ledger(callerState.currentContractState.data).deepRoutes
+    .lookup(deepRouteParentKey).lookup(deepRouteKey);
+  assert.deepEqual(mappedDeepRoute.target.bytes, reference.bytes);
+  assert.equal(mappedDeepRoute.enabled, true);
+  const mappedDeepRouteList = ledger(callerState.currentContractState.data).deepRouteLists
+    .lookup(deepRouteParentKey).lookup(deepRouteKey);
+  assert.deepEqual(mappedDeepRouteList.head().value.target.bytes, reference.bytes);
+  assert.equal(mappedDeepRouteList.head().value.enabled, true);
 
   const crossContract = {
     stateProvider: {async getContractState() { return calleeState.currentContractState; }},
@@ -247,6 +271,14 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
     contextFor(callerState.currentContractState.data), routeKey, 7n,
   );
   assert.equal(mappedRouteListResult, 7n);
+  const {result: mappedDeepRouteResult} = await forwarder.circuits.forwardDeepRoute(
+    contextFor(callerState.currentContractState.data), deepRouteParentKey, deepRouteKey, 7n,
+  );
+  assert.equal(mappedDeepRouteResult, 7n);
+  const {result: mappedDeepRouteListResult} = await forwarder.circuits.forwardDeepRouteList(
+    contextFor(callerState.currentContractState.data), deepRouteParentKey, deepRouteKey, 7n,
+  );
+  assert.equal(mappedDeepRouteListResult, 7n);
 
   const routeForwarder = new RouteForwarder({});
   const routeState = await routeForwarder.initialState(runtime.createConstructorContext(null, key), reference);
@@ -305,7 +337,7 @@ export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
   };
   const {result: echoedReference} = await echoCaller.circuits.roundTrip(echoContext, valueReference);
   assert.deepEqual(echoedReference.bytes, valueReference.bytes);
-  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, Map<Bytes<32>, Route>, Map<Bytes<32>, List<Route>>, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
+  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, Map<Bytes<32>, Route>, Map<Bytes<32>, List<Route>>, Map<Bytes<32>, Map<Bytes<32>, Route>>, Map<Bytes<32>, Map<Bytes<32>, List<Route>>>, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
 } finally {
   await rm(scratch, {recursive: true, force: true});
   try {

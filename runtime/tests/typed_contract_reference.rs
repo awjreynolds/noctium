@@ -113,7 +113,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
     let assert_route = |forward: &Plan,
                         circuit: &IrSource,
                         stored: &ChargedState<Db>,
-                        inputs|
+                        inputs: &BTreeMap<String, serde_json::Value>|
      -> anyhow::Result<()> {
         let execution = prepare(forward, inputs, stored, &INITIAL_PARAMETERS, caller)?;
         let composed = assemble(
@@ -212,31 +212,52 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         "owner".into(),
         json!({"kind": "bytes", "values": ([2u8; 32])}),
     );
-    for (init, write, forward) in [
+    for (init, write, forward, two_keys) in [
         (
             None,
             "NestedMapCaller.insertRoute",
             "NestedMapCaller.forward",
+            false,
         ),
         (
-            Some("NestedListCaller.initializeOwner"),
+            Some(("NestedListCaller.initializeOwner", false)),
             "NestedListCaller.addRoute",
             "NestedListCaller.forward",
+            false,
+        ),
+        (
+            Some(("DeepMapCaller.initializeOwner", false)),
+            "DeepMapCaller.insertRoute",
+            "DeepMapCaller.forward",
+            true,
+        ),
+        (
+            Some(("DeepListCaller.initializeBucket", true)),
+            "DeepListCaller.addRoute",
+            "DeepListCaller.forward",
+            true,
         ),
     ] {
         let (write_plan, write_circuit) = load(write)?;
         let (forward_plan, forward_circuit) = load(forward)?;
         let state = create_state(&write_plan, &empty_list)?;
-        let state = if let Some(init) = init {
+        let mut write_inputs = nested_write_inputs.clone();
+        let mut call_inputs = nested_call_inputs.clone();
+        let mut absent_owner = missing_owner_inputs.clone();
+        let bucket = json!({"kind": "bytes", "values": ([3u8; 32])});
+        if two_keys {
+            write_inputs.insert("bucket".into(), bucket.clone());
+            call_inputs.insert("bucket".into(), bucket.clone());
+            absent_owner.insert("bucket".into(), bucket.clone());
+        }
+        let state = if let Some((init, needs_bucket)) = init {
             let (plan, circuit) = load(init)?;
-            let initialized = prepare(
-                &plan,
-                &list_owner_inputs,
-                &state,
-                &INITIAL_PARAMETERS,
-                caller,
-            )
-            .with_context(|| format!("{init} execution"))?;
+            let mut inputs = list_owner_inputs.clone();
+            if needs_bucket {
+                inputs.insert("bucket".into(), bucket);
+            }
+            let initialized = prepare(&plan, &inputs, &state, &INITIAL_PARAMETERS, caller)
+                .with_context(|| format!("{init} execution"))?;
             check(&initialized, &circuit).with_context(|| format!("{init} relation"))?;
             initialized.after.state
         } else {
@@ -244,7 +265,7 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         };
         let written = prepare(
             &write_plan,
-            &nested_write_inputs,
+            &write_inputs,
             &state,
             &INITIAL_PARAMETERS,
             caller,
@@ -255,13 +276,13 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
             &forward_plan,
             &forward_circuit,
             &written.after.state,
-            &nested_call_inputs,
+            &call_inputs,
         )
         .with_context(|| format!("{forward} call assembly"))?;
         assert!(
             prepare(
                 &forward_plan,
-                &missing_owner_inputs,
+                &absent_owner,
                 &written.after.state,
                 &INITIAL_PARAMETERS,
                 caller,
@@ -269,6 +290,23 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
             .is_err(),
             "{forward} accepted a missing owner"
         );
+        if two_keys {
+            call_inputs.insert(
+                "bucket".into(),
+                json!({"kind": "bytes", "values": ([4u8; 32])}),
+            );
+            assert!(
+                prepare(
+                    &forward_plan,
+                    &call_inputs,
+                    &written.after.state,
+                    &INITIAL_PARAMETERS,
+                    caller
+                )
+                .is_err(),
+                "{forward} accepted a missing bucket"
+            );
+        }
     }
 
     let (echo_target_plan, echo_target_circuit) = load("EchoTarget.echo")?;

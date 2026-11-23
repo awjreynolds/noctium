@@ -182,8 +182,10 @@ or expected result.
 A Bytes32-keyed Map record or List of records also retains the declared
 interface. The paired fixtures store a reference and route `update(7)` through
 each layout. Native assembly rejects an absent key, the wrong target, and the
-wrong selector. Deeper record paths and deployed dynamic interface lookup
-remain open under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+wrong selector. Both layouts also work under two Bytes32 Map keys. The
+native checker rejects missing owner and bucket keys independently.
+Record-key Maps and deployed dynamic interface lookup remain open under
+[typed contract references](https://github.com/awjreynolds/noctium/issues/828).
 
 ### Bind the entrypoint and read the address from a registry
 

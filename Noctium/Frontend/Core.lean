@@ -5501,8 +5501,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let outerTy ← readTy outer
           let innerTy ← readTy inner
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+            elaborateNamedRecordWithRefs contractName record recordFields state
+          if !fieldRefs.isEmpty then
+            recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
           let valueSchema := LedgerValueType.map outerTy
             (.map innerTy (.composite environment compositeType))
           let outerTerm ← tyTerm outerTy
@@ -5639,8 +5641,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           let outerTy ← readTy outer
           let innerTy ← readTy inner
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+            elaborateNamedRecordWithRefs contractName record recordFields state
+          if !fieldRefs.isEmpty then
+            recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
           let valueSchema := LedgerValueType.map outerTy
             (.map innerTy (.«list» environment compositeType))
           let outerTerm ← tyTerm outerTy
