@@ -82,6 +82,35 @@ private def nativeZeroFixture : Circuit := {
     return !opcodes.contains "add" && (opcodes.filter (· == "assert")).size == 2 &&
       names == #[some "%input_witness", some "%input_visible"] && output == #["%input_visible"]
 
+private def uintZeroFixture : Circuit := {
+  name := "uintZeroAdd"
+  inputs := [{name := "visible", ty := .uint 7, visibility := .«public»}]
+  outputs := [
+    { name := "leftZero"
+      ty := .uint 10
+      value := .uadd (.uint 3 0) (.ref "visible" : Expr (.uint 7)) },
+    { name := "rightZero"
+      ty := .uint 31
+      value := .uadd (.ref "visible" : Expr (.uint 7)) (.uint 24 0) }]
+}
+
+#guard match Backend.Zkir.lowerCircuit uintZeroFixture with
+  | .error _ => false
+  | .ok program => Id.run do
+    let .ok instructions := program.getObjValAs? (Array Lean.Json) "instructions"
+      | return false
+    let opcodes := instructions.map Backend.Native.opcode
+    let onInput (instruction : Lean.Json) (field : String) :=
+      (instruction.getObjValAs? String field).toOption == some "%input_visible"
+    let widths := (instructions.filter fun instruction =>
+      Backend.Native.opcode instruction == "constrain_bits" && onInput instruction "val").map
+      fun instruction => (instruction.getObjValAs? Nat "bits").toOption
+    let checkedBound := instructions.any fun instruction =>
+      Backend.Native.opcode instruction == "less_than" && onInput instruction "a" &&
+      (instruction.getObjValAs? String "b").toOption == some "0x0b"
+    return !opcodes.contains "add" && widths.contains (some 4) && widths.contains (some 5) &&
+      checkedBound && opcodes.contains "assert"
+
 /-- Emit the actual relation for before/after byte-parity checks. -/
 def main : IO Unit := do
   match Backend.Zkir.lowerCircuit fixture with

@@ -179,6 +179,21 @@ requirement. [Native fold](https://github.com/awjreynolds/noctium/issues/211) ·
 [UInt fold](https://github.com/awjreynolds/noctium/issues/770) ·
 [Focused regression](../../tests/ScalarCseParity.lean)
 
+## Fold literal UInt zero in addition
+
+The UInt fold eagerly lowers both operands and applies the sum's original
+range constraint to the surviving value. The focused fixture checks both
+operand orders, including a non-power-of-two bound. Lean checks source
+normalization and the lowering action's output-capacity frame.
+
+All 16 pinned ConfidentialToken relations and Impact plans matched the
+baseline bytes. `transferFrom` stayed at 1,005 instructions and 61,522 rows
+at K16. Both native runs accepted transfer and rejected overspend. The
+remaining `transferFrom` zero arithmetic runs inside byte packing, where
+an all-zero chunk emits 30 adds and 30 multiplies. [UInt fold](https://github.com/awjreynolds/noctium/issues/770) ·
+[Packing ticket](https://github.com/awjreynolds/noctium/issues/775) ·
+[Focused regression](../../tests/ScalarCseParity.lean)
+
 ## Reuse existing byte leaves
 
 Static slices select byte leaves directly when the inputs already use that

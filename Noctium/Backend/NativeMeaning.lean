@@ -402,6 +402,18 @@ theorem isLiteralNativeZero_eq_true_iff (expression : Expr .native) :
   case native value => cases value <;> simp [isLiteralNativeZero]
   all_goals simp [isLiteralNativeZero]
 
+/-- Recognize only a zero literal at its declared UInt width. -/
+def isLiteralUIntZero {maximum : Nat} : Expr (.uint maximum) → Bool
+  | .uint _ 0 => true
+  | _ => false
+
+theorem isLiteralUIntZero_eq_true_iff {maximum : Nat}
+    (expression : Expr (.uint maximum)) :
+    isLiteralUIntZero expression = true ↔ expression = .uint maximum 0 := by
+  cases expression
+  case uint value => cases value <;> simp [isLiteralUIntZero]
+  all_goals simp [isLiteralUIntZero]
+
 /-- Typed Bool constants and bridges stay distinct from Native field values. -/
 def typedBoolConstantTerm (value : Nat) : Term := .unary "bool_constant" (.constant value)
 
@@ -475,6 +487,16 @@ def normalizeNativeAdd (leftSource rightSource : Expr .native)
     bounds := left.bounds ++ right.bounds
     assertions := left.assertions ++ right.assertions
   }
+
+/-- Fold a literal UInt zero while retaining both child requirements and the
+result's declared unsigned bound. -/
+def normalizeUIntAdd {m n : Nat} (leftSource : Expr (.uint m))
+    (rightSource : Expr (.uint n)) (left right : Normalized) : Normalized :=
+  let term := if isLiteralUIntZero leftSource then right.term
+    else if isLiteralUIntZero rightSource then left.term
+    else .binary "add" left.term right.term
+  {requireSourceType (.uint (m + n)) term (left.bounds ++ right.bounds) with
+    assertions := left.assertions ++ right.assertions}
 
 private def subtraction (ty : Ty) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary "add" left.term (.unary "neg" right.term)) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
@@ -864,7 +886,10 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     pure (normalizeNativeAdd left right leftNormalized rightNormalized)
   | .mul left right => do pure (arithmetic ty "mul" (← normalize env left) (← normalize env right))
   | .sub left right => do pure (subtraction ty (← normalize env left) (← normalize env right))
-  | .uadd left right => do pure (arithmetic ty "add" (← normalize env left) (← normalize env right))
+  | .uadd (m := m) (n := n) left right => do
+    let leftNormalized ← normalize env left
+    let rightNormalized ← normalize env right
+    pure (normalizeUIntAdd left right leftNormalized rightNormalized)
   | .umul left right => do pure (arithmetic ty "mul" (← normalize env left) (← normalize env right))
   | .usub left right => do pure (subtraction ty (← normalize env left) (← normalize env right))
   | .inv value => do
