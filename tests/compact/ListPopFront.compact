@@ -1,0 +1,43 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger standalone: List<Field>;
+export ledger nested: Map<Bytes<32>, List<Bytes<128>>>;
+
+export circuit popStandalone(enabled: Boolean): [] {
+  if (disclose(enabled)) { standalone.popFront(); }
+}
+
+export circuit initializeStandalone(): [] {
+  standalone.resetToDefault();
+}
+
+export circuit initializeNested(owner: Bytes<32>): [] {
+  const key = disclose(owner);
+  if (!nested.member(key)) { nested.insertDefault(key); }
+}
+
+export circuit popNested(owner: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) { nested.lookup(disclose(owner)).popFront(); }
+}
+
+export circuit pushBoth(owner: Bytes<32>, value: Field, memo: Bytes<128>): [] {
+  const key = disclose(owner);
+  if (!nested.member(key)) { nested.insertDefault(key); }
+  standalone.pushFront(disclose(value));
+  nested.lookup(key).pushFront(disclose(memo));
+}
+
+export circuit inspectStandalone(): [Uint<64>, Boolean, Field] {
+  const head = standalone.head();
+  return [standalone.length(), head.is_some, head.value];
+}
+
+export circuit inspectNested(owner: Bytes<32>): [Uint<64>, Boolean, Bytes<128>] {
+  const head = nested.lookup(disclose(owner)).head();
+  return [nested.lookup(disclose(owner)).length(), head.is_some, head.value];
+}
+
+export circuit hasNested(owner: Bytes<32>): Boolean {
+  return nested.member(disclose(owner));
+}

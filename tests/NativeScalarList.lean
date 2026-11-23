@@ -110,6 +110,19 @@ noctium_contract NativeScalarList where
     return payloadIsEmpty : Bool := payloadEmpty
   end
 
+  entry popRoot uses scalarListInputs where
+    popFront values
+  end
+
+  entry popNested uses scalarListInputs where
+    popFront memos[disclose(owner)]
+  end
+
+  entry guardedPop uses scalarListInputs where
+    when enabled popFront values
+    when enabled popFront memos[disclose(owner)]
+  end
+
   entry clear uses scalarListInputs where
     reset values
     reset zeroBytes
@@ -153,11 +166,28 @@ private def scalarListInputValues (amount : Nat) (payload : List Nat) : List (St
   , ("enabled", .bool Bool.true)
   ]
 
+private def scalarListDisabledInputValues (amount : Nat) (payload : List Nat) :
+    List (String × Value) :=
+  [ ("owner", scalarListOwner)
+  , ("amount", .native amount)
+  , ("payload", .bytes 128 payload)
+  , ("empty", .bytes 0 [])
+  , ("enabled", .bool Bool.false)
+  ]
+
 private def scalarListState : LedgerState := {
   trees := [
     ("values", .list []),
     ("zeroBytes", .list []),
     ("memos", .map [(scalarListOwner, .list [])])
+  ]
+}
+
+private def scalarListAbsentParentState : LedgerState := {
+  trees := [
+    ("values", .list []),
+    ("zeroBytes", .list []),
+    ("memos", .map [])
   ]
 }
 
@@ -178,6 +208,47 @@ private def scalarListContext : EvalContext := {
 #guard match Backend.Zkir.lowerEntrypoint NativeScalarList.state
     (nativeScalarListEntry "guardMissing") with
   | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match Backend.Zkir.lowerEntrypoint NativeScalarList.state
+    (nativeScalarListEntry "pop") with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match Backend.Zkir.lowerEntrypoint NativeScalarList.state
+    (nativeScalarListEntry "popRoot") with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match Backend.Zkir.lowerEntrypoint NativeScalarList.state
+    (nativeScalarListEntry "popNested") with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match Backend.Zkir.lowerEntrypoint NativeScalarList.state
+    (nativeScalarListEntry "guardedPop") with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popRoot")
+    (scalarListInputValues 0 (List.replicate 128 0)) scalarListState with
+  | .error _ => Bool.true
+  | .ok _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popNested")
+    (scalarListInputValues 0 (List.replicate 128 0)) scalarListState with
+  | .error _ => Bool.true
+  | .ok _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "popNested")
+    (scalarListInputValues 0 (List.replicate 128 0)) scalarListAbsentParentState with
+  | .error _ => Bool.true
+  | .ok _ => Bool.false
+
+#guard match Entrypoint.run scalarListContext (nativeScalarListEntry "guardedPop")
+    (scalarListDisabledInputValues 0 (List.replicate 128 0))
+    scalarListAbsentParentState with
+  | .ok (outputs, state) => outputs.isEmpty && state == scalarListAbsentParentState
   | .error _ => Bool.false
 
 #guard match Entrypoint.run scalarListContext (nativeScalarListEntry "inspect")

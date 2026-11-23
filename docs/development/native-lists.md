@@ -61,6 +61,14 @@ standalone Native and nested Bytes128 Lists. The
 [Compact 0.36.1 oracle](../../tests/compact/native-scalar-list.mjs)
 checks the corresponding empty, prepend, pop and reset transitions.
 
+A pinned Compact 0.36.1 and Runtime 0.21.0 empty-pop case records a
+behavioral difference. An active pop returns success and replaces an
+initialized empty List with native `Null`. A subsequent head read fails.
+This happens at a root slot and at a selected Map entry. Noctium rejects
+the same active pop and preserves the original typed state. Both skip an
+inactive pop through an absent parent and remove one item from a populated
+List. [Compact case and state assertions](../../tests/compact/list-pop-front.mjs)
+
 The [pinned Compact `Maybe` oracle](../../tests/compact/ListHeadMaybe.compact)
 and [runner](../../tests/compact/list-head-maybe.mjs) check `head()` on
 `List<Uint<8>>`: an empty List returns `is_some = false, value = 0`, and a
