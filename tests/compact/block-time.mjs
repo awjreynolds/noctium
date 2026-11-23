@@ -58,7 +58,7 @@ console.log(JSON.stringify({
   compiler: 'Compact 0.36.1',
   runtime: runtimePackage.version,
   circuit: 'checkTime',
-  outputOrder: ['blockTimeLessThan', 'blockTimeGreaterThan', 'blockTimeGte', 'blockTimeLte'],
+  outputOrder: ['blockTimeLt', 'blockTimeGt', 'blockTimeGte', 'blockTimeLte'],
   timeRepresentation: 'runtime context accepts Number, tested through Number.MAX_SAFE_INTEGER',
   cases: evidence,
 }, null, 2));
