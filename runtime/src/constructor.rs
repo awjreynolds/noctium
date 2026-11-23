@@ -179,9 +179,17 @@ fn scalar_zero(ty: &str) -> Result<Json> {
     })
 }
 
-fn default_value(decl: &StateDecl) -> Result<Json> {
+fn opaque_string_state_value(decl: &StateDecl, value: &str) -> Json {
     if decl.kind.get("opaqueString") == Some(&Json::Bool(true)) {
-        return Ok(json!(""));
+        json!(value)
+    } else {
+        json!({"kind": "opaqueString", "value": value})
+    }
+}
+
+fn default_value(decl: &StateDecl) -> Result<Json> {
+    if matches!(cell_type(decl), Ok("OpaqueString")) {
+        return Ok(opaque_string_state_value(decl, ""));
     }
     if let Some(ty) = decl.kind.get("cell").and_then(Json::as_str) {
         return scalar_zero(ty);
@@ -923,7 +931,7 @@ pub fn construct_state(
                 string_bytes <= scalars::MAX_OPAQUE_STRING_LENGTH,
                 "constructor string byte limit"
             );
-            strings.insert(parameter.name.as_str(), value);
+            strings.insert(parameter.name.as_str(), text);
         } else {
             scalars.insert(parameter.name.clone(), input_value(&parameter.ty, value)?);
         }
@@ -977,17 +985,17 @@ pub fn construct_state(
                     initializer.ty == "OpaqueString",
                     "string initializer type mismatch"
                 );
-                (*strings
+                let text = strings
                     .get(name.as_str())
-                    .ok_or_else(|| anyhow!("unknown opaque string parameter"))?)
-                .clone()
+                    .ok_or_else(|| anyhow!("unknown opaque string parameter"))?;
+                opaque_string_state_value(declaration, text)
             }
             InitialValue::OpaqueStringLiteral { value } => {
                 ensure!(
                     initializer.ty == "OpaqueString",
                     "string initializer type mismatch"
                 );
-                json!(value)
+                opaque_string_state_value(declaration, value)
             }
         };
         config.insert(initializer.state.clone(), value);

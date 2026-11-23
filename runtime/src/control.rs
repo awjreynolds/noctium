@@ -194,7 +194,9 @@ fn curve_operation(operation: &str) -> Result<(Vec<ScalarType>, ScalarType, crat
             vec![Native; arity],
             Native,
             crate::Expr::TransientHash {
-                values: (0..arity).map(|index| *argument(index)).collect(),
+                values: (0..arity)
+                    .map(|index| crate::TransientHashOperand::Expression(*argument(index)))
+                    .collect(),
             },
         ));
     }

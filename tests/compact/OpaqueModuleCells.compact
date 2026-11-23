@@ -1,0 +1,44 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+module GenericOpaqueCell<T> {
+  export ledger value: T;
+
+  export circuit read(): T {
+    return value;
+  }
+
+  export circuit hash(): Field {
+    return transientHash<T>(value);
+  }
+}
+
+import GenericOpaqueCell<Opaque<"string">> prefix text_;
+import GenericOpaqueCell<Opaque<"Uint8Array">> prefix bytes_;
+
+export ledger directText: Opaque<"string">;
+export ledger directBytes: Opaque<"Uint8Array">;
+
+constructor(textValue: Opaque<"string">, bytesValue: Opaque<"Uint8Array">) {
+  text_value = disclose(textValue);
+  bytes_value = disclose(bytesValue);
+  directText = disclose(textValue);
+  directBytes = disclose(bytesValue);
+}
+
+export circuit directTextHash(): Field {
+  return transientHash<Opaque<"string">>(directText);
+}
+
+export circuit directBytesHash(): Field {
+  return transientHash<Opaque<"Uint8Array">>(directBytes);
+}
+
+export {
+  text_value,
+  bytes_value,
+  text_read,
+  bytes_read,
+  text_hash,
+  bytes_hash,
+};
