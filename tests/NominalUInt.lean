@@ -157,6 +157,7 @@ noctium_contract NominalAmountMaps where
   end
   entry removeAmount uses nominalMapValues where
     remove balances[disclose(key)]
+    absent balances[disclose(key)]
     member balances[disclose(key)] as hasKey
     return present : Bool := hasKey
   end
@@ -630,6 +631,15 @@ noctium_contract rejectsNominalMapRawKey where
   map balances : Count => Amount
   entry inspect uses nominalMapRawValues where
     member balances[disclose(rawKey)] as hasKey
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapAbsentKey where
+  map balances : Count => Amount
+  entry inspect uses nominalMapValues where
+    absent balances[disclose(amount)]
   end
 end
 

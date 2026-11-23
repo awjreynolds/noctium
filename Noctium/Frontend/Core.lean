@@ -4428,7 +4428,7 @@ private def elaborateEffect (schema : List (String × StateKind))
     if depth > 0 then throwErrorAt effect "absent queries inside if/else blocks are unsupported"
     let some (.map keyTy _) := schema.lookup storage.getId.toString
       | throwErrorAt storage "absent requires a declared state map"
-    let loweredKey ← checkedExpression state.env key keyTy
+    let loweredKey ← checkedRootMapKey state storage key keyTy
     let term ← `(Noctium.Effect.requireAbsent
       $(stringTerm storage.getId.toString) $(← tyTerm keyTy) $loweredKey)
     state := {state with terms := state.terms.push term}
