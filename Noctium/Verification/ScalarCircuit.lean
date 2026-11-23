@@ -78,11 +78,14 @@ private theorem scalarSourceTerm (input : Input) (supported : ScalarType input.t
   cases input with
   | mk name ty visibility span => cases supported <;> rfl
 
+/-- Total projection for scalar relation boundaries. Current theorem consumers
+restrict this projection to admitted scalar outputs or successful typed reads;
+other values, including records, retain the zero fallback. -/
 def valueNumber : Value → Nat
   | .native value | .uint _ value => value
   | .bool value => if value then 1 else 0
   | .bytes _ _ | .opaqueBytes _ | .opaqueString _ | .jubjubScalar _ | .jubjubPoint _ _
-  | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ => 0
+  | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ | .record _ => 0
 
 private theorem valueNumber_pack_scalar (ty : Ty) (value : ty.Denote)
     (scalarType : ScalarType ty) :
