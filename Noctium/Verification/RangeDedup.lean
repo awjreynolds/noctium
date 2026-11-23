@@ -100,14 +100,19 @@ private theorem decodeOperandField_from_string (item : Json) (field text : Strin
       simp [decodeOperandField, found, toJson, bind, Except.bind]
     | _ => simp [stringField, found, bind, Except.bind, Json.getStr?] at parsed
 
-private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutput : String)
-    (keyWidth : Nat) (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
+/-- A recognized comparison that decodes successfully has exactly the keyed
+operand width and output. This form does not assume the decoded instruction's
+constructor in advance, and also carries the output identifier check needed by
+native SSA admission. -/
+private theorem exists_comparison_decode (item : Json) (leftKey rightKey keyOutput : String)
+    (keyWidth : Nat) (instruction : Instruction)
     (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
-    (decoded : decodeInstruction item =
-      .ok (.lessThan left right decodedWidth decodedOutput)) :
-    decodeOperand (toJson leftKey) = .ok left ∧
+    (decoded : decodeInstruction item = .ok instruction) :
+    ∃ left right,
+      instruction = .lessThan left right keyWidth keyOutput ∧
+      decodeOperand (toJson leftKey) = .ok left ∧
       decodeOperand (toJson rightKey) = .ok right ∧
-      decodedWidth = keyWidth ∧ decodedOutput = keyOutput := by
+      NativeRelationJson.validIdentifier keyOutput = true := by
   obtain ⟨opcodeField, leftField, rightField, widthField, outputField⟩ :=
     comparison_fields item leftKey rightKey keyOutput keyWidth key
   have leftDecoded := decodeOperandField_from_string item "a" leftKey leftField
@@ -134,14 +139,25 @@ private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutp
           cases outputValid : ensure (validIdentifier keyOutput) "invalid native SSA definition" with
           | error message => simp [outputValid] at decoded
           | ok _ =>
-            simp only [outputValid, pure, Except.pure] at decoded
-            simp only [Except.ok.injEq, Instruction.lessThan.injEq] at decoded
-            rcases decoded with ⟨leftEq, rightEq, widthEq, outputEq⟩
-            subst left
-            subst right
-            subst decodedWidth
-            subst decodedOutput
-            exact ⟨rfl, rfl, rfl, rfl⟩
+            have keyOutputValid : NativeRelationJson.validIdentifier keyOutput = true := by
+              simpa [NativeRelationJson.ensure] using outputValid
+            simp only [outputValid, pure, Except.pure, Except.ok.injEq] at decoded
+            exact ⟨decodedLeft, decodedRight, decoded.symm, rfl, rfl, keyOutputValid⟩
+
+private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutput : String)
+    (keyWidth : Nat) (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
+    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
+    (decoded : decodeInstruction item =
+      .ok (.lessThan left right decodedWidth decodedOutput)) :
+    decodeOperand (toJson leftKey) = .ok left ∧
+      decodeOperand (toJson rightKey) = .ok right ∧
+      decodedWidth = keyWidth ∧ decodedOutput = keyOutput ∧
+      NativeRelationJson.validIdentifier keyOutput = true := by
+  obtain ⟨decodedLeft, decodedRight, shape, leftParsed, rightParsed, valid⟩ :=
+    exists_comparison_decode item leftKey rightKey keyOutput keyWidth _ key decoded
+  simp only [Instruction.lessThan.injEq] at shape
+  rcases shape with ⟨rfl, rfl, rfl, rfl⟩
+  exact ⟨leftParsed, rightParsed, rfl, rfl, valid⟩
 
 /-- Successful native decoding of two equal comparison keys yields the same
 ordered typed operands and width. Decoded output names follow their respective
@@ -159,10 +175,10 @@ theorem equalComparisonKeys_decode_agree (earlier later : Json)
       .ok (.lessThan left₂ right₂ width₂ output₂)) :
     left₁ = left₂ ∧ right₁ = right₂ ∧ width₁ = width ∧ width₂ = width ∧
       output₁ = firstOutput ∧ output₂ = duplicateOutput := by
-  obtain ⟨decodeLeft₁, decodeRight₁, widthEq₁, outputEq₁⟩ :=
+  obtain ⟨decodeLeft₁, decodeRight₁, widthEq₁, outputEq₁, _⟩ :=
     comparison_decode_agrees earlier leftKey rightKey firstOutput width
       left₁ right₁ width₁ output₁ earlierKey decoded₁
-  obtain ⟨decodeLeft₂, decodeRight₂, widthEq₂, outputEq₂⟩ :=
+  obtain ⟨decodeLeft₂, decodeRight₂, widthEq₂, outputEq₂, _⟩ :=
     comparison_decode_agrees later leftKey rightKey duplicateOutput width
       left₂ right₂ width₂ output₂ laterKey decoded₂
   have leftEq : left₁ = left₂ :=
@@ -425,6 +441,45 @@ theorem lessThanCopyPreservesWithRanges (hash : Hash) (witness : Assignment)
         leftBound rightBound).mpr ⟨firstHolds, duplicateHolds⟩
     exact ⟨leftRange, rightRange, firstHolds, copied⟩
 
+/-- The accepted relation represents a reference Copy as equality between its
+source and destination operands. This is the same assignment condition used by
+the optimizer's Copy model, up to equality symmetry. -/
+theorem equalReferenceCopy_iff_copyHolds (hash : Hash) (witness : Assignment)
+    (source destination : String) :
+    Instruction.Holds hash witness
+        (.equal (.reference source) (.reference destination)) ↔
+      copyHolds witness source destination := by
+  change witness source = witness destination ↔ witness destination = witness source
+  exact ⟨Eq.symm, Eq.symm⟩
+
+/-- Under the exact operand bit bounds retained before comparison reuse, a
+decoded reference-equality Copy has the same relation as the duplicate
+comparison it replaces. -/
+theorem lessThanEqualCopyPreserves (hash : Hash) (witness : Assignment)
+    (left right : Operand) (width : Nat) (firstOutput duplicateOutput : String)
+    (leftBound : (left.read witness).val < 2 ^ width)
+    (rightBound : (right.read witness).val < 2 ^ width) :
+    (Instruction.Holds hash witness
+        (.lessThan left right width firstOutput) ∧
+      Instruction.Holds hash witness
+        (.equal (.reference firstOutput) (.reference duplicateOutput))) ↔
+      (Instruction.Holds hash witness
+        (.lessThan left right width firstOutput) ∧
+      Instruction.Holds hash witness
+        (.lessThan left right width duplicateOutput)) := by
+  constructor
+  · rintro ⟨firstHolds, equalHolds⟩
+    have copied : copyHolds witness firstOutput duplicateOutput :=
+      (equalReferenceCopy_iff_copyHolds hash witness firstOutput duplicateOutput).mp equalHolds
+    exact (lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
+      leftBound rightBound).mp ⟨firstHolds, copied⟩
+  · rintro ⟨firstHolds, duplicateHolds⟩
+    obtain ⟨firstHolds, copied⟩ :=
+      (lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
+        leftBound rightBound).mpr ⟨firstHolds, duplicateHolds⟩
+    exact ⟨firstHolds,
+      (equalReferenceCopy_iff_copyHolds hash witness firstOutput duplicateOutput).mpr copied⟩
+
 /-- Connect the actual two-item comparison fold to the decoded scalar
 relation under the operand range constraints. The Copy contributes equality
 between the destination and the retained result. -/
@@ -627,5 +682,146 @@ theorem removeDuplicateAssertions_preserves_decoded (instructions : Array Json)
         List.mem_map.mpr ⟨item, sourceMember, rfl⟩
       rw [← decodedEq]
       exact holds (decodedItem item) originalMember
+
+/-- Keep bit checks and the host-observable instructions in their original order. -/
+def stableOutsideComparisons : Instruction → Bool
+  | .lessThan .. | .equal .. => false
+  | _ => true
+
+private theorem comparison_filter_map (items : List Json) :
+    (items.map decodedItem).filter stableOutsideComparisons =
+      items.flatMap fun item => if stableOutsideComparisons (decodedItem item)
+        then [decodedItem item] else [] := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    by_cases keep : stableOutsideComparisons (decodedItem item) <;> simp [keep, ih]
+
+private theorem decodedComparisonPair (earlier later : Json)
+    (leftName rightName : String) (width : Nat) (first output : String)
+    (earlierKey : comparison? earlier = some ((leftName, rightName, width), first))
+    (laterKey : comparison? later = some ((leftName, rightName, width), output))
+    (earlierDecoded : decodeInstruction earlier = .ok (decodedItem earlier))
+    (laterDecoded : decodeInstruction later = .ok (decodedItem later)) :
+    ∃ left right,
+      decodedItem earlier = .lessThan left right width first ∧
+      decodedItem later = .lessThan left right width output ∧
+      decodeInstruction (comparisonCopyJson first output) =
+        .ok (.equal (.reference first) (.reference output)) := by
+  obtain ⟨left, right, earlierShape, leftParsed, rightParsed, firstValid⟩ :=
+    exists_comparison_decode earlier leftName rightName first width _ earlierKey earlierDecoded
+  obtain ⟨laterLeft, laterRight, laterShape, laterLeftParsed, laterRightParsed, outputValid⟩ :=
+    exists_comparison_decode later leftName rightName output width _ laterKey laterDecoded
+  have sameLeft := Except.ok.inj (laterLeftParsed.symm.trans leftParsed)
+  have sameRight := Except.ok.inj (laterRightParsed.symm.trans rightParsed)
+  refine ⟨left, right, earlierShape, ?_, ?_⟩
+  · simpa only [sameLeft, sameRight] using laterShape
+  · exact NativeRelationJson.decodeInstruction_copyJson first output firstValid outputValid
+
+/-- A comparison operand's range follows from a literal or a retained bit check. -/
+def ComparisonOperandRange (instructions : List Instruction) (operand : Operand)
+    (width : Nat) : Prop :=
+  (∃ narrow ≤ width, .bits operand narrow ∈ instructions) ∨
+    (∃ literal, operand = .immediate literal ∧ literal.val < 2 ^ width)
+
+/-- Arithmetic-derived producer bounds require a separate admission proof. -/
+def ComparisonBitChecks (instructions : List Instruction) : Prop :=
+  ∀ left right width output, .lessThan left right width output ∈ instructions →
+    ComparisonOperandRange instructions left width ∧
+    ComparisonOperandRange instructions right width
+
+private theorem ComparisonOperandRange.bound {instructions : List Instruction}
+    {operand : Operand} {width : Nat} (range : ComparisonOperandRange instructions operand width)
+    (hash : Hash) (witness : Assignment)
+    (bitRanges : ∀ operand width, .bits operand width ∈ instructions →
+      Instruction.Holds hash witness (.bits operand width)) :
+    (operand.read witness).val < 2 ^ width := by
+  rcases range with ⟨narrow, smaller, member⟩ | ⟨literal, rfl, bounded⟩
+  · exact Nat.lt_of_lt_of_le (bitRanges operand narrow member)
+      (Nat.pow_le_pow_right (by decide) smaller)
+  · exact bounded
+
+/-- Apply the exact Copy relation throughout the real compiler fold. The range
+hypothesis refers to constraints present in the decoded source relation. -/
+theorem reuseComparisons_preserves_decoded (source : Array Json) (original : List Instruction)
+    (decoded : source.toList.mapM decodeInstruction = .ok original)
+    (ranges : ComparisonBitChecks original) :
+    ∃ optimized,
+      (reuseComparisons source).toList.mapM decodeInstruction = .ok optimized ∧
+      optimized.filter stableOutsideComparisons = original.filter stableOutsideComparisons ∧
+      ∀ hash witness,
+        (∀ instruction ∈ optimized, instruction.Holds hash witness) ↔
+        (∀ instruction ∈ original, instruction.Holds hash witness) := by
+  obtain ⟨originalForm, admitted⟩ := (decode_list _ _).mp decoded
+  let reduced := reuseComparisons source
+  let optimized := reduced.toList.map decodedItem
+  have pairs : ∀ earlier ∈ source.toList, ∀ later ∈ source.toList,
+      ∀ key first output,
+      comparison? earlier = some (key, first) → comparison? later = some (key, output) →
+      ∃ left right,
+        decodedItem earlier = .lessThan left right key.2.2 first ∧
+        decodedItem later = .lessThan left right key.2.2 output ∧
+        decodeInstruction (comparisonCopyJson first output) =
+          .ok (.equal (.reference first) (.reference output)) := by
+    intro earlier earlierMember later laterMember key first output earlierKey laterKey
+    rcases key with ⟨leftName, rightName, width⟩
+    exact decodedComparisonPair earlier later leftName rightName width first output earlierKey
+      laterKey (admitted earlier earlierMember) (admitted later laterMember)
+  have admittedReduced : ∀ item ∈ reduced.toList,
+      decodeInstruction item = .ok (decodedItem item) := by
+    apply (reuseComparisons_preserves_source_satisfaction source
+      (fun item => decodeInstruction item = .ok (decodedItem item)) ?_).mpr admitted
+    intro earlier earlierMember later laterMember key first output earlierKey laterKey
+    obtain ⟨_, _, _, _, copied⟩ := pairs earlier earlierMember later laterMember key first output
+      earlierKey laterKey
+    have actual : decodeInstruction (comparisonCopyJson first output) =
+        .ok (decodedItem (comparisonCopyJson first output)) := by
+      simp [decodedItem, copied, Except.toOption]
+    exact ⟨fun facts => ⟨facts.1, admitted later laterMember⟩,
+      fun facts => ⟨facts.1, actual⟩⟩
+  have stable : optimized.filter stableOutsideComparisons =
+      original.filter stableOutsideComparisons := by
+    rw [← originalForm, comparison_filter_map, comparison_filter_map]
+    apply reuseComparisons_preserves_observations source
+    intro earlier earlierMember later laterMember key first output earlierKey laterKey
+    obtain ⟨_, _, _, laterShape, copied⟩ := pairs earlier earlierMember later laterMember key first output
+      earlierKey laterKey
+    have copyShape : decodedItem (comparisonCopyJson first output) =
+        .equal (.reference first) (.reference output) := by
+      simp [decodedItem, copied, Except.toOption]
+    simp [laterShape, copyShape, stableOutsideComparisons]
+  refine ⟨optimized, (decode_list _ _).mpr ⟨rfl, admittedReduced⟩, stable, ?_⟩
+  intro hash witness
+  let satisfies (instructions : List Instruction) :=
+    ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction
+  have fold (bitRanges : ∀ operand width, .bits operand width ∈ original →
+        Instruction.Holds hash witness (.bits operand width)) :
+      satisfies optimized ↔ satisfies original := by
+    unfold satisfies
+    change (∀ instruction ∈ reduced.toList.map decodedItem, _) ↔ _
+    rw [← originalForm]
+    simp only [List.forall_mem_map]
+    apply reuseComparisons_preserves_source_satisfaction source
+    intro earlier earlierMember later laterMember key first output earlierKey laterKey
+    obtain ⟨left, right, earlierShape, laterShape, copied⟩ :=
+      pairs earlier earlierMember later laterMember key first output earlierKey laterKey
+    have copyShape : decodedItem (comparisonCopyJson first output) =
+        .equal (.reference first) (.reference output) := by
+      simp [decodedItem, copied, Except.toOption]
+    have earlierInOriginal : .lessThan left right key.2.2 first ∈ original := by
+      rw [← earlierShape, ← originalForm]
+      exact List.mem_map_of_mem earlierMember
+    obtain ⟨leftRange, rightRange⟩ := ranges left right key.2.2 first earlierInOriginal
+    rw [earlierShape, laterShape, copyShape]
+    exact lessThanEqualCopyPreserves hash witness left right key.2.2 first output
+      (leftRange.bound hash witness bitRanges) (rightRange.bound hash witness bitRanges)
+  refine ⟨fun optimizedHolds => ?_, fun originalHolds => (fold fun _ _ member =>
+    originalHolds _ member).mpr originalHolds⟩
+  apply (fold ?_).mp optimizedHolds
+  intro operand width member
+  have inStable : .bits operand width ∈ original.filter stableOutsideComparisons := by
+    exact List.mem_filter.mpr ⟨member, rfl⟩
+  rw [← stable] at inStable
+  exact optimizedHolds _ (List.mem_filter.mp inStable).1
 
 end Noctium.Verification.RangeDedup
