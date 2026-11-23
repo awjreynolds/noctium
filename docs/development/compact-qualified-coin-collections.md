@@ -63,10 +63,15 @@ Two focused four-parent List calls finalized on development Ledger
 9.1.0.1 at blocks 72,222 and 72,225. The selected List held booked indices
 48 and 47 in newest-first order, with three sibling Lists empty. Read-only
 recovery matched the two stored coin commitments to their contract-owned
-outputs in the finalized extrinsics. The normal receipt observer returned
-a response error on the second call. Independent Zswap replay and the
-observer error remain under investigation. [Finalized evidence](funded-four-parent-coin-list-localnet-receipt.json) ·
-[Observer ticket](https://github.com/awjreynolds/noctium/issues/791)
+outputs in the finalized extrinsics. Read-only replay also matched both
+leaves and their contract owner against the node's finalized Zswap Merkle
+root. Full ledger replay first diverged at block 72,225. The replay matched
+the contract value, operations, authority and balance. The charged
+contract storage differed. Replacing the replayed contract state with
+the node's exact bytes in the diagnostic reproduced the full ledger
+root. The ordinary receipt observer still needs a fix for the second call.
+[Finalized evidence](funded-four-parent-coin-list-localnet-receipt.json) ·
+[Receipt and replay ticket](https://github.com/awjreynolds/noctium/issues/791)
 
 The deeper List route qualifies the coin before reading the List, then
 rebuilds cached Map ancestors one key at a time. The emitted ZKIR 3.2.1
