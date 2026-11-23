@@ -88,6 +88,11 @@ fn record_map_keys_preserve_strict_lookup_and_distinct_members() -> anyhow::Resu
         arguments.insert("value".into(), json!(value.to_string()));
         arguments
     };
+    let remove_args = |active, amount, removing| {
+        let mut arguments = key(active, amount);
+        arguments.insert("removing".into(), json!(removing));
+        arguments
+    };
     let read = |active, amount, state: &ChargedState<Db>| -> anyhow::Result<Json> {
         let execution = prepare(&lookup, &key(active, amount), state, parameters, address)?;
         assert_eq!(
@@ -114,7 +119,31 @@ fn record_map_keys_preserve_strict_lookup_and_distinct_members() -> anyhow::Resu
         assert_eq!(read(active, amount, &state)?, json!(value.to_string()));
     }
 
-    let removed = prepare(&remove, &key(true, 513), &state, parameters, address)?;
+    let inactive_remove = prepare(
+        &remove,
+        &remove_args(true, 513, false),
+        &state,
+        parameters,
+        address,
+    )?;
+    assert_eq!(
+        check(&inactive_remove, &remove_relation)?,
+        inactive_remove.activity_schedule
+    );
+    assert_eq!(inactive_remove.returns_json()["presentBefore"], json!(true));
+    assert_eq!(inactive_remove.returns_json()["presentAfter"], json!(true));
+    assert_eq!(inactive_remove.after.state, state);
+    assert_eq!(read(true, 513, &inactive_remove.after.state)?, json!("11"));
+    assert_eq!(read(false, 513, &inactive_remove.after.state)?, json!("22"));
+    assert_eq!(read(true, 514, &inactive_remove.after.state)?, json!("33"));
+
+    let removed = prepare(
+        &remove,
+        &remove_args(true, 513, true),
+        &inactive_remove.after.state,
+        parameters,
+        address,
+    )?;
     assert_eq!(
         check(&removed, &remove_relation)?,
         removed.activity_schedule

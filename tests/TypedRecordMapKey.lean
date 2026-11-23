@@ -18,6 +18,12 @@ noctium_circuit recordMapKeyInputs where
   public amount : UInt 16
 end
 
+noctium_circuit recordMapRemoveInputs where
+  public active : Bool
+  public amount : UInt 16
+  public removing : Bool
+end
+
 noctium_contract RecordMapKeys where
   tree memos : struct Memo {
     active : Bool
@@ -32,9 +38,9 @@ noctium_contract RecordMapKeys where
     return presentAfter : Bool := afterMember
   end
 
-  entry removeMemo uses recordMapKeyInputs where
+  entry removeMemo uses recordMapRemoveInputs where
     member memos[fields(active, amount)] as beforeMember
-    remove memos[fields(active, amount)]
+    when removing remove memos[fields(active, amount)]
     member memos[fields(active, amount)] as afterMember
     return presentBefore : Bool := beforeMember
     return presentAfter : Bool := afterMember
@@ -62,9 +68,11 @@ private def recordMapUpdateRun (active : _root_.Bool) (amount value : Nat) (stat
     ("active", .bool active), ("amount", .uint 65535 amount),
     ("value", .uint 65535 value)] state
 
-private def recordMapRemoveRun (active : _root_.Bool) (amount : Nat) (state : LedgerState) :=
+private def recordMapRemoveRun (active : _root_.Bool) (amount : Nat)
+    (removing : _root_.Bool) (state : LedgerState) :=
   (recordMapEntry "removeMemo").run recordMapContext [
-    ("active", .bool active), ("amount", .uint 65535 amount)] state
+    ("active", .bool active), ("amount", .uint 65535 amount),
+    ("removing", .bool removing)] state
 
 private def recordMapLookupRun (active : _root_.Bool) (amount : Nat) (state : LedgerState) :=
   (recordMapEntry "lookup").run recordMapContext [
@@ -135,7 +143,22 @@ private def validateGuardedRecordMapEffect (effect : Effect) : Except Diagnostic
   | .ok (outputs, _) => outputs.lookup "storedValue" == some (.uint 65535 7)
   | .error _ => _root_.Bool.false
 
-#guard match recordMapRemoveRun _root_.Bool.true 513
+#guard match recordMapRemoveRun _root_.Bool.true 513 _root_.Bool.false
+    (match recordMapUpdateRun _root_.Bool.false 513 9
+      (match recordMapUpdateRun _root_.Bool.true 513 7 recordMapInitialState with
+        | .ok (_, state) => state
+        | .error _ => recordMapInitialState) with
+      | .ok (_, state) => state
+      | .error _ => recordMapInitialState) with
+  | .ok (outputs, state) =>
+      outputs.lookup "presentBefore" == some (.bool _root_.Bool.true) &&
+      outputs.lookup "presentAfter" == some (.bool _root_.Bool.true) &&
+      state.trees.lookup "memos" == some (.map [
+        (.record [(.bool, [0]), (.uint 65535, [513])], .scalar (.uint 65535 9)),
+        (.record [(.bool, [1]), (.uint 65535, [513])], .scalar (.uint 65535 7))])
+  | .error _ => _root_.Bool.false
+
+#guard match recordMapRemoveRun _root_.Bool.true 513 _root_.Bool.true
     (match recordMapUpdateRun _root_.Bool.false 513 9
       (match recordMapUpdateRun _root_.Bool.true 513 7 recordMapInitialState with
         | .ok (_, state) => state
@@ -146,8 +169,10 @@ private def validateGuardedRecordMapEffect (effect : Effect) : Except Diagnostic
       outputs.lookup "presentBefore" == some (.bool _root_.Bool.true) &&
       outputs.lookup "presentAfter" == some (.bool _root_.Bool.false) &&
       match state.trees.lookup "memos" with
-      | some (.map entries) => entries.length == 1 && !entries.contains
-          (.record [(.bool, [1]), (.uint 65535, [513])], .scalar (.uint 65535 7))
+      | some (.map entries) => entries.length == 1 && entries.contains
+          (.record [(.bool, [0]), (.uint 65535, [513])], .scalar (.uint 65535 9)) &&
+          !entries.contains
+            (.record [(.bool, [1]), (.uint 65535, [513])], .scalar (.uint 65535 7))
       | _ => _root_.Bool.false
   | .error _ => _root_.Bool.false
 

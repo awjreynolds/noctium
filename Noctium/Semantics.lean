@@ -2120,7 +2120,7 @@ def runEffectsWithGuardsAndEnv (ctx : EvalContext) (effects : List Effect)
             .writeCompositePath .. | .emptyMapPath .. | .listPushFront .. | .pushFrontCoin .. |
             .insertShieldedCoinSetTo .. | .writeShieldedCoinCellTo .. | .pushFrontCoinTo .. |
             .listPopFront .. | .listReset .. | .setInsert .. | .setInsertRecord .. |
-            .removeRecordSet .. | .removePath .. => pure ()
+            .removeRecordMap .. | .removeRecordSet .. | .removePath .. => pure ()
         | .readPath _ destination _ ty =>
           let zero : ty.Denote := match ty with
             | .native => 0
