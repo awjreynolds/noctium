@@ -168,10 +168,10 @@ int32_t noctium_native_composition_owner_free(uint64_t owner);
    For a scalar List, entries are typed values in head-to-tail order:
      {"abiVersion":1,"kind":"list","entries":["1"],"nextOffset":1}
    List elements with checked composite schemas use the same canonical record JSON.
-   Scalar Map keys, ordinary typed record Map keys, and Set members use stable
+   Scalar Map keys, ordinary typed record keys, and Set members use stable
    ascending typed order. Numeric values sort numerically, Bool sorts false before
    true, byte values sort lexicographically, and foreign keys sort by canonical
-   bytes. Record Map keys sort lexicographically by declared field order.
+   bytes. Record Map and Set keys sort lexicographically by declared field order.
    Supported record key fields are Native, Bool, UInt and Bytes32. Qualified shielded coin Set members return record JSON and sort by
    nonce bytes, color bytes, numeric value, then numeric mtIndex. Use an empty keys
    array for a root collection. To read a nested collection, provide one typed

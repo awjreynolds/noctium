@@ -360,6 +360,19 @@ enum CollectionSchema {
     },
 }
 
+fn collection_record_key_schema(key: &Json) -> Result<crate::CheckedRecordSchema, i32> {
+    let record = crate::ordinary_record_key_schema(key).ok_or(INVALID_ARGUMENT)?;
+    let schema = crate::checked_typed_record_schema(record).map_err(|_| INVALID_ARGUMENT)?;
+    if schema
+        .fields
+        .iter()
+        .any(|field| field.ty == ScalarType::JubjubPoint)
+    {
+        return Err(INVALID_ARGUMENT);
+    }
+    Ok(schema)
+}
+
 fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
     if let Some(set) = schema.get("set") {
         let key = if let Some(key_name) = set.as_str() {
@@ -373,12 +386,12 @@ fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
                 .filter(|fields| fields.len() == 1)
                 .and_then(|fields| fields.get("composite"))
                 .ok_or(INVALID_ARGUMENT)?;
-            if !crate::is_shielded_coin_record_schema(record) {
-                return Err(INVALID_ARGUMENT);
-            }
-            CollectionValueSchema::Record(
-                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
-            )
+            let schema = if crate::is_shielded_coin_record_schema(record) {
+                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?
+            } else {
+                collection_record_key_schema(set)?
+            };
+            CollectionValueSchema::Record(schema)
         };
         return Ok(Some(CollectionSchema::Set { key }));
     }
@@ -393,17 +406,7 @@ fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
                 .map_err(|_| INVALID_ARGUMENT)?;
             CollectionValueSchema::Scalar { ty, name: key_name }
         } else {
-            let record = crate::ordinary_record_key_schema(&fields[0]).ok_or(INVALID_ARGUMENT)?;
-            let schema =
-                crate::checked_typed_record_schema(record).map_err(|_| INVALID_ARGUMENT)?;
-            if schema
-                .fields
-                .iter()
-                .any(|field| field.ty == ScalarType::JubjubPoint)
-            {
-                return Err(INVALID_ARGUMENT);
-            }
-            CollectionValueSchema::Record(schema)
+            CollectionValueSchema::Record(collection_record_key_schema(&fields[0])?)
         };
         let value = if let Some(name) = fields[1].as_str() {
             CollectionValueSchema::Scalar {
@@ -604,22 +607,21 @@ fn collection_page(
             CollectionSchema::Map {
                 key: CollectionValueSchema::Record(record_schema),
                 ..
-            } => {
-                let values =
-                    crate::decode_record_value(record_schema, key).map_err(|_| INVALID_ARGUMENT)?;
-                let mut order = Vec::new();
-                for value in &values {
-                    order.extend(key_order(value)?);
-                }
-                let key = record_values_json(record_schema, &values)?;
-                (order, key)
             }
-            CollectionSchema::Set {
+            | CollectionSchema::Set {
                 key: CollectionValueSchema::Record(record_schema),
             } => {
                 let values =
                     crate::decode_record_value(record_schema, key).map_err(|_| INVALID_ARGUMENT)?;
-                let order = qualified_coin_key_order(&values)?;
+                let order = if record_schema.shielded_coin {
+                    qualified_coin_key_order(&values)?
+                } else {
+                    let mut order = Vec::new();
+                    for value in &values {
+                        order.extend(key_order(value)?);
+                    }
+                    order
+                };
                 let key = record_values_json(record_schema, &values)?;
                 (order, key)
             }
