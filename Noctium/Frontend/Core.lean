@@ -430,6 +430,7 @@ scoped syntax "mintShielded" "(" nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "receiveShieldedToMap" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "insertShieldedCoinSet" "(" nlpath "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "insertShieldedCoinSet" "(" nlpath "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
+scoped syntax "insertShieldedCoinMap" "(" ident "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "writeShieldedCoinCell" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "writeShieldedCoinCell" "(" ident "," nlexpr "," nlexpr "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "pushFrontCoin" "(" nlpath "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
@@ -1893,6 +1894,18 @@ private def lowerQualifiedCoinSetPath (schema : List (String × StateKind))
   | .error message => throwErrorAt path message
   pure (storage, ← pathKeysTerm keys)
 
+private def validateQualifiedCoinMapTarget (schema : List (String × StateKind))
+    (storage : TSyntax `ident) : CommandElabM Unit := do
+  let treeSchema ← treeStateSchema schema storage
+  match treeSchema with
+  | .map (.bytes 32) (.composite environment recordType) =>
+    match LedgerValueType.shieldedCoinRecordFields environment recordType with
+    | .ok _ => pure ()
+    | .error message => throwErrorAt storage message
+  | _ =>
+    throwErrorAt storage
+      "insertShieldedCoinMap requires a root Bytes32 Map with the fixed qualified coin record value"
+
 private def lowerQualifiedCoinListPath (schema : List (String × StateKind))
     (env : Bindings) (path : TSyntax `nlpath) :
     CommandElabM (TSyntax `ident × TSyntax `term) := do
@@ -3318,6 +3331,24 @@ private def elaborateEffect (schema : List (String × StateKind))
         terms := state.terms.push relayTerm
         spans := state.spans.push span
         guards := state.guards.push noGuard}
+    | `(nlupdate| insertShieldedCoinMap($storage:ident, $key:nlexpr,
+        $nonce:nlexpr, $color:nlexpr, $amount:nlexpr,
+        $isContract:nlexpr, $recipient:nlexpr)) => do
+      unless depth == 0 do
+        throwErrorAt update "insertShieldedCoinMap must be unguarded"
+      match guard with
+      | `(term| none) => pure ()
+      | _ => throwErrorAt update "insertShieldedCoinMap must be unguarded"
+      validateQualifiedCoinMapTarget schema storage
+      let key ← checkedExpression state.env key (.bytes 32)
+      let nonce ← checkedExpression state.env nonce (.bytes 32)
+      let color ← checkedExpression state.env color (.bytes 32)
+      let amount ← checkedExpression state.env amount (.uint (2 ^ 128 - 1))
+      let isContract ← checkedExpression state.env isContract .bool
+      let recipient ← checkedExpression state.env recipient (.bytes 32)
+      let insertTerm ← `(Noctium.Effect.insertShieldedCoinMap
+        $(stringTerm storage.getId.toString) $key $nonce $color $amount $isContract $recipient)
+      state := {state with terms := state.terms.push insertTerm}
     | `(nlupdate| insertShieldedCoinSet($path:nlpath, $nonce:nlexpr,
         $color:nlexpr, $amount:nlexpr, $isContract:nlexpr, $recipient:nlexpr)) => do
       unless depth == 0 do

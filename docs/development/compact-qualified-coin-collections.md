@@ -64,6 +64,21 @@ The native checker accepts both implicit and explicit contract recipient
 paths. The root Set and root explicit-recipient artifacts match their previous
 bytes. The nested Set checks use the query context and emitted relation.
 
+## Booked coin Map
+
+`insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.
+The key and nonce are independent. The recipient tag and address select the
+commitment whose index the ledger assigned. Compact and Noctium accept
+replacement at the same key. A missing or wrong-recipient booking rejects,
+and the insertion adds no receive claim. The Noctium query-context test
+checks both wallet and contract recipients. The emitted wallet case passed
+the native relation check. The pinned ZKIR tool measured K13 and 6,856 rows.
+[Lean fixture](../../tests/BookedCoinMap.lean) ·
+[Compact fixture and runner](../../tests/compact/qualified-coin-collections.mjs)
+
+This fixture covers a root Map in a native query context. Nested paths and
+finalized independent-key calls remain open.
+
 ## Funded nested Set and List
 
 The funded fixture initializes two Bytes32 owners, then self-mints five units
