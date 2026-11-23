@@ -5,10 +5,27 @@ contract TypedRefUpdate {
   circuit update(amount: Uint<8>): Uint<8>;
 }
 
+contract TypedRefValue {
+  circuit inspect(): Uint<8>;
+}
+
+contract TypedRefEcho {
+  circuit echo(value: TypedRefValue): TypedRefValue;
+}
+
+contract implements TypedRefEcho;
+
 export ledger target: TypedRefUpdate;
+export ledger echoes: Uint<8>;
 
 constructor(targetRef: TypedRefUpdate) {
   target = disclose(targetRef);
+  echoes = 0 as Uint<8>;
+}
+
+export circuit echo(value: TypedRefValue): TypedRefValue {
+  echoes = disclose(echoes + 1 as Uint<8>);
+  return value;
 }
 
 export circuit forward(amount: Uint<8>): Uint<8> {

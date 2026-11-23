@@ -28,6 +28,8 @@ const listSource = join(scratch, 'ForwarderList.compact');
 const listOutput = join(scratch, 'ForwarderList');
 const routeListSource = join(scratch, 'RouteForwarderList.compact');
 const routeListOutput = join(scratch, 'RouteForwarderList');
+const echoCallerSource = join(scratch, 'TypedRefEchoCaller.compact');
+const echoCallerOutput = join(scratch, 'TypedRefEchoCaller');
 try {
   await writeFile(calleeSource, `pragma language_version 0.28;
 import CompactStandardLibrary;
@@ -46,6 +48,11 @@ export circuit update(amount: Uint<8>): Uint<8> {
   const scalarLedger = contractInfo.ledger.find(({name}) => name === 'target');
   assert.equal(scalarLedger?.storage, 'Cell');
   assert.equal(scalarLedger?.type['type-name'], 'Contract');
+  const echoCircuit = contractInfo.circuits.find(({name}) => name === 'echo');
+  assert.equal(echoCircuit?.arguments[0]?.type['type-name'], 'Contract');
+  assert.equal(echoCircuit?.arguments[0]?.type.name, 'TypedRefValue');
+  assert.equal(echoCircuit?.['result-type']?.['type-name'], 'Contract');
+  assert.equal(echoCircuit?.['result-type']?.name, 'TypedRefValue');
 
   await writeFile(routeSource, `pragma language_version 0.28;
 import CompactStandardLibrary;
@@ -99,7 +106,67 @@ export circuit forward(amount: Uint<8>): Uint<8> {
 `);
   execFileSync(compactc, ['--compact-path', scratch, routeListSource, routeListOutput], {encoding: 'utf8'});
 
-  for (const output of [calleeOutput, callerOutput, routeOutput, listOutput, routeListOutput]) {
+  await writeFile(echoCallerSource, `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefValue { circuit inspect(): Uint<8>; }
+contract TypedRefEcho { circuit echo(value: TypedRefValue): TypedRefValue; }
+export ledger echoer: TypedRefEcho;
+constructor(initial: TypedRefEcho) { echoer = disclose(initial); }
+export circuit roundTrip(value: TypedRefValue): TypedRefValue {
+  return echoer.echo(disclose(value));
+}
+`);
+  execFileSync(compactc, ['--compact-path', scratch, echoCallerSource, echoCallerOutput], {encoding: 'utf8'});
+
+  const compileRejected = async (name, source, expected) => {
+    const sourcePath = join(scratch, `${name}.compact`);
+    const outputPath = join(scratch, name);
+    await writeFile(sourcePath, source);
+    let error;
+    try {
+      execFileSync(compactc, ['--skip-zk', sourcePath, outputPath], {encoding: 'utf8'});
+    } catch (caught) {
+      error = caught;
+    }
+    assert.ok(error && error.status !== 0, `${name} unexpectedly compiled`);
+    const diagnostic = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+    assert.match(diagnostic, expected, `${name} diagnostic`);
+  };
+  await compileRejected('WrongRefArgument', `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefValue { circuit inspect(): Uint<8>; }
+contract OtherRef { circuit inspect(): Uint<8>; }
+contract TypedRefEcho { circuit echo(value: TypedRefValue): TypedRefValue; }
+export ledger echoer: TypedRefEcho;
+constructor(initial: TypedRefEcho) { echoer = disclose(initial); }
+export circuit roundTrip(value: OtherRef): TypedRefValue {
+  return echoer.echo(disclose(value));
+}
+`, /expected first argument of TypedRefEcho\.echo to have type contract TypedRefValue/);
+  await compileRejected('RawBytesRefArgument', `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefValue { circuit inspect(): Uint<8>; }
+contract TypedRefEcho { circuit echo(value: TypedRefValue): TypedRefValue; }
+export ledger echoer: TypedRefEcho;
+constructor(initial: TypedRefEcho) { echoer = disclose(initial); }
+export circuit roundTrip(value: Bytes<32>): TypedRefValue {
+  return echoer.echo(disclose(value));
+}
+`, /expected first argument of TypedRefEcho\.echo to have type contract TypedRefValue/);
+  await compileRejected('WrongRefReturnImplementation', `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefValue { circuit inspect(): Uint<8>; }
+contract OtherRef { circuit inspect(): Uint<8>; }
+contract TypedRefEcho { circuit echo(value: TypedRefValue): TypedRefValue; }
+contract implements TypedRefEcho;
+export ledger result: OtherRef;
+constructor(initial: OtherRef) { result = disclose(initial); }
+export circuit echo(value: TypedRefValue): OtherRef {
+  return result;
+}
+`, /its return type is contract OtherRef[\s\S]*rather than contract\s+TypedRefValue/);
+
+  for (const output of [calleeOutput, callerOutput, routeOutput, listOutput, routeListOutput, echoCallerOutput]) {
     const scopedRuntime = join(output, 'node_modules/@midnight-ntwrk/compact-runtime');
     await mkdir(dirname(scopedRuntime), {recursive: true});
     await symlink(runtimeDirectory, scopedRuntime, 'dir');
@@ -109,6 +176,7 @@ export circuit forward(amount: Uint<8>): Uint<8> {
   const {Contract: RouteForwarder, ledger: routeLedger} = await import(pathToFileURL(join(routeOutput, 'contract/index.js')).href);
   const {Contract: ListForwarder, ledger: listLedger} = await import(pathToFileURL(join(listOutput, 'contract/index.js')).href);
   const {Contract: RouteListForwarder, ledger: routeListLedger} = await import(pathToFileURL(join(routeListOutput, 'contract/index.js')).href);
+  const {Contract: EchoCaller} = await import(pathToFileURL(join(echoCallerOutput, 'contract/index.js')).href);
   const key = '00'.repeat(32);
   const callee = new TypedRefUpdate({});
   const calleeState = await callee.initialState(runtime.createConstructorContext(null, key));
@@ -164,7 +232,43 @@ export circuit forward(amount: Uint<8>): Uint<8> {
   assert.equal(listedRoute.enabled, true);
   const {result: routeListResult} = await routeListForwarder.circuits.forward(contextFor(routeListState.currentContractState.data), 7n);
   assert.equal(routeListResult, 7n);
-  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, scalar List, Route Cell, and List<Route> references round-tripped; all forwarded update(7)`);
+
+  const echoService = new Forwarder({});
+  const echoServiceState = await echoService.initialState(runtime.createConstructorContext(null, key), reference);
+  const echoVerifierKey = Uint8Array.from(await readFile(join(callerOutput, 'keys/echo.verifier')));
+  const echoOperation = new runtime.ContractOperation();
+  echoOperation.verifierKey = echoVerifierKey;
+  echoServiceState.currentContractState.setOperation('echo', echoOperation);
+  const echoServiceReference = {
+    bytes: Uint8Array.from(Buffer.from(runtime.sampleContractAddress(), 'hex')),
+  };
+  const echoCaller = new EchoCaller({});
+  const echoCallerState = await echoCaller.initialState(
+    runtime.createConstructorContext(null, key), echoServiceReference,
+  );
+  const echoCrossContract = {
+    stateProvider: {async getContractState() { return echoServiceState.currentContractState; }},
+    moduleProvider: {
+      resolve() {
+        return async () => import(pathToFileURL(join(callerOutput, 'contract/index.js')).href);
+      },
+    },
+  };
+  const echoContext = runtime.createCircuitContext({
+    circuitId: 'roundTrip',
+    contractAddress: runtime.sampleContractAddress(),
+    coinPublicKeyOrZswapState: key,
+    contractState: echoCallerState.currentContractState.data,
+    privateState: null,
+    parentBlockHash: '00'.repeat(32),
+    crossContract: echoCrossContract,
+  });
+  const valueReference = {
+    bytes: Uint8Array.from(Buffer.from(runtime.sampleContractAddress(), 'hex')),
+  };
+  const {result: echoedReference} = await echoCaller.circuits.roundTrip(echoContext, valueReference);
+  assert.deepEqual(echoedReference.bytes, valueReference.bytes);
+  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
 } finally {
   await rm(scratch, {recursive: true, force: true});
   try {

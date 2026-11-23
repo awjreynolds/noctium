@@ -193,5 +193,95 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         assert_route(&forward_plan, &forward_circuit, &written.after.state)
             .with_context(|| format!("{forward} call assembly"))?;
     }
+
+    let (echo_target_plan, echo_target_circuit) = load("EchoTarget.echo")?;
+    let (echo_caller_plan, echo_caller_circuit) = load("EchoCaller.forward")?;
+    let echo_target_address = ContractAddress(HashOutput([11; 32]));
+    let echo_caller_address = ContractAddress(HashOutput([12; 32]));
+    let echo_value = ContractAddress(HashOutput([13; 32]));
+    let substitute = ContractAddress(HashOutput([14; 32]));
+    let bytes_value = |address: ContractAddress| json!({"kind": "bytes", "values": address.0.0});
+    let empty_echo_target = create_state(&echo_target_plan, &BTreeMap::new())?;
+    let empty_echo_caller = create_state(&echo_caller_plan, &BTreeMap::new())?;
+    let echo_target_execution = prepare(
+        &echo_target_plan,
+        &BTreeMap::from([("target".into(), bytes_value(echo_value))]),
+        &empty_echo_target,
+        &INITIAL_PARAMETERS,
+        echo_target_address,
+    )?;
+    assert_eq!(
+        echo_target_execution.returns_json(),
+        BTreeMap::from([("result".into(), bytes_value(echo_value))])
+    );
+
+    let echo_inputs = BTreeMap::from([
+        ("opening".into(), json!("101")),
+        ("target".into(), bytes_value(echo_target_address)),
+        ("argument".into(), bytes_value(echo_value)),
+        ("expected".into(), bytes_value(echo_value)),
+    ]);
+    let echo_entry = EntryPointBuf(b"echo".to_vec());
+    let prepare_echo_caller = |inputs: &BTreeMap<String, serde_json::Value>| {
+        prepare(
+            &echo_caller_plan,
+            inputs,
+            &empty_echo_caller,
+            &INITIAL_PARAMETERS,
+            echo_caller_address,
+        )
+    };
+    let assemble_echo = |caller: &noctium_runtime::Execution,
+                         target: &noctium_runtime::Execution| {
+        assemble_checked_calls(
+            &[
+                CheckedNativeCall {
+                    execution: caller,
+                    circuit: &echo_caller_circuit,
+                    initial_context: QueryContext::new(
+                        empty_echo_caller.clone(),
+                        echo_caller_address,
+                    ),
+                    entry_point: EntryPointBuf(b"forward".to_vec()),
+                    communication_commitment_rand: Fr::from(151u64),
+                },
+                CheckedNativeCall {
+                    execution: target,
+                    circuit: &echo_target_circuit,
+                    initial_context: QueryContext::new(
+                        empty_echo_target.clone(),
+                        echo_target_address,
+                    ),
+                    entry_point: echo_entry.clone(),
+                    communication_commitment_rand: Fr::from(101u64),
+                },
+            ],
+            &INITIAL_PARAMETERS,
+            1_800_000_000,
+            &mut OsRng,
+        )
+    };
+    let echo_caller_execution = prepare_echo_caller(&echo_inputs)?;
+    let claims = &echo_caller_execution.after.effects.claimed_contract_calls;
+    assert_eq!(claims.iter().count(), 1);
+    let (_, claimed_address, selector, _) = claims.iter().next().unwrap().into_inner();
+    assert_eq!(claimed_address, echo_target_address);
+    assert_eq!(selector, echo_entry.ep_hash());
+
+    let echo_intent = assemble_echo(&echo_caller_execution, &echo_target_execution)?;
+    let echo_calls = echo_intent.calls().collect::<Vec<_>>();
+    assert_eq!(echo_calls.len(), 2);
+    assert!(echo_calls[0].calls(echo_calls[1]));
+    assert_eq!(echo_calls[1].address, echo_target_address);
+
+    let mut wrong_expected = echo_inputs.clone();
+    wrong_expected.insert("expected".into(), bytes_value(substitute));
+    let wrong_expected_execution = prepare_echo_caller(&wrong_expected)?;
+    assert!(assemble_echo(&wrong_expected_execution, &echo_target_execution).is_err());
+
+    let mut wrong_argument = echo_inputs;
+    wrong_argument.insert("argument".into(), bytes_value(substitute));
+    let wrong_argument_execution = prepare_echo_caller(&wrong_argument)?;
+    assert!(assemble_echo(&wrong_argument_execution, &echo_target_execution).is_err());
     Ok(())
 }
