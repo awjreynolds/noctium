@@ -332,4 +332,270 @@ theorem private_input_step_meaning {hash : Hash} {inputs witness : Assignment}
   change StateMeaning hash inputs witness definedState
   exact define_meaning invariant (input_fact_meaning inputEq) defined
 
+theorem combine_meaning {hash : Hash} {inputs witness : Assignment}
+    {term : Term} {maximum : Nat} {children : List Fact} {fact : Fact}
+    {value : Scalar}
+    (accepted : combine term maximum children = .ok fact)
+    (meaning : interpret hash inputs term = some value)
+    (bound : value.val ≤ maximum) :
+    FactMeaning hash inputs witness fact value := by
+  unfold combine at accepted
+  dsimp [Backend.Native.ensure] at accepted
+  split at accepted
+  · simp only [Pure.pure, Except.pure] at accepted
+    cases accepted
+    refine ⟨meaning, bound, ?_⟩
+    intro _ _ tag
+    cases tag
+  · contradiction
+
+theorem defineResult_meaning {hash : Hash} {inputs witness : Assignment}
+    {state next : State} {instruction : Lean.Json} {fact : Fact}
+    (invariant : StateMeaning hash inputs witness state)
+    (meaning : ∀ identifier, stringField instruction "output" = .ok identifier →
+      FactMeaning hash inputs witness fact (witness identifier))
+    (accepted : defineResult state instruction fact = .ok next) :
+    StateMeaning hash inputs witness next := by
+  unfold defineResult at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨identifier, parsed, accepted⟩
+  exact define_meaning invariant (meaning identifier parsed) accepted
+
+theorem modular_add_bound (left right : Scalar) (leftMaximum rightMaximum : Nat)
+    (leftBound : left.val ≤ leftMaximum) (rightBound : right.val ≤ rightMaximum) :
+    (scalar (left.val + right.val)).val ≤
+      if leftMaximum + rightMaximum < Field.modulus then leftMaximum + rightMaximum
+      else Field.modulus - 1 := by
+  split
+  · exact Nat.le_trans (scalar_le _) (Nat.add_le_add leftBound rightBound)
+  · have canonical := (scalar (left.val + right.val)).isLt
+    omega
+
+theorem modular_mul_bound (left right : Scalar) (leftMaximum rightMaximum : Nat)
+    (leftBound : left.val ≤ leftMaximum) (rightBound : right.val ≤ rightMaximum) :
+    (scalar (left.val * right.val)).val ≤
+      if leftMaximum * rightMaximum < Field.modulus then leftMaximum * rightMaximum
+      else Field.modulus - 1 := by
+  split
+  · exact Nat.le_trans (scalar_le _) (Nat.mul_le_mul leftBound rightBound)
+  · have canonical := (scalar (left.val * right.val)).isLt
+    omega
+
+/-- The accepted producer reducer for native addition uses the same facts and
+bound passed to `combine`, then defines its output with `defineResult`. -/
+theorem accepted_native_add_define
+    {expected : Expected} {state next : State} {raw : Lean.Json}
+    {left right fact : Fact}
+    (opcodeParsed : stringField raw "op" = .ok "add")
+    (leftAccepted : argument state raw "a" = .ok left)
+    (rightAccepted : argument state raw "b" = .ok right)
+    (leftNative : left.valueType = .native) (rightNative : right.valueType = .native)
+    (combined : combine (.binary "add" left.term right.term)
+      (if left.maximum + right.maximum < Field.modulus then left.maximum + right.maximum
+        else Field.modulus - 1) [left, right] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    defineResult state raw fact = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "add" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp only [bind_ok] at accepted
+  simp_all [Backend.Native.ensure]
+  have notPoint : (NativeValueType.native == NativeValueType.jubjubPoint) = false := by decide
+  rw [notPoint] at accepted
+  rcases accepted with ⟨fieldsAccepted, sameTypeAccepted, reducerAccepted⟩
+  change (do
+    let _ ← Backend.Native.ensure (left.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    let _ ← Backend.Native.ensure (right.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    let acceptedFact ← (Except.ok fact : Except String Fact)
+    defineResult state raw acceptedFact) = .ok next at reducerAccepted
+  simp [leftNative, rightNative, Backend.Native.ensure] at reducerAccepted
+  exact reducerAccepted
+
+theorem accepted_native_mul_define
+    {expected : Expected} {state next : State} {raw : Lean.Json}
+    {left right fact : Fact}
+    (opcodeParsed : stringField raw "op" = .ok "mul")
+    (leftAccepted : argument state raw "a" = .ok left)
+    (rightAccepted : argument state raw "b" = .ok right)
+    (leftNative : left.valueType = .native) (rightNative : right.valueType = .native)
+    (combined : combine (.binary "mul" left.term right.term)
+      (if left.maximum * right.maximum < Field.modulus then left.maximum * right.maximum
+        else Field.modulus - 1) [left, right] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    defineResult state raw fact = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "mul" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp only [bind_ok] at accepted
+  simp_all [Backend.Native.ensure]
+  rcases accepted with ⟨_, reducer⟩
+  change (do
+    let _ ← Backend.Native.ensure (left.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    let _ ← Backend.Native.ensure (right.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    let acceptedFact ← (Except.ok fact : Except String Fact)
+    defineResult state raw acceptedFact) = .ok next at reducer
+  simp [leftNative, rightNative, Backend.Native.ensure] at reducer
+  exact reducer
+
+theorem accepted_native_neg_define
+    {expected : Expected} {state next : State} {raw : Lean.Json}
+    {value fact : Fact}
+    (opcodeParsed : stringField raw "op" = .ok "neg")
+    (valueAccepted : argument state raw "a" = .ok value)
+    (valueNative : value.valueType = .native)
+    (combined : combine (.unary "neg" value.term)
+      (if value.maximum == 0 then 0 else Field.modulus - 1) [value] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    defineResult state raw fact = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "neg" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp only [bind_ok] at accepted
+  simp_all
+  rcases accepted with ⟨_, reducer⟩
+  change (do
+    let _ ← Backend.Native.ensure (value.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    let acceptedFact ← (Except.ok fact : Except String Fact)
+    defineResult state raw acceptedFact) = .ok next at reducer
+  simp [valueNative, Backend.Native.ensure] at reducer
+  exact reducer
+
+/-- Native addition preserves meanings for every accepted definition and the
+matching decoded instruction relation. -/
+theorem native_add_step_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Lean.Json} {output : String}
+    {left right : Fact} {a b : Operand} {fact : Fact}
+    (invariant : StateMeaning hash inputs witness state)
+    (opcodeParsed : stringField raw "op" = .ok "add")
+    (leftAccepted : argument state raw "a" = .ok left)
+    (rightAccepted : argument state raw "b" = .ok right)
+    (leftNative : left.valueType = .native) (rightNative : right.valueType = .native)
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.add a b output))
+    (holds : Instruction.Holds hash witness (.add a b output))
+    (combined : combine (.binary "add" left.term right.term)
+      (if left.maximum + right.maximum < Field.modulus then left.maximum + right.maximum
+        else Field.modulus - 1) [left, right] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    StateMeaning hash inputs witness next := by
+  have decodedFields := decoded_add_arguments opcodeParsed decoded
+  have leftMeaning := argument_decoded_meaning invariant leftAccepted decodedFields.1
+  have rightMeaning := argument_decoded_meaning invariant rightAccepted decodedFields.2.1
+  have holdsEquation : witness output = scalar ((a.read witness).val + (b.read witness).val) := by
+    simpa [Instruction.Holds] using holds
+  have resultMeaning : interpret hash inputs (.binary "add" left.term right.term) =
+      some (witness output) := by
+    simp [interpret, leftMeaning.term, rightMeaning.term, holdsEquation]
+  have resultBound : (witness output).val ≤
+      if left.maximum + right.maximum < Field.modulus then left.maximum + right.maximum
+      else Field.modulus - 1 := by
+    rw [holdsEquation]
+    exact modular_add_bound (a.read witness) (b.read witness)
+      left.maximum right.maximum leftMeaning.bound rightMeaning.bound
+  have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+    combine_meaning combined resultMeaning resultBound
+  have defined := accepted_native_add_define opcodeParsed leftAccepted rightAccepted
+    leftNative rightNative combined accepted
+  apply defineResult_meaning invariant ?_ defined
+  intro identifier parsed
+  have same : identifier = output := Except.ok.inj (parsed.symm.trans decodedFields.2.2)
+  subst identifier
+  exact factMeaning
+
+theorem native_mul_step_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Lean.Json} {output : String}
+    {left right : Fact} {a b : Operand} {fact : Fact}
+    (invariant : StateMeaning hash inputs witness state)
+    (opcodeParsed : stringField raw "op" = .ok "mul")
+    (leftAccepted : argument state raw "a" = .ok left)
+    (rightAccepted : argument state raw "b" = .ok right)
+    (leftNative : left.valueType = .native) (rightNative : right.valueType = .native)
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.mul a b output))
+    (holds : Instruction.Holds hash witness (.mul a b output))
+    (combined : combine (.binary "mul" left.term right.term)
+      (if left.maximum * right.maximum < Field.modulus then left.maximum * right.maximum
+        else Field.modulus - 1) [left, right] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    StateMeaning hash inputs witness next := by
+  have decodedFields := decoded_mul_arguments opcodeParsed decoded
+  have leftMeaning := argument_decoded_meaning invariant leftAccepted decodedFields.1
+  have rightMeaning := argument_decoded_meaning invariant rightAccepted decodedFields.2.1
+  have holdsEquation : witness output = scalar ((a.read witness).val * (b.read witness).val) := by
+    simpa [Instruction.Holds] using holds
+  have resultMeaning : interpret hash inputs (.binary "mul" left.term right.term) =
+      some (witness output) := by
+    simp [interpret, leftMeaning.term, rightMeaning.term, holdsEquation]
+  have resultBound : (witness output).val ≤
+      if left.maximum * right.maximum < Field.modulus then left.maximum * right.maximum
+      else Field.modulus - 1 := by
+    rw [holdsEquation]
+    exact modular_mul_bound (a.read witness) (b.read witness)
+      left.maximum right.maximum leftMeaning.bound rightMeaning.bound
+  have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+    combine_meaning combined resultMeaning resultBound
+  have defined := accepted_native_mul_define opcodeParsed leftAccepted rightAccepted
+    leftNative rightNative combined accepted
+  apply defineResult_meaning invariant ?_ defined
+  intro identifier parsed
+  have same : identifier = output := Except.ok.inj (parsed.symm.trans decodedFields.2.2)
+  subst identifier
+  exact factMeaning
+
+/-- Native negation preserves the producer's bound, including its zero-only
+case, under the decoded witness equation. -/
+theorem native_neg_step_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Lean.Json} {output : String}
+    {value : Fact} {a : Operand} {fact : Fact}
+    (invariant : StateMeaning hash inputs witness state)
+    (opcodeParsed : stringField raw "op" = .ok "neg")
+    (valueAccepted : argument state raw "a" = .ok value)
+    (valueNative : value.valueType = .native)
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.neg a output))
+    (holds : Instruction.Holds hash witness (.neg a output))
+    (combined : combine (.unary "neg" value.term)
+      (if value.maximum == 0 then 0 else Field.modulus - 1) [value] = .ok fact)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    StateMeaning hash inputs witness next := by
+  have decodedFields := decoded_neg_argument opcodeParsed decoded
+  have valueMeaning := argument_decoded_meaning invariant valueAccepted decodedFields.1
+  have holdsEquation : witness output = scalar (Field.modulus - (a.read witness).val) := by
+    simpa [Instruction.Holds] using holds
+  have resultMeaning : interpret hash inputs (.unary "neg" value.term) =
+      some (witness output) := by
+    simp [interpret, valueMeaning.term, holdsEquation]
+  have resultBound : (witness output).val ≤
+      if value.maximum == 0 then 0 else Field.modulus - 1 := by
+    cases zeroMax : value.maximum == 0
+    · have canonical := (witness output).isLt
+      simp only [Bool.false_eq_true, ↓reduceIte]
+      omega
+    · have valueZero : (a.read witness).val = 0 := by
+        have bound := valueMeaning.bound
+        have maxZero : value.maximum = 0 := of_decide_eq_true zeroMax
+        omega
+      rw [holdsEquation]
+      simp [valueZero, scalar]
+  have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+    combine_meaning combined resultMeaning resultBound
+  have defined := accepted_native_neg_define opcodeParsed valueAccepted valueNative
+    combined accepted
+  apply defineResult_meaning invariant ?_ defined
+  intro identifier parsed
+  have same : identifier = output := Except.ok.inj (parsed.symm.trans decodedFields.2)
+  subst identifier
+  exact factMeaning
+
 end Noctium.Verification.ScalarValidationMeaning
