@@ -2111,6 +2111,12 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
     | {name, ty := .bytes _, value, ..} =>
       let value ← lowerBytes value
       modify fun s => {s with byteAliases := (name, value) :: s.byteAliases}
+    | {name, ty := .opaqueBytes, value, ..} =>
+      let value ← lowerOpaqueBytes value
+      modify fun s => {s with aliases := (name, value) :: s.aliases}
+    | {name, ty := .opaqueString, value, ..} =>
+      let value ← lowerOpaqueString value
+      modify fun s => {s with aliases := (name, value) :: s.aliases}
     | {name, value, ..} =>
       let value ← lowerExpr value
       modify fun s => {s with aliases := (name, value) :: s.aliases}

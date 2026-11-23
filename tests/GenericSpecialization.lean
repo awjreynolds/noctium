@@ -189,6 +189,37 @@ private def genericRangeIndexEscapeProgram : GProgram := {
       result.program.exports.length == 1
   | .error _ => false
 
+private def opaqueIdentityCompiles (type : GType) (ty : Ty) : Bool :=
+  match specialize (identityProgram type) "entry" with
+  | .error _ => false
+  | .ok result =>
+    match Helpers.compile result.program result.exportName with
+    | .error _ => false
+    | .ok circuit =>
+      let inputOk := circuit.inputs.any fun input =>
+        input.name == "value" && input.ty == ty && input.visibility == .public
+      let outputOk := match circuit.outputs with
+        | [output] => output.name == "result" && output.ty == ty &&
+            output.nativeReturnFieldCount == 1 &&
+            (match output.nativeReturnFields with
+            | .ok fields => fields.length == 1
+            | .error _ => false)
+        | _ => false
+      let signatureOk := parseSignatureArtifact (Lean.toJson result.signatureArtifact) |>.isOk
+      inputOk && outputOk && signatureOk
+
+-- Opaque types specialize only as root scalar helper inputs and outputs.
+#guard opaqueIdentityCompiles .opaqueBytes .opaqueBytes
+#guard opaqueIdentityCompiles .opaqueString .opaqueString
+
+private def opaqueAggregateProgram : GProgram :=
+  identityProgram (.tuple [.opaqueBytes])
+
+#guard match specialize opaqueAggregateProgram "entry" with
+  | .error diagnostic => diagnostic.message.contains "opaque byte strings are not scalar values"
+  | .ok result => messageContains (Helpers.compile result.program result.exportName)
+      "opaque byte strings are not scalar values"
+
 private def genericBox (id : String) : Structure :=
   ⟨id, [⟨"T", .type⟩], [("value", .parameter "T")], {}⟩
 
@@ -612,6 +643,17 @@ private def privateIdentity (release : Bool) : GProgram :=
   | .error _ => false
 #guard match specialize (privateIdentity true) "entry" with
   | .ok result => ComponentDisclosure.checkProgram result.program result.exportName |>.isOk
+  | .error _ => false
+
+private def privateOpaqueIdentity (release : Bool) : GProgram :=
+  identityProgram .opaqueBytes .private release
+
+#guard match specialize (privateOpaqueIdentity false) "entry" with
+  | .ok result => messageContains (Helpers.compile result.program result.exportName)
+      "undisclosed private parameter 'value'"
+  | .error _ => false
+#guard match specialize (privateOpaqueIdentity true) "entry" with
+  | .ok result => (Helpers.compile result.program result.exportName).isOk
   | .error _ => false
 
 private def providerProgram (release : Bool) (type : GType := .native) : GProgram := {

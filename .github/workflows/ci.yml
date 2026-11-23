@@ -375,6 +375,9 @@ jobs:
           .lake/build/bin/noctium compile tests/NestedRecordList.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/nested-record-list"
+          .lake/build/bin/noctium compile tests/modules/OpaqueGenericCircuit.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/opaque-generic-circuit"
           .lake/build/bin/noctium compile tests/NominalRecordMaybe.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/nominal-record-maybe"
@@ -451,6 +454,7 @@ jobs:
             NOCTIUM_READABLE_NOMINAL_UINT_DIR="$artifacts/readable-nominal-uint" \
             NOCTIUM_IMPORTED_MODULE_TYPES_DIR="$artifacts/imported-module-types" \
             NOCTIUM_NESTED_RECORD_LIST_DIR="$artifacts/nested-record-list" \
+            NOCTIUM_OPAQUE_GENERIC_CIRCUIT_DIR="$artifacts/opaque-generic-circuit" \
             NOCTIUM_NOMINAL_RECORD_MAYBE_DIR="$artifacts/nominal-record-maybe" \
             NOCTIUM_CURVE25519_PROJECTION_DIR="$artifacts/curve25519-projection" \
             NOCTIUM_FIXED_NUMERIC_BYTES_DIR="$artifacts/fixed-numeric-bytes" \
@@ -476,7 +480,8 @@ jobs:
               --test nested_record_list --test vector_set_keys \
               --test generic_jubjub_module --test imported_module_types \
               --test readable_nominal_uint --test generic_foreign_curve_module \
-              --test curve25519_projection --test opaque_module_cells -- --ignored
+              --test curve25519_projection --test opaque_module_cells \
+              --test opaque_generic_circuit -- --ignored
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_ORDERED_CONSTRUCTOR_COUNTER_READ_DIR="$artifacts/ordered-constructor-counter-read" \

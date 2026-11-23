@@ -30,6 +30,8 @@ mutual
     | unit
     | native
     | bool
+    | opaqueBytes
+    | opaqueString
     | jubjubScalar
     | jubjubPoint
     | uint (maximum : Natural)
@@ -394,6 +396,8 @@ mutual
         | .unit => pure .unit
         | .native => pure (.scalar .native)
         | .bool => pure (.scalar .bool)
+        | .opaqueBytes => pure (.scalar .opaqueBytes)
+        | .opaqueString => pure (.scalar .opaqueString)
         | .jubjubScalar => pure (.scalar .jubjubScalar)
         | .jubjubPoint => pure (.scalar .jubjubPoint)
         | .foreign kind => pure (.scalar (.foreign kind))
@@ -569,7 +573,8 @@ private def sourceChildren (limits : Limits) (span : SourceSpan) :
   | .argument (.type value) => pure [.typeExpr value]
   | .argument (.natural value) => pure [.natural value]
   | .typeExpr type => match type with
-    | .unit | .native | .bool | .jubjubScalar | .jubjubPoint | .parameter _
+    | .unit | .native | .bool | .opaqueBytes | .opaqueString
+    | .jubjubScalar | .jubjubPoint | .parameter _
     | .enumeration _ | .foreign _ => pure []
     | .uint maximum | .bytes maximum => pure [.natural maximum]
     | .tuple items => do
@@ -991,9 +996,12 @@ def specializeTypeWithEnvironment (limits : Limits) (source : Program)
     structures := source.base.composites.structures ++ state.structures
     enumerations := source.base.composites.enumerations}
   let environment := Types.CompositeEnv.reachable expandedEnvironment value
-  match Types.checkedLayout Types.defaultLimits environment value with
-  | .ok _ => pure {value, environment}
-  | .error diagnostic => fail diagnostic.span diagnostic.message
+  match value with
+  | .scalar .opaqueBytes | .scalar .opaqueString => pure {value, environment}
+  | _ =>
+    match Types.checkedLayout Types.defaultLimits environment value with
+    | .ok _ => pure {value, environment}
+    | .error diagnostic => fail diagnostic.span diagnostic.message
 
 /- Specialize requested exports in one bounded session. The declaration and
 type caches are shared across roots. Output names are sorted before expansion,
@@ -1287,16 +1295,16 @@ private def canonicalDecimal (text : String) : Except String Nat := do
   unless toString value == text do throw "decimal string has a leading zero or invalid form"
   pure value
 
-private partial def validateSignatureType (fuel : Nat) (value : SignatureType) : Except String Unit := do
+private partial def validateSignatureType (fuel : Nat) (allowOpaqueRoot : Bool)
+    (value : SignatureType) : Except String Unit := do
   match fuel with
   | 0 => throw "signature type nesting exceeds the parser limit"
   | fuel + 1 => match value with
     | .unit | .native | .bool => pure ()
     | .jubjubScalar | .jubjubPoint => pure ()
-    | .opaqueBytes =>
-      throw "OpaqueBytes helper signatures are not supported by specialization"
-    | .opaqueString =>
-      throw "OpaqueString helper signatures are not supported by specialization"
+    | .opaqueBytes | .opaqueString =>
+      unless allowOpaqueRoot do
+        throw "opaque types are supported only as root scalar helper signatures"
     | .foreign sourceName => do
       unless Foreign.kinds.any (fun kind => kind.sourceName == sourceName) do
         throw "unsupported foreign helper signature type"
@@ -1305,27 +1313,27 @@ private partial def validateSignatureType (fuel : Nat) (value : SignatureType) :
       unless maximum ≤ ScalarPolicy.maxUint do throw "unsigned signature exceeds target maximum"
     | .tuple items => do
       if items.length > Types.defaultLimits.maxLayoutNodes then throw "signature tuple exceeds the parser limit"
-      for item in items do validateSignatureType fuel item
+      for item in items do validateSignatureType fuel false item
     | .structure id | .enumeration id =>
       unless Types.validDeclId id do throw "invalid nominal signature identity"
     | .vector length element => do
       let length ← canonicalDecimal length
       unless length ≤ Types.defaultLimits.maxVectorLength do throw "signature vector exceeds target maximum"
-      validateSignatureType fuel element
+      validateSignatureType fuel false element
     | .bytes length => do
       let length ← canonicalDecimal length
       unless length ≤ Types.defaultLimits.maxVectorLength do throw "signature byte array exceeds target maximum"
 
 private def validateSignatureArgument (argument : SignatureArgument) : Except String Unit := do
   match argument with
-  | .type value => validateSignatureType 128 value
+  | .type value => validateSignatureType 128 true value
   | .natural value =>
     let value ← canonicalDecimal value
     unless value ≤ ScalarPolicy.maxUint do throw "natural signature argument exceeds target maximum"
 
-private def validateSignatureValue (value : SignatureValue) : Except String Unit := do
+private def validateSignatureValue (allowOpaqueRoot : Bool) (value : SignatureValue) : Except String Unit := do
   if value.name.utf8ByteSize > 1024 then throw "signature value name exceeds parser limit"
-  validateSignatureType 128 value.type
+  validateSignatureType 128 allowOpaqueRoot value.type
 
 private def validateArtifact (artifact : SignatureArtifact) : Except String Unit := do
   unless artifact.schemaVersion == 1 do throw "unsupported specialization signature schema version"
@@ -1341,9 +1349,9 @@ private def validateArtifact (artifact : SignatureArtifact) : Except String Unit
         declaration.witnesses.length > 16384 then
       throw "specialized signature list exceeds parser limit"
     for argument in declaration.arguments do validateSignatureArgument argument
-    for parameter in declaration.parameters do validateSignatureValue parameter
-    validateSignatureType 128 declaration.result
-    for witness in declaration.witnesses do validateSignatureValue witness
+    for parameter in declaration.parameters do validateSignatureValue true parameter
+    validateSignatureType 128 true declaration.result
+    for witness in declaration.witnesses do validateSignatureValue false witness
 
 /-- Parse and validate the additive standalone `.specialization.json` artifact. -/
 def parseSignatureArtifact (json : Lean.Json) : Except String SignatureArtifact := do
