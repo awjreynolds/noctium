@@ -1692,20 +1692,19 @@ private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : Str
 
 private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
-  let some declaration := decls.find? (·.name == state)
-    | throw s!"unknown qualified shielded coin Map '{state}'"
-  let .tree schema := declaration.kind
-    | throw s!"qualified coin insertion requires a root Bytes32 Map or one-level nested owner Map '{state}'"
-  match keys with
-  | [] => pure ()
-  | [key] =>
-    unless key.ty == .bytes 32 do
-      throw s!"qualified coin insertion requires a Bytes32 owner key in '{state}'"
-  | _ =>
-    throw s!"qualified coin insertion supports only a root Map or one Bytes32 owner key in '{state}'"
-  let selected ← if keys.isEmpty then pure schema else schema.resolvePath keys
+  if keys.length > 5 then
+    throw "qualified coin Map parent path exceeds five Maps"
+  let selected ← if keys.isEmpty then do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown qualified shielded coin Map '{state}'"
+    let .tree schema := declaration.kind
+      | throw s!"qualified coin insertion requires a recursive tree '{state}'"
+    pure schema
+  else resolveTreeState decls state keys
+  unless keys.all (fun key => key.ty == .bytes 32) do
+    throw s!"qualified coin Map parent keys must be Bytes32 in '{state}'"
   let .map (.bytes 32) (.composite environment recordType) := selected
-    | throw s!"qualified coin insertion requires a root Bytes32 Map or a one-level nested Bytes32-keyed owner Map with a record value '{state}'"
+    | throw s!"qualified coin insertion requires a Bytes32-keyed Map with a qualified coin record value '{state}'"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
 
 private def validateCounterEffect (decls : List StateDecl) (state : String)

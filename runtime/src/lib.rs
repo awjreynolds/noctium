@@ -3108,15 +3108,16 @@ fn validate_shielded_coin_map_path(plan: &Plan, slot: u32, keys: &[PathPart]) ->
         slot < 16 && (slot as usize) < plan.state.len(),
         "shielded coin Map slot exceeds the native state limit"
     );
+    // Map_insert_coin adjusts Dup to 5 + 2 * parent keys, within its four-bit immediate.
     ensure!(
-        keys.len() <= 1,
-        "shielded coin Map supports at most one parent key"
+        keys.len() <= 5,
+        "shielded coin Map parent path exceeds native Dup encoding limit"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
         ensure!(
-            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
-            "shielded coin Map parent key must be Bytes32"
+            key_types.iter().all(|ty| ty == &ScalarType::Bytes32),
+            "shielded coin Map parent keys must be Bytes32"
         );
     }
     let field_count = path_field_count(plan, slot, keys)?;
@@ -9215,9 +9216,10 @@ impl PreparationCursor {
                         .try_into()
                         .map_err(|_| anyhow!("invalid shielded coin Map slot"))?,
                 )];
-                if let Some(parent_key) = parent_keys.into_iter().next() {
+                for parent_key in parent_keys {
                     path.push(Key::Value(
-                        parent_key.try_into()
+                        parent_key
+                            .try_into()
                             .map_err(|_| anyhow!("invalid shielded coin Map parent key"))?,
                     ));
                 }
@@ -10986,6 +10988,94 @@ mod shielded_spend_tests {
         QueryContext::new(state, ContractAddress(HashOutput(ADDRESS)))
     }
 
+    fn two_parent_map_insert_plan() -> Plan {
+        let mut value = map_insert_plan_json();
+        let inputs = value["circuit"]["inputs"].as_array_mut().unwrap();
+        inputs.insert(
+            0,
+            json!({"name":"owner", "type":"Bytes<32>", "visibility":"public"}),
+        );
+        inputs.insert(
+            1,
+            json!({"name":"collection", "type":"Bytes<32>", "visibility":"public"}),
+        );
+        value["state"][0]["kind"]["tree"] = json!({
+            "map":["Bytes<32>", {
+                "map":["Bytes<32>", {
+                    "map":["Bytes<32>", {"composite":coin_schema()}]
+                }]
+            }]
+        });
+        value["operations"][0]["keys"] = json!([
+            {"alignment":"bytes32", "expression":reference("owner")},
+            {"alignment":"bytes32", "expression":reference("collection")}
+        ]);
+        let mut plan: Plan = serde_json::from_value(value).unwrap();
+        plan.target = Some(profile::NAME.into());
+        plan.target_profile = Some(profile::target_json());
+        plan
+    }
+
+    fn two_parent_map_context(
+        schema: &Json,
+        owner: Option<[u8; 32]>,
+        collection: Option<[u8; 32]>,
+        include_target_coin: bool,
+    ) -> QueryContext<Db> {
+        let existing = context_with_schema(schema, NONCE, NONCE, 5);
+        let key = AlignedValue::from(Nonce(HashOutput(NONCE)));
+        let record = read_state_value(&existing, 0, &[key.clone()]).unwrap();
+        let sibling_owner = AlignedValue::from(Nonce(HashOutput([8; 32])));
+        let sibling_collection = AlignedValue::from(Nonce(HashOutput([7; 32])));
+        let sibling_coin = AlignedValue::from(Nonce(HashOutput([4; 32])));
+
+        let mut sibling_owner_coins: HashMap<AlignedValue, StateValue<Db>, Db> =
+            HashMap::default();
+        sibling_owner_coins = sibling_owner_coins.insert(key.clone(), record.clone());
+        let mut sibling_owner_collections: HashMap<AlignedValue, StateValue<Db>, Db> =
+            HashMap::default();
+        sibling_owner_collections = sibling_owner_collections.insert(
+            sibling_collection.clone(),
+            StateValue::Map(sibling_owner_coins),
+        );
+
+        let mut owners: HashMap<AlignedValue, StateValue<Db>, Db> = HashMap::default();
+        owners = owners.insert(
+            sibling_owner,
+            StateValue::Map(sibling_owner_collections),
+        );
+        if let Some(owner) = owner {
+            let mut owner_collections: HashMap<AlignedValue, StateValue<Db>, Db> =
+                HashMap::default();
+            let mut sibling_collection_coins: HashMap<AlignedValue, StateValue<Db>, Db> =
+                HashMap::default();
+            sibling_collection_coins =
+                sibling_collection_coins.insert(key.clone(), record.clone());
+            owner_collections = owner_collections.insert(
+                sibling_collection.clone(),
+                StateValue::Map(sibling_collection_coins),
+            );
+            if let Some(collection) = collection {
+                let mut target_coins: HashMap<AlignedValue, StateValue<Db>, Db> =
+                    HashMap::default();
+                target_coins = target_coins.insert(sibling_coin, record.clone());
+                if include_target_coin {
+                    target_coins = target_coins.insert(key, record);
+                }
+                owner_collections = owner_collections.insert(
+                    AlignedValue::from(Nonce(HashOutput(collection))),
+                    StateValue::Map(target_coins),
+                );
+            }
+            owners = owners.insert(
+                AlignedValue::from(Nonce(HashOutput(owner))),
+                StateValue::Map(owner_collections),
+            );
+        }
+        let state = ChargedState::new(StateValue::Array(vec![StateValue::Map(owners)].into()));
+        QueryContext::new(state, ContractAddress(HashOutput(ADDRESS)))
+    }
+
     fn map_insert_inputs(
         key: [u8; 32],
         coin: &ShieldedCoinInfo,
@@ -11678,6 +11768,212 @@ mod shielded_spend_tests {
             assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
             assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
         }
+    }
+
+    #[test]
+    fn shielded_coin_map_insert_supports_two_existing_parent_maps() {
+        let plan = two_parent_map_insert_plan();
+        let coin = ShieldedCoinInfo {
+            nonce: Nonce(HashOutput([9; 32])),
+            type_: ShieldedTokenType(HashOutput(COLOR)),
+            value: 5,
+        };
+        let owner_bytes = [6; 32];
+        let collection_bytes = [9; 32];
+        let owner = AlignedValue::from(Nonce(HashOutput(owner_bytes)));
+        let collection = AlignedValue::from(Nonce(HashOutput(collection_bytes)));
+        let key = AlignedValue::from(Nonce(HashOutput(NONCE)));
+        let sibling_owner = AlignedValue::from(Nonce(HashOutput([8; 32])));
+        let sibling_collection = AlignedValue::from(Nonce(HashOutput([7; 32])));
+        let sibling_coin = AlignedValue::from(Nonce(HashOutput([4; 32])));
+        let parameters = &ledger::structure::INITIAL_PARAMETERS;
+
+        for (is_contract, recipient_bytes) in [(false, RECIPIENT), (true, RELAY_TARGET)] {
+            let recipient = if is_contract {
+                Recipient::Contract(ContractAddress(HashOutput(recipient_bytes)))
+            } else {
+                Recipient::User(PublicKey(HashOutput(recipient_bytes)))
+            };
+            let commitment = coin.commitment(&recipient);
+            let mut inputs = map_insert_inputs(NONCE, &coin, is_contract, recipient_bytes, commitment);
+            inputs.insert("owner".into(), bytes_json(&owner_bytes));
+            inputs.insert("collection".into(), bytes_json(&collection_bytes));
+
+            for overwrite in [false, true] {
+                let mut context = two_parent_map_context(
+                    &coin_schema(),
+                    Some(owner_bytes),
+                    Some(collection_bytes),
+                    overwrite,
+                );
+                context.call_context.com_indices =
+                    context.call_context.com_indices.insert(commitment, 41);
+                let target_path = [owner.clone(), collection.clone(), key.clone()];
+                let original_record = read_state_aligned(&context, 0, &target_path).ok();
+                assert_eq!(original_record.is_some(), overwrite);
+
+                let execution = prepare_with_context(&plan, &inputs, context.clone(), parameters)
+                    .unwrap_or_else(|error| {
+                        panic!("two-parent booked coin Map insertion failed: {error:#}")
+                    });
+                assert_ne!(key, AlignedValue::from(coin.nonce));
+                let stored = read_state_aligned(&execution.after, 0, &target_path).unwrap();
+                assert_eq!(stored, AlignedValue::from(coin.qualify(41)));
+                if let Some(original_record) = &original_record {
+                    assert_ne!(
+                        stored,
+                        original_record.clone(),
+                        "existing coin Map entry must be overwritten"
+                    );
+                }
+
+                for sibling_path in [
+                    [sibling_owner.clone(), sibling_collection.clone(), key.clone()],
+                    [owner.clone(), sibling_collection.clone(), key.clone()],
+                    [owner.clone(), collection.clone(), sibling_coin.clone()],
+                ] {
+                    assert_eq!(
+                        read_state_value(&execution.after, 0, &sibling_path).unwrap(),
+                        read_state_value(&context, 0, &sibling_path).unwrap(),
+                        "inserting under one parent path must preserve sibling entries"
+                    );
+                }
+                assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+                assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+                assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
+
+                let mut no_booking = context.clone();
+                no_booking.call_context.com_indices = Default::default();
+                let error = prepare_with_context(&plan, &inputs, no_booking, parameters)
+                    .err()
+                    .expect("a coin without a current booking must not be inserted");
+                assert!(error.to_string().contains("absent from the current transaction"));
+
+                for (wrong_kind, wrong_bytes) in
+                    [(is_contract, [7; 32]), (!is_contract, recipient_bytes)]
+                {
+                    let wrong_recipient = if wrong_kind {
+                        Recipient::Contract(ContractAddress(HashOutput(wrong_bytes)))
+                    } else {
+                        Recipient::User(PublicKey(HashOutput(wrong_bytes)))
+                    };
+                    let mut wrong_inputs = inputs.clone();
+                    wrong_inputs.insert("isContract".into(), json!(wrong_kind));
+                    wrong_inputs.insert("recipient".into(), bytes_json(&wrong_bytes));
+                    wrong_inputs.insert(
+                        "commitment".into(),
+                        bytes_json(&coin.commitment(&wrong_recipient).0.0),
+                    );
+                    let error = prepare_with_context(
+                        &plan,
+                        &wrong_inputs,
+                        context.clone(),
+                        parameters,
+                    )
+                    .err()
+                    .expect("a booking for a different recipient must not qualify the coin");
+                    assert!(error.to_string().contains("absent from the current transaction"));
+                }
+
+                assert_eq!(
+                    read_state_aligned(&context, 0, &target_path).ok(),
+                    original_record,
+                    "failed booking checks must leave the input context unchanged"
+                );
+            }
+
+            for (missing_owner, missing_collection) in
+                [(None, Some(collection_bytes)), (Some(owner_bytes), None)]
+            {
+                let mut missing_parent = two_parent_map_context(
+                    &coin_schema(),
+                    missing_owner,
+                    missing_collection,
+                    false,
+                );
+                missing_parent.call_context.com_indices =
+                    missing_parent.call_context.com_indices.insert(commitment, 41);
+                assert!(prepare_with_context(
+                    &plan,
+                    &inputs,
+                    missing_parent.clone(),
+                    parameters,
+                )
+                .is_err());
+                assert!(
+                    read_state_value(&missing_parent, 0, &[owner.clone(), collection.clone()])
+                        .is_err(),
+                    "insertion must reject a missing parent at either level"
+                );
+            }
+        }
+
+        if let Some(artifact_dir) = std::env::var_os("NOCTIUM_DEEP_BOOKED_COIN_MAP_DIR") {
+            let artifact_dir = std::path::PathBuf::from(artifact_dir);
+            let artifact_plan: Plan = serde_json::from_slice(
+                &std::fs::read(artifact_dir.join("DeepBookedCoinMap.store.impact.json")).unwrap(),
+            )
+            .unwrap();
+            let circuit_bytes =
+                std::fs::read(artifact_dir.join("DeepBookedCoinMap.store.zkir")).unwrap();
+            let circuit = IrSource::load(circuit_bytes.as_slice()).unwrap();
+            let recipient = Recipient::User(PublicKey(HashOutput(RECIPIENT)));
+            let commitment = coin.commitment(&recipient);
+            let coin_schema = &artifact_plan.state[0].kind["tree"]["map"][1]["map"][1]["map"]
+                [1]["composite"];
+            let mut context = two_parent_map_context(
+                coin_schema,
+                Some(owner_bytes),
+                Some(collection_bytes),
+                false,
+            );
+            context.call_context.com_indices =
+                context.call_context.com_indices.insert(commitment, 41);
+            let mut artifact_inputs =
+                map_insert_inputs(NONCE, &coin, false, RECIPIENT, commitment);
+            artifact_inputs.insert("owner".into(), bytes_json(&owner_bytes));
+            artifact_inputs.insert("group".into(), bytes_json(&collection_bytes));
+            artifact_inputs.remove("commitment");
+            let execution = prepare_with_context(
+                &artifact_plan,
+                &artifact_inputs,
+                context,
+                parameters,
+            )
+            .unwrap_or_else(|error| panic!("emitted DeepBookedCoinMap artifact failed: {error:#}"));
+            assert_eq!(
+                read_state_aligned(
+                    &execution.after,
+                    0,
+                    &[owner.clone(), collection.clone(), key.clone()],
+                )
+                .unwrap(),
+                AlignedValue::from(coin.qualify(41))
+            );
+            assert_eq!(check(&execution, &circuit).unwrap(), execution.activity_schedule);
+            assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
+        }
+    }
+
+    #[test]
+    fn shielded_coin_map_insert_rejects_six_parent_maps_for_dup_limit() {
+        let plan = map_insert_plan();
+        let keys: Vec<PathPart> = (0..6)
+            .map(|_| {
+                serde_json::from_value(json!({
+                    "alignment":"bytes32",
+                    "expression":reference("key")
+                }))
+                .unwrap()
+            })
+            .collect();
+        let error = validate_shielded_coin_map_path(&plan, 0, &keys).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "shielded coin Map parent path exceeds native Dup encoding limit"
+        );
     }
 
     fn expected_coin_effects() -> (Nullifier, Commitment) {

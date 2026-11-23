@@ -66,7 +66,7 @@ private def bookedCoinMapWrongKey : List StateDecl :=
     | _ => declaration
 
 #guard match bookedCoinMapEntry.validate Capabilities.source bookedCoinMapWrongKey with
-  | .error diagnostic => diagnostic.message.contains "root Bytes32 Map"
+  | .error diagnostic => diagnostic.message.contains "Bytes32-keyed Map with a qualified coin record value"
   | .ok _ => Bool.false
 
 private def bookedCoinMapGuarded : Entrypoint :=

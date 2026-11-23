@@ -89,7 +89,7 @@ private def nestedBookedCoinMapWrongOwnerKey : Entrypoint :=
 
 #guard match nestedBookedCoinMapWrongOwnerKey.validate
     Capabilities.source NestedBookedCoinMap.state with
-  | .error diagnostic => diagnostic.message.contains "Bytes32 owner key"
+  | .error diagnostic => diagnostic.message.contains "nested map key type mismatch"
   | .ok _ => Bool.false
 
 private def nestedBookedCoinMapWrongOwnerSchema : List StateDecl :=
@@ -114,5 +114,5 @@ private def nestedBookedCoinMapWrongValueState : List StateDecl :=
 #guard match nestedBookedCoinMapStore.validate
     Capabilities.source nestedBookedCoinMapWrongValueState with
   | .error diagnostic =>
-      diagnostic.message.contains "one-level nested Bytes32-keyed owner Map"
+      diagnostic.message.contains "Bytes32-keyed Map with a qualified coin record value"
   | .ok _ => Bool.false

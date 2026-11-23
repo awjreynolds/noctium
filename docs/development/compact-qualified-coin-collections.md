@@ -83,6 +83,20 @@ other owner's Map unchanged. Missing owners reject. The Impact suffix uses
 reinsertion. A private owner requires explicit disclosure because the path
 appears in the public transcript. [Nested Lean fixture](../../tests/NestedBookedCoinMap.lean)
 
+A two-parent source case selects both existing Bytes32 Maps before writing
+the independent leaf key. The native query checks insertion, replacement,
+missing parents at both levels, booking recipient checks and unchanged
+siblings. The emitted Lean circuit passes the pinned native relation
+checker against the same query context. Compact 0.36.1 and Runtime 0.21.0
+also completed a two-parent insertion and overwrite in their query context.
+[Lean fixture](../../tests/DeepBookedCoinMap.lean) ·
+[Compact runner](../../tests/compact/qualified-coin-collections.mjs)
+
+The current Impact sequence uses a four-bit `Dup` index of
+`5 + 2 * parentCount`. The compiler and runtime reject paths beyond five
+parents. [Wider lowering](https://github.com/awjreynolds/noctium/issues/716) ·
+[Funded two-parent qualification](https://github.com/awjreynolds/noctium/issues/717)
+
 The query-context checks cover overwrite and missing owners. The funded
 fixture below exercises independent-key insertion and overwrite on Ledger 9.
 

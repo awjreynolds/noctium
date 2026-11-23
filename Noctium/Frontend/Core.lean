@@ -380,6 +380,9 @@ scoped syntax "sealed" "counter" ident : nlstate
 scoped syntax "sealed" ident ident ":" nltype : nlstate
 declare_syntax_cat nlcompositefield
 scoped syntax ident ":" nltype : nlcompositefield
+declare_syntax_cat nlmaprecordtail
+scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
+scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
 scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmerklespec
@@ -395,6 +398,7 @@ scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" nlt
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nltype "=>" nlmaprecordtail : nlstate
 scoped syntax ident ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" ident "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" ident "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -1894,17 +1898,26 @@ private def lowerQualifiedCoinSetPath (schema : List (String × StateKind))
   | .error message => throwErrorAt path message
   pure (storage, ← pathKeysTerm keys)
 
+private partial def bytes32ParentMaps (schema : LedgerValueType)
+    (keys : List (TSyntax `nlexpr)) : _root_.Bool :=
+  match keys with
+  | [] => _root_.Bool.true
+  | _ :: rest =>
+    match schema with
+    | .map (.bytes 32) value => bytes32ParentMaps value rest
+    | _ => _root_.Bool.false
+
 private def lowerQualifiedCoinMapPath (schema : List (String × StateKind))
     (env : Bindings) (path : TSyntax `nlpath) :
     CommandElabM (TSyntax `ident × TSyntax `term) := do
   let (storage, sourceKeys) ← sourcePathParts path
-  unless sourceKeys.length ≤ 1 do
-    throwErrorAt path "insertShieldedCoinMap supports a root Map or one Bytes32-keyed owner Map"
   let treeSchema ← treeStateSchema schema storage
   let (keys, selected) ← lowerTreePath env treeSchema sourceKeys
+  unless bytes32ParentMaps treeSchema sourceKeys do
+    throwErrorAt path "insertShieldedCoinMap requires Bytes32-keyed parent Maps"
   let .map (.bytes 32) (.composite environment recordType) := selected
     | throwErrorAt path
-        "insertShieldedCoinMap requires a root Bytes32 Map or a one-level nested Bytes32-keyed owner Map with the fixed qualified coin record value"
+        "insertShieldedCoinMap requires a Bytes32-keyed Map with the fixed qualified coin record value"
   match LedgerValueType.shieldedCoinRecordFields environment recordType with
   | .ok _ => pure ()
   | .error message => throwErrorAt path message
@@ -4613,6 +4626,17 @@ private def nestedRecordSetSchema (keyTy : Ty)
       (Noctium.LedgerValueType.recordSet $environmentTerm $recordTypeTerm))
     pure (schema, term)
 
+private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
+    CommandElabM (List Ty × TSyntax `ident × Array (TSyntax `nlcompositefield)) := do
+  match tail with
+  | `(nlmaprecordtail| struct $record:ident { $recordFields:nlcompositefield* }) =>
+    pure ([], record, recordFields)
+  | `(nlmaprecordtail| $key:nltype => $rest:nlmaprecordtail) => do
+    let keyTy ← readTy key
+    let (restTypes, record, recordFields) ← readMapRecordTail rest
+    pure (keyTy :: restTypes, record, recordFields)
+  | _ => throwErrorAt tail "expected a nested Map key or record leaf"
+
 @[command_elab contractCommand] unsafe def elabContract : CommandElab := fun stx => do
   match stx with
   | `(noctium_contract $name:ident where $states:nlstate* $entries:nlentry* end) =>
@@ -4799,6 +4823,25 @@ private def nestedRecordSetSchema (keyTy : Ty)
           let valueTerm ← `(Noctium.LedgerValueType.map $outerTerm
             (Noctium.LedgerValueType.map $innerTerm
               (Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+        | `(nlstate| tree $id:ident : $first:nltype => $second:nltype =>
+            $third:nltype => $tail:nlmaprecordtail) => do
+          let firstTy ← readTy first
+          let secondTy ← readTy second
+          let thirdTy ← readTy third
+          let (tailTypes, record, recordFields) ← readMapRecordTail tail
+          let keyTypes := [firstTy, secondTy, thirdTy] ++ tailTypes
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+            elaborateNamedRecord contractName record recordFields state
+          let valueSchema := keyTypes.reverse.foldl
+            (fun value keyType => LedgerValueType.map keyType value)
+            (.composite environment compositeType)
+          let mut valueTerm ← `(Noctium.LedgerValueType.composite
+            $environmentTerm $compositeTypeTerm)
+          for keyType in keyTypes.reverse do
+            let keyTerm ← tyTerm keyType
+            valueTerm ← `(Noctium.LedgerValueType.map $keyTerm $valueTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $outer:nltype => struct $keyRecord:ident
             { $keyFields:nlcompositefield* } => $valueType:nltype) => do
