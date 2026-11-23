@@ -75,8 +75,8 @@ private def hasIndexedJsonField (values : Array Json) (index : Nat) (field : Str
 #guard match SealedRootSetConstructor.constructor with
   | some ctor =>
       match ctor.setInserts with
-      | [{name := "registered", key := .mk .native (.disclose _ (.ref "key"))},
-         {name := "registered", key := .mk .native (.disclose _ (.ref "key"))}] => _root_.Bool.true
+      | [{name := "registered", key := .mk .native (.disclose _ (.ref "key")), guard := none},
+         {name := "registered", key := .mk .native (.disclose _ (.ref "key")), guard := none}] => _root_.Bool.true
       | _ => _root_.Bool.false
   | none => _root_.Bool.false
 

@@ -377,6 +377,9 @@ jobs:
           .lake/build/bin/noctium compile tests/modules/ImportedModuleTypes.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/imported-module-types"
+          .lake/build/bin/noctium compile tests/GuardedConstructorSet.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/guarded-constructor-set"
           .lake/build/bin/noctium compile tests/RecordConstructor.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/record-constructor"
@@ -439,6 +442,9 @@ jobs:
               --test typed_contract_reference --test nominal_contract_interface \
               --test nominal_record_maybe \
               --test generic_jubjub_module --test imported_module_types -- --ignored
+          NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test guarded_constructor_set -- --ignored
           NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_record_cell \
