@@ -50,10 +50,10 @@ def jubjubGenericIdentityRoot : Noctium.Modules.Definition := {
   entrypoints := [
     {«member» := 2, name := "scalarIdentity",
       circuit := .importedMember "scalar" "identity",
-      effects := [⟨.writeCellOutput (.localMember 0) "result", {}⟩]},
+      effects := [{effect := .writeCellOutput (.localMember 0) "result"}]},
     {«member» := 3, name := "pointIdentity",
       circuit := .importedMember "point" "identity",
-      effects := [⟨.writeCellOutput (.localMember 1) "result", {}⟩]}]
+      effects := [{effect := .writeCellOutput (.localMember 1) "result"}]}]
   exports := [
     {name := "scalarResult", target := .localMember 0},
     {name := "pointResult", target := .localMember 1},

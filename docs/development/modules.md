@@ -83,6 +83,16 @@ one identity circuit and stores each result in a fixed, typed Cell. Generic
 ledger state type substitution is a separate scope.
 [Lean fixture](../../tests/modules/JubjubGenericIdentity.lean) · [Compact comparison](../../tests/compact/generic-jubjub-module.mjs)
 
+## Generic record Cells
+
+Pass a declared record as `.checkedTypeValue value environment` when selecting
+a generic module with `stateSchema? := some (.cell (.parameter "T"))`. Its
+reachable type declarations determine the checked ledger layout. Bind
+constructor inputs by field name with `recordFields`. The module stores one
+record Cell and returns it as a typed record. A guarded write requires
+disclosure for private values used as payload or guard.
+[Lean fixture](../../tests/modules/GenericRecordCell.lean) · [Compact comparison](../../tests/compact/generic-record-cell.mjs)
+
 ## Import exported types
 
 Select the source member in your module definition, then bind the selected

@@ -140,7 +140,7 @@ private def genericLedgerModule : Definition := {
     member := 2
     name := "update"
     circuit := .localMember 1
-    effects := [⟨.writeCellOutput (.localMember 0) "result", {}⟩]}]
+    effects := [{effect := .writeCellOutput (.localMember 0) "result"}]}]
   exports := [
     {name := "balance", target := .localMember 0},
     {name := "update", target := .localMember 2}]
