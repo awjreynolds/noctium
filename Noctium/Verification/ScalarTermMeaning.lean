@@ -67,28 +67,66 @@ private theorem scalar_mul_mod (left right : Nat) :
     ((left * right) % Field.modulus)
   exact (Nat.mul_mod left right Field.modulus).symm
 
-/-- The recursive source packing term for constant bytes denotes the producer's
-little-endian integer modulo the native field. -/
-theorem interpret_packByteTerms_constants (hash : Hash) (inputs : Assignment)
+/-- The raw recursive source packing term denotes the producer's little-endian
+integer modulo the native field. -/
+private theorem interpret_packByteTermsRaw_constants (hash : Hash) (inputs : Assignment)
     (values : List Nat) :
-    interpret? hash inputs (Backend.Native.packByteTerms (values.map Term.constant)) =
+    interpret? hash inputs (Backend.Native.packByteTermsRaw (values.map Term.constant)) =
       some (scalar (Backend.Native.littleEndian values)) := by
   induction values with
-  | nil => simp [Backend.Native.packByteTerms, Backend.Native.littleEndian]
+  | nil => simp [Backend.Native.packByteTermsRaw, Backend.Native.littleEndian]
   | cons first rest ih =>
     cases rest with
-    | nil => simp [Backend.Native.packByteTerms, Backend.Native.littleEndian]
+    | nil => simp [Backend.Native.packByteTermsRaw, Backend.Native.littleEndian]
     | cons second rest =>
       change interpret? hash inputs
           (.binary "add" (.constant first)
             (.binary "mul" (.constant 256)
-              (Backend.Native.packByteTerms (List.map Term.constant (second :: rest))))) =
+              (Backend.Native.packByteTermsRaw (List.map Term.constant (second :: rest))))) =
         some (scalar (first + 256 * Backend.Native.littleEndian (second :: rest)))
       have ih' : interpret? hash inputs
-          (Backend.Native.packByteTerms (Term.constant second :: List.map Term.constant rest)) =
+          (Backend.Native.packByteTermsRaw (Term.constant second :: List.map Term.constant rest)) =
           some (scalar (Backend.Native.littleEndian (second :: rest))) := by
         simpa only [List.map_cons] using ih
       simp [interpret?, ih', scalar_add_mod, scalar_mul_mod]
+
+private theorem allLiteralZeroTerms_constants_iff (values : List Nat) :
+    Backend.Native.allLiteralZeroTerms (values.map Term.constant) = true ↔
+      ∀ value ∈ values, value = 0 := by
+  induction values with
+  | nil => simp [Backend.Native.allLiteralZeroTerms]
+  | cons value rest ih =>
+    cases value <;> simp [Backend.Native.allLiteralZeroTerms, ih]
+
+private theorem littleEndian_eq_zero_of_all_zero (values : List Nat)
+    (allZero : ∀ value ∈ values, value = 0) :
+    Backend.Native.littleEndian values = 0 := by
+  induction values with
+  | nil => rfl
+  | cons first rest ih =>
+    have firstZero := allZero first (by simp)
+    have restZero : ∀ value ∈ rest, value = 0 := by
+      intro value member
+      exact allZero value (List.Mem.tail first member)
+    simp [Backend.Native.littleEndian, firstZero, ih restZero]
+
+/-- Normalized all-zero chunks pack to zero. Other chunks retain the original
+symbolic recurrence and its scalar meaning. -/
+theorem interpret_packByteTerms_constants (hash : Hash) (inputs : Assignment)
+    (values : List Nat) :
+    interpret? hash inputs (Backend.Native.packByteTerms (values.map Term.constant)) =
+      some (scalar (Backend.Native.littleEndian values)) := by
+  by_cases allZero :
+      Backend.Native.allLiteralZeroTerms (values.map Term.constant) = true
+  · have zeroValues := (allLiteralZeroTerms_constants_iff values).mp allZero
+    have endianZero := littleEndian_eq_zero_of_all_zero values zeroValues
+    simp [Backend.Native.packByteTerms, allZero, endianZero]
+  · have nonzero : Backend.Native.allLiteralZeroTerms (values.map Term.constant) = false := by
+      cases result : Backend.Native.allLiteralZeroTerms (values.map Term.constant) with
+      | false => rfl
+      | true => exact False.elim (allZero result)
+    simp only [Backend.Native.packByteTerms, nonzero, Bool.false_eq_true, ↓reduceIte]
+    exact interpret_packByteTermsRaw_constants hash inputs values
 
 theorem interpret_packedByteConstant_eq_terms (hash : Hash) (inputs : Assignment)
     (values : List Nat) :

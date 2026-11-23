@@ -534,13 +534,24 @@ private def lowerBoolGate (opcode left right : String) : LowerM String := do
   modify fun state => {state with expressions := (key, output) :: state.expressions}
   pure output
 
-private def packBytes : List String → LowerM String
+private def packBytesRec : List String → LowerM String
   | [] => pure "0x00"
   | [byte] => pure byte
   | byte :: rest => do
-    let suffix ← packBytes rest
+    let suffix ← packBytesRec rest
     let scaled ← binary "mul" "0x0001" suffix
     binary "add" byte scaled
+
+/-- Skip symbolic packing when every already-lowered byte is canonical zero.
+The one linear scan runs before the existing recurrence. -/
+private def packBytes (bytes : List String) : LowerM String :=
+  if bytes.all (fun byte => byte == "0x00") then pure "0x00" else packBytesRec bytes
+
+private theorem packBytes_zero_exact (bytes : List String) (state : LowerState)
+    (allZero : bytes.all (fun byte => byte == "0x00") = true) :
+    (packBytes bytes).run state = ("0x00", state) := by
+  simp [packBytes, allZero]
+  rfl
 
 private def bytes32Alignment : Json := Json.arr #[Json.mkObj [
   ("tag", toJson ("atom" : String)),
