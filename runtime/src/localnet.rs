@@ -3383,6 +3383,217 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the authenticated RecordMapCollections update bundle and funded development node"]
+    fn record_map_collections_finalize_distinct_keys_noop_and_reset() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ChargedState, ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_RECORD_MAP_COLLECTIONS_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "RecordMapCollections requires the authorized loopback node on port 19944"
+            );
+            let manifest = setting("NOCTIUM_RECORD_MAP_COLLECTIONS_MANIFEST")?;
+            let bundle = artifacts::verify(
+                Path::new(&setting("NOCTIUM_RECORD_MAP_COLLECTIONS_BUNDLE")?),
+                Some(&manifest),
+            )?;
+            let bundle_digest = bundle
+                .authenticated_manifest_sha256()
+                .context("verified bundle omitted its authenticated manifest pin")?
+                .to_owned();
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "update", "expected RecordMapCollections.update");
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let degree = circuit.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_RECORD_MAP_COLLECTIONS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let parameters = cache.parameters(degree).await?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{"scalars":[],"records":[]}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let update = target.operation("update", &parameters, ttl)?;
+            let empty_config = BTreeMap::from([
+                ("scalars".to_owned(), json!([])),
+                ("records".to_owned(), json!([])),
+            ]);
+            let mut model_state = crate::create_state(&plan, &empty_config)?;
+            let (deployed, deployment) = funded.deploy(&target, "update").await?;
+            let deployed_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.contract_address == target.contract_address(),
+                "deployment receipt belongs to another contract address"
+            );
+            ensure!(
+                deployed_state.data.get_ref() == model_state.get_ref(),
+                "deployed RecordMapCollections state differs from the exact empty constructor state"
+            );
+            let mut current = Some(deployed);
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid target contract address"))?,
+            ));
+
+            let call_inputs = |active, amount: u16, adding, clear| {
+                BTreeMap::from([
+                    ("active".into(), json!(active)),
+                    ("amount".into(), json!(amount.to_string())),
+                    ("adding".into(), json!(adding)),
+                    ("clear".into(), json!(clear)),
+                ])
+            };
+            let simulate = |before: &ChargedState<Db>,
+                            inputs: &BTreeMap<String, Json>,
+                            expected_size: u64| {
+                let snapshot = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plan,
+                    inputs,
+                    before,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                ensure!(
+                    crate::check(&execution, &circuit)? == execution.activity_schedule,
+                    "native RecordMapCollections relation did not check"
+                );
+                let expected_returns = BTreeMap::from([
+                    ("scalarSize".into(), json!(expected_size.to_string())),
+                    ("scalarEmpty".into(), json!(expected_size == 0)),
+                    ("recordSize".into(), json!(expected_size.to_string())),
+                    ("recordEmpty".into(), json!(expected_size == 0)),
+                ]);
+                ensure!(
+                    execution.returns_json() == expected_returns,
+                    "native RecordMapCollections return values differ from the expected size and emptiness"
+                );
+                Ok::<_, anyhow::Error>(execution)
+            };
+            let verify_receipt = |bound: &BoundTransaction,
+                                  receipt: &FinalizedReceipt,
+                                  execution: &crate::Execution|
+             -> anyhow::Result<()> {
+                bound.check_receipt(receipt)?;
+                ensure!(
+                    receipt.chain.genesis == DEVELOPMENT_GENESIS,
+                    "finalized receipt belongs to another genesis"
+                );
+                ensure!(
+                    receipt.contract_address == target.contract_address(),
+                    "finalized receipt belongs to another contract address"
+                );
+                ensure!(
+                    receipt.contract_state == bound.expected_state(),
+                    "finalized receipt bytes differ from the bound expected state"
+                );
+                let decoded: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    decoded.data.get_ref() == execution.after.state.get_ref(),
+                    "decoded finalized RecordMap data differs from checked native execution"
+                );
+                Ok(())
+            };
+            let receipt_record = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height,
+                    "finalizedHeight": receipt.finalized_height,
+                    "blockHash": receipt.block_hash,
+                    "finalizedHash": receipt.finalized_hash,
+                    "extrinsicHash": receipt.extrinsic_hash,
+                    "transactionId": receipt.transaction_id,
+                    "intentId": receipt.intent_id,
+                    "stateBytes": receipt.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                })
+            };
+
+            let mut receipts = Vec::new();
+            let mut previous_receipt_state = deployment.contract_state.clone();
+            let mut reset_finalized = false;
+            for (active, adding, clear, size) in [
+                (true, true, false, 1u64),
+                (false, true, false, 2),
+                (false, false, false, 2),
+                (true, false, true, 0),
+            ] {
+                let inputs = call_inputs(active, 513, adding, clear);
+                let execution = simulate(&model_state, &inputs, size)?;
+                let (bound, receipt) = funded
+                    .call_with_bound(&update, &mut current, &parameters, inputs)
+                    .await?;
+                verify_receipt(&bound, &receipt, &execution)?;
+                if !adding && !clear {
+                    ensure!(
+                        receipt.contract_state == previous_receipt_state,
+                        "inactive update changed finalized state bytes"
+                    );
+                }
+                if clear {
+                    let reset_state: ContractState<Db> =
+                        native_decode(&receipt.contract_state)?;
+                    let StateValue::Array(slots) = reset_state.data.get_ref() else {
+                        anyhow::bail!("expected finalized native state slots")
+                    };
+                    ensure!(
+                        slots.len() == 2
+                            && matches!(slots.get(0), Some(StateValue::Map(map)) if map.size() == 0)
+                            && matches!(slots.get(1), Some(StateValue::Map(map)) if map.size() == 0),
+                        "reset did not finalize two empty root Maps"
+                    );
+                    reset_finalized = true;
+                }
+                let checked_returns = execution.returns_json();
+                model_state = execution.after.state;
+                previous_receipt_state = receipt.contract_state.clone();
+                let mut record = receipt_record(&receipt);
+                record["checkedReturns"] = json!(checked_returns);
+                receipts.push(record);
+            }
+            ensure!(reset_finalized, "reset receipt was not checked");
+
+            println!(
+                "{}",
+                json!({
+                    "profile": crate::profile::NAME,
+                    "genesis": funded.node.policy.genesis,
+                    "contractAddress": target.contract_address(),
+                    "bundleManifestSha256": bundle_digest,
+                    "degree": degree,
+                    "deployment": receipt_record(&deployment),
+                    "calls": receipts,
+                    "distinctKeysDifferByActiveBool": true,
+                    "inactiveUpdatePreservedExactFinalizedBytes": true,
+                    "resetFinalizedBothMapsEmpty": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the pinned development ledger and authenticated NativeUserCaller artifacts"]
     fn signed_unshielded_spend_authenticates_the_finalized_user_caller() -> anyhow::Result<()> {
         use crate::{
