@@ -363,6 +363,9 @@ jobs:
           .lake/build/bin/noctium compile tests/NamedProofUnit.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-proof-unit"
+          .lake/build/bin/noctium compile tests/VectorSetKeys.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/vector-set-keys"
           .lake/build/bin/noctium compile tests/RawShieldedClaims.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/raw-shielded-claims"
@@ -444,6 +447,7 @@ jobs:
             NOCTIUM_OPAQUE_MODULE_CELLS_DIR="$artifacts/opaque-module-cells" \
             NOCTIUM_GENERIC_FOREIGN_CURVE_MODULE_DIR="$artifacts/generic-foreign-curve-module" \
             NOCTIUM_GENERIC_JUBJUB_MODULE_DIR="$artifacts/generic-jubjub-module" \
+            NOCTIUM_VECTOR_SET_KEYS_DIR="$artifacts/vector-set-keys" \
             NOCTIUM_READABLE_NOMINAL_UINT_DIR="$artifacts/readable-nominal-uint" \
             NOCTIUM_IMPORTED_MODULE_TYPES_DIR="$artifacts/imported-module-types" \
             NOCTIUM_NESTED_RECORD_LIST_DIR="$artifacts/nested-record-list" \
@@ -469,7 +473,7 @@ jobs:
               --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
               --test typed_contract_reference --test nominal_contract_interface \
               --test nominal_record_maybe \
-              --test nested_record_list \
+              --test nested_record_list --test vector_set_keys \
               --test generic_jubjub_module --test imported_module_types \
               --test readable_nominal_uint --test generic_foreign_curve_module \
               --test curve25519_projection --test opaque_module_cells -- --ignored

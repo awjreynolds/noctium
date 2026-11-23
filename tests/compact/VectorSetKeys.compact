@@ -1,0 +1,30 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger vectorKeys: Set<Vector<2, Field>>;
+
+export circuit update(first: Field, second: Field, third: Field): [Boolean, Boolean, Boolean, Uint<64>] {
+  const key = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyWithDifferentSecond = [disclose(first), disclose(third)] as Vector<2, Field>;
+  const reversedKey = [disclose(second), disclose(first)] as Vector<2, Field>;
+  vectorKeys.insert(key);
+  vectorKeys.insert(keyWithDifferentSecond);
+  vectorKeys.insert(reversedKey);
+  vectorKeys.insert(key);
+  return [vectorKeys.member(key), vectorKeys.member(keyWithDifferentSecond),
+          vectorKeys.member(reversedKey), vectorKeys.size()];
+}
+
+export circuit remove(first: Field, second: Field, third: Field): [Boolean, Boolean, Boolean, Uint<64>] {
+  const key = [disclose(first), disclose(second)] as Vector<2, Field>;
+  const keyWithDifferentSecond = [disclose(first), disclose(third)] as Vector<2, Field>;
+  const reversedKey = [disclose(second), disclose(first)] as Vector<2, Field>;
+  vectorKeys.remove(key);
+  return [vectorKeys.member(key), vectorKeys.member(keyWithDifferentSecond),
+          vectorKeys.member(reversedKey), vectorKeys.size()];
+}
+
+export circuit reset(): [Uint<64>, Boolean] {
+  vectorKeys.resetToDefault();
+  return [vectorKeys.size(), vectorKeys.isEmpty()];
+}
