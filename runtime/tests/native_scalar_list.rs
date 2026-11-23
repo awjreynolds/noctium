@@ -2,7 +2,10 @@
 
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
 use noctium_runtime::{Db, Plan, check, create_state, field_value, prepare, zkir::IrSource};
-use onchain_runtime::state::{ChargedState, StateValue};
+use onchain_runtime::{
+    context::QueryContext,
+    state::{ChargedState, StateValue},
+};
 use serde_json::{Value as Json, json};
 use std::{
     collections::BTreeMap,
@@ -215,9 +218,21 @@ fn run(
     payload: &[u8],
     state: &ChargedState<Db>,
 ) -> noctium_runtime::Execution {
+    execute(plan, circuit, 7, true, amount, payload, state)
+}
+
+fn execute(
+    plan: &Plan,
+    circuit: &IrSource,
+    owner: u8,
+    enabled: bool,
+    amount: u64,
+    payload: &[u8],
+    state: &ChargedState<Db>,
+) -> noctium_runtime::Execution {
     let execution = prepare(
         plan,
-        &inputs(plan, 7, amount, payload, true),
+        &inputs(plan, owner, amount, payload, enabled),
         state,
         &ledger::structure::INITIAL_PARAMETERS,
         coin_structure::contract::ContractAddress::default(),
@@ -225,6 +240,19 @@ fn run(
     .unwrap();
     check(&execution, circuit).unwrap();
     execution
+}
+
+fn native_query_succeeds(state: &ChargedState<Db>, execution: &noctium_runtime::Execution) -> bool {
+    QueryContext::new(
+        state.clone(),
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .query(
+        &execution.program,
+        None,
+        &ledger::structure::INITIAL_PARAMETERS.cost_model.runtime_cost_model,
+    )
+    .is_ok()
 }
 
 #[test]
@@ -235,6 +263,9 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
     let (inspect, inspect_circuit) = fixture(&directory, "inspect");
     let (guard_missing, guard_missing_circuit) = fixture(&directory, "guardMissing");
     let (pop, pop_circuit) = fixture(&directory, "pop");
+    let (pop_root, pop_root_circuit) = fixture(&directory, "popRoot");
+    let (pop_nested, pop_nested_circuit) = fixture(&directory, "popNested");
+    let (guarded_pop, guarded_pop_circuit) = fixture(&directory, "guardedPop");
     let (clear, clear_circuit) = fixture(&directory, "clear");
     assert_bytes128_chunks(&inspect, "payloadValue");
 
@@ -254,6 +285,45 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
     );
     let empty = cleared.after.state;
     assert_state(&empty, &clear, &[], 0, &[]);
+
+    assert!(prepare(
+        &pop_root,
+        &inputs(&pop_root, 7, 0, &vec![0; 128], true),
+        &empty,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .is_err());
+    assert!(prepare(
+        &pop_nested,
+        &inputs(&pop_nested, 7, 0, &vec![0; 128], true),
+        &empty,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .is_err());
+
+    let guarded_empty_or_absent = execute(
+        &guarded_pop,
+        &guarded_pop_circuit,
+        8,
+        false,
+        0,
+        &vec![0; 128],
+        &base,
+    );
+    assert_eq!(guarded_empty_or_absent.after.state, base);
+    assert!(native_query_succeeds(&base, &guarded_empty_or_absent));
+
+    assert!(prepare(
+        &pop_nested,
+        &inputs(&pop_nested, 8, 0, &vec![0; 128], true),
+        &base,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .is_err());
+
     let empty_view = run(&inspect, &inspect_circuit, 0, &vec![0; 128], &empty);
     assert_eq!(
         empty_view.returns_json(),
@@ -310,6 +380,27 @@ fn native_scalar_lists_round_trip_defaults_pops_resets_and_alignment() {
         &[second.clone(), first.clone()],
     );
     assert_bytes128_head(&state, &append, &second);
+
+    let root_only_pop = run(&pop_root, &pop_root_circuit, 0, &vec![0; 128], &state);
+    assert_state(
+        &root_only_pop.after.state,
+        &pop_root,
+        &[5],
+        2,
+        &[second.clone(), first.clone()],
+    );
+    assert!(!native_query_succeeds(&empty, &root_only_pop));
+
+    let nested_only_pop = run(&pop_nested, &pop_nested_circuit, 0, &vec![0; 128], &state);
+    assert_state(
+        &nested_only_pop.after.state,
+        &pop_nested,
+        &[300, 5],
+        2,
+        &[first.clone()],
+    );
+    assert!(!native_query_succeeds(&empty, &nested_only_pop));
+    assert!(!native_query_succeeds(&base, &nested_only_pop));
 
     let malformed = replace_nested_payload_head(&state, &append, &second);
     assert!(
