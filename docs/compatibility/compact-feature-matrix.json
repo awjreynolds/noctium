@@ -2977,7 +2977,7 @@
       "layer": "host-ledger-view",
       "surface": "Map.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. Compound keys and wider SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. Wider compound keys and SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -2986,6 +2986,7 @@
         "HOST"
       ],
       "observedEvidence": [
+        "tests/TypedRecordMapKey.lean",
         "runtime/tests/collection_reads.rs",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
