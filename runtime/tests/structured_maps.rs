@@ -67,6 +67,85 @@ fn load_entrypoint(directory: &std::path::Path, stem: &str) -> anyhow::Result<(P
 }
 
 #[test]
+#[ignore = "requires fresh RecordMapDefaults outputs in NOCTIUM_RECORD_MAP_DEFAULTS_DIR"]
+fn guarded_record_map_defaults_insert_replace_and_preserve_siblings() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_DEFAULTS_DIR")?);
+    let seed = load_entrypoint(&directory, "RecordMapDefaults.seedRecordMaps")?;
+    let default = load_entrypoint(&directory, "RecordMapDefaults.defaultRecordMaps")?;
+    let config = seed
+        .0
+        .state
+        .iter()
+        .map(|declaration| (declaration.name.clone(), json!([])))
+        .collect();
+    let initial = create_state(&seed.0, &config)?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let seed_args = |active, nonce: u16, amount: u16, accepted, receipt_amount: u16| {
+        BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("nonce".into(), json!(nonce.to_string())),
+            ("amount".into(), json!(amount.to_string())),
+            ("accepted".into(), json!(accepted)),
+            ("receiptAmount".into(), json!(receipt_amount.to_string())),
+        ])
+    };
+    let default_args = |active, nonce: u16, enabled| {
+        BTreeMap::from([
+            ("active".into(), json!(active)),
+            ("nonce".into(), json!(nonce.to_string())),
+            ("enabled".into(), json!(enabled)),
+        ])
+    };
+    let run = |operation: &(Plan, IrSource), args: &BTreeMap<String, Json>, state: &ChargedState<Db>| {
+        let execution = prepare(&operation.0, args, state, parameters, address)?;
+        assert_eq!(
+            check(&execution, &operation.1)?,
+            execution.activity_schedule
+        );
+        Ok::<_, anyhow::Error>(execution)
+    };
+
+    let sibling = run(
+        &seed,
+        &seed_args(false, 513, 22, false, 42),
+        &initial,
+    )?;
+
+    let expected = run(
+        &seed,
+        &seed_args(true, 513, 0, false, 0),
+        &sibling.after.state,
+    )?;
+    let inserted = run(
+        &default,
+        &default_args(true, 513, true),
+        &sibling.after.state,
+    )?;
+    assert_eq!(inserted.after.state.get_ref(), expected.after.state.get_ref());
+
+    let replaced = run(
+        &seed,
+        &seed_args(true, 513, 19, true, 91),
+        &inserted.after.state,
+    )?;
+    let reset = run(
+        &default,
+        &default_args(true, 513, true),
+        &replaced.after.state,
+    )?;
+    assert_eq!(reset.after.state.get_ref(), expected.after.state.get_ref());
+
+    let disabled = run(
+        &default,
+        &default_args(true, 513, false),
+        &replaced.after.state,
+    )?;
+    assert_eq!(disabled.after.state, replaced.after.state);
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires fresh artifacts in NOCTIUM_RECORD_MAP_KEYS_DIR"]
 fn record_map_keys_preserve_strict_lookup_and_distinct_members() -> anyhow::Result<()> {
     let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_KEYS_DIR")?);

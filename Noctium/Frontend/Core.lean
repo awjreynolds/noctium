@@ -475,6 +475,7 @@ scoped syntax "increment" nlpath "by" nlexpr : nleffect
 scoped syntax "decrement" nlpath "by" nlexpr : nleffect
 scoped syntax "reset" nlpath : nleffect
 scoped syntax "insertDefault" nlpath : nleffect
+scoped syntax "insertDefault" ident "[" nlleaves "]" : nleffect
 scoped syntax "resetHistory" nlpath : nleffect
 scoped syntax "insertHash" nlpath ":=" nlexpr : nleffect
 scoped syntax "insertField" nlpath ":=" nlexpr : nleffect
@@ -528,6 +529,7 @@ scoped syntax "when" nlexpr "increment" nlpath "by" nlexpr : nleffect
 scoped syntax "when" nlexpr "decrement" nlpath "by" nlexpr : nleffect
 scoped syntax "when" nlexpr "reset" nlpath : nleffect
 scoped syntax "when" nlexpr "insertDefault" nlpath : nleffect
+scoped syntax "when" nlexpr "insertDefault" ident "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "resetHistory" nlpath : nleffect
 scoped syntax "when" nlexpr "insertHash" nlpath ":=" nlexpr : nleffect
 scoped syntax "when" nlexpr "insertField" nlpath ":=" nlexpr : nleffect
@@ -2090,6 +2092,7 @@ private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `
   | `(nleffect| when $condition:nlexpr decrement $_path:nlpath by $_amount:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr reset $_path:nlpath) => some condition
   | `(nleffect| when $condition:nlexpr insertDefault $_path:nlpath) => some condition
+  | `(nleffect| when $condition:nlexpr insertDefault $_state:ident [$_payload:nlleaves]) => some condition
   | `(nleffect| when $condition:nlexpr resetHistory $_path:nlpath) => some condition
   | `(nleffect| when $condition:nlexpr insertField $_path:nlpath := $_leaf:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insertHash $_path:nlpath := $_hash:nlexpr) => some condition
@@ -2624,6 +2627,36 @@ private def elaborateMapDefault (schema : List (String × StateKind)) (path : TS
         (Noctium.Types.CompositeType.structure $(stringTerm id)) [$values,*])
     | .composite .. => throwErrorAt path "insertDefault requires a named ledger record"
     | value => collectionResetTerm path storage keys sourceKeys.length value Bool.true
+  pure {state with terms := state.terms.push term}
+
+private def elaborateRecordMapDefault (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM EntryEffects := do
+  let valueSchema ← statePathSchema schema storage
+  let (keyEnvironment, keyType) ← match valueSchema with
+    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
+      pure (environment, type)
+    | _ => throwErrorAt storage "insertDefault with fields(...) requires a root record-key Map"
+  let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let keyValues ← elaborateLedgerFieldValues state.env payload keyFields
+  let name := stringTerm storage.getId.toString
+  let term ← match valueSchema with
+    | .recordMapKey _ _ valueTy => do
+      let type ← tyTerm valueTy
+      let value ← `(Noctium.GuardedExpression.zeroValue $type)
+      `(Noctium.Effect.writeRecordMap $name $keyValues $type $value)
+    | .recordMapComposite _ _ valueEnvironment valueType => do
+      let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt storage message
+      let values ← zeroLedgerFieldValues valueFields
+      let .structure valueTypeId := valueType
+        | throwErrorAt storage "record Map values require a named structure"
+      let type ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
+      `(Noctium.Effect.writeRecordMapComposite $name $type $keyValues [$values,*])
+    | _ => throwErrorAt storage "insertDefault with fields(...) requires a root record-key Map"
   pure {state with terms := state.terms.push term}
 
 private def elaborateCompositePathWrite (schema : List (String × StateKind))
@@ -3813,6 +3846,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| insertDefault $path:nlpath)
   | `(nleffect| when $_:nlexpr insertDefault $path:nlpath) =>
     state := ← elaborateMapDefault schema path state
+  | `(nleffect| insertDefault $storage:ident [ $payload:nlleaves ])
+  | `(nleffect| when $_:nlexpr insertDefault $storage:ident [ $payload:nlleaves ]) =>
+    state := ← elaborateRecordMapDefault schema storage payload state
   | `(nleffect| reset $path:nlpath)
   | `(nleffect| when $_:nlexpr reset $path:nlpath) =>
     state := ← elaborateReset schema path state
