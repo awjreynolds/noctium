@@ -196,6 +196,69 @@ private theorem filter_decoded (items : List Json) :
   | cons item rest ih =>
     by_cases kept : nonAssert (decodedItem item) <;> simp [kept, ih]
 
+/-- Native `copy` carries the witness value of its source SSA name to its
+destination. The typed instruction relation records this effect as equality. -/
+def copyHolds (witness : Assignment) (source destination : String) : Prop :=
+  witness destination = witness source
+
+/-- A retained comparison and the Copy emitted for its duplicate have exactly
+the original duplicate comparison's arbitrary-witness constraint. Both input
+bounds stay conditional in the same way in all three instructions. -/
+theorem lessThanCopyPreserves (hash : Hash) (witness : Assignment)
+    (left right : Operand) (width : Nat) (firstOutput duplicateOutput : String)
+    (leftBound : (left.read witness).val < 2 ^ width)
+    (rightBound : (right.read witness).val < 2 ^ width) :
+    (Instruction.Holds hash witness
+        (.lessThan left right width firstOutput) ∧
+      copyHolds witness firstOutput duplicateOutput) ↔
+      (Instruction.Holds hash witness
+          (.lessThan left right width firstOutput) ∧
+        Instruction.Holds hash witness (.lessThan left right width duplicateOutput)) := by
+  constructor
+  · rintro ⟨firstHolds, copied⟩
+    refine ⟨firstHolds, ?_⟩
+    intro _ _
+    change witness duplicateOutput = witness firstOutput at copied
+    rw [copied]
+    exact firstHolds leftBound rightBound
+  · rintro ⟨firstHolds, duplicateHolds⟩
+    refine ⟨firstHolds, ?_⟩
+    unfold copyHolds
+    rw [firstHolds leftBound rightBound, duplicateHolds leftBound rightBound]
+
+/-- The producer retains the original operand range checks. Under those checks,
+replacing a second equal comparison with the emitted Copy preserves the full
+constraint conjunction for every witness. -/
+theorem lessThanCopyPreservesWithRanges (hash : Hash) (witness : Assignment)
+    (left right : Operand) (width : Nat) (firstOutput duplicateOutput : String) :
+    (Instruction.Holds hash witness (.bits left width) ∧
+      Instruction.Holds hash witness (.bits right width) ∧
+      Instruction.Holds hash witness (.lessThan left right width firstOutput) ∧
+      copyHolds witness firstOutput duplicateOutput) ↔
+    (Instruction.Holds hash witness (.bits left width) ∧
+      Instruction.Holds hash witness (.bits right width) ∧
+      Instruction.Holds hash witness (.lessThan left right width firstOutput) ∧
+      Instruction.Holds hash witness (.lessThan left right width duplicateOutput)) := by
+  constructor
+  · rintro ⟨leftRange, rightRange, firstHolds, copied⟩
+    have leftBound : (left.read witness).val < 2 ^ width := by
+      simpa [Instruction.Holds] using leftRange
+    have rightBound : (right.read witness).val < 2 ^ width := by
+      simpa [Instruction.Holds] using rightRange
+    obtain ⟨firstHolds, duplicateHolds⟩ :=
+      (lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
+        leftBound rightBound).mp ⟨firstHolds, copied⟩
+    exact ⟨leftRange, rightRange, firstHolds, duplicateHolds⟩
+  · rintro ⟨leftRange, rightRange, firstHolds, duplicateHolds⟩
+    have leftBound : (left.read witness).val < 2 ^ width := by
+      simpa [Instruction.Holds] using leftRange
+    have rightBound : (right.read witness).val < 2 ^ width := by
+      simpa [Instruction.Holds] using rightRange
+    obtain ⟨firstHolds, copied⟩ :=
+      (lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
+        leftBound rightBound).mpr ⟨firstHolds, duplicateHolds⟩
+    exact ⟨leftRange, rightRange, firstHolds, copied⟩
+
 /-- The actual JSON range pass preserves decode success, ordered non-range
 instructions and field-level satisfaction for every assignment accepted or
 rejected by the existing scalar relation model. -/
