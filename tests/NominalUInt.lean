@@ -66,6 +66,71 @@ noctium_circuit lowLevelCastedAmountArithmetic where
   output result : Amount := disclose(add(cast(Amount, left), cast(Amount, right)))
 end
 
+noctium_circuit nominalLedgerValues where
+  private amount : Amount
+  private raw : UInt 8
+  output amountResult : Amount := disclose(amount)
+end
+
+noctium_circuit countLedgerValue where
+  private count : Count
+end
+
+noctium_circuit nominalConditionValues where
+  private amount : Amount
+  private count : Count
+end
+
+private def nominalCellReadProgram : Program := {
+  ledger := [{name := "balance", kind := .cell (.uint 255)}]
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "readBalance"
+    result := .scalar (.uint 255)
+    body := [
+      .readCell "balance" "current" (.uint 255),
+      .return (some (.ref "current"))]}]
+  exports := [{name := "readBalance", target := ⟨0, 0⟩}]
+}
+
+private def nominalCellWriteProgram : Program := {
+  ledger := [{name := "balance", kind := .cell (.uint 255)}]
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "writeBalance"
+    result := .unit
+    body := [
+      .writeCell "balance" (.uint 255) (.uint 255 1),
+      .return none]}]
+  exports := [{name := "writeBalance", target := ⟨0, 0⟩}]
+}
+
+noctium_contract RawUIntHelperCells where
+  cell balance : UInt 8
+  entry readBalance from nominalCellReadProgram entry "readBalance" end
+  entry writeBalance from nominalCellWriteProgram entry "writeBalance" end
+end
+
+noctium_contract NominalAmountLedger where
+  cell balance : Amount
+  constructor(initial : Amount) where
+    initialize balance := initial
+  end
+
+  entry setAmount uses nominalLedgerValues where
+    write balance := disclose(amount)
+    read balance as current
+    return currentAmount : Amount := current
+    return forwardedAmount : Amount := amountResult
+  end
+
+  entry setRaw uses nominalLedgerValues where
+    write balance := disclose(cast(Amount, raw))
+    read balance as current
+    return currentAmount : Amount := current
+  end
+end
+
 #guard preserveAmount.__witnessSignature.parameters.map (·.sourceNominal) ==
   [some "NominalUInt.Amount"]
 #guard preserveAmount.__witnessSignature.resultNominal == some "NominalUInt.Amount"
@@ -110,6 +175,31 @@ private def context : EvalContext := {
   modulus := Field.modulus,
   poseidon2 := fun _ _ _ => .error "unused Poseidon oracle"
 }
+
+#guard match NominalAmountLedger.constructor with
+  | some {parameters := [parameter], initializers := [initializer], ..} =>
+    parameter.name == "initial" && parameter.type == .scalar (.uint 255) &&
+      initializer.state == "balance" && initializer.type == .scalar (.uint 255)
+  | _ => Bool.false
+
+private def nominalCellRoundTrip : Except String _root_.Bool := do
+  let [setAmount, setRaw] := NominalAmountLedger.entrypoints
+    | throw "expected two nominal cell operations"
+  let inputs : EvalEnv := [("amount", .uint 255 41), ("raw", .uint 255 255)]
+  let (amountOutputs, amountState) ← setAmount.run context inputs
+    {cells := [("balance", .uint 255 19)]}
+  let (rawOutputs, rawState) ← setRaw.run context inputs amountState
+  pure (setAmount.name == "setAmount" && setRaw.name == "setRaw" &&
+    amountOutputs.lookup "currentAmount" == some (.uint 255 41) &&
+    amountOutputs.lookup "forwardedAmount" == some (.uint 255 41) &&
+    amountState.cells.lookup "balance" == some (.uint 255 41) &&
+    rawOutputs.lookup "currentAmount" == some (.uint 255 255) &&
+    rawState.cells.lookup "balance" == some (.uint 255 255))
+
+#guard nominalCellRoundTrip.toOption == some Bool.true
+
+#guard NominalAmountLedger.entrypoints.all fun operation =>
+  (Noctium.Backend.Zkir.lowerEntrypoint NominalAmountLedger.state operation).isOk
 
 #guard match Noctium.Witness.compile amountArithmetic.__program arithmeticEntry with
   | .ok compiled =>
@@ -217,6 +307,104 @@ end
 noctium_circuit rejectsLowLevelImplicitNominalOutput where
   private raw : UInt 8
   output result : Amount := raw
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellRawWrite where
+  cell balance : Amount
+  entry setRaw uses nominalLedgerValues where
+    write balance := raw
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellCountWrite where
+  cell balance : Amount
+  entry setCount uses countLedgerValue where
+    write balance := count
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellRawConstructor where
+  cell balance : Amount
+  constructor(initial : UInt 8) where
+    initialize balance := initial
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalTypedReturn where
+  cell balance : Amount
+  entry returnRaw uses nominalLedgerValues where
+    return rawAmount : Amount := raw
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellReadReturn where
+  cell balance : Amount
+  entry returnRaw uses nominalLedgerValues where
+    read balance as current
+    return rawAmount : UInt 8 := current
+  end
+end
+
+/- error: structured entry helpers cannot read nominal UInt Cell 'balance' until helper tags are supported -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellHelperRead where
+  cell balance : Amount
+  entry readBalance from nominalCellReadProgram entry "readBalance" end
+end
+
+/- error: structured entry helpers cannot write nominal UInt Cell 'balance' until helper tags are supported -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCellHelperWrite where
+  cell balance : Amount
+  entry writeBalance from nominalCellWriteProgram entry "writeBalance" end
+end
+
+/- error: nominal UInt equality requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalRequireAliasMismatch where
+  cell scratch : UInt 8
+  entry check uses nominalConditionValues where
+    require eq(amount, count)
+  end
+end
+
+/- error: nominal UInt equality requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalBranchAliasMismatch where
+  cell scratch : UInt 8
+  entry check uses nominalConditionValues where
+    if eq(amount, count) then {
+    } else {
+    }
+  end
+end
+
+/- error: nominal UInt equality requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalEffectGuardAliasMismatch where
+  cell scratch : UInt 8
+  entry check uses nominalConditionValues where
+    when eq(amount, count) write scratch := 1
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalCircuitOutputReturn where
+  cell balance : Amount
+  entry returnRaw uses nominalLedgerValues where
+    return rawAmount : UInt 8 := amountResult
+  end
 end
 
 /- error: nominal UInt arithmetic requires matching nominal operands -/

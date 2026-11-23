@@ -33,6 +33,14 @@ try {
     ['intermediate-width', 'new type Wide = Uint<248>;',
       'pure circuit invalid(x: Wide, y: Wide): Wide { return x + y; }',
       /resulting value might exceed largest representable Uint value/],
+    ['mixed-ledger-write',
+      'new type Count = Uint<8>; ledger balance: Amount; constructor(x: Amount) { balance = disclose(x); }',
+      'circuit invalid(x: Count): [] { balance = disclose(x); return []; }',
+      /expected right-hand side of = to have type Amount but received Count/],
+    ['implicit-ledger-wrap',
+      'ledger balance: Amount; constructor(x: Amount) { balance = disclose(x); }',
+      'circuit invalid(x: Uint<8>): [] { balance = disclose(x); return []; }',
+      /expected right-hand side of = to have type Amount but received Uint<8>/],
   ];
   for (const [name, extra, circuit, diagnostic] of rejectedCases) {
     const source = join(scratch, name + '.compact');
@@ -46,14 +54,34 @@ try {
   const link = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
   mkdirSync(dirname(link), { recursive: true });
   symlinkSync(runtime, link, 'dir');
-  const { pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
+  const { Contract, pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   assert.equal(pureCircuits.addAmount(1n, 1n), 2n);
   assert.equal(pureCircuits.addAmount(255n, 0n), 255n);
   assert.throws(() => pureCircuits.addAmount(255n, 1n), /greater than 255/);
   assert.equal(pureCircuits.toUnderlying(9n), 9n);
   assert.equal(pureCircuits.toAmount(255n), 255n);
   assert.throws(() => pureCircuits.toAmount(256n), /greater than 255/);
-  console.log(`Compact ${version} matched nominal UInt identity and checked narrowing cases`);
+  const compactRuntime = await import(pathToFileURL(join(runtime, 'dist/index.js')).href);
+  const contract = new Contract({});
+  const wallet = '00'.repeat(32);
+  const { currentContractState } = await contract.initialState(
+    compactRuntime.createConstructorContext(null, wallet), 19n,
+  );
+  function invoke(name, state, ...args) {
+    const context = compactRuntime.createCircuitContext({
+      circuitId: name, contractAddress: compactRuntime.dummyContractAddress(),
+      coinPublicKeyOrZswapState: wallet, contractState: state, privateState: null,
+    });
+    return contract.circuits[name](context, ...args);
+  }
+  const initial = currentContractState.data;
+  assert.equal((await invoke('get', initial)).result, 19n);
+  const written = await invoke('setAmount', initial, 41n);
+  const afterWrite = written.context.callContext.currentQueryContext.state;
+  assert.equal((await invoke('get', afterWrite)).result, 41n);
+  const cast = await invoke('setRaw', afterWrite, 255n);
+  assert.equal((await invoke('get', cast.context.callContext.currentQueryContext.state)).result, 255n);
+  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing and ledger state cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
