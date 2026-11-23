@@ -71,7 +71,8 @@ private def hasIndexedJsonField (values : Array Json) (index : Nat) (field : Str
 #guard match SealedCounterListConstructor.constructor with
   | some ctor =>
       let countersInOrder := match ctor.counterIncrements with
-        | [{state := "total", amount := first}, {state := "total", amount := second}] =>
+        | [{state := "total", amount := first, guard := none},
+           {state := "total", amount := second, guard := none}] =>
             let immediate := match first with
               | .uint _ 70000 => _root_.Bool.true
               | _ => _root_.Bool.false
@@ -81,8 +82,8 @@ private def hasIndexedJsonField (values : Array Json) (index : Nat) (field : Str
             immediate && parameter
         | _ => _root_.Bool.false
       let listsInOrder := match ctor.listPushes with
-        | [{state := "items", valueType := .native, value := .ref "first"},
-           {state := "items", value := .native 42, ..}] => _root_.Bool.true
+        | [{state := "items", valueType := .native, value := .ref "first", guard := none},
+           {state := "items", value := .native 42, guard := none, ..}] => _root_.Bool.true
         | _ => _root_.Bool.false
       countersInOrder && listsInOrder
   | none => _root_.Bool.false

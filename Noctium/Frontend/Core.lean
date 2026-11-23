@@ -420,7 +420,9 @@ scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "initializeMember" ident "from" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "increment" ident "by" nlexpr : nlconstructorinit
+scoped syntax "when" nlexpr "increment" ident "by" nlexpr : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlexpr : nlconstructorinit
+scoped syntax "when" nlexpr "pushFront" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "constructor" "(" nlconstructorparam,* ")" "where" nlconstructorinit* "end" : nlstate
 scoped syntax "map" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "counter" ident : nlstate
@@ -5187,6 +5189,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           (← `(Noctium.ConstructorAction.mapInsert $orderedInsert))
       | some _ => throwErrorAt stateName "constructor insert requires a Map"
       | none => throwErrorAt stateName s!"constructor inserts into unknown Map '{destination}'"
+    | `(nlconstructorinit| when $_:nlexpr increment $stateName:ident by $amount:nlexpr)
     | `(nlconstructorinit| increment $stateName:ident by $amount:nlexpr) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
@@ -5201,17 +5204,33 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         | _ => do
           let value ← checkedExpression scalarBindings amount (.uint (2 ^ 16 - 1))
           `(Noctium.Expr.cast $(← tyTerm (.uint (2 ^ 32 - 1))) $value)
+      let guard ← match initializer with
+        | `(nlconstructorinit| when $condition:nlexpr increment $_:ident by $_:nlexpr) => do
+          let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+            nominalUIntBindings condition {type := .bool}
+          `(some $conditionExpression)
+        | `(nlconstructorinit| increment $_:ident by $_:nlexpr) => `(none)
+        | _ => throwErrorAt initializer "invalid constructor Counter increment"
       match schema.find? (·.1 == destination) with
       | some (_, .tree .counter) => do
         counterIncrementTerms := counterIncrementTerms.push
-          (← `(Noctium.ConstructorCounterIncrement.mk $(stringTerm destination) $amountExpression))
+          (← `(Noctium.ConstructorCounterIncrement.mk $(stringTerm destination)
+            $amountExpression $guard))
       | some _ => throwErrorAt stateName "constructor increment requires a root Counter"
       | none => throwErrorAt stateName s!"constructor increments unknown Counter '{destination}'"
+    | `(nlconstructorinit| when $_:nlexpr pushFront $stateName:ident := $value:nlexpr)
     | `(nlconstructorinit| pushFront $stateName:ident := $value:nlexpr) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
       let destination := stateName.getId.toString
+      let guard ← match initializer with
+        | `(nlconstructorinit| when $condition:nlexpr pushFront $_:ident := $_:nlexpr) => do
+          let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+            nominalUIntBindings condition {type := .bool}
+          `(some $conditionExpression)
+        | `(nlconstructorinit| pushFront $_:ident := $_:nlexpr) => `(none)
+        | _ => throwErrorAt initializer "invalid constructor List pushFront"
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.«list» _ (.scalar valueTy))) => do
         let contractRef := contractRefState.lookup destination
@@ -5220,7 +5239,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           {type := valueTy, nominalUInt, contractRef}
         listPushTerms := listPushTerms.push
           (← `(Noctium.ConstructorListPush.mk $(stringTerm destination)
-            $(← tyTerm valueTy) $valueExpression))
+            $(← tyTerm valueTy) $valueExpression $guard))
       | some _ => throwErrorAt stateName "constructor pushFront requires a root scalar List"
       | none => throwErrorAt stateName s!"constructor pushes to unknown List '{destination}'"
     | _ => do

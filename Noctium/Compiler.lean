@@ -885,14 +885,16 @@ private def constructorMapInsertJson (insertion : ConstructorMapInsert) : Json :
   ("value", nativeExpressionJson insertion.value)]
 
 private def constructorCounterIncrementJson (action : ConstructorCounterIncrement) : Json :=
-  Json.mkObj [
+  Json.mkObj ([
     ("state", toJson action.state),
-    ("amount", nativeExpressionJson action.amount)]
+    ("amount", nativeExpressionJson action.amount)] ++
+    action.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
 
 private def constructorListPushJson (push : ConstructorListPush) : Json :=
-  Json.mkObj [
+  Json.mkObj ([
     ("state", toJson push.state),
-    ("value", nativeExpressionJson push.value)]
+    ("value", nativeExpressionJson push.value)] ++
+    push.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
 
 private def constructorSetInsertJson (insertion : ConstructorSetInsert) : Json :=
   Json.mkObj ([
