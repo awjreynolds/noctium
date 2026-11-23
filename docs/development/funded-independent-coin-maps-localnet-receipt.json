@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "scope": "One funded development Ledger 9 self-mint with independent-key root and nested qualified coin Maps, a nested Set and a nested List",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "ledger": "9.1.0.1",
+  "zkir": "3.2.1",
+  "compilerRevision": "b42ae81523a2a01489f089fbd05f3b729ff05cd7",
+  "source": {
+    "path": "tests/FundedNestedQualifiedCoinCollections.lean",
+    "sha256": "fb2e606298facbbe73ffeba0d87d44d1f5df773c9e90f90719a5f72c1dc872f4"
+  },
+  "artifacts": {
+    "initializeOwners": {
+      "k": 9,
+      "rows": 284,
+      "manifestSha256": "deca10c389f4e925e369d8778f6c311581131cb4a19711390c5e855eb2614837",
+      "circuitSha256": "31e00faefe5d397f3651ab07917c42d9c0eae7bfc4fd902ad147610ec7305222",
+      "impactPlanSha256": "f5c6b8a141653ba1b6e7aa33139c30b339c039697f1aa9553d491b84b8bea6f0",
+      "verifierKeySha256": "2c1adbd1f04d3a7dbb9e453da8e59a25deae23dfc8cbcf6e4edba3e9b992baa8",
+      "proverKeySha256": "4e82648911f151381bf206972fad2ee9a01efe907615ebf76c4784d4db3dc922"
+    },
+    "tip": {
+      "k": 15,
+      "rows": 24829,
+      "manifestSha256": "26bb7ea96122cab2de1e484f9f163ca1fc28fa7ed46714daad0d3a6808fadfef",
+      "circuitSha256": "0e5621de8c6d8d8a4e2d62771fd90c63fe3a4edaba41c3c77e8bb3f90e220f0e",
+      "impactPlanSha256": "38b50c92818e8c096c7dc455cae92d0636521f0508529ac859efd68b7e383cd4",
+      "verifierKeySha256": "5e6d4184097e52e3c9a2645ea77f2c21979481e27333bedc32d5e5cdf8f01931",
+      "proverKeySha256": "1a4c510f1c4a521db5a8b3a9ef4029e14db6ed263baf0cc19c9626e1120b7c87"
+    }
+  },
+  "ledgerParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+  "nativeCliBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "srsSha256": {
+    "k9": "b9009f1098bcefffec3c461ab3a5e3a17f7e5599f0f08c70fcdc55a89227bcbd",
+    "k15": "724c7c3d779148bb113c7ee9c034b2f27db16e6bdf315fde90105a9bad00b1de"
+  },
+  "deployment": {
+    "height": 68963,
+    "blockHash": "b94c1e76992892e346b73f7d6904ef505824d4f527546e5e4517afb7a4b7abdd",
+    "transactionId": "6575bdc8c960f86bf2c916eb31ba1a3f85f2f5be53cd39512a0ba21879f860dd"
+  },
+  "initialization": {
+    "blockHash": "21799d97352cfb666739908686671e96cc0dfeae45d6662d7669c569f2ab775c",
+    "bothOwnersInitialized": true,
+    "height": 68966,
+    "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+    "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+    "stateSha256": "815abf17db071e49dc6599a46560de3e593e2eb7c903fa1f81b9fc2b6d4317e0",
+    "transactionId": "523529cf06ea54b41fbc9b4c33c4acfeb6259ccad842fcdde7a6d555620ee17b"
+  },
+  "call": {
+    "callHeight": 68970,
+    "callTransaction": "b8748fcdae3a9715e5af429763d0d5fa6073efd44b4f0aa623c2ee44ee3b8fba",
+    "color": "0d7ba385a1b0536411049e85eb33301f4c0662df5fe6ed8a349be522d8214db7",
+    "commitment": "08ca99e037ed246ce0bb899dfd4a32d4a49cfbf9323ce8202a6d69c4b6a9cc49",
+    "contractAddress": "a5658642ce0a8bbc371ddbd9588060b6c6f927f02af8d89c0a3085743e53200e",
+    "finalizedBlockHash": "c48cd1620ec9cfd9792b6ce2a80b3c027c7c894a75099efe1a262d238c9e42f3",
+    "k": 15,
+    "mapCoinMatchesFinalizedOutput": true,
+    "mapKey": "0404040404040404040404040404040404040404040404040404040404040404",
+    "mtIndex": 37,
+    "nestedCoinMapMatchesFinalizedOutput": true,
+    "nestedListHeadMatchesFinalizedOutput": true,
+    "nestedSetMatchesFinalizedOutput": true,
+    "nonce": "bcc779bf54444b461a4d3a9f2a662ad7177c7e69fc3ece0b6e2d1edd312dee37",
+    "otherOwner": "0202020202020202020202020202020202020202020202020202020202020202",
+    "otherOwnerCoinMapEmpty": true,
+    "otherOwnerListEmpty": true,
+    "otherOwnerSetEmpty": true,
+    "rejected": [
+      "missingOffer",
+      "mismatchedOffer"
+    ],
+    "rootCoinMapMatchesFinalizedOutput": true,
+    "selectedOwner": "0101010101010101010101010101010101010101010101010101010101010101",
+    "stateSha256": "9360fcbe112bd2ecab146b31fa794f864842038d7070d88015c4f795e27723e1",
+    "value": "5"
+  },
+  "test": {
+    "name": "localnet::shielded_receive::tests::funded_shielded_receive_localnet",
+    "sourcePath": "runtime/src/localnet/shielded_receive.rs",
+    "sourceSha256": "a6f8d4f1880fa6eec9766a17e1776df193a704409dcc92d6f38ce32ddc57d36e",
+    "binarySha256": "0bd76853a7480c90fc66190b8276462d2edffb6aed7afd993cb3c0fa577f2e6f",
+    "result": "passed",
+    "durationSeconds": 170.95
+  }
+}
