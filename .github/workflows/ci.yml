@@ -376,6 +376,9 @@ jobs:
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit standalone --emit specialization --output "$artifacts/generic-foreign-curve-module"
           node tests/modules/check-foreign-curve-artifacts.mjs "$artifacts/generic-foreign-curve-module"
+          .lake/build/bin/noctium compile tests/Curve25519ProjectionParity.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/curve25519-projection"
           .lake/build/bin/noctium compile tests/modules/JubjubGenericIdentity.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/generic-jubjub-module"
@@ -437,6 +440,7 @@ jobs:
             NOCTIUM_READABLE_NOMINAL_UINT_DIR="$artifacts/readable-nominal-uint" \
             NOCTIUM_IMPORTED_MODULE_TYPES_DIR="$artifacts/imported-module-types" \
             NOCTIUM_NOMINAL_RECORD_MAYBE_DIR="$artifacts/nominal-record-maybe" \
+            NOCTIUM_CURVE25519_PROJECTION_DIR="$artifacts/curve25519-projection" \
             NOCTIUM_FIXED_NUMERIC_BYTES_DIR="$artifacts/fixed-numeric-bytes" \
             NOCTIUM_ALIGNED_BYTE_CONCAT_DIR="$artifacts/aligned-byte-concat" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
@@ -458,7 +462,8 @@ jobs:
               --test typed_contract_reference --test nominal_contract_interface \
               --test nominal_record_maybe \
               --test generic_jubjub_module --test imported_module_types \
-              --test readable_nominal_uint --test generic_foreign_curve_module -- --ignored
+              --test readable_nominal_uint --test generic_foreign_curve_module \
+              --test curve25519_projection -- --ignored
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_ORDERED_CONSTRUCTOR_COUNTER_READ_DIR="$artifacts/ordered-constructor-counter-read" \

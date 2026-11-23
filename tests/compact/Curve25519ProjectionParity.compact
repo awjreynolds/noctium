@@ -1,0 +1,6 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit project(point: Curve25519Point): [Curve25519Base, Curve25519Base] {
+  return [curve25519PointX(point), curve25519PointY(point)];
+}
