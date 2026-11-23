@@ -179,8 +179,11 @@ its supplied arguments and expected results before lowering. Native call
 assembly matches the returned address and rejects a substituted argument
 or expected result.
 
-Nested record storage and deployed dynamic interface lookup remain open
-under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
+A Bytes32-keyed Map record or List of records also retains the declared
+interface. The paired fixtures store a reference and route `update(7)` through
+each layout. Native assembly rejects an absent key, the wrong target, and the
+wrong selector. Deeper record paths and deployed dynamic interface lookup
+remain open under [typed contract references](https://github.com/awjreynolds/noctium/issues/828).
 
 ### Bind the entrypoint and read the address from a registry
 

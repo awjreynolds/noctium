@@ -48,6 +48,15 @@ export circuit update(amount: Uint<8>): Uint<8> {
   const scalarLedger = contractInfo.ledger.find(({name}) => name === 'target');
   assert.equal(scalarLedger?.storage, 'Cell');
   assert.equal(scalarLedger?.type['type-name'], 'Contract');
+  const routeMapLedger = contractInfo.ledger.find(({name}) => name === 'routes');
+  assert.equal(routeMapLedger?.storage, 'Map');
+  assert.equal(routeMapLedger?.value['type-name'], 'Struct');
+  assert.equal(routeMapLedger?.value.name, 'Route');
+  const routeListMapLedger = contractInfo.ledger.find(({name}) => name === 'routeLists');
+  assert.equal(routeListMapLedger?.storage, 'Map');
+  assert.equal(routeListMapLedger?.value['type-name'], 'List');
+  assert.equal(routeListMapLedger?.value.type['type-name'], 'Struct');
+  assert.equal(routeListMapLedger?.value.type.name, 'Route');
   const echoCircuit = contractInfo.circuits.find(({name}) => name === 'echo');
   assert.equal(echoCircuit?.arguments[0]?.type['type-name'], 'Contract');
   assert.equal(echoCircuit?.arguments[0]?.type.name, 'TypedRefValue');
@@ -165,6 +174,19 @@ export circuit echo(value: TypedRefValue): OtherRef {
   return result;
 }
 `, /its return type is contract OtherRef[\s\S]*rather than contract\s+TypedRefValue/);
+  await compileRejected('WrongNominalRouteReference', `pragma language_version 0.28;
+import CompactStandardLibrary;
+contract TypedRefUpdate { circuit update(amount: Uint<8>): Uint<8>; }
+contract OtherRef { circuit update(amount: Uint<8>): Uint<8>; }
+struct Route { target: TypedRefUpdate, enabled: Boolean }
+export ledger routes: Map<Bytes<32>, Route>;
+constructor(targetRef: OtherRef) {
+  routes.insert(disclose(0 as Bytes<32>), disclose(Route{target: disclose(targetRef), enabled: disclose(true)}));
+}
+export circuit forward(key: Bytes<32>, amount: Uint<8>): Uint<8> {
+  return routes.lookup(disclose(key)).target.update(disclose(amount));
+}
+`, /mismatch between actual type contract OtherRef[\s\S]*declared type\s+contract TypedRefUpdate[\s\S]*field target of struct Route/);
 
   for (const output of [calleeOutput, callerOutput, routeOutput, listOutput, routeListOutput, echoCallerOutput]) {
     const scopedRuntime = join(output, 'node_modules/@midnight-ntwrk/compact-runtime');
@@ -190,6 +212,13 @@ export circuit echo(value: TypedRefValue): OtherRef {
   const forwarder = new Forwarder({});
   const callerState = await forwarder.initialState(runtime.createConstructorContext(null, key), reference);
   assert.deepEqual(ledger(callerState.currentContractState.data).target.bytes, reference.bytes);
+  const routeKey = new Uint8Array(32);
+  const mappedRoute = ledger(callerState.currentContractState.data).routes.lookup(routeKey);
+  assert.deepEqual(mappedRoute.target.bytes, reference.bytes);
+  assert.equal(mappedRoute.enabled, true);
+  const mappedRouteList = ledger(callerState.currentContractState.data).routeLists.lookup(routeKey);
+  assert.deepEqual(mappedRouteList.head().value.target.bytes, reference.bytes);
+  assert.equal(mappedRouteList.head().value.enabled, true);
 
   const crossContract = {
     stateProvider: {async getContractState() { return calleeState.currentContractState; }},
@@ -210,6 +239,14 @@ export circuit echo(value: TypedRefValue): OtherRef {
   });
   const {result: scalarCellResult} = await forwarder.circuits.forward(contextFor(callerState.currentContractState.data), 7n);
   assert.equal(scalarCellResult, 7n);
+  const {result: mappedRouteResult} = await forwarder.circuits.forwardRoute(
+    contextFor(callerState.currentContractState.data), routeKey, 7n,
+  );
+  assert.equal(mappedRouteResult, 7n);
+  const {result: mappedRouteListResult} = await forwarder.circuits.forwardRouteList(
+    contextFor(callerState.currentContractState.data), routeKey, 7n,
+  );
+  assert.equal(mappedRouteListResult, 7n);
 
   const routeForwarder = new RouteForwarder({});
   const routeState = await routeForwarder.initialState(runtime.createConstructorContext(null, key), reference);
@@ -268,7 +305,7 @@ export circuit echo(value: TypedRefValue): OtherRef {
   };
   const {result: echoedReference} = await echoCaller.circuits.roundTrip(echoContext, valueReference);
   assert.deepEqual(echoedReference.bytes, valueReference.bytes);
-  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
+  console.log(`Compact ${compilerVersion} / runtime ${runtimePackage.version}: scalar Cell, Map<Bytes<32>, Route>, Map<Bytes<32>, List<Route>>, scalar List, Route Cell, List<Route>, and interface argument/result references round-tripped; compile-time mismatch cases were rejected`);
 } finally {
   await rm(scratch, {recursive: true, force: true});
   try {

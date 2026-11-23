@@ -17,10 +17,19 @@ contract implements TypedRefEcho;
 
 export ledger target: TypedRefUpdate;
 export ledger echoes: Uint<8>;
+export ledger routes: Map<Bytes<32>, Route>;
+export ledger routeLists: Map<Bytes<32>, List<Route>>;
+
+struct Route { target: TypedRefUpdate, enabled: Boolean }
 
 constructor(targetRef: TypedRefUpdate) {
   target = disclose(targetRef);
   echoes = 0 as Uint<8>;
+  const key = 0 as Bytes<32>;
+  const route = Route{target: disclose(targetRef), enabled: disclose(true)};
+  routes.insert(disclose(key), disclose(route));
+  routeLists.insertDefault(disclose(key));
+  routeLists.lookup(disclose(key)).pushFront(disclose(route));
 }
 
 export circuit echo(value: TypedRefValue): TypedRefValue {
@@ -30,4 +39,17 @@ export circuit echo(value: TypedRefValue): TypedRefValue {
 
 export circuit forward(amount: Uint<8>): Uint<8> {
   return target.update(disclose(amount));
+}
+
+export circuit forwardRoute(key: Bytes<32>, amount: Uint<8>): Uint<8> {
+  const route = routes.lookup(disclose(key));
+  if (route.enabled) { return route.target.update(disclose(amount)); }
+  return 0 as Uint<8>;
+}
+
+export circuit forwardRouteList(key: Bytes<32>, amount: Uint<8>): Uint<8> {
+  const route = routeLists.lookup(disclose(key)).head();
+  assert(route.is_some, "missing route");
+  if (route.value.enabled) { return route.value.target.update(disclose(amount)); }
+  return 0 as Uint<8>;
 }
