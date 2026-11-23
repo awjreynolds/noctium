@@ -6,6 +6,7 @@ export ledger coinSet: Set<QualifiedShieldedCoinInfo>;
 export ledger coinList: List<QualifiedShieldedCoinInfo>;
 export ledger coinLists: Map<Bytes<32>, List<QualifiedShieldedCoinInfo>>;
 export ledger coinSets: Map<Bytes<32>, Set<QualifiedShieldedCoinInfo>>;
+export ledger coinMap: Map<Bytes<32>, QualifiedShieldedCoinInfo>;
 
 circuit bookCoin(coin: ShieldedCoinInfo, book: Boolean): [] {
   if (disclose(book)) {
@@ -46,5 +47,12 @@ export circuit putInNestedSet(owner: Bytes<32>, coin: ShieldedCoinInfo, book: Bo
                               recipient: Bytes<32>): [] {
   bookCoin(coin, book);
   coinSets.lookup(disclose(owner)).insertCoin(disclose(coin),
+    right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: disclose(recipient)}));
+}
+
+export circuit putInMap(key: Bytes<32>, coin: ShieldedCoinInfo, book: Boolean,
+                        recipient: Bytes<32>): [] {
+  bookCoin(coin, book);
+  coinMap.insertCoin(disclose(key), disclose(coin),
     right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: disclose(recipient)}));
 }

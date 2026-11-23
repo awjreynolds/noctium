@@ -340,6 +340,12 @@ private def operationJsonBare : Backend.Impact.Op → Json
       ("nonce", nativeExpressionJson nonce), ("color", nativeExpressionJson color),
       ("amount", nativeExpressionJson amount),
       ("commitment", nativeExpressionJson commitment)]
+  | .insertShieldedCoinMap slot key nonce color amount isContract recipient commitment => Json.mkObj [
+      ("op", toJson ("insertShieldedCoinMap" : String)), ("slot", toJson slot),
+      ("key", nativeExpressionJson key), ("nonce", nativeExpressionJson nonce),
+      ("color", nativeExpressionJson color), ("amount", nativeExpressionJson amount),
+      ("isContract", nativeExpressionJson isContract), ("recipient", nativeExpressionJson recipient),
+      ("commitment", nativeExpressionJson commitment)]
   | .insertShieldedCoinSet slot nonce color amount commitment keys => Json.mkObj (
       [("op", toJson ("insertShieldedCoinSet" : String)), ("slot", toJson slot)] ++
       (if keys.isEmpty then [] else
@@ -491,6 +497,11 @@ private def effectJson : Effect → Json
       ("op", toJson ("receiveShieldedToMap" : String)), ("state", toJson state),
       ("nonce", expressionJson nonce), ("color", expressionJson color),
       ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)]
+  | .insertShieldedCoinMap state key nonce color amount isContract recipient => Json.mkObj [
+      ("op", toJson ("insertShieldedCoinMap" : String)), ("state", toJson state),
+      ("key", expressionJson key), ("nonce", expressionJson nonce), ("color", expressionJson color),
+      ("amount", expressionJson amount), ("isContract", expressionJson isContract),
+      ("recipient", expressionJson recipient)]
   | .insertShieldedCoinSet state nonce color amount selfAddress keys => Json.mkObj (
       [("op", toJson ("insertShieldedCoinSet" : String)), ("state", toJson state),
        ("nonce", expressionJson nonce), ("color", expressionJson color),

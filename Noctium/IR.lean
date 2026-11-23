@@ -986,6 +986,11 @@ inductive Effect where
   | insertShieldedCoinSetTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient : Expr (.bytes 32)) (keys : List PathKey)
+  /-- Insert a transaction-booked coin under an explicit Bytes32 key in a
+  root Map with the fixed qualified coin record value. -/
+  | insertShieldedCoinMap (state : String) (key nonce color : Expr (.bytes 32))
+      (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
+      (recipient : Expr (.bytes 32))
   /-- Store a coin whose self-recipient commitment is already booked in the
   current transaction. The runtime obtains its Ledger index from context. -/
   | writeShieldedCoinCell (state : String) (nonce color : Expr (.bytes 32))
@@ -1684,6 +1689,14 @@ private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : Str
       throw s!"qualified coin insertion requires a root record Set or one-level Bytes32-keyed nested record Set '{state}'"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
 
+private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String) :
+    Except String Unit := do
+  let some declaration := decls.find? (·.name == state)
+    | throw s!"unknown qualified shielded coin Map '{state}'"
+  let .tree (.map (.bytes 32) (.composite environment recordType)) := declaration.kind
+    | throw s!"qualified coin insertion requires a root Bytes32 Map with a record value '{state}'"
+  discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
+
 private def validateCounterEffect (decls : List StateDecl) (state : String)
     (keys : List PathKey) : Except String Unit := do
   let some decl := decls.find? (·.name == state) | throw s!"unknown tree state '{state}'"
@@ -1801,7 +1814,7 @@ private def Effect.writeTarget : Effect → Option String
     .writeRecordMapComposite state .. |
     .removeRecordMap state .. | .insertPath state .. | .writePath state .. |
     .receiveShieldedToMap state .. | .insertShieldedCoinSet state .. |
-    .insertShieldedCoinSetTo state .. |
+    .insertShieldedCoinSetTo state .. | .insertShieldedCoinMap state .. |
     .sendShieldedFromMap state .. |
     .writeShieldedCoinCell state .. | .writeShieldedCoinCellTo state .. |
     .pushFrontCoin state .. | .pushFrontCoinTo state .. |
@@ -2111,6 +2124,16 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         if !caps.stateMaps then throw "target lacks state maps"
         validateQualifiedCoinSetTarget decls state keys
         for key in keys do key.validate caps env
+        nonce.validate caps env
+        color.validate caps env
+        amount.validate caps env
+        isContract.validate caps env
+        recipient.validate caps env
+        pure []
+      | .insertShieldedCoinMap state key nonce color amount isContract recipient => do
+        if !caps.stateMaps then throw "target lacks state maps"
+        validateQualifiedCoinMapTarget decls state
+        key.validate caps env
         nonce.validate caps env
         color.validate caps env
         amount.validate caps env

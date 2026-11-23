@@ -202,6 +202,11 @@ fn booked_coin_recipient(
             recipient,
             ..
         } => explicit_shielded_recipient(is_contract, recipient, env),
+        Instruction::InsertShieldedCoinMap {
+            is_contract,
+            recipient,
+            ..
+        } => explicit_shielded_recipient(is_contract, recipient, env),
         Instruction::WriteShieldedCoinCell { .. }
         | Instruction::InsertShieldedCoinSet { .. }
         | Instruction::ListPushFrontCoin { .. } => {
@@ -1833,6 +1838,17 @@ pub enum Instruction {
         amount: Expr,
         commitment: Expr,
     },
+    #[serde(rename = "insertShieldedCoinMap", rename_all = "camelCase")]
+    InsertShieldedCoinMap {
+        slot: u32,
+        key: Expr,
+        nonce: Expr,
+        color: Expr,
+        amount: Expr,
+        is_contract: Expr,
+        recipient: Expr,
+        commitment: Expr,
+    },
     #[serde(rename = "writeShieldedCoinCell", rename_all = "camelCase")]
     WriteShieldedCoinCell {
         slot: u32,
@@ -2185,6 +2201,10 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             vec![1, path_field_count(plan, *slot, keys)?, 1, 5, 1, 4]
         }
         Instruction::ReceiveShieldedToMap { .. } => RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS.to_vec(),
+        Instruction::InsertShieldedCoinMap { slot, .. } => {
+            validate_shielded_coin_map(plan, *slot)?;
+            INSERT_SHIELDED_COIN_MAP_FIELD_COUNTS.to_vec()
+        }
         Instruction::WriteShieldedCoinCell { .. } => WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS.to_vec(),
         Instruction::WriteShieldedCoinCellTo { .. } => {
             WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS.to_vec()
@@ -2421,6 +2441,9 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
         Instruction::ReceiveShieldedToMap { .. } => {
             bail!("shielded receive must be unguarded")
         }
+        Instruction::InsertShieldedCoinMap { .. } => {
+            bail!("shielded coin Map insertion must be unguarded")
+        }
         Instruction::WriteShieldedCoinCell { .. } => {
             bail!("shielded coin Cell write must be unguarded")
         }
@@ -2573,6 +2596,7 @@ fn map_key_type(plan: &Plan, slot: u32) -> Result<ScalarType> {
 const MINT_FIELD_COUNTS: [usize; 16] = [1, 4, 6, 1, 1, 1, 5, 1, 1, 2, 1, 1, 2, 1, 1, 1];
 const RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS: [usize; 16] =
     [1, 4, 6, 2, 1, 1, 4, 6, 1, 6, 5, 11, 1, 2, 1, 1];
+const INSERT_SHIELDED_COIN_MAP_FIELD_COUNTS: [usize; 10] = [4, 6, 1, 6, 5, 11, 1, 2, 1, 1];
 const WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS: [usize; 8] = [5, 1, 6, 5, 11, 1, 2, 1];
 const INSERT_SHIELDED_COIN_SET_FIELD_COUNTS: [usize; 10] = [4, 1, 6, 5, 11, 1, 2, 2, 1, 1];
 const SPEND_SHIELDED_FROM_MAP_FIELD_COUNTS: [usize; 12] = [1, 4, 6, 2, 1, 1, 1, 4, 6, 2, 1, 1];
@@ -3075,33 +3099,33 @@ fn is_shielded_coin_record_schema(schema: &Json) -> bool {
 fn validate_shielded_coin_map(plan: &Plan, slot: u32) -> Result<()> {
     ensure!(
         slot < 16,
-        "shielded receive Map slot exceeds the native state limit"
+        "shielded coin Map slot exceeds the native state limit"
     );
     let schema = tree_schema_at_path(plan, slot, 0)?;
     let object = schema
         .as_object()
-        .ok_or_else(|| anyhow!("shielded receive requires a tree Map"))?;
+        .ok_or_else(|| anyhow!("shielded coin storage requires a tree Map"))?;
     ensure!(
         object.len() == 1 && object.contains_key("map"),
-        "shielded receive requires a root tree Map"
+        "shielded coin storage requires a root tree Map"
     );
     let parts = schema
         .get("map")
         .and_then(Json::as_array)
         .filter(|parts| parts.len() == 2)
-        .ok_or_else(|| anyhow!("shielded receive requires a Bytes32-keyed Map"))?;
+        .ok_or_else(|| anyhow!("shielded coin storage requires a Bytes32-keyed Map"))?;
     ensure!(
         ledger_key_type(&parts[0])? == ScalarType::Bytes32,
-        "shielded receive Map key must be Bytes32"
+        "shielded coin Map key must be Bytes32"
     );
     let value = parts[1]
         .as_object()
         .filter(|value| value.len() == 1)
         .and_then(|value| value.get("composite"))
-        .ok_or_else(|| anyhow!("shielded receive Map value must be the coin record"))?;
+        .ok_or_else(|| anyhow!("shielded coin Map value must be the coin record"))?;
     ensure!(
         is_shielded_coin_record_schema(value),
-        "shielded receive Map must use the fixed coin record schema"
+        "shielded coin Map must use the fixed qualified coin record schema"
     );
     Ok(())
 }
@@ -3555,6 +3579,7 @@ fn mutates_contract_state(operation: &Instruction) -> bool {
             | Instruction::MerkleTreeReset { .. }
             | Instruction::MerkleTreeResetHistory { .. }
             | Instruction::ReceiveShieldedToMap { .. }
+            | Instruction::InsertShieldedCoinMap { .. }
             | Instruction::WriteShieldedCoinCell { .. }
             | Instruction::WriteShieldedCoinCellTo { .. }
             | Instruction::InsertShieldedCoinSet { .. }
@@ -4317,6 +4342,13 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
             } => {
                 ensure!(guard.is_none(), "shielded spend must be unguarded");
                 validate_shielded_spend_layout(plan, index, nonce, color, amount)?;
+            }
+            Instruction::InsertShieldedCoinMap { slot, .. } => {
+                ensure!(
+                    guard.is_none(),
+                    "shielded coin Map insertion must be unguarded"
+                );
+                validate_shielded_coin_map(plan, *slot)?;
             }
             Instruction::SendShieldedFromMap {
                 nonce,
@@ -6756,6 +6788,21 @@ fn probe_instruction(
             env,
             deferred_outputs,
         ),
+        Instruction::InsertShieldedCoinMap {
+            key,
+            nonce,
+            color,
+            amount,
+            is_contract,
+            recipient,
+            commitment,
+            ..
+        } => probe_expressions(
+            [key, nonce, color, amount, is_contract, recipient, commitment],
+            plan,
+            env,
+            deferred_outputs,
+        ),
         Instruction::InsertShieldedCoinSet {
             slot: _,
             keys,
@@ -9070,6 +9117,80 @@ impl PreparationCursor {
                     recipient,
                 )?
             }
+            Instruction::InsertShieldedCoinMap {
+                slot,
+                key,
+                nonce,
+                color,
+                amount,
+                commitment,
+                ..
+            } => {
+                validate_shielded_coin_map(plan, *slot)?;
+                let coin = ShieldedCoinInfo {
+                    nonce: Nonce(claim_hash_output(
+                        evaluate(nonce, &env)?,
+                        "shielded coin nonce",
+                    )?),
+                    type_: ShieldedTokenType(claim_hash_output(
+                        evaluate(color, &env)?,
+                        "shielded coin color",
+                    )?),
+                    value: unshielded_amount(amount, &env)?,
+                };
+                let recipient = booked_coin_recipient(i, &context, &env)?;
+                let key = AlignedValue::from(Nonce(claim_hash_output(
+                    evaluate(key, &env)?,
+                    "shielded coin Map key",
+                )?));
+                let expected_commitment =
+                    claim_hash_output(evaluate(commitment, &env)?, "shielded coin commitment")?;
+                let coin_commitment = coin.commitment(&recipient);
+                ensure!(
+                    coin_commitment.0 == expected_commitment,
+                    "shielded coin Map commitment mismatch"
+                );
+                let qualified =
+                    qualify_booked_coin_for(&context, &coin, &recipient).ok_or_else(|| {
+                        anyhow!(
+                            "shielded coin Map commitment is absent from the current transaction"
+                        )
+                    })?;
+                ensure!(
+                    context.call_context.com_indices.get(&coin_commitment)
+                        == Some(&qualified.mt_index),
+                    "shielded coin Map transaction index mismatch"
+                );
+
+                if has_written {
+                    advance_native_state_prefix(
+                        prefix_context,
+                        &program,
+                        &mut materialized_prefix,
+                        mutation_boundary,
+                        cost,
+                    )?;
+                }
+                let path = vec![Key::Value(
+                    AlignedValue::from(u8::try_from(*slot)?)
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid shielded coin Map slot"))?,
+                )];
+                let mut map_ops = onchain_runtime::program_fragments::Map_insert_coin!(
+                    path,
+                    false,
+                    AlignedValue,
+                    ShieldedCoinInfo,
+                    key,
+                    coin,
+                    recipient
+                );
+                map_ops[2] = Op::Dup { n: 5 };
+                let insert_final = map_ops[9].clone();
+                program.extend(map_ops.into_iter().take(9));
+                has_written = true;
+                insert_final
+            }
             Instruction::ReceiveShieldedToMap {
                 slot,
                 nonce,
@@ -10256,6 +10377,7 @@ impl PreparationCursor {
                 | Instruction::MapRemove { .. }
                 | Instruction::MapRemoveRecord { .. }
                 | Instruction::ReceiveShieldedToMap { .. }
+                | Instruction::InsertShieldedCoinMap { .. }
                 | Instruction::WriteShieldedCoinCell { .. }
                 | Instruction::WriteShieldedCoinCellTo { .. }
                 | Instruction::InsertShieldedCoinSet { .. }
@@ -10729,6 +10851,54 @@ mod shielded_spend_tests {
         plan
     }
 
+    fn map_insert_plan() -> Plan {
+        let mut value = spend_plan_json();
+        value["entrypoint"] = json!("store");
+        value["circuit"]["inputs"] = json!([
+            {"name":"key", "type":"Bytes<32>", "visibility":"private"},
+            {"name":"nonce", "type":"Bytes<32>", "visibility":"private"},
+            {"name":"color", "type":"Bytes<32>", "visibility":"private"},
+            {"name":"amount", "type":"UIntRange<340282366920938463463374607431768211456>", "visibility":"private"},
+            {"name":"isContract", "type":"Bool", "visibility":"private"},
+            {"name":"recipient", "type":"Bytes<32>", "visibility":"private"},
+            {"name":"commitment", "type":"Bytes<32>", "visibility":"private"}
+        ]);
+        value["operations"] = json!([{
+            "op":"insertShieldedCoinMap",
+            "slot":0,
+            "key":reference("key"),
+            "nonce":reference("nonce"),
+            "color":reference("color"),
+            "amount":reference("amount"),
+            "isContract":reference("isContract"),
+            "recipient":reference("recipient"),
+            "commitment":reference("commitment")
+        }]);
+        value["reads"] = json!([]);
+        let mut plan: Plan = serde_json::from_value(value).unwrap();
+        plan.target = Some(profile::NAME.into());
+        plan.target_profile = Some(profile::target_json());
+        plan
+    }
+
+    fn map_insert_inputs(
+        key: [u8; 32],
+        coin: &ShieldedCoinInfo,
+        is_contract: bool,
+        recipient: [u8; 32],
+        commitment: Commitment,
+    ) -> BTreeMap<String, Json> {
+        BTreeMap::from([
+            ("key".into(), bytes_json(&key)),
+            ("nonce".into(), bytes_json(&coin.nonce.0.0)),
+            ("color".into(), bytes_json(&coin.type_.0.0)),
+            ("amount".into(), json!(coin.value.to_string())),
+            ("isContract".into(), json!(is_contract)),
+            ("recipient".into(), bytes_json(&recipient)),
+            ("commitment".into(), bytes_json(&commitment.0.0)),
+        ])
+    }
+
     fn send_plan() -> Plan {
         let mut value = spend_plan_json();
         value["entrypoint"] = json!("send");
@@ -11162,6 +11332,121 @@ mod shielded_spend_tests {
                 )
                 .is_err());
             }
+        }
+    }
+
+    #[test]
+    fn shielded_coin_map_insert_uses_independent_key_and_current_booking() {
+        let plan = map_insert_plan();
+        let coin = ShieldedCoinInfo {
+            nonce: Nonce(HashOutput([9; 32])),
+            type_: ShieldedTokenType(HashOutput(COLOR)),
+            value: 5,
+        };
+        let parameters = &ledger::structure::INITIAL_PARAMETERS;
+
+        for (is_contract, recipient_bytes) in [(false, RECIPIENT), (true, RELAY_TARGET)] {
+            let recipient = if is_contract {
+                Recipient::Contract(ContractAddress(HashOutput(recipient_bytes)))
+            } else {
+                Recipient::User(PublicKey(HashOutput(recipient_bytes)))
+            };
+            let commitment = coin.commitment(&recipient);
+            let mut context = context_with_schema(&coin_schema(), NONCE, NONCE, 5);
+            context.call_context.com_indices =
+                context.call_context.com_indices.insert(commitment, 41);
+            let inputs = map_insert_inputs(NONCE, &coin, is_contract, recipient_bytes, commitment);
+            let execution = prepare_with_context(&plan, &inputs, context.clone(), parameters)
+                .unwrap_or_else(|error| panic!("booked coin Map insertion failed: {error:#}"));
+
+            let key = AlignedValue::from(Nonce(HashOutput(NONCE)));
+            assert_ne!(key, AlignedValue::from(coin.nonce));
+            assert_eq!(
+                read_state_aligned(&execution.after, 0, &[key.clone()]).unwrap(),
+                AlignedValue::from(coin.qualify(41))
+            );
+            assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
+
+            let original_record = read_state_aligned(&context, 0, &[key.clone()]).unwrap();
+            let mut no_booking = context.clone();
+            no_booking.call_context.com_indices = Default::default();
+            assert!(prepare_with_context(&plan, &inputs, no_booking, parameters).is_err());
+            assert_eq!(
+                read_state_aligned(&context, 0, &[key.clone()]).unwrap(),
+                original_record
+            );
+
+            for (wrong_kind, wrong_bytes) in [(is_contract, [7; 32]), (!is_contract, recipient_bytes)] {
+                let wrong_recipient = if wrong_kind {
+                    Recipient::Contract(ContractAddress(HashOutput(wrong_bytes)))
+                } else {
+                    Recipient::User(PublicKey(HashOutput(wrong_bytes)))
+                };
+                let wrong_inputs = map_insert_inputs(
+                    NONCE, &coin, wrong_kind, wrong_bytes, coin.commitment(&wrong_recipient),
+                );
+                let error =
+                    prepare_with_context(&plan, &wrong_inputs, context.clone(), parameters)
+                        .err()
+                        .expect("a booking for a different recipient must not qualify the coin");
+                assert!(error.to_string().contains("absent from the current transaction"));
+            }
+            assert_eq!(
+                read_state_aligned(&context, 0, &[key]).unwrap(),
+                original_record
+            );
+        }
+
+        if let Some(artifact_dir) = std::env::var_os("NOCTIUM_BOOKED_COIN_MAP_DIR") {
+            let artifact_dir = std::path::PathBuf::from(artifact_dir);
+            let artifact_plan: Plan = serde_json::from_slice(
+                &std::fs::read(artifact_dir.join("BookedCoinMap.store.impact.json")).unwrap(),
+            )
+            .unwrap();
+            let circuit_bytes =
+                std::fs::read(artifact_dir.join("BookedCoinMap.store.zkir")).unwrap();
+            let circuit = IrSource::load(circuit_bytes.as_slice()).unwrap();
+            let recipient = Recipient::User(PublicKey(HashOutput(RECIPIENT)));
+            let commitment = coin.commitment(&recipient);
+            let mut context = context_with_schema(
+                &artifact_plan.state[0].kind["tree"]["map"][1]["composite"],
+                NONCE,
+                NONCE,
+                5,
+            );
+            context.call_context.com_indices =
+                context.call_context.com_indices.insert(commitment, 41);
+            let artifact_inputs = BTreeMap::from([
+                ("key".into(), bytes_json(&NONCE)),
+                ("nonce".into(), bytes_json(&coin.nonce.0.0)),
+                ("color".into(), bytes_json(&coin.type_.0.0)),
+                ("amount".into(), json!(coin.value.to_string())),
+                ("isContract".into(), json!(false)),
+                ("recipient".into(), bytes_json(&RECIPIENT)),
+            ]);
+            let execution =
+                prepare_with_context(&artifact_plan, &artifact_inputs, context, parameters)
+                    .unwrap_or_else(|error| {
+                        panic!("emitted BookedCoinMap artifact failed: {error:#}")
+                    });
+            assert_eq!(
+                read_state_aligned(
+                    &execution.after,
+                    0,
+                    &[AlignedValue::from(Nonce(HashOutput(NONCE)))],
+                )
+                .unwrap(),
+                AlignedValue::from(coin.qualify(41))
+            );
+            assert_eq!(
+                check(&execution, &circuit).unwrap(),
+                execution.activity_schedule
+            );
+            assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
         }
     }
 
