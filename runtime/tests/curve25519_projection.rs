@@ -3,20 +3,22 @@
 use anyhow::Result;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    Plan, Value, check,
-    create_state,
+    Plan, Value, check, create_state,
     foreign::{ForeignFamily, ForeignRole, ForeignType, ForeignValue},
     prepare,
+    proof::TrustedParameters,
     zkir::IrSource,
 };
 use num_bigint::BigUint;
 use onchain_runtime::state::ChargedState;
+use rand::rngs::OsRng;
 use std::{
     collections::BTreeMap,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 use transient_crypto::curve::Fr;
+use transient_crypto::proofs::{ParamsVerifier, Zkir};
 
 fn coordinate(value: &str) -> ForeignValue {
     let number = BigUint::parse_bytes(value.as_bytes(), 10).expect("decimal coordinate");
@@ -36,6 +38,16 @@ fn point(bytes: &[u8; 32]) -> ForeignValue {
         bytes,
     )
     .expect("valid Curve25519Point")
+}
+
+fn generator_vector() -> (ForeignValue, ForeignValue, ForeignValue) {
+    let mut bytes = [0x66; 32];
+    bytes[0] = 0x58;
+    (
+        point(&bytes),
+        coordinate("15112221349535400772501151409588531511454012693041857206046113283949847762202"),
+        coordinate("46316835694926478169428394003475163141307993866256225615783033603165251855960"),
+    )
 }
 
 fn check_projection(
@@ -71,12 +83,9 @@ fn check_projection(
 
 fn fixture(directory: &Path) -> Result<(Plan, IrSource)> {
     let stem = "Curve25519ProjectionParity.project";
-    let plan: Plan = serde_json::from_slice(&fs::read(
-        directory.join(format!("{stem}.impact.json")),
-    )?)?;
-    let relation = IrSource::load(
-        fs::read(directory.join(format!("{stem}.zkir")))?.as_slice(),
-    )?;
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(directory.join(format!("{stem}.impact.json")))?)?;
+    let relation = IrSource::load(fs::read(directory.join(format!("{stem}.zkir")))?.as_slice())?;
     Ok((plan, relation))
 }
 
@@ -99,19 +108,17 @@ fn curve25519_point_projection_matches_compact_coordinates() -> Result<()> {
     );
 
     let initial = create_state(&plan, &BTreeMap::new())?;
+    let (generator, generator_x, generator_y) = generator_vector();
     let point_type = ForeignType::new(ForeignFamily::Curve25519, ForeignRole::Point);
     let identity = ForeignValue::zero(point_type)?;
-    let mut generator_bytes = [0x66; 32];
-    generator_bytes[0] = 0x58;
-    let generator = point(&generator_bytes);
 
     check_projection(
         &plan,
         &relation,
         &initial,
         generator,
-        coordinate("15112221349535400772501151409588531511454012693041857206046113283949847762202"),
-        coordinate("46316835694926478169428394003475163141307993866256225615783033603165251855960"),
+        generator_x,
+        generator_y,
     )?;
     check_projection(
         &plan,
@@ -121,5 +128,68 @@ fn curve25519_point_projection_matches_compact_coordinates() -> Result<()> {
         coordinate("0"),
         coordinate("1"),
     )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh projection artifacts and pinned proof parameters"]
+fn curve25519_point_projection_generates_and_binds_a_native_proof() -> Result<()> {
+    let directory = PathBuf::from(env::var_os("NOCTIUM_CURVE25519_PROJECTION_DIR").expect(
+        "set NOCTIUM_CURVE25519_PROJECTION_DIR to the fresh Curve25519ProjectionParity artifacts",
+    ));
+    let parameter_path = env::var_os("NOCTIUM_CURVE25519_PROJECTION_PROOF_PARAMETERS")
+        .expect("set NOCTIUM_CURVE25519_PROJECTION_PROOF_PARAMETERS to the pinned SRS file");
+    let parameter_sha256 = env::var("NOCTIUM_CURVE25519_PROJECTION_PROOF_PARAMETERS_SHA256")
+        .expect("set NOCTIUM_CURVE25519_PROJECTION_PROOF_PARAMETERS_SHA256 to its pinned digest");
+    let parameter_bytes = fs::read(parameter_path)?;
+    let (plan, relation) = fixture(&directory)?;
+    let parameters =
+        TrustedParameters::from_bytes(&parameter_bytes, relation.k(), &parameter_sha256)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let (generator, generator_x, generator_y) = generator_vector();
+    let inputs = BTreeMap::from([("point".into(), Value::Foreign(generator).public_json())]);
+    let execution = prepare(
+        &plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(check(&execution, &relation)?, execution.activity_schedule);
+    assert_eq!(
+        execution.returns(),
+        [
+            ("x".into(), Value::Foreign(generator_x)),
+            ("y".into(), Value::Foreign(generator_y)),
+        ]
+    );
+
+    let (prover_key, verifier_key) = futures::executor::block_on(relation.keygen(&parameters))?;
+    let (proof, statement, activity) = futures::executor::block_on(relation.prove(
+        OsRng,
+        &parameters,
+        prover_key,
+        &execution.preimage,
+    ))?;
+    assert_eq!(activity, execution.activity_schedule);
+    let verifier_parameters = ParamsVerifier::read(parameter_bytes.as_slice())?;
+    verifier_key.verify(&verifier_parameters, &proof, statement.iter().copied())?;
+
+    let (commitment, _) = execution
+        .preimage
+        .communications_commitment
+        .expect("the native projection binds its communicated return");
+    assert_eq!(statement[1], commitment);
+    let mut changed_statement = statement;
+    changed_statement[1] = commitment + Fr::from(1u64);
+    assert!(
+        verifier_key
+            .verify(
+                &verifier_parameters,
+                &proof,
+                changed_statement.iter().copied()
+            )
+            .is_err()
+    );
     Ok(())
 }

@@ -485,7 +485,8 @@ jobs:
               --test generic_jubjub_module --test imported_module_types \
               --test readable_nominal_uint --test generic_foreign_curve_module \
               --test curve25519_projection --test opaque_module_cells \
-              --test opaque_generic_circuit -- --ignored
+              --test opaque_generic_circuit -- --ignored \
+                --skip curve25519_point_projection_generates_and_binds_a_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_ORDERED_CONSTRUCTOR_COUNTER_READ_DIR="$artifacts/ordered-constructor-counter-read" \
