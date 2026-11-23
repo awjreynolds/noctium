@@ -161,19 +161,21 @@ int32_t noctium_native_composition_owner_free(uint64_t owner);
      {"abiVersion":1,"kind":"map","entries":[{"key":"1","value":true}],
       "nextOffset":1}
    Map values with checked composite schemas use canonical record JSON. Aggregate
-   records use their schema value shape. Mixed records use named fields.
+   records use their schema value shape. Mixed records use named fields. Map
+   records with supported key fields use canonical record JSON for the key.
    For a Set, entries are typed member values:
      {"abiVersion":1,"kind":"set","entries":["1"],"nextOffset":1}
    For a scalar List, entries are typed values in head-to-tail order:
      {"abiVersion":1,"kind":"list","entries":["1"],"nextOffset":1}
    List elements with checked composite schemas use the same canonical record JSON.
-   Scalar Map keys and Set members use stable ascending order. Numeric values
-   sort numerically, Bool sorts false before true, byte values sort lexicographically,
-   and foreign keys sort by canonical bytes. Qualified shielded coin Set members
-   return record JSON and sort by nonce bytes, color bytes, numeric value, then
-   numeric mtIndex. Use an empty keys array for a root collection. To read a nested
-   collection, provide one typed key per enclosing Map. The path must resolve to a supported Map, Set,
-   or List. List pages validate each linked node's count and empty sentinel.
+   Scalar Map keys, ordinary typed record Map keys, and Set members use stable
+   ascending typed order. Numeric values sort numerically, Bool sorts false before
+   true, byte values sort lexicographically, and foreign keys sort by canonical
+   bytes. Record Map keys sort lexicographically by declared field order.
+   Supported record key fields are Native, Bool, UInt and Bytes32. Qualified shielded coin Set members return record JSON and sort by
+   nonce bytes, color bytes, numeric value, then numeric mtIndex. Use an empty keys
+   array for a root collection. To read a nested collection, provide one typed
+   key per enclosing Map. The path must resolve to a supported Map, Set, or List. List pages validate each linked node's count and empty sentinel.
    Merkle result JSON has abiVersion, kind, entries, and nextOffset (integer or null).
    Merkle pages also have root and firstFree as decimal strings. The merkleTree kind has
    empty entries. historicMerkleTree entries contain history root digests as

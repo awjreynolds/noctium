@@ -349,8 +349,7 @@ enum CollectionValueSchema {
 
 enum CollectionSchema {
     Map {
-        key_type: ScalarType,
-        key_name: String,
+        key: CollectionValueSchema,
         value: CollectionValueSchema,
     },
     Set {
@@ -388,29 +387,47 @@ fn collection_schema(schema: &Json) -> Result<Option<CollectionSchema>, i32> {
             .as_array()
             .filter(|fields| fields.len() == 2)
             .ok_or(INVALID_ARGUMENT)?;
-        let key_name = fields[0].as_str().ok_or(INVALID_ARGUMENT)?.to_owned();
-        let key_type = crate::ledger_key_type(&Json::String(key_name.clone()))
-            .map_err(|_| INVALID_ARGUMENT)?;
+        let key = if let Some(key_name) = fields[0].as_str() {
+            let key_name = key_name.to_owned();
+            let ty = crate::ledger_key_type(&Json::String(key_name.clone()))
+                .map_err(|_| INVALID_ARGUMENT)?;
+            CollectionValueSchema::Scalar { ty, name: key_name }
+        } else {
+            let record = crate::ordinary_record_key_schema(&fields[0]).ok_or(INVALID_ARGUMENT)?;
+            let schema =
+                crate::checked_typed_record_schema(record).map_err(|_| INVALID_ARGUMENT)?;
+            if schema
+                .fields
+                .iter()
+                .any(|field| field.ty == ScalarType::JubjubPoint)
+            {
+                return Err(INVALID_ARGUMENT);
+            }
+            CollectionValueSchema::Record(schema)
+        };
         let value = if let Some(name) = fields[1].as_str() {
             CollectionValueSchema::Scalar {
                 ty: ScalarType::parse(name).map_err(|_| INVALID_ARGUMENT)?,
                 name: name.to_owned(),
             }
         } else {
-            let record = fields[1]
+            let descriptor = fields[1]
                 .as_object()
                 .filter(|fields| fields.len() == 1)
-                .and_then(|fields| fields.get("composite"))
                 .ok_or(INVALID_ARGUMENT)?;
-            CollectionValueSchema::Record(
-                crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
-            )
+            if let Some(name) = descriptor.get("scalar").and_then(Json::as_str) {
+                CollectionValueSchema::Scalar {
+                    ty: crate::validate_tree_scalar_type(name).map_err(|_| INVALID_ARGUMENT)?,
+                    name: name.to_owned(),
+                }
+            } else {
+                let record = descriptor.get("composite").ok_or(INVALID_ARGUMENT)?;
+                CollectionValueSchema::Record(
+                    crate::checked_record_schema(record).map_err(|_| INVALID_ARGUMENT)?,
+                )
+            }
         };
-        return Ok(Some(CollectionSchema::Map {
-            key_type,
-            key_name,
-            value,
-        }));
+        return Ok(Some(CollectionSchema::Map { key, value }));
     }
     if let Some(list) = schema.get("list") {
         let element = list
@@ -573,19 +590,29 @@ fn collection_page(
         let (key, value) = &*entry;
         let (order, key) = match schema {
             CollectionSchema::Map {
-                key_type, key_name, ..
+                key: CollectionValueSchema::Scalar { ty, name },
+                ..
             }
             | CollectionSchema::Set {
-                key:
-                    CollectionValueSchema::Scalar {
-                        ty: key_type,
-                        name: key_name,
-                    },
+                key: CollectionValueSchema::Scalar { ty, name },
             } => {
-                let key = crate::decode_state_cell(key, key_name, crate::key_alignment(key_type))
+                let key = crate::decode_state_cell(key, name, crate::key_alignment(ty))
                     .map_err(|_| INVALID_ARGUMENT)?;
                 let order = key_order(&key)?;
                 (order, key.public_json())
+            }
+            CollectionSchema::Map {
+                key: CollectionValueSchema::Record(record_schema),
+                ..
+            } => {
+                let values =
+                    crate::decode_record_value(record_schema, key).map_err(|_| INVALID_ARGUMENT)?;
+                let mut order = Vec::new();
+                for value in &values {
+                    order.extend(key_order(value)?);
+                }
+                let key = record_values_json(record_schema, &values)?;
+                (order, key)
             }
             CollectionSchema::Set {
                 key: CollectionValueSchema::Record(record_schema),

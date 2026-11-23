@@ -3,18 +3,19 @@
 use base_crypto::{fab::AlignedValue, hash::HashOutput};
 use coin_structure::coin::{Info, Nonce, ShieldedTokenType};
 use noctium_runtime::{
-    Db, artifacts,
+    Db, Plan, artifacts, check, create_state,
     collection_ffi::noctium_ledger_collection_page,
     field_value,
     native_ffi::{
         INVALID_ARGUMENT, OK, noctium_native_result_copy, noctium_native_result_free,
         noctium_native_result_length,
     },
+    prepare, zkir::IrSource,
 };
 use onchain_runtime::state::{ChargedState, ContractState, StateValue};
 use serde_json::{Value, json};
 use serialize::tagged_serialize;
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 use storage::{arena::Sp, storage::HashMap};
 use transient_crypto::curve::Fr;
 
@@ -28,12 +29,16 @@ struct Snapshot {
 
 impl Snapshot {
     fn new(plan: Value, state: ChargedState<Db>) -> Self {
+        Self::from_plan_bytes(serde_json::to_vec(&plan).unwrap(), state)
+    }
+
+    fn from_plan_bytes(plan: Vec<u8>, state: ChargedState<Db>) -> Self {
         let mut contract = ContractState::<Db>::default();
         contract.data = state;
         let mut state_bytes = Vec::new();
         tagged_serialize(&contract, &mut state_bytes).unwrap();
         Self {
-            plan: serde_json::to_vec(&plan).unwrap(),
+            plan,
             state: state_bytes,
         }
     }
@@ -582,6 +587,92 @@ fn composite_record_map_and_list_pages_decode_checked_values() {
         malformed.status("records", 0, 2, &artifacts::digest(&malformed.state)),
         INVALID_ARGUMENT
     );
+}
+
+#[test]
+#[ignore = "requires fresh RecordMapKeys outputs in NOCTIUM_RECORD_MAP_KEY_PAGE_DIR"]
+fn record_key_map_pages_sort_and_validate_typed_keys() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_MAP_KEY_PAGE_DIR")?);
+    let stem = "RecordMapKeys.update";
+    let plan_bytes = std::fs::read(directory.join(format!("{stem}.impact.json")))?;
+    let plan: Plan = serde_json::from_slice(&plan_bytes)?;
+    let circuit = IrSource::load(std::fs::read(directory.join(format!("{stem}.zkir")))?.as_slice())?;
+    let empty = create_state(&plan, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let records = [(true, 513u16, 33u16), (false, 513, 22), (true, 514, 44)];
+    let snapshot = |reverse: bool| -> anyhow::Result<Snapshot> {
+        let mut state = empty.clone();
+        let mut records = records;
+        if reverse {
+            records.reverse();
+        }
+        for (active, amount, value) in records {
+            let arguments = BTreeMap::from([
+                ("active".into(), json!(active)),
+                ("amount".into(), json!(amount.to_string())),
+                ("value".into(), json!(value.to_string())),
+            ]);
+            let execution = prepare(&plan, &arguments, &state, parameters, address)?;
+            assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+            assert_eq!(execution.returns_json()["presentBefore"], json!(false));
+            assert_eq!(execution.returns_json()["presentAfter"], json!(true));
+            state = execution.after.state;
+        }
+        Ok(Snapshot::from_plan_bytes(plan_bytes.clone(), state))
+    };
+
+    let forward = snapshot(false)?;
+    let reverse = snapshot(true)?;
+    let first_page = json!({
+        "abiVersion":1,
+        "kind":"map",
+        "entries":[
+            {"key":{"active":false,"amount":"513"},"value":"22"},
+            {"key":{"active":true,"amount":"513"},"value":"33"}
+        ],
+        "nextOffset":2
+    });
+    let second_page = json!({
+        "abiVersion":1,
+        "kind":"map",
+        "entries":[
+            {"key":{"active":true,"amount":"514"},"value":"44"}
+        ],
+        "nextOffset":null
+    });
+    assert_eq!(forward.page("memos", 0, 2), first_page);
+    assert_eq!(forward.page("memos", 2, 2), second_page);
+    assert_eq!(reverse.page("memos", 0, 2), first_page);
+    assert_eq!(reverse.page("memos", 2, 2), second_page);
+
+    let mut malformed_schema: Value = serde_json::from_slice(&plan_bytes)?;
+    malformed_schema["state"][0]["kind"]["tree"]["map"][0]["composite"]["fields"][1]
+        ["type"] = json!("Bool");
+    let malformed_schema = Snapshot {
+        plan: serde_json::to_vec(&malformed_schema)?,
+        state: forward.state.clone(),
+    };
+    assert_eq!(
+        malformed_schema.status("memos", 0, 2, &artifacts::digest(&malformed_schema.state)),
+        INVALID_ARGUMENT
+    );
+
+    let malformed_key = field_value(Fr::from(513u16));
+    let malformed_map = HashMap::new().insert(
+        malformed_key,
+        StateValue::Cell(Sp::new(field_value(Fr::from(33u16)))),
+    );
+    let malformed_payload = Snapshot::from_plan_bytes(
+        plan_bytes,
+        ChargedState::new(StateValue::Array(vec![StateValue::Map(malformed_map)].into())),
+    );
+    assert_eq!(
+        malformed_payload.status("memos", 0, 2, &artifacts::digest(&malformed_payload.state)),
+        INVALID_ARGUMENT
+    );
+    Ok(())
 }
 
 #[test]
