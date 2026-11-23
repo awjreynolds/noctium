@@ -1082,6 +1082,20 @@ private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit :
     read output
     constrainType input.ty output
 
+private theorem publicBytes32Requirements (name : String) :
+    Native.Input.requirements {name, ty := .bytes 32, visibility := .«public»} = [
+      {identifier := "%input__noctium_bytes32_" ++ name ++ "_high", visibility := .«public», ty := .uint 255},
+      {identifier := "%input__noctium_bytes32_" ++ name ++ "_low31", visibility := .«public»,
+        ty := .uint (2 ^ 248 - 1)}] := by
+  rfl
+
+/-- A public Bytes32 input's 1-byte and 31-byte range constraints allocate no SSA names. -/
+theorem lowerByteInput_publicBytes32_next (name : String) (state : LowerState) :
+    (lowerByteInput {name, ty := .bytes 32, visibility := .«public»}).run state |>.2.next =
+      state.next := by
+  simp [lowerByteInput, publicBytes32Requirements, constrainType, constrainUnsigned, emit]
+  rfl
+
 mutual
 private def lowerOpaqueBytes : Expr .opaqueBytes → LowerM String
   | .opaqueBytesEmpty => pure "0x00"
