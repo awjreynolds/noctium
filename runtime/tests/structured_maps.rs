@@ -588,3 +588,77 @@ fn structured_helper_binds_guarded_bytes32_map_effects_and_returns() {
     altered_guard.preimage.private_transcript[0] = Fr::from(1u64);
     assert!(check(&altered_guard, &circuit).is_err());
 }
+
+#[test]
+#[ignore = "requires fresh NestedRecordMapDefaults outputs in NOCTIUM_NESTED_RECORD_MAP_DEFAULTS_DIR"]
+fn nested_record_map_defaults_insert_replace_and_preserve_siblings() -> anyhow::Result<()> {
+    let directory =
+        std::path::PathBuf::from(std::env::var("NOCTIUM_NESTED_RECORD_MAP_DEFAULTS_DIR")?);
+    let load = |entry| load_entrypoint(&directory, &format!("NestedRecordMapDefaults.{entry}"));
+    let initialize = load("initializeOwner")?;
+    let seed = load("seedMemo")?;
+    let default = load("defaultMemo")?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let owner = |byte: u8| json!({"kind": "bytes", "values": vec![byte; 32]});
+    let key_args = |owner_byte, active, amount: u16| {
+        BTreeMap::from([
+            ("owner".into(), owner(owner_byte)),
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+        ])
+    };
+    let seed_args = |owner_byte, active, amount, value: u16| {
+        let mut inputs = key_args(owner_byte, active, amount);
+        inputs.insert("value".into(), json!(value.to_string()));
+        inputs
+    };
+    let default_args = |owner_byte, active, amount, enabled| {
+        let mut inputs = key_args(owner_byte, active, amount);
+        inputs.insert("enabled".into(), json!(enabled));
+        inputs
+    };
+    let run = |entry: &(Plan, IrSource), inputs: &BTreeMap<String, Json>, state: &ChargedState<Db>| {
+        let execution = prepare(&entry.0, inputs, state, parameters, address)?;
+        assert_eq!(check(&execution, &entry.1)?, execution.activity_schedule);
+        Ok::<_, anyhow::Error>(execution)
+    };
+
+    let mut state = create_state(&initialize.0, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    for owner_byte in [1, 2] {
+        let inputs = BTreeMap::from([("owner".into(), owner(owner_byte))]);
+        state = run(&initialize, &inputs, &state)?.after.state;
+    }
+    for (owner_byte, active, value) in [(1, true, 11), (1, false, 22), (2, true, 99)] {
+        state = run(&seed, &seed_args(owner_byte, active, 513, value), &state)?
+            .after
+            .state;
+    }
+
+    let inactive = run(&default, &default_args(1, false, 513, false), &state)?;
+    assert_eq!(inactive.after.state, state);
+    assert_eq!(inactive.returns_json()["bucketSize"], json!("2"));
+
+    let inserted = run(&default, &default_args(1, true, 514, true), &state)?;
+    let expected_inserted = run(&seed, &seed_args(1, true, 514, 0), &state)?;
+    assert_eq!(
+        inserted.after.state.get_ref(),
+        expected_inserted.after.state.get_ref()
+    );
+    assert_eq!(inserted.returns_json()["presentBefore"], json!(false));
+    assert_eq!(inserted.returns_json()["presentAfter"], json!(true));
+    assert_eq!(inserted.returns_json()["chosenValue"], json!("0"));
+    assert_eq!(inserted.returns_json()["bucketSize"], json!("3"));
+
+    let replaced = run(&default, &default_args(1, true, 513, true), &inserted.after.state)?;
+    let expected_replaced = run(&seed, &seed_args(1, true, 513, 0), &inserted.after.state)?;
+    assert_eq!(
+        replaced.after.state.get_ref(),
+        expected_replaced.after.state.get_ref()
+    );
+    assert_eq!(replaced.returns_json()["presentBefore"], json!(true));
+    assert_eq!(replaced.returns_json()["presentAfter"], json!(true));
+    assert_eq!(replaced.returns_json()["chosenValue"], json!("0"));
+    assert_eq!(replaced.returns_json()["bucketSize"], json!("3"));
+    Ok(())
+}

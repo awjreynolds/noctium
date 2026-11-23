@@ -2735,7 +2735,7 @@
       "layer": "language-ledger",
       "surface": "Map.insertDefault",
       "noctiumStatus": "subset",
-      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. Compact and the native checker agree on Field insertion and replacement. Ledger 9.1.0.1 finalized a missing Field insertion as zero and an existing nonzero Field replacement as zero with siblings preserved. Native checks cover nested scalar, record and collection layouts, including a matched HistoricMerkle default. Root record-key Maps with UInt16 or flat record values also match pinned Compact insertion and overwrite behavior, with siblings preserved. Full funded layout equivalence remains unverified.",
+      "notes": "insertDefault writes the admitted typed default to a direct or nested Map entry. Compact and the native checker agree on Field insertion and replacement. Ledger 9.1.0.1 finalized a missing Field insertion as zero and an existing nonzero Field replacement as zero with siblings preserved. Native checks cover nested scalar, record and collection layouts, including a matched HistoricMerkle default. Root record-key Maps with UInt16 or flat record values also match pinned Compact insertion and overwrite behavior, with siblings preserved. A Bytes32-owner Map with inner record keys and UInt16 values also matches pinned Compact for absent insertion and overwrite. The native check confirms exact sibling state and inactive preservation. Full funded layout equivalence remains unverified.",
       "source": [
         "adt"
       ],
@@ -2745,6 +2745,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/NestedRecordMapDefaults.lean",
         "tests/RecordMapDefaults.lean",
         "runtime/tests/structured_maps.rs",
         "tests/NativeMapDefault.lean",
