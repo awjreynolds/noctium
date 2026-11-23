@@ -14,6 +14,8 @@ Usage: noctium --version\n\
 Artifact roles: ledger, standalone, witness, control, specialization, observations.\n\
 Omit --emit to generate all applicable roles.\n\
 Default target: profiles/midnight-ledger-9.json\n\
+Ordinary builds with the pinned ZKIR 3.2.1 profile deduplicate range checks and repeated assertions.\n\
+Use --dedup-range-checks to also reuse identical comparisons.\n\
 The selectable ZKIR 3.2.1 profile qualifies a selected native subset only."
 
 structure Options where

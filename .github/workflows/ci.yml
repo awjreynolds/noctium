@@ -327,6 +327,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableIteration.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-iteration"
+          jq -e '[.instructions[] | select(.op == "assert") | .cond] |
+            length > 0 and (length == (unique | length))' \
+            "$artifacts/readable-iteration/ReadableIterationBlock.run.zkir"
           .lake/build/bin/noctium compile tests/QualifiedShieldedCoinInfo.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/qualified-coin-info"

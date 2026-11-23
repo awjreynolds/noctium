@@ -283,12 +283,12 @@ private def optimizedAssertionExpected : Except Diagnostic Expected := do
 private def checkOptimizedAssertionMutation
     (change : Array Json → Array Json) : Except String Unit := do
   let expected ← optimizedAssertionExpected |>.mapError (·.message)
-  let json ← (Zkir.lowerCircuit repeatedAssertionCircuit true).mapError (·.message)
+  let json ← (Zkir.lowerCircuit repeatedAssertionCircuit .rangeAndAssertions).mapError (·.message)
   let instructions ← Native.arrayField json "instructions"
   Native.validate expected (replace json "instructions" (Json.arr (change instructions)))
 
 #guard match Zkir.lowerCircuit repeatedAssertionCircuit,
-    Zkir.lowerCircuit repeatedAssertionCircuit true with
+    Zkir.lowerCircuit repeatedAssertionCircuit .rangeAndAssertions with
   | .ok ordinary, .ok optimized =>
     match Native.arrayField ordinary "instructions", Native.arrayField optimized "instructions" with
     | .ok plainItems, .ok optimizedItems =>
