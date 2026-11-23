@@ -92,5 +92,5 @@ private def nestedTypedListEnvironment : Types.CompositeEnv := {
 
 #guard match LedgerValueType.listElementFields nestedTypedListEnvironment
     (.structure "OuterTypedMemo") with
-  | .error _ => _root_.Bool.true
-  | .ok _ => _root_.Bool.false
+  | .ok [("inner_active", .bool)] => _root_.Bool.true
+  | _ => _root_.Bool.false
