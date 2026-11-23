@@ -95,7 +95,7 @@ also completed a two-parent insertion and overwrite in their query context.
 The current Impact sequence uses a four-bit `Dup` index of
 `5 + 2 * parentCount`. The compiler and runtime reject paths beyond five
 parents. [Wider lowering](https://github.com/awjreynolds/noctium/issues/716) ·
-[Funded two-parent qualification](https://github.com/awjreynolds/noctium/issues/717)
+[Funded two-parent receipt](funded-two-parent-coin-maps-localnet-receipt.json)
 
 The query-context checks cover overwrite and missing owners. The funded
 fixture below exercises independent-key insertion and overwrite on Ledger 9.
@@ -120,6 +120,16 @@ owner's buckets stayed empty. The recorded block hashes and three contract
 state digests matched direct queries at the recorded blocks.
 [Overwrite receipt](funded-coin-map-overwrite-localnet-receipt.json)
 
+The two-parent fixture initializes both groups under each owner. Its calls
+finalized at blocks 69,511 and 69,514. The same independent leaf key
+stored index 40 and then index 41 in the selected owner and group Map.
+The root Map made the same replacement. The nonce Map, Set and List
+retained both coins. The other group and both groups under the other
+owner stayed empty. Exact inclusion and finalization hashes and the three
+state digests matched direct node queries.
+[Two-parent Lean fixture](../../tests/FundedDeepQualifiedCoinMaps.lean) ·
+[Ledger receipt](funded-two-parent-coin-maps-localnet-receipt.json)
+
 Compile the fixture for the pinned ZKIR 3.2.1 profile and assemble both
 entrypoint bundles. Use the compiler revision and fixture hash in the receipt
 for the pinned build. The initializer measured 284 rows at K9. The funded
@@ -139,7 +149,9 @@ NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS='{"initializeOwners":"INITIA
   localnet::shielded_receive::tests::funded_shielded_receive_localnet -- --exact --ignored --nocapture
 ```
 
-Set `NOCTIUM_FUNDED_MAP_OVERWRITE=1` for the two-call run. Run against a
+Set `NOCTIUM_FUNDED_MAP_OVERWRITE=1` for a two-call run. For the two-parent
+run, select bundles from `FundedDeepQualifiedCoinMaps` and also set
+`NOCTIUM_FUNDED_TWO_PARENT_MAP=1`. Run against a
 dedicated development chain to keep Zswap booking indices stable during
 funding and submission.
 
