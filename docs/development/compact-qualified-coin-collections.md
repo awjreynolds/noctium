@@ -86,6 +86,12 @@ artifacts match the earlier bytes. The deeper cases use a native query
 context. [Lean fixture](../../tests/DeepQualifiedCoinSet.lean) ·
 [Native query check](../../runtime/tests/qualified_coin_set.rs)
 
+The pinned Compact 0.36.1 and Runtime 0.21.0 query test also inserts under
+five Bytes32 Map parents. It adds a selected Set member with booked index 1
+after a distinct transaction-local mint, keeps the original member and
+five seeded siblings, and rejects missing bookings, wrong-recipient
+bookings and an absent Set path. [Compact fixture and runner](../../tests/compact/five-parent-qualified-coin-set.mjs)
+
 ## Booked coin Map
 
 `insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.
