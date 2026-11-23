@@ -6257,16 +6257,18 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
     (outputName : String := "") (observationArtifact? : Option String := none)
     (describeOutputs : Helpers.Program → Witness.Compiled →
       CommandElabM (List (String × Ty × Name) × List (String × Name × List String) ×
-        List (String × NominalBytes32)) :=
-      fun _ _ => pure ([], [], []))
+        List (String × NominalBytes32) × List (String × NominalUIntType)) :=
+      fun _ _ => pure ([], [], [], []))
     (specializationArtifact? : Option String := none)
-    (useCheckedCircuitValue : _root_.Bool := _root_.Bool.false) : CommandElabM Unit := do
+    (useCheckedCircuitValue : _root_.Bool := _root_.Bool.false)
+    (nominalUIntInputs : List (String × NominalUIntType) := []) : CommandElabM Unit := do
     let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
     let fullName := (← getCurrNamespace) ++ name.getId
     let compiled ← match Witness.compile program exportName fullName.toString outputName with
       | .ok value => pure value
       | .error diagnostic => failDisclosure diagnostic *> throwError "typed witness compilation failed"
-    let (logicalOutputs, aggregateOutputs, nominalBytes32Outputs) ← describeOutputs program compiled
+    let (logicalOutputs, aggregateOutputs, nominalBytes32Outputs, nominalUIntOutputs) ←
+      describeOutputs program compiled
     let sourceTerm := mkIdent sourceName
     let fullNameTerm := stringTerm fullName.toString
     let exportNameTerm := stringTerm exportName
@@ -6306,6 +6308,8 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
       inputs := compiled.circuit.inputs.map fun input => (input.name, input.ty),
       publicInputs := (compiled.circuit.inputs.filter (·.visibility == .public)).map fun input => (input.name, input.ty),
       outputs := compiled.circuit.outputs.map fun value => (value.name, value.ty),
+      nominalUIntInputs,
+      nominalUIntOutputs,
       logicalOutputs,
       nominalBytes32Outputs,
       aggregateOutputs,

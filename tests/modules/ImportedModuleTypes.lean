@@ -110,7 +110,7 @@ noctium_witness_circuit importedFlagInput using flagWire where
   output ordinal : Native := cast(Native, flag)
 end
 
-noctium_circuit importedCountInput where
+noctium_witness_circuit importedCountInput where
   private count : LocalCount
   output echoed : AlsoCount := disclose(count)
 end
