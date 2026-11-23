@@ -5606,8 +5606,8 @@
       "id": "C-STDLIB-CURVE25519POINTX",
       "layer": "standard-library",
       "surface": "curve25519PointX",
-      "noctiumStatus": "related-subset",
-      "notes": "Lean curveX returns the native Base coordinate from a checked Curve25519 point, including identity.",
+      "noctiumStatus": "subset",
+      "notes": "Lean curveX returns the native Base coordinate from a checked Curve25519 point. The generator and identity match Compact 0.36.1 in the native checker with a typed Curve25519Base return. A modified public transcript output fails the native check.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5623,6 +5623,9 @@
       "observedEvidence": [
         "tests/Curve25519.lean",
         "runtime/tests/curve25519.rs",
+        "tests/Curve25519ProjectionParity.lean",
+        "tests/compact/curve25519-projection-parity.mjs",
+        "runtime/tests/curve25519_projection.rs",
         "docs/development/curve25519.md"
       ],
       "equivalence": "unverified"
@@ -5631,8 +5634,8 @@
       "id": "C-STDLIB-CURVE25519POINTY",
       "layer": "standard-library",
       "surface": "curve25519PointY",
-      "noctiumStatus": "related-subset",
-      "notes": "Lean curveY returns the native Base coordinate from a checked Curve25519 point, including identity.",
+      "noctiumStatus": "subset",
+      "notes": "Lean curveY returns the native Base coordinate from a checked Curve25519 point. The generator and identity match Compact 0.36.1 in the native checker with a typed Curve25519Base return. A modified public transcript output fails the native check.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5648,6 +5651,9 @@
       "observedEvidence": [
         "tests/Curve25519.lean",
         "runtime/tests/curve25519.rs",
+        "tests/Curve25519ProjectionParity.lean",
+        "tests/compact/curve25519-projection-parity.mjs",
+        "runtime/tests/curve25519_projection.rs",
         "docs/development/curve25519.md"
       ],
       "equivalence": "unverified"
