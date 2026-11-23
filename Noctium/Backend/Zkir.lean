@@ -342,6 +342,14 @@ def constrainUnsigned (maximum : Nat) (value : String) : LowerM Unit := do
         ("bits", toJson bits), ("output", toJson output)]
       emit "assert" [("cond", toJson output)]
 
+/-- Lower bounded unsigned addition. The output keeps the source sum bound even
+when a literal-zero operand lets the arithmetic instruction disappear. -/
+def nativeUIntAdd (maximum : Nat) (leftIsZero rightIsZero : Bool)
+    (left right : String) : LowerM String := do
+  let output ← nativeAdd leftIsZero rightIsZero left right
+  constrainUnsigned maximum output
+  pure output
+
 def constrainType (ty : Ty) (value : String) : LowerM Unit :=
   match ty with
   | .native => pure ()
@@ -738,6 +746,17 @@ private theorem constrainUnsigned_preservesOutputCapacityFrame (maximum : Nat)
         intro _
         exact suffixFrame
       simpa [constrainUnsigned, isZero, exactPower] using bodyFrame state
+
+theorem nativeUIntAdd_preservesOutputCapacityFrame (maximum : Nat)
+    (leftIsZero rightIsZero : Bool) (left right : String) :
+    PreservesOutputCapacityFrame (nativeUIntAdd maximum leftIsZero rightIsZero left right) := by
+  apply bind_preservesOutputCapacityFrame _ _
+    (nativeAdd_preservesOutputCapacityFrame leftIsZero rightIsZero left right)
+  intro output
+  apply bind_preservesOutputCapacityFrame _ _
+    (constrainUnsigned_preservesOutputCapacityFrame maximum output)
+  intro _
+  exact pure_preservesOutputCapacityFrame output
 
 private theorem constrainType_preservesOutputCapacityFrame (ty : Ty) (value : String) :
     PreservesOutputCapacityFrame (constrainType ty value) := by
@@ -1852,9 +1871,11 @@ def lowerExpr : Expr ty → LowerM String
   | .mul a b => do binary "mul" (← lowerExpr a) (← lowerExpr b)
   | .sub a b => do binary "add" (← lowerExpr a) (← unary "neg" (← lowerExpr b))
   | .uadd (m := m) (n := n) a b => do
-    let output ← binary "add" (← lowerExpr a) (← lowerExpr b)
-    constrainUnsigned (m + n) output
-    pure output
+    let leftIsZero := Native.isLiteralUIntZero a
+    let rightIsZero := Native.isLiteralUIntZero b
+    let left ← lowerExpr a
+    let right ← lowerExpr b
+    nativeUIntAdd (m + n) leftIsZero rightIsZero left right
   | .umul (m := m) (n := n) a b => do
     let output ← binary "mul" (← lowerExpr a) (← lowerExpr b)
     constrainUnsigned (m * n) output

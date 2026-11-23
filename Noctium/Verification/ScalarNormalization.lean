@@ -269,6 +269,14 @@ private theorem native_canonical (number : Nat) (bound : number < Field.modulus)
   change number < Field.modulus ∧ True
   exact ⟨bound, trivial⟩
 
+private theorem eval_uint_zero_value (ctx : EvalContext) (env : EvalEnv)
+    {maximum value : Nat}
+    (evaluation : Expr.eval ctx env (.uint maximum 0) = .ok value) : value = 0 := by
+  simp only [Expr.eval] at evaluation
+  split at evaluation
+  · simpa [pure, Except.pure] using evaluation.symm
+  · cases evaluation
+
 private theorem scalar_eq_zero (value : Nat) (bound : value < Field.modulus) :
     scalar value = zero ↔ value = 0 := by
   constructor
@@ -576,12 +584,38 @@ theorem normalize_success (ctx : EvalContext) (hash : Hash)
             ⟨by simpa [implementation.modulus, Canonical, sourceNumber?] using valid.2,
               valid.1.1, valid.1.2⟩
           refine ⟨_, by simp only [normalize, na, nb]; rfl, ?_⟩
-          simp only [arithmetic_eq, requireSourceType_eq]
-          apply represent_with_bound _ _ _ _ _ _ _ canonical (requirements_join _ _ _ _ _ ar br)
-          simp [interpret_add, am, bm, sourceScalar?, sourceNumber?]
-          change scalar ((av % Field.modulus) + (bv % Field.modulus)) = scalar (av + bv)
-          rw [Nat.mod_eq_of_lt (show av < Field.modulus from ac.1),
-            Nat.mod_eq_of_lt (show bv < Field.modulus from bc.1)]
+          by_cases leftZero : isLiteralUIntZero a = true
+          · have leftIsZero : a = .uint m 0 :=
+              (isLiteralUIntZero_eq_true_iff a).mp leftZero
+            cases leftIsZero
+            have avZero := eval_uint_zero_value ctx values ea
+            simp only [normalizeUIntAdd, isLiteralUIntZero, requireSourceType_eq, ↓reduceIte]
+            apply represent_with_bound _ _ _ _ _ _ _ canonical (requirements_join _ _ _ _ _ ar br)
+            simpa [avZero, sourceScalar?, sourceNumber?] using bm
+          · have leftNotZero : isLiteralUIntZero a = false := by
+              cases h : isLiteralUIntZero a with
+              | false => rfl
+              | true => exact False.elim (leftZero h)
+            by_cases rightZero : isLiteralUIntZero b = true
+            · have rightIsZero : b = .uint n 0 :=
+                (isLiteralUIntZero_eq_true_iff b).mp rightZero
+              cases rightIsZero
+              have bvZero := eval_uint_zero_value ctx values eb
+              simp only [normalizeUIntAdd, leftNotZero, rightZero,
+                Bool.false_eq_true, requireSourceType_eq, ↓reduceIte]
+              apply represent_with_bound _ _ _ _ _ _ _ canonical (requirements_join _ _ _ _ _ ar br)
+              simpa [bvZero, sourceScalar?, sourceNumber?] using am
+            · have rightNotZero : isLiteralUIntZero b = false := by
+                cases h : isLiteralUIntZero b with
+                | false => rfl
+                | true => exact False.elim (rightZero h)
+              simp only [normalizeUIntAdd, leftNotZero, rightNotZero,
+                Bool.false_eq_true, requireSourceType_eq, ↓reduceIte]
+              apply represent_with_bound _ _ _ _ _ _ _ canonical (requirements_join _ _ _ _ _ ar br)
+              simp [interpret_add, am, bm, sourceScalar?, sourceNumber?]
+              change scalar ((av % Field.modulus) + (bv % Field.modulus)) = scalar (av + bv)
+              rw [Nat.mod_eq_of_lt (show av < Field.modulus from ac.1),
+                Nat.mod_eq_of_lt (show bv < Field.modulus from bc.1)]
         next invalid => cases success
   | @usub m n a b leftSupported rightSupported ia ib =>
     cases ea : a.eval ctx values with
