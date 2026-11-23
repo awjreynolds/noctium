@@ -1,5 +1,6 @@
 #![cfg(feature = "zkir-321")]
 
+use anyhow::Context;
 use base_crypto::hash::HashOutput;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
@@ -72,13 +73,6 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         ("amount".into(), json!("7")),
         ("expected".into(), json!("7")),
     ]);
-    let caller_execution = prepare(
-        &caller_plan,
-        &forward_inputs,
-        &initial_caller,
-        &INITIAL_PARAMETERS,
-        caller,
-    )?;
     let assemble = |source: &noctium_runtime::Execution,
                     circuit: &IrSource,
                     route: &ChargedState<Db>,
@@ -109,20 +103,6 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
     };
 
     let update = EntryPointBuf(b"update".to_vec());
-    let composed = assemble(
-        &caller_execution,
-        &caller_circuit,
-        &initial_caller,
-        target,
-        &target_execution,
-        update.clone(),
-    )?;
-    let mut calls = composed.calls();
-    let parent = calls.next().unwrap();
-    let child = calls.next().unwrap();
-    assert!(parent.calls(child));
-    assert_eq!(child.address, target);
-
     let other_execution = prepare(
         &target_plan,
         &target_inputs,
@@ -130,61 +110,88 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         &INITIAL_PARAMETERS,
         other_target,
     )?;
-    assert!(
-        assemble(
-            &caller_execution,
-            &caller_circuit,
-            &initial_caller,
-            other_target,
-            &other_execution,
-            update.clone(),
-        )
-        .is_err()
-    );
-    assert!(
-        assemble(
-            &caller_execution,
-            &caller_circuit,
-            &initial_caller,
-            target,
-            &target_execution,
-            EntryPointBuf(b"other".to_vec()),
-        )
-        .is_err()
-    );
-    let (push_plan, push_circuit) = load("ListCaller.addRoute")?;
-    let (list_plan, list_circuit) = load("ListCaller.forward")?;
-    let empty_list = create_state(&push_plan, &BTreeMap::from([("routes".into(), json!([]))]))?;
-    let push = prepare(
-        &push_plan,
-        &BTreeMap::from([(
-            "replacement".into(),
-            json!({"kind": "bytes", "values": target.0.0}),
-        )]),
-        &empty_list,
-        &INITIAL_PARAMETERS,
-        caller,
-    )?;
-    check(&push, &push_circuit)?;
-    let stored_list = &push.after.state;
-    let list_execution = prepare(
-        &list_plan,
-        &forward_inputs,
-        stored_list,
-        &INITIAL_PARAMETERS,
-        caller,
-    )?;
-    let composed = assemble(
-        &list_execution,
-        &list_circuit,
-        stored_list,
-        target,
-        &target_execution,
-        update,
-    )?;
-    let calls = composed.calls().collect::<Vec<_>>();
-    assert_eq!(calls.len(), 2);
-    assert!(calls[0].calls(calls[1]));
-    assert_eq!(calls[1].address, target);
+    let assert_route =
+        |forward: &Plan, circuit: &IrSource, stored: &ChargedState<Db>| -> anyhow::Result<()> {
+            let execution = prepare(
+                forward,
+                &forward_inputs,
+                stored,
+                &INITIAL_PARAMETERS,
+                caller,
+            )?;
+            let composed = assemble(
+                &execution,
+                circuit,
+                stored,
+                target,
+                &target_execution,
+                update.clone(),
+            )?;
+            let calls = composed.calls().collect::<Vec<_>>();
+            assert_eq!(calls.len(), 2);
+            assert!(calls[0].calls(calls[1]));
+            assert_eq!(calls[1].address, target);
+            assert!(
+                assemble(
+                    &execution,
+                    circuit,
+                    stored,
+                    other_target,
+                    &other_execution,
+                    update.clone(),
+                )
+                .is_err()
+            );
+            assert!(
+                assemble(
+                    &execution,
+                    circuit,
+                    stored,
+                    target,
+                    &target_execution,
+                    EntryPointBuf(b"other".to_vec()),
+                )
+                .is_err()
+            );
+            Ok(())
+        };
+
+    assert_route(&caller_plan, &caller_circuit, &initial_caller)?;
+
+    let empty_list = BTreeMap::from([("routes".into(), json!([]))]);
+    let record_cell = BTreeMap::from([(
+        "route".into(),
+        json!({
+            "target": {"kind": "bytes", "values": other_target.0.0},
+            "enabled": false
+        }),
+    )]);
+    let inputs = BTreeMap::from([(
+        "replacement".into(),
+        json!({"kind": "bytes", "values": target.0.0}),
+    )]);
+    for (write, forward, initial) in [
+        ("ListCaller.addRoute", "ListCaller.forward", &empty_list),
+        (
+            "RecordCaller.setRoute",
+            "RecordCaller.forward",
+            &record_cell,
+        ),
+        (
+            "RecordListCaller.addRoute",
+            "RecordListCaller.forward",
+            &empty_list,
+        ),
+    ] {
+        let (write_plan, write_circuit) = load(write)?;
+        let (forward_plan, forward_circuit) = load(forward)?;
+        let state =
+            create_state(&write_plan, initial).with_context(|| format!("{write} initial state"))?;
+        let written = prepare(&write_plan, &inputs, &state, &INITIAL_PARAMETERS, caller)
+            .with_context(|| format!("{write} execution"))?;
+        check(&written, &write_circuit).with_context(|| format!("{write} relation"))?;
+        assert_route(&forward_plan, &forward_circuit, &written.after.state)
+            .with_context(|| format!("{forward} call assembly"))?;
+    }
     Ok(())
 }

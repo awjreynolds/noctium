@@ -2025,18 +2025,21 @@ private def checkedSourceValue (env : Bindings) (nominalEnv : CircuitNominalEnv)
   checkedCircuitSourceExpression env nominalEnv value target
 
 private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
-    (fields : List (String × Ty)) : CommandElabM (List (Ty × TSyntax `term)) := do
+    (fields : List (String × Ty)) (contractRefs : List (String × Name) := [])
+    (fieldRefs : List (String × Name) := []) : CommandElabM (List (Ty × TSyntax `term)) := do
   let `(nlleaves| fields($items:nlexpr,*)) := payload
     | throwErrorAt payload "ledger record payload expects fields(...)"
   let items := items.getElems.toList
   unless items.length == fields.length do
     throwErrorAt payload "ledger record field count does not match its checked layout"
-  (items.zip fields).mapM fun (item, _, ty) => do
-    pure (ty, ← checkedExpression env item ty)
+  (items.zip fields).mapM fun (item, field, ty) => do
+    let value ← checkedSourceValue env [] contractRefs item {type := ty, contractRef := fieldRefs.lookup field}
+    pure (ty, value)
 
 private def elaborateLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
-    (fields : List (String × Ty)) : CommandElabM (TSyntax `term) := do
-  let values ← (← checkedLedgerFieldValues env payload fields).mapM fun (ty, value) => do
+    (fields : List (String × Ty)) (contractRefs : List (String × Name) := [])
+    (fieldRefs : List (String × Name) := []) : CommandElabM (TSyntax `term) := do
+  let values ← (← checkedLedgerFieldValues env payload fields contractRefs fieldRefs).mapM fun (ty, value) => do
     `(Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value)
   let values := values.toArray
   `(([$values,*] : List Noctium.LedgerFieldExpr))
@@ -2382,6 +2385,7 @@ private structure EntryEffects where
   nominalUIntCells : List (String × NominalUIntType) := []
   contractRefBindings : List (String × Name) := []
   contractRefState : List (String × Name) := []
+  recordContractRefs : List (String × List (String × Name)) := []
   nominalBytes32Bindings : List (String × NominalBytes32) := []
   merkleLeafTypes : List (String × MerkleLeafType) := []
   optionalRecordHeads : List OptionalRecordHead := []
@@ -2640,7 +2644,7 @@ private def bindReadName (state : EntryEffects) (sourceName internalName : Strin
   pure {state with env}
 
 private def bindLedgerRecordFields (state : EntryEffects) (destination : TSyntax `ident)
-    (depth : Nat) (fields : List (String × Ty)) :
+    (depth : Nat) (fields : List (String × Ty)) (fieldRefs : List (String × Name) := []) :
     CommandElabM (EntryEffects × TSyntax `term) := do
   let mut updated := state
   let mut destinations := #[]
@@ -2654,6 +2658,8 @@ private def bindLedgerRecordFields (state : EntryEffects) (destination : TSyntax
       updated := {updated with nextLocal, usedLocalNames := candidate :: updated.usedLocalNames}
       pure candidate
     updated ← bindReadName updated sourceName internalName ty
+    let contractRefBindings := bindContractRef updated.contractRefBindings sourceName (fieldRefs.lookup field)
+    updated := {updated with contractRefBindings}
     destinations := destinations.push (← `(($(stringTerm internalName), $(← tyTerm ty))))
   pure (updated, ← `(([$destinations,*] : List (String × Noctium.Ty))))
 
@@ -2780,7 +2786,8 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
     let (readName, updated) ← freshReadName depth state destination
-    let (updated, destinations) ← bindLedgerRecordFields updated destination depth fields
+    let fieldRefs := (state.recordContractRefs.lookup storage.getId.toString).getD []
+    let (updated, destinations) ← bindLedgerRecordFields updated destination depth fields fieldRefs
     let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
     let term ← `(Noctium.Effect.readCompositePath
       $(stringTerm storage.getId.toString) $(stringTerm readName) $keys $typeTerm $destinations)
@@ -2852,7 +2859,9 @@ private def elaborateListHead (schema : List (String × StateKind))
       let contractRefBindings := bindContractRef updated.contractRefBindings destination.getId.toString interface
       let updated := {updated with contractRefBindings}
       pure (updated, ← `([($(stringTerm readName), $(← tyTerm ty))]))
-    | _ => bindLedgerRecordFields updated destination depth fields
+    | _ =>
+      let fieldRefs := (state.recordContractRefs.lookup storage.getId.toString).getD []
+      bindLedgerRecordFields updated destination depth fields fieldRefs
   let typeTerm ← listElementTypeTerm path type
   let term ← `(Noctium.Effect.listHead
     $(stringTerm storage.getId.toString) $(stringTerm readName) $keys $typeTerm $destinations)
@@ -2920,7 +2929,8 @@ private def elaborateListPushFront (schema : List (String × StateKind))
     | `(nlledgervalue| $items:nlleaves) => do
       if let .scalar _ := type then
         throwErrorAt payload "scalar List pushFront expects one value expression"
-      elaborateLedgerFieldValues state.env items fields
+      let fieldRefs := (state.recordContractRefs.lookup storage.getId.toString).getD []
+      elaborateLedgerFieldValues state.env items fields state.contractRefBindings fieldRefs
     | _ => throwErrorAt payload "expected a List element"
   let typeTerm ← listElementTypeTerm path type
   let term ← `(Noctium.Effect.listPushFront
@@ -3080,7 +3090,8 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
     else LedgerValueType.ledgerRecordWriteFields environment type) with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
-  let valueList ← elaborateLedgerFieldValues state.env payload fields
+  let fieldRefs := (state.recordContractRefs.lookup storage.getId.toString).getD []
+  let valueList ← elaborateLedgerFieldValues state.env payload fields state.contractRefBindings fieldRefs
   let pathTerm ← pathKeysTerm path
   let typeTerm ← match type with
     | .structure id => `(Noctium.Types.CompositeType.structure $(stringTerm id))
@@ -4730,10 +4741,10 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
   pure state
 
 private def readCompositeField (field : TSyntax `nlcompositefield) :
-    CommandElabM (String × Ty) := do
+    CommandElabM (String × CircuitSourceType) := do
   let `(nlcompositefield| $fieldName:ident : $fieldType:nltype) := field
     | throwErrorAt field "unsupported composite record field"
-  pure (fieldName.getId.toString, ← readTy fieldType)
+  pure (fieldName.getId.toString, ← readCircuitSourceType fieldType)
 
 private partial def readMerkleCompositeField (rootId path : String)
     (field : TSyntax `nlmerkleafield) :
@@ -4770,14 +4781,19 @@ private partial def readMerkleCompositeField (rootId path : String)
     pure (parent, declaration :: nestedDeclarations.toList, leafFields.toList)
   | _ => throwErrorAt field "expected a scalar or nested struct MerkleTree field"
 
-private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
+private def elaborateNamedRecordWithRefs (contractName : Name) (record : TSyntax `ident)
     (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax) :
-    CommandElabM (Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) := do
+    CommandElabM ((Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) ×
+      List (String × Name)) := do
   let typeId := contractName.toString ++ "." ++ record.getId.toString
   let mut fieldTerms : Array (TSyntax `term) := #[]
   let mut fieldValues : List Noctium.Types.Field := []
+  let mut contractRefs : List (String × Name) := []
   for field in recordFields do
-    let (fieldName, fieldTy) ← readCompositeField field
+    let (fieldName, sourceType) ← readCompositeField field
+    let fieldTy := sourceType.type
+    if let some interface := sourceType.contractRef then
+      contractRefs := (fieldName, interface) :: contractRefs
     fieldValues := fieldValues ++ [{name := fieldName, type := .scalar fieldTy}]
     let fieldTypeTerm ← `(Noctium.Types.CompositeType.scalar $(← tyTerm fieldTy))
     let fieldSpan ← spanTerm field
@@ -4788,7 +4804,15 @@ private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
   let compositeType := Types.CompositeType.structure typeId
   let compositeTypeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm typeId))
   let environment : Types.CompositeEnv := {structures := [{id := typeId, fields := fieldValues}]}
-  pure (environment, compositeType, environmentTerm, compositeTypeTerm)
+  pure ((environment, compositeType, environmentTerm, compositeTypeTerm), contractRefs)
+
+private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
+    (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax) :
+    CommandElabM (Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) := do
+  let (layout, refs) ← elaborateNamedRecordWithRefs contractName record recordFields owner
+  unless refs.isEmpty do
+    throwErrorAt owner "typed contract reference fields require a root record Cell or List"
+  pure layout
 
 private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy : Ty) :
     CommandElabM (StateKind × TSyntax `term) := do
@@ -5126,6 +5150,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
     let mut schema : List (String × StateKind) := []
     let mut nominalUIntCells : List (String × NominalUIntType) := []
     let mut contractRefState : List (String × Name) := []
+    let mut recordContractRefs : List (String × List (String × Name)) := []
     let mut merkleLeafTypes : List (String × MerkleLeafType) := []
     let mut concreteSchema : List StateDecl := []
     let mut stateDeclarations : Array (TSyntax `nlstate) := #[]
@@ -5192,8 +5217,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+            elaborateNamedRecordWithRefs contractName record recordFields state
+          if !fieldRefs.isEmpty then
+            recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
           match LedgerValueType.cellRecordFields environment compositeType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
@@ -5419,8 +5446,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "unsupported recursive List state declaration"
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+            elaborateNamedRecordWithRefs contractName record recordFields state
+          if !fieldRefs.isEmpty then
+            recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
           let valueSchema := LedgerValueType.«list» environment compositeType
           let valueTerm ← `(Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
@@ -5556,6 +5585,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           nominalUIntCells := nominalUIntCells
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
+          recordContractRefs := recordContractRefs
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs
@@ -5587,6 +5617,7 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           nominalUIntCells := nominalUIntCells
           contractRefBindings := info.contractRefBindings
           contractRefState := contractRefState
+          recordContractRefs := recordContractRefs
           merkleLeafTypes := merkleLeafTypes
           usedLocalNames := reserved
           nominalBytes32Bindings := info.nominalBytes32Outputs

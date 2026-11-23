@@ -63,6 +63,50 @@ noctium_contract TypedRefListCaller where
   end
 end
 
+noctium_contract TypedRefRecordCaller where
+  cell route : struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry setRoute uses typedRefRotateInputs where
+    write route := fields(nextRoute, true)
+  end
+  entry forward uses typedRefForwardInputs where
+    read route as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+noctium_contract TypedRefRecordListCaller where
+  list routes : struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry addRoute uses typedRefRotateInputs where
+    pushFront routes := fields(nextRoute, true)
+  end
+  entry forward uses typedRefForwardInputs where
+    head routes as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract WrongTypedRefRecord where
+  cell route : struct Route {
+    target : ContractRef TypedRefOther
+    enabled : Bool
+  }
+  entry setRoute uses typedRefRotateInputs where
+    write route := fields(nextRoute, true)
+  end
+end
+
 noctium_circuit typedRefPrivateTarget where
   private target : ContractRef TypedRefUpdate
   let destination : ContractRef TypedRefUpdate := copyValue(target)
