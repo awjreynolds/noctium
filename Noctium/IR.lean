@@ -987,10 +987,11 @@ inductive Effect where
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient : Expr (.bytes 32)) (keys : List PathKey)
   /-- Insert a transaction-booked coin under an explicit Bytes32 key in a
-  root Map with the fixed qualified coin record value. -/
+  root Map or one-level nested Bytes32-keyed Map with the fixed qualified
+  coin record value. -/
   | insertShieldedCoinMap (state : String) (key nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
-      (recipient : Expr (.bytes 32))
+      (recipient : Expr (.bytes 32)) (keys : List PathKey)
   /-- Store a coin whose self-recipient commitment is already booked in the
   current transaction. The runtime obtains its Ledger index from context. -/
   | writeShieldedCoinCell (state : String) (nonce color : Expr (.bytes 32))
@@ -1689,12 +1690,22 @@ private def validateQualifiedCoinSetTarget (decls : List StateDecl) (state : Str
       throw s!"qualified coin insertion requires a root record Set or one-level Bytes32-keyed nested record Set '{state}'"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
 
-private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String) :
-    Except String Unit := do
+private def validateQualifiedCoinMapTarget (decls : List StateDecl) (state : String)
+    (keys : List PathKey) : Except String Unit := do
   let some declaration := decls.find? (·.name == state)
     | throw s!"unknown qualified shielded coin Map '{state}'"
-  let .tree (.map (.bytes 32) (.composite environment recordType)) := declaration.kind
-    | throw s!"qualified coin insertion requires a root Bytes32 Map with a record value '{state}'"
+  let .tree schema := declaration.kind
+    | throw s!"qualified coin insertion requires a root Bytes32 Map or one-level nested owner Map '{state}'"
+  match keys with
+  | [] => pure ()
+  | [key] =>
+    unless key.ty == .bytes 32 do
+      throw s!"qualified coin insertion requires a Bytes32 owner key in '{state}'"
+  | _ =>
+    throw s!"qualified coin insertion supports only a root Map or one Bytes32 owner key in '{state}'"
+  let selected ← if keys.isEmpty then pure schema else schema.resolvePath keys
+  let .map (.bytes 32) (.composite environment recordType) := selected
+    | throw s!"qualified coin insertion requires a root Bytes32 Map or a one-level nested Bytes32-keyed owner Map with a record value '{state}'"
   discard (LedgerValueType.shieldedCoinRecordFields environment recordType)
 
 private def validateCounterEffect (decls : List StateDecl) (state : String)
@@ -2130,9 +2141,10 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         isContract.validate caps env
         recipient.validate caps env
         pure []
-      | .insertShieldedCoinMap state key nonce color amount isContract recipient => do
+      | .insertShieldedCoinMap state key nonce color amount isContract recipient keys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        validateQualifiedCoinMapTarget decls state
+        validateQualifiedCoinMapTarget decls state keys
+        for pathKey in keys do pathKey.validate caps env
         key.validate caps env
         nonce.validate caps env
         color.validate caps env

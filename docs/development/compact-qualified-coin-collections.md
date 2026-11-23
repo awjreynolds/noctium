@@ -76,8 +76,15 @@ the native relation check. The pinned ZKIR tool measured K13 and 6,856 rows.
 [Lean fixture](../../tests/BookedCoinMap.lean) ·
 [Compact fixture and runner](../../tests/compact/qualified-coin-collections.mjs)
 
-This fixture covers a root Map in a native query context. Nested paths and
-finalized independent-key calls remain open.
+The nested fixture selects one existing Bytes32 owner before inserting or
+replacing the inner key. Both runtimes retain the assigned index and leave the
+other owner's Map unchanged. Missing owners reject. The Impact suffix uses
+`0x71` for the owner path, `0x37` for the context lookup and `0xa2` for cached
+reinsertion. A private owner requires explicit disclosure because the path
+appears in the public transcript. [Nested Lean fixture](../../tests/NestedBookedCoinMap.lean)
+
+These checks use a native query context. Deeper paths and finalized
+independent-key calls remain open.
 
 ## Funded nested Set and List
 
