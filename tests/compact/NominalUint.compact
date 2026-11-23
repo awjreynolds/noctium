@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+
+export new type Amount = Uint<8>;
+
+export pure circuit addAmount(left: Amount, right: Amount): Amount {
+  const sum: Amount = left + right;
+  return sum;
+}
+
+export pure circuit toUnderlying(value: Amount): Uint<8> {
+  return value as Uint<8>;
+}
+
+export pure circuit toAmount(value: Uint<16>): Amount {
+  return value as Amount;
+}

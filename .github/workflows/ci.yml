@@ -254,6 +254,7 @@ jobs:
           lake env lean tests/CurveDefaults.lean
           lake env lean tests/CompositeMaybe.lean
           lake env lean tests/CompositeMaybeInput.lean
+          lake env lean tests/NominalUInt.lean
           lake env lean tests/MaybeBytesCurves.lean
           lake env lean tests/CompositeEither.lean
           lake env lean tests/CompositeEitherInput.lean
