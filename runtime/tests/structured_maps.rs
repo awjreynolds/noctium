@@ -513,6 +513,129 @@ fn nested_record_key_map_reads_inserts_and_guarded_removes() -> anyhow::Result<(
 }
 
 #[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_NESTED_RECORD_MAP_RECORDS_DIR"]
+fn nested_record_key_map_reads_and_writes_typed_record_values() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(std::env::var(
+        "NOCTIUM_NESTED_RECORD_MAP_RECORDS_DIR",
+    )?);
+    let load = |entry| load_entrypoint(&directory, &format!("NestedRecordMapRecords.{entry}"));
+    let (initialize, initialize_relation) = load("initializeOwner")?;
+    let upsert = load("upsert")?;
+    let lookup = load("lookup")?;
+    let remove = load("removeMemo")?;
+    let mut state = create_state(&upsert.0, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let owner = |byte: u8| json!({"kind":"bytes", "values":vec![byte; 32]});
+    let owner_args = |owner_byte| BTreeMap::from([("owner".into(), owner(owner_byte))]);
+    for owner_byte in [1, 2] {
+        let step = prepare(
+            &initialize,
+            &owner_args(owner_byte),
+            &state,
+            parameters,
+            address,
+        )?;
+        assert_eq!(check(&step, &initialize_relation)?, step.activity_schedule);
+        state = step.after.state;
+    }
+    let key_args = |owner_byte, active, amount: u16| {
+        BTreeMap::from([
+            ("owner".into(), owner(owner_byte)),
+            ("active".into(), json!(active)),
+            ("amount".into(), json!(amount.to_string())),
+        ])
+    };
+    let run = |operation: &(Plan, IrSource), args: &BTreeMap<String, Json>, state: &ChargedState<Db>| {
+        let execution = prepare(&operation.0, args, state, parameters, address)?;
+        assert_eq!(check(&execution, &operation.1)?, execution.activity_schedule);
+        Ok::<_, anyhow::Error>(execution)
+    };
+
+    for (owner_byte, active, accepted, code) in [
+        (1, true, false, 7u16),
+        (1, false, false, 22),
+        (2, true, true, 99),
+    ] {
+        let mut args = key_args(owner_byte, active, 513);
+        args.insert("accepted".into(), json!(accepted));
+        args.insert("code".into(), json!(code.to_string()));
+        let step = run(&upsert, &args, &state)?;
+        let returns = step.returns_json();
+        assert_eq!(returns["presentBefore"], json!(false));
+        assert_eq!(returns["presentAfter"], json!(true));
+        assert_eq!(returns["storedAccepted"], json!(accepted));
+        assert_eq!(returns["storedCode"], json!(code.to_string()));
+        state = step.after.state;
+    }
+
+    let mut overwrite_args = key_args(1, true, 513);
+    overwrite_args.insert("accepted".into(), json!(true));
+    overwrite_args.insert("code".into(), json!("41"));
+    let overwrite = run(&upsert, &overwrite_args, &state)?;
+    assert_eq!(overwrite.returns_json()["presentBefore"], json!(true));
+    assert_eq!(overwrite.returns_json()["presentAfter"], json!(true));
+    assert_eq!(overwrite.returns_json()["storedAccepted"], json!(true));
+    assert_eq!(overwrite.returns_json()["storedCode"], json!("41"));
+    state = overwrite.after.state;
+
+    let lookup_args = |owner_byte, active, amount: u16, should_read| {
+        let mut args = key_args(owner_byte, active, amount);
+        args.insert("shouldRead".into(), json!(should_read));
+        args
+    };
+    for (owner_byte, active, accepted, code) in [
+        (1, true, true, 41u16),
+        (1, false, false, 22),
+        (2, true, true, 99),
+    ] {
+        let step = run(
+            &lookup,
+            &lookup_args(owner_byte, active, 513, true),
+            &state,
+        )?;
+        assert_eq!(step.returns_json()["present"], json!(true));
+        assert_eq!(step.returns_json()["storedAccepted"], json!(accepted));
+        assert_eq!(step.returns_json()["storedCode"], json!(code.to_string()));
+    }
+
+    let mut remove_args = key_args(1, false, 513);
+    remove_args.insert("removeIt".into(), json!(true));
+    let removed = run(&remove, &remove_args, &state)?;
+    assert_eq!(removed.returns_json()["presentBefore"], json!(true));
+    assert_eq!(removed.returns_json()["presentAfter"], json!(false));
+    state = removed.after.state;
+    let absent = run(
+        &lookup,
+        &lookup_args(1, false, 513, false),
+        &state,
+    )?;
+    assert_eq!(absent.returns_json()["present"], json!(false));
+    assert_eq!(absent.returns_json()["storedAccepted"], json!(false));
+    assert_eq!(absent.returns_json()["storedCode"], json!("0"));
+    for (owner_byte, accepted, code) in [(1, true, 41u16), (2, true, 99)] {
+        let retained = run(
+            &lookup,
+            &lookup_args(owner_byte, true, 513, true),
+            &state,
+        )?;
+        assert_eq!(retained.returns_json()["present"], json!(true));
+        assert_eq!(retained.returns_json()["storedAccepted"], json!(accepted));
+        assert_eq!(retained.returns_json()["storedCode"], json!(code.to_string()));
+    }
+
+    let miss = lookup_args(1, true, 514, false);
+    let absent = run(&lookup, &miss, &state)?;
+    assert_eq!(absent.returns_json()["present"], json!(false));
+    assert_eq!(absent.returns_json()["storedAccepted"], json!(false));
+    assert_eq!(absent.returns_json()["storedCode"], json!("0"));
+    let mut invalid_miss = miss;
+    invalid_miss.insert("shouldRead".into(), json!(true));
+    assert!(prepare(&lookup.0, &invalid_miss, &state, parameters, address).is_err());
+    Ok(())
+}
+
+#[test]
 fn structured_helper_binds_guarded_bytes32_map_effects_and_returns() {
     let plan: Plan = serde_json::from_str(PLAN).expect("source map plan parses");
     let circuit = IrSource::load(CIRCUIT).expect("source ZKIR parses");

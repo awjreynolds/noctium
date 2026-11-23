@@ -2990,7 +2990,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
     if let Some(record) = ordinary_record_key_schema(&parts[0]) {
         ensure!(
             depth <= 1,
-            "record-key Maps may only be root or one scalar Map level deep"
+            "record-key Maps may only be root or one Map level deep"
         );
         let value = parts[1]
             .as_object()
@@ -3002,10 +3002,6 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
                 "opaque Map values require a Bytes32 key"
             );
         } else if let Some(value_record) = value.get("composite") {
-            ensure!(
-                depth == 0,
-                "nested record-key Maps require scalar values"
-            );
             ensure!(
                 is_record_schema(value_record)
                     && !is_shielded_coin_record_schema(value_record),
@@ -3959,15 +3955,11 @@ fn indexed_record_collection_schema<'a>(
     if !keys.is_empty() {
         let selected = tree_schema_at_path(plan, slot, keys.len())?;
         if selected.get("map").is_some() {
-            return ordinary_record_map_schema_at_path(plan, slot, keys, true);
+            return ordinary_record_map_schema_at_path(plan, slot, keys, false);
         }
         return ordinary_record_set_schema_at_path(plan, slot, keys);
     }
     Ok(record_collection_key_schema(plan, slot))
-}
-
-fn ordinary_record_map_parts(plan: &Plan, slot: u32) -> Option<&[Json]> {
-    ordinary_record_map_parts_at_path(plan, slot, &[]).ok().flatten()
 }
 
 fn ordinary_record_map_parts_at_path<'a>(
@@ -4026,7 +4018,7 @@ fn record_removal_key_schema<'a>(
         return Ok(record_collection_key_schema(plan, slot));
     }
     if tree_schema_at_path(plan, slot, keys.len())?.get("map").is_some() {
-        ordinary_record_map_schema_at_path(plan, slot, keys, true)
+        ordinary_record_map_schema_at_path(plan, slot, keys, false)
     } else {
         ordinary_record_set_schema_at_path(plan, slot, keys)
     }
@@ -4114,8 +4106,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 ..
             } => {
                 ensure!(
-                    ordinary_record_map_schema_at_path(plan, *slot, keys, !keys.is_empty())?
-                        == Some(schema),
+                    ordinary_record_map_schema_at_path(plan, *slot, keys, false)? == Some(schema),
                     "record Map index differs from state schema"
                 );
                 let (read, read_guard) = plan
@@ -4269,7 +4260,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                                 plan,
                                 *slot,
                                 keys,
-                                !keys.is_empty(),
+                                false,
                             )? == Some(key_schema),
                             "record Map read key differs from state schema"
                         );

@@ -1048,14 +1048,14 @@ inductive Effect where
       (parentKeys : List PathKey)
   | readRecordMapComposite (state destination : String) (valueType : Types.CompositeType)
       (values : List LedgerFieldExpr)
-      (destinations : List (String × Ty))
+      (destinations : List (String × Ty)) (parentKeys : List PathKey)
   | memberRecordMap (state destination : String) (values : List LedgerFieldExpr)
       (parentKeys : List PathKey)
   | writeRecordMap (state : String) (values : List LedgerFieldExpr)
       (valueTy : Ty) (value : Expr valueTy) (parentKeys : List PathKey)
   | writeRecordMapComposite (state : String) (valueType : Types.CompositeType)
       (keyValues : List LedgerFieldExpr)
-      (valueValues : List LedgerFieldExpr)
+      (valueValues : List LedgerFieldExpr) (parentKeys : List PathKey)
   | removeRecordMap (state : String) (values : List LedgerFieldExpr)
       (parentKeys : List PathKey)
   | mapIsEmpty (state destination : String) (keys : List PathKey)
@@ -1629,25 +1629,23 @@ private def resolveAnyRecordMapKeyFields (decls : List StateDecl) (state : Strin
   pure fields
 
 private def resolveRecordMapCompositeKey (decls : List StateDecl) (state : String)
-    (values : List LedgerFieldExpr) : Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
-  let some declaration := decls.find? (·.name == state)
-    | throw s!"unknown record-key Map '{state}'"
-  let .tree (.recordMapComposite environment type _ _) := declaration.kind
-    | throw s!"state '{state}' is not a composite-valued record-key Map"
+    (values : List LedgerFieldExpr) (parentKeys : List PathKey) :
+    Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
+  let selected ← resolveRecordMapSchema decls state parentKeys
+  let .recordMapComposite environment type _ _ := selected
+    | throw s!"path does not select a composite-valued record-key Map in '{state}'"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure (environment, type, fields)
 
 private def resolveRecordMapCompositeValue (decls : List StateDecl) (state : String)
-    (values : List LedgerFieldExpr) : Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
-  let some declaration := decls.find? (·.name == state)
-    | throw s!"unknown record-key Map '{state}'"
-  let .tree (.recordMapComposite _ _ environment type) := declaration.kind
-    | throw s!"state '{state}' is not a composite-valued record-key Map"
+    (parentKeys : List PathKey) :
+    Except String (Types.CompositeEnv × Types.CompositeType × List (String × Ty)) := do
+  let selected ← resolveRecordMapSchema decls state parentKeys
+  let .recordMapComposite _ _ environment type := selected
+    | throw s!"path does not select a composite-valued record-key Map in '{state}'"
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
-  unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
-    throw "record Map value field type mismatch"
   pure (environment, type, fields)
 
 private def resolveMerkleTreePath (decls : List StateDecl) (state : String)
@@ -1963,15 +1961,13 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         for value in values do match value with
           | .mk ty expression => ty.validate caps; expression.validate caps env
         pure [(destination, valueTy)]
-      | .readRecordMapComposite state _destination valueType values destinations => do
+      | .readRecordMapComposite state _destination valueType values destinations parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state values
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown composite-valued record-key Map '{state}'"
-        let .tree (.recordMapComposite _ _ valueEnvironment foundValueType) := declaration.kind
-          | throw s!"state '{state}' is not a composite-valued record-key Map"
-        let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment foundValueType
+        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state values parentKeys
+        let (_, foundValueType, valueFields) ←
+          resolveRecordMapCompositeValue decls state parentKeys
         unless foundValueType == valueType do throw "record Map value type mismatch"
+        for key in parentKeys do key.validate caps env
         for (_, ty) in keyFields ++ valueFields do ty.validate caps
         for value in values do match value with
           | .mk ty expression => ty.validate caps; expression.validate caps env
@@ -2200,11 +2196,15 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         valueTy.validate caps
         value.validate caps env
         pure []
-      | .writeRecordMapComposite state valueType keyValues valueValues => do
+      | .writeRecordMapComposite state valueType keyValues valueValues parentKeys => do
         if !caps.stateMaps then throw "target lacks state maps"
-        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state keyValues
-        let (_, foundValueType, valueFields) ← resolveRecordMapCompositeValue decls state valueValues
+        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state keyValues parentKeys
+        let (_, foundValueType, valueFields) ←
+          resolveRecordMapCompositeValue decls state parentKeys
         unless foundValueType == valueType do throw "record Map value type mismatch"
+        unless valueFields.map Prod.snd == valueValues.map LedgerFieldExpr.ty do
+          throw "record Map value field type mismatch"
+        for key in parentKeys do key.validate caps env
         for (_, ty) in keyFields ++ valueFields do ty.validate caps
         for field in keyValues ++ valueValues do match field with
           | .mk ty expression => ty.validate caps; expression.validate caps env
