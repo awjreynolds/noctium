@@ -52,6 +52,125 @@ private theorem key_fields (item : Json) (name : String) (bits : Nat)
   exact ⟨opcodeEq ▸ toOption_some opcode, toOption_some operand, starts,
     naturalField_of_getNat item "bits" _ (toOption_some width)⟩
 
+private theorem comparison_fields (item : Json) (left right output : String) (width : Nat)
+    (key : comparison? item = some ((left, right, width), output)) :
+    stringField item "op" = .ok "less_than" ∧
+      stringField item "a" = .ok left ∧ stringField item "b" = .ok right ∧
+      naturalField item "bits" = .ok width ∧ stringField item "output" = .ok output := by
+  simp only [comparison?, bind, Option.bind_eq_some_iff, option_guard_some, pure,
+    Option.some.injEq, Prod.mk.injEq] at key
+  obtain ⟨_, _, _, _, opcode, opcodeValue, _, opcodeEq, leftValue, leftFound,
+    rightValue, rightFound, widthValue, widthFound, outputValue, outputFound,
+    tupleMatches, outputMatches⟩ := key
+  have opcodeMatches : opcode = "less_than" := of_decide_eq_true opcodeEq
+  have opcodeField : stringField item "op" = .ok "less_than" := by
+    have decoded := toOption_some opcodeValue
+    rw [opcodeMatches] at decoded
+    simpa [stringField, Bind.bind] using decoded
+  have leftEq := tupleMatches.1
+  have rightEq := tupleMatches.2.1
+  have widthEq := tupleMatches.2.2
+  have outputEq := outputMatches
+  have leftField : stringField item "a" = .ok leftValue := by
+    simpa [stringField, Bind.bind] using toOption_some leftFound
+  have rightField : stringField item "b" = .ok rightValue := by
+    simpa [stringField, Bind.bind] using toOption_some rightFound
+  have widthField := naturalField_of_getNat item "bits" widthValue (toOption_some widthFound)
+  have outputField : stringField item "output" = .ok outputValue := by
+    simpa [stringField, Bind.bind] using toOption_some outputFound
+  rw [leftEq] at leftField
+  rw [rightEq] at rightField
+  rw [widthEq] at widthField
+  rw [outputEq] at outputField
+  exact ⟨opcodeField, leftField, rightField, widthField, outputField⟩
+
+private theorem decodeOperandField_from_string (item : Json) (field text : String)
+    (parsed : stringField item field = .ok text) :
+    decodeOperandField item field = decodeOperand (toJson text) := by
+  cases found : item.getObjVal? field with
+  | error message => simp [stringField, found, bind, Except.bind] at parsed
+  | ok value =>
+    cases value with
+    | str value =>
+      simp only [stringField, found, bind, Except.bind, Json.getStr?] at parsed
+      have same : value = text := by
+        change Except.ok value = Except.ok text at parsed
+        exact Except.ok.inj parsed
+      subst text
+      simp [decodeOperandField, found, toJson, bind, Except.bind]
+    | _ => simp [stringField, found, bind, Except.bind, Json.getStr?] at parsed
+
+private theorem comparison_decode_agrees (item : Json) (leftKey rightKey keyOutput : String)
+    (keyWidth : Nat) (left right : Operand) (decodedWidth : Nat) (decodedOutput : String)
+    (key : comparison? item = some ((leftKey, rightKey, keyWidth), keyOutput))
+    (decoded : decodeInstruction item =
+      .ok (.lessThan left right decodedWidth decodedOutput)) :
+    decodeOperand (toJson leftKey) = .ok left ∧
+      decodeOperand (toJson rightKey) = .ok right ∧
+      decodedWidth = keyWidth ∧ decodedOutput = keyOutput := by
+  obtain ⟨opcodeField, leftField, rightField, widthField, outputField⟩ :=
+    comparison_fields item leftKey rightKey keyOutput keyWidth key
+  have leftDecoded := decodeOperandField_from_string item "a" leftKey leftField
+  have rightDecoded := decodeOperandField_from_string item "b" rightKey rightField
+  unfold decodeInstruction at decoded
+  simp only [opcodeField, bind, Except.bind] at decoded
+  cases exact : exactFields item ["op", "a", "b", "bits", "output"] with
+  | error message => simp [exact] at decoded
+  | ok _ =>
+    simp only [exact, widthField] at decoded
+    cases bounded : ensure (0 < keyWidth && keyWidth ≤ ScalarPolicy.maxBits)
+        "unsupported native bit width" with
+    | error message => simp [bounded] at decoded
+    | ok _ =>
+      simp only [bounded, leftDecoded, rightDecoded, outputField] at decoded
+      cases leftValue : decodeOperand (toJson leftKey) with
+      | error message => simp [leftValue] at decoded
+      | ok decodedLeft =>
+        simp only [leftValue] at decoded
+        cases rightValue : decodeOperand (toJson rightKey) with
+        | error message => simp [rightValue] at decoded
+        | ok decodedRight =>
+          simp only [rightValue] at decoded
+          cases outputValid : ensure (validIdentifier keyOutput) "invalid native SSA definition" with
+          | error message => simp [outputValid] at decoded
+          | ok _ =>
+            simp only [outputValid, pure, Except.pure] at decoded
+            simp only [Except.ok.injEq, Instruction.lessThan.injEq] at decoded
+            rcases decoded with ⟨leftEq, rightEq, widthEq, outputEq⟩
+            subst left
+            subst right
+            subst decodedWidth
+            subst decodedOutput
+            exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Successful native decoding of two equal comparison keys yields the same
+ordered typed operands and width. Decoded output names follow their respective
+recognized JSON fields, so this statement also permits distinct destinations.
+The raw operand strings pass through `decodeOperand`, including immediates. -/
+theorem equalComparisonKeys_decode_agree (earlier later : Json)
+    (leftKey rightKey : String) (width : Nat) (firstOutput duplicateOutput : String)
+    (left₁ right₁ : Operand) (width₁ : Nat) (output₁ : String)
+    (left₂ right₂ : Operand) (width₂ : Nat) (output₂ : String)
+    (earlierKey : comparison? earlier = some ((leftKey, rightKey, width), firstOutput))
+    (laterKey : comparison? later = some ((leftKey, rightKey, width), duplicateOutput))
+    (decoded₁ : decodeInstruction earlier =
+      .ok (.lessThan left₁ right₁ width₁ output₁))
+    (decoded₂ : decodeInstruction later =
+      .ok (.lessThan left₂ right₂ width₂ output₂)) :
+    left₁ = left₂ ∧ right₁ = right₂ ∧ width₁ = width ∧ width₂ = width ∧
+      output₁ = firstOutput ∧ output₂ = duplicateOutput := by
+  obtain ⟨decodeLeft₁, decodeRight₁, widthEq₁, outputEq₁⟩ :=
+    comparison_decode_agrees earlier leftKey rightKey firstOutput width
+      left₁ right₁ width₁ output₁ earlierKey decoded₁
+  obtain ⟨decodeLeft₂, decodeRight₂, widthEq₂, outputEq₂⟩ :=
+    comparison_decode_agrees later leftKey rightKey duplicateOutput width
+      left₂ right₂ width₂ output₂ laterKey decoded₂
+  have leftEq : left₁ = left₂ :=
+    Except.ok.inj (decodeLeft₁.symm.trans decodeLeft₂)
+  have rightEq : right₁ = right₂ :=
+    Except.ok.inj (decodeRight₁.symm.trans decodeRight₂)
+  exact ⟨leftEq, rightEq, widthEq₁, widthEq₂, outputEq₁, outputEq₂⟩
+
 private theorem key_instruction (item : Json) (instruction : Instruction) (name : String)
     (bits : Nat) (key : key? item = some (name, bits))
     (decoded : decodeInstruction item = .ok instruction) :
@@ -286,6 +405,45 @@ theorem reuseComparisons_pair_bridge_with_ranges (hash : Hash) (witness : Assign
   exact lessThanCopyPreserves hash witness left right width firstOutput duplicateOutput
     (by simpa [Instruction.Holds] using leftRange)
     (by simpa [Instruction.Holds] using rightRange)
+
+/-- Derive the shared typed operands and width from successful JSON decoding
+and equal optimizer keys, then apply the range-constrained pair bridge. -/
+theorem reuseComparisons_pair_bridge_from_decodes (hash : Hash) (witness : Assignment)
+    (earlier later : Json) (leftKey rightKey : String) (width : Nat)
+    (firstOutput duplicateOutput : String)
+    (left₁ right₁ : Operand) (width₁ : Nat) (output₁ : String)
+    (left₂ right₂ : Operand) (width₂ : Nat) (output₂ : String)
+    (earlierKey : comparison? earlier = some ((leftKey, rightKey, width), firstOutput))
+    (laterKey : comparison? later = some ((leftKey, rightKey, width), duplicateOutput))
+    (earlierDecoded : decodeInstruction earlier =
+      .ok (.lessThan left₁ right₁ width₁ output₁))
+    (laterDecoded : decodeInstruction later =
+      .ok (.lessThan left₂ right₂ width₂ output₂))
+    (leftRange : Instruction.Holds hash witness (.bits left₁ width))
+    (rightRange : Instruction.Holds hash witness (.bits right₁ width)) :
+    reuseComparisons #[earlier, later] =
+        #[earlier, comparisonCopyJson firstOutput duplicateOutput] ∧
+      (match decodeInstruction earlier, decodeInstruction later with
+      | .ok first, .ok second =>
+          (first.Holds hash witness ∧ copyHolds witness firstOutput duplicateOutput) ↔
+          (first.Holds hash witness ∧ second.Holds hash witness)
+      | _, _ => False) := by
+  obtain ⟨leftEq, rightEq, widthEq₁, widthEq₂, outputEq₁, outputEq₂⟩ :=
+    equalComparisonKeys_decode_agree earlier later leftKey rightKey width
+      firstOutput duplicateOutput left₁ right₁ width₁ output₁ left₂ right₂ width₂ output₂
+      earlierKey laterKey earlierDecoded laterDecoded
+  have earlierCanonical : decodeInstruction earlier =
+      .ok (.lessThan left₁ right₁ width firstOutput) := by
+    rw [widthEq₁, outputEq₁] at earlierDecoded
+    exact earlierDecoded
+  have laterCanonical : decodeInstruction later =
+      .ok (.lessThan left₁ right₁ width duplicateOutput) := by
+    rw [widthEq₂, outputEq₂, ← leftEq, ← rightEq] at laterDecoded
+    exact laterDecoded
+  have bridge := reuseComparisons_pair_bridge_with_ranges hash witness
+    earlier later leftKey rightKey width firstOutput duplicateOutput left₁ right₁
+    earlierKey laterKey earlierCanonical laterCanonical leftRange rightRange
+  simpa only [earlierCanonical, laterCanonical] using bridge
 
 /-- The actual JSON range pass preserves decode success, ordered non-range
 instructions and field-level satisfaction for every assignment accepted or
