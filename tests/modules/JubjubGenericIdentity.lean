@@ -67,3 +67,20 @@ def jubjubGenericIdentityRequest : Noctium.Modules.Request := {
   arguments := []}
 
 noctium_module_contract JubjubGenericIdentity from jubjubGenericIdentityRequest
+
+def mismatchedJubjubRoot : Noctium.Modules.Definition := {
+  jubjubGenericIdentityRoot with
+  entrypoints := jubjubGenericIdentityRoot.entrypoints.map fun operation =>
+    if operation.name == "scalarIdentity" then
+      {operation with circuit := .importedMember "point" "identity"}
+    else operation
+}
+noctium_module from mismatchedJubjubRoot
+
+def mismatchedJubjubRequest : Noctium.Modules.Request := {
+  sourceName := `mismatchedJubjubRoot
+  arguments := []
+}
+/- error: type mismatch for 'result' -/
+#guard_msgs (substring := true) in
+noctium_module_contract MismatchedJubjubIdentity from mismatchedJubjubRequest

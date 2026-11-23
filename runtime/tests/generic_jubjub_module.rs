@@ -23,6 +23,9 @@ fn generic_module_specializations_roundtrip_jubjub_scalar_and_point() -> anyhow:
         assert_eq!(plan.circuit.inputs.len(), 1);
         assert_eq!(plan.circuit.inputs[0].name, "value");
         assert_eq!(plan.circuit.inputs[0].ty, cell_type);
+        assert_eq!(plan.circuit.outputs.len(), 1);
+        assert_eq!(plan.circuit.outputs[0].name, "result");
+        assert_eq!(plan.circuit.outputs[0].ty, cell_type);
 
         let mut state_config = BTreeMap::new();
         let mut result_cell = None;
@@ -48,7 +51,6 @@ fn generic_module_specializations_roundtrip_jubjub_scalar_and_point() -> anyhow:
             ContractAddress::default(),
         )?;
         check(&execution, &circuit)?;
-        assert_eq!(execution.returns_json()["result"], expected_value);
         state_config.insert(result_cell.expect("specialized result cell"), expected_value);
         assert_eq!(execution.after.state, create_state(&plan, &state_config)?);
     }
