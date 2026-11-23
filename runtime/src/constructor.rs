@@ -15,6 +15,8 @@ use storage::{arena::Sp, storage::HashMap};
 pub struct Constructor {
     pub parameters: Vec<Parameter>,
     pub initializers: Vec<Initializer>,
+    #[serde(default)]
+    pub actions: Vec<ConstructorAction>,
     #[serde(default, rename = "mapInserts")]
     pub map_inserts: Vec<MapInsert>,
     #[serde(default, rename = "setInserts")]
@@ -48,6 +50,23 @@ pub struct MapInsert {
     pub state: String,
     pub key: Expr,
     pub value: Expr,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ConstructorAction {
+    MapInsert {
+        state: String,
+        key: Expr,
+        value: Expr,
+        #[serde(default)]
+        guard: Option<Expr>,
+    },
+    InitializeCellFromMapMember {
+        state: String,
+        map: String,
+        key: Expr,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -277,28 +296,8 @@ fn apply_map_inserts(
     }
     let mut maps: BTreeMap<usize, ConstructorMap> = BTreeMap::new();
     for insert in inserts {
-        let (slot, declaration) = plan
-            .state
-            .iter()
-            .enumerate()
-            .find(|(_, declaration)| declaration.name == insert.state)
-            .ok_or_else(|| anyhow!("unknown constructor Map state"))?;
-        let (key_type, value_type) = flat_map_types(declaration)?
-            .ok_or_else(|| anyhow!("constructor Map insert requires a flat scalar Map"))?;
-        let key_value = evaluate(&insert.key, environment)?;
-        ensure!(
-            key_value.scalar_type() == key_type,
-            "constructor Map key type mismatch"
-        );
-        crate::validate_ledger_key_value(&key_type, &key_value)?;
-        let value = evaluate(&insert.value, environment)?;
-        ensure!(
-            value.scalar_type() == value_type,
-            "constructor Map value type mismatch"
-        );
-        value.validate()?;
-        let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
-        let value = crate::aligned_storage_cell(&value)?;
+        let (slot, key, value) =
+            evaluate_map_insert(plan, &insert.state, &insert.key, &insert.value, environment)?;
         let map = maps.entry(slot).or_insert_with(HashMap::new);
         *map = map.insert(key, StateValue::Cell(Sp::new(value)));
     }
@@ -311,6 +310,157 @@ fn apply_map_inserts(
         slots = slots
             .insert(slot, StateValue::Map(map))
             .ok_or_else(|| anyhow!("constructor Map slot is outside state"))?;
+    }
+    Ok(ChargedState::new(StateValue::Array(slots)))
+}
+
+fn flat_map_slot(plan: &Plan, name: &str) -> Result<(usize, ScalarType, ScalarType)> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor Map state"))?;
+    let (key_type, value_type) = flat_map_types(declaration)?
+        .ok_or_else(|| anyhow!("constructor Map insert requires a flat scalar Map"))?;
+    Ok((slot, key_type, value_type))
+}
+
+fn evaluate_map_insert(
+    plan: &Plan,
+    state: &str,
+    key: &Expr,
+    value: &Expr,
+    environment: &BTreeMap<String, Value>,
+) -> Result<(usize, AlignedValue, AlignedValue)> {
+    let (slot, key_type, value_type) = flat_map_slot(plan, state)?;
+    let key_value = evaluate(key, environment)?;
+    ensure!(
+        key_value.scalar_type() == key_type,
+        "constructor Map key type mismatch"
+    );
+    crate::validate_ledger_key_value(&key_type, &key_value)?;
+    let value = evaluate(value, environment)?;
+    ensure!(
+        value.scalar_type() == value_type,
+        "constructor Map value type mismatch"
+    );
+    value.validate()?;
+    Ok((
+        slot,
+        crate::aligned(&key_value, crate::key_alignment(&key_type))?,
+        crate::aligned_storage_cell(&value)?,
+    ))
+}
+
+fn validate_ordered_action_targets(
+    plan: &Plan,
+    actions: &[ConstructorAction],
+    initialized: &mut BTreeSet<String>,
+) -> Result<()> {
+    for action in actions {
+        match action {
+            ConstructorAction::MapInsert { state, .. } => {
+                flat_map_slot(plan, state)?;
+            }
+            ConstructorAction::InitializeCellFromMapMember { state, map, .. } => {
+                flat_map_slot(plan, map)?;
+                let declaration = plan
+                    .state
+                    .iter()
+                    .find(|declaration| declaration.name == *state)
+                    .ok_or_else(|| anyhow!("unknown constructor state cell"))?;
+                ensure!(
+                    declaration.sealed
+                        && declaration
+                            .kind
+                            .as_object()
+                            .is_some_and(|kind| kind.len() == 1)
+                        && declaration.kind.get("cell").and_then(Json::as_str) == Some("Bool"),
+                    "constructor Map membership initializer requires a sealed Bool cell"
+                );
+                ensure!(
+                    initialized.insert(state.clone()),
+                    "duplicate constructor initializer"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_ordered_actions(
+    plan: &Plan,
+    actions: &[ConstructorAction],
+    environment: &BTreeMap<String, Value>,
+    state: ChargedState<Db>,
+) -> Result<ChargedState<Db>> {
+    if actions.is_empty() {
+        return Ok(state);
+    }
+    let StateValue::Array(root) = state.get_ref() else {
+        bail!("constructor state requires array storage")
+    };
+    let mut slots = root.clone();
+    for action in actions {
+        match action {
+            ConstructorAction::MapInsert {
+                state: map_name,
+                key,
+                value,
+                guard,
+            } => {
+                if let Some(guard) = guard {
+                    let guard = evaluate(guard, environment)?;
+                    ensure!(
+                        guard.scalar_type() == ScalarType::Bool,
+                        "constructor Map insert guard must be Bool"
+                    );
+                    let Value::Bool(guard) = guard else {
+                        bail!("constructor Map insert guard must be Bool")
+                    };
+                    if !guard {
+                        continue;
+                    }
+                }
+                let (slot, key, value) =
+                    evaluate_map_insert(plan, map_name, key, value, environment)?;
+                let Some(StateValue::Map(map)) = slots.get(slot) else {
+                    bail!("constructor Map state requires map storage")
+                };
+                let map = map.insert(key, StateValue::Cell(Sp::new(value)));
+                slots = slots
+                    .insert(slot, StateValue::Map(map))
+                    .ok_or_else(|| anyhow!("constructor Map slot is outside state"))?;
+            }
+            ConstructorAction::InitializeCellFromMapMember {
+                state: cell_name,
+                map,
+                key,
+            } => {
+                let (map_slot, key_type, _) = flat_map_slot(plan, map)?;
+                let key_value = evaluate(key, environment)?;
+                ensure!(
+                    key_value.scalar_type() == key_type,
+                    "constructor Map key type mismatch"
+                );
+                crate::validate_ledger_key_value(&key_type, &key_value)?;
+                let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
+                let Some(StateValue::Map(entries)) = slots.get(map_slot) else {
+                    bail!("constructor Map state requires map storage")
+                };
+                let member = entries.get(&key).is_some();
+                let value = crate::aligned_storage_cell(&Value::Bool(member))?;
+                let cell_slot = plan
+                    .state
+                    .iter()
+                    .position(|declaration| declaration.name == *cell_name)
+                    .ok_or_else(|| anyhow!("unknown constructor state cell"))?;
+                slots = slots
+                    .insert(cell_slot, StateValue::Cell(Sp::new(value)))
+                    .ok_or_else(|| anyhow!("constructor cell slot is outside state"))?;
+            }
+        }
     }
     Ok(ChargedState::new(StateValue::Array(slots)))
 }
@@ -432,13 +582,18 @@ pub fn construct_state(
     let action_count = constructor
         .map_inserts
         .len()
-        .checked_add(constructor.counter_increments.len())
+        .checked_add(constructor.actions.len())
+        .and_then(|count| count.checked_add(constructor.counter_increments.len()))
         .and_then(|count| count.checked_add(constructor.list_pushes.len()))
         .and_then(|count| count.checked_add(constructor.set_inserts.len()))
         .ok_or_else(|| anyhow!("too many constructor collection actions"))?;
     ensure!(
         action_count <= 64,
         "too many constructor collection actions"
+    );
+    ensure!(
+        constructor.actions.is_empty() || constructor.map_inserts.is_empty(),
+        "ordered constructor actions cannot be mixed with legacy Map inserts"
     );
     for declaration in &plan.state {
         if declaration.kind.get("map").is_some() {
@@ -494,7 +649,7 @@ pub fn construct_state(
     let mut initialized = BTreeSet::new();
     for initializer in &constructor.initializers {
         ensure!(
-            initialized.insert(initializer.state.as_str()),
+            initialized.insert(initializer.state.clone()),
             "duplicate constructor initializer"
         );
         let declaration = plan
@@ -540,12 +695,12 @@ pub fn construct_state(
         };
         config.insert(initializer.state.clone(), value);
     }
+    validate_ordered_action_targets(plan, &constructor.actions, &mut initialized)?;
     for declaration in &plan.state {
         if declaration.sealed && declaration.kind.get("map").is_none() {
-            let collection_default =
-                constructor_counter(declaration)
-                    || flat_scalar_list_type(declaration)?.is_some()
-                    || root_scalar_set_type(declaration)?.is_some();
+            let collection_default = constructor_counter(declaration)
+                || flat_scalar_list_type(declaration)?.is_some()
+                || root_scalar_set_type(declaration)?.is_some();
             if collection_default {
                 continue;
             }
@@ -561,7 +716,11 @@ pub fn construct_state(
         config.insert(state, json!(total.to_string()));
     }
     let state = create_state(plan, &config)?;
-    let state = apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)?;
+    let state = if constructor.actions.is_empty() {
+        apply_map_inserts(plan, &constructor.map_inserts, &scalars, state)?
+    } else {
+        apply_ordered_actions(plan, &constructor.actions, &scalars, state)?
+    };
     let state = apply_list_pushes(plan, &constructor.list_pushes, &scalars, state)?;
     apply_set_inserts(plan, &constructor.set_inserts, &scalars, state)
 }

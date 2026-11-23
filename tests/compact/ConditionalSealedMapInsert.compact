@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export sealed ledger seeded: Map<Field, Field>;
+export sealed ledger present: Boolean;
+
+constructor(key: Field, enabled: Boolean) {
+  if (disclose(enabled)) {
+    seeded.insert(disclose(key), 41 as Field);
+  }
+  present = seeded.member(disclose(key));
+}
+
+export circuit inspect(key: Field): [Boolean, Boolean] {
+  return [seeded.member(disclose(key)), present];
+}
