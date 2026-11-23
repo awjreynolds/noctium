@@ -110,53 +110,55 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         &INITIAL_PARAMETERS,
         other_target,
     )?;
-    let assert_route =
-        |forward: &Plan, circuit: &IrSource, stored: &ChargedState<Db>| -> anyhow::Result<()> {
-            let execution = prepare(
-                forward,
-                &forward_inputs,
+    let assert_route = |forward: &Plan,
+                        circuit: &IrSource,
+                        stored: &ChargedState<Db>,
+                        inputs|
+     -> anyhow::Result<()> {
+        let execution = prepare(forward, inputs, stored, &INITIAL_PARAMETERS, caller)?;
+        let composed = assemble(
+            &execution,
+            circuit,
+            stored,
+            target,
+            &target_execution,
+            update.clone(),
+        )?;
+        let calls = composed.calls().collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].calls(calls[1]));
+        assert_eq!(calls[1].address, target);
+        assert!(
+            assemble(
+                &execution,
+                circuit,
                 stored,
-                &INITIAL_PARAMETERS,
-                caller,
-            )?;
-            let composed = assemble(
+                other_target,
+                &other_execution,
+                update.clone(),
+            )
+            .is_err()
+        );
+        assert!(
+            assemble(
                 &execution,
                 circuit,
                 stored,
                 target,
                 &target_execution,
-                update.clone(),
-            )?;
-            let calls = composed.calls().collect::<Vec<_>>();
-            assert_eq!(calls.len(), 2);
-            assert!(calls[0].calls(calls[1]));
-            assert_eq!(calls[1].address, target);
-            assert!(
-                assemble(
-                    &execution,
-                    circuit,
-                    stored,
-                    other_target,
-                    &other_execution,
-                    update.clone(),
-                )
-                .is_err()
-            );
-            assert!(
-                assemble(
-                    &execution,
-                    circuit,
-                    stored,
-                    target,
-                    &target_execution,
-                    EntryPointBuf(b"other".to_vec()),
-                )
-                .is_err()
-            );
-            Ok(())
-        };
+                EntryPointBuf(b"other".to_vec()),
+            )
+            .is_err()
+        );
+        Ok(())
+    };
 
-    assert_route(&caller_plan, &caller_circuit, &initial_caller)?;
+    assert_route(
+        &caller_plan,
+        &caller_circuit,
+        &initial_caller,
+        &forward_inputs,
+    )?;
 
     let empty_list = BTreeMap::from([("routes".into(), json!([]))]);
     let record_cell = BTreeMap::from([(
@@ -190,8 +192,83 @@ fn typed_contract_reference_routes_to_the_stored_target_and_selector() -> anyhow
         let written = prepare(&write_plan, &inputs, &state, &INITIAL_PARAMETERS, caller)
             .with_context(|| format!("{write} execution"))?;
         check(&written, &write_circuit).with_context(|| format!("{write} relation"))?;
-        assert_route(&forward_plan, &forward_circuit, &written.after.state)
-            .with_context(|| format!("{forward} call assembly"))?;
+        assert_route(
+            &forward_plan,
+            &forward_circuit,
+            &written.after.state,
+            &forward_inputs,
+        )
+        .with_context(|| format!("{forward} call assembly"))?;
+    }
+
+    let owner = json!({"kind": "bytes", "values": ([1u8; 32])});
+    let list_owner_inputs = BTreeMap::from([("owner".into(), owner.clone())]);
+    let mut nested_write_inputs = inputs;
+    nested_write_inputs.insert("owner".into(), owner.clone());
+    let mut nested_call_inputs = forward_inputs;
+    nested_call_inputs.insert("owner".into(), owner);
+    let mut missing_owner_inputs = nested_call_inputs.clone();
+    missing_owner_inputs.insert(
+        "owner".into(),
+        json!({"kind": "bytes", "values": ([2u8; 32])}),
+    );
+    for (init, write, forward) in [
+        (
+            None,
+            "NestedMapCaller.insertRoute",
+            "NestedMapCaller.forward",
+        ),
+        (
+            Some("NestedListCaller.initializeOwner"),
+            "NestedListCaller.addRoute",
+            "NestedListCaller.forward",
+        ),
+    ] {
+        let (write_plan, write_circuit) = load(write)?;
+        let (forward_plan, forward_circuit) = load(forward)?;
+        let state = create_state(&write_plan, &empty_list)?;
+        let state = if let Some(init) = init {
+            let (plan, circuit) = load(init)?;
+            let initialized = prepare(
+                &plan,
+                &list_owner_inputs,
+                &state,
+                &INITIAL_PARAMETERS,
+                caller,
+            )
+            .with_context(|| format!("{init} execution"))?;
+            check(&initialized, &circuit).with_context(|| format!("{init} relation"))?;
+            initialized.after.state
+        } else {
+            state
+        };
+        let written = prepare(
+            &write_plan,
+            &nested_write_inputs,
+            &state,
+            &INITIAL_PARAMETERS,
+            caller,
+        )
+        .with_context(|| format!("{write} execution"))?;
+        check(&written, &write_circuit).with_context(|| format!("{write} relation"))?;
+        assert_route(
+            &forward_plan,
+            &forward_circuit,
+            &written.after.state,
+            &nested_call_inputs,
+        )
+        .with_context(|| format!("{forward} call assembly"))?;
+        assert!(
+            prepare(
+                &forward_plan,
+                &missing_owner_inputs,
+                &written.after.state,
+                &INITIAL_PARAMETERS,
+                caller,
+            )
+            .is_err(),
+            "{forward} accepted a missing owner"
+        );
     }
 
     let (echo_target_plan, echo_target_circuit) = load("EchoTarget.echo")?;

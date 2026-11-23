@@ -5480,8 +5480,10 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| tree $id:ident : $key:nltype => struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+            elaborateNamedRecordWithRefs contractName record recordFields state
+          if !fieldRefs.isEmpty then
+            recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
           let valueSchema := LedgerValueType.map keyTy (.composite environment compositeType)
           let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
             (Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm))
@@ -5614,14 +5616,18 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         | `(nlstate| tree $id:ident : $key:nltype => $listKind:ident struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
           if listKind.getId.toString == "List" then
+            let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldRefs) ←
+              elaborateNamedRecordWithRefs contractName record recordFields state
+            if !fieldRefs.isEmpty then
+              recordContractRefs := (id.getId.toString, fieldRefs) :: recordContractRefs
             let valueSchema := LedgerValueType.map keyTy (.«list» environment compositeType)
             let valueTerm ← `(Noctium.LedgerValueType.map $(← tyTerm keyTy)
               (Noctium.LedgerValueType.«list» $environmentTerm $compositeTypeTerm))
             pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
           else if listKind.getId.toString == "Set" then
+            let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
+              elaborateNamedRecord contractName record recordFields state
             let (valueSchema, valueTerm) ← nestedRecordSetSchema keyTy environment compositeType
               environmentTerm compositeTypeTerm state
             pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))

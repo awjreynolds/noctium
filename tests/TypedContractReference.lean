@@ -203,6 +203,27 @@ noctium_circuit typedRefRotateInputs where
   output nextRoute : ContractRef TypedRefUpdate := disclose(replacement)
 end
 
+noctium_circuit typedRefNestedInsertInputs where
+  private owner : Bytes32
+  private replacement : ContractRef TypedRefUpdate
+end
+
+noctium_circuit typedRefNestedOwnerInputs where
+  private owner : Bytes32
+end
+
+noctium_circuit typedRefNestedForwardInputs where
+  private owner : Bytes32
+  private opening : Native
+  private amount : UInt 8
+  private expected : UInt 8
+end
+
+noctium_circuit wrongTypedRefNestedInsertInputs where
+  private owner : Bytes32
+  private replacement : ContractRef TypedRefOther
+end
+
 noctium_contract TypedRefCaller where
   cell route : ContractRef TypedRefUpdate
   constructor(initial : ContractRef TypedRefUpdate) where
@@ -260,6 +281,72 @@ noctium_contract TypedRefRecordListCaller where
     require stored_enabled
     claimContractCall(stored_target,
       disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+noctium_contract TypedRefNestedMapCaller where
+  tree routes : Bytes32 => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses typedRefNestedInsertInputs arguments [owner, replacement] where
+    insert routes[disclose(owner)] := fields(disclose(replacement), true)
+  end
+  entry forward uses typedRefNestedForwardInputs arguments [owner, opening, amount, expected] where
+    read routes[disclose(owner)] as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+noctium_contract TypedRefNestedListCaller where
+  tree routes : Bytes32 => List struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry initializeOwner uses typedRefNestedOwnerInputs arguments [owner] where
+    member routes[disclose(owner)] as ownerPresent
+    when eq(ownerPresent, false) insertDefault routes[disclose(owner)]
+  end
+  entry addRoute uses typedRefNestedInsertInputs arguments [owner, replacement] where
+    pushFront routes[disclose(owner)] := fields(disclose(replacement), true)
+  end
+  entry forward uses typedRefNestedForwardInputs arguments [owner, opening, amount, expected] where
+    head routes[disclose(owner)] as routeHead
+    require routeHead_enabled
+    claimContractCall(routeHead_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+  entry forwardOptional uses typedRefNestedForwardInputs arguments [owner, opening, amount, expected] where
+    headOrDefault routes[disclose(owner)] as (routePresent, routeHead)
+    when routePresent require routeHead_enabled
+    when routePresent claimContractCall(routeHead_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract WrongTypedRefNestedMapCaller where
+  tree routes : Bytes32 => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses wrongTypedRefNestedInsertInputs arguments [owner, replacement] where
+    insert routes[disclose(owner)] := fields(disclose(replacement), true)
+  end
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract WrongTypedRefNestedListCaller where
+  tree routes : Bytes32 => List struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry addRoute uses wrongTypedRefNestedInsertInputs arguments [owner, replacement] where
+    pushFront routes[disclose(owner)] := fields(disclose(replacement), true)
   end
 end
 
