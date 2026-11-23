@@ -264,6 +264,20 @@ int32_t noctium_ledger_list_head(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Read the size of a pinned root or nested Map, Set, or List.
+   Use the same request fields and limits as noctium_ledger_list_head.
+   Map and Set sizes come from the selected native container. List size
+   validates the linked nodes, elements, and empty sentinel.
+   The result token owns copied public JSON:
+     {"abiVersion":1,"kind":"collectionSize","collection":"map","size":"2"}
+   Collection is map, set, or list. Size uses UInt64 decimal. A missing
+   enclosing Map, unsupported collection or malformed List returns an error. */
+int32_t noctium_ledger_collection_size(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 /* Read one UInt64 Counter from a pinned, canonical contract-state snapshot.
    Request UTF-8 JSON (unknown fields reject):
      {"abiVersion":1,"planSha256":"<lowercase SHA-256>",

@@ -794,6 +794,30 @@ fn list_head(
     }))
 }
 
+enum CollectionSizeSchema {
+    Map,
+    Set,
+    List(CollectionValueSchema),
+}
+
+fn collection_size(state: &StateValue<Db>, schema: CollectionSizeSchema) -> Result<Json, i32> {
+    let (collection, size) = match (schema, state) {
+        (CollectionSizeSchema::Map, StateValue::Map(map)) => ("map", map.size().to_string()),
+        (CollectionSizeSchema::Set, StateValue::Map(map)) => ("set", map.size().to_string()),
+        (CollectionSizeSchema::List(element), state) => {
+            let (_, length) = checked_list_entries(state, &element, 0, 0)?;
+            ("list", length.to_string())
+        }
+        _ => return Err(INVALID_ARGUMENT),
+    };
+    Ok(json!({
+        "abiVersion": 1,
+        "kind": "collectionSize",
+        "collection": collection,
+        "size": size
+    }))
+}
+
 /// # Safety
 /// Each input pointer must reference readable bytes for its declared length.
 /// `out_result` must point to writable storage for one `u64`.
@@ -1003,6 +1027,87 @@ pub unsafe extern "C" fn noctium_ledger_list_head(
             return Err(INVALID_ARGUMENT);
         };
         let result = list_head(&selected, &element)?;
+        let result =
+            native_ffi::service_public_bytes(serde_json::to_vec(&result).map_err(|_| INTERNAL)?)?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}
+
+/// Read the size of a typed Map, Set, or List from an authenticated, canonical state snapshot.
+/// The request, plan, and snapshot pointers follow the same safety contract as
+/// `noctium_ledger_collection_page`.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_collection_size(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: SnapshotReadRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if request.keys.len() > MAX_KEYS {
+            return Err(LIMIT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
+
+        let (final_schema, selected) =
+            typed_state_path(&plan.state, &state.data, &request.name, &keys)
+                .map_err(|_| INVALID_ARGUMENT)?;
+        let declaration = plan
+            .state
+            .iter()
+            .find(|declaration| declaration.name == request.name)
+            .ok_or(INVALID_ARGUMENT)?;
+        let size_schema = if declaration.kind.get("tree").is_some() {
+            crate::validate_tree_schema(final_schema, keys.len()).map_err(|_| INVALID_ARGUMENT)?;
+            if final_schema.get("map").is_some() {
+                CollectionSizeSchema::Map
+            } else if final_schema.get("set").is_some() {
+                CollectionSizeSchema::Set
+            } else if final_schema.get("list").is_some() {
+                let Some(CollectionSchema::List { element }) = collection_schema(final_schema)?
+                else {
+                    return Err(INVALID_ARGUMENT);
+                };
+                CollectionSizeSchema::List(element)
+            } else {
+                return Err(INVALID_ARGUMENT);
+            }
+        } else {
+            match collection_schema(final_schema)? {
+                Some(CollectionSchema::Map { .. }) => CollectionSizeSchema::Map,
+                Some(CollectionSchema::Set { .. }) => CollectionSizeSchema::Set,
+                Some(CollectionSchema::List { element }) => CollectionSizeSchema::List(element),
+                None => return Err(INVALID_ARGUMENT),
+            }
+        };
+        let result = collection_size(&selected, size_schema)?;
         let result =
             native_ffi::service_public_bytes(serde_json::to_vec(&result).map_err(|_| INTERNAL)?)?;
         unsafe { out_result.write(result) };
