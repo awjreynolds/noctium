@@ -224,6 +224,35 @@ noctium_circuit wrongTypedRefNestedInsertInputs where
   private replacement : ContractRef TypedRefOther
 end
 
+noctium_circuit typedRefDeepMapInitializeInputs where
+  private owner : Bytes32
+end
+
+noctium_circuit typedRefDeepListInitializeInputs where
+  private owner : Bytes32
+  private bucket : Bytes32
+end
+
+noctium_circuit typedRefDeepInsertInputs where
+  private owner : Bytes32
+  private bucket : Bytes32
+  private replacement : ContractRef TypedRefUpdate
+end
+
+noctium_circuit typedRefDeepForwardInputs where
+  private owner : Bytes32
+  private bucket : Bytes32
+  private opening : Native
+  private amount : UInt 8
+  private expected : UInt 8
+end
+
+noctium_circuit wrongTypedRefDeepInsertInputs where
+  private owner : Bytes32
+  private bucket : Bytes32
+  private replacement : ContractRef TypedRefOther
+end
+
 noctium_contract TypedRefCaller where
   cell route : ContractRef TypedRefUpdate
   constructor(initial : ContractRef TypedRefUpdate) where
@@ -326,6 +355,63 @@ noctium_contract TypedRefNestedListCaller where
   end
 end
 
+noctium_contract TypedRefDeepMapCaller where
+  tree routes : Bytes32 => Bytes32 => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry initializeOwner uses typedRefDeepMapInitializeInputs arguments [owner] where
+    member routes[disclose(owner)] as ownerPresent
+    if eq(ownerPresent, false) then {
+      insert routes[disclose(owner)] := emptyMap
+    } else {
+    }
+  end
+  entry insertRoute uses typedRefDeepInsertInputs arguments [owner, bucket, replacement] where
+    insert routes[disclose(owner)][disclose(bucket)] := fields(disclose(replacement), true)
+  end
+  entry forward uses typedRefDeepForwardInputs arguments [owner, bucket, opening, amount, expected] where
+    read routes[disclose(owner)][disclose(bucket)] as stored
+    require stored_enabled
+    claimContractCall(stored_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
+noctium_contract TypedRefDeepListCaller where
+  tree routes : Bytes32 => Bytes32 => List struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry initializeBucket uses typedRefDeepListInitializeInputs arguments [owner, bucket] where
+    member routes[disclose(owner)] as ownerPresent
+    if eq(ownerPresent, false) then {
+      insert routes[disclose(owner)] := emptyMap
+    } else {
+    }
+    member routes[disclose(owner)][disclose(bucket)] as bucketPresent
+    if eq(bucketPresent, false) then {
+      reset routes[disclose(owner)][disclose(bucket)]
+    } else {
+    }
+  end
+  entry addRoute uses typedRefDeepInsertInputs arguments [owner, bucket, replacement] where
+    pushFront routes[disclose(owner)][disclose(bucket)] := fields(disclose(replacement), true)
+  end
+  entry forward uses typedRefDeepForwardInputs arguments [owner, bucket, opening, amount, expected] where
+    head routes[disclose(owner)][disclose(bucket)] as routeHead
+    require routeHead_enabled
+    claimContractCall(routeHead_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+  entry forwardOptional uses typedRefDeepForwardInputs arguments [owner, bucket, opening, amount, expected] where
+    headOrDefault routes[disclose(owner)][disclose(bucket)] as (routePresent, routeHead)
+    when routePresent require routeHead_enabled
+    when routePresent claimContractCall(routeHead_target,
+      disclose(callCommitment("update", opening, [amount], [expected])))
+  end
+end
+
 /- error: contract reference must match the declared interface -/
 #guard_msgs (substring := true) in
 noctium_contract WrongTypedRefNestedMapCaller where
@@ -347,6 +433,30 @@ noctium_contract WrongTypedRefNestedListCaller where
   }
   entry addRoute uses wrongTypedRefNestedInsertInputs arguments [owner, replacement] where
     pushFront routes[disclose(owner)] := fields(disclose(replacement), true)
+  end
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract WrongTypedRefDeepMapCaller where
+  tree routes : Bytes32 => Bytes32 => struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry insertRoute uses wrongTypedRefDeepInsertInputs arguments [owner, bucket, replacement] where
+    insert routes[disclose(owner)][disclose(bucket)] := fields(disclose(replacement), true)
+  end
+end
+
+/- error: contract reference must match the declared interface -/
+#guard_msgs (substring := true) in
+noctium_contract WrongTypedRefDeepListCaller where
+  tree routes : Bytes32 => Bytes32 => List struct Route {
+    target : ContractRef TypedRefUpdate
+    enabled : Bool
+  }
+  entry addRoute uses wrongTypedRefDeepInsertInputs arguments [owner, bucket, replacement] where
+    pushFront routes[disclose(owner)][disclose(bucket)] := fields(disclose(replacement), true)
   end
 end
 
