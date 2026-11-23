@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger privileged: Set<Bytes<32>>;
+
+constructor(owner: Bytes<32>, enabled: Boolean) {
+  if (disclose(enabled)) {
+    privileged.insert(disclose(owner));
+  }
+}
+
+export circuit inspect(owner: Bytes<32>): Boolean {
+  return privileged.member(disclose(owner));
+}

@@ -416,6 +416,7 @@ scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlexpr : nlconstructorinit
+scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "initializeMember" ident "from" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" : nlconstructorinit
 scoped syntax "increment" ident "by" nlexpr : nlconstructorinit
@@ -5141,6 +5142,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some _, some _ => throwErrorAt mapNameStx "constructor membership read requires a Map"
       | none, _ => throwErrorAt stateName s!"constructor initializes unknown state '{destination}'"
       | _, none => throwErrorAt mapNameStx s!"constructor reads unknown Map '{mapName}'"
+    | `(nlconstructorinit| when $_:nlexpr insert $stateName:ident [ $key:nlexpr ])
     | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
@@ -5148,12 +5150,19 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let destination := stateName.getId.toString
       match schema.find? (·.1 == destination) with
       | some (_, .tree (.set keyTy)) => do
+        let guard ← match initializer with
+          | `(nlconstructorinit| when $condition:nlexpr insert $_:ident [ $_:nlexpr ]) => do
+            let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+              nominalUIntBindings condition {type := .bool}
+            `(some $conditionExpression)
+          | `(nlconstructorinit| insert $_:ident [ $_:nlexpr ]) => `(none)
+          | _ => throwErrorAt initializer "invalid constructor Set insert"
         let nominal := (nominalUIntCollections.lookup destination).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
           {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         setInsertTerms := setInsertTerms.push
-          (← `(Noctium.ConstructorSetInsert.mk $(stringTerm destination) $key))
+          (← `(Noctium.ConstructorSetInsert.mk $(stringTerm destination) $key $guard))
       | some _ => throwErrorAt stateName "constructor insert requires a root Set"
       | none => throwErrorAt stateName s!"constructor inserts into unknown Set '{destination}'"
     | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do

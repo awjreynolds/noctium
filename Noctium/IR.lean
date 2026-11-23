@@ -845,6 +845,7 @@ structure ConstructorListPush where
 structure ConstructorSetInsert where
   name : String
   key : PathKey
+  guard : Option (Expr .bool) := none
   deriving Repr
 
 structure ConstructorOrderedMapInsert where
@@ -1965,6 +1966,10 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     match key.validate caps scalarEnvironment with
     | .error message => throw {span, message}
     | .ok _ => pure ()
+    if let some guard := insertion.guard then
+      match guard.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
   for state in states do
     let sealedMap := match state.kind with | .map .. => true | _ => false
     if state.sealed && !sealedMap && !state.kind.isDefaultEmptyRoot &&

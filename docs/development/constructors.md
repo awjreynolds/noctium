@@ -108,6 +108,20 @@ Ledger 9.1.0.1 finalized deployment at localnet height 51343. The state
 matched the native constructor output. The read at 51346 preserved the full
 deployed state bytes. [Finalized receipt](sealed-set-localnet-receipt.json)
 
+## Guard a Set insert
+
+```lean
+constructor(owner : Bytes32, enabled : Bool) where
+  when enabled insert privileged[owner]
+end
+```
+
+The constructor checks the guard as Bool and the key against the root Set's
+declared type. The native runtime evaluates the guard first. False skips
+the key expression and leaves the Set unchanged. True inserts the owner.
+An ordinary insert emits the same plan as before.
+[Lean fixture](../../tests/GuardedConstructorSet.lean) · [Compact comparison](../../tests/compact/guarded-constructor-set.mjs)
+
 ## Initialize named records
 
 ```lean

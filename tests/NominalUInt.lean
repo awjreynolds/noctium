@@ -694,7 +694,7 @@ private def nominalMapHelperRoundTrip : Except String _root_.Bool := do
     Bool.true
   | _ => Bool.false
 #guard match NominalAmountSets.constructor with
-  | some {setInserts := [{name := "amounts", key := .mk (.uint 255) (.ref "initial")}], ..} =>
+  | some {setInserts := [{name := "amounts", key := .mk (.uint 255) (.ref "initial"), guard := none}], ..} =>
     Bool.true
   | _ => Bool.false
 
