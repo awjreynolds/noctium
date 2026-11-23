@@ -230,6 +230,26 @@ int32_t noctium_ledger_map_lookup(
   const uint8_t *snapshot, size_t snapshot_len,
   uint64_t *out_result);
 
+/* Read the optional head of a pinned root or nested List snapshot.
+   Request UTF-8 JSON (unknown fields reject):
+     {"abiVersion":1,"planSha256":"<lowercase SHA-256>",
+      "stateSha256":"<lowercase SHA-256>","name":"<state name>",
+      "keys":[{"type":"<Noctium scalar type>","value":<canonical JSON>}]}
+   The keys array contains only enclosing Map keys. Use an empty array for
+   a root List. The reader uses the same node and element validation as
+   noctium_ledger_collection_page.
+   A valid empty List returns found:false and null. An absent enclosing
+   Map, wrong schema or malformed list returns an error. The result token
+   owns copied public JSON:
+     {"abiVersion":1,"kind":"listHead","found":true,"value":<canonical JSON>}
+   Value formats, snapshot provenance and input limits match
+   noctium_ledger_collection_page. */
+int32_t noctium_ledger_list_head(
+  const uint8_t *request, size_t request_len,
+  const uint8_t *plan, size_t plan_len,
+  const uint8_t *snapshot, size_t snapshot_len,
+  uint64_t *out_result);
+
 /* Read one UInt64 Counter from a pinned, canonical contract-state snapshot.
    Request UTF-8 JSON (unknown fields reject):
      {"abiVersion":1,"planSha256":"<lowercase SHA-256>",

@@ -101,20 +101,12 @@ struct Key {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CounterRequest {
+struct SnapshotReadRequest {
     abi_version: u32,
     plan_sha256: String,
     state_sha256: String,
     name: String,
-    keys: Vec<CounterKey>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CounterKey {
-    #[serde(rename = "type")]
-    ty: String,
-    value: Json,
+    keys: Vec<Key>,
 }
 
 #[derive(Deserialize)]
@@ -708,12 +700,12 @@ fn collection_page(
     }))
 }
 
-fn list_page(
+fn checked_list_entries(
     state: &StateValue<Db>,
     element_schema: &CollectionValueSchema,
     offset: usize,
     limit: usize,
-) -> Result<Json, i32> {
+) -> Result<(Vec<Json>, usize), i32> {
     let mut cursor = state;
     let mut remaining = None;
     let mut length = 0usize;
@@ -769,11 +761,36 @@ fn list_page(
         remaining = Some(count - 1);
     }
 
+    Ok((entries, length))
+}
+
+fn list_page(
+    state: &StateValue<Db>,
+    element_schema: &CollectionValueSchema,
+    offset: usize,
+    limit: usize,
+) -> Result<Json, i32> {
+    let end = offset.saturating_add(limit);
+    let (entries, length) = checked_list_entries(state, element_schema, offset, limit)?;
     Ok(json!({
         "abiVersion": 1,
         "kind": "list",
         "entries": entries,
         "nextOffset": (end < length).then_some(end)
+    }))
+}
+
+fn list_head(
+    state: &StateValue<Db>,
+    element_schema: &CollectionValueSchema,
+) -> Result<Json, i32> {
+    let (mut entries, _) = checked_list_entries(state, element_schema, 0, 1)?;
+    let value = entries.pop();
+    Ok(json!({
+        "abiVersion": 1,
+        "kind": "listHead",
+        "found": value.is_some(),
+        "value": value.unwrap_or(Json::Null)
     }))
 }
 
@@ -892,7 +909,7 @@ pub unsafe extern "C" fn noctium_ledger_counter_get(
     native_ffi::guard(|| {
         unsafe { native_ffi::output(out_result)? };
 
-        let request: CounterRequest = serde_json::from_slice(unsafe {
+        let request: SnapshotReadRequest = serde_json::from_slice(unsafe {
             native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
         })
         .map_err(|_| INVALID_ARGUMENT)?;
@@ -932,6 +949,62 @@ pub unsafe extern "C" fn noctium_ledger_counter_get(
             }))
             .map_err(|_| INTERNAL)?,
         )?;
+        unsafe { out_result.write(result) };
+        Ok(())
+    })
+}
+
+/// Read the head of a typed List from an authenticated, canonical state snapshot.
+/// The request, plan, and snapshot pointers follow the same safety contract as
+/// `noctium_ledger_collection_page`.
+#[cfg_attr(not(target_family = "wasm"), unsafe(no_mangle))]
+pub unsafe extern "C" fn noctium_ledger_list_head(
+    request: *const u8,
+    request_len: usize,
+    plan: *const u8,
+    plan_len: usize,
+    snapshot: *const u8,
+    snapshot_len: usize,
+    out_result: *mut u64,
+) -> i32 {
+    native_ffi::guard(|| {
+        unsafe { native_ffi::output(out_result)? };
+
+        let request: SnapshotReadRequest = serde_json::from_slice(unsafe {
+            native_ffi::input(request, request_len, MAX_REQUEST_BYTES)?
+        })
+        .map_err(|_| INVALID_ARGUMENT)?;
+        if request.abi_version != 1
+            || request.name.is_empty()
+            || !valid_digest(&request.plan_sha256)
+            || !valid_digest(&request.state_sha256)
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        if request.keys.len() > MAX_KEYS {
+            return Err(LIMIT);
+        }
+
+        let _work = Work::reserve()?;
+        let plan_bytes = unsafe { native_ffi::input(plan, plan_len, MAX_BYTES)? };
+        let snapshot_bytes = unsafe { native_ffi::input(snapshot, snapshot_len, MAX_BYTES)? };
+        let AdmittedSnapshot { plan, state, keys } = admit_snapshot(
+            plan_bytes,
+            snapshot_bytes,
+            &request.plan_sha256,
+            &request.state_sha256,
+            request.keys.iter().map(|key| (key.ty.as_str(), &key.value)),
+        )?;
+
+        let (final_schema, selected) =
+            typed_state_path(&plan.state, &state.data, &request.name, &keys)
+                .map_err(|_| INVALID_ARGUMENT)?;
+        let Some(CollectionSchema::List { element }) = collection_schema(final_schema)? else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let result = list_head(&selected, &element)?;
+        let result =
+            native_ffi::service_public_bytes(serde_json::to_vec(&result).map_err(|_| INTERNAL)?)?;
         unsafe { out_result.write(result) };
         Ok(())
     })

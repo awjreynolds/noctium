@@ -3019,7 +3019,7 @@
       "layer": "language-ledger",
       "surface": "List.head",
       "noctiumStatus": "subset",
-      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The host ledger getter remains unqualified.",
+      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The native snapshot ABI exposes the optional scalar or record head for admitted root and nested paths. It validates List nodes with the paging reader and returns explicit absence for a valid empty List.",
       "source": [
         "adt"
       ],
@@ -3044,7 +3044,9 @@
         "tests/NativeScalarList.lean",
         "runtime/tests/native_scalar_list.rs",
         "tests/compact/native-scalar-list.mjs",
-        "docs/development/native-lists.md"
+        "docs/development/native-lists.md",
+        "runtime/tests/collection_reads.rs",
+        "docs/development/native-client-abi.md"
       ],
       "equivalence": "unverified"
     },
