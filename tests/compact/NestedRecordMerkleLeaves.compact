@@ -1,0 +1,39 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Meta {
+  approved: Boolean;
+  count: Uint<16>;
+}
+
+export struct Leaf {
+  tag: Bytes<3>;
+  meta: Meta;
+}
+
+export ledger ordinary: MerkleTree<2, Leaf>;
+export ledger history: HistoricMerkleTree<2, Leaf>;
+
+export circuit appendOrdinary(leaf: Leaf): [] {
+  ordinary.insert(disclose(leaf));
+}
+
+export circuit writeOrdinary(index: Uint<64>, leaf: Leaf): [] {
+  ordinary.insertIndex(disclose(leaf), disclose(index));
+}
+
+export circuit defaultOrdinary(index: Uint<64>): [] {
+  ordinary.insertIndexDefault(disclose(index));
+}
+
+export circuit appendHistoric(leaf: Leaf): [] {
+  history.insert(disclose(leaf));
+}
+
+export circuit writeHistoric(index: Uint<64>, leaf: Leaf): [] {
+  history.insertIndex(disclose(leaf), disclose(index));
+}
+
+export circuit defaultHistoric(index: Uint<64>): [] {
+  history.insertIndexDefault(disclose(index));
+}

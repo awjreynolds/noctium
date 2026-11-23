@@ -3252,7 +3252,7 @@
       "layer": "language-ledger",
       "surface": "MerkleTree.insert",
       "noctiumStatus": "subset",
-      "notes": "Native, Bool, bounded UInt, fixed Bytes, and checked flat named records lower through the mdn:lh digest. Pinned Bool, mixed record and JubjubPoint cases compare roots and cursor. Under ZKIR 3.2.1, all nine standalone foreign Base, Scalar and Point append cases match pinned Compact leaf digests and roots. Nested composite leaves need separate evidence.",
+      "notes": "Native, Bool, bounded UInt, fixed Bytes, and checked named records lower through the mdn:lh digest. Pinned Compact cases compare roots and cursors for Bool, mixed flat and nested records, and JubjubPoint. Under ZKIR 3.2.1, all nine standalone foreign Base, Scalar and Point append cases match the pinned Compact leaf digests and roots.",
       "source": [
         "adt"
       ],
@@ -3270,6 +3270,9 @@
         "tests/compact/RecordMerkleLeaves.compact",
         "tests/compact/record-merkle-leaves.mjs",
         "runtime/tests/record_merkle_leaves.rs",
+        "tests/NestedRecordMerkleLeaves.lean",
+        "tests/compact/NestedRecordMerkleLeaves.compact",
+        "tests/compact/nested-record-merkle-leaves.mjs",
         "tests/JubjubMerkleLeaves.lean",
         "runtime/tests/jubjub_merkle_leaves.rs",
         "tests/ForeignMerkleLeaves.lean",
@@ -3326,7 +3329,7 @@
       "layer": "language-ledger",
       "surface": "MerkleTree.insertIndex",
       "noctiumStatus": "subset",
-      "notes": "Typed scalar and flat record writes bind the declared leaf encoding and a UInt64 index. Pinned Field, Bool and mixed record cases cover sparse insertion and active out-of-range rejection. Pinned JubjubPoint identity writes also match the native digest and root.",
+      "notes": "Typed scalar and record writes bind the declared leaf encoding and a UInt64 index. The pinned Field, Bool and record cases cover sparse insertion and active out-of-range rejection. The nested record case also covers occupied-index replacement on ordinary and historic trees. Pinned JubjubPoint identity writes match the native digest and root.",
       "source": [
         "adt"
       ],
@@ -3348,6 +3351,9 @@
         "tests/compact/RecordMerkleLeaves.compact",
         "tests/compact/record-merkle-leaves.mjs",
         "runtime/tests/record_merkle_leaves.rs",
+        "tests/NestedRecordMerkleLeaves.lean",
+        "tests/compact/NestedRecordMerkleLeaves.compact",
+        "tests/compact/nested-record-merkle-leaves.mjs",
         "tests/JubjubMerkleLeaves.lean",
         "runtime/tests/jubjub_merkle_leaves.rs",
         "runtime/tests/fixtures/merkle-curve-leaves/compact-0.36.1.json"
@@ -3359,7 +3365,7 @@
       "layer": "language-ledger",
       "surface": "MerkleTree.insertIndexDefault",
       "noctiumStatus": "subset",
-      "notes": "Indexed writes hash the declared scalar or record default. The pinned Bool and mixed record cases replace index zero while preserving the cursor at capacity. Pinned JubjubPoint identity writes also match the native digest and root.",
+      "notes": "Indexed writes hash the declared scalar or record default. The pinned Bool, flat record and nested record cases replace index zero while preserving the cursor at capacity. Pinned JubjubPoint identity writes also match the native digest and root.",
       "source": [
         "adt"
       ],
@@ -3377,6 +3383,9 @@
         "tests/compact/RecordMerkleLeaves.compact",
         "tests/compact/record-merkle-leaves.mjs",
         "runtime/tests/record_merkle_leaves.rs",
+        "tests/NestedRecordMerkleLeaves.lean",
+        "tests/compact/NestedRecordMerkleLeaves.compact",
+        "tests/compact/nested-record-merkle-leaves.mjs",
         "tests/JubjubMerkleLeaves.lean",
         "runtime/tests/jubjub_merkle_leaves.rs",
         "runtime/tests/fixtures/merkle-curve-leaves/compact-0.36.1.json"

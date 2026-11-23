@@ -23,13 +23,36 @@ const SPARSE_ROOT: &str =
     "40354775844647557467683646849622796372373223037362699614063017930900206276343";
 const DEFAULT_ROOT: &str =
     "37209924186628564446821313957374143838394805355827780640358174939144179734266";
+const REPLACEMENT_ROOT: &str =
+    "46477204749292707696335458957297918442122955491656087953126831889570121098374";
+const APPEND_DIGEST: &str =
+    "404240dbb1350b91a51bb5a2f7c9b4531a2e000eff58f9a825f3da38ee7b1d35";
+const DEFAULT_DIGEST: &str =
+    "1aab68d060c99555b0edec93ea06e3d024f852573c43a8ab719252460422df84";
+const REPLACEMENT_DIGEST: &str =
+    "34eedfe062c95fe4d84c411a48863cf19d41310390a683475d744612e4b1d835";
 
 fn fixture(entry: &str) -> Fixture {
+    fixture_from_env(
+        "NOCTIUM_RECORD_MERKLE_DIR",
+        "NativeRecordMerkleLeaves",
+        entry,
+    )
+}
+
+fn nested_fixture(entry: &str) -> Fixture {
+    fixture_from_env(
+        "NOCTIUM_NESTED_RECORD_MERKLE_DIR",
+        "NativeNestedRecordMerkleLeaves",
+        entry,
+    )
+}
+
+fn fixture_from_env(variable: &str, prefix: &str, entry: &str) -> Fixture {
     let directory = PathBuf::from(
-        env::var_os("NOCTIUM_RECORD_MERKLE_DIR")
-            .expect("set fresh outputs in NOCTIUM_RECORD_MERKLE_DIR"),
+        env::var_os(variable).unwrap_or_else(|| panic!("set fresh outputs in {variable}")),
     );
-    let stem = format!("NativeRecordMerkleLeaves.{entry}");
+    let stem = format!("{prefix}.{entry}");
     let plan = serde_json::from_slice(
         &std::fs::read(directory.join(format!("{stem}.impact.json"))).unwrap(),
     )
@@ -40,14 +63,24 @@ fn fixture(entry: &str) -> Fixture {
 }
 
 fn inputs(plan: &Plan, position: u64, enabled: bool) -> BTreeMap<String, Json> {
+    inputs_with_leaf(plan, position, enabled, true, 258)
+}
+
+fn inputs_with_leaf(
+    plan: &Plan,
+    position: u64,
+    enabled: bool,
+    accepted: bool,
+    count: u16,
+) -> BTreeMap<String, Json> {
     plan.circuit
         .inputs
         .iter()
         .map(|input| {
             let value = match input.name.as_str() {
                 "tag" => json!({"kind":"bytes", "values":[12, 0, 0]}),
-                "accepted" => json!(true),
-                "count" => json!("258"),
+                "accepted" => json!(accepted),
+                "count" => json!(count.to_string()),
                 "position" => json!(position.to_string()),
                 "enabled" => json!(enabled),
                 other => panic!("unexpected input {other}"),
@@ -58,14 +91,25 @@ fn inputs(plan: &Plan, position: u64, enabled: bool) -> BTreeMap<String, Json> {
 }
 
 fn run(
-    (plan, circuit): &Fixture,
+    fixture: &Fixture,
     position: u64,
     enabled: bool,
     state: &ChargedState<Db>,
 ) -> noctium_runtime::Execution {
+    run_with_leaf(fixture, position, enabled, true, 258, state)
+}
+
+fn run_with_leaf(
+    (plan, circuit): &Fixture,
+    position: u64,
+    enabled: bool,
+    accepted: bool,
+    count: u16,
+    state: &ChargedState<Db>,
+) -> noctium_runtime::Execution {
     let execution = prepare(
         plan,
-        &inputs(plan, position, enabled),
+        &inputs_with_leaf(plan, position, enabled, accepted, count),
         state,
         &INITIAL_PARAMETERS,
         ContractAddress::default(),
@@ -118,7 +162,7 @@ fn assert_record_leaf(
     tag: [u8; 3],
     accepted: bool,
     count: u16,
-) {
+) -> [u8; 32] {
     let tree = merkle_tree_at(&plan.state, state, name, &[]).unwrap();
     let leaf = serde_json::to_vec(&json!({
         "kind":"tuple",
@@ -129,8 +173,10 @@ fn assert_record_leaf(
         ]
     }))
     .unwrap();
-    tree.structured_path(index, &record_schema(), &leaf)
+    let path = tree
+        .structured_path(index, &record_schema(), &leaf)
         .unwrap();
+    *path.leaf_hash()
 }
 
 #[test]
@@ -212,4 +258,146 @@ fn record_merkle_leaves_match_compact_on_ordinary_and_historic_trees() {
 
     let skipped = run(&set_index, 4, false, &defaulted);
     assert_eq!(skipped.after.state, defaulted);
+}
+
+#[test]
+#[ignore = "requires fresh NativeNestedRecordMerkleLeaves outputs in NOCTIUM_NESTED_RECORD_MERKLE_DIR"]
+fn nested_record_merkle_leaves_match_compact_on_ordinary_and_historic_trees() {
+    let append = nested_fixture("append");
+    let set_index = nested_fixture("setIndex");
+    let set_default = nested_fixture("setDefault");
+    let initial = create_state(
+        &append.0,
+        &BTreeMap::from([
+            ("ordinary".into(), json!([])),
+            ("archive".into(), json!([])),
+        ]),
+    )
+    .unwrap();
+
+    assert_tree(&append.0, &initial, "ordinary", "0", 0, None);
+    assert_tree(&append.0, &initial, "archive", "0", 0, Some(&["0"]));
+
+    let appended = run(&append, 0, true, &initial).after.state;
+    assert_tree(&append.0, &appended, "ordinary", APPEND_ROOT, 1, None);
+    assert_tree(
+        &append.0,
+        &appended,
+        "archive",
+        APPEND_ROOT,
+        1,
+        Some(&["0", APPEND_ROOT]),
+    );
+    for name in ["ordinary", "archive"] {
+        assert_eq!(
+            hex::encode(assert_record_leaf(
+                &append.0,
+                &appended,
+                name,
+                0,
+                [12, 0, 0],
+                true,
+                258,
+            )),
+            APPEND_DIGEST,
+            "{name} appended leaf digest"
+        );
+    }
+
+    let sparse = run(&set_index, 3, true, &appended).after.state;
+    assert_tree(&set_index.0, &sparse, "ordinary", SPARSE_ROOT, 4, None);
+    assert_tree(
+        &set_index.0,
+        &sparse,
+        "archive",
+        SPARSE_ROOT,
+        4,
+        Some(&["0", APPEND_ROOT, SPARSE_ROOT]),
+    );
+    for name in ["ordinary", "archive"] {
+        assert_record_leaf(&set_index.0, &sparse, name, 0, [12, 0, 0], true, 258);
+        assert_record_leaf(&set_index.0, &sparse, name, 3, [12, 0, 0], true, 258);
+    }
+
+    let defaulted = run(&set_default, 0, true, &sparse).after.state;
+    assert_tree(
+        &set_default.0,
+        &defaulted,
+        "ordinary",
+        DEFAULT_ROOT,
+        4,
+        None,
+    );
+    assert_tree(
+        &set_default.0,
+        &defaulted,
+        "archive",
+        DEFAULT_ROOT,
+        4,
+        Some(&["0", APPEND_ROOT, SPARSE_ROOT, DEFAULT_ROOT]),
+    );
+    for name in ["ordinary", "archive"] {
+        assert_eq!(
+            hex::encode(assert_record_leaf(
+                &set_default.0,
+                &defaulted,
+                name,
+                0,
+                [0, 0, 0],
+                false,
+                0,
+            )),
+            DEFAULT_DIGEST,
+            "{name} default leaf digest"
+        );
+        assert_record_leaf(&set_default.0, &defaulted, name, 3, [12, 0, 0], true, 258);
+    }
+
+    let replaced = run_with_leaf(&set_index, 3, true, false, 513, &defaulted)
+        .after
+        .state;
+    assert_tree(
+        &set_index.0,
+        &replaced,
+        "ordinary",
+        REPLACEMENT_ROOT,
+        4,
+        None,
+    );
+    assert_tree(
+        &set_index.0,
+        &replaced,
+        "archive",
+        REPLACEMENT_ROOT,
+        4,
+        Some(&["0", APPEND_ROOT, SPARSE_ROOT, DEFAULT_ROOT, REPLACEMENT_ROOT]),
+    );
+    for name in ["ordinary", "archive"] {
+        assert_record_leaf(&set_index.0, &replaced, name, 0, [0, 0, 0], false, 0);
+        assert_eq!(
+            hex::encode(assert_record_leaf(
+                &set_index.0,
+                &replaced,
+                name,
+                3,
+                [12, 0, 0],
+                false,
+                513,
+            )),
+            REPLACEMENT_DIGEST,
+            "{name} replacement leaf digest"
+        );
+    }
+
+    let rejected = prepare(
+        &set_index.0,
+        &inputs(&set_index.0, 4, true),
+        &replaced,
+        &INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    );
+    assert!(rejected.is_err());
+
+    let skipped = run(&set_index, 4, false, &replaced);
+    assert_eq!(skipped.after.state, replaced);
 }
