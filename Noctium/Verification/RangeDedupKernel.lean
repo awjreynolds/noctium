@@ -196,6 +196,23 @@ theorem parsed_range_run_preserves_kernel (source : Array Json) (left right : Pr
     simpa [instructionsEqual] using (sameHolds hash witness).symm
   exact satisfies_iff hash streams witness groups returns ordered holds
 
+theorem comparisonRewrite_preserves_kernel (left right : Program)
+    (stable : left.instructions.filter RangeDedup.stableOutsideComparisons =
+      right.instructions.filter RangeDedup.stableOutsideComparisons)
+    (holds : ∀ hash witness,
+      (∀ instruction ∈ left.instructions, Instruction.Holds hash witness instruction) ↔
+      (∀ instruction ∈ right.instructions, Instruction.Holds hash witness instruction)) :
+    ∀ hash streams witness groups returns,
+      (Satisfies hash left streams witness groups returns ↔
+        Satisfies hash right streams witness groups returns) := by
+  intro hash streams witness groups returns
+  apply satisfies_iff_of_filter hash streams witness groups returns
+    (keep := RangeDedup.stableOutsideComparisons)
+  · exact stable
+  · intro instruction dropped
+    cases instruction <;> simp_all [RangeDedup.stableOutsideComparisons, silent]
+  · exact holds hash witness
+
 /-- The actual comparison fold preserves arbitrary-witness satisfaction and
 ordered inputs, Impact groups and outputs when the source relation carries the
 needed comparison ranges. -/
@@ -211,13 +228,10 @@ theorem parsed_reuseComparisons_preserves_kernel (source : Array Json) (left rig
     RangeDedup.reuseComparisons_preserves_decoded source left.instructions sourceDecoded ranges
   have equality : optimized = right.instructions :=
     Except.ok.inj (optimizedParsed.symm.trans runDecoded)
-  intro hash streams witness groups returns
-  apply satisfies_iff_of_filter hash streams witness groups returns
-    (keep := RangeDedup.stableOutsideComparisons)
+  apply comparisonRewrite_preserves_kernel left right
   · rw [← equality]
     exact stable.symm
-  · intro instruction dropped
-    cases instruction <;> simp_all [RangeDedup.stableOutsideComparisons, silent]
-  · simpa only [equality] using (holds hash witness).symm
+  · intro hash witness
+    simpa only [equality] using (holds hash witness).symm
 
 end Noctium.Verification.RangeDedupKernel
