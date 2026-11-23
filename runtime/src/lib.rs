@@ -3242,14 +3242,15 @@ fn validate_shielded_coin_list(
         "qualified coin List slot exceeds the native state limit"
     );
     ensure!(
-        keys.len() <= 1,
-        "qualified coin List supports at most one parent key"
+        keys.len() <= 2,
+        "qualified coin List supports at most two parent keys"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
         ensure!(
-            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
-            "qualified coin List parent key must be Bytes32"
+            key_types.len() == keys.len()
+                && key_types.iter().all(|key_type| *key_type == ScalarType::Bytes32),
+            "qualified coin List parent keys must be Bytes32"
         );
     }
     path_field_count(plan, slot, keys)?;

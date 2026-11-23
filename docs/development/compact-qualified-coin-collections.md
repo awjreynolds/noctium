@@ -33,6 +33,15 @@ index 42 ahead of index 17 and the same booking boundary. The List lowering
 pushes the node before its key so the cached insert receives the correct operands.
 These checks use a native query context.
 
+Noctium also checks a self-recipient List prepend under two Bytes32 Map
+parents. The emitted ZKIR 3.2.1 relation accepts booked index 42 ahead of
+index 31 and preserves the neighboring bucket and the other owner's List.
+Missing parents, a missing booking and a wrong-recipient booking reject
+in the native query context. Pinned Compact comparison and funded-chain
+evidence cover shallower List paths.
+[Lean fixture](../../tests/TwoParentQualifiedCoinList.lean) ·
+[Native check](../../runtime/tests/two_parent_qualified_coin_list.rs)
+
 A funded Ledger 9 run stored one self-minted coin in a Map, root Cell, root
 Set, and one-element root List in the same call. The test compares the Map,
 Cell and Set records and the List head with the finalized contract-owned

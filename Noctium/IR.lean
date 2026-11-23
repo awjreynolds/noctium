@@ -1002,14 +1002,14 @@ inductive Effect where
   | writeShieldedCoinCellTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
       (recipient : Expr (.bytes 32))
-  /-- Push a transaction-booked self-recipient shielded coin to a root or
-  one-level Bytes32-keyed List. The backend obtains the coin's current
+  /-- Push a transaction-booked self-recipient shielded coin to a root List
+  or a List under up to two Bytes32-keyed Maps. The backend obtains the coin's current
   transaction index from ledger context. -/
   | pushFrontCoin (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
       (keys : List PathKey)
   /-- Push a transaction-booked coin for an explicit wallet or contract
-  recipient to a root or one-level Bytes32-keyed qualified coin List. The
+  recipient to a qualified coin List under up to two Bytes32-keyed Maps. The
   runtime gets its index from the current transaction context. -/
   | pushFrontCoinTo (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (isContract : Expr .bool)
@@ -2089,11 +2089,8 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"unknown qualified shielded coin List '{state}'"
         let .tree treeSchema := declaration.kind
           | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
-        let oneBytes32Key := match keys with
-          | [key] => key.ty == .bytes 32
-          | _ => false
-        unless keys.isEmpty || oneBytes32Key do
-          throw s!"qualified shielded coin push supports only a root List or one Bytes32-keyed List '{state}'"
+        unless keys.length ≤ 2 && keys.all (fun key => key.ty == .bytes 32) do
+          throw s!"qualified shielded coin push supports a List under at most two Bytes32-keyed Maps '{state}'"
         let (compositeEnv, recordType, _) ← treeSchema.listPath keys
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
@@ -2108,11 +2105,8 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           | throw s!"unknown qualified shielded coin List '{state}'"
         let .tree treeSchema := declaration.kind
           | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
-        let oneBytes32Key := match keys with
-          | [key] => key.ty == .bytes 32
-          | _ => false
-        unless keys.isEmpty || oneBytes32Key do
-          throw s!"qualified shielded coin push supports only a root List or one Bytes32-keyed List '{state}'"
+        unless keys.length ≤ 2 && keys.all (fun key => key.ty == .bytes 32) do
+          throw s!"qualified shielded coin push supports a List under at most two Bytes32-keyed Maps '{state}'"
         let (compositeEnv, recordType, _) ← treeSchema.listPath keys
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
