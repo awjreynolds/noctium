@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "scope": "Two self-mints and booked List prepends below four Bytes32 Map parents on isolated development Ledger 9.1.0.1",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "runtimeSpecVersion": 2001100,
+  "transactionVersion": 4,
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "source": {
+    "path": "tests/FundedFourParentQualifiedCoinList.lean",
+    "sha256": "e94060a3d9c7d8830293ffac19a27d70ab82bbfb80599376c70d5f45802cc467"
+  },
+  "artifacts": {
+    "initializeOwners": {
+      "k": 10,
+      "rows": 513,
+      "compilerRevision": "a41aa0d8d09a7b2c6a4c439cbea9ab8260e3bc99",
+      "manifestSha256": "cabd9e77b8e6a910bcef095df43a88fcc4f2f9d2c84a480b5ad700577cf9c580",
+      "circuitSha256": "4074d2a9649d1a16b0278e7465da5a87e856a162bae128cd24995f82c063b07b",
+      "impactPlanSha256": "b0ed09e71c7eb6cd9eccea10f72ec00ff55fff22c0afe2b2e682b0148bf7eccc",
+      "verifierKeySha256": "2f38519f3f2b5d51f19ccbe60f742d9725b5cef3a88cf6f901c5b37058bc12a9",
+      "proverKeySha256": "3b548c3189f3f885ecd13c8025744e9f94627ee9746ff047e4102c61b9c1e684"
+    },
+    "tip": {
+      "k": 14,
+      "rows": 12850,
+      "compilerRevision": "a41aa0d8d09a7b2c6a4c439cbea9ab8260e3bc99",
+      "manifestSha256": "fb6960a5238c0f10c44d69906bc82d167e8db5d9da2a4fe50179849d46090d26",
+      "circuitSha256": "a0dd52a7e24989548e3033a2f135642a9063aeb74e2f446243047ee913874441",
+      "impactPlanSha256": "d8c9f75d1796ebd43c9058ece36c553a65314099820e62bc13470dd766a1dc61",
+      "verifierKeySha256": "8a39c4017b42542e4552c5b5de97bbee55e03f17fea8cd3078219242dc4e4fb3",
+      "proverKeySha256": "c11bc4c723adf3f15667150c943ca2d32b9219d5309d27374323fab4bb8c24a2"
+    }
+  },
+  "contractAddress": "adc183e067838070883e9fd230a8a804fcbb71eda145aaca0ef718e31d77005b",
+  "ledgerParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+  "nativeCliBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+  "srsSha256": {
+    "k10": "46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42",
+    "k14": "fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244"
+  },
+  "deployment": {
+    "height": 72215,
+    "blockHash": "7d7ae4753bb3c8782a9f7bbf0a16837ef359913b3810c381139d61ccc6240364",
+    "transactionId": "0e95267fc8b297ea0a76b4e65e944eae12751119eb75696ac9df786411cc2a63",
+    "stateSha256": "9c9df7359e85b6ada907fb7eec62b6a431e7b31ad91cbcc0e6f28875dd15961d",
+    "appliedEvent": "TxApplied"
+  },
+  "initialization": {
+    "height": 72218,
+    "blockHash": "11093e22bb44ca4c313f3426be4fd50208e3d7c1a5a6cde408d459c435435e0d",
+    "transactionId": "ed95158c4d2137064981cc523eb14b30e5da16f10142e225f959c86c8ec1c43a",
+    "stateSha256": "efe6c44ab8748f281c3ac9188773e223903d5994c01ad0ce1e5a11533f1deb36",
+    "appliedEvent": "TxApplied"
+  },
+  "firstCall": {
+    "height": 72222,
+    "blockHash": "2e267219c942679dd7b2073b646d02a36cd63d04612ed8a17dc191c2eed7c28a",
+    "transactionId": "743492c2406765df5b0b09537d0e4622047776851fd9a930f518da401ece275b",
+    "stateSha256": "7cf7eae3053c14aed9fc1d8005291702b5da395376b0824e7cba127c8a9cff1d",
+    "appliedEvent": "TxApplied",
+    "coin": {
+      "mtIndex": 47,
+      "nonce": "9d9e22f62d8736f4e3ef612b3ec8e16ca7cdfff7e74754754bf8a3ae777ca3b7",
+      "color": "3194d8a48abbeafc5a879eb6b5fcddd2a8bed37fa08de77152c46996301098c8",
+      "value": "5",
+      "commitment": "16adc5a6095205ddd3cf6559de9235f8e8af2e2056497253bab3ab0abc6614a9"
+    }
+  },
+  "secondCall": {
+    "height": 72225,
+    "blockHash": "f4ca03e40e1ec5ec786039a6eda8d1ad1258feb27355f614f903d2ce839224cc",
+    "transactionId": "b9f8c7f96472ddd71ffa6a5586e63a8b371549ae0666e57a18af25a92b6ddf2a",
+    "stateSha256": "e61e6501396406a706a602d7fb8f76ba0c3c222faf57899e8bb7c9a13662592a",
+    "appliedEvent": "TxApplied",
+    "coin": {
+      "mtIndex": 48,
+      "nonce": "b682f94e3e0bf1eea630675dbdd9f59c29dc68aa977b0260820af3e37b8e5063",
+      "color": "3194d8a48abbeafc5a879eb6b5fcddd2a8bed37fa08de77152c46996301098c8",
+      "value": "5",
+      "commitment": "1511379be3fdaaaff4fbb1f316148dc0fb809f13b2ef5f4df66c0fc6d394f2cd"
+    }
+  },
+  "observedFinalizedHead": {
+    "height": 72382,
+    "blockHash": "58dc96f323ab8954a56c50daedb25ac8302cccabefae607dfb341f39f73b3e9c"
+  },
+  "verified": {
+    "newestFirstIndices": [
+      48,
+      47
+    ],
+    "threeSiblingListsRemainEmpty": true,
+    "qualifiedRecordsMatchBothFinalizedExtrinsicOutputCommitments": true,
+    "canonicalEventsAndStateDigestsMatchNode": true
+  },
+  "rejectedBeforeFirstCall": [
+    "missingOffer",
+    "mismatchedOffer"
+  ],
+  "evidence": {
+    "submissionHarnessSourceSha256": "c45e1b554f2817eac5d9e225b296b74bb15a28cb04e937e6755f0fa3199763dd",
+    "submissionHarnessBinarySha256": "debfba4e026613460ab3223b2e9f3f84e1c2d711e122bbb582a5a0acfa20c0bf",
+    "secondReceiptObserverResult": "noctium_localnet_Response",
+    "readOnlyFinalizedEventStateAndOutputRecovery": "passed",
+    "readOnlyRecoverySourceSha256": "438f95f9294b9e4d7c052744ba687cbd2aa7b129723b518fb9be3c541776a263",
+    "independentZswapReplayResult": "noctium_localnet_Replay",
+    "observerIssue": "https://github.com/awjreynolds/noctium/issues/791"
+  }
+}
