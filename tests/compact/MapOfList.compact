@@ -1,0 +1,19 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger buckets: Map<Field, List<Field>>;
+
+export circuit push(owner: Field, value: Field): [] {
+  const key = disclose(owner);
+  if (!buckets.member(key)) { buckets.insertDefault(key); }
+  buckets.lookup(key).pushFront(disclose(value));
+}
+
+export circuit inspect(owner: Field): [Uint<64>, Boolean, Field] {
+  const head = buckets.lookup(disclose(owner)).head();
+  return [buckets.lookup(disclose(owner)).length(), head.is_some, head.value];
+}
+
+export circuit pop(owner: Field): [] {
+  buckets.lookup(disclose(owner)).popFront();
+}
