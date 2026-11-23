@@ -1,0 +1,69 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+circuit recordNullifier(digest: Bytes<32>): [] {
+  kernel.claimZswapNullifier(disclose(digest));
+}
+
+circuit recordReceive(digest: Bytes<32>): [] {
+  kernel.claimZswapCoinReceive(disclose(digest));
+}
+
+circuit recordSpend(digest: Bytes<32>): [] {
+  kernel.claimZswapCoinSpend(disclose(digest));
+}
+
+export circuit rawClaims(
+  nullifierDigest: Bytes<32>,
+  receiveDigest: Bytes<32>,
+  spendDigest: Bytes<32>,
+): [] {
+  kernel.claimZswapNullifier(disclose(nullifierDigest));
+  kernel.claimZswapCoinReceive(disclose(receiveDigest));
+  kernel.claimZswapCoinSpend(disclose(spendDigest));
+}
+
+export circuit helperClaims(
+  nullifierDigest: Bytes<32>,
+  receiveDigest: Bytes<32>,
+  spendDigest: Bytes<32>,
+): [] {
+  recordNullifier(nullifierDigest);
+  recordReceive(receiveDigest);
+  recordSpend(spendDigest);
+}
+
+export circuit guardedReceive(digest: Bytes<32>, enabled: Boolean): [] {
+  if (disclose(enabled)) {
+    recordReceive(digest);
+  }
+}
+
+export circuit duplicateClaims(
+  nullifierDigest: Bytes<32>,
+  receiveDigest: Bytes<32>,
+  spendDigest: Bytes<32>,
+): [] {
+  recordNullifier(nullifierDigest);
+  recordNullifier(nullifierDigest);
+  recordReceive(receiveDigest);
+  recordReceive(receiveDigest);
+  recordSpend(spendDigest);
+  recordSpend(spendDigest);
+}
+
+export circuit distinctClaims(
+  nullifierA: Bytes<32>,
+  nullifierB: Bytes<32>,
+  receiveA: Bytes<32>,
+  receiveB: Bytes<32>,
+  spendA: Bytes<32>,
+  spendB: Bytes<32>,
+): [] {
+  recordNullifier(nullifierA);
+  recordNullifier(nullifierB);
+  recordReceive(receiveA);
+  recordReceive(receiveB);
+  recordSpend(spendA);
+  recordSpend(spendB);
+}

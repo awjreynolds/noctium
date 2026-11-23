@@ -1613,6 +1613,14 @@ pub enum ImmediateAmount {
     Expression(Expr),
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShieldedClaimKind {
+    Nullifier,
+    Receive,
+    Spend,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Instruction {
@@ -1799,6 +1807,11 @@ pub enum Instruction {
         #[serde(rename = "entryPointHash")]
         entry_point_hash: Expr,
         commitment: Expr,
+    },
+    #[serde(rename = "claimShielded")]
+    ClaimShielded {
+        kind: ShieldedClaimKind,
+        digest: Expr,
     },
     #[serde(rename = "mintShielded")]
     MintShielded {
@@ -2457,6 +2470,7 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             }
         }
         Instruction::ClaimContractCall { .. } => vec![1, 4, 1, 1, 11, 2, 2, 1, 1],
+        Instruction::ClaimShielded { .. } => vec![1, 4, 6, 2, 1, 1],
         Instruction::MintShielded { .. } | Instruction::MintUnshielded { .. } => {
             MINT_FIELD_COUNTS.to_vec()
         }
@@ -2511,6 +2525,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
     Ok(match instruction {
         Instruction::AddImmediate { .. } | Instruction::SubImmediate { .. } => 2,
         Instruction::ClaimContractCall { .. } => 24,
+        Instruction::ClaimShielded { .. } => 15,
         Instruction::ReceiveShieldedToMap { .. } => {
             bail!("shielded receive must be unguarded")
         }
@@ -7100,6 +7115,9 @@ fn probe_instruction(
             env,
             deferred_outputs,
         ),
+        Instruction::ClaimShielded { digest, .. } => {
+            probe_expression(digest, plan, env, deferred_outputs)
+        }
         Instruction::MintShielded { domain, amount }
         | Instruction::MintUnshielded { domain, amount } => {
             probe_expressions([domain, amount], plan, env, deferred_outputs)
@@ -7688,6 +7706,7 @@ fn validate_guarded_shape(operation: &Instruction) -> Result<()> {
                 | Instruction::MerkleTreeReset { .. }
                 | Instruction::MerkleTreeResetHistory { .. }
                 | Instruction::ClaimContractCall { .. }
+                | Instruction::ClaimShielded { .. }
                 | Instruction::MintShielded { .. }
                 | Instruction::MintUnshielded { .. }
                 | Instruction::IncUnshieldedOutputs { .. }
@@ -9411,6 +9430,34 @@ impl PreparationCursor {
                 );
                 program.extend(claim_ops[..8].iter().cloned());
                 claim_ops[8].clone()
+            }
+            Instruction::ClaimShielded { kind, digest } => {
+                let digest = claim_hash_output(evaluate(digest, &env)?, "shielded claim digest")?;
+                let claim_ops = match kind {
+                    ShieldedClaimKind::Nullifier => {
+                        onchain_runtime::program_fragments::kernel_claim_zswap_nullifier!(
+                            (),
+                            (),
+                            coin_structure::coin::Nullifier(digest)
+                        )
+                    }
+                    ShieldedClaimKind::Receive => {
+                        onchain_runtime::program_fragments::kernel_claim_zswap_coin_receive!(
+                            (),
+                            (),
+                            Commitment(digest)
+                        )
+                    }
+                    ShieldedClaimKind::Spend => {
+                        onchain_runtime::program_fragments::kernel_claim_zswap_coin_spend!(
+                            (),
+                            (),
+                            Commitment(digest)
+                        )
+                    }
+                };
+                program.extend(claim_ops[..5].iter().cloned());
+                claim_ops[5].clone()
             }
             Instruction::MintShielded { domain, amount } => {
                 let domain = claim_hash_output(evaluate(domain, &env)?, "shielded mint domain")?;
@@ -11281,6 +11328,45 @@ mod shielded_spend_tests {
         plan
     }
 
+    fn raw_shielded_claim_plan(kind: &str, guarded: bool, duplicate: bool) -> Plan {
+        let mut inputs = vec![json!({
+            "name":"digest", "type":"Bytes<32>", "visibility":"private"
+        })];
+        if guarded {
+            inputs.push(json!({
+                "name":"enabled", "type":"Bool", "visibility":"private"
+            }));
+        }
+        let raw_operation = json!({
+            "op":"claimShielded", "kind":kind, "digest":reference("digest")
+        });
+        let operation = if guarded {
+            json!({"op":"guarded", "guard":reference("enabled"), "operation":raw_operation})
+        } else {
+            raw_operation
+        };
+        let operations = if duplicate {
+            vec![operation.clone(), operation]
+        } else {
+            vec![operation]
+        };
+        let mut plan: Plan = serde_json::from_value(json!({
+            "schemaVersion":1,
+            "entrypoint":"rawClaim",
+            "circuit":{
+                "inputs":inputs,
+                "outputs":[]
+            },
+            "state":[],
+            "operations":operations,
+            "reads":[]
+        }))
+        .unwrap();
+        plan.target = Some(profile::NAME.into());
+        plan.target_profile = Some(profile::target_json());
+        plan
+    }
+
     fn map_insert_plan() -> Plan {
         let mut plan: Plan = serde_json::from_value(map_insert_plan_json()).unwrap();
         plan.target = Some(profile::NAME.into());
@@ -11967,6 +12053,111 @@ mod shielded_spend_tests {
             ))
         );
         (input_commitment, nullifier, output_commitment)
+    }
+
+    #[test]
+    fn raw_shielded_claims_use_the_matching_pinned_kernel_fragment() {
+        for (kind, digest_byte) in [("nullifier", 6), ("receive", 7), ("spend", 8)] {
+            let plan = raw_shielded_claim_plan(kind, false, false);
+            let state = create_state(&plan, &BTreeMap::new()).unwrap();
+            let context = QueryContext::new(state, ContractAddress(HashOutput(ADDRESS)));
+            let digest = [digest_byte; 32];
+            let inputs = BTreeMap::from([("digest".into(), bytes_json(&digest))]);
+            let execution = prepare_with_context(
+                &plan,
+                &inputs,
+                context,
+                &ledger::structure::INITIAL_PARAMETERS,
+            )
+            .unwrap();
+
+            let expected_fragment: Program = match kind {
+                "nullifier" => onchain_runtime::program_fragments::kernel_claim_zswap_nullifier!(
+                    (),
+                    (),
+                    Nullifier(HashOutput(digest))
+                )
+                .into_iter()
+                .collect(),
+                "receive" => onchain_runtime::program_fragments::kernel_claim_zswap_coin_receive!(
+                    (),
+                    (),
+                    Commitment(HashOutput(digest))
+                )
+                .into_iter()
+                .collect(),
+                "spend" => onchain_runtime::program_fragments::kernel_claim_zswap_coin_spend!(
+                    (),
+                    (),
+                    Commitment(HashOutput(digest))
+                )
+                .into_iter()
+                .collect(),
+                _ => unreachable!(),
+            };
+            assert!(execution
+                .program
+                .windows(expected_fragment.len())
+                .any(|operations| operations == expected_fragment));
+
+            match kind {
+                "nullifier" => assert!(execution
+                    .after
+                    .effects
+                    .claimed_nullifiers
+                    .member(&Nullifier(HashOutput(digest)))),
+                "receive" => assert!(execution
+                    .after
+                    .effects
+                    .claimed_shielded_receives
+                    .member(&Commitment(HashOutput(digest)))),
+                "spend" => assert!(execution
+                    .after
+                    .effects
+                    .claimed_shielded_spends
+                    .member(&Commitment(HashOutput(digest)))),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn raw_shielded_claims_honor_guards_and_deduplicate_repeated_digests() {
+        for (kind, digest_byte) in [("nullifier", 6), ("receive", 7), ("spend", 8)] {
+            let plan = raw_shielded_claim_plan(kind, true, true);
+            for enabled in [false, true] {
+                let state = create_state(&plan, &BTreeMap::new()).unwrap();
+                let context = QueryContext::new(state, ContractAddress(HashOutput(ADDRESS)));
+                let digest = [digest_byte; 32];
+                let inputs = BTreeMap::from([
+                    ("digest".into(), bytes_json(&digest)),
+                    ("enabled".into(), json!(enabled)),
+                ]);
+                let execution = prepare_with_context(
+                    &plan,
+                    &inputs,
+                    context,
+                    &ledger::structure::INITIAL_PARAMETERS,
+                )
+                .unwrap();
+
+                match kind {
+                    "nullifier" => assert_eq!(
+                        execution.after.effects.claimed_nullifiers.size(),
+                        usize::from(enabled)
+                    ),
+                    "receive" => assert_eq!(
+                        execution.after.effects.claimed_shielded_receives.size(),
+                        usize::from(enabled)
+                    ),
+                    "spend" => assert_eq!(
+                        execution.after.effects.claimed_shielded_spends.size(),
+                        usize::from(enabled)
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 
     #[test]

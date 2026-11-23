@@ -457,6 +457,7 @@ scoped syntax nlpath "[" nlexpr "]" : nlpath
 declare_syntax_cat nlupdate
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr ")" : nlupdate
+scoped syntax "claimShielded" "(" ident "," nlexpr ")" : nlupdate
 scoped syntax "mintShielded" "(" nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "receiveShieldedToMap" "(" ident "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "insertShieldedCoinSet" "(" nlpath "," nlexpr "," nlexpr "," nlexpr ")" : nlupdate
@@ -3520,6 +3521,15 @@ private def elaborateEffect (schema : List (String × StateKind))
       let entryPointHash ← checkedExpression state.env entryPointHash (.bytes 32)
       let commitment ← checkedExpression state.env commitment .native
       let term ← `(Noctium.Effect.claimContractCall $address $entryPointHash $commitment)
+      state := {state with terms := state.terms.push term}
+    | `(nlupdate| claimShielded($kind:ident, $digest:nlexpr)) => do
+      let kind ← match kind.getId.toString with
+        | "nullifier" => `(Noctium.ShieldedClaimKind.nullifier)
+        | "receive" => `(Noctium.ShieldedClaimKind.receive)
+        | "spend" => `(Noctium.ShieldedClaimKind.spend)
+        | _ => throwErrorAt kind "expected shielded claim kind nullifier, receive, or spend"
+      let digest ← checkedExpression state.env digest (.bytes 32)
+      let term ← `(Noctium.Effect.claimShielded $kind $digest)
       state := {state with terms := state.terms.push term}
     | `(nlupdate| mintShielded($domain:nlexpr, $amount:nlexpr)) => do
       let domain ← checkedExpression state.env domain (.bytes 32)

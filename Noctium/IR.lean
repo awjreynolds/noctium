@@ -956,6 +956,20 @@ inductive LedgerFieldExpr where
 def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
   | .mk ty _ => ty
 
+inductive ShieldedClaimKind where
+  | nullifier | receive | spend
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def ShieldedClaimKind.name : ShieldedClaimKind → String
+  | .nullifier => "nullifier"
+  | .receive => "receive"
+  | .spend => "spend"
+
+def ShieldedClaimKind.slot : ShieldedClaimKind → Nat
+  | .nullifier => 0
+  | .receive => 1
+  | .spend => 2
+
 /-- The existing qualified coin reset is the only ordinary effect that may
 write a qualified record without a booked coin. -/
 def LedgerValueType.cellWriteEffectFields (environment : Types.CompositeEnv)
@@ -986,6 +1000,8 @@ inductive Effect where
   transcript slot. The commitment is the native transient input/output hash.
   Helper and witness-statement authoring APIs do not expose this effect yet. -/
   | claimContractCall (address entryPointHash : Expr (.bytes 32)) (commitment : Expr .native)
+  /-- Claim one raw Zswap digest using the ledger's fixed claim slot. -/
+  | claimShielded (kind : ShieldedClaimKind) (digest : Expr (.bytes 32))
   | mintShielded (domain : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 64 - 1)))
   /-- Receive an already-funded shielded coin into a typed Bytes32-keyed tree map.
   The backend computes its commitment from the disclosed coin data and the
@@ -2034,7 +2050,7 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
       | .ok _ => pure ()
       match effect with
       | .readCell .. | .readMap .. | .readMember .. | .writeCell .. | .writeMap .. |
-          .claimContractCall .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
+          .claimContractCall .. | .claimShielded .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
           .readContractAddress .. | .readTokenBalance .. | .mintShielded .. | .mintUnshielded .. |
           .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
           .readPath .. | .memberPath .. | .memberRecordSet .. | .readRecordMap .. |
@@ -2111,6 +2127,9 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         address.validate caps env
         entryPointHash.validate caps env
         commitment.validate caps env
+        pure []
+      | .claimShielded _ digest => do
+        digest.validate caps env
         pure []
       | .mintShielded domain amount | .mintUnshielded domain amount => do
         domain.validate caps env

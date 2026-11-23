@@ -250,6 +250,10 @@ def describeEffect : Effect → LedgerEffectDescriptor
       [.selector "address" "contract-call claim address" address,
        .selector "entryPointHash" "contract-call claim entrypoint hash" entryPointHash,
        .payload "commitment" "contract-call claim commitment" commitment] []
+  | .claimShielded kind digest =>
+    let sink := s!"public shielded {kind.name} claim"
+    .publicEffect "claimShielded" .asset .publicActivity sink
+      [.payload "digest" sink digest] []
   | .mintShielded domain amount =>
     let sink := "public shielded mint"
     .publicEffect "mintShielded" .asset .publicActivity sink
