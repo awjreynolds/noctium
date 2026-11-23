@@ -18,13 +18,6 @@ import Lean
 namespace Noctium
 open Lean Elab Command
 
-/-- A source-level bounded unsigned type. Its native representation stays the
-underlying UInt maximum, while this identity stays distinct during elaboration. -/
-structure NominalUIntType where
-  name : String
-  maximum : Nat
-  deriving Repr, BEq, DecidableEq
-
 initialize noctiumNominalUIntTypeRegistry : SimplePersistentEnvExtension
     Noctium.NominalUIntType (Array Noctium.NominalUIntType) ←
   registerSimplePersistentEnvExtension {
@@ -73,6 +66,9 @@ structure CircuitInfo where
   sourceProgram? : Option (Name × String) := none
   /-- Structured ledger bodies are rebuilt from their typed source at export. -/
   stateProgram? : Option (Name × String) := none
+  /-- Source nominal identities for scalar cells in the owning structured
+  contract. These tags are reapplied when the helper source is rebuilt. -/
+  stateNominalUIntCells : List (String × NominalUIntType) := []
   specializationArtifact? : Option String := none
   deriving Inhabited
 
@@ -656,6 +652,10 @@ private def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM 
       | .error message => throwErrorAt bits message
       | _ => throwErrorAt bits "invalid nominal UInt width"
     let declaration : NominalUIntType := {name := fullName, maximum}
+    let typeIdent := mkIdent (name.getId ++ `nominalType)
+    let bound : TSyntax `term := ⟨Syntax.mkNumLit (toString maximum)⟩
+    elabCommand (← `(def $typeIdent : Noctium.NominalUIntType :=
+      {name := $(⟨Syntax.mkStrLit fullName⟩), maximum := $bound}))
     modifyEnv fun env => noctiumNominalUIntTypeRegistry.addEntry env declaration
   | _ => throwUnsupportedSyntax
 
@@ -5395,6 +5395,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
+        unless info.stateNominalUIntCells.isEmpty do
+          throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         unless args.getElems.size ≤ 256 && uniqueNames (args.getElems.toList.map (·.getId.toString)) do
           throwErrorAt id "invalid logical call argument list"
         let mut callInputTerms : Array (TSyntax `term) := #[]
@@ -5440,6 +5442,8 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
+        unless info.stateNominalUIntCells.isEmpty do
+          throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         let env ← addReferences [] (info.inputs ++ info.outputs)
         let env ← addLogicalReferences env info.logicalOutputs
         let reserved := statements.toList.flatMap (fun statement => syntaxIdentifiers statement.raw) ++
@@ -5461,27 +5465,23 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
         entryNames := id.getId :: entryNames
         let sourceName ← liftCoreM <| resolveGlobalConstNoOverload source
         let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
+        let program := {program with nominalUIntCells := nominalUIntCells}
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
-        for effect in value.effects do
-          match effect with
-          | .readCell storage _ _ =>
-            if nominalUIntCells.any (fun (name, _) => name == storage) then
-              throwErrorAt entryStx
-                s!"structured entry helpers cannot read nominal UInt Cell '{storage}' until helper tags are supported"
-          | .writeCell storage _ _ =>
-            if nominalUIntCells.any (fun (name, _) => name == storage) then
-              throwErrorAt entryStx
-                s!"structured entry helpers cannot write nominal UInt Cell '{storage}' until helper tags are supported"
-          | _ => pure ()
         let localCircuitName := name.getId ++ id.getId ++ `circuit
         let fullCircuitName := (← getCurrNamespace) ++ localCircuitName
         let circuitId := mkIdent localCircuitName
         let circuitName := stringTerm fullCircuitName.toString
         let sourceTerm := mkIdent sourceName
+        let nominalUIntCellTerms ← nominalUIntCells.toArray.mapM fun (storage, nominalUInt) => do
+          let name := stringTerm nominalUInt.name
+          let maximum := natTerm nominalUInt.maximum
+          `(($(stringTerm storage), ({name := $name, maximum := $maximum} : Noctium.NominalUIntType)))
+        let taggedProgram ← `({$sourceTerm with nominalUIntCells := [$nominalUIntCellTerms,*]
+          : Noctium.Helpers.Program})
         elabCommand (← `(def $circuitId : Noctium.Circuit :=
-          match Noctium.Witness.compileStateEntrypoint $sourceTerm $exportName [$stateTerms,*] with
+          match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with
           | .ok compiledEntry => {compiledEntry.circuit with name := $circuitName}
           | .error _ => {name := $circuitName}))
         unsafe checkGeneratedCircuit fullCircuitName
@@ -5490,10 +5490,11 @@ private partial def readMapSetTail (tail : TSyntax `nlmapsettail) :
           inputs := value.circuit.inputs.map fun input => (input.name, input.ty)
           publicInputs := (value.circuit.inputs.filter (·.visibility == .public)).map fun input => (input.name, input.ty)
           outputs := []
-          stateProgram? := some (sourceName, exportName.getString)}
+          stateProgram? := some (sourceName, exportName.getString)
+          stateNominalUIntCells := nominalUIntCells}
         let circuitTerm := mkIdent fullCircuitName
         entryTerms := entryTerms.push (← `(
-          match Noctium.Witness.compileStateEntrypoint $sourceTerm $exportName [$stateTerms,*] with
+          match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with
           | .ok compiledEntry => {compiledEntry with name := $(stringTerm id.getId.toString), circuit := $circuitTerm}
           | .error _ => {name := $(stringTerm id.getId.toString), circuit := $circuitTerm}))
       | _ => throwErrorAt entryStx "unsupported Noctium entrypoint"

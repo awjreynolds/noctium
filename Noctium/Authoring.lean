@@ -2670,6 +2670,9 @@ private def authoringForeignBinaryTerm : Foreign.BinaryOp → CommandElabM (TSyn
     let curve ← authoringForeignCurveTerm curve
     `(Noctium.Foreign.BinaryOp.fromCoordinates $curve)
 
+private def nominalUIntTypeTerm (target : NominalUIntType) : CommandElabM (TSyntax `term) := do
+  `(Noctium.NominalUIntType.mk $(stringTerm target.name) $(natTerm target.maximum))
+
 private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `term)
   | .unit => `(Noctium.Helpers.Term.unit)
   | .native value => `(Noctium.Helpers.Term.native $(natTerm value))
@@ -2705,6 +2708,9 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
     `(Noctium.Helpers.Term.foreignConstant $kind [$encoding,*])
   | .eq left right => do `(Noctium.Helpers.Term.eq $(← termTerm left) $(← termTerm right))
   | .cast ty value => do `(Noctium.Helpers.Term.cast $(← tyTerm ty) $(← termTerm value))
+  | .castNominalUInt target value => do
+    let target ← nominalUIntTypeTerm target
+    `(Noctium.Helpers.Term.castNominalUInt $target $(← termTerm value))
   | .disclose span value => do
     let span ← quoteSpan span
     `(Noctium.Helpers.Term.disclose $span $(← termTerm value))
@@ -3766,14 +3772,21 @@ private partial def lowerReadableStatement (programName path : String)
       let compositeParameterTerms ← declaration.compositeParameters.mapM fun (name, type) => do
         `(($(stringTerm name), $(← compositeTypeTerm type)))
       let compositeParameterTerms := compositeParameterTerms.toArray
+      let nominalUIntParameterTerms ← declaration.nominalUIntParameters.mapM fun (name, target) => do
+        `(($(stringTerm name), $(← nominalUIntTypeTerm target)))
+      let nominalUIntParameterTerms := nominalUIntParameterTerms.toArray
       let statementTerms ← declaration.body.mapM statementTerm
       let statementTerms := statementTerms.toArray
       let id ← `(Noctium.Helpers.DeclarationId.mk $(natTerm declaration.id.scope)
         $(natTerm declaration.id.ordinal))
       let result ← resultTypeTerm declaration.result
+      let nominalUIntResult ← match declaration.nominalUIntResult with
+        | none => `(none)
+        | some target => `(some $(← nominalUIntTypeTerm target))
       let declaredPure ← if declaration.declaredPure then `(Bool.true) else `(Bool.false)
       `(Noctium.Helpers.Declaration.mk $id $(stringTerm declaration.name)
-        [$parameterTerms,*] [$compositeParameterTerms,*] $result
+        [$parameterTerms,*] [$compositeParameterTerms,*] [$nominalUIntParameterTerms,*]
+        $result $nominalUIntResult
         [$statementTerms,*] $declaredPure $(← quoteSpan declaration.span))
     let declarationTerms := declarationTerms.toArray
     let structureTerms ← program.composites.structures.mapM fun structDecl => do
@@ -3806,6 +3819,9 @@ private partial def lowerReadableStatement (programName path : String)
     let exportTerm ← `(Noctium.Helpers.Export.mk $(stringTerm entryExport.name) $exportId
       [$inputTerms,*] [$aggregateInputTerms,*] $exportSpanTerm)
     let localDeclarations ← `([$declarationTerms,*])
+    let nominalUIntCellTerms ← program.nominalUIntCells.mapM fun (name, target) => do
+      `(($(stringTerm name), $(← nominalUIntTypeTerm target)))
+    let nominalUIntCellTerms := nominalUIntCellTerms.toArray
     let programTerm ← match libraryName with
       | some source =>
         let library := mkIdent source
@@ -3816,6 +3832,7 @@ private partial def lowerReadableStatement (programName path : String)
           composites := $compositeEnvTerm
           witnesses := [$signatureTerms,*]
           ledger := $(library).ledger
+          nominalUIntCells := [$nominalUIntCellTerms,*]
           : Noctium.Helpers.Program })
       | none => `({
           scopes := [{id := 0}]
@@ -3823,6 +3840,7 @@ private partial def lowerReadableStatement (programName path : String)
           exports := [$exportTerm]
           composites := $compositeEnvTerm
           witnesses := [$signatureTerms,*]
+          nominalUIntCells := [$nominalUIntCellTerms,*]
           : Noctium.Helpers.Program })
     let programTerm ← if codecTerms.isEmpty || helperProgram.isSome then pure programTerm else
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with

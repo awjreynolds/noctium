@@ -111,6 +111,69 @@ noctium_contract RawUIntHelperCells where
   entry writeBalance from nominalCellWriteProgram entry "writeBalance" end
 end
 
+private def nominalHelperProgram : Program := {
+  ledger := [{name := "balance", kind := .cell (.uint 255)}]
+  declarations := [
+    {id := ⟨0, 0⟩, name := "forward", parameters := [⟨"amount", .uint 255⟩],
+      nominalUIntParameters := [("amount", Amount.nominalType)],
+      result := .scalar (.uint 255), nominalUIntResult := some Amount.nominalType,
+      body := [.return (some (.ref "amount"))]},
+    {id := ⟨0, 1⟩, name := "set", parameters := [⟨"amount", .uint 255⟩],
+      nominalUIntParameters := [("amount", Amount.nominalType)],
+      result := .scalar (.uint 255), nominalUIntResult := some Amount.nominalType,
+      body := [
+        .writeCell "balance" (.uint 255) (.disclose {} (.call "forward" [.ref "amount"])),
+        .readCell "balance" "current" (.uint 255),
+        .return (some (.disclose {} (.call "forward" [.ref "current"])))]},
+    {id := ⟨0, 2⟩, name := "setRaw", parameters := [⟨"raw", .uint 511⟩],
+      result := .scalar (.uint 255), nominalUIntResult := some Amount.nominalType,
+      body := [
+        .bind "amount" (.scalar (.uint 255)) (.castNominalUInt Amount.nominalType (.ref "raw")),
+        .return (some (.call "set" [.ref "amount"]))]}]
+  exports := [
+    {name := "set", target := ⟨0, 1⟩, inputs := [{name := "amount", ty := .uint 255, visibility := .private}]},
+    {name := "setRaw", target := ⟨0, 2⟩, inputs := [{name := "raw", ty := .uint 511, visibility := .private}]}]
+}
+
+noctium_contract NominalAmountHelperLedger where
+  cell balance : Amount
+  entry setAmount from nominalHelperProgram entry "set" end
+  entry setRaw from nominalHelperProgram entry "setRaw" end
+end
+
+/- error: use 'entry from' to bind a structured nominal UInt circuit to its contract -/
+#guard_msgs (substring := true) in
+noctium_contract WrongOwnerNominalHelper where
+  cell balance : Count
+  entry reuseAmount uses NominalAmountHelperLedger.setAmount.circuit where
+  end
+end
+
+private def hostedNominalHelperProgram : Program := {
+  nominalHelperProgram with
+  witnesses := [preserveAmount.__witnessSignature]
+  declarations := nominalHelperProgram.declarations.map fun declaration =>
+    if declaration.name == "forward" then {declaration with body := [
+        .return (some (.witnessCall "preserve-amount" preserveAmount.__witnessSignature.name [.ref "amount"]))]}
+    else declaration
+}
+
+noctium_contract NominalAmountHostedLedger where
+  cell balance : Amount
+  entry setAmount from hostedNominalHelperProgram entry "set" end
+end
+
+#guard match Witness.Ledger.transform
+    {hostedNominalHelperProgram with nominalUIntCells := [("balance", Amount.nominalType)]} with
+  | .ok transformed =>
+    transformed.host.witnesses.any (fun signature =>
+      signature.operation == "noctium.ledger.read.v1" &&
+        signature.resultNominal == some Amount.nominalType.name) &&
+    transformed.native.witnesses.any (fun signature =>
+      signature.operation == "noctium.ledger.write.v1" &&
+        signature.parameters.map (·.sourceNominal) == [some Amount.nominalType.name])
+  | .error _ => Bool.false
+
 noctium_contract NominalAmountLedger where
   cell balance : Amount
   constructor(initial : Amount) where
@@ -200,6 +263,42 @@ private def nominalCellRoundTrip : Except String _root_.Bool := do
 
 #guard NominalAmountLedger.entrypoints.all fun operation =>
   (Noctium.Backend.Zkir.lowerEntrypoint NominalAmountLedger.state operation).isOk
+
+private def nominalHelperCellRoundTrip : Except String _root_.Bool := do
+  let [setAmount, setRaw] := NominalAmountHelperLedger.entrypoints
+    | throw "expected two nominal cell operations"
+  let (_, amountState) ← setAmount.run context [("amount", .uint 255 41)]
+    {cells := [("balance", .uint 255 19)]}
+  let (_, rawState) ← setRaw.run context [("raw", .uint 511 255)] amountState
+  pure (amountState.cells.lookup "balance" == some (.uint 255 41) &&
+    rawState.cells.lookup "balance" == some (.uint 255 255) &&
+    !(setRaw.run context [("raw", .uint 511 256)] rawState).isOk)
+
+#guard nominalHelperCellRoundTrip.toOption == some Bool.true
+
+#guard NominalAmountHelperLedger.entrypoints.all fun operation =>
+  (Noctium.Backend.Zkir.lowerEntrypoint NominalAmountHelperLedger.state operation).isOk
+
+#guard match Witness.compileStateEntrypointWithWitness
+    {hostedNominalHelperProgram with nominalUIntCells := [("balance", Amount.nominalType)]}
+    "set" NominalAmountHostedLedger.state with
+  | .ok (_, some _) => Bool.true
+  | _ => Bool.false
+
+private def crossedNominalHelperProgram : Program := {
+  nominalHelperProgram with
+  declarations := nominalHelperProgram.declarations.map fun declaration =>
+    if declaration.name == "forward" then {declaration with
+        nominalUIntParameters := [("amount", Count.nominalType)]
+        nominalUIntResult := some Count.nominalType}
+    else declaration
+}
+
+#guard match Witness.compileStateEntrypoint
+    {crossedNominalHelperProgram with nominalUIntCells := [("balance", Amount.nominalType)]}
+    "set" NominalAmountHelperLedger.state with
+  | .error issue => (issue.message.splitOn "nominal UInt values require an explicit cast").length > 1
+  | .ok _ => Bool.false
 
 #guard match Noctium.Witness.compile amountArithmetic.__program arithmeticEntry with
   | .ok compiled =>
@@ -355,14 +454,14 @@ noctium_contract rejectsNominalCellReadReturn where
   end
 end
 
-/- error: structured entry helpers cannot read nominal UInt Cell 'balance' until helper tags are supported -/
+/- error: nominal UInt values require an explicit cast and must match the target type -/
 #guard_msgs (substring := true) in
 noctium_contract rejectsNominalCellHelperRead where
   cell balance : Amount
   entry readBalance from nominalCellReadProgram entry "readBalance" end
 end
 
-/- error: structured entry helpers cannot write nominal UInt Cell 'balance' until helper tags are supported -/
+/- error: nominal UInt values require an explicit cast and must match the target type -/
 #guard_msgs (substring := true) in
 noctium_contract rejectsNominalCellHelperWrite where
   cell balance : Amount

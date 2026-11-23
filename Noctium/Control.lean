@@ -126,6 +126,8 @@ mutual
         pure (⟨.bool, if a == b then 1 else 0⟩ : ScalarPolicy.Value)
       pure {combined (.scalar .bool) [a, b] with literal}
     | .cast ty value => abstractCast (.scalar ty) <$> expression checked scope env span value
+    | .castNominalUInt target value =>
+      abstractCast (.scalar (.uint target.maximum)) <$> expression checked scope env span value
     | .disclose _ value =>
       let value ← expression checked scope env span value
       pure {value with origins := [], control := []}
@@ -467,6 +469,9 @@ mutual
       pure (node span tag [("condition", ← emitExpression checked scope env span c),
         ("yes", yes), ("no", no)])
     | .cast ty value => pure (node span "cast" [("type", toJson (typeName (.scalar ty))), ("value", ← emitExpression checked scope env span value)])
+    | .castNominalUInt target value => pure (node span "cast" [
+        ("type", toJson (typeName (.scalar (.uint target.maximum)))),
+        ("value", ← emitExpression checked scope env span value)])
     | .disclose _ value => pure (node span "disclose" [("value", ← emitExpression checked scope env span value)])
     | .poseidon2 domain a b => pure (node span "poseidon2" [("domain", toJson (toString domain)),
         ("left", ← emitExpression checked scope env span a), ("right", ← emitExpression checked scope env span b)])

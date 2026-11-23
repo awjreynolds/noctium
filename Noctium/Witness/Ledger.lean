@@ -20,6 +20,7 @@ structure Transformed where
 
 private structure BuildState where
   source : String
+  nominalUIntCells : List (String × NominalUIntType) := []
   next : Nat := 0
   reserved : List String := []
   calls : List LedgerCall := []
@@ -53,7 +54,8 @@ private def signatureResult (kind : String) (valueTy : Ty) : ResultType :=
   else .scalar (if kind == "readMember" then .bool else valueTy)
 
 private def registerCall (kind stateName : String) (keyTy : Option Ty) (valueTy : Ty)
-    (parameters : List WitnessParameter) : BuildM (String × String) := do
+    (parameters : List WitnessParameter) (resultNominal : Option String := none) :
+    BuildM (String × String) := do
   let site ← fresh "site"
   let name ← fresh "signature"
   let signature : WitnessSignature := {
@@ -61,14 +63,16 @@ private def registerCall (kind stateName : String) (keyTy : Option Ty) (valueTy 
     operation := if isRead kind then "noctium.ledger.read.v1" else "noctium.ledger.write.v1",
     capability := "noctium.ledger",
     parameters,
-    result := signatureResult kind valueTy}
+    result := signatureResult kind valueTy,
+    resultNominal}
   modify fun current => {current with
     calls := current.calls ++ [{site, name, kind, state := stateName, keyTy, valueTy}]
     signatures := current.signatures ++ [signature]}
   pure (site, name)
 
-private def scalarParameter (name : String) (ty : Ty) : WitnessParameter :=
-  {name, type := .scalar ty}
+private def scalarParameter (name : String) (ty : Ty)
+    (sourceNominal : Option String := none) : WitnessParameter :=
+  {name, type := .scalar ty, sourceNominal}
 
 private def callTerm (site name : String) (arguments : List Term) : Term :=
   .witnessCall site name arguments
@@ -77,7 +81,9 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
   match statement with
   | .readCell state destination ty => do
     let actual ← fresh "read"
+    let nominalUInt? := (← get).nominalUIntCells.lookup state
     let (site, name) ← registerCall "readCell" state none ty []
+      (nominalUInt?.map (·.name))
     -- Native equality ties the disclosed provider value to the public ledger read.
     let bindResult := Statement.bind destination (.scalar ty)
       (.disclose {} (callTerm site name []))
@@ -103,7 +109,9 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
       .assert (.eq (.ref destination) (.ref actual))])
   | .writeCell state ty value => do
     let valueName ← fresh "value"
-    let (site, name) ← registerCall "writeCell" state none ty [scalarParameter "value" ty]
+    let nominalUInt? := (← get).nominalUIntCells.lookup state
+    let (site, name) ← registerCall "writeCell" state none ty
+      [scalarParameter "value" ty (nominalUInt?.map (·.name))]
     let bindValue := Statement.bind valueName (.scalar ty) value
     let notify := Statement.evaluate (callTerm site name [.ref valueName])
     pure ([bindValue, notify], [bindValue, .writeCell state ty (.ref valueName), notify])
@@ -152,7 +160,8 @@ def transform (program : Program) : Except Diagnostic Transformed := do
   discard (Helpers.analyze program)
   let source := reprStr program
   let initial : BuildState := {
-    source, reserved := program.witnesses.map (·.name)}
+    source, nominalUIntCells := program.nominalUIntCells,
+    reserved := program.witnesses.map (·.name)}
   let action : BuildM (List Declaration × List Declaration) := transformDeclarations program.declarations
   let ((hostDeclarations, nativeDeclarations), result) ← action.run initial
   let host : Program := {program with

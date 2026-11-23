@@ -8,18 +8,22 @@ constructor(initial: Amount) {
   balance = disclose(initial);
 }
 
+pure circuit forwardAmount(value: Amount): Amount {
+  return value;
+}
+
 export circuit setAmount(value: Amount): [] {
-  balance = disclose(value);
+  balance = disclose(forwardAmount(value));
   return [];
 }
 
 export circuit setRaw(value: Uint<8>): [] {
-  balance = disclose(value as Amount);
+  balance = disclose(forwardAmount(value as Amount));
   return [];
 }
 
 export circuit get(): Amount {
-  return balance;
+  return forwardAmount(balance);
 }
 
 export pure circuit addAmount(left: Amount, right: Amount): Amount {
