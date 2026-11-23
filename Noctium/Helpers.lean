@@ -49,6 +49,7 @@ def Parameter.resultType (parameter : Parameter) : ResultType :=
 structure WitnessParameter where
   name : String
   type : ResultType
+  sourceNominal : Option String := none
   deriving Repr
 
 /-- Explicit host identity. Returning a value grants no circuit truth or release authority. -/
@@ -59,6 +60,7 @@ structure WitnessSignature where
   privateKey : Option String := none
   parameters : List WitnessParameter := []
   result : ResultType
+  resultNominal : Option String := none
   span : SourceSpan := {}
   deriving Repr
 
