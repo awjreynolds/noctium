@@ -23,7 +23,7 @@ theorem typedEnvironment_snoc_existing (hash : Hash) (witness : Assignment)
     (freshType : types.lookup name = none)
     (alias : aliases.lookup name = some term)
     (canonical : Canonical ty value)
-    (meaning : interpret hash witness term = scalar (number ty value)) :
+    (meaning : interpret hash witness term = sourceScalar? ty value) :
     TypedEnvironment hash witness aliases
       (values ++ [(name, Value.pack ty value)])
       (types ++ [(name, ty)]) := by
@@ -33,8 +33,9 @@ theorem typedEnvironment_snoc_existing (hash : Hash) (witness : Assignment)
     · subst found
       simp [List.lookup_append, freshValue] at lookup
       cases lookup
-      cases ty <;> cases foundTy <;>
-        simp_all [Value.pack, Value.as, Canonical, number]
+      obtain ⟨foundCanonical, sourceMeaning⟩ :=
+        packed_as_canonical ty foundTy value result canonical typed
+      exact ⟨foundCanonical, term, alias, meaning.trans sourceMeaning.symm⟩
     · have unequal : (found == name) = false := by simp [same]
       simp only [List.lookup_append, List.lookup_cons, unequal,
         List.lookup_nil, Option.or_none] at lookup
@@ -47,7 +48,7 @@ theorem typedEnvironment_snoc_existing (hash : Hash) (witness : Assignment)
       simp [List.lookup_append, freshType] at lookup
       cases lookup
       exact ⟨Value.pack ty value, value,
-        by simp [List.lookup_append, freshValue], number_pack_as ty value⟩
+        by simp [List.lookup_append, freshValue], number_pack_as ty value canonical⟩
     · have unequal : (found == name) = false := by simp [same]
       simp only [List.lookup_append, List.lookup_cons, unequal,
         List.lookup_nil, Option.or_none] at lookup
@@ -62,6 +63,8 @@ theorem appendDecodedReads (reads : List Backend.Impact.Read)
     (hash : Hash) (witness : Assignment)
     (aliases : AliasEnvironment) (values : EvalEnv) (types : TypeEnv)
     (environment : TypedEnvironment hash witness aliases values types)
+    (decodedValues : EvalEnv)
+    (decoded : decodeReads reads witness = .ok decodedValues)
     (fresh : ∀ read ∈ reads,
       aliases.lookup read.name = none ∧
       values.lookup read.name = none ∧
@@ -72,18 +75,26 @@ theorem appendDecodedReads (reads : List Backend.Impact.Read)
     (bounded : ∀ read ∈ reads,
       (witness ("%input_" ++ read.name)).val ≤ sourceMaximum read.ty) :
     TypedEnvironment hash witness (aliases ++ readAliases reads)
-      (values ++ decodeReads reads witness) (types ++ readTypes reads) := by
-  induction reads generalizing aliases values types with
-  | nil => simpa [readAliases, decodeReads, readTypes] using environment
+      (values ++ decodedValues) (types ++ readTypes reads) := by
+  induction reads generalizing aliases values types decodedValues with
+  | nil =>
+    simp [decodeReads] at decoded
+    cases decoded
+    simpa [readAliases, readTypes] using environment
   | cons read rest ih =>
     simp only [List.pairwise_cons] at distinct
+    obtain ⟨first, tailValues, firstSuccess, tailSuccess, decodedShape⟩ :=
+      decodeReads_cons_success read rest witness decodedValues decoded
+    obtain ⟨supported, firstShape⟩ :=
+      decodeRead_success read witness first firstSuccess
+    cases firstShape
     have headFresh := fresh read (by simp)
-    obtain ⟨canonical, meaning⟩ := sourceValue_canonical read.ty
+    obtain ⟨canonical, meaning⟩ := sourceValue_canonical supported
       (witness ("%input_" ++ read.name))
       (typed read (by simp)) (bounded read (by simp))
     have next := typedEnvironment_snoc hash witness aliases values types
       read.name read.ty
-      (sourceValue read.ty (witness ("%input_" ++ read.name)))
+      (sourceValue supported (witness ("%input_" ++ read.name)))
       (.input ("%input_" ++ read.name)) environment
       headFresh.1 headFresh.2.1 headFresh.2.2 canonical
       (by simpa only [interpret_input] using meaning.symm)
@@ -91,7 +102,7 @@ theorem appendDecodedReads (reads : List Backend.Impact.Read)
         (aliases ++ [(read.name, Term.input ("%input_" ++ read.name))]).lookup
           item.name = none ∧
         (values ++ [(read.name, Value.pack read.ty
-          (sourceValue read.ty (witness ("%input_" ++ read.name))))]).lookup
+          (sourceValue supported (witness ("%input_" ++ read.name))))]).lookup
           item.name = none ∧
         (types ++ [(read.name, read.ty)]).lookup item.name = none := by
       intro item member
@@ -109,8 +120,10 @@ theorem appendDecodedReads (reads : List Backend.Impact.Read)
         (witness ("%input_" ++ item.name)).val ≤ sourceMaximum item.ty := by
       intro item member
       exact bounded item (by simp [member])
-    have later := ih _ _ _ next restFresh distinct.2 restTyped restBounded
-    simpa [readAliases, decodeReads, readTypes, List.append_assoc] using later
+    have later := ih _ _ _ next tailValues tailSuccess restFresh distinct.2
+      restTyped restBounded
+    rw [decodedShape]
+    simpa [readAliases, readTypes, List.append_assoc] using later
 
 /-- Production read aliases are present before the output fold. Extend only
 the source value and type environments with bounded, typed candidates. -/
@@ -118,6 +131,8 @@ theorem appendDecodedReads_existing (reads : List Backend.Impact.Read)
     (hash : Hash) (witness : Assignment)
     (aliases : AliasEnvironment) (values : EvalEnv) (types : TypeEnv)
     (environment : TypedEnvironment hash witness aliases values types)
+    (decodedValues : EvalEnv)
+    (decoded : decodeReads reads witness = .ok decodedValues)
     (fresh : ∀ read ∈ reads,
       values.lookup read.name = none ∧ types.lookup read.name = none)
     (distinct : reads.Pairwise (fun left right => left.name ≠ right.name))
@@ -128,24 +143,32 @@ theorem appendDecodedReads_existing (reads : List Backend.Impact.Read)
     (bounded : ∀ read ∈ reads,
       (witness ("%input_" ++ read.name)).val ≤ sourceMaximum read.ty) :
     TypedEnvironment hash witness aliases
-      (values ++ decodeReads reads witness) (types ++ readTypes reads) := by
-  induction reads generalizing values types with
-  | nil => simpa [decodeReads, readTypes] using environment
+      (values ++ decodedValues) (types ++ readTypes reads) := by
+  induction reads generalizing values types decodedValues with
+  | nil =>
+    simp [decodeReads] at decoded
+    cases decoded
+    simpa [readTypes] using environment
   | cons read rest ih =>
     simp only [List.pairwise_cons] at distinct
+    obtain ⟨first, tailValues, firstSuccess, tailSuccess, decodedShape⟩ :=
+      decodeReads_cons_success read rest witness decodedValues decoded
+    obtain ⟨supported, firstShape⟩ :=
+      decodeRead_success read witness first firstSuccess
+    cases firstShape
     have headFresh := fresh read (by simp)
-    obtain ⟨canonical, meaning⟩ := sourceValue_canonical read.ty
+    obtain ⟨canonical, meaning⟩ := sourceValue_canonical supported
       (witness ("%input_" ++ read.name))
       (typed read (by simp)) (bounded read (by simp))
     have next := typedEnvironment_snoc_existing hash witness aliases values types
       read.name read.ty
-      (sourceValue read.ty (witness ("%input_" ++ read.name)))
+      (sourceValue supported (witness ("%input_" ++ read.name)))
       (.input ("%input_" ++ read.name)) environment
       headFresh.1 headFresh.2 (existing read (by simp)) canonical
       (by simpa only [interpret_input] using meaning.symm)
     have restFresh : ∀ item ∈ rest,
         (values ++ [(read.name, Value.pack read.ty
-          (sourceValue read.ty (witness ("%input_" ++ read.name))))]).lookup
+          (sourceValue supported (witness ("%input_" ++ read.name))))]).lookup
           item.name = none ∧
         (types ++ [(read.name, read.ty)]).lookup item.name = none := by
       intro item member
@@ -154,10 +177,11 @@ theorem appendDecodedReads_existing (reads : List Backend.Impact.Read)
         (distinct.1 item member).symm
       exact ⟨lookup_snoc_none values item.name read.name _ base.1 different,
         lookup_snoc_none types item.name read.name _ base.2 different⟩
-    have later := ih _ _ next restFresh distinct.2
+    have later := ih _ _ next tailValues tailSuccess restFresh distinct.2
       (fun item member => existing item (by simp [member]))
       (fun item member => typed item (by simp [member]))
       (fun item member => bounded item (by simp [member]))
-    simpa [decodeReads, readTypes, List.append_assoc] using later
+    rw [decodedShape]
+    simpa [readTypes, List.append_assoc] using later
 
 end Noctium.Verification.GenericStateReadEnvironment
