@@ -4793,7 +4793,7 @@
       "layer": "standard-library",
       "surface": "transientHash",
       "noctiumStatus": "subset",
-      "notes": "The native field vector route and typed transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use ordered typed leaves for checked records, tuples and fixed vectors. Readable circuits accept a single checked composite value. The native and Compact fixtures agree on mixed leaf encodings and empty preimages. The readable fixture accepts a single private aggregate in the host session and rejects a digest published without release. One mixed nested Jubjub and Secp256k1 payload matches the exact Compact 0.36.1 Field output through the native checker. Readable transientHashValue on the same private payload matches that Field in both the Rust witness session and the native relation.",
+      "notes": "The native field vector route and typed transientHashValue use native transient_hash. Ordinary and readable circuits match pinned Compact for selected Native, Bool and UInt8 inputs, including equal scalar encodings across types. Native rejects UInt8 overflow. Ordinary circuits use ordered typed leaves for checked records, tuples and fixed vectors. Readable circuits accept a single checked composite value. The native and Compact fixtures agree on mixed leaf encodings and empty preimages. The readable fixture accepts a single private aggregate in the host session and rejects a digest published without release. One mixed nested Jubjub and Secp256k1 payload matches the exact Compact 0.36.1 Field output through the native checker. Readable transientHashValue on the same private payload matches that Field in both the Rust witness session and the native relation. A bounded UIntRange 7 record matches pinned Compact at counts 5 and 6, rejects count 7, and its readable transientHashValue matches at count 5 while rejecting 7.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4820,7 +4820,11 @@
         "tests/ReadableFabHash.lean",
         "runtime/tests/readable_fab_hash.rs",
         "tests/CurveFabHashes.lean",
-        "runtime/tests/curve_fab_hashes.rs"
+        "runtime/tests/curve_fab_hashes.rs",
+        "tests/BoundedFabHashCommit.lean",
+        "tests/compact/BoundedFabHashCommit.compact",
+        "tests/compact/bounded-fab-hash-commit.mjs",
+        "runtime/tests/bounded_fab_hash_commit.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4829,7 +4833,7 @@
       "layer": "standard-library",
       "surface": "transientCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open.",
+      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4850,7 +4854,11 @@
         "runtime/tests/mixed_fab_commitments.rs",
         "tests/compact/mixed-fab-persistent-hash.mjs",
         "tests/CurveFabHashes.lean",
-        "runtime/tests/curve_fab_hashes.rs"
+        "runtime/tests/curve_fab_hashes.rs",
+        "tests/BoundedFabHashCommit.lean",
+        "tests/compact/BoundedFabHashCommit.compact",
+        "tests/compact/bounded-fab-hash-commit.mjs",
+        "runtime/tests/bounded_fab_hash_commit.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4859,7 +4867,7 @@
       "layer": "standard-library",
       "surface": "persistentHash",
       "noctiumStatus": "subset",
-      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open. The native runtime matches pinned Compact digests for 33- and 64-lane UInt16 vectors.",
+      "notes": "Checked mixed records, flat tuples and a nested Jubjub and Secp256k1 payload match pinned Compact digests through the native relation. The runtime rejects a mismatched byte field wrapper. Named Lean helpers hash checked FAB records supplied by private providers and require disclosure for a public digest. Empty and 33-byte record fields match pinned Compact digests. The 63-byte cases exercise three native chunks and reject an out-of-range high byte. Typed UInt16 root vectors of length two and zero also match pinned Compact and reject mismatched arity. General overload qualification remains open. The native runtime matches pinned Compact digests for 33- and 64-lane UInt16 vectors. A bounded UIntRange 7 record matches pinned Compact at counts 5 and 6 and rejects count 7.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4886,7 +4894,11 @@
         "tests/CurveFabHashes.lean",
         "runtime/tests/curve_fab_hashes.rs",
         "tests/HelperPersistentFab.lean",
-        "runtime/tests/witness_control.rs"
+        "runtime/tests/witness_control.rs",
+        "tests/BoundedFabHashCommit.lean",
+        "tests/compact/BoundedFabHashCommit.compact",
+        "tests/compact/bounded-fab-hash-commit.mjs",
+        "runtime/tests/bounded_fab_hash_commit.rs"
       ],
       "equivalence": "unverified"
     },
@@ -4895,7 +4907,7 @@
       "layer": "standard-library",
       "surface": "persistentCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open.",
+      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4916,7 +4928,11 @@
         "runtime/tests/mixed_fab_commitments.rs",
         "tests/compact/mixed-fab-persistent-hash.mjs",
         "tests/CurveFabHashes.lean",
-        "runtime/tests/curve_fab_hashes.rs"
+        "runtime/tests/curve_fab_hashes.rs",
+        "tests/BoundedFabHashCommit.lean",
+        "tests/compact/BoundedFabHashCommit.compact",
+        "tests/compact/bounded-fab-hash-commit.mjs",
+        "runtime/tests/bounded_fab_hash_commit.rs"
       ],
       "equivalence": "unverified"
     },

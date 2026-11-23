@@ -113,8 +113,9 @@ where
       | .scalar .nativeField => pure [value]
       | .scalar .booleanField => pure [.cast .native value]
       | .scalar (.boundedUnsignedField maximum) =>
-        unless (List.range ScalarPolicy.maxBits).any (fun bits => 2 ^ (bits + 1) - 1 == maximum) do
-          throw "transientHashValue requires a supported UInt width"
+        -- Keep the declared maximum on the checked layout and source input.
+        -- The cast here only produces the field operand Compact hashes.
+        discard (ScalarPolicy.validate (.uint maximum))
         pure [.cast .native value]
       | .bytes length .byteField =>
         unless length ≤ maxBytesLength do

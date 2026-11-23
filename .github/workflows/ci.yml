@@ -312,6 +312,9 @@ jobs:
           .lake/build/bin/noctium compile tests/MixedFabCommitments.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/mixed-fab-commitments"
+          .lake/build/bin/noctium compile tests/BoundedFabHashCommit.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/bounded-fab-hash-commit"
           .lake/build/bin/noctium compile tests/NestedTransientHash.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/nested-transient-hash"
@@ -373,6 +376,7 @@ jobs:
             NOCTIUM_MAYBE_BYTES_CURVES_DIR="$artifacts/maybe-bytes-curves" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
             NOCTIUM_MIXED_FAB_COMMITMENTS_DIR="$artifacts/mixed-fab-commitments" \
+            NOCTIUM_BOUNDED_FAB_HASH_COMMIT_DIR="$artifacts/bounded-fab-hash-commit" \
             NOCTIUM_NESTED_TRANSIENT_HASH_DIR="$artifacts/nested-transient-hash" \
             NOCTIUM_READABLE_FAB_HASH_DIR="$artifacts/readable-fab-hash" \
             NOCTIUM_NAMED_ENUM_MEMBERS_DIR="$artifacts/named-enum-members" \
@@ -398,6 +402,7 @@ jobs:
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test curve_defaults \
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \
+              --test bounded_fab_hash_commit \
               --test named_enum_members --test nested_aggregate_equality \
               --test structural_equality_widening \
               --test readable_lazy_conditional --test readable_iteration \

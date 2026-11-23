@@ -1,0 +1,19 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Payload {
+  count: Uint<0..7>;
+}
+
+export pure circuit hashRange(
+  payload: Payload,
+  persistentOpening: Bytes<32>,
+  transientOpening: Field,
+): [Bytes<32>, Bytes<32>, Field, Field] {
+  return [
+    persistentHash<Payload>(payload),
+    persistentCommit<Payload>(payload, persistentOpening),
+    transientHash<Payload>(payload),
+    transientCommit<Payload>(payload, transientOpening),
+  ];
+}
