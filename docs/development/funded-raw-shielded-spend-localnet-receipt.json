@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "network": "undeployed",
+  "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "runtimeSpecVersion": 2001100,
+  "targetProfile": "midnight-ledger-9-zkir-3.2.1",
+  "compilerRevision": "597dfc14a3158bd558f869883db72771e2757d06",
+  "source": "tests/FundedRawShieldedSpend.lean",
+  "sourceSha256": "6ae874a8c5215de6710479b94489e965138eb3bb6e767f687c7d832b1f70bad5",
+  "contract": "FundedRawShieldedSpend",
+  "zkirSha256": "5a0c89df7d1645ea68ea700c7b58982f7190a03fbd6692179cfd716cbb4fbf90",
+  "circuitK": 10,
+  "circuitRows": 650,
+  "ledgerParametersSha256": "d7d5f27e5dba936f21c14a8a8a1d5128c65f17fd09b2958c5b3c3593a94cd708",
+  "bundleManifestSha256": {
+    "tip": "c5899f635a98d7398325670a28f7f4bd3d918912cab2da40fe90780881bed357",
+    "spendRaw": "1584b6b3e666b9a3a75f59f618f90f627661284d35deb8b4e5bba94be9808220"
+  },
+  "finalizedBlockHash": "0xabbccd09a9f29a85bc7ac5cb28d5f52b89126744665dbf9b53038874c6545114",
+  "contractStateSha256": "fc7736f36e65701eebebdd67b454796f8e6f0b7ddf2792e013d1196de0ae7563",
+  "decryptedOutput": true,
+  "deploymentHeight": 45,
+  "inputCommitment": "5b6fa5ae06fd67f57344a7411776841ca1b7004d16a6b0b8dd579e57a9910ff6",
+  "inputNonce": "f93043be66f33d8d412c2c8dd8c1df1a8fd17b389441aa0c5bd750757221961c",
+  "inputNullifier": "ce17139454f8bc1068e60414bac775dc90004f016d66481330f79d2277317fd9",
+  "outputCommitment": "d0b71363cca002d9763162356358b8f171a0104205bba50bae060eec987e93c7",
+  "outputIndex": 29,
+  "rawOutputDigestMismatchRejectedBeforeSubmit": true,
+  "rejected": [
+    "mismatchedNonce",
+    "rawOutputDigestMismatch",
+    "replayedNonce"
+  ],
+  "sendAmount": 5,
+  "spendEntrypoint": "spendRaw",
+  "spendHeight": 52,
+  "spendTransaction": "55a0b98c6b46561fb15f193338e9e1ad733d399ed5f11edb369a5a02c514489c",
+  "tipHeight": 48
+}

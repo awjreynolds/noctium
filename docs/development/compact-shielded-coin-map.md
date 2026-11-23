@@ -127,6 +127,20 @@ NOCTIUM_TRANSFER_SPEND_MANIFEST_SHA256=YOUR_SPEND_MANIFEST_SHA256 \
   funded_shielded_map_spend_localnet -- --ignored --nocapture
 ```
 
+### Funded spend with standalone claims
+
+`FundedRawShieldedSpend.spendRaw` checks the nonce and removes the Map entry.
+Only the two standalone claims bind the contract input nullifier and the
+recipient output commitment. The Ledger 9.1.0.1 development chain finalized
+the spend at block 52. The recipient decrypted five units at index 29. A
+changed output commitment and a replay were rejected before submission.
+[Receipt](funded-raw-shielded-spend-localnet-receipt.json)
+
+Compile `tests/FundedRawShieldedSpend.lean` with the 3.2.1 target. Assemble its
+`tip` and `spendRaw` bundles with their matching keys. Use the same six
+settings as the whole-spend command with the `NOCTIUM_RAW_SPEND_` prefix.
+Run `funded_shielded_map_raw_spend_localnet` as the test name.
+
 ## Immediate shielded relay to a destination contract
 
 The pinned Compact fixture receives a contract-owned coin, sends its full value with `sendImmediateShielded`, rejects change, then binds a `claimContractCall` to the destination using the child call's communication opening. The in-memory runner checks the receive, spend and nullifier claims, both contract-owned outputs, the destination call commitment, and the empty relay Map. [Compact source](../../tests/compact/ShieldedCoinMap.compact) · [Runner](../../tests/compact/shielded-coin-map.mjs)

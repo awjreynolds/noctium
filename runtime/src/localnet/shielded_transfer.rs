@@ -241,7 +241,12 @@ impl DevelopmentFunding<'_> {
     ) -> Result<BoundTransaction> {
         let policy = self.node.policy.clone();
         check(policy.genesis == DEVELOPMENT_GENESIS, Error::Policy)?;
-        check(inputs.len() == 2, Error::State)?;
+        let expected_input_count = if target.operation() == "spendRaw" {
+            4
+        } else {
+            2
+        };
+        check(inputs.len() == expected_input_count, Error::State)?;
         let nonce = Nonce(read_bytes32(&inputs, "nonce")?);
         let recipient = PublicKey(read_bytes32(&inputs, "recipient")?);
         let bytes = hex::decode(
@@ -736,6 +741,29 @@ mod tests {
         ])
     }
 
+    fn raw_spend_inputs(
+        nonce: Nonce,
+        recipient: PublicKey,
+        input_nullifier: HashOutput,
+        output_commitment: HashOutput,
+    ) -> BTreeMap<String, Value> {
+        BTreeMap::from([
+            ("nonce".into(), nonce_input(nonce)),
+            (
+                "recipient".into(),
+                json!({"kind":"bytes", "values":recipient.0.0}),
+            ),
+            (
+                "inputNullifier".into(),
+                json!({"kind":"bytes", "values":input_nullifier.0}),
+            ),
+            (
+                "outputCommitment".into(),
+                json!({"kind":"bytes", "values":output_commitment.0}),
+            ),
+        ])
+    }
+
     fn partial_spend_inputs(
         nonce: Nonce,
         send_amount: u128,
@@ -759,19 +787,31 @@ mod tests {
     #[test]
     #[ignore = "requires generated tip/spend bundles and isolated development node"]
     fn funded_shielded_map_spend_localnet() -> Result<()> {
-        funded_shielded_map_localnet(false)
+        funded_shielded_map_localnet(false, false)
     }
 
     #[test]
     #[ignore = "requires generated tip/spend bundles and isolated development node"]
     fn funded_shielded_map_partial_spend_localnet() -> Result<()> {
-        funded_shielded_map_localnet(true)
+        funded_shielded_map_localnet(true, false)
     }
 
-    fn funded_shielded_map_localnet(split: bool) -> Result<()> {
+    #[test]
+    #[ignore = "requires generated raw spend and tip bundles and isolated development node"]
+    fn funded_shielded_map_raw_spend_localnet() -> Result<()> {
+        funded_shielded_map_localnet(false, true)
+    }
+
+    fn funded_shielded_map_localnet(split: bool, raw_spend: bool) -> Result<()> {
+        ensure!(
+            !split || !raw_spend,
+            "raw shielded spend harness currently covers whole spends only"
+        );
         futures::executor::block_on(async {
             let setting = |name: String| env::var(&name).with_context(|| format!("missing {name}"));
-            let prefix = if split {
+            let prefix = if raw_spend {
+                "NOCTIUM_RAW_SPEND_"
+            } else if split {
                 "NOCTIUM_PARTIAL_SPEND_"
             } else {
                 "NOCTIUM_TRANSFER_"
@@ -821,7 +861,11 @@ mod tests {
                 &mut OsRng,
             )?;
             let tip = target.operation("tip", &tip_parameters, ttl)?;
-            let spend = target.operation("spend", &spend_parameters, ttl)?;
+            let spend = target.operation(
+                if raw_spend { "spendRaw" } else { "spend" },
+                &spend_parameters,
+                ttl,
+            )?;
             let make_funding = || {
                 DevelopmentFunding::new(
                     &node,
@@ -967,12 +1011,33 @@ mod tests {
             let keys = SecretKeys::from_rng_seed(&mut rng);
             let recipient_coin_key = keys.coin_public_key();
             let recipient_encryption_key = keys.enc_public_key();
+            let raw_input_nullifier =
+                Info::from(&qualified_coin).nullifier(&SenderEvidence::Contract(address));
+            let raw_output_coin = Info::from(&qualified_coin).evolve_from(
+                b"midnight:kernel:nonce_evolve",
+                qualified_coin.value,
+                qualified_coin.type_,
+            );
+            let raw_output_commitment =
+                raw_output_coin.commitment(&CoinRecipient::User(recipient_coin_key));
+            let spend_inputs_for_nonce = |nonce| {
+                if raw_spend {
+                    raw_spend_inputs(
+                        nonce,
+                        recipient_coin_key,
+                        raw_input_nullifier.0,
+                        raw_output_commitment.0,
+                    )
+                } else {
+                    spend_inputs(nonce, recipient_coin_key)
+                }
+            };
             let expected_output_index = node.sync()?.state.zswap.first_free;
             let mismatch_signer = make_signer();
             let mismatch_inputs = if split {
                 partial_spend_inputs(Nonce(HashOutput([0x55; 32])), 2, recipient_coin_key)
             } else {
-                spend_inputs(Nonce(HashOutput([0x55; 32])), recipient_coin_key)
+                spend_inputs_for_nonce(Nonce(HashOutput([0x55; 32])))
             };
             let mismatch = if split {
                 make_funding()
@@ -1008,6 +1073,41 @@ mod tests {
                     == tip_receipt.contract_state,
                 "mismatched nonce changed the contract Map"
             );
+            if raw_spend {
+                let mut mismatched_output_commitment = raw_output_commitment.0;
+                mismatched_output_commitment.0[0] ^= 1;
+                ensure!(
+                    mismatched_output_commitment != raw_output_commitment.0,
+                    "raw output commitment mismatch did not change one byte"
+                );
+                let raw_mismatch = make_funding()
+                    .bind_shielded_map_spend(
+                        &spend,
+                        &current,
+                        raw_spend_inputs(
+                            coin.nonce,
+                            recipient_coin_key,
+                            raw_input_nullifier.0,
+                            mismatched_output_commitment,
+                        ),
+                        recipient_encryption_key,
+                        &spend_parameters,
+                        &cache,
+                        &make_signer(),
+                        StdRng::from_entropy(),
+                    )
+                    .await;
+                ensure!(
+                    matches!(raw_mismatch, Err(Error::State)),
+                    "one-byte raw output commitment mismatch was not rejected by the exact offer binder"
+                );
+                ensure!(
+                    node.finalized_contract_state(target.contract_address())?
+                        .bytes
+                        == tip_receipt.contract_state,
+                    "rejected raw output commitment changed the contract Map"
+                );
+            }
             if split {
                 let full_value_signer = make_signer();
                 ensure!(
@@ -1054,7 +1154,7 @@ mod tests {
                     .bind_shielded_map_spend(
                         &spend,
                         &current,
-                        spend_inputs(coin.nonce, recipient_coin_key),
+                        spend_inputs_for_nonce(coin.nonce),
                         recipient_encryption_key,
                         &spend_parameters,
                         &cache,
@@ -1143,6 +1243,12 @@ mod tests {
             );
             let output_commitment =
                 output_coin.commitment(&CoinRecipient::User(recipient_coin_key));
+            ensure!(
+                !raw_spend
+                    || (input_nullifier == raw_input_nullifier
+                        && output_commitment == raw_output_commitment),
+                "raw claim digests differ from the finalized offer"
+            );
             let (output_leaf, output_owner) = spent_snapshot
                 .state
                 .zswap
@@ -1205,7 +1311,7 @@ mod tests {
             let replay_inputs = if split {
                 partial_spend_inputs(coin.nonce, 2, recipient_coin_key)
             } else {
-                spend_inputs(coin.nonce, recipient_coin_key)
+                spend_inputs_for_nonce(coin.nonce)
             };
             let replay = if split {
                 make_funding()
@@ -1245,6 +1351,9 @@ mod tests {
             if split {
                 rejected.insert(1, "fullValueAmount");
             }
+            if raw_spend {
+                rejected.insert(1, "rawOutputDigestMismatch");
+            }
             println!(
                 "{}",
                 json!({
@@ -1261,6 +1370,8 @@ mod tests {
                     "changeCommitment": change_commitment.as_ref().map(|value| hex::encode(value.0.0)),
                     "changeIndex": split.then(|| expected_output_index.checked_add(1)).flatten(),
                     "changeValue": split.then(|| qualified_coin.value - send_amount),
+                    "spendEntrypoint": if raw_spend { "spendRaw" } else { "spend" },
+                    "rawOutputDigestMismatchRejectedBeforeSubmit": raw_spend,
                     "decryptedOutput": true,
                     "rejected": rejected,
                     "contractStateSha256": artifacts::digest(&spend_receipt.contract_state)
