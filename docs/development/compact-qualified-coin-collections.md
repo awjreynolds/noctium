@@ -142,6 +142,18 @@ submission. The tip relation measured K14 and 12,824 rows with pinned
 ZKIR 3.2.1. [Source fixture](../../tests/FundedFiveParentQualifiedCoinSet.lean) ·
 [Finalized receipt](funded-five-parent-coin-set-localnet-receipt.json)
 
+The fourteen-parent fixture initializes one owner and two sibling Set leaves.
+On isolated Ledger 9.1.0.1 the initializer finalized at block 207, and a
+funded `tip` finalized at block 211. The selected Set stores the complete
+qualified record at booked index 28. It matches the contract-owned Zswap
+leaf, and the sibling Set stays empty. Missing and mismatched offers reject
+before submission. The initializer measured K10 and 926 rows. The `tip`
+relation measured K14 and 13,428 rows. The test uses the pinned serializer's
+release recursion limit of 250 in development builds. The debug limit of 50
+rejected the exact finalized initializer state, which round-tripped byte for
+byte at the release limit. [Lean fixture](../../tests/FundedFourteenParentQualifiedCoinSet.lean) ·
+[Finalized receipt](funded-fourteen-parent-coin-set-localnet-receipt.json)
+
 ## Booked coin Map
 
 `insertShieldedCoinMap` writes an already booked coin into a root Bytes32 Map.

@@ -579,6 +579,7 @@ impl DevelopmentFunding<'_> {
 mod tests {
     use super::*;
     use crate::{
+        Instruction,
         Plan,
         artifacts::{self, ContractBundleSet, Role},
         client::{ChainAdapter, FinalizedReceipt, NetworkPolicy, Submission},
@@ -1147,6 +1148,125 @@ mod tests {
         )
     }
 
+    fn assert_fourteen_parent_coin_sets(
+        value: &StateValue<Db>,
+        selected_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_members: &[AlignedValue],
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let StateValue::Map(owners) = value else {
+            anyhow::bail!("expected fourteen-parent qualified coin Set owner Map");
+        };
+        ensure!(owners.size() == 1, "fourteen-parent Set owner buckets differ");
+        let owner_key = AlignedValue::from(*selected_owner);
+        let Some(owner_groups) = owners.get(&owner_key) else {
+            anyhow::bail!("fourteen-parent Set selected owner path is missing");
+        };
+        let group_key = AlignedValue::from(*selected_group);
+        let mut current = (*owner_groups).clone();
+        for _ in 0..12 {
+            let StateValue::Map(groups) = &current else {
+                anyhow::bail!("expected an intermediate fourteen-parent Set Map");
+            };
+            ensure!(
+                groups.size() == 1,
+                "intermediate fourteen-parent Set Map is not singular"
+            );
+            let Some(next) = groups.get(&group_key) else {
+                anyhow::bail!("fourteen-parent Set path is missing a repeated group key");
+            };
+            current = (*next).clone();
+        }
+
+        let StateValue::Map(leaves) = &current else {
+            anyhow::bail!("expected fourteen-parent qualified coin Set leaf Map");
+        };
+        ensure!(leaves.size() == 2, "fourteen-parent Set leaf count differs");
+        let Some(selected_set) = leaves.get(&group_key) else {
+            anyhow::bail!("fourteen-parent Set selected leaf is missing");
+        };
+        let sibling_key = AlignedValue::from(*other_group);
+        let Some(sibling_set) = leaves.get(&sibling_key) else {
+            anyhow::bail!("fourteen-parent Set sibling leaf is missing");
+        };
+        assert_group_coin_set_path(&selected_set, &group_key, 0, selected_members)?;
+        assert_group_coin_set_path(&sibling_set, &sibling_key, 0, &[])?;
+        Ok(())
+    }
+
+    fn assert_fourteen_parent_coin_set_state(
+        state_bytes: &[u8],
+        plan: &Plan,
+        selected_owner: &[u8; 32],
+        selected_group: &[u8; 32],
+        other_group: &[u8; 32],
+        selected_members: &[AlignedValue],
+    ) -> Result<()> {
+        let state: ContractState<Db> = native_decode(state_bytes)?;
+        let StateValue::Array(slots) = state.data.get_ref() else {
+            anyhow::bail!("expected fourteen-parent Set state slots");
+        };
+        let slot = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinSets")
+            .context("deepCoinSets state slot missing from plan")?;
+        let value = slots
+            .get(slot)
+            .context("deepCoinSets state slot missing from contract state")?;
+        assert_fourteen_parent_coin_sets(
+            value,
+            selected_owner,
+            selected_group,
+            other_group,
+            selected_members,
+        )
+    }
+
+    fn collect_deep_coin_set_path_lengths(
+        instruction: &Instruction,
+        slot: u32,
+        lengths: &mut Vec<usize>,
+    ) {
+        match instruction {
+            Instruction::Guarded { operation, .. } => {
+                collect_deep_coin_set_path_lengths(operation, slot, lengths);
+            }
+            Instruction::InsertShieldedCoinSet {
+                slot: operation_slot,
+                keys,
+                ..
+            }
+            | Instruction::InsertShieldedCoinSetTo {
+                slot: operation_slot,
+                keys,
+                ..
+            } if *operation_slot == slot => lengths.push(keys.len()),
+            _ => {}
+        }
+    }
+
+    fn deep_coin_set_path_key_count(plan: &Plan) -> Result<usize> {
+        let slot = plan
+            .state
+            .iter()
+            .position(|declaration| declaration.name == "deepCoinSets")
+            .context("deepCoinSets state slot missing from plan")?;
+        let slot = u32::try_from(slot).context("deepCoinSets state slot exceeds u32")?;
+        let mut lengths = Vec::new();
+        for instruction in &plan.operations {
+            collect_deep_coin_set_path_lengths(instruction, slot, &mut lengths);
+        }
+        anyhow::ensure!(
+            lengths.len() == 1,
+            "deepCoinSets bundle must contain exactly one Set insertion"
+        );
+        Ok(lengths[0])
+    }
+
     fn assert_four_parent_coin_lists(
         value: &StateValue<Db>,
         selected_owner: &[u8; 32],
@@ -1484,6 +1604,12 @@ mod tests {
                 && ["coinSets", "coinLists", "deepCoinLists", "rootCoinMap", "coinMaps"]
                     .iter()
                     .all(|name| !has_state(name));
+            let deep_set_path_key_count = if deep_set_only {
+                Some(deep_coin_set_path_key_count(&plan)?)
+            } else {
+                None
+            };
+            let deep_fourteen_set = deep_set_path_key_count == Some(14);
             let deep_list_only = nested
                 && has_state("pot")
                 && has_state("deepCoinLists")
@@ -1559,7 +1685,7 @@ mod tests {
                     "selectedOwner".into(),
                     json!({"kind":"bytes", "values": selected_owner}),
                 )]);
-                if !deep_list_only {
+                if !deep_list_only && !deep_fourteen_set {
                     initialize_inputs.insert(
                         "otherOwner".into(),
                         json!({"kind":"bytes", "values": other_owner}),
@@ -1612,7 +1738,16 @@ mod tests {
                         "stateSha256": artifacts::digest(&receipt.contract_state)
                     }));
                 }
-                if deep_set_only {
+                if deep_fourteen_set {
+                    assert_fourteen_parent_coin_set_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &selected_group,
+                        &other_group,
+                        &[],
+                    )?;
+                } else if deep_set_only {
                     assert_five_parent_coin_set_state(
                         &receipt.contract_state,
                         &plan,
@@ -1659,7 +1794,7 @@ mod tests {
                     "stateSha256": artifacts::digest(&receipt.contract_state),
                     "selectedOwner": hex::encode(selected_owner)
                 });
-                if deep_list_only {
+                if deep_list_only || deep_fourteen_set {
                     observation["singleOwnerInitialized"] = json!(true);
                 } else {
                     observation["otherOwner"] = json!(hex::encode(other_owner));
@@ -1673,6 +1808,9 @@ mod tests {
                     observation["otherGroup"] = json!(hex::encode(other_group));
                     if deep_list_only {
                         observation["fourParentListPathsInitialized"] = json!(true);
+                    } else if deep_fourteen_set {
+                        observation["twelveRepeatedGroupMapsInitialized"] = json!(true);
+                        observation["selectedAndSiblingSetLeavesInitialized"] = json!(true);
                     } else {
                         observation["bothGroupsInitializedForBothOwners"] = json!(true);
                     }
@@ -1839,7 +1977,16 @@ mod tests {
                 "finalized Map does not contain the Ledger-assigned qualified coin"
             );
             if nested {
-                if deep_set_only {
+                if deep_fourteen_set {
+                    assert_fourteen_parent_coin_set_state(
+                        &receipt.contract_state,
+                        &plan,
+                        &selected_owner,
+                        &selected_group,
+                        &other_group,
+                        &[qualified.clone()],
+                    )?;
+                } else if deep_set_only {
                     assert_five_parent_coin_set_state(
                         &receipt.contract_state,
                         &plan,
@@ -2136,7 +2283,7 @@ mod tests {
             });
             if nested {
                 evidence["selectedOwner"] = json!(hex::encode(selected_owner));
-                if !deep_list_only {
+                if !deep_list_only && !deep_fourteen_set {
                     evidence["otherOwner"] = json!(hex::encode(other_owner));
                 }
                 if deep_list_only {
@@ -2169,6 +2316,33 @@ mod tests {
                         "secondCall": replacement_inclusion
                             .as_ref()
                             .context("second List mint receipt evidence missing")?
+                    });
+                } else if deep_fourteen_set {
+                    evidence["selectedGroup"] = json!(hex::encode(selected_group));
+                    evidence["siblingGroup"] = json!(hex::encode(other_group));
+                    evidence["coinSetParentCount"] = json!(14);
+                    evidence["oneOwnerInitialized"] = json!(true);
+                    evidence["twelveRepeatedGroupMapsInitialized"] = json!(true);
+                    evidence["deepCoinSetMatchesFinalizedOutput"] = json!(true);
+                    evidence["deepCoinSetSiblingPathsEmpty"] = json!(true);
+                    evidence["receiptInclusions"] = json!({
+                        "deployment": {
+                            "height": deployed.height,
+                            "blockHash": deployed.block_hash,
+                            "finalizedHeight": deployed.finalized_height,
+                            "finalizedBlockHash": deployed.finalized_hash,
+                            "transactionId": deployed.transaction_id
+                        },
+                        "initialization": initialization_inclusion
+                            .as_ref()
+                            .context("fourteen-parent Set initializer receipt evidence missing")?,
+                        "firstCall": {
+                            "height": receipt.height,
+                            "blockHash": receipt.block_hash,
+                            "finalizedHeight": receipt.finalized_height,
+                            "finalizedBlockHash": receipt.finalized_hash,
+                            "transactionId": receipt.transaction_id
+                        }
                     });
                 } else if deep_set_only {
                     evidence["selectedGroup"] = json!(hex::encode(selected_group));
