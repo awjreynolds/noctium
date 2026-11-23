@@ -92,10 +92,19 @@ also completed a two-parent insertion and overwrite in their query context.
 [Lean fixture](../../tests/DeepBookedCoinMap.lean) ·
 [Compact runner](../../tests/compact/qualified-coin-collections.mjs)
 
-The current Impact sequence uses a four-bit `Dup` index of
-`5 + 2 * parentCount`. The compiler and runtime reject paths beyond five
-parents. [Wider lowering](https://github.com/awjreynolds/noctium/issues/716) ·
-[Funded two-parent receipt](funded-two-parent-coin-maps-localnet-receipt.json)
+The original Impact sequence uses a four-bit `Dup` index of
+`5 + 2 * parentCount` for up to five parents. From six to fourteen, the
+native sequence reads the transaction booking before traversing the Map
+path. It writes the leaf and rebuilds each parent with cached lookups.
+The Lean compiler binds the expanded sequence to the circuit transcript.
+The six-parent source artifact passes the pinned native circuit and query
+checks. A fifteen-parent path rejects at both admission boundaries.
+[Six-parent Lean fixture](../../tests/DeepBookedCoinMapSix.lean) ·
+[Wider lowering](https://github.com/awjreynolds/noctium/issues/716)
+
+The pinned Compact six-parent source probe produced no artifacts. Its exit
+diagnostic was unavailable, so the six-parent Compact comparison remains
+open.
 
 The query-context checks cover overwrite and missing owners. The funded
 fixture below exercises independent-key insertion and overwrite on Ledger 9.
@@ -130,6 +139,16 @@ state digests matched direct node queries.
 [Two-parent Lean fixture](../../tests/FundedDeepQualifiedCoinMaps.lean) ·
 [Ledger receipt](funded-two-parent-coin-maps-localnet-receipt.json)
 
+The six-parent fixture initializes a chain below each owner and group.
+Its two calls finalized at blocks 69,757 and 69,760. The independent
+leaf key stored index 42 and then index 43 in the selected chain.
+All sibling leaves stayed empty. The nonce Map, Set and List retained
+both coins, and direct node queries matched the recorded inclusion and
+finalization hashes and three state digests. Six is the deepest funded
+path verified here.
+[Six-parent funded fixture](../../tests/FundedSixParentQualifiedCoinMaps.lean) ·
+[Ledger receipt](funded-six-parent-coin-maps-localnet-receipt.json)
+
 Compile the fixture for the pinned ZKIR 3.2.1 profile and assemble both
 entrypoint bundles. Use the compiler revision and fixture hash in the receipt
 for the pinned build. The initializer measured 284 rows at K9. The funded
@@ -151,7 +170,9 @@ NOCTIUM_NESTED_QUALIFIED_COIN_COLLECTIONS_MANIFESTS='{"initializeOwners":"INITIA
 
 Set `NOCTIUM_FUNDED_MAP_OVERWRITE=1` for a two-call run. For the two-parent
 run, select bundles from `FundedDeepQualifiedCoinMaps` and also set
-`NOCTIUM_FUNDED_TWO_PARENT_MAP=1`. Run against a
+`NOCTIUM_FUNDED_TWO_PARENT_MAP=1`. For six parents, select
+`FundedSixParentQualifiedCoinMaps` bundles and set
+`NOCTIUM_FUNDED_SIX_PARENT_MAP=1` instead. Run against a
 dedicated development chain to keep Zswap booking indices stable during
 funding and submission.
 

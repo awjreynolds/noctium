@@ -640,12 +640,47 @@ mod tests {
             .context("missing guaranteed shielded offer")
     }
 
+    fn assert_group_coin_map_path(
+        value: &StateValue,
+        group: &AlignedValue,
+        repeated_group_maps: usize,
+        expected_leaf: Option<(&AlignedValue, &AlignedValue)>,
+    ) -> Result<()> {
+        use anyhow::ensure;
+
+        let mut current = (*value).clone();
+        for _ in 0..repeated_group_maps {
+            let StateValue::Map(groups) = &current else {
+                anyhow::bail!("expected an intermediate qualified coin Map");
+            };
+            ensure!(groups.size() == 1, "intermediate qualified coin Map is not singular");
+            let Some(next) = groups.get(group) else {
+                anyhow::bail!("intermediate Map is missing its repeated group key");
+            };
+            current = (*next).clone();
+        }
+        let StateValue::Map(coins) = &current else {
+            anyhow::bail!("expected qualified coin leaf Map");
+        };
+        if let Some((map_key, qualified)) = expected_leaf {
+            ensure!(
+                coins.size() == 1
+                    && coins.get(map_key).as_deref()
+                        == Some(&StateValue::Cell(Sp::new(qualified.clone()))),
+                "qualified coin leaf does not match the expected coin under its key"
+            );
+        } else {
+            ensure!(coins.size() == 0, "qualified coin leaf is not empty");
+        }
+        Ok(())
+    }
+
     fn assert_nested_qualified_coin_owners_empty(
         state_bytes: &[u8],
         plan: &Plan,
         selected_owner: &[u8; 32],
         other_owner: &[u8; 32],
-        deep_groups: Option<(&[u8; 32], &[u8; 32])>,
+        deep_groups: Option<(&[u8; 32], &[u8; 32], usize)>,
     ) -> Result<()> {
         use anyhow::ensure;
 
@@ -726,7 +761,7 @@ mod tests {
             let StateValue::Map(coins) = &*coins else {
                 anyhow::bail!("expected initialized owner qualified coin Map");
             };
-            if let Some((selected_group, other_group)) = deep_groups {
+            if let Some((selected_group, other_group, map_parent_count)) = deep_groups {
                 let groups = [
                     AlignedValue::from(*selected_group),
                     AlignedValue::from(*other_group),
@@ -736,10 +771,12 @@ mod tests {
                     let Some(group_coins) = coins.get(group) else {
                         anyhow::bail!("initializer omitted a qualified coin Map group");
                     };
-                    let StateValue::Map(group_coins) = &*group_coins else {
-                        anyhow::bail!("expected initialized group qualified coin Map");
-                    };
-                    ensure!(group_coins.size() == 0, "initialized group coin Map is not empty");
+                    assert_group_coin_map_path(
+                        &*group_coins,
+                        group,
+                        map_parent_count - 2,
+                        None,
+                    )?;
                 }
             } else {
                 ensure!(coins.size() == 0, "initialized owner coin Map is not empty");
@@ -754,7 +791,7 @@ mod tests {
         selected_owner: &[u8; 32],
         other_owner: &[u8; 32],
         map_key: &[u8; 32],
-        deep_groups: Option<(&[u8; 32], &[u8; 32])>,
+        deep_groups: Option<(&[u8; 32], &[u8; 32], usize)>,
         newest_first: &[(&Info, u64)],
     ) -> Result<()> {
         use anyhow::ensure;
@@ -813,9 +850,10 @@ mod tests {
             anyhow::bail!("expected owner-keyed finalized qualified coin Map");
         };
         ensure!(coin_map_owners.size() == 2, "qualified coin Map owner buckets differ");
-        if let Some((selected_group, other_group)) = deep_groups {
+        if let Some((selected_group, other_group, map_parent_count)) = deep_groups {
             let selected_group = AlignedValue::from(*selected_group);
             let other_group = AlignedValue::from(*other_group);
+            let repeated_group_maps = map_parent_count - 2;
             let Some(selected_owner_groups) = coin_map_owners.get(&selected_key) else {
                 anyhow::bail!("selected owner is missing from the qualified coin Map");
             };
@@ -826,22 +864,21 @@ mod tests {
             let Some(selected_coins) = selected_owner_groups.get(&selected_group) else {
                 anyhow::bail!("selected group is missing from the qualified coin Map");
             };
-            let StateValue::Map(selected_coins) = &*selected_coins else {
-                anyhow::bail!("expected selected group's qualified coin Map");
-            };
-            ensure!(
-                selected_coins.size() == 1
-                    && selected_coins.get(&map_key).as_deref()
-                        == Some(&StateValue::Cell(Sp::new(qualified[0].clone()))),
-                "selected group Map does not contain the newest coin under the original key"
-            );
+            assert_group_coin_map_path(
+                &*selected_coins,
+                &selected_group,
+                repeated_group_maps,
+                Some((&map_key, &qualified[0])),
+            )?;
             let Some(sibling_coins) = selected_owner_groups.get(&other_group) else {
                 anyhow::bail!("sibling group is missing from the qualified coin Map");
             };
-            let StateValue::Map(sibling_coins) = &*sibling_coins else {
-                anyhow::bail!("expected sibling group's qualified coin Map");
-            };
-            ensure!(sibling_coins.size() == 0, "replacement leaked into sibling group Map");
+            assert_group_coin_map_path(
+                &*sibling_coins,
+                &other_group,
+                repeated_group_maps,
+                None,
+            )?;
 
             let Some(other_owner_groups) = coin_map_owners.get(&other_key) else {
                 anyhow::bail!("other owner is missing from the qualified coin Map");
@@ -854,10 +891,7 @@ mod tests {
                 let Some(group_coins) = other_owner_groups.get(group) else {
                     anyhow::bail!("other owner is missing a qualified coin Map group");
                 };
-                let StateValue::Map(group_coins) = &*group_coins else {
-                    anyhow::bail!("expected other owner's qualified coin Map group");
-                };
-                ensure!(group_coins.size() == 0, "replacement leaked into other owner group Map");
+                assert_group_coin_map_path(&*group_coins, group, repeated_group_maps, None)?;
             }
         } else {
             let Some(selected_coin_map) = coin_map_owners.get(&selected_key) else {
@@ -972,7 +1006,7 @@ mod tests {
                 "nested collection mode requires both nested bundle and manifest settings"
             );
             let nested = nested_directory.is_some();
-            let deep_map = match env::var_os("NOCTIUM_FUNDED_TWO_PARENT_MAP") {
+            let two_parent_map = match env::var_os("NOCTIUM_FUNDED_TWO_PARENT_MAP") {
                 Some(value) => {
                     ensure!(
                         value.to_str() == Some("1"),
@@ -982,6 +1016,22 @@ mod tests {
                 }
                 None => false,
             };
+            let six_parent_map = match env::var_os("NOCTIUM_FUNDED_SIX_PARENT_MAP") {
+                Some(value) => {
+                    ensure!(
+                        value.to_str() == Some("1"),
+                        "NOCTIUM_FUNDED_SIX_PARENT_MAP must be set to 1 to enable deep Map mode"
+                    );
+                    true
+                }
+                None => false,
+            };
+            ensure!(
+                !(two_parent_map && six_parent_map),
+                "NOCTIUM_FUNDED_TWO_PARENT_MAP and NOCTIUM_FUNDED_SIX_PARENT_MAP are mutually exclusive"
+            );
+            let deep_map = two_parent_map || six_parent_map;
+            let map_parent_count = if six_parent_map { 6 } else if two_parent_map { 2 } else { 0 };
             let overwrite = match env::var_os("NOCTIUM_FUNDED_MAP_OVERWRITE") {
                 Some(value) => {
                     ensure!(
@@ -997,8 +1047,12 @@ mod tests {
                 "NOCTIUM_FUNDED_MAP_OVERWRITE=1 requires nested collection mode"
             );
             ensure!(
-                !deep_map || (nested && overwrite),
+                !two_parent_map || (nested && overwrite),
                 "NOCTIUM_FUNDED_TWO_PARENT_MAP=1 requires nested collection and overwrite modes"
+            );
+            ensure!(
+                !six_parent_map || (nested && overwrite),
+                "NOCTIUM_FUNDED_SIX_PARENT_MAP=1 requires nested collection and overwrite modes"
             );
             let root_bundle = if nested {
                 None
@@ -1230,7 +1284,7 @@ mod tests {
                     &plan,
                     &selected_owner,
                     &other_owner,
-                    deep_map.then_some((&selected_group, &other_group)),
+                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
                 )?;
                 before_funded_call = receipt.contract_state.clone();
                 current = Some(
@@ -1426,7 +1480,7 @@ mod tests {
                     &selected_owner,
                     &other_owner,
                     &public_key,
-                    deep_map.then_some((&selected_group, &other_group)),
+                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
                     &[(&coin, finalized_index)],
                 )?;
             } else {
@@ -1580,7 +1634,7 @@ mod tests {
                     &selected_owner,
                     &other_owner,
                     &public_key,
-                    deep_map.then_some((&selected_group, &other_group)),
+                    deep_map.then_some((&selected_group, &other_group, map_parent_count)),
                     &[(&replacement, replacement_index), (&coin, finalized_index)],
                 )?;
                 let mut replacement_evidence = json!({
@@ -1657,6 +1711,7 @@ mod tests {
                 if deep_map {
                     evidence["selectedGroup"] = json!(hex::encode(selected_group));
                     evidence["siblingGroup"] = json!(hex::encode(other_group));
+                    evidence["mapParentCount"] = json!(map_parent_count);
                     evidence["deepCoinMapMatchesFinalizedOutput"] = json!(true);
                     evidence["siblingGroupsUnchanged"] = json!(true);
                     evidence["otherOwnerGroupsUnchanged"] = json!(true);
