@@ -162,6 +162,23 @@ token. Both mixed-vector builds matched the Compact runtime 0.21.0 digest
 and rejected a changed return commitment in the native checker.
 [Optimization ticket](https://github.com/awjreynolds/noctium/issues/403) · [Native fixture](../../runtime/tests/native_byte_packing.rs)
 
+## Fold literal Native zero in addition
+
+The lowerer evaluates both operands in order and reuses the other operand
+when a source operand is the Native literal zero. The source normalization
+proof retains both operands' bounds and assertions. A focused circuit
+removed three `add` instructions and its ledger form removed four. Both
+kept their input order, four assertions and the intended public output.
+
+All 16 ConfidentialToken relations and Impact plans matched the baseline
+bytes. `transferFrom` used 1,005 instructions and 61,522 rows at K16 in
+both builds. The native workload accepted transfer and rejected overspend
+with each build's matching witness control files. The earlier combined
+experiment also folded UInt additions. That rule has a separate range-check
+requirement. [Native fold](https://github.com/awjreynolds/noctium/issues/211) ·
+[UInt fold](https://github.com/awjreynolds/noctium/issues/770) ·
+[Focused regression](../../tests/ScalarCseParity.lean)
+
 ## Reuse existing byte leaves
 
 Static slices select byte leaves directly when the inputs already use that

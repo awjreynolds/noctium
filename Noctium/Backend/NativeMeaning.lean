@@ -391,6 +391,17 @@ def isWidenedByte : Expr ty → Bool
   | .cast (source := .uint maximum) .native _ => maximum ≤ 255
   | _ => false
 
+/-- Recognize only a source Native literal equal to zero. -/
+def isLiteralNativeZero : Expr .native → Bool
+  | .native 0 => true
+  | _ => false
+
+theorem isLiteralNativeZero_eq_true_iff (expression : Expr .native) :
+    isLiteralNativeZero expression = true ↔ expression = .native 0 := by
+  cases expression
+  case native value => cases value <;> simp [isLiteralNativeZero]
+  all_goals simp [isLiteralNativeZero]
+
 /-- Typed Bool constants and bridges stay distinct from Native field values. -/
 def typedBoolConstantTerm (value : Nat) : Term := .unary "bool_constant" (.constant value)
 
@@ -452,6 +463,18 @@ private def normalizeReverseBytes (length : Nat) (normalized : Normalized) : Exc
 
 private def arithmetic (ty : Ty) (opcode : String) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary opcode left.term right.term) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
+
+/-- Fold literal Native zero from additions while retaining every child
+constraint, including constraints attached to the folded operand. -/
+def normalizeNativeAdd (leftSource rightSource : Expr .native)
+    (left right : Normalized) : Normalized :=
+  {
+    term := if isLiteralNativeZero leftSource then right.term
+      else if isLiteralNativeZero rightSource then left.term
+      else .binary "add" left.term right.term
+    bounds := left.bounds ++ right.bounds
+    assertions := left.assertions ++ right.assertions
+  }
 
 private def subtraction (ty : Ty) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary "add" left.term (.unary "neg" right.term)) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
@@ -835,7 +858,10 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       | _, .bool true => some leftNormalized.term
       | _, _ => none
     pure (normalizeBoolGate "xor" leftNormalized rightNormalized notOperand)
-  | .add left right => do pure (arithmetic ty "add" (← normalize env left) (← normalize env right))
+  | .add left right => do
+    let leftNormalized ← normalize env left
+    let rightNormalized ← normalize env right
+    pure (normalizeNativeAdd left right leftNormalized rightNormalized)
   | .mul left right => do pure (arithmetic ty "mul" (← normalize env left) (← normalize env right))
   | .sub left right => do pure (subtraction ty (← normalize env left) (← normalize env right))
   | .uadd left right => do pure (arithmetic ty "add" (← normalize env left) (← normalize env right))
