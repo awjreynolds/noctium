@@ -19,6 +19,12 @@ fn artifacts() -> PathBuf {
         .expect("NOCTIUM_FOUR_PARENT_QUALIFIED_COIN_LIST_DIR")
 }
 
+fn deep_coin_list_artifacts() -> PathBuf {
+    std::env::var_os("NOCTIUM_DEEP_BOOKED_COIN_LIST_DIR")
+        .map(PathBuf::from)
+        .expect("NOCTIUM_DEEP_BOOKED_COIN_LIST_DIR")
+}
+
 fn bytes32(value: &[u8; 32]) -> Json {
     json!({"kind": "bytes", "values": value})
 }
@@ -152,6 +158,77 @@ fn coin(nonce: u8, color: u8, value: u128) -> ShieldedCoinInfo {
         type_: ShieldedTokenType(HashOutput([color; 32])),
         value,
     }
+}
+
+fn deep_coin_list_push_inputs(
+    owner: &[u8; 32],
+    group: &[u8; 32],
+    leaf: &[u8; 32],
+    coin: &ShieldedCoinInfo,
+) -> BTreeMap<String, Json> {
+    BTreeMap::from([
+        ("owner".into(), bytes32(owner)),
+        ("group".into(), bytes32(group)),
+        ("leaf".into(), bytes32(leaf)),
+        ("nonce".into(), bytes32(&coin.nonce.0.0)),
+        ("color".into(), bytes32(&coin.type_.0.0)),
+        ("amount".into(), json!(coin.value.to_string())),
+    ])
+}
+
+fn deep_coin_list_at(
+    state: &ChargedState<Db>,
+    plan: &Plan,
+    owner: &[u8; 32],
+    group: &[u8; 32],
+    leaf: &[u8; 32],
+) -> StateValue<Db> {
+    let StateValue::Array(root) = state.get_ref() else {
+        panic!("expected native state slots");
+    };
+    let slot = plan
+        .state
+        .iter()
+        .position(|declaration| declaration.name == "coinLists")
+        .expect("coinLists state slot");
+    let mut value = root.get(slot).expect("coinLists state").clone();
+    let mut keys = Vec::with_capacity(13);
+    keys.push(owner);
+    keys.extend(std::iter::repeat(group).take(11));
+    keys.push(leaf);
+    for key in keys {
+        value = map_entry(&value, key);
+    }
+    value
+}
+
+fn deep_coin_list_leaf_exists(
+    state: &ChargedState<Db>,
+    plan: &Plan,
+    owner: &[u8; 32],
+    group: &[u8; 32],
+    leaf: &[u8; 32],
+) -> bool {
+    let StateValue::Array(root) = state.get_ref() else {
+        panic!("expected native state slots");
+    };
+    let slot = plan
+        .state
+        .iter()
+        .position(|declaration| declaration.name == "coinLists")
+        .expect("coinLists state slot");
+    let mut value = root.get(slot).expect("coinLists state").clone();
+    let mut keys = Vec::with_capacity(12);
+    keys.push(owner);
+    keys.extend(std::iter::repeat(group).take(11));
+    for key in keys {
+        value = map_entry(&value, key);
+    }
+    let StateValue::Map(leaves) = &value else {
+        panic!("expected final parent Map");
+    };
+    let leaf_key: AlignedValue = (*leaf).into();
+    leaves.contains_key(&leaf_key)
 }
 
 #[test]
@@ -364,35 +441,190 @@ fn four_parent_coin_list_preserves_booking_order_and_sibling_paths() -> anyhow::
         assert_eq!(context.state, state);
     }
 
-    let mut too_deep_json: Json = serde_json::from_reader(File::open(plan_path)?)?;
-    let operation = too_deep_json["operations"]
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_DEEP_BOOKED_COIN_LIST_DIR"]
+fn thirteen_parent_coin_list_preserves_booking_order_and_rejects_fourteen() -> anyhow::Result<()> {
+    let directory = deep_coin_list_artifacts();
+    let initialize: Plan = serde_json::from_reader(File::open(
+        directory.join("DeepBookedCoinListBoundary.initializePaths.impact.json"),
+    )?)?;
+    let initialize_circuit = IrSource::load(File::open(
+        directory.join("DeepBookedCoinListBoundary.initializePaths.zkir"),
+    )?)?;
+    let plan_path = directory.join("DeepBookedCoinListBoundary.pushCoin.impact.json");
+    let raw_plan: Json = serde_json::from_reader(File::open(&plan_path)?)?;
+    let operation = raw_plan["operations"]
+        .as_array()
+        .expect("native operation array")
+        .iter()
+        .find(|operation| operation["op"] == "listPushFrontCoin")
+        .expect("qualified coin List push operation");
+    assert_eq!(
+        operation["keys"].as_array().expect("native Map path").len(),
+        13,
+        "emitted List push selects a 13-parent path"
+    );
+    let plan: Plan = serde_json::from_value(raw_plan.clone())?;
+    let circuit = IrSource::load(File::open(
+        directory.join("DeepBookedCoinListBoundary.pushCoin.zkir"),
+    )?)?;
+
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let own = ContractAddress(HashOutput([9; 32]));
+    let wrong_contract = ContractAddress(HashOutput([8; 32]));
+    let owner = [1; 32];
+    let group = [2; 32];
+    let leaf = [3; 32];
+    let sibling_leaf = [4; 32];
+    let absent_leaf = [5; 32];
+    let initial = create_state(&plan, &BTreeMap::from([("coinLists".into(), json!([]))]))?;
+
+    let initialized = prepare_with_context(
+        &initialize,
+        &BTreeMap::from([
+            ("owner".into(), bytes32(&owner)),
+            ("group".into(), bytes32(&group)),
+            ("leaf".into(), bytes32(&leaf)),
+            ("siblingLeaf".into(), bytes32(&sibling_leaf)),
+        ]),
+        QueryContext::new(initial, own),
+        parameters,
+    )
+    .context("initialize selected and sibling thirteen-parent Lists")?;
+    assert_eq!(
+        check(&initialized, &initialize_circuit).context("check the initializer preimage")?,
+        initialized.activity_schedule
+    );
+    let mut state = initialized.after.state;
+
+    let selected_coin = coin(2, 1, 5);
+    let sibling_coin = coin(3, 1, 7);
+    for (leaf_key, booked_coin, index) in [
+        (&leaf, &selected_coin, 31),
+        (&sibling_leaf, &sibling_coin, 7),
+    ] {
+        let execution = prepare_with_context(
+            &plan,
+            &deep_coin_list_push_inputs(&owner, &group, leaf_key, booked_coin),
+            context_with_booking(state, own, booked_coin, Some(own), index),
+            parameters,
+        )
+        .context("seed a selected or sibling thirteen-parent List")?;
+        assert_eq!(
+            check(&execution, &circuit).context("check the prepend preimage")?,
+            execution.activity_schedule
+        );
+        state = execution.after.state;
+    }
+    assert_coin_list(
+        &deep_coin_list_at(&state, &plan, &owner, &group, &leaf),
+        &[AlignedValue::from(selected_coin.qualify(31))],
+    );
+    assert_coin_list(
+        &deep_coin_list_at(&state, &plan, &owner, &group, &sibling_leaf),
+        &[AlignedValue::from(sibling_coin.qualify(7))],
+    );
+
+    let next_coin = coin(4, 1, 11);
+    let execution = prepare_with_context(
+        &plan,
+        &deep_coin_list_push_inputs(&owner, &group, &leaf, &next_coin),
+        context_with_booking(state.clone(), own, &next_coin, Some(own), 42),
+        parameters,
+    )
+    .context("prepend a self-booked coin at thirteen Map parents")?;
+    assert_eq!(
+        check(&execution, &circuit).context("check the prepend preimage")?,
+        execution.activity_schedule
+    );
+    state = execution.after.state;
+    assert_coin_list(
+        &deep_coin_list_at(&state, &plan, &owner, &group, &leaf),
+        &[
+            AlignedValue::from(next_coin.qualify(42)),
+            AlignedValue::from(selected_coin.qualify(31)),
+        ],
+    );
+    assert_coin_list(
+        &deep_coin_list_at(&state, &plan, &owner, &group, &sibling_leaf),
+        &[AlignedValue::from(sibling_coin.qualify(7))],
+    );
+
+    let rejected_coin = coin(5, 1, 13);
+    for recipient in [None, Some(wrong_contract)] {
+        let context = context_with_booking(state.clone(), own, &rejected_coin, recipient, 53);
+        let error = prepare_with_context(
+            &plan,
+            &deep_coin_list_push_inputs(&owner, &group, &leaf, &rejected_coin),
+            context.clone(),
+            parameters,
+        )
+        .err()
+        .expect("the selected List requires a current-contract booking");
+        assert!(
+            error
+                .to_string()
+                .contains("absent from the current transaction")
+        );
+        assert_eq!(context.state, state);
+    }
+
+    let missing_parent_coin = coin(6, 1, 17);
+    let missing_parent_context =
+        context_with_booking(state.clone(), own, &missing_parent_coin, Some(own), 54);
+    let missing_parent_error = prepare_with_context(
+        &plan,
+        &deep_coin_list_push_inputs(&owner, &group, &absent_leaf, &missing_parent_coin),
+        missing_parent_context.clone(),
+        parameters,
+    )
+    .err()
+    .expect("the final Map parent key must already exist");
+    assert!(
+        missing_parent_error
+            .to_string()
+            .contains("missing map path key")
+    );
+    assert_eq!(missing_parent_context.state, state);
+    assert!(!deep_coin_list_leaf_exists(
+        &state,
+        &plan,
+        &owner,
+        &group,
+        &absent_leaf,
+    ));
+
+    let mut too_deep_json = raw_plan;
+    let too_deep_operation = too_deep_json["operations"]
         .as_array_mut()
         .expect("native operation array")
         .iter_mut()
         .find(|operation| operation["op"] == "listPushFrontCoin")
-        .expect("implicit qualified List push operation");
-    operation["keys"]
+        .expect("qualified coin List push operation");
+    too_deep_operation["keys"]
         .as_array_mut()
         .expect("native Map path")
         .push(json!({
             "alignment": "bytes32",
-            "expression": {"tag": "reference", "name": "first"}
+            "expression": {"tag": "reference", "name": "group"}
         }));
     let too_deep_plan: Plan = serde_json::from_value(too_deep_json)?;
-    let too_deep_coin = coin(9, 1, 29);
-    let too_deep_inputs = push_inputs(&first, &second, &third, &fourth, &too_deep_coin);
-    let error = prepare_with_context(
+    let too_deep_coin = coin(7, 1, 19);
+    let too_deep_error = prepare_with_context(
         &too_deep_plan,
-        &too_deep_inputs,
-        context_with_booking(state, own, &too_deep_coin, Some(own), 56),
+        &deep_coin_list_push_inputs(&owner, &group, &leaf, &too_deep_coin),
+        context_with_booking(state, own, &too_deep_coin, Some(own), 55),
         parameters,
     )
     .err()
-    .expect("native plans must reject a fifth Map parent");
+    .expect("native Plans must reject fourteen Map parents");
     assert!(
-        error
+        too_deep_error
             .to_string()
-            .contains("supports at most four parent keys")
+            .contains("supports at most thirteen parent keys")
     );
     Ok(())
 }

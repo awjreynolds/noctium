@@ -3241,10 +3241,9 @@ fn validate_shielded_coin_list(
         slot < 16 && (slot as usize) < plan.state.len(),
         "qualified coin List slot exceeds the native state limit"
     );
-    // The pinned fragment uses a four-bit context Dup at depth 7 + 2 * keys.len().
     ensure!(
-        keys.len() <= 4,
-        "qualified coin List supports at most four parent keys"
+        keys.len() <= 13,
+        "qualified coin List supports at most thirteen parent keys"
     );
     if !keys.is_empty() {
         let key_types = map_path_key_types(plan, slot, keys.len())?;
@@ -6263,6 +6262,42 @@ fn native_index_from_aligned_values(
     })
 }
 
+fn append_deep_booked_coin_map_rebuild_ops(
+    ops: &mut Vec<Op<ResultModeVerify, Db>>,
+    slot: u32,
+    parent_keys: &[AlignedValue],
+) -> Result<()> {
+    for prefix_len in (1..=parent_keys.len()).rev() {
+        ops.extend([
+            Op::Dup { n: 1 },
+            native_index_from_aligned_values(slot, &parent_keys[..prefix_len - 1], true)?,
+            push_native_state(
+                StateValue::Cell(Sp::new(parent_keys[prefix_len - 1].clone())),
+                false,
+            )?,
+            Op::Swap { n: 0 },
+            Op::Swap { n: 1 },
+            Op::Ins {
+                cached: true,
+                n: 1,
+            },
+        ]);
+    }
+
+    ops.extend([
+        push_native_state(
+            StateValue::Cell(Sp::new(AlignedValue::from(u8::try_from(slot)?))),
+            false,
+        )?,
+        Op::Swap { n: 0 },
+        Op::Ins {
+            cached: true,
+            n: 1,
+        },
+    ]);
+    Ok(())
+}
+
 fn deep_booked_coin_map_insert_ops(
     slot: u32,
     parent_keys: &[AlignedValue],
@@ -6312,14 +6347,83 @@ fn deep_booked_coin_map_insert_ops(
         },
     ];
 
-    for prefix_len in (1..=parent_keys.len()).rev() {
+    append_deep_booked_coin_map_rebuild_ops(&mut ops, slot, parent_keys)?;
+    Ok(ops)
+}
+
+fn deep_booked_coin_list_push_ops(
+    slot: u32,
+    parent_keys: &[AlignedValue],
+    coin: &ShieldedCoinInfo,
+    commitment: Commitment,
+) -> Result<Vec<Op<ResultModeVerify, Db>>> {
+    let mut ops = vec![
+        // Qualify the coin before path expansion keeps the context Dup shallow.
+        Op::Dup { n: 2 },
+        push_native_state(
+            StateValue::Cell(Sp::new(AlignedValue::from(commitment))),
+            false,
+        )?,
+        Op::Idx {
+            cached: true,
+            push_path: false,
+            path: vec![
+                Key::Value(
+                    AlignedValue::from(1u8)
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid booked coin index key"))?,
+                ),
+                Key::Stack,
+            ]
+            .into_iter()
+            .collect(),
+        },
+        push_native_state(
+            StateValue::Cell(Sp::new(AlignedValue::from(coin.clone()))),
+            false,
+        )?,
+        Op::Swap { n: 0 },
+        Op::Concat {
+            cached: true,
+            n: 91,
+        },
+        Op::Dup { n: 1 },
+        native_index_from_aligned_values(slot, parent_keys, false)?,
+        Op::Dup { n: 0 },
+        list_index(2),
+        Op::Addi { immediate: 1 },
+        push_native_state(
+            StateValue::Array(vec![StateValue::Null; 3].into()),
+            true,
+        )?,
+        Op::Swap { n: 0 },
+        push_native_state(StateValue::Cell(Sp::new(AlignedValue::from(2u8))), false)?,
+        Op::Swap { n: 0 },
+        Op::Ins {
+            cached: false,
+            n: 1,
+        },
+        Op::Swap { n: 0 },
+        push_native_state(StateValue::Cell(Sp::new(AlignedValue::from(1u8))), false)?,
+        Op::Swap { n: 0 },
+        Op::Ins {
+            cached: false,
+            n: 1,
+        },
+        Op::Swap { n: 0 },
+        push_native_state(StateValue::Cell(Sp::new(AlignedValue::from(0u8))), false)?,
+        Op::Swap { n: 0 },
+        Op::Ins {
+            cached: false,
+            n: 1,
+        },
+    ];
+
+    if let Some((key, map_parents)) = parent_keys.split_last() {
         ops.extend([
             Op::Dup { n: 1 },
-            native_index_from_aligned_values(slot, &parent_keys[..prefix_len - 1], true)?,
-            push_native_state(
-                StateValue::Cell(Sp::new(parent_keys[prefix_len - 1].clone())),
-                false,
-            )?,
+            native_index_from_aligned_values(slot, map_parents, true)?,
+            push_native_state(StateValue::Cell(Sp::new(key.clone())), false)?,
             Op::Swap { n: 0 },
             Op::Swap { n: 1 },
             Op::Ins {
@@ -6327,19 +6431,11 @@ fn deep_booked_coin_map_insert_ops(
                 n: 1,
             },
         ]);
+        append_deep_booked_coin_map_rebuild_ops(&mut ops, slot, map_parents)?;
+    } else {
+        append_deep_booked_coin_map_rebuild_ops(&mut ops, slot, &[])?;
     }
 
-    ops.extend([
-        push_native_state(
-            StateValue::Cell(Sp::new(AlignedValue::from(u8::try_from(slot)?))),
-            false,
-        )?,
-        Op::Swap { n: 0 },
-        Op::Ins {
-            cached: true,
-            n: 1,
-        },
-    ]);
     Ok(ops)
 }
 
@@ -9657,61 +9753,72 @@ impl PreparationCursor {
                     &parent_keys,
                     list_element_schema_at_path(plan, *slot, keys.len())?,
                 )?;
-                let mut path = vec![Key::Value(
-                    AlignedValue::from(u8::try_from(*slot)?)
-                        .try_into()
-                        .map_err(|_| anyhow!("invalid qualified coin List slot"))?,
-                )];
-                path.extend(
-                    parent_keys
-                        .iter()
-                        .cloned()
-                        .map(|key| {
-                            key.try_into()
-                                .map(Key::Value)
-                                .map_err(|_| anyhow!("invalid qualified coin List parent key"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                );
-                let path_length = path.len();
-                let mut operations = Vec::from(
-                    onchain_runtime::program_fragments::List_push_front_coin!(
-                        path,
-                        false,
-                        QualifiedInfo,
-                        coin,
-                        recipient
-                    ),
-                );
-                ensure!(
-                    matches!(
-                        operations.get(4),
-                        Some(Op::Push {
-                            storage: false,
-                            value: StateValue::Cell(_),
-                        })
-                    ) && matches!(
-                        operations.get(5),
-                        Some(Op::Push {
-                            storage: true,
-                            value: StateValue::Array(node),
-                        }) if node.len() == 3
-                    ),
-                    "qualified coin List fragment initial pushes changed"
-                );
-                // Compact pushes the empty node before the index key.
-                operations.swap(4, 5);
-                let Some(Op::Dup { n }) = operations.get_mut(6) else {
-                    bail!("qualified coin List fragment has no context lookup duplicate")
+                let mut operations = if parent_keys.len() > 4 {
+                    // The pinned fragment's context Dup only fits four parent keys.
+                    deep_booked_coin_list_push_ops(
+                        *slot,
+                        &parent_keys,
+                        &coin,
+                        coin_commitment,
+                    )?
+                } else {
+                    let mut path = vec![Key::Value(
+                        AlignedValue::from(u8::try_from(*slot)?)
+                            .try_into()
+                            .map_err(|_| anyhow!("invalid qualified coin List slot"))?,
+                    )];
+                    path.extend(
+                        parent_keys
+                            .iter()
+                            .cloned()
+                            .map(|key| {
+                                key.try_into().map(Key::Value).map_err(|_| {
+                                    anyhow!("invalid qualified coin List parent key")
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    );
+                    let path_length = path.len();
+                    let mut operations = Vec::from(
+                        onchain_runtime::program_fragments::List_push_front_coin!(
+                            path,
+                            false,
+                            QualifiedInfo,
+                            coin,
+                            recipient
+                        ),
+                    );
+                    ensure!(
+                        matches!(
+                            operations.get(4),
+                            Some(Op::Push {
+                                storage: false,
+                                value: StateValue::Cell(_),
+                            })
+                        ) && matches!(
+                            operations.get(5),
+                            Some(Op::Push {
+                                storage: true,
+                                value: StateValue::Array(node),
+                            }) if node.len() == 3
+                        ),
+                        "qualified coin List fragment initial pushes changed"
+                    );
+                    // Compact pushes the empty node before the index key.
+                    operations.swap(4, 5);
+                    let Some(Op::Dup { n }) = operations.get_mut(6) else {
+                        bail!("qualified coin List fragment has no context lookup duplicate")
+                    };
+                    ensure!(
+                        *n == u8::try_from(4 + 2 * path_length)?,
+                        "qualified coin List fragment duplicate depth changed"
+                    );
+                    // This depth selects effects, while the commitment lookup needs context.
+                    *n = n
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow!("qualified coin List duplicate depth overflow"))?;
+                    operations
                 };
-                ensure!(
-                    *n == u8::try_from(4 + 2 * path_length)?,
-                    "qualified coin List fragment duplicate depth changed"
-                );
-                // This depth selects effects, while the commitment lookup needs context.
-                *n = n
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow!("qualified coin List duplicate depth overflow"))?;
                 let insert = operations
                     .pop()
                     .ok_or_else(|| anyhow!("qualified coin List operation is empty"))?;

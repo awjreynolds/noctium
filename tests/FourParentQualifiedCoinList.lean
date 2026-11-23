@@ -118,31 +118,3 @@ private def fourParentQualifiedCoinListEntry (name : String) : Entrypoint :=
   (fourParentQualifiedCoinListEntry "pushCoin")).isOk
 #guard (Backend.Zkir.lowerPrunedEntrypoint FourParentQualifiedCoinList.state
   (fourParentQualifiedCoinListEntry "pushCoinTo")).isOk
-
-noctium_circuit fiveParentQualifiedCoinListPushInputs where
-  public first : Bytes32
-  public second : Bytes32
-  public third : Bytes32
-  public fourth : Bytes32
-  public fifth : Bytes32
-  private nonce : Bytes32
-  private color : Bytes32
-  private amount : UInt 128
-end
-
-/-- error: pushFrontCoin supports a qualified coin List under at most four Bytes32-keyed Maps -/
-#guard_msgs (substring := true) in
-noctium_contract FiveParentQualifiedCoinList where
-  tree coinLists : Bytes32 => Bytes32 => Bytes32 => Bytes32 => Bytes32 =>
-      List struct Coin {
-    nonce : Bytes32
-    color : Bytes32
-    value : UInt 128
-    mtIndex : UInt 64
-  }
-
-  entry pushCoin uses fiveParentQualifiedCoinListPushInputs where
-    pushFrontCoin(coinLists[first][second][third][fourth][fifth],
-      disclose(nonce), disclose(color), disclose(amount))
-  end
-end

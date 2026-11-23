@@ -49,9 +49,8 @@ The four-parent Noctium fixture accepts a List below four existing Bytes32
 Maps. The native ZKIR 3.2.1 check prepends a coin booked to an explicit
 contract at index 42 ahead of the self-recipient coin at index 31. Two
 seeded sibling Lists stay intact. Missing and wrong bookings and absent
-paths reject. The pinned context `Dup` uses depth 15 at four parents.
-Source and native plan admission reject a fifth parent. The root and
-two-parent checks pass on the same compiler build. [Lean fixture](../../tests/FourParentQualifiedCoinList.lean) ·
+paths reject. The direct pinned fragment uses context `Dup` depth 15
+at four parents. The root and two-parent checks pass on the same compiler build. [Lean fixture](../../tests/FourParentQualifiedCoinList.lean) ·
 [Native query-context test](../../runtime/tests/four_parent_qualified_coin_list.rs)
 
 The matching Compact 0.36.1 and Runtime 0.21.0 case also prepends beneath
@@ -68,6 +67,16 @@ outputs in the finalized extrinsics. The normal receipt observer returned
 a response error on the second call. Independent Zswap replay and the
 observer error remain under investigation. [Finalized evidence](funded-four-parent-coin-list-localnet-receipt.json) ·
 [Observer ticket](https://github.com/awjreynolds/noctium/issues/791)
+
+The deeper List route qualifies the coin before reading the List, then
+rebuilds cached Map ancestors one key at a time. The emitted ZKIR 3.2.1
+case passes at thirteen Bytes32 Map parents, the ordinary native List
+schema limit. It checks index 42 ahead of 31, an unchanged seeded sibling,
+and rejection of missing or wrong bookings and a missing path. Source
+and native-plan admission reject fourteen. The four-parent route and
+the existing fourteen-parent booked Map case pass the native checks.
+[Boundary fixture](../../tests/DeepBookedCoinListBoundary.lean) ·
+[Native query-context check](../../runtime/tests/four_parent_qualified_coin_list.rs)
 
 A funded Ledger 9 run stored one self-minted coin in a Map, root Cell, root
 Set, and one-element root List in the same call. The test compares the Map,
