@@ -47,6 +47,22 @@ try {
     ['list-implicit-raw-insert', 'ledger amounts: List<Amount>;',
       'circuit invalid(x: Uint<8>): [] { amounts.pushFront(disclose(x)); return []; }',
       /expected first argument of pushFront to have type Amount but received Uint<8>/],
+    ['map-wrong-nominal-key',
+      'new type Count = Uint<8>; new type OtherCount = Uint<8>; ledger balances: Map<Count, Amount>;',
+      'circuit invalid(key: OtherCount): [] { balances.insert(disclose(key), disclose(0 as Amount)); return []; }',
+      /expected first argument of insert to have type Count but received OtherCount/],
+    ['map-implicit-raw-key',
+      'new type Count = Uint<8>; ledger balances: Map<Count, Amount>;',
+      'circuit invalid(key: Uint<8>): [] { balances.insert(disclose(key), disclose(0 as Amount)); return []; }',
+      /expected first argument of insert to have type Count but received Uint<8>/],
+    ['map-wrong-nominal-value',
+      'new type Count = Uint<8>; new type OtherAmount = Uint<8>; ledger balances: Map<Count, Amount>;',
+      'circuit invalid(value: OtherAmount): [] { balances.insert(disclose(0 as Count), disclose(value)); return []; }',
+      /expected second argument of insert to have type Amount but received OtherAmount/],
+    ['map-implicit-raw-value',
+      'new type Count = Uint<8>; ledger balances: Map<Count, Amount>;',
+      'circuit invalid(value: Uint<8>): [] { balances.insert(disclose(0 as Count), disclose(value)); return []; }',
+      /expected second argument of insert to have type Amount but received Uint<8>/],
   ];
   for (const [name, extra, circuit, diagnostic] of rejectedCases) {
     const source = join(scratch, name + '.compact');
@@ -60,7 +76,7 @@ try {
   const link = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
   mkdirSync(dirname(link), { recursive: true });
   symlinkSync(runtime, link, 'dir');
-  const { Contract, pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
+  const { Contract, ledger, pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   assert.equal(pureCircuits.addAmount(1n, 1n), 2n);
   assert.equal(pureCircuits.addAmount(255n, 0n), 255n);
   assert.throws(() => pureCircuits.addAmount(255n, 1n), /greater than 255/);
@@ -71,7 +87,7 @@ try {
   const contract = new Contract({});
   const wallet = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(
-    compactRuntime.createConstructorContext(null, wallet), 19n,
+    compactRuntime.createConstructorContext(null, wallet), 2n, 19n,
   );
   function invoke(name, state, ...args) {
     const context = compactRuntime.createCircuitContext({
@@ -82,6 +98,8 @@ try {
   }
   const initial = currentContractState.data;
   assert.equal((await invoke('get', initial)).result, 19n);
+  assert.equal(ledger(initial).balances.member(2n), true);
+  assert.equal(ledger(initial).balances.lookup(2n), 19n);
   const initialListHead = (await invoke('amountHead', initial)).result;
   assert.deepEqual(Object.keys(initialListHead), ['is_some', 'value']);
   assert.equal(initialListHead.is_some, true);
@@ -92,13 +110,38 @@ try {
   const pushedListHead = (await invoke('amountHead', afterWrite)).result;
   assert.equal(pushedListHead.is_some, true);
   assert.equal(pushedListHead.value, 41n);
+
+  const mapWrite = await invoke('writeBalance', initial, 2n, 41n);
+  const afterMapWrite = mapWrite.context.callContext.currentQueryContext.state;
+  assert.equal((await invoke('balanceMember', afterMapWrite, 2n)).result, true);
+  assert.equal((await invoke('balanceLookup', afterMapWrite, 2n)).result, 41n);
+  assert.equal(ledger(initial).balances.lookup(2n), 19n);
+
+  const rawMapWrite = await invoke('writeRawBalance', afterMapWrite, 255n, 255n);
+  const afterRawMapWrite = rawMapWrite.context.callContext.currentQueryContext.state;
+  assert.equal((await invoke('balanceMember', afterRawMapWrite, 255n)).result, true);
+  assert.equal((await invoke('balanceLookup', afterRawMapWrite, 255n)).result, 255n);
+
+  const nestedWrite = await invoke('writeNestedBalance', afterRawMapWrite, 2n, 3n, 73n);
+  const afterNestedWrite = nestedWrite.context.callContext.currentQueryContext.state;
+  assert.equal(ledger(afterNestedWrite).nestedBalances.lookup(2n).member(3n), true);
+  assert.equal(ledger(afterNestedWrite).nestedBalances.lookup(2n).lookup(3n), 73n);
+  const nestedSibling = await invoke('writeNestedBalance', afterNestedWrite, 2n, 4n, 74n);
+  const nestedBalances = ledger(nestedSibling.context.callContext.currentQueryContext.state).nestedBalances;
+  assert.equal(nestedBalances.lookup(2n).lookup(3n), 73n);
+  assert.equal(nestedBalances.lookup(2n).lookup(4n), 74n);
+
+  const removed = await invoke('removeBalance', afterRawMapWrite, 2n);
+  const afterRemove = removed.context.callContext.currentQueryContext.state;
+  assert.equal((await invoke('balanceMember', afterRemove, 2n)).result, false);
+  assert.equal((await invoke('balanceMember', afterRemove, 255n)).result, true);
   const cast = await invoke('setRaw', afterWrite, 255n);
   const afterCast = cast.context.callContext.currentQueryContext.state;
   assert.equal((await invoke('get', afterCast)).result, 255n);
   const castListHead = (await invoke('amountHead', afterCast)).result;
   assert.equal(castListHead.is_some, true);
   assert.equal(castListHead.value, 255n);
-  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state and List<Amount> cases`);
+  console.log(`Compact ${version} matched nominal UInt arithmetic, narrowing, ledger state, List<Amount> and Map<Count, Amount> cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

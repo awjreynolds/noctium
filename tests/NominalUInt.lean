@@ -111,6 +111,57 @@ noctium_contract NominalAmountLists where
   end
 end
 
+noctium_circuit nominalMapValues where
+  private key : Count
+  private nestedKey : Count
+  private amount : Amount
+end
+
+noctium_circuit nominalMapRawValues where
+  private rawKey : UInt 8
+  private rawAmount : UInt 8
+end
+
+noctium_contract NominalAmountMaps where
+  map balances : Count => Amount
+  sealed map seededBalances : Count => Amount
+  tree nestedBalances : Count => Count => Amount
+
+  constructor(initialKey : Count, initial : Amount) where
+    insert balances[initialKey] := initial
+    insert seededBalances[initialKey] := initial
+  end
+
+  entry inspect uses nominalMapValues where
+    member balances[disclose(key)] as hasKey
+    read balances[disclose(key)] as current
+    read seededBalances[disclose(key)] as seeded
+    return present : Bool := hasKey
+    return value : Amount := current
+    return initialValue : Amount := seeded
+  end
+  entry setAmount uses nominalMapValues where
+    insert balances[disclose(key)] := disclose(amount)
+  end
+  entry setRaw uses nominalMapRawValues where
+    insert balances[disclose(cast(Count, rawKey))] := disclose(cast(Amount, rawAmount))
+    read balances[disclose(cast(Count, rawKey))] as current
+    return value : Amount := current
+  end
+  entry setNested uses nominalMapValues where
+    member nestedBalances[disclose(key)] as pathPresent
+    when eq(pathPresent, false) insertDefault nestedBalances[disclose(key)]
+    insert nestedBalances[disclose(key)][disclose(nestedKey)] := disclose(amount)
+    read nestedBalances[disclose(key)][disclose(nestedKey)] as current
+    return value : Amount := current
+  end
+  entry removeAmount uses nominalMapValues where
+    remove balances[disclose(key)]
+    member balances[disclose(key)] as hasKey
+    return present : Bool := hasKey
+  end
+end
+
 noctium_circuit countLedgerValue where
   private count : Count
 end
@@ -311,6 +362,43 @@ private def nominalListRoundTrip : Except String _root_.Bool := do
     finalState.trees.lookup "amounts" == some (.list [[.uint 255 255], [.uint 255 41], [.uint 255 19]]))
 
 #guard nominalListRoundTrip.toOption == some Bool.true
+
+private def nominalMapRoundTrip : Except String _root_.Bool := do
+  let [inspect, setAmount, setRaw, setNested, removeAmount] := NominalAmountMaps.entrypoints
+    | throw "expected five Map operations"
+  let key : Value := .uint 255 2
+  let amount : Value := .uint 255 19
+  let inputs : EvalEnv := [("key", key), ("nestedKey", .uint 255 3), ("amount", .uint 255 41)]
+  let initial : LedgerState := {
+    maps := [("balances", [(key, amount)]), ("seededBalances", [(key, amount)])]
+    trees := [("nestedBalances", .map [])]}
+  let (before, _) ← inspect.run context inputs initial
+  let (_, updated) ← setAmount.run context inputs initial
+  let (after, _) ← inspect.run context inputs updated
+  let (raw, updated) ← setRaw.run context [("rawKey", .uint 255 255), ("rawAmount", .uint 255 255)] updated
+  let (nested, updated) ← setNested.run context
+    [("key", key), ("nestedKey", .uint 255 3), ("amount", .uint 255 73)] updated
+  let (_, updated) ← setNested.run context
+    [("key", key), ("nestedKey", .uint 255 4), ("amount", .uint 255 74)] updated
+  let (removed, finalState) ← removeAmount.run context inputs updated
+  pure (before.lookup "present" == some (.bool Bool.true) &&
+    before.lookup "value" == some amount &&
+    after.lookup "value" == some (.uint 255 41) &&
+    after.lookup "initialValue" == some amount &&
+    raw.lookup "value" == some (.uint 255 255) &&
+    nested.lookup "value" == some (.uint 255 73) &&
+    removed.lookup "present" == some (.bool Bool.false) &&
+    finalState.maps.lookup "balances" == some [(.uint 255 255, .uint 255 255)] &&
+    finalState.trees.lookup "nestedBalances" == some (.map [
+      (key, .map [(.uint 255 4, .scalar (.uint 255 74)), (.uint 255 3, .scalar (.uint 255 73))])]))
+
+#guard nominalMapRoundTrip.toOption == some Bool.true
+#guard match NominalAmountMaps.constructor with
+  | some ctor => ctor.mapInserts.map (·.state) == ["balances", "seededBalances"]
+  | none => Bool.false
+#guard NominalAmountMaps.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint NominalAmountMaps.state operation).isOk
+
 
 #guard match NominalAmountLedger.constructor with
   | some {parameters := [parameter], initializers := [initializer], ..} =>
@@ -515,6 +603,61 @@ noctium_contract rejectsNominalListHeadAliasReturn where
   entry inspect uses nominalListHeadOnly where
     head amounts as currentAmount
     return wrongAlias : Count := currentAmount
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapConstructorKey where
+  sealed map balances : Count => Amount
+  constructor(initialKey : Amount, initial : Amount) where
+    insert balances[initialKey] := initial
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapValue where
+  map balances : Count => Amount
+  entry insertWrong uses nominalMapValues where
+    insert balances[disclose(key)] := disclose(nestedKey)
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapRawKey where
+  map balances : Count => Amount
+  entry inspect uses nominalMapRawValues where
+    member balances[disclose(rawKey)] as hasKey
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapRawValue where
+  map balances : Count => Amount
+  entry insertWrong uses nominalMapRawValues where
+    insert balances[disclose(cast(Count, rawKey))] := disclose(rawAmount)
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalNestedMapKey where
+  tree balances : Count => Count => Amount
+  entry removeWrong uses nominalMapValues where
+    remove balances[disclose(key)][disclose(amount)]
+  end
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract rejectsNominalMapReadReturn where
+  map balances : Count => Amount
+  entry inspect uses nominalMapValues where
+    read balances[disclose(key)] as current
+    return wrongAlias : Count := current
   end
 end
 

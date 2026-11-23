@@ -2,13 +2,17 @@ pragma language_version 0.28;
 import CompactStandardLibrary;
 
 export new type Amount = Uint<8>;
+export new type Count = Uint<8>;
 
 export ledger balance: Amount;
 export ledger amounts: List<Amount>;
+export ledger balances: Map<Count, Amount>;
+export ledger nestedBalances: Map<Count, Map<Count, Amount>>;
 
-constructor(initial: Amount) {
+constructor(initialKey: Count, initial: Amount) {
   balance = disclose(initial);
   amounts.pushFront(disclose(initial));
+  balances.insert(disclose(initialKey), disclose(initial));
 }
 
 pure circuit forwardAmount(value: Amount): Amount {
@@ -25,6 +29,36 @@ export circuit setRaw(value: Uint<8>): [] {
   const amount = value as Amount;
   balance = disclose(forwardAmount(amount));
   amounts.pushFront(disclose(amount));
+  return [];
+}
+
+export circuit writeBalance(key: Count, value: Amount): [] {
+  balances.insert(disclose(key), disclose(value));
+  return [];
+}
+
+export circuit writeRawBalance(key: Uint<8>, value: Uint<8>): [] {
+  balances.insert(disclose(key as Count), disclose(value as Amount));
+  return [];
+}
+
+export circuit removeBalance(key: Count): [] {
+  balances.remove(disclose(key));
+  return [];
+}
+
+export circuit balanceMember(key: Count): Boolean {
+  return balances.member(disclose(key));
+}
+
+export circuit balanceLookup(key: Count): Amount {
+  return balances.lookup(disclose(key));
+}
+
+export circuit writeNestedBalance(owner: Count, key: Count, value: Amount): [] {
+  const exposedOwner = disclose(owner);
+  if (!nestedBalances.member(exposedOwner)) { nestedBalances.insertDefault(exposedOwner); }
+  nestedBalances.lookup(exposedOwner).insert(disclose(key), disclose(value));
   return [];
 }
 
