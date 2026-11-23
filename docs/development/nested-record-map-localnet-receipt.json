@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "compilerRevision": "92e2991bfe80224f05b45b4bb442a960bdaa6160",
+  "sourceFixture": "tests/NestedRecordMap.lean",
+  "ledgerRelease": "9.1.0.1",
+  "zkirRelease": "3.2.1",
+  "artifacts": {
+    "initializeOwner": {
+      "manifestSha256": "113502bb6631ac2dfb1c596b3155b04947717a2c91ac27b2073ec0f7e79a66ce",
+      "circuitSha256": "5741430da4fc6e47323f818822a0d3fd074621fba047110f0b38d96d249e7573",
+      "impactSha256": "d73a28554d65c6596cc2ea14d67f2224965748ab70e2b4a40e221925b6970832",
+      "verifierKeySha256": "2214da1135c64841b8382ae4b9bfad2d59eafb528a355406f5694edd9f19dbb5",
+      "parametersSha256": "e82ae890c080188355f37feaffe91372584cd810615082d9143d4dec0453fd9d",
+      "degree": 7,
+      "rows": 118
+    },
+    "upsert": {
+      "manifestSha256": "3799798409d28b3a88739d7a1ead75708b2a5798a159da65ab27f6c39e8fcd1b",
+      "circuitSha256": "e495a11d366373fd84367961da34558fe2f25cdf38488e6a0dedb18f4365e996",
+      "impactSha256": "2261e7b96eeba3aa5df0cba267a91c52a4160e01f39b647831327fb68f60dceb",
+      "verifierKeySha256": "3e6e90a44677e5aa67d944fe3b3ec99f932ca4d8149458ac1893b253d220e3f2",
+      "parametersSha256": "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+      "degree": 8,
+      "rows": 228
+    },
+    "lookup": {
+      "manifestSha256": "81118e38edfef876dc15ac1b7234bdb4940ab6fe89f4842abad0ab5bc2ef4e6e",
+      "circuitSha256": "fafb2d194c90d14dd3caa7ce93f7dc48d5f372823bd1bddd27253ba785e02897",
+      "impactSha256": "64ee102f7c1d02e10bcbfed4dcc9052ae1a7ecd1d57f2b13c8f472a4ffe41fe6",
+      "verifierKeySha256": "98e6156ede446ecf724753cc3c093d553134cd51cca155bab41601fdbd3d457f",
+      "parametersSha256": "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+      "degree": 8,
+      "rows": 224
+    },
+    "removeMemo": {
+      "manifestSha256": "5df23248dea0413fa5ae3f27436101f9cf2be6d09d24894927c553b36cbd6df2",
+      "circuitSha256": "5b9641c749705a40744c8154bc2aec5a2933b90e573191b80cb327d06b23a079",
+      "impactSha256": "2af3a9d3e8d30de0523b655f86d2bc5872812c6046123ecc85f30ecdb1a6f680",
+      "verifierKeySha256": "5647343d29480f25730117b67b44e6c4ee73c6782551af83ded62f0c46dd50ec",
+      "parametersSha256": "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+      "degree": 8,
+      "rows": 238
+    }
+  },
+  "bundleManifestSha256": {
+    "initializeOwner": "113502bb6631ac2dfb1c596b3155b04947717a2c91ac27b2073ec0f7e79a66ce",
+    "lookup": "81118e38edfef876dc15ac1b7234bdb4940ab6fe89f4842abad0ab5bc2ef4e6e",
+    "removeMemo": "5df23248dea0413fa5ae3f27436101f9cf2be6d09d24894927c553b36cbd6df2",
+    "upsert": "3799798409d28b3a88739d7a1ead75708b2a5798a159da65ab27f6c39e8fcd1b"
+  },
+  "calls": [
+    {
+      "checkedReturns": {},
+      "entrypoint": "initializeOwner",
+      "finalizedHash": "7192a3f503a5fa125076d498c042c5da63fbf500fd8034e548da4006c6d01d50",
+      "finalizedHeight": 66412,
+      "height": 66412,
+      "stateBytes": 5863,
+      "stateSha256": "3caa5c3a2c57c014267a8d24ee55ba7e94068c0bc101a2cac8235bdb91d468ea",
+      "transactionId": "f589f9fa2ab084c4a5ef10961d2fa027a1f7af45678af9b04d8fe80748d88f96"
+    },
+    {
+      "checkedReturns": {},
+      "entrypoint": "initializeOwner",
+      "finalizedHash": "3a007f22675c930b33943a97cf0dfea58c87876ad376380e84a13f3635af8dc1",
+      "finalizedHeight": 66415,
+      "height": 66415,
+      "stateBytes": 6141,
+      "stateSha256": "dafb6e1b3d2f2d26e0ea4cafecd87681848f1d8f3fee0a7c0fb02cf79a0e4025",
+      "transactionId": "4042399bac22c9e02ed20c1d3682b312ba63fa064827188786bae84ebec1d4d9"
+    },
+    {
+      "checkedReturns": {
+        "presentAfter": true,
+        "presentBefore": false,
+        "storedValue": "11"
+      },
+      "entrypoint": "upsert",
+      "finalizedHash": "cab041e989cf8537fc699688460209e4bf283cd3537393716494721317afe807",
+      "finalizedHeight": 66418,
+      "height": 66418,
+      "stateBytes": 6276,
+      "stateSha256": "34ea3c849b2d9b017ae70faf5c5229ca7ce8f59fb8d986b8a8ce198d5034e31a",
+      "transactionId": "4b2ee5ded2154a32e255ea23233c8cfe1a11403dca7c5cd889787fc8977b11d9"
+    },
+    {
+      "checkedReturns": {
+        "presentAfter": true,
+        "presentBefore": false,
+        "storedValue": "22"
+      },
+      "entrypoint": "upsert",
+      "finalizedHash": "6058883788797f71169a4bb166691e9965c67efd2330a974cdcb31b14d4b2fbe",
+      "finalizedHeight": 66421,
+      "height": 66421,
+      "stateBytes": 6500,
+      "stateSha256": "b9d92a7323b3f19cf7361c7b0085ae0604a47dab4d66430441ef44cf3c1a1daf",
+      "transactionId": "f039c3720f4b569e56813c2eecd05cbbd19ebca379db9b9c9fba9afa5d01e043"
+    },
+    {
+      "checkedReturns": {
+        "presentAfter": true,
+        "presentBefore": false,
+        "storedValue": "99"
+      },
+      "entrypoint": "upsert",
+      "finalizedHash": "07cf7f849ec7f6e427541b3d91727d340112a6c46a8ff9dbbf3736a4be022066",
+      "finalizedHeight": 66424,
+      "height": 66424,
+      "stateBytes": 6628,
+      "stateSha256": "a09046c0262986dab87d942b57b08c13de8db0c71d19e3152d788e36c198ed7e",
+      "transactionId": "3e2f53e68e156773e8c262859bf1306b4724aa29dcf63c316c32a0372cdc820e"
+    },
+    {
+      "checkedReturns": {
+        "present": true,
+        "storedValue": "11"
+      },
+      "entrypoint": "lookup",
+      "finalizedHash": "fa4761cccd9d005a416cd36a87fc2e4b4edf664a17ba4d3a33d0e94d47987f1a",
+      "finalizedHeight": 66427,
+      "height": 66427,
+      "stateBytes": 6628,
+      "stateSha256": "a09046c0262986dab87d942b57b08c13de8db0c71d19e3152d788e36c198ed7e",
+      "transactionId": "bc22548dc746e43b9054a9905e3e1d7c5691f823e3f6db7b5c2671c88b406ac8"
+    },
+    {
+      "checkedReturns": {
+        "presentAfter": false,
+        "presentBefore": true
+      },
+      "entrypoint": "removeMemo",
+      "finalizedHash": "7fb60fdc0177e49b0e4e924c5020e6606a2841d9927e081e0eb4297883ea402e",
+      "finalizedHeight": 66430,
+      "height": 66430,
+      "stateBytes": 6405,
+      "stateSha256": "a79cb06b598bbbb4cc321eac3d2eaf7ae59145a145e76e74f2f64cd0ce2f83e3",
+      "transactionId": "bfd878bb2203b8daab0f11ffa8a236fa458a63a4e12a44cc7aac610231f1382e"
+    }
+  ],
+  "contractAddress": "66298977e2db325206a826ac18a4c8520c5debcb56c8d1a28411ecb54520853a",
+  "deployment": {
+    "finalizedHash": "b0c8e0860bb2b34f89f989347d4bea077fb34b350fcf05187ced1d07d60f6a8e",
+    "finalizedHeight": 66409,
+    "height": 66409,
+    "stateBytes": 5681,
+    "stateSha256": "f5c062a9ed47b9bad8162a46be5c7a784b6020ce90be548e8afa95e5237e242f",
+    "transactionId": "f72a8d99cab78cf82c3222b9b114c89e784c41c723234467c9476c984cad21a7"
+  },
+  "finalOwners": 2,
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "k": {
+    "initializeOwner": 7,
+    "lookup": 8,
+    "removeMemo": 8,
+    "upsert": 8
+  },
+  "nativeStateMatchedEveryFinalizedReceipt": true,
+  "ownerOneSiblingRemovalPreservedOwnerTwo": true
+}

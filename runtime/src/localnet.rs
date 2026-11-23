@@ -3594,6 +3594,216 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "submits funded NestedRecordMap calls to the authorized isolated localnet"]
+    fn nested_record_map_finalizes_and_preserves_outer_and_inner_siblings() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_NESTED_RECORD_MAP_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "NestedRecordMap requires the authorized loopback node on port 19944"
+            );
+            let directory = setting("NOCTIUM_NESTED_RECORD_MAP_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_NESTED_RECORD_MAP_MANIFESTS")?)?;
+            let entries = ["initializeOwner", "upsert", "lookup", "removeMemo"];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut degrees = BTreeMap::new();
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            for entry in entries {
+                let pin = pins
+                    .get(entry)
+                    .with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(plan.entrypoint == entry, "unexpected NestedRecordMap entrypoint");
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry.to_owned(), circuit.k());
+                plans.insert(entry.to_owned(), plan);
+                circuits.insert(entry.to_owned(), circuit);
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NESTED_RECORD_MAP_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let mut parameters = BTreeMap::new();
+            for entry in entries {
+                parameters.insert(entry, cache.parameters(degrees[entry]).await?);
+            }
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{"memos":[]}}"#,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let mut operations = BTreeMap::new();
+            for entry in entries {
+                operations.insert(entry, target.operation(entry, &parameters[entry], ttl)?);
+            }
+            let state_config = BTreeMap::from([("memos".to_owned(), json!([]))]);
+            let mut model_state = crate::create_state(&plans["initializeOwner"], &state_config)?;
+            let (deployed_state, deployment) =
+                funded.deploy(&target, "initializeOwner").await?;
+            let mut current = Some(deployed_state);
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.contract_address == target.contract_address()
+                    && deployed.data.get_ref() == model_state.get_ref(),
+                "deployed NestedRecordMap state differs from its empty constructor"
+            );
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid target contract address"))?,
+            ));
+            let bytes = |byte: u8| json!({"kind":"bytes", "values":vec![byte; 32]});
+            let key_inputs = |owner: u8, active: bool, amount: u16| {
+                BTreeMap::from([
+                    ("owner".into(), bytes(owner)),
+                    ("active".into(), json!(active)),
+                    ("amount".into(), json!(amount.to_string())),
+                ])
+            };
+            let init_inputs = |owner| BTreeMap::from([("owner".into(), bytes(owner))]);
+            let mut steps: Vec<(&str, BTreeMap<String, Json>, BTreeMap<String, Json>)> = Vec::new();
+            for owner in [1, 2] {
+                steps.push(("initializeOwner", init_inputs(owner), BTreeMap::new()));
+            }
+            for (owner, active, value) in [(1, true, 11u16), (1, false, 22), (2, true, 99)] {
+                let mut inputs = key_inputs(owner, active, 513);
+                inputs.insert("value".into(), json!(value.to_string()));
+                steps.push((
+                    "upsert",
+                    inputs,
+                    BTreeMap::from([
+                        ("presentBefore".into(), json!(false)),
+                        ("presentAfter".into(), json!(true)),
+                        ("storedValue".into(), json!(value.to_string())),
+                    ]),
+                ));
+            }
+            let mut lookup_inputs = key_inputs(1, true, 513);
+            lookup_inputs.insert("shouldRead".into(), json!(true));
+            steps.push((
+                "lookup",
+                lookup_inputs,
+                BTreeMap::from([
+                    ("present".into(), json!(true)),
+                    ("storedValue".into(), json!("11")),
+                ]),
+            ));
+            let mut removal_inputs = key_inputs(1, false, 513);
+            removal_inputs.insert("removeIt".into(), json!(true));
+            steps.push((
+                "removeMemo",
+                removal_inputs,
+                BTreeMap::from([
+                    ("presentBefore".into(), json!(true)),
+                    ("presentAfter".into(), json!(false)),
+                ]),
+            ));
+
+            let receipt_record = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height,
+                    "finalizedHeight": receipt.finalized_height,
+                    "finalizedHash": receipt.finalized_hash,
+                    "transactionId": receipt.transaction_id,
+                    "stateBytes": receipt.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                })
+            };
+            let mut calls = Vec::with_capacity(steps.len());
+            for (entry, inputs, expected_returns) in steps {
+                let snapshot = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plans[entry],
+                    &inputs,
+                    &model_state,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                ensure!(
+                    crate::check(&execution, &circuits[entry])? == execution.activity_schedule,
+                    "native NestedRecordMap {entry} relation did not check"
+                );
+                ensure!(
+                    execution.returns_json() == expected_returns,
+                    "native NestedRecordMap {entry} returns differ from expectations"
+                );
+                let (bound, receipt) = funded
+                    .call_with_bound(
+                        &operations[entry],
+                        &mut current,
+                        &parameters[entry],
+                        inputs,
+                    )
+                    .await?;
+                bound.check_receipt(&receipt)?;
+                ensure!(
+                    receipt.chain.genesis == DEVELOPMENT_GENESIS
+                        && receipt.contract_address == target.contract_address()
+                        && receipt.contract_state == bound.expected_state(),
+                    "finalized NestedRecordMap receipt has the wrong chain, contract, or state bytes"
+                );
+                let decoded: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    decoded.data.get_ref() == execution.after.state.get_ref(),
+                    "decoded finalized NestedRecordMap state differs from checked native execution"
+                );
+                let mut record = receipt_record(&receipt);
+                record["entrypoint"] = json!(entry);
+                record["checkedReturns"] = json!(execution.returns_json());
+                calls.push(record);
+                model_state = execution.after.state;
+            }
+
+            let StateValue::Array(slots) = model_state.get_ref() else {
+                anyhow::bail!("expected final NestedRecordMap state slots")
+            };
+            ensure!(
+                slots.len() == 1
+                    && matches!(slots.get(0), Some(StateValue::Map(owners)) if owners.size() == 2),
+                "final state must retain exactly two initialized owners"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "genesis": funded.node.policy.genesis,
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                    "deployment": receipt_record(&deployment),
+                    "calls": calls,
+                    "finalOwners": 2,
+                    "nativeStateMatchedEveryFinalizedReceipt": true,
+                    "ownerOneSiblingRemovalPreservedOwnerTwo": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the pinned development ledger and authenticated NativeUserCaller artifacts"]
     fn signed_unshielded_spend_authenticates_the_finalized_user_caller() -> anyhow::Result<()> {
         use crate::{
