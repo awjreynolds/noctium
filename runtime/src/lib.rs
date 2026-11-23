@@ -1841,6 +1841,8 @@ pub enum Instruction {
     #[serde(rename = "insertShieldedCoinMap", rename_all = "camelCase")]
     InsertShieldedCoinMap {
         slot: u32,
+        #[serde(default)]
+        keys: Vec<PathPart>,
         key: Expr,
         nonce: Expr,
         color: Expr,
@@ -2201,9 +2203,10 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             vec![1, path_field_count(plan, *slot, keys)?, 1, 5, 1, 4]
         }
         Instruction::ReceiveShieldedToMap { .. } => RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS.to_vec(),
-        Instruction::InsertShieldedCoinMap { slot, .. } => {
-            validate_shielded_coin_map(plan, *slot)?;
-            INSERT_SHIELDED_COIN_MAP_FIELD_COUNTS.to_vec()
+        Instruction::InsertShieldedCoinMap { slot, keys, .. } => {
+            let mut counts = INSERT_SHIELDED_COIN_MAP_FIELD_COUNTS.to_vec();
+            counts[0] = validate_shielded_coin_map_path(plan, *slot, keys)?;
+            counts
         }
         Instruction::WriteShieldedCoinCell { .. } => WRITE_SHIELDED_COIN_CELL_FIELD_COUNTS.to_vec(),
         Instruction::WriteShieldedCoinCellTo { .. } => {
@@ -3097,11 +3100,27 @@ fn is_shielded_coin_record_schema(schema: &Json) -> bool {
 }
 
 fn validate_shielded_coin_map(plan: &Plan, slot: u32) -> Result<()> {
+    validate_shielded_coin_map_path(plan, slot, &[]).map(|_| ())
+}
+
+fn validate_shielded_coin_map_path(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<usize> {
     ensure!(
-        slot < 16,
+        slot < 16 && (slot as usize) < plan.state.len(),
         "shielded coin Map slot exceeds the native state limit"
     );
-    let schema = tree_schema_at_path(plan, slot, 0)?;
+    ensure!(
+        keys.len() <= 1,
+        "shielded coin Map supports at most one parent key"
+    );
+    if !keys.is_empty() {
+        let key_types = map_path_key_types(plan, slot, keys.len())?;
+        ensure!(
+            key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
+            "shielded coin Map parent key must be Bytes32"
+        );
+    }
+    let field_count = path_field_count(plan, slot, keys)?;
+    let schema = tree_schema_at_path(plan, slot, keys.len())?;
     let object = schema
         .as_object()
         .ok_or_else(|| anyhow!("shielded coin storage requires a tree Map"))?;
@@ -3127,7 +3146,7 @@ fn validate_shielded_coin_map(plan: &Plan, slot: u32) -> Result<()> {
         is_shielded_coin_record_schema(value),
         "shielded coin Map must use the fixed qualified coin record schema"
     );
-    Ok(())
+    Ok(field_count)
 }
 
 fn validate_shielded_coin_cell(plan: &Plan, slot: u32) -> Result<()> {
@@ -4343,12 +4362,12 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                 ensure!(guard.is_none(), "shielded spend must be unguarded");
                 validate_shielded_spend_layout(plan, index, nonce, color, amount)?;
             }
-            Instruction::InsertShieldedCoinMap { slot, .. } => {
+            Instruction::InsertShieldedCoinMap { slot, keys, .. } => {
                 ensure!(
                     guard.is_none(),
                     "shielded coin Map insertion must be unguarded"
                 );
-                validate_shielded_coin_map(plan, *slot)?;
+                validate_shielded_coin_map_path(plan, *slot, keys)?;
             }
             Instruction::SendShieldedFromMap {
                 nonce,
@@ -6789,6 +6808,7 @@ fn probe_instruction(
             deferred_outputs,
         ),
         Instruction::InsertShieldedCoinMap {
+            keys,
             key,
             nonce,
             color,
@@ -6797,12 +6817,18 @@ fn probe_instruction(
             recipient,
             commitment,
             ..
-        } => probe_expressions(
-            [key, nonce, color, amount, is_contract, recipient, commitment],
-            plan,
-            env,
-            deferred_outputs,
-        ),
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions(
+                    [key, nonce, color, amount, is_contract, recipient, commitment],
+                    plan,
+                    env,
+                    deferred_outputs,
+                )
+            }
+        }
         Instruction::InsertShieldedCoinSet {
             slot: _,
             keys,
@@ -9119,6 +9145,7 @@ impl PreparationCursor {
             }
             Instruction::InsertShieldedCoinMap {
                 slot,
+                keys,
                 key,
                 nonce,
                 color,
@@ -9126,7 +9153,7 @@ impl PreparationCursor {
                 commitment,
                 ..
             } => {
-                validate_shielded_coin_map(plan, *slot)?;
+                validate_shielded_coin_map_path(plan, *slot, keys)?;
                 let coin = ShieldedCoinInfo {
                     nonce: Nonce(claim_hash_output(
                         evaluate(nonce, &env)?,
@@ -9171,11 +9198,29 @@ impl PreparationCursor {
                         cost,
                     )?;
                 }
-                let path = vec![Key::Value(
+                let current = if has_written {
+                    &prefix_context
+                } else {
+                    &context
+                };
+                let (_, parent_keys) = native_index(plan, *slot, keys, false, &env)?;
+                if !parent_keys.is_empty() {
+                    ensure!(
+                        matches!(read_state_value(current, *slot, &parent_keys)?, StateValue::Map(_)),
+                        "shielded coin Map parent is not a Map"
+                    );
+                }
+                let mut path = vec![Key::Value(
                     AlignedValue::from(u8::try_from(*slot)?)
                         .try_into()
                         .map_err(|_| anyhow!("invalid shielded coin Map slot"))?,
                 )];
+                if let Some(parent_key) = parent_keys.into_iter().next() {
+                    path.push(Key::Value(
+                        parent_key.try_into()
+                            .map_err(|_| anyhow!("invalid shielded coin Map parent key"))?,
+                    ));
+                }
                 let mut map_ops = onchain_runtime::program_fragments::Map_insert_coin!(
                     path,
                     false,
@@ -9185,7 +9230,18 @@ impl PreparationCursor {
                     coin,
                     recipient
                 );
-                map_ops[2] = Op::Dup { n: 5 };
+                ensure!(
+                    map_ops.len() == 10,
+                    "shielded coin Map fragment operation count changed"
+                );
+                let Some(Op::Dup { n }) = map_ops.get_mut(2) else {
+                    bail!("shielded coin Map fragment has no context lookup duplicate")
+                };
+                *n = u8::try_from(5 + 2 * keys.len())?;
+                ensure!(
+                    matches!(map_ops.get(9), Some(Op::Ins { cached: true, n }) if usize::from(*n) == keys.len() + 1),
+                    "shielded coin Map fragment final insertion depth changed"
+                );
                 let insert_final = map_ops[9].clone();
                 program.extend(map_ops.into_iter().take(9));
                 has_written = true;
@@ -10852,6 +10908,13 @@ mod shielded_spend_tests {
     }
 
     fn map_insert_plan() -> Plan {
+        let mut plan: Plan = serde_json::from_value(map_insert_plan_json()).unwrap();
+        plan.target = Some(profile::NAME.into());
+        plan.target_profile = Some(profile::target_json());
+        plan
+    }
+
+    fn map_insert_plan_json() -> Json {
         let mut value = spend_plan_json();
         value["entrypoint"] = json!("store");
         value["circuit"]["inputs"] = json!([
@@ -10875,10 +10938,52 @@ mod shielded_spend_tests {
             "commitment":reference("commitment")
         }]);
         value["reads"] = json!([]);
+        value
+    }
+
+    fn nested_map_insert_plan() -> Plan {
+        let mut value = map_insert_plan_json();
+        value["circuit"]["inputs"]
+            .as_array_mut()
+            .unwrap()
+            .insert(
+                0,
+                json!({"name":"owner", "type":"Bytes<32>", "visibility":"public"}),
+            );
+        value["state"][0]["kind"]["tree"]["map"][1] = json!({
+            "map":["Bytes<32>", {"composite":coin_schema()}]
+        });
+        value["operations"][0]["keys"] = json!([
+            {"alignment":"bytes32", "expression":reference("owner")}
+        ]);
         let mut plan: Plan = serde_json::from_value(value).unwrap();
         plan.target = Some(profile::NAME.into());
         plan.target_profile = Some(profile::target_json());
         plan
+    }
+
+    fn nested_map_context(
+        schema: &Json,
+        owner: Option<[u8; 32]>,
+    ) -> QueryContext<Db> {
+        let mut owners: HashMap<AlignedValue, StateValue<Db>, Db> = HashMap::default();
+        let existing = context_with_schema(schema, NONCE, NONCE, 5);
+        let key = AlignedValue::from(Nonce(HashOutput(NONCE)));
+        let record = read_state_value(&existing, 0, &[key.clone()]).unwrap();
+        let sibling_owner = AlignedValue::from(Nonce(HashOutput([8; 32])));
+        let mut sibling_coins: HashMap<AlignedValue, StateValue<Db>, Db> = HashMap::default();
+        sibling_coins = sibling_coins.insert(key.clone(), record.clone());
+        owners = owners.insert(sibling_owner, StateValue::Map(sibling_coins));
+        if let Some(owner) = owner {
+            let mut coins: HashMap<AlignedValue, StateValue<Db>, Db> = HashMap::default();
+            coins = coins.insert(key, record);
+            owners = owners.insert(
+                AlignedValue::from(Nonce(HashOutput(owner))),
+                StateValue::Map(coins),
+            );
+        }
+        let state = ChargedState::new(StateValue::Array(vec![StateValue::Map(owners)].into()));
+        QueryContext::new(state, ContractAddress(HashOutput(ADDRESS)))
     }
 
     fn map_insert_inputs(
@@ -11444,6 +11549,131 @@ mod shielded_spend_tests {
                 check(&execution, &circuit).unwrap(),
                 execution.activity_schedule
             );
+            assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
+        }
+    }
+
+    #[test]
+    fn shielded_coin_map_insert_supports_one_existing_owner_map() {
+        let plan = nested_map_insert_plan();
+        let coin = ShieldedCoinInfo {
+            nonce: Nonce(HashOutput([9; 32])),
+            type_: ShieldedTokenType(HashOutput(COLOR)),
+            value: 5,
+        };
+        let owner_bytes = [6; 32];
+        let owner = AlignedValue::from(Nonce(HashOutput(owner_bytes)));
+        let sibling_owner = AlignedValue::from(Nonce(HashOutput([8; 32])));
+        let key = AlignedValue::from(Nonce(HashOutput(NONCE)));
+        let parameters = &ledger::structure::INITIAL_PARAMETERS;
+
+        for (is_contract, recipient_bytes) in [(false, RECIPIENT), (true, RELAY_TARGET)] {
+            let recipient = if is_contract {
+                Recipient::Contract(ContractAddress(HashOutput(recipient_bytes)))
+            } else {
+                Recipient::User(PublicKey(HashOutput(recipient_bytes)))
+            };
+            let commitment = coin.commitment(&recipient);
+            let mut context = nested_map_context(&coin_schema(), Some(owner_bytes));
+            context.call_context.com_indices =
+                context.call_context.com_indices.insert(commitment, 41);
+            let mut inputs = map_insert_inputs(NONCE, &coin, is_contract, recipient_bytes, commitment);
+            inputs.insert("owner".into(), bytes_json(&owner_bytes));
+
+            let execution = prepare_with_context(&plan, &inputs, context.clone(), parameters)
+                .unwrap_or_else(|error| panic!("nested booked coin Map insertion failed: {error:#}"));
+            assert_ne!(key, AlignedValue::from(coin.nonce));
+            assert_eq!(
+                read_state_aligned(&execution.after, 0, &[owner.clone(), key.clone()]).unwrap(),
+                AlignedValue::from(coin.qualify(41))
+            );
+            assert_eq!(
+                read_state_aligned(&execution.after, 0, &[sibling_owner.clone(), key.clone()]).unwrap(),
+                read_state_aligned(&context, 0, &[sibling_owner.clone(), key.clone()]).unwrap(),
+                "inserting under one owner must preserve the sibling owner's entry"
+            );
+            assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
+            assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);
+
+            let original_record = read_state_aligned(&context, 0, &[owner.clone(), key.clone()]).unwrap();
+            let mut no_booking = context.clone();
+            no_booking.call_context.com_indices = Default::default();
+            assert!(prepare_with_context(&plan, &inputs, no_booking, parameters).is_err());
+            assert_eq!(
+                read_state_aligned(&context, 0, &[owner.clone(), key.clone()]).unwrap(),
+                original_record
+            );
+
+            let mut missing_parent = nested_map_context(&coin_schema(), None);
+            missing_parent.call_context.com_indices =
+                missing_parent.call_context.com_indices.insert(commitment, 41);
+            assert!(prepare_with_context(&plan, &inputs, missing_parent.clone(), parameters).is_err());
+            assert!(read_state_value(&missing_parent, 0, &[owner.clone(), key.clone()]).is_err());
+
+            for (wrong_kind, wrong_bytes) in [(is_contract, [7; 32]), (!is_contract, recipient_bytes)] {
+                let wrong_recipient = if wrong_kind {
+                    Recipient::Contract(ContractAddress(HashOutput(wrong_bytes)))
+                } else {
+                    Recipient::User(PublicKey(HashOutput(wrong_bytes)))
+                };
+                let mut wrong_inputs = inputs.clone();
+                wrong_inputs.insert("isContract".into(), json!(wrong_kind));
+                wrong_inputs.insert("recipient".into(), bytes_json(&wrong_bytes));
+                wrong_inputs.insert(
+                    "commitment".into(),
+                    bytes_json(&coin.commitment(&wrong_recipient).0.0),
+                );
+                assert!(prepare_with_context(
+                    &plan,
+                    &wrong_inputs,
+                    context.clone(),
+                    parameters,
+                )
+                .is_err());
+            }
+            assert_eq!(
+                read_state_aligned(&context, 0, &[owner.clone(), key.clone()]).unwrap(),
+                original_record
+            );
+        }
+
+        if let Some(artifact_dir) = std::env::var_os("NOCTIUM_NESTED_BOOKED_COIN_MAP_DIR") {
+            let artifact_dir = std::path::PathBuf::from(artifact_dir);
+            let artifact_plan: Plan = serde_json::from_slice(
+                &std::fs::read(artifact_dir.join("NestedBookedCoinMap.store.impact.json")).unwrap(),
+            )
+            .unwrap();
+            let circuit_bytes =
+                std::fs::read(artifact_dir.join("NestedBookedCoinMap.store.zkir")).unwrap();
+            let circuit = IrSource::load(circuit_bytes.as_slice()).unwrap();
+            let recipient = Recipient::User(PublicKey(HashOutput(RECIPIENT)));
+            let commitment = coin.commitment(&recipient);
+            let mut context = nested_map_context(
+                &artifact_plan.state[0].kind["tree"]["map"][1]["map"][1]["composite"],
+                Some(owner_bytes),
+            );
+            context.call_context.com_indices =
+                context.call_context.com_indices.insert(commitment, 41);
+            let mut artifact_inputs = map_insert_inputs(NONCE, &coin, false, RECIPIENT, commitment);
+            artifact_inputs.insert("owner".into(), bytes_json(&owner_bytes));
+            artifact_inputs.remove("commitment");
+            let execution = prepare_with_context(
+                &artifact_plan,
+                &artifact_inputs,
+                context,
+                parameters,
+            )
+            .unwrap_or_else(|error| {
+                panic!("emitted NestedBookedCoinMap artifact failed: {error:#}")
+            });
+            assert_eq!(
+                read_state_aligned(&execution.after, 0, &[owner, key]).unwrap(),
+                AlignedValue::from(coin.qualify(41))
+            );
+            assert_eq!(check(&execution, &circuit).unwrap(), execution.activity_schedule);
             assert_eq!(execution.after.effects.claimed_nullifiers.size(), 0);
             assert_eq!(execution.after.effects.claimed_shielded_spends.size(), 0);
             assert_eq!(execution.after.effects.claimed_shielded_receives.size(), 0);

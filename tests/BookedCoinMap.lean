@@ -37,7 +37,7 @@ private def bookedCoinMapEntry : Entrypoint :=
 #guard bookedCoinMapEntry.effectGuards.length == 1 &&
   bookedCoinMapEntry.effectGuards.all Option.isNone
 #guard match bookedCoinMapEntry.effects with
-  | [.insertShieldedCoinMap "coins" (.ref "key") _ _ _ _ _] => Bool.true
+  | [.insertShieldedCoinMap "coins" (.ref "key") _ _ _ _ _ []] => Bool.true
   | _ => Bool.false
 #guard (bookedCoinMapEntry.validate Capabilities.source BookedCoinMap.state).isOk
 #guard (Disclosure.entrypoint bookedCoinMapEntry).isOk
@@ -50,8 +50,8 @@ private def bookedCoinMapEntry : Entrypoint :=
 private def bookedCoinMapUndisclosed : Entrypoint :=
   {bookedCoinMapEntry with effects := bookedCoinMapEntry.effects.map fun effect =>
     match effect with
-    | .insertShieldedCoinMap state key _ color amount isContract recipient =>
-        .insertShieldedCoinMap state key (.ref "nonce") color amount isContract recipient
+    | .insertShieldedCoinMap state key _ color amount isContract recipient keys =>
+        .insertShieldedCoinMap state key (.ref "nonce") color amount isContract recipient keys
     | _ => effect}
 
 #guard match Disclosure.entrypoint bookedCoinMapUndisclosed with

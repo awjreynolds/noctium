@@ -197,6 +197,7 @@ jobs:
           lake env lean tests/QualifiedCoinSet.lean
           lake env lean tests/NestedQualifiedCoinSet.lean
           lake env lean tests/BookedCoinMap.lean
+          lake env lean tests/NestedBookedCoinMap.lean
           lake env lean tests/QualifiedCoinList.lean
           lake env lean tests/NestedQualifiedCoinList.lean
           lake env lean tests/QualifiedCoinRecipient.lean

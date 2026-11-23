@@ -251,10 +251,117 @@ for (const [book, recipient] of [[false, self], [true, new Uint8Array(32).fill(1
   );
 }
 
+const nestedMapOwner = new Uint8Array(32).fill(8);
+const uninitializedMapOwner = new Uint8Array(32).fill(9);
+const nestedMapKey = new Uint8Array(32).fill(11);
+const nestedMap = state => ledger(state).coinMaps;
+const nestedMapValue = (state, owner) => nestedMap(state).lookup(owner);
+let nestedMapState = currentContractState.data;
+for (const owner of [nestedMapOwner, owners[1]]) {
+  const { context } = await contract.circuits.initializeMapOwner(
+    contextFor('initializeMapOwner', nestedMapState), owner,
+  );
+  nestedMapState = context.callContext.currentQueryContext.state;
+}
+assert.equal(nestedMap(nestedMapState).member(nestedMapOwner), true);
+assert.equal(nestedMapValue(nestedMapState, nestedMapOwner).size(), 0n);
+
+const missingMapOwnerContext = contextFor('putInNestedMap', nestedMapState);
+await assert.rejects(
+  contract.circuits.putInNestedMap(
+    missingMapOwnerContext, uninitializedMapOwner, nestedMapKey, coin, true, self,
+  ),
+  /invalid operation for type: attempted to ins/,
+);
+assert.equal(nestedMap(missingMapOwnerContext.callContext.currentQueryContext.state)
+  .member(uninitializedMapOwner), false);
+
+const acceptedNestedMapCall = await contract.circuits.putInNestedMap(
+  contextFor('putInNestedMap', nestedMapState), nestedMapOwner, nestedMapKey, coin, true, self,
+);
+const acceptedNestedMapQuery = acceptedNestedMapCall.context.callContext.currentQueryContext;
+const qualifiedNestedMapCoin = { ...coin, mt_index: 0n };
+assert.equal(acceptedNestedMapQuery.effects.claimedShieldedReceives.length, 1);
+assert.equal(nestedMapValue(acceptedNestedMapQuery.state, nestedMapOwner).size(), 1n);
+assert.equal(nestedMapValue(acceptedNestedMapQuery.state, nestedMapOwner).member(nestedMapKey), true);
+assert.deepEqual(
+  nestedMapValue(acceptedNestedMapQuery.state, nestedMapOwner).lookup(nestedMapKey),
+  qualifiedNestedMapCoin,
+);
+
+const overwrittenNestedMapCall = await contract.circuits.putInNestedMap(
+  contextFor('putInNestedMap', acceptedNestedMapQuery.state),
+  nestedMapOwner, nestedMapKey, secondCoin, true, self,
+);
+const overwrittenNestedMapQuery = overwrittenNestedMapCall.context.callContext.currentQueryContext;
+const qualifiedOverwrittenNestedMapCoin = { ...secondCoin, mt_index: 0n };
+assert.equal(overwrittenNestedMapQuery.effects.claimedShieldedReceives.length, 1);
+assert.equal(nestedMapValue(overwrittenNestedMapQuery.state, nestedMapOwner).size(), 1n);
+assert.deepEqual(
+  nestedMapValue(overwrittenNestedMapQuery.state, nestedMapOwner).lookup(nestedMapKey),
+  qualifiedOverwrittenNestedMapCoin,
+);
+
+for (const [book, recipient] of [[false, self], [true, new Uint8Array(32).fill(10)]]) {
+  const context = contextFor('putInNestedMap', overwrittenNestedMapQuery.state);
+  await assert.rejects(
+    contract.circuits.putInNestedMap(
+      context, nestedMapOwner, nestedMapKey, secondCoin, book, recipient,
+    ),
+    /Coin commitment not found/,
+  );
+  assert.deepEqual(
+    nestedMapValue(context.callContext.currentQueryContext.state, nestedMapOwner)
+      .lookup(nestedMapKey),
+    qualifiedOverwrittenNestedMapCoin,
+  );
+}
+
+const nestedMapRelation = JSON.parse(await readFile(
+  join(generated, 'zkir', 'putInNestedMap.zkir'), 'utf8',
+));
+const nestedMapImpact = nestedMapRelation.instructions.filter(({ op }) => op === 'impact');
+receipt.impact.putInNestedMap = nestedMapImpact;
+receipt.impact.putInNestedMapSuffix = nestedMapImpact.slice(-12);
+assert.deepEqual(nestedMapImpact.slice(-12), [
+  { op: 'impact', guard: '%book.9', inputs: ['0xa2'] },
+  { op: 'impact', guard: '%book.9', inputs: ['0x40'] },
+  {
+    op: 'impact', guard: '0x01',
+    inputs: ['0x71', '0x01', '0x01', '0x06', '0x01', '0x20', '%owner.0', '%owner.1'],
+  },
+  {
+    op: 'impact', guard: '0x01',
+    inputs: ['0x10', '0x01', '0x01', '0x20', '%key.2', '%key.3'],
+  },
+  { op: 'impact', guard: '0x01', inputs: ['0x37'] },
+  {
+    op: 'impact', guard: '0x01',
+    inputs: ['0x10', '0x01', '0x01', '0x20', '%hash.21', '%hash.20'],
+  },
+  {
+    op: 'impact', guard: '0x01',
+    inputs: ['0x61', '0x01', '0x01', '0x01', '-0x01'],
+  },
+  {
+    op: 'impact', guard: '0x01',
+    inputs: [
+      '0x10', '0x01', '0x03', '0x20', '0x20', '0x10',
+      '%coin.4', '%coin.5', '%coin.6', '%coin.7', '%coin.8',
+    ],
+  },
+  { op: 'impact', guard: '0x01', inputs: ['0x40'] },
+  { op: 'impact', guard: '0x01', inputs: ['0x17', '0x5b'] },
+  { op: 'impact', guard: '0x01', inputs: ['0x91'] },
+  { op: 'impact', guard: '0x01', inputs: ['0xa2'] },
+]);
+
 console.log(
-  'Pinned Compact 0.36.1 and Runtime 0.21.0 matched Map<Bytes<32>, QualifiedShieldedCoinInfo>.insertCoin booking, overwrite, index and rejection cases',
+  'Pinned Compact 0.36.1 and Runtime 0.21.0 matched direct and nested qualified coin maps, booking, overwrite, missing-owner rejection, and Impact suffix',
 );
 console.log(JSON.stringify(receipt, null, 2));
+console.log('Nested Map Impact suffix (last 12 impact instructions):');
+console.log(JSON.stringify(nestedMapImpact.slice(-12), null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
