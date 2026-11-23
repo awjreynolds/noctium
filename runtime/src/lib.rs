@@ -2990,14 +2990,25 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         .ok_or_else(|| anyhow!("invalid state tree map schema"))?;
     if let Some(record) = ordinary_record_key_schema(&parts[0]) {
         ensure!(depth == 0, "record-key Maps must use a root state slot");
-        let value_type = parts[1]
-            .get("scalar")
-            .and_then(Json::as_str)
-            .ok_or_else(|| anyhow!("record-key Maps require a scalar value"))?;
-        ensure!(
-            !matches!(value_type, "OpaqueBytes" | "OpaqueString"),
-            "opaque Map values require a Bytes32 key"
-        );
+        let value = parts[1]
+            .as_object()
+            .filter(|value| value.len() == 1)
+            .ok_or_else(|| anyhow!("invalid record-key Map value schema"))?;
+        if let Some(value_type) = value.get("scalar").and_then(Json::as_str) {
+            ensure!(
+                !matches!(value_type, "OpaqueBytes" | "OpaqueString"),
+                "opaque Map values require a Bytes32 key"
+            );
+        } else if let Some(value_record) = value.get("composite") {
+            ensure!(
+                is_record_schema(value_record)
+                    && !is_shielded_coin_record_schema(value_record),
+                "record-key Maps require an ordinary typed record value"
+            );
+            checked_typed_record_schema(value_record)?;
+        } else {
+            bail!("record-key Maps require a scalar or record value")
+        }
         checked_typed_record_schema(record)?;
         return validate_tree_schema(&parts[1], depth + 1);
     }
@@ -3941,14 +3952,25 @@ fn indexed_record_collection_schema<'a>(
     Ok(record_collection_key_schema(plan, slot))
 }
 
-fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
-    let parts = tree_schema_at_path(plan, slot, 0)
+fn ordinary_record_map_parts(plan: &Plan, slot: u32) -> Option<&[Json]> {
+    tree_schema_at_path(plan, slot, 0)
         .ok()?
         .get("map")?
         .as_array()
-        .filter(|parts| parts.len() == 2)?;
-    parts[1].get("scalar")?.as_str()?;
-    ordinary_record_key_schema(&parts[0])
+        .filter(|parts| parts.len() == 2)
+        .map(Vec::as_slice)
+}
+
+fn ordinary_record_map_schema(plan: &Plan, slot: u32) -> Option<&Json> {
+    let parts = ordinary_record_map_parts(plan, slot)?;
+    let value = parts[1].as_object().filter(|descriptor| descriptor.len() == 1)?;
+    let scalar_value = value.get("scalar").and_then(Json::as_str).is_some();
+    let record_value = value
+        .get("composite")
+        .is_some_and(is_record_schema);
+    (scalar_value || record_value)
+        .then(|| ordinary_record_key_schema(&parts[0]))
+        .flatten()
 }
 
 fn record_collection_key_schema(plan: &Plan, slot: u32) -> Option<&Json> {
@@ -4020,6 +4042,27 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     "record Map index and read guards differ"
                 );
                 checked_typed_record_schema(schema)?;
+                let parts = ordinary_record_map_parts(plan, *slot)
+                    .ok_or_else(|| anyhow!("record Map index differs from state schema"))?;
+                let value = &parts[1];
+                match read {
+                    Instruction::Popeq { .. } => ensure!(
+                        value.get("scalar").and_then(Json::as_str).is_some(),
+                        "record Map scalar read requires a scalar value"
+                    ),
+                    Instruction::PopeqFields { schema, .. } if is_record_schema(schema) => {
+                        ensure!(
+                            value.get("composite") == Some(schema),
+                            "record Map read differs from state schema"
+                        );
+                        checked_typed_record_schema(schema)?;
+                    }
+                    Instruction::PopeqFields { .. } => ensure!(
+                        value.get("scalar").and_then(Json::as_str).is_some(),
+                        "record Map typed read requires a scalar or record value"
+                    ),
+                    _ => unreachable!("record Map read kind was checked above"),
+                }
             }
             Instruction::PushFields {
                 storage: true,
@@ -4087,6 +4130,17 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         == Some(schema),
                     "record write differs from state schema"
                 );
+                let (insert, insert_guard) = plan
+                    .operations
+                    .get(index + 1)
+                    .map(unguarded_operation)
+                    .ok_or_else(|| anyhow!("record write has no map insertion"))?;
+                let expected_depth = keys.len() + 2;
+                ensure!(
+                    matches!(insert, Instruction::Insert { n } if usize::from(*n) == expected_depth)
+                        && insert_guard == guard,
+                    "record Map value insertion depth or guard differs from its indexed path"
+                );
             }
             Instruction::PopeqFields { schema, .. } if is_record_schema(schema) => {
                 let path_operation = index
@@ -4098,23 +4152,42 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     path_guard == guard,
                     "record read guard differs from its indexed path"
                 );
-                let Instruction::IndexPath {
-                    slot,
-                    keys,
-                    push_path: false,
-                } = path_operation
-                else {
-                    bail!("record read has no indexed path")
-                };
-                if keys.is_empty() {
-                    checked_cell_record_schema(schema)?;
-                } else {
-                    checked_typed_record_schema(schema)?;
+                match path_operation {
+                    Instruction::IndexPath {
+                        slot,
+                        keys,
+                        push_path: false,
+                    } => {
+                        if keys.is_empty() {
+                            checked_cell_record_schema(schema)?;
+                        } else {
+                            checked_typed_record_schema(schema)?;
+                        }
+                        ensure!(
+                            tree_schema_at_path(plan, *slot, keys.len())?.get("composite")
+                                == Some(schema),
+                            "record read differs from state schema"
+                        );
+                    }
+                    Instruction::IndexRecordPath {
+                        slot,
+                        schema: key_schema,
+                        ..
+                    } => {
+                        ensure!(
+                            ordinary_record_map_schema(plan, *slot) == Some(key_schema),
+                            "record Map read key differs from state schema"
+                        );
+                        ensure!(
+                            ordinary_record_map_parts(plan, *slot)
+                                .and_then(|parts| parts[1].get("composite"))
+                                == Some(schema),
+                            "record Map read differs from state schema"
+                        );
+                        checked_typed_record_schema(schema)?;
+                    }
+                    _ => bail!("record read has no indexed path"),
                 }
-                ensure!(
-                    tree_schema_at_path(plan, *slot, keys.len())?.get("composite") == Some(schema),
-                    "record read differs from state schema"
-                );
             }
             Instruction::SpendShieldedFromMap {
                 nonce,

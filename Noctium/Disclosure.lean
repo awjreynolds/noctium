@@ -374,6 +374,10 @@ def describeEffect : Effect → LedgerEffectDescriptor
     let sink := s!"public record Map read key '{state}'"
     .publicEffect "readRecordMap" .stateRead .publicActivity sink
       (recordKeyOperands sink state values) [destination]
+  | .readRecordMapComposite state _ _ values destinations =>
+    let sink := s!"public record Map key read guard '{state}'"
+    .publicEffect "readRecordMapComposite" .stateRead .publicActivity sink
+      (recordKeyOperands sink state values) (destinations.map Prod.fst)
   | .memberRecordMap state destination values =>
     let sink := s!"public record Map membership key '{state}'"
     .publicEffect "memberRecordMap" .stateRead .publicActivity sink
@@ -490,6 +494,13 @@ def describeEffect : Effect → LedgerEffectDescriptor
     .publicEffect "writeRecordMap" .stateWrite .publicActivity sink
       (recordKeyOperands sink state values ++
         [.payload "value" s!"public record Map value '{state}'" value]) []
+  | .writeRecordMapComposite state _ keyValues valueValues =>
+    let sink := s!"public record Map key and value write '{state}'"
+    .publicEffect "writeRecordMapComposite" .stateWrite .publicActivity sink
+      (recordKeyOperands sink state keyValues ++
+        valueValues.zipIdx.map (fun (value, index) => match value with
+          | .mk _ expression => .payload "field"
+              s!"public record Map value field {index} of '{state}'" expression)) []
   | .removeRecordMap state values =>
     let sink := s!"public record Map removal key '{state}'"
     .publicEffect "removeRecordMap" .stateWrite .publicActivity sink

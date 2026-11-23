@@ -390,6 +390,7 @@ scoped syntax "historicMerkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "Set" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
+scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax ident ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -483,6 +484,8 @@ scoped syntax "write" ident ":=" nlexpr : nleffect
 scoped syntax "write" ident ":=" nlleaves : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "insert" ident "[" nlleaves "]" ":=" nlexpr : nleffect
+scoped syntax "insert" ident "[" nlleaves "]" ":=" nlleaves : nleffect
+scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlleaves : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" "emptyMap" : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "write" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
@@ -1756,6 +1759,7 @@ private partial def lowerTreePath (env : Bindings) (schema : LedgerValueType)
   | .set _, _ :: _ => throwError "set members have no readable value"
   | .recordSet .., _ :: _ => throwError "record Set members have no readable value"
   | .recordMapKey .., _ :: _ => throwError "record Map values are scalar and have no nested path"
+  | .recordMapComposite .., _ :: _ => throwError "record Map values are composite and have no nested path"
   | .shieldedCoinSet .., _ :: _ => throwError "qualified shielded coin Set members have no readable value"
   | .counter, _ :: _ => throwError "nested map path continues through a Counter value"
   | .composite .., _ :: _ => throwError "nested map path continues through a composite value"
@@ -2390,6 +2394,7 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
   | .set _ => throwErrorAt destination "Set members do not have readable values"
   | .recordSet .. => throwErrorAt destination "Set members do not have readable values"
   | .recordMapKey .. => throwErrorAt destination "record Map values require a typed record key read"
+  | .recordMapComposite .. => throwErrorAt destination "record Map values require a typed record key read"
   | .shieldedCoinSet .. => throwErrorAt destination "Set members do not have readable values"
   | .«list» .. => throwErrorAt destination "List reads require head or length"
   | .merkleTree .. => throwErrorAt destination "MerkleTree values are read through their operations"
@@ -2733,7 +2738,15 @@ private def recordMapKeyValues (schema : List (String × StateKind))
 private def elaborateRecordMapMember (schema : List (String × StateKind))
     (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
     (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
-  let (_, _, values) ← recordMapKeyValues schema storage payload state
+  let valueSchema ← statePathSchema schema storage
+  let (keyEnvironment, keyType) ← match valueSchema with
+    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
+      pure (environment, type)
+    | _ => throwErrorAt storage "typed record key operation requires a root record-key Map"
+  let fields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let values ← elaborateLedgerFieldValues state.env payload fields
   let (readName, updated) ← freshReadName depth state destination
   let term ← `(Noctium.Effect.memberRecordMap
     $(stringTerm storage.getId.toString) $(stringTerm readName) $values)
@@ -2750,6 +2763,61 @@ private def elaborateRecordMapRead (schema : List (String × StateKind))
   bindReadName {updated with terms := updated.terms.push term}
     destination.getId.toString readName valueTy
 
+private def recordMapCompositeFields (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
+    CommandElabM (Types.CompositeType × List (String × Ty) × TSyntax `term) := do
+  let valueSchema ← statePathSchema schema storage
+  let .recordMapComposite _ _ valueEnvironment valueType := valueSchema
+    | throwErrorAt storage "typed record Map value operation requires a composite-valued record-key Map"
+  let fields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let values ← elaborateLedgerFieldValues state.env payload fields
+  pure (valueType, fields, values)
+
+private def elaborateRecordMapCompositeRead (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (destination : TSyntax `ident)
+    (depth : Nat) (state : EntryEffects) : CommandElabM EntryEffects := do
+  let keySchema ← statePathSchema schema storage
+  let .recordMapComposite keyEnvironment keyType valueEnvironment valueType := keySchema
+    | throwErrorAt storage "typed record Map value read requires a composite-valued record-key Map"
+  let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let keyValues ← elaborateLedgerFieldValues state.env payload keyFields
+  let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let (readName, updated) ← freshReadName depth state destination
+  let (updated, destinations) ← bindLedgerRecordFields updated destination depth valueFields
+  let .structure valueTypeId := valueType
+    | throwErrorAt storage "record Map values require a named structure"
+  let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
+  let term ← `(Noctium.Effect.readRecordMapComposite
+    $(stringTerm storage.getId.toString) $(stringTerm readName) $typeTerm $keyValues $destinations)
+  pure {updated with terms := updated.terms.push term}
+
+private def elaborateRecordMapCompositeWrite (schema : List (String × StateKind))
+    (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (valuePayload : TSyntax `nlleaves)
+    (state : EntryEffects) : CommandElabM EntryEffects := do
+  let keySchema ← statePathSchema schema storage
+  let .recordMapComposite keyEnvironment keyType valueEnvironment valueType := keySchema
+    | throwErrorAt storage "typed record Map write requires a composite-valued record-key Map"
+  let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let keyValues ← elaborateLedgerFieldValues state.env payload keyFields
+  let valueValues ← elaborateLedgerFieldValues state.env valuePayload valueFields
+  let .structure valueTypeId := valueType
+    | throwErrorAt storage "record Map values require a named structure"
+  let typeTerm ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
+  let term ← `(Noctium.Effect.writeRecordMapComposite
+    $(stringTerm storage.getId.toString) $typeTerm $keyValues $valueValues)
+  pure {state with terms := state.terms.push term}
+
 private def elaborateRecordMapWrite (schema : List (String × StateKind))
     (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (value : TSyntax `nlexpr)
     (state : EntryEffects) : CommandElabM EntryEffects := do
@@ -2762,7 +2830,15 @@ private def elaborateRecordMapWrite (schema : List (String × StateKind))
 private def elaborateRecordMapRemove (schema : List (String × StateKind))
     (storage : TSyntax `ident) (payload : TSyntax `nlleaves) (state : EntryEffects) :
     CommandElabM EntryEffects := do
-  let (_, _, values) ← recordMapKeyValues schema storage payload state
+  let valueSchema ← statePathSchema schema storage
+  let (keyEnvironment, keyType) ← match valueSchema with
+    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
+      pure (environment, type)
+    | _ => throwErrorAt storage "typed record key operation requires a root record-key Map"
+  let fields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt storage message
+  let values ← elaborateLedgerFieldValues state.env payload fields
   let term ← `(Noctium.Effect.removeRecordMap $(stringTerm storage.getId.toString) $values)
   pure {state with terms := state.terms.push term}
 
@@ -3549,7 +3625,10 @@ private def elaborateEffect (schema : List (String × StateKind))
     state ← elaborateCounterLessThan schema path threshold destination depth state
   | `(nleffect| read $storage:ident [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr read $storage:ident [ $payload:nlleaves ] as $destination:ident) =>
-    state := ← elaborateRecordMapRead schema storage payload destination depth state
+    match (← statePathSchema schema storage) with
+    | .recordMapComposite .. =>
+      state := ← elaborateRecordMapCompositeRead schema storage payload destination depth state
+    | _ => state := ← elaborateRecordMapRead schema storage payload destination depth state
   | `(nleffect| read $path:nlpath as $destination:ident)
   | `(nleffect| when $_:nlexpr read $path:nlpath as $destination:ident) =>
     state := ← elaborateNamedPathRead schema "read" path destination depth guard state
@@ -3569,7 +3648,7 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| member $storage:ident [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr member $storage:ident [ $payload:nlleaves ] as $destination:ident) =>
     match (← statePathSchema schema storage) with
-    | .recordMapKey .. =>
+    | .recordMapKey .. | .recordMapComposite .. =>
       state := ← elaborateRecordMapMember schema storage payload destination depth state
     | _ => state := ← elaborateRecordSetMember schema storage payload destination depth state
   | `(nleffect| member $path:nlpath as $destination:ident)
@@ -3644,6 +3723,9 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ] := $value:nlexpr)
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ] := $value:nlexpr) =>
     state := ← elaborateRecordMapWrite schema storage payload value state
+  | `(nleffect| insert $storage:ident [ $payload:nlleaves ] := $valuePayload:nlleaves)
+  | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ] := $valuePayload:nlleaves) =>
+    state := ← elaborateRecordMapCompositeWrite schema storage payload valuePayload state
   | `(nleffect| insert $storage:ident [ $key:nlexpr ] := $value:nlexpr)
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $key:nlexpr ] := $value:nlexpr) => do
     let term ← match schema.lookup storage.getId.toString with
@@ -3710,7 +3792,7 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| remove $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr remove $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
-    | .recordMapKey .. => state := ← elaborateRecordMapRemove schema storage payload state
+    | .recordMapKey .. | .recordMapComposite .. => state := ← elaborateRecordMapRemove schema storage payload state
     | _ => state := ← elaborateRecordSetMutation schema storage payload Bool.false state
   | `(nleffect| remove $path:nlpath)
   | `(nleffect| when $_:nlexpr remove $path:nlpath) =>
@@ -3721,7 +3803,7 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| insert $storage:ident [ $payload:nlleaves ])
   | `(nleffect| when $_:nlexpr insert $storage:ident [ $payload:nlleaves ]) =>
     match (← statePathSchema schema storage) with
-    | .recordMapKey .. => throwErrorAt storage "record-key Map insert requires a value"
+    | .recordMapKey .. | .recordMapComposite .. => throwErrorAt storage "record-key Map insert requires a value"
     | _ => state := ← elaborateRecordSetMutation schema storage payload Bool.true state
   | `(nleffect| insert $path:nlpath)
   | `(nleffect| when $_:nlexpr insert $path:nlpath) =>
@@ -4388,6 +4470,24 @@ private def elaborateMerkleState (keys : List (TSyntax `nltype)) (depth : Nat)
           let valueSchema := LedgerValueType.recordMapKey environment compositeType valueTy
           let valueTerm ← `(Noctium.LedgerValueType.recordMapKey
             $environmentTerm $compositeTypeTerm $(← tyTerm valueTy))
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+        | `(nlstate| tree $id:ident : struct $keyRecord:ident { $keyFields:nlcompositefield* } =>
+            struct $valueRecord:ident { $valueFields:nlcompositefield* }) => do
+          let contractName := (← getCurrNamespace) ++ name.getId
+          let (keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm) ←
+            elaborateNamedRecord contractName keyRecord keyFields state
+          let (valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm) ←
+            elaborateNamedRecord contractName valueRecord valueFields state
+          match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+          | .error message => throwErrorAt state message
+          | .ok _ => pure ()
+          match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+          | .error message => throwErrorAt state message
+          | .ok _ => pure ()
+          let valueSchema := LedgerValueType.recordMapComposite
+            keyEnvironment keyType valueEnvironment valueType
+          let valueTerm ← `(Noctium.LedgerValueType.recordMapComposite
+            $keyEnvironmentTerm $keyTypeTerm $valueEnvironmentTerm $valueTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
