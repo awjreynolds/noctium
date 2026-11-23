@@ -25,6 +25,8 @@ use ledger::{
     structure::{LedgerState, SystemTransaction},
     verify::WellFormedStrictness,
 };
+#[cfg(test)]
+use ledger::events::EventDetails;
 use onchain_runtime::context::BlockContext;
 use parity_scale_codec::{Compact, Decode, Encode};
 use reqwest::blocking::Client;
@@ -534,7 +536,17 @@ struct ReplayCache {
 struct PartialReplay<'a> {
     transaction: &'a [u8],
     address: ContractAddress,
+    partial: bool,
     result: Option<(BTreeMap<u16, bool>, Vec<u8>)>,
+    #[cfg(test)]
+    logs: Option<Vec<FinalizedContractLog>>,
+}
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FinalizedContractLog {
+    address: ContractAddress,
+    entry_point: onchain_runtime::state::EntryPointBuf,
+    item: onchain_runtime::ops::VersionedLogItem<Db>,
 }
 /// Development-node trust is explicit: finalized RPC history is replayed locally and
 /// the resulting native ledger root must match the finalized runtime API root.
@@ -892,21 +904,39 @@ impl Node {
                     if let Some(replay) = partial.as_deref_mut()
                         && bytes == replay.transaction
                     {
-                        let TransactionResult::PartialSuccess(segments, _) = &outcome else {
-                            return Err(Error::Replay);
-                        };
-                        check(replay.result.is_none(), Error::Replay)?;
-                        let contract = state.contract.get(&replay.address).ok_or(Error::State)?;
-                        let mut bytes = Vec::new();
-                        serialize::tagged_serialize(&*contract, &mut bytes)
-                            .map_err(|_| Error::State)?;
-                        replay.result = Some((
-                            segments
-                                .iter()
-                                .map(|(&number, value)| (number, value.is_ok()))
-                                .collect(),
-                            bytes,
-                        ));
+                        if replay.partial {
+                            let TransactionResult::PartialSuccess(segments, _) = &outcome else {
+                                return Err(Error::Replay);
+                            };
+                            check(replay.result.is_none(), Error::Replay)?;
+                            let contract = state.contract.get(&replay.address).ok_or(Error::State)?;
+                            let mut bytes = Vec::new();
+                            serialize::tagged_serialize(&*contract, &mut bytes)
+                                .map_err(|_| Error::State)?;
+                            replay.result = Some((
+                                segments.iter().map(|(&number, value)| (number, value.is_ok())).collect(),
+                                bytes,
+                            ));
+                        }
+                        #[cfg(test)]
+                        if !replay.partial {
+                            let TransactionResult::Success(events) = &outcome else {
+                                return Err(Error::Replay);
+                            };
+                            check(replay.logs.is_none(), Error::Replay)?;
+                            replay.logs = Some(events.iter().filter_map(|event| {
+                                match &event.content {
+                                    EventDetails::ContractLog { address, entry_point, logged_item } => {
+                                        Some(FinalizedContractLog {
+                                            address: *address,
+                                            entry_point: entry_point.clone(),
+                                            item: logged_item.clone(),
+                                        })
+                                    }
+                                    _ => None,
+                                }
+                            }).collect());
+                        }
                     }
                     let events = match outcome {
                         TransactionResult::Success(events)
@@ -1323,7 +1353,10 @@ impl Node {
                     let mut replay = PartialReplay {
                         transaction: transaction.bytes(),
                         address,
+                        partial: true,
                         result: None,
+                        #[cfg(test)]
+                        logs: None,
                     };
                     // The outcome event carries the transaction hash only. Replay the exact
                     // signed bytes in the canonical block to recover the segment results.
@@ -3654,6 +3687,16 @@ mod tests {
             parameters: &crate::proof::TrustedParameters,
             inputs: BTreeMap<String, Json>,
         ) -> anyhow::Result<FinalizedReceipt> {
+            Ok(self.call_with_bound(operation, current, parameters, inputs).await?.1)
+        }
+
+        async fn call_with_bound(
+            &self,
+            operation: &crate::proof::ContractOperationTarget,
+            current: &mut Option<crate::proof::CurrentStateContext>,
+            parameters: &crate::proof::TrustedParameters,
+            inputs: BTreeMap<String, Json>,
+        ) -> anyhow::Result<(BoundTransaction, FinalizedReceipt)> {
             use crate::proof::LocalProver;
             use anyhow::Context;
             use rand::{SeedableRng, rngs::StdRng};
@@ -3679,8 +3722,184 @@ mod tests {
                         false,
                     )?,
             );
-            Ok(receipt)
+            Ok((bound, receipt))
         }
+    }
+
+    fn finalized_contract_logs(
+        node: &Node,
+        bound: &BoundTransaction,
+        receipt: &FinalizedReceipt,
+    ) -> anyhow::Result<Vec<FinalizedContractLog>> {
+        use anyhow::{Context, ensure};
+
+        bound.check_receipt(receipt)?;
+        let mut cache = node.cache.borrow().clone();
+        ensure!(
+            cache.as_ref().is_some_and(|cache| cache.height < receipt.height),
+            "no pre-inclusion replay state is available"
+        );
+        let address = ContractAddress(HashOutput(
+            hex::decode(bound.contract_address())?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid bound contract address"))?,
+        ));
+        let mut replay = PartialReplay {
+            transaction: bound.bytes(),
+            address,
+            partial: false,
+            result: None,
+            logs: None,
+        };
+        let snapshot = node.replay_to(&receipt.block_hash, &mut cache, Some(&mut replay))?;
+        ensure!(
+            snapshot.height == receipt.height && snapshot.finalized_hash == receipt.block_hash,
+            "captured block differs from finalized receipt"
+        );
+        let contract = snapshot
+            .state
+            .contract
+            .get(&address)
+            .context("replayed contract state is missing")?;
+        let mut state = Vec::new();
+        serialize::tagged_serialize(&*contract, &mut state)
+            .map_err(|_| anyhow::anyhow!("cannot encode replayed contract state"))?;
+        ensure!(
+            state == receipt.contract_state,
+            "replayed contract state differs from the checked receipt"
+        );
+        replay.logs.context("exact finalized transaction emitted no replay capture")
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "spends the published development wallet on the pinned isolated localnet"]
+    fn standard_event_helper_finalizes_logs() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::{Alignment, AlignmentAtom};
+        use futures::executor::block_on;
+        use onchain_runtime::{ops::LogEventType, state::StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_STANDARD_EVENTS_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_STANDARD_EVENTS_MANIFESTS")?)?;
+            let mut bundles = Vec::new();
+            let mut helper_k = None;
+            for entry in ["logSpend", "logCatalog", "logHelperSpend"] {
+                let pin = pins.get(entry).with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(plan.entrypoint == entry, "bundle directory does not match operation");
+                if entry == "logHelperSpend" {
+                    helper_k = Some(IrSource::load(bundle.file(Role::Circuit)?)?.k());
+                }
+                bundles.push(bundle);
+            }
+            let cache = ProofCache::new(
+                setting("NOCTIUM_STANDARD_EVENTS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let parameters = cache
+                .parameters(helper_k.context("missing helper event circuit")?)
+                .await?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_STANDARD_EVENTS_NODE")?,
+                &cache,
+            )
+            .await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation("logHelperSpend", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "logHelperSpend").await?;
+            let mut current = Some(deployed);
+            let nullifier: Vec<u8> = (1..=32).collect();
+            let call = |active| {
+                BTreeMap::from([
+                    ("active".into(), json!(active)),
+                    ("nullifier".into(), json!({"kind":"bytes","values":nullifier})),
+                ])
+            };
+            let (active_bound, active_receipt) = funded
+                .call_with_bound(&operation, &mut current, &parameters, call(true))
+                .await?;
+            let active_logs = finalized_contract_logs(&funded.node, &active_bound, &active_receipt)?;
+            let (inactive_bound, inactive_receipt) = funded
+                .call_with_bound(&operation, &mut current, &parameters, call(false))
+                .await?;
+            let inactive_logs = finalized_contract_logs(&funded.node, &inactive_bound, &inactive_receipt)?;
+
+            fn payload(log: &FinalizedContractLog) -> anyhow::Result<&[u8]> {
+                let StateValue::Cell(data) = &log.item.data else {
+                    anyhow::bail!("event payload is not a byte cell")
+                };
+                let [atom] = data.value.0.as_slice() else {
+                    anyhow::bail!("expected one event byte payload")
+                };
+                ensure!(
+                    data.alignment == Alignment::singleton(AlignmentAtom::Bytes { length: atom.0.len() as u32 }),
+                    "event payload alignment differs from its bytes"
+                );
+                Ok(&atom.0)
+            }
+            let expected_address = hex::encode(hex::decode(active_bound.contract_address())?);
+            let assert_logs = |logs: &[FinalizedContractLog], kinds: &[LogEventType]| -> anyhow::Result<()> {
+                ensure!(logs.len() == kinds.len(), "unexpected finalized event count");
+                for (log, kind) in logs.iter().zip(kinds) {
+                    ensure!(hex::encode(log.address.0.0) == expected_address, "event belongs to another contract");
+                    ensure!(log.entry_point == onchain_runtime::state::EntryPointBuf(b"logHelperSpend".to_vec()), "event belongs to another entrypoint");
+                    ensure!(log.item.version == 1, "unexpected event schema version");
+                    ensure!(log.item.event_type == *kind, "finalized event tag differs");
+                }
+                Ok(())
+            };
+            assert_logs(&active_logs, &[LogEventType::Paused, LogEventType::ShieldedSpend, LogEventType::Unpaused])?;
+            assert_logs(&inactive_logs, &[LogEventType::Paused, LogEventType::Unpaused])?;
+            ensure!(payload(&active_logs[0])?.is_empty(), "Paused payload is not empty");
+            ensure!(payload(&active_logs[1])? == nullifier.as_slice(), "helper payload differs");
+            ensure!(payload(&active_logs[2])?.is_empty(), "Unpaused payload is not empty");
+            ensure!(
+                payload(&inactive_logs[0])?.is_empty() && payload(&inactive_logs[1])?.is_empty(),
+                "inactive branch emitted an unexpected helper payload"
+            );
+
+            let receipt_logs = |logs: &[FinalizedContractLog]| -> anyhow::Result<Vec<_>> {
+                logs.iter().map(|log| {
+                    let bytes = payload(log)?;
+                    Ok(json!({
+                        "version": log.item.version,
+                        "tag": log.item.event_type as u8,
+                        "payloadLength": bytes.len(),
+                        "payloadSha256": hex::encode(sha2::Sha256::digest(bytes)),
+                    }))
+                }).collect()
+            };
+            println!("{}", json!({
+                "profile": crate::profile::NAME,
+                "contractAddress": active_receipt.contract_address,
+                "deployment": {"height": deployment.height, "transactionId": deployment.transaction_id},
+                "active": {"height": active_receipt.height, "blockHash": active_receipt.block_hash, "transactionId": active_receipt.transaction_id, "events": receipt_logs(&active_logs)?},
+                "inactive": {"height": inactive_receipt.height, "blockHash": inactive_receipt.block_hash, "transactionId": inactive_receipt.transaction_id, "events": receipt_logs(&inactive_logs)?},
+                "exactFinalizedEventBytesChecked": true,
+            }));
+            Ok(())
+        })
     }
 
     #[cfg(feature = "zkir-321")]
