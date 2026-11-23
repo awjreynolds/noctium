@@ -1104,7 +1104,7 @@
       "layer": "language",
       "surface": "Modules, imports, exports, includes",
       "noctiumStatus": "subset",
-      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Selected imports and re-exports now carry checked record, enum and nominal UInt types into Lean authoring. The pinned Compact and native cases agree on an imported generic record and UInt. The fixture checks alias identity, a distinct record specialization and rejection of an unselected type. Public generic module members retain their declaration identity through a bridge re-export. The paired Compact and Lean fixtures specialize the selected module and use its exported record and nominal UInt in checked circuits. Lean rejects private members and imports from later views.",
+      "notes": "Namespace and visibility behavior, top-level exports, generic modules, and explicit ordinary circuit imports. A two-file 3.2.1 CLI case selects one qualified circuit and matches the single-file entrypoint's ZKIR bytes. Source provenance qualification for imported artifacts remains open. Selective imports of the same generic circuit bind separate JubjubScalar and JubjubPoint instances and lower to native entrypoints. Selected imports and re-exports now carry checked record, enum and nominal UInt types into Lean authoring. The pinned Compact and native cases agree on an imported generic record and UInt. The fixture checks alias identity, a distinct record specialization and rejection of an unselected type. Public generic module members retain their declaration identity through a bridge re-export. The paired Compact and Lean fixtures specialize the selected module and use its exported record and nominal UInt in checked circuits. Lean rejects private members and imports from later views. Generic circuit modules accept the nine Secp256k1, Secp256r1 and Curve25519 base, scalar and point types. The pinned Compact runtime executes identity circuits at each type. Noctium emits nine distinct typed specializations and the native checker confirms the Secp256k1 scalar result written to a Cell.",
       "source": [
         "reference"
       ],
@@ -1113,6 +1113,11 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/modules/ForeignCurveGenericIdentity.lean",
+        "tests/modules/check-foreign-curve-generic.sh",
+        "tests/compact/GenericForeignCurveModule.compact",
+        "tests/compact/generic-foreign-curve-module.mjs",
+        "runtime/tests/generic_foreign_curve_module.rs",
         "tests/modules/PublicModuleAliases.lean",
         "tests/compact/PublicModuleAliases.compact",
         "tests/compact/public-module-aliases.mjs",

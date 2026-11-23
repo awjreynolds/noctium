@@ -340,7 +340,8 @@ private partial def canonicalTypeSize (fuel : Nat) (value : Types.CompositeType)
     | .scalar .opaqueString => none
     | .scalar .jubjubScalar => some 3
     | .scalar .jubjubPoint => some 3
-    | .scalar (.foreign _) => none
+    | .scalar (.foreign kind) =>
+      some (2 + 1 + natSize kind.sourceName.utf8ByteSize + 1 + kind.sourceName.utf8ByteSize)
     | .tuple items => do
       let sizes ← items.mapM (canonicalTypeSize fuel)
       pure (3 + natSize items.length + sizes.foldl (· + ·) 0)
@@ -374,7 +375,7 @@ private partial def consumeTypeNodes (span : SourceSpan) (remaining : Nat)
   | .scalar .opaqueBytes => fail span "OpaqueBytes are not supported by module type parameters"
   | .scalar .opaqueString => fail span "OpaqueString is not supported by module type parameters"
   | .scalar .jubjubScalar | .scalar .jubjubPoint => pure remaining
-  | .scalar (.foreign _) => fail span "foreign types are not supported by module type parameters"
+  | .scalar (.foreign _) => pure remaining
   | .scalar .native | .scalar .bool | .unit => pure remaining
 
 private def encodeType : Types.CompositeType → String
