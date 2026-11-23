@@ -25,6 +25,13 @@ private theorem bind_ok (first : Except ε α) (next : α → Except ε β)
     ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem throw_eq_error (error : ε) : (throw error : Except ε α) = .error error := rfl
+
+private theorem map_ok (action : Except ε α) (function : α → β) (value : β) :
+    function <$> action = .ok value ↔
+      ∃ result, action = .ok result ∧ function result = value := by
+  cases action <;> simp [Functor.map, Except.map]
+
 theorem forIn_extract (body : α → PUnit → Except ε (ForInStep PUnit))
     (property : α → Prop) (values : List α)
     (actions : ∀ value step, body value .unit = .ok step →
@@ -54,38 +61,64 @@ theorem validated_outputs_unshadowed (circuit : Circuit)
       (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
         output.name = none := by
   cases inputNames : uniqueNames (circuit.inputs.map (·.name)) with
-  | false => simp [Circuit.validate, inputNames, bind, Except.bind] at valid
+  | false => simp [Circuit.validate, inputNames, bind, bind_ok, throw_eq_error] at valid
   | true =>
-    cases outputNames : uniqueNames (circuit.outputs.map (·.name)) with
-    | false => simp [Circuit.validate, inputNames, outputNames, bind, Except.bind] at valid
+    cases nativeNames : uniqueNames (circuit.inputs.flatMap Input.nativeIdentifiers) with
+    | false => simp [Circuit.validate, inputNames, nativeNames, bind, bind_ok,
+        throw_eq_error] at valid
     | true =>
-      simp only [Circuit.validate, inputNames, outputNames,
-        Bool.not_true, Bool.false_eq_true, ↓reduceIte] at valid
-      simp only [bind, bind_ok] at valid
-      rcases valid with ⟨_, _, _, _, _, outputChecks, _⟩
-      refine forIn_extract _ (fun output =>
-        (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
-          output.name = none) circuit.outputs ?_ outputChecks
-      intro output step success
-      cases typeChecked : output.ty.validate {poseidon2 := true} with
-      | error message => simp [typeChecked, bind, Except.bind] at success
-      | ok result =>
-        simp only [typeChecked] at success
-        split at success
-        next shadow => cases success
-        next unshadowed =>
-          cases expressionChecked : output.value.validate {poseidon2 := true}
-              (circuit.inputs.map (fun input => (input.name, input.ty))) with
-          | error message => simp [expressionChecked, bind, Except.bind] at success
-          | ok result =>
-            simp only [expressionChecked] at success
-            cases success
-            constructor
-            · rfl
-            · cases found : (circuit.inputs.map
-                  (fun input => (input.name, input.ty))).lookup output.name with
-              | none => rfl
-              | some ty => simp [found] at unshadowed
+      cases projectionNames : uniqueNames
+          (circuit.inputs.flatMap Input.publicProjectionIdentifiers) with
+      | false => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+          bind, bind_ok, throw_eq_error] at valid
+      | true =>
+        cases projectionCollision : (circuit.inputs.flatMap
+            Input.publicProjectionIdentifiers).any (fun name =>
+              circuit.inputs.any (fun input => input.name == name)) with
+        | true => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+            projectionCollision, bind, bind_ok, throw_eq_error] at valid
+        | false =>
+          cases outputNames : uniqueNames (circuit.outputs.map (·.name)) with
+          | false => simp [Circuit.validate, inputNames, nativeNames, projectionNames,
+              projectionCollision, outputNames, bind, bind_ok, throw_eq_error] at valid
+          | true =>
+            simp only [Circuit.validate, inputNames, nativeNames, projectionNames,
+              projectionCollision, outputNames,
+              Bool.not_true, Bool.false_eq_true, ↓reduceIte] at valid
+            simp only [bind, bind_ok] at valid
+            rcases valid with ⟨_, _, afterInputs⟩
+            change Except.bind (validateConstraints {poseidon2 := true}
+              (circuit.inputs.map (fun input => (input.name, input.ty)))
+              circuit.span circuit.constraints) _ = .ok () at afterInputs
+            obtain ⟨checked, constraintsValid, afterConstraints⟩ :=
+              (bind_ok _ _ _).mp afterInputs
+            cases checked
+            change ((fun _ : PUnit => ()) <$> (_ : Except _ PUnit)) =
+              Except.ok () at afterConstraints
+            obtain ⟨⟨⟩, outputChecks, _⟩ := (map_ok _ _ _).mp afterConstraints
+            refine forIn_extract _ (fun output =>
+              (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
+                output.name = none) circuit.outputs ?_ outputChecks
+            intro output step success
+            cases typeChecked : output.ty.validate {poseidon2 := true} with
+            | error message => simp [typeChecked, bind, Except.bind] at success
+            | ok result =>
+              simp only [typeChecked] at success
+              split at success
+              next shadow => cases success
+              next unshadowed =>
+                cases expressionChecked : output.value.validate {poseidon2 := true}
+                    (circuit.inputs.map (fun input => (input.name, input.ty))) with
+                | error message => simp [expressionChecked, bind, Except.bind] at success
+                | ok result =>
+                  simp only [expressionChecked] at success
+                  cases success
+                  constructor
+                  · rfl
+                  · cases found : (circuit.inputs.map
+                        (fun input => (input.name, input.ty))).lookup output.name with
+                    | none => rfl
+                    | some ty => simp [found] at unshadowed
 
 private theorem lookup_member (values : List (String × α))
     (name : String) (value : α)
@@ -142,6 +175,13 @@ theorem typedEnvironment_cons_unused (hash : Hash) (inputs : Assignment)
   exact ⟨aliasAgreement_cons_unused hash inputs aliases values name term
     environment.aliases unused, environment.complete⟩
 
+private theorem packed_as_canonical (ty found : Ty) (value : ty.Denote)
+    (result : found.Denote) (canonical : Canonical ty value)
+    (typed : (Value.pack ty value).as found = some result) :
+    Canonical found result ∧ sourceScalar? found result = sourceScalar? ty value := by
+  cases ty <;> cases found <;>
+    simp_all [Value.pack, Value.as, Canonical, sourceNumber?, sourceScalar?]
+
 /-- Appending later read-input aliases cannot change the first alias already
 found for an admitted source input. -/
 theorem typedEnvironment_append_aliases (hash : Hash) (inputs : Assignment)
@@ -176,7 +216,7 @@ theorem typedEnvironment_snoc (hash : Hash) (inputs : Assignment)
     (freshValue : values.lookup name = none)
     (freshType : types.lookup name = none)
     (canonical : Canonical ty value)
-    (meaning : interpret hash inputs term = scalar (number ty value)) :
+    (meaning : interpret hash inputs term = sourceScalar? ty value) :
     TypedEnvironment hash inputs (aliases ++ [(name, term)])
       (values ++ [(name, Value.pack ty value)]) (types ++ [(name, ty)]) := by
   constructor
@@ -187,8 +227,9 @@ theorem typedEnvironment_snoc (hash : Hash) (inputs : Assignment)
       cases lookup
       have aliasLookup : (aliases ++ [(name, term)]).lookup name = some term := by
         simp [List.lookup_append, freshAlias]
-      cases ty <;> cases foundTy <;>
-        simp_all [Value.pack, Value.as, Canonical, number]
+      obtain ⟨foundCanonical, sourceMeaning⟩ :=
+        packed_as_canonical ty foundTy value result canonical typed
+      exact ⟨foundCanonical, term, aliasLookup, meaning.trans sourceMeaning.symm⟩
     · have unequal : (found == name) = false := by simp [same]
       simp only [List.lookup_append, List.lookup_cons, unequal,
         List.lookup_nil, Option.or_none] at lookup
@@ -202,7 +243,7 @@ theorem typedEnvironment_snoc (hash : Hash) (inputs : Assignment)
       simp [List.lookup_append, freshType] at lookup
       cases lookup
       exact ⟨Value.pack ty value, value,
-        by simp [List.lookup_append, freshValue], number_pack_as ty value⟩
+        by simp [List.lookup_append, freshValue], number_pack_as ty value canonical⟩
     · have unequal : (found == name) = false := by simp [same]
       simp only [List.lookup_append, List.lookup_cons, unequal,
         List.lookup_nil, Option.or_none] at lookup
