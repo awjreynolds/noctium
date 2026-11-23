@@ -4,9 +4,9 @@ Context pointer: [ticket 12, Map ledger 9 witness, proof, and state boundaries](
 
 Research checked on 2026-11-16 against official Midnight documentation and repositories.
 
-## Current compatibility profile
+## Compatibility profile recorded on 2026-11-16
 
-Mainnet and Preview run ledger 9.1.0.1 with node 2.1.101, proof server 9.0.0, Midnight.js 5.0.0, and Compact toolchain 0.36.0. The ledger 9.1.0.0 release notes identify `midnight-circuits` 7.3.0 and `midnight-zk-stdlib` 2.4.0. Proof Server 9.0.0 supports ZKIR v3 through `midnight-zkir` 3.2.0. These pins describe the current integration profile, not a requirement to use Compact source or its runtime as Noctium's language model. [Ledger 9 upgrade](https://docs.midnight.network/relnotes/ledger-9) [Ledger 9.1.0.1 release](https://github.com/midnightntwrk/midnight-ledger/releases/tag/ledger-9.1.0.1) [Proof Server 9.0.0 release notes](https://github.com/midnightntwrk/midnight-ledger/releases)
+The compatibility matrix checked on 2026-11-16 listed ledger 9.1.0.1, node 2.1.101, proof server 9.0.0, Midnight.js 5.0.0, and Compact toolchain 0.36.0 for Mainnet and Preview. The ledger 9.1.0.0 release notes identify `midnight-circuits` 7.3.0 and `midnight-zk-stdlib` 2.4.0. Proof Server 9.0.0 supports ZKIR v3 through `midnight-zkir` 3.2.0. The [updated baseline](compact-equivalence-baseline.md) records the 2026-11-17 client patch. [Current compatibility matrix](https://docs.midnight.network/relnotes/support-matrix) [Ledger 9 upgrade](https://docs.midnight.network/relnotes/ledger-9) [Ledger 9.1.0.1 release](https://github.com/midnightntwrk/midnight-ledger/releases/tag/ledger-9.1.0.1) [Proof Server 9.0.0 release notes](https://github.com/midnightntwrk/midnight-ledger/releases)
 
 ## Observed boundaries
 
