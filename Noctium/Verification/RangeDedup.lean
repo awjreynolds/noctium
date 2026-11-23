@@ -111,6 +111,64 @@ private theorem decode_list (items : List Json) (instructions : List Instruction
           · simpa only [head] using decoded
           · exact facts.2 json member⟩, And.left⟩
 
+private theorem decoded_assertionOperand? (item : Json) (operand : String)
+    (instruction : Instruction) (recognized : assertionOperand? item = some operand)
+    (decoded : decodeInstruction item = .ok instruction) :
+    instruction = .assert (.reference operand) := by
+  simp only [assertionOperand?, bind, Option.bind_eq_some_iff, option_guard_some,
+    pure, Option.some.injEq] at recognized
+  obtain ⟨object, objectEq, _, objectSize, opcode, opcodeEq, _, opcodeIsAssert,
+    text, textEq, _, validText, textIsOperand⟩ := recognized
+  have opcodeAsserts : opcode = "assert" := of_decide_eq_true opcodeIsAssert
+  have opcodeDecode : (item.getObjVal? "op" >>= Json.getStr?) = .ok "assert" := by
+    have h := toOption_some opcodeEq
+    rw [opcodeAsserts] at h
+    exact h
+  have opcodeField : stringField item "op" = .ok "assert" := by
+    simpa [stringField] using opcodeDecode
+  have textDecode : (item.getObjVal? "cond" >>= Json.getStr?) = .ok text :=
+    toOption_some textEq
+  have condValue : item.getObjVal? "cond" = .ok (.str text) := by
+    cases found : item.getObjVal? "cond" with
+    | error message =>
+      simp only [found, Bind.bind, Except.bind] at textDecode
+      cases textDecode
+    | ok value => cases value with
+      | str value =>
+        simp only [found, Bind.bind, Except.bind, Json.getStr?] at textDecode
+        injection textDecode with equal
+        subst value
+        rfl
+      | _ =>
+        simp only [found, Bind.bind, Except.bind, Json.getStr?] at textDecode
+        cases textDecode
+  have validParts := validText
+  simp only [Bool.and_eq_true] at validParts
+  simp only [String.startsWith_char_eq_head?, beq_iff_eq] at validParts
+  have bytePrefix : ['%'] <+: text.toList := by
+    cases chars : text.toList with
+    | nil => simp [chars] at validParts
+    | cons first rest =>
+      have firstIsPercent : first = '%' := by simpa [chars] using validParts.1.1
+      subst first
+      simp
+  have valid : validIdentifier text = true := by
+    simp [validIdentifier, bytePrefix, validParts.1.2, validParts.2]
+  have starts : text.startsWith '%' = true := by
+    simpa only [String.startsWith_char_eq_head?, beq_iff_eq] using validParts.1.1
+  have noHex : text.startsWith "0x" = false := prefix_disjoint text (by
+    exact starts)
+  unfold decodeInstruction at decoded
+  simp only [opcodeField, bind, Except.bind] at decoded
+  cases fields : exactFields item ["op", "cond"] with
+  | error message => simp [fields] at decoded
+  | ok _ =>
+    simp only [fields, decodeOperandField, bind, Except.bind] at decoded
+    simp only [condValue, Json.getStr?, decodeOperand, bind, Except.bind, noHex, Bool.false_eq_true,
+      ↓reduceIte, valid, ensure, pure, Except.pure] at decoded
+    have decoded' : instruction = .assert (.reference text) := Except.ok.inj decoded.symm
+    simpa [textIsOperand] using decoded'
+
 /-- Inputs, Impact operations and outputs all occur among these ordered
 instructions. Dropping range checks has no effect on their observations. -/
 def nonRange : Instruction → Bool
@@ -124,6 +182,19 @@ private theorem filter_map (items : List Json) :
   | nil => rfl
   | cons item rest ih =>
     by_cases kept : nonRange (decodedItem item) <;> simp [kept, ih]
+
+def nonAssert : Instruction → Bool
+  | .assert _ => false
+  | _ => true
+
+private theorem filter_decoded (items : List Json) :
+    (items.map decodedItem).filter nonAssert =
+      items.flatMap fun item =>
+        if nonAssert (decodedItem item) then [decodedItem item] else [] := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    by_cases kept : nonAssert (decodedItem item) <;> simp [kept, ih]
 
 /-- The actual JSON range pass preserves decode success, ordered non-range
 instructions and field-level satisfaction for every assignment accepted or
@@ -150,5 +221,115 @@ theorem preserves_decoded (instructions : Array Json) (original : List Instructi
       intro item member name width key
       rw [key_instruction item _ name width key (admitted item member)]
       rfl)
+
+/-- Removing repeated direct reference assertions preserves decoded non-assert
+order and the satisfying witnesses for every successful input decode. -/
+theorem removeDuplicateAssertions_preserves_decoded (instructions : Array Json)
+    (original : List Instruction)
+    (decoded : instructions.toList.mapM decodeInstruction = .ok original) :
+    ∃ optimized,
+      (removeDuplicateAssertions instructions).toList.mapM decodeInstruction = .ok optimized ∧
+      optimized.filter nonAssert = original.filter nonAssert ∧
+      ∀ hash witness,
+        (∀ instruction ∈ optimized, instruction.Holds hash witness) ↔
+        (∀ instruction ∈ original, instruction.Holds hash witness) := by
+  obtain ⟨originalForm, admitted⟩ := (decode_list _ _).mp decoded
+  subst original
+  let reduced := removeDuplicateAssertions instructions
+  let optimized := reduced.toList.map decodedItem
+  have reducedDecoded : reduced.toList.mapM decodeInstruction = .ok optimized :=
+    (decode_list _ _).mpr ⟨rfl, fun item member =>
+      admitted item ((removeDuplicateAssertions_sublist instructions).subset member)⟩
+  let observe := fun item =>
+    if nonAssert (decodedItem item) then [decodedItem item] else []
+  have observed := removeDuplicateAssertions_preserves_observation instructions observe (by
+    intro item member operand recognized
+    have shape := decoded_assertionOperand? item operand (decodedItem item) recognized
+      (admitted item member)
+    simp [observe, shape, nonAssert])
+  let observeUnrecognized := fun item =>
+    if (assertionOperand? item).isNone then [item] else []
+  have rawObserved := removeDuplicateAssertions_preserves_observation instructions
+      observeUnrecognized (by
+        intro item member operand recognized
+        simp [observeUnrecognized, recognized])
+  refine ⟨optimized, reducedDecoded, ?_, ?_⟩
+  · let observe := fun item =>
+      if nonAssert (decodedItem item) then [decodedItem item] else []
+    simpa only [filter_decoded, observe, optimized, reduced] using observed
+  · intro hash witness
+    constructor
+    · intro holds instruction member
+      by_cases retained : nonAssert instruction = true
+      · have filtered : instruction ∈
+          (instructions.toList.map decodedItem).filter nonAssert :=
+            List.mem_filter.mpr ⟨member, retained⟩
+        have projection : optimized.filter nonAssert =
+            (instructions.toList.map decodedItem).filter nonAssert := by
+          simpa only [filter_decoded, observe, optimized, reduced] using observed
+        have filtered' : instruction ∈ optimized.filter nonAssert := by
+          rw [projection]
+          exact filtered
+        exact holds instruction (List.mem_filter.mp filtered').1
+      · cases instruction with
+        | assert condition =>
+          have source := List.mem_map.mp member
+          obtain ⟨item, sourceMember, decodedItemEq⟩ := source
+          cases recognized : assertionOperand? item with
+          | none =>
+            have observedSource : item ∈ instructions.toList.flatMap observeUnrecognized := by
+              apply List.mem_flatMap.mpr
+              exact ⟨item, sourceMember, by simp [observeUnrecognized, recognized]⟩
+            have observedReduced : item ∈ reduced.toList.flatMap observeUnrecognized := by
+              rw [rawObserved]
+              exact observedSource
+            obtain ⟨retainedItem, retainedMember, itemIn⟩ :=
+              List.mem_flatMap.mp observedReduced
+            have sameItem : retainedItem = item := by
+              cases retainedRecognition : assertionOperand? retainedItem with
+              | none =>
+                have eq : item = retainedItem := by
+                  simpa [observeUnrecognized, retainedRecognition] using itemIn
+                exact eq.symm
+              | some other => simp [observeUnrecognized, retainedRecognition] at itemIn
+            have optimizedMember : decodedItem item ∈ optimized := by
+              change decodedItem item ∈ reduced.toList.map decodedItem
+              rw [← sameItem]
+              exact List.mem_map.mpr ⟨retainedItem, retainedMember, rfl⟩
+            rw [← decodedItemEq]
+            exact holds (decodedItem item) optimizedMember
+          | some operand =>
+            have shape := decoded_assertionOperand? item operand (decodedItem item)
+              recognized (admitted item sourceMember)
+            have conditionEq : condition = .reference operand := by
+              have eq : Instruction.assert condition = Instruction.assert (.reference operand) :=
+                decodedItemEq.symm.trans shape
+              injection eq
+            cases condition with
+            | immediate value => simp at conditionEq
+            | reference name =>
+              have sameOperand : name = operand := by injection conditionEq
+              subst name
+              obtain ⟨retainedItem, retainedMember, retainedShape⟩ :=
+                removeDuplicateAssertions_retains_operand instructions item sourceMember recognized
+              have retainedDecoded :=
+                admitted retainedItem ((removeDuplicateAssertions_sublist instructions).subset retainedMember)
+              have retainedInstruction : decodedItem retainedItem = .assert (.reference operand) :=
+                decoded_assertionOperand? retainedItem operand (decodedItem retainedItem)
+                  retainedShape retainedDecoded
+              have optimizedMember : decodedItem retainedItem ∈ optimized := by
+                change decodedItem retainedItem ∈ reduced.toList.map decodedItem
+                exact List.mem_map.mpr ⟨retainedItem, retainedMember, rfl⟩
+              apply holds (.assert (.reference operand))
+              rw [← retainedInstruction]
+              exact optimizedMember
+        | _ => simp [nonAssert] at retained
+    · intro holds instruction member
+      obtain ⟨item, reducedMember, decodedEq⟩ := List.mem_map.mp member
+      have sourceMember := (removeDuplicateAssertions_sublist instructions).subset reducedMember
+      have originalMember : decodedItem item ∈ instructions.toList.map decodedItem :=
+        List.mem_map.mpr ⟨item, sourceMember, rfl⟩
+      rw [← decodedEq]
+      exact holds (decodedItem item) originalMember
 
 end Noctium.Verification.RangeDedup
