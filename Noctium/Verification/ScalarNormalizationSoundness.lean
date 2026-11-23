@@ -176,7 +176,7 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp only [normalize, bind, Functor.map, Except.map, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
     cases equal
-    simp only [arithmetic_eq, requireSourceType_eq] at requirements
+    simp only [normalizeNativeAdd] at requirements
     obtain ⟨ar, br⟩ := requirements_children hash inputs an bn _ [] (by simpa using requirements)
     obtain ⟨av, ea, ac, aq, am⟩ := ia types aliases values environment an valid.1 na ar
     obtain ⟨bv, eb, bc, bq, bm⟩ := ib types aliases values environment bn valid.2 nb br
@@ -226,7 +226,7 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
     simp only [normalize, bind, except_bind_ok, Except.pure] at normal
     rcases normal with ⟨an, na, bn, nb, equal⟩
     cases equal
-    simp only [arithmetic_eq, requireSourceType_eq] at requirements
+    simp only [normalizeUIntAdd, requireSourceType_eq] at requirements
     obtain ⟨ar, br⟩ := requirements_children hash inputs an bn _ _ requirements
     obtain ⟨av, ea, ac, aq, am⟩ := ia types aliases values environment an valid.2.1 na ar
     obtain ⟨bv, eb, bc, bq, bm⟩ := ib types aliases values environment bn valid.2.2 nb br
