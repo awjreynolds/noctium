@@ -998,6 +998,70 @@ private def seedRawInput (expected : Expected) (rawInput : Json) (index : Nat)
   let (name, fact) ← seedRawInputFact expected rawInput index
   define state name fact
 
+theorem seedRawInput_native_parts {expected : Expected} {rawInput : Json}
+    {index : Nat} {state next : State}
+    (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
+    (accepted : seedRawInput expected rawInput index state = .ok next) :
+    ∃ required, expected.rawInputs[index]? = some required ∧
+      required.visibility = .«private» ∧ required.ty.isBytes = false ∧
+      define state required.identifier
+        ({term := .input required.identifier,
+          maximum := Field.modulus - 1} : Fact) = .ok next := by
+  unfold seedRawInput at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨⟨name, fact⟩, factAccepted, defineAccepted⟩
+  unfold seedRawInputFact at factAccepted
+  cases requiredLookup : expected.rawInputs[index]? with
+  | none => simp [requiredLookup] at factAccepted
+  | some required =>
+    rw [requiredLookup] at factAccepted
+    simp only [bind_ok] at factAccepted
+    rcases factAccepted with ⟨_, _, rest⟩
+    rcases rest with ⟨_, privateAccepted, rest⟩
+    rcases rest with ⟨rawName, rawNameParsed, rest⟩
+    rcases rest with ⟨_, nameAccepted, typeAccepted⟩
+    have requiredMember : required ∈ expected.rawInputs := by
+      let headers := expected.rawInputs
+      have lookup : headers[index]? = some required := by simpa [headers] using requiredLookup
+      rcases List.getElem?_eq_some_iff.mp lookup with ⟨within, indexEq⟩
+      have member := List.getElem_mem within
+      rw [indexEq] at member
+      simpa [headers] using member
+    have requirementNative : required.ty.isForeign = false :=
+      nativeOnly required requiredMember
+    have inputIsPrivate : required.visibility = .«private» := by
+      have checks := ensure_ok.mp privateAccepted
+      have privateCheck := (Bool.and_eq_true_iff.mp checks).1
+      cases visibility : required.visibility with
+      | «public» =>
+        have unequal : (Visibility.«public» == Visibility.«private») = false := by decide
+        rw [visibility, unequal] at privateCheck
+        contradiction
+      | «private» => rfl
+    have inputIsNotBytes : required.ty.isBytes = false := by
+      have checks := ensure_ok.mp privateAccepted
+      have notBytes := (Bool.and_eq_true_iff.mp checks).2
+      cases isBytes : required.ty.isBytes <;> simp [isBytes] at notBytes ⊢
+    have headerName : rawName = required.identifier :=
+      eq_of_beq (ensure_ok.mp nameAccepted)
+    cases ty : required.ty <;> simp [Ty.isForeign, ty] at requirementNative
+    all_goals
+      rw [ty] at typeAccepted
+      simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq, isForeignType] at typeAccepted
+      rcases typeAccepted with ⟨_, _, ⟨_, _, ⟨valueType, valueTypeEq, pairEq⟩⟩⟩
+      cases valueTypeEq
+      simp only [Prod.mk.injEq] at pairEq
+      rcases pairEq with ⟨nameEq, factEq⟩
+      have nameIsRequired : name = required.identifier := nameEq.symm.trans headerName
+      have expectedFact :
+          ({term := .input required.identifier, maximum := Field.modulus - 1} : Fact) = fact := by
+        simpa [headerName] using factEq
+      refine ⟨required, rfl, inputIsPrivate, inputIsNotBytes, ?_⟩
+      have expectedFactAtName := expectedFact
+      rw [← nameIsRequired] at expectedFactAtName
+      rw [← nameIsRequired, expectedFactAtName]
+      exact defineAccepted
+
 private theorem seedRawInput_inputCount {expected : Expected} {rawInput : Json}
     {index : Nat} {state next : State}
     (accepted : seedRawInput expected rawInput index state = .ok next) :

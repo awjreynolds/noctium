@@ -1,4 +1,7 @@
 import Noctium.Frontend
+import Noctium.Verification.GenericStateCircuitParts
+import Noctium.Verification.ScalarValidationProjection
+import Noctium.Verification.ScalarValidationRawSeedMeaning
 
 open scoped Noctium
 
@@ -57,3 +60,44 @@ private def callArgumentSchema (names : List String) (visibility : Noctium.Visib
 #guard !(callArgumentSchema ["value", "value"]).isOk
 #guard !(callArgumentSchema ["value"] .public).isOk
 #guard (callArgumentSchema ["value"] .private (.uint 7)).isOk
+
+namespace NativeReturnsProof
+
+open Noctium Noctium.Backend Noctium.Verification
+open NativeRelation ScalarValidationMeaning ScalarValidationProjection
+
+private def advance := nativeReturnsEntry "advance"
+
+#guard (Zkir.lowerEntrypoint NativeReturns.state advance).isOk
+
+/-- The actual advance call seeds the ledger validator with its source amount
+before any transcript instruction. The witness uses the same argument. -/
+theorem acceptedAdvanceSeedMeaning
+    {hash : Hash} {inputs assignment : Assignment} {program : Lean.Json}
+    (lowered : Zkir.lowerEntrypoint NativeReturns.state advance = .ok program)
+    (amountAgrees : assignment "%input_amount" = inputs "%input_amount") :
+    ∃ expected instructions rawInputs seed final,
+      Native.expectedEntrypoint NativeReturns.state (Passes.pruneEntrypoint advance) =
+        .ok expected ∧
+      expected.rawInputs = [{identifier := "%input_amount", visibility := .private, ty := .native}] ∧
+      NativeValidationDriverFacts expected program instructions rawInputs seed final ∧
+      StateMeaning hash inputs assignment seed := by
+  obtain ⟨_, expected, _, schedule, validated, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions NativeReturns.state advance program lowered
+  have ordered : expected.rawInputs =
+      [{identifier := "%input_amount", visibility := .private, ty := .native}] :=
+    GenericStateCircuitParts.expectedEntrypoint_rawInputs NativeReturns.state
+      (Passes.pruneEntrypoint advance) expected schedule
+  obtain ⟨instructions, rawInputs, seed, final, driver⟩ := validate_driver_result validated
+  refine ⟨expected, instructions, rawInputs, seed, final, schedule, ordered, driver, ?_⟩
+  apply ScalarValidationRawSeedMeaning.seedRawInputs_meaning _ _ driver.seededRawInputs
+  · intro requirement inHeader
+    rw [ordered] at inHeader
+    rw [List.mem_singleton.mp inHeader]
+    rfl
+  · intro requirement inHeader
+    rw [ordered] at inHeader
+    rw [List.mem_singleton.mp inHeader]
+    exact amountAgrees
+
+end NativeReturnsProof

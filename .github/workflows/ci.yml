@@ -272,6 +272,8 @@ jobs:
           lake env lean tests/RecordMerkleLeaves.lean
           lake env lean tests/JubjubMerkleLeaves.lean
           lake env lean tests/ForeignMerkleLeaves.lean
+          lake build Noctium.Verification.GenericStateCircuitParts \
+            Noctium.Verification.ScalarValidationProjection Noctium.Verification.ScalarValidationRawSeedMeaning
           lake env lean tests/NativeReturns.lean
           lake env lean tests/TypedCallArguments.lean
           lake env lean tests/ContractInterfaces.lean

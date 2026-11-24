@@ -210,6 +210,7 @@ structure NativeValidationDriverFacts (expected : Expected) (program : Json)
   instructionsParsed : arrayField program "instructions" = .ok instructions
   rawInputsParsed : arrayField program "inputs" = .ok rawInputs
   rawInputCount : rawInputs.size = expected.rawInputs.length
+  seededRawInputs : seedRawInputs expected rawInputs = .ok seed
   seedInputCount : seed.inputCount = 0
   emptyRawSeed : expected.rawInputs = [] → seed = {}
   finalOutput : requireFinalOutput instructions.toList = .ok ()
@@ -271,9 +272,10 @@ theorem validate_driver_result {expected : Expected} {program : Json}
     change seedRawInputs expected rawInputs = .ok seedState at seedStateParsed
     exact seedRawInputs_inputCount seedStateParsed
   refine ⟨instructions, rawInputs, seedState, finalState, ?_⟩
-  refine ⟨parsedInstructions, rawInputsParsed, ?_, ?_, ?_, finalOutputParsed, instructionTrace,
+  refine ⟨parsedInstructions, rawInputsParsed, ?_, ?_, ?_, ?_, finalOutputParsed, instructionTrace,
     ?_, ?_, ?_, ?_⟩
   · exact eq_of_beq (ensure_ok.mp rawInputCountParsed)
+  · exact seedStateParsed
   · exact seedInputCount
   · intro noRawInputs
     have rawCount := eq_of_beq (ensure_ok.mp rawInputCountParsed)

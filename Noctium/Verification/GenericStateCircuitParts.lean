@@ -287,6 +287,15 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
   · simp [produced]
   · simp [produced]
 
+/-- The checked native call header comes from the source argument order. -/
+theorem expectedEntrypoint_rawInputs (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (accepted : expectedEntrypoint state entry = .ok expected) :
+    expected.rawInputs = entry.callArguments.flatMap Input.callArgumentRequirements := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _,
+    _, _, _, _, _, _, _, _, _, _, _, _, _, raw, _, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  exact raw
+
 private theorem mapM_indexed {α β ε : Type} {f : α → Except ε β}
     {sources : List α} {results : List β}
     (accepted : sources.mapM f = .ok results) (index : Nat) :
