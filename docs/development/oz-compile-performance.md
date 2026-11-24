@@ -382,6 +382,18 @@ K and rows describe each circuit. The table uses Noctium's range-deduplicated ex
 
 The earlier native sizing and instruction counts are retained in the [machine-readable benchmark](oz-compile-performance.json). Circuit sizing measures synthesis rows and K. It excludes proving latency.
 
+An isolated issue 74 sizing probe on base `2066c7c1` changed only
+`cell totalSupply : UInt 128` to `cell totalSupply : UInt 128 alignedBytes` in
+a scratch copy of `ConfidentialToken.lean`. The strict aligned variant measured
+K7 and 66 rows, the same size as the unmodified field-aligned source. Adding
+`--ledger-read-bound OpenZeppelinPort.ConfidentialToken.totalSupply` removed
+only `constrain_bits %input_currentSupply, 128` and measured K6 and 34 rows
+with the pinned `zkir mock-compile`. The source change also changes the ledger
+layout. The default cell uses field encoding. The `alignedBytes` declaration
+emits `cellAlignment: "u128"` and stores one 16-byte FAB atom. The aligned
+strict and optimized Impact plans match byte for byte. The Compact comparison
+above uses the default Noctium field layout.
+
 ## Reproduction and limits
 
 ```sh
