@@ -9,8 +9,6 @@ open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeDefinitions
 open Noctium.Verification.ScalarValidationNativeLoop
 
-def expectedInputName (requirement : InputRequirement) : String := requirement.identifier
-
 def expectedInputDescriptor (requirement : InputRequirement) : Visibility × String :=
   (requirement.visibility, requirement.identifier)
 
@@ -18,8 +16,6 @@ def strictInstructionInputDescriptors : Instruction → List (Visibility × Stri
   | .input visibility output => [(visibility, output)]
   | _ => []
 
-def strictInstructionInputNames (instruction : Instruction) : List String :=
-  (strictInstructionInputDescriptors instruction).map Prod.snd
 
 /-- A decoded strict-profile row either consumes the next expected input with
 the same visibility and name, or preserves the producer input cursor. -/
@@ -140,45 +136,5 @@ theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
       rw [restDescriptors, headDescriptors]
       simp [strictInstructionInputDescriptors, List.append_assoc]
 
-theorem accepted_supportedScalarOpcode_input_names_step {expected : Expected}
-    {state next : State} {raw : Json} {instruction : Instruction}
-    (definitions : NativeDefinitions state)
-    (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = false)
-    (step : NativeDefinitionStep raw instruction)
-    (accepted : validateInstruction expected state raw = .ok next) :
-    (expected.inputs.take next.inputCount).map expectedInputName =
-      (expected.inputs.take state.inputCount).map expectedInputName ++
-        strictInstructionInputNames instruction := by
-  change (expected.inputs.take next.inputCount).map (fun requirement => requirement.identifier) =
-    (expected.inputs.take state.inputCount).map (fun requirement => requirement.identifier) ++
-      strictInstructionInputNames instruction
-  have descriptors := accepted_supportedScalarOpcode_input_descriptors_step
-    definitions inputSchema step accepted
-  have names := congrArg (List.map Prod.snd) descriptors
-  rw [List.map_append] at names
-  simpa [expectedInputName, expectedInputDescriptor, strictInstructionInputNames,
-    List.map_map, Function.comp_def] using names
-
-theorem validateInstructionLoop_input_names_of_trace {expected : Expected}
-    {items : List (Json × Nat)} {instructions : List Instruction}
-    {initial final : State}
-    (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = false)
-    (initialDefinitions : NativeDefinitions initial)
-    (trace : NativeDefinitionTrace items instructions)
-    (accepted : validateInstructionLoop expected items initial = .ok final) :
-    (expected.inputs.take final.inputCount).map expectedInputName =
-      (expected.inputs.take initial.inputCount).map expectedInputName ++
-        instructions.flatMap strictInstructionInputNames := by
-  change (expected.inputs.take final.inputCount).map (fun requirement => requirement.identifier) =
-    (expected.inputs.take initial.inputCount).map (fun requirement => requirement.identifier) ++
-      instructions.flatMap (fun instruction =>
-        (strictInstructionInputDescriptors instruction).map Prod.snd)
-  have descriptors := validateInstructionLoop_input_descriptors_of_trace
-    inputSchema initialDefinitions trace accepted
-  have names := congrArg (List.map Prod.snd) descriptors
-  rw [List.map_append, List.map_flatMap] at names
-  simpa [expectedInputName, expectedInputDescriptor, List.map_map, Function.comp_def] using names
 
 end Noctium.Verification.NativeInputOrdinalTrace

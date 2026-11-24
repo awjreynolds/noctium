@@ -314,17 +314,6 @@ theorem accepted_input_output_descriptor {expected : Expected}
       rw [guarded] at unguarded
       cases unguarded
 
-/-- Project the producer's checked output identifier from its input descriptor. -/
-theorem accepted_input_output_identifier {expected : Expected}
-    {state next : State} {raw : Json} {visibility : Visibility}
-    {requirement : InputRequirement}
-    (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nonforeignInput : requirement.ty.isForeign = false)
-    (opcodeParsed : Backend.Native.stringField raw "op" =
-      .ok (inputOpcode visibility))
-    (accepted : validateInstruction expected state raw = .ok next) :
-    Backend.Native.stringField raw "output" = .ok requirement.identifier := by
-  exact (accepted_input_output_descriptor selected nonforeignInput opcodeParsed accepted).1
 
 /-- Project the exact raw guard and the native fact checked by the producer for
 an accepted guarded public ledger read. -/
@@ -544,27 +533,10 @@ theorem accepted_input_row_descriptor_agrees {expected : Expected}
   have outputEq := Except.ok.inj (decoderName.symm.trans producerName)
   exact ⟨producerName, Prod.ext requirementVisibility.symm outputEq⟩
 
-/-- The ordered input descriptor includes the visibility and name checked by
-the producer and exposed by the strict decoder. -/
-theorem accepted_input_row_names_agree {expected : Expected}
-    {state next : State} {raw : Json} {visibility : Visibility}
-    {requirement : InputRequirement} {decodedOutput : String}
-    (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nonforeignInput : requirement.ty.isForeign = false)
-    (opcodeParsed : Backend.Native.stringField raw "op" =
-      .ok (inputOpcode visibility))
-    (accepted : validateInstruction expected state raw = .ok next)
-    (decoded : NativeRelationJson.decodeInstruction raw =
-      .ok (.input visibility decodedOutput)) :
-    Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
-      decodedOutput = requirement.identifier := by
-  obtain ⟨producerName, descriptor⟩ := accepted_input_row_descriptor_agrees
-    selected nonforeignInput opcodeParsed accepted decoded
-  exact ⟨producerName, congrArg Prod.snd descriptor⟩
 
-/-- The ordered production read row, producer output field and strict decoded
-input name agree in one step, with the producer cursor advanced once. -/
-theorem accepted_generic_state_input_row_names_agree (state : List StateDecl)
+/-- The ordered production read row agrees with the strict decoded input
+descriptor and advances the producer cursor once. -/
+theorem accepted_generic_state_input_row_descriptor_agrees (state : List StateDecl)
     (entry : Entrypoint) {expected : Expected} {producerState next : State}
     {raw : Json} {visibility : Visibility} {decodedOutput : String}
     (expectedAccepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
@@ -584,14 +556,14 @@ theorem accepted_generic_state_input_row_names_agree (state : List StateDecl)
       expected.inputs[producerState.inputCount]? = some requirement ∧
       next.inputCount = producerState.inputCount + 1 ∧
       Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
-      decodedOutput = requirement.identifier := by
+      (visibility, decodedOutput) = (requirement.visibility, requirement.identifier) := by
   obtain ⟨plan, inputState, requirement, lowered, inputsExact, selected, increment⟩ :=
     accepted_generic_state_input_row_step state entry expectedAccepted inputSchema
       opcodeParsed accepted
   have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-  obtain ⟨producerName, decodedName⟩ := accepted_input_row_names_agree selected
+  obtain ⟨producerName, decodedDescriptor⟩ := accepted_input_row_descriptor_agrees selected
     (inputSchema requirement member) opcodeParsed accepted decoded
   exact ⟨plan, inputState, requirement, lowered, inputsExact, selected,
-    increment, producerName, decodedName⟩
+    increment, producerName, decodedDescriptor⟩
 
 end Noctium.Verification.NativeInputOrdinal
