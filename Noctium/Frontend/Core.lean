@@ -498,6 +498,8 @@ scoped syntax "fields(" nlexpr,* ")" : nlleaves
 scoped syntax "initialize" ident ":=" nlleaves : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
+scoped syntax "insert" ident "[" nlleaves "]" : nlconstructorinit
+scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlleaves : nlconstructorinit
 scoped syntax "when" nlexpr "pushFront" ident ":=" nlleaves : nlconstructorinit
 
@@ -5471,6 +5473,27 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let action ← elaborateConstructorRecordListPush schema bindings initializer stateName payload
       orderedActionTerms := orderedActionTerms.push
         action
+      hasOrderedActions := _root_.Bool.true
+    | `(nlconstructorinit| when $_:nlexpr insert $stateName:ident[$payload:nlleaves])
+    | `(nlconstructorinit| insert $stateName:ident[$payload:nlleaves]) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let some (.tree (.recordSet environment type)) := schema.lookup destination
+        | throwErrorAt stateName "constructor fields insert requires a root record Set"
+      let fields ← match LedgerValueType.recordSetKeyFields environment type with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt stateName message
+      let values ← elaborateLedgerFieldValues bindings payload fields
+      let guard ← match initializer with
+        | `(nlconstructorinit| when $condition:nlexpr insert $_:ident[$_:nlleaves]) => do
+          let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+            nominalUIntBindings condition {type := .bool}
+          `(some $conditionExpression)
+        | _ => `(none)
+      orderedActionTerms := orderedActionTerms.push
+        (← `(Noctium.ConstructorAction.insertRecordSet $(stringTerm destination) $values $guard))
       hasOrderedActions := _root_.Bool.true
     | `(nlconstructorinit| when $_:nlexpr insert $stateName:ident [ $key:nlexpr ])
     | `(nlconstructorinit| insert $stateName:ident [ $key:nlexpr ]) => do

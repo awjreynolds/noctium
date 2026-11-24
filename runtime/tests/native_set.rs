@@ -683,3 +683,48 @@ fn guarded_set_emptiness_does_not_reveal_cardinality() {
     assert_eq!(after_clear.returns_json()["groupsEmpty"], json!(false));
     assert_eq!(after_clear.returns_json()["selectedEmpty"], json!(true));
 }
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_RECORD_SET_CONSTRUCTOR_DIR"]
+fn record_set_constructor_checks_guard_key_encoding_and_duplicates() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_RECORD_SET_CONSTRUCTOR_DIR")
+            .expect("record Set constructor artifacts"),
+    );
+    let plan = load_plan(&directory, "RecordSetConstructor.inspect.impact.json");
+    let circuit = load_circuit(&directory, "RecordSetConstructor.inspect.zkir");
+    let tag = [7];
+    let first_id = [3; 33];
+    let mut late_id = first_id;
+    late_id[32] = 4;
+    let inputs = BTreeMap::from([
+        ("tag".into(), bytes_value(&tag)),
+        ("firstId".into(), bytes_value(&first_id)),
+        ("lateId".into(), bytes_value(&late_id)),
+    ]);
+    let mut arguments = inputs.clone();
+    for (enabled, count) in [(false, "1"), (true, "2")] {
+        arguments.insert("enabled".into(), json!(enabled));
+        let state = noctium_runtime::construct_state(&plan, &arguments)?;
+        let execution = prepare(
+            &plan,
+            &inputs,
+            &state,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )?;
+        check(&execution, &circuit)?;
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([
+                ("first".into(), json!(true)),
+                ("late".into(), json!(enabled)),
+                ("count".into(), json!(count)),
+            ])
+        );
+        assert_eq!(execution.after.state, state);
+    }
+    arguments.insert("lateId".into(), bytes_value(&late_id[..32]));
+    assert!(noctium_runtime::construct_state(&plan, &arguments).is_err());
+    Ok(())
+}

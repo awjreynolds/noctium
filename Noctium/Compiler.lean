@@ -955,6 +955,11 @@ private def constructorActionJson (action : ConstructorAction) : Json :=
       ("key", match key with | .mk _ expression => nativeExpressionJson expression),
       ("fields", toJson (fields.map ledgerFieldExprJson))] ++
       guard.toList.map fun expression => ("guard", nativeExpressionJson expression))
+  | .insertRecordSet state fields guard => Json.mkObj ([
+      ("kind", toJson ("insertRecordSet" : String)),
+      ("state", toJson state),
+      ("fields", toJson (fields.map ledgerFieldExprJson))] ++
+      guard.toList.map fun expression => ("guard", nativeExpressionJson expression))
   | .pushRecordList state fields guard => Json.mkObj ([
       ("kind", toJson ("pushRecordList" : String)),
       ("state", toJson state),

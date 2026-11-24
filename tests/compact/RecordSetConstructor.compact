@@ -1,0 +1,26 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export ledger members: Set<Key>;
+
+constructor(enabled: Boolean, tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>) {
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  members.insert(first);
+  if (disclose(enabled)) {
+    members.insert(late);
+    members.insert(late);
+  }
+}
+
+export circuit inspect(tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>):
+                        [Boolean, Boolean, Uint<64>] {
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  return [members.member(first), members.member(late), members.size()];
+}
