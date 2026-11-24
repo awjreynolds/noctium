@@ -99,43 +99,37 @@ theorem accepted_constrainEq_nativeDefinitions {expected : Expected} {state next
   change (name, fact) ∈ nextState.definitions at member
   exact nextStateNative name fact member
 
-/-- The subset of decoded scalar instructions whose definition transitions
-have one-step proofs here. Copy appears as a decoded equality between SSA
-references, but its producer step aliases the existing fact. -/
-inductive NativeDefinitionStep (raw : Json) : Instruction → Prop where
+/-- The supported opcode profile for this trace fragment. Copy and constrain_eq
+both decode to `.equal`, so the profile records which producer opcode was used. -/
+inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | publicInput (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "public_input")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.input .public output)) :
-      NativeDefinitionStep raw (.input .public output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "public_input") :
+      SupportedScalarOpcode raw (.input .public output)
   | privateInput (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "private_input")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.input .private output)) :
-      NativeDefinitionStep raw (.input .private output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "private_input") :
+      SupportedScalarOpcode raw (.input .private output)
   | add (a b : Operand) (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "add")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.add a b output)) :
-      NativeDefinitionStep raw (.add a b output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "add") :
+      SupportedScalarOpcode raw (.add a b output)
   | mul (a b : Operand) (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "mul")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.mul a b output)) :
-      NativeDefinitionStep raw (.mul a b output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "mul") :
+      SupportedScalarOpcode raw (.mul a b output)
   | neg (a : Operand) (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "neg")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.neg a output)) :
-      NativeDefinitionStep raw (.neg a output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "neg") :
+      SupportedScalarOpcode raw (.neg a output)
   | testEq (a b : Operand) (output : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.testEq a b output)) :
-      NativeDefinitionStep raw (.testEq a b output)
+      (opcode : Backend.Native.stringField raw "op" = .ok "test_eq") :
+      SupportedScalarOpcode raw (.testEq a b output)
   | copy (source destination : String)
-      (opcode : Backend.Native.stringField raw "op" = .ok "copy")
-      (decoded : NativeRelationJson.decodeInstruction raw =
-        .ok (.equal (.reference source) (.reference destination))) :
-      NativeDefinitionStep raw (.equal (.reference source) (.reference destination))
+      (opcode : Backend.Native.stringField raw "op" = .ok "copy") :
+      SupportedScalarOpcode raw (.equal (.reference source) (.reference destination))
   | constrainEq (a b : Operand)
-      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
-      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal a b)) :
-      NativeDefinitionStep raw (.equal a b)
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq") :
+      SupportedScalarOpcode raw (.equal a b)
+
+structure NativeDefinitionStep (raw : Json) (instruction : Instruction) : Prop where
+  supported : SupportedScalarOpcode raw instruction
+  decoded : NativeRelationJson.decodeInstruction raw = .ok instruction
 
 inductive NativeDefinitionTrace : List (Json × Nat) → List Instruction → Prop where
   | nil : NativeDefinitionTrace [] []
@@ -145,13 +139,40 @@ inductive NativeDefinitionTrace : List (Json × Nat) → List Instruction → Pr
       (tail : NativeDefinitionTrace items instructions) :
       NativeDefinitionTrace ((raw, index) :: items) (instruction :: instructions)
 
+inductive SupportedScalarOpcodeTrace : List (Json × Nat) → List Instruction → Prop where
+  | nil : SupportedScalarOpcodeTrace [] []
+  | cons {raw : Json} {index : Nat} {instruction : Instruction}
+      {items : List (Json × Nat)} {instructions : List Instruction}
+      (head : SupportedScalarOpcode raw instruction)
+      (tail : SupportedScalarOpcodeTrace items instructions) :
+      SupportedScalarOpcodeTrace ((raw, index) :: items) (instruction :: instructions)
+
+/-- Attach the exact per-instruction decoder proofs from a successful mapM to
+an explicit supported-opcode trace. No other opcode is inferred or admitted. -/
+theorem NativeDefinitionTrace.ofDecodedSupportedOpcodes
+    {items : List (Json × Nat)} {instructions : List Instruction}
+    (supported : SupportedScalarOpcodeTrace items instructions)
+    (decoded : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction = .ok instructions) :
+    NativeDefinitionTrace items instructions := by
+  induction supported with
+  | nil => exact .nil
+  | @cons raw index instruction tailItems tailInstructions head tail ih =>
+    simp only [List.map_cons, List.mapM_cons, bind_ok] at decoded
+    rcases decoded with ⟨decodedInstruction, decodedHead, decodedTailInstructions,
+      decodedTail, listEquality⟩
+    simp only [Pure.pure, Except.pure] at listEquality
+    rcases List.cons.inj (Except.ok.inj listEquality) with ⟨instructionEq, instructionsEq⟩
+    cases instructionEq
+    cases instructionsEq
+    exact .cons ⟨head, decodedHead⟩ (ih decodedTail)
+
 theorem NativeDefinitionTrace.decodes {items : List (Json × Nat)}
     {instructions : List Instruction} (trace : NativeDefinitionTrace items instructions) :
     (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction = .ok instructions := by
   induction trace with
   | nil => simp [List.mapM_nil, Pure.pure, Except.pure]
   | @cons raw index instruction tailItems tailInstructions head tail ih =>
-    cases head <;> simp_all [List.mapM_cons, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    simp [List.mapM_cons, head.decoded, ih, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 theorem empty_nativeDefinitions : NativeDefinitions ({} : State) := by
   intro identifier fact found
@@ -164,8 +185,8 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
     (step : NativeDefinitionStep raw instruction)
     (accepted : validateInstruction expected state raw = .ok next) :
     NativeDefinitions next := by
-  cases step with
-  | publicInput output opcode _ =>
+  cases step.supported with
+  | publicInput output opcode =>
     have parsedOpcode : Backend.Native.stringField raw "op" =
         .ok (inputOpcode .public) := by simpa [inputOpcode] using opcode
     obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
@@ -179,7 +200,7 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
     | some guardTerm =>
       exact guarded_public_input_nativeDefinitions_step nativeDefinitions selected
         nonforeignInput guarded parsedOpcode accepted
-  | privateInput output opcode _ =>
+  | privateInput output opcode =>
     have parsedOpcode : Backend.Native.stringField raw "op" =
         .ok (inputOpcode .private) := by simpa [inputOpcode] using opcode
     obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
@@ -189,18 +210,18 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
     have unguarded := accepted_private_input_unguarded selected parsedOpcode accepted
     exact input_nativeDefinitions_step (visibility := .private) nativeDefinitions selected
       nonforeignInput unguarded parsedOpcode accepted
-  | add _ _ _ opcode _ => exact accepted_add_nativeDefinitions nativeDefinitions opcode accepted
-  | mul _ _ _ opcode _ =>
+  | add _ _ _ opcode => exact accepted_add_nativeDefinitions nativeDefinitions opcode accepted
+  | mul _ _ _ opcode =>
       obtain ⟨_, _, _, _, _, _, _, combined, defined⟩ :=
         accepted_mul_components nativeDefinitions opcode accepted
       exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
-  | neg _ _ opcode _ =>
+  | neg _ _ opcode =>
       obtain ⟨_, _, _, _, combined, defined⟩ :=
         accepted_neg_components nativeDefinitions opcode accepted
       exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
-  | testEq _ _ _ opcode _ => exact accepted_testEq_nativeDefinitions nativeDefinitions opcode accepted
-  | copy _ _ opcode _ => exact accepted_copy_nativeDefinitions nativeDefinitions opcode accepted
-  | constrainEq _ _ opcode _ =>
+  | testEq _ _ _ opcode => exact accepted_testEq_nativeDefinitions nativeDefinitions opcode accepted
+  | copy _ _ opcode => exact accepted_copy_nativeDefinitions nativeDefinitions opcode accepted
+  | constrainEq _ _ opcode =>
       exact accepted_constrainEq_nativeDefinitions nativeDefinitions opcode accepted
 
 /-- Derive the final native-definition invariant from the actual decoded
@@ -228,13 +249,15 @@ theorem validateInstructionLoop_nativeDefinitions_of_trace
         initialNativeDefinitions head checked
       exact ih nextNativeDefinitions accepted
 
-theorem validateInstructionLoop_nativeDefinitions_from_empty
+theorem validateInstructionLoop_supportedScalar_nativeDefinitions
     {expected : Expected} {items : List (Json × Nat)} {instructions : List Instruction}
     {final : State}
     (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
-    (trace : NativeDefinitionTrace items instructions)
-    (accepted : validateInstructionLoop expected items {} = .ok final) :
+    (supported : SupportedScalarOpcodeTrace items instructions)
+    (decoded : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction = .ok instructions)
+    (accepted : validateInstructionLoop expected items ({} : State) = .ok final) :
     NativeDefinitions final :=
-  validateInstructionLoop_nativeDefinitions_of_trace inputSchema empty_nativeDefinitions trace accepted
+  validateInstructionLoop_nativeDefinitions_of_trace inputSchema empty_nativeDefinitions
+    (NativeDefinitionTrace.ofDecodedSupportedOpcodes supported decoded) accepted
 
 end Noctium.Verification.ScalarValidationNativeDefinitions
