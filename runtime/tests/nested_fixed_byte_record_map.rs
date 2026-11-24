@@ -160,13 +160,13 @@ fn nested_fixed_byte_record_maps_match_compact_and_isolate_parent_buckets() -> R
     )
     .is_err());
 
-    let mut invalid_value: Json = serde_json::from_str(include_str!(
+    let mut fixed_byte_value: Json = serde_json::from_str(include_str!(
         "fixtures/nested-fixed-byte-record-map/321/NestedFixedByteRecordMap.exercise.impact.json"
     ))?;
-    invalid_value["state"][1]["kind"]["tree"]["map"][1]["map"][1]["composite"]["fields"][0]
+    fixed_byte_value["state"][1]["kind"]["tree"]["map"][1]["map"][1]["composite"]["fields"][0]
         ["type"] = json!("Bytes<1>");
-    let invalid_value: Plan = serde_json::from_value(invalid_value)?;
-    assert!(create_state(&invalid_value, &config).is_err());
+    let fixed_byte_value: Plan = serde_json::from_value(fixed_byte_value)?;
+    assert!(create_state(&fixed_byte_value, &config).is_ok());
 
     let mut excessive_depth: Json = serde_json::from_str(include_str!(
         "fixtures/nested-fixed-byte-record-map/321/NestedFixedByteRecordMap.exercise.impact.json"

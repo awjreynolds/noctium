@@ -1,0 +1,148 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+
+const [compactc, runtimePath] = process.argv.slice(2);
+assert.ok(compactc && runtimePath,
+  'usage: node tests/compact/nested-record-key-byte-values.mjs <compactc-0.36.1> <compact-runtime-0.21.0>');
+const compilerVersion = execFileSync(compactc, ['--version'], { encoding: 'utf8' }).trim();
+assert.match(compilerVersion, /^0\.36\.1 \(7fa3a117c/);
+const runtimeDirectory = resolve(runtimePath);
+const runtimePackage = JSON.parse(readFileSync(join(runtimeDirectory, 'package.json'), 'utf8'));
+assert.equal(runtimePackage.name, '@midnight-ntwrk/compact-runtime');
+assert.equal(runtimePackage.version, '0.21.0');
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const experiments = join(root, 'build/experiments');
+mkdirSync(experiments, { recursive: true });
+const scratch = mkdtempSync(join(experiments, 'nested-record-key-byte-values-'));
+try {
+  const generated = join(scratch, 'compact');
+  const source = join(root, 'tests/compact/NestedRecordKeyByteValues.compact');
+  const compile = spawnSync(compactc, ['--skip-zk', source, generated], { encoding: 'utf8' });
+  assert.equal(compile.status, 0, `Compact compilation failed:\n${compile.stderr || compile.stdout}`);
+  const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
+  mkdirSync(dirname(runtimeLink), { recursive: true });
+  symlinkSync(runtimeDirectory, runtimeLink, 'dir');
+
+  const { createCircuitContext, createConstructorContext, dummyContractAddress } = await import(
+    pathToFileURL(join(runtimeDirectory, 'dist/index.js')).href,
+  );
+  const { Contract, ledger } = await import(
+    pathToFileURL(join(generated, 'contract/index.js')).href,
+  );
+  const contract = new Contract({});
+  const wallet = '00'.repeat(32);
+  const { currentContractState } = await contract.initialState(
+    createConstructorContext(null, wallet),
+  );
+  const ownerA = new Uint8Array(32).fill(1);
+  const ownerB = new Uint8Array(32).fill(2);
+  const tag = new Uint8Array([7]);
+  const keyId = tail => new Uint8Array([...new Array(32).fill(3), tail]);
+  const digest = tail => new Uint8Array([...new Array(32).fill(6), tail]);
+  const firstId = keyId(4);
+  const siblingId = keyId(5);
+  const firstProfile = { label: new Uint8Array([11]), digest: digest(4) };
+  const siblingProfile = { label: new Uint8Array([12]), digest: digest(5) };
+  const otherOwnerProfile = { label: new Uint8Array([21]), digest: digest(6) };
+  const replacementProfile = { label: new Uint8Array([13]), digest: digest(7) };
+
+  const invoke = async (state, name, ...args) => {
+    const { result, context } = await contract.circuits[name](createCircuitContext({
+      circuitId: name,
+      contractAddress: dummyContractAddress(),
+      coinPublicKeyOrZswapState: wallet,
+      contractState: state,
+      privateState: null,
+    }), ...args);
+    return [result, context.callContext.currentQueryContext.state];
+  };
+  const recordKey = id => ({ tag, id });
+  const jsonBytes = value => ({ kind: 'bytes', values: Array.from(value) });
+  const jsonProfile = profile => ({
+    label: jsonBytes(profile.label),
+    digest: jsonBytes(profile.digest),
+  });
+  const jsonLookup = result => jsonProfile({ label: result[0], digest: result[1] });
+  const lookup = async (state, owner, id) => {
+    const [result] = await invoke(state, 'lookup', owner, tag, id);
+    return jsonLookup(result);
+  };
+
+  let state = currentContractState.data;
+  [, state] = await invoke(
+    state, 'store', ownerA, tag, firstId, firstProfile.label, firstProfile.digest,
+  );
+  const initialFirst = await lookup(state, ownerA, firstId);
+  assert.deepEqual(initialFirst, jsonProfile(firstProfile));
+
+  [, state] = await invoke(
+    state, 'store', ownerA, tag, siblingId, siblingProfile.label, siblingProfile.digest,
+  );
+  const initialSibling = await lookup(state, ownerA, siblingId);
+  assert.deepEqual(initialSibling, jsonProfile(siblingProfile));
+
+  [, state] = await invoke(
+    state, 'store', ownerB, tag, firstId, otherOwnerProfile.label, otherOwnerProfile.digest,
+  );
+  const initialOtherOwner = await lookup(state, ownerB, firstId);
+  assert.deepEqual(initialOtherOwner, jsonProfile(otherOwnerProfile));
+
+  const malformedId = firstId.slice(0, 32);
+  await assert.rejects(() => invoke(
+    state, 'store', ownerA, tag, malformedId, firstProfile.label, firstProfile.digest,
+  ));
+  const malformedDigest = firstProfile.digest.slice(0, 32);
+  await assert.rejects(() => invoke(
+    state, 'store', ownerA, tag, firstId, firstProfile.label, malformedDigest,
+  ));
+
+  [, state] = await invoke(
+    state, 'store', ownerA, tag, firstId, replacementProfile.label, replacementProfile.digest,
+  );
+  const overwritten = await lookup(state, ownerA, firstId);
+  assert.deepEqual(overwritten, jsonProfile(replacementProfile));
+
+  [, state] = await invoke(state, 'remove', ownerA, tag, firstId);
+  await assert.rejects(() => invoke(state, 'lookup', ownerA, tag, firstId));
+  const survivingSibling = await lookup(state, ownerA, siblingId);
+  const survivingOtherOwner = await lookup(state, ownerB, firstId);
+  assert.deepEqual(survivingSibling, jsonProfile(siblingProfile));
+  assert.deepEqual(survivingOtherOwner, jsonProfile(otherOwnerProfile));
+
+  const profileLedger = ledger(state).profiles;
+  const ownerAProfiles = profileLedger.lookup(ownerA);
+  const ownerBProfiles = profileLedger.lookup(ownerB);
+  assert.equal(profileLedger.size(), 2n);
+  assert.equal(ownerAProfiles.size(), 1n);
+  assert.equal(ownerBProfiles.size(), 1n);
+  assert.equal(ownerAProfiles.member(recordKey(firstId)), false);
+  assert.equal(ownerAProfiles.member(recordKey(siblingId)), true);
+  assert.equal(ownerBProfiles.member(recordKey(firstId)), true);
+  assert.deepEqual(ownerAProfiles.lookup(recordKey(siblingId)), siblingProfile);
+  assert.deepEqual(ownerBProfiles.lookup(recordKey(firstId)), otherOwnerProfile);
+
+  console.log(JSON.stringify({
+    fixture: 'NestedRecordKeyByteValues',
+    compact: compilerVersion,
+    runtime: runtimePackage.version,
+    outputs: {
+      initialFirst,
+      initialSibling,
+      initialOtherOwner,
+      overwritten,
+      survivingSibling,
+      survivingOtherOwner,
+    },
+    ownerBucketsAfterRemoval: Number(profileLedger.size()),
+    entriesPerParentAfterRemoval: [Number(ownerAProfiles.size()), Number(ownerBProfiles.size())],
+    wrongIdWidthRejected: true,
+    wrongDigestWidthRejected: true,
+    removedLookupRejected: true,
+  }, null, 2));
+} finally {
+  rmSync(scratch, { recursive: true, force: true });
+}

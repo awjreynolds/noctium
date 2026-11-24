@@ -3498,11 +3498,12 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
       let value ← `(Noctium.GuardedExpression.zeroValue $type)
       `(Noctium.Effect.writeRecordMap $name $keyValues $type $value $parentKeys)
     | .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
-      let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+      let keyFields ← match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType
+          parentPath.length with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
-      let valueFields ← match (if parentPath.isEmpty then
+      let valueFields ← match (if parentPath.length ≤ 1 then
           LedgerValueType.mapRecordWriteFields valueEnvironment valueType
         else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
         | .ok fields => pure fields
@@ -3711,7 +3712,7 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let valueFields ← match (if parentKeys.isEmpty then
+  let valueFields ← match (if parentKeys.length ≤ 1 then
       LedgerValueType.mapRecordWriteFields valueEnvironment valueType
     else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
     | .ok fields => pure fields
@@ -6702,7 +6703,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 1 with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
-          match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+          match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
           let valueSchema := LedgerValueType.map outerTy
