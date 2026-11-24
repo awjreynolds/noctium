@@ -136,11 +136,15 @@ structure OpaqueCellHashReturn where
   span : SourceSpan := {}
   deriving Repr, Inhabited
 
-structure CellValueReturn where
+structure StateValueReturn where
   name : String
   state : StateTarget
   span : SourceSpan := {}
   deriving Repr, Inhabited
+
+structure MapValueReturn extends StateValueReturn where
+  key : PathKey
+  deriving Repr
 
 inductive ModuleEffect where
   | readCell (state : StateTarget) (destination : String) (ty : Ty)
@@ -152,6 +156,7 @@ inductive ModuleEffect where
   | writeCellOutput (state : StateTarget) (outputName : String)
   | writeRecordCell (state : StateTarget) (fields : List (String × LedgerFieldExpr))
   | writeCellInput (state : StateTarget) (inputName : String) (disclosed : Bool)
+  | writeMapInput (state : StateTarget) (key : PathKey) (inputName : String) (disclosed : Bool)
   | writeMap (state : StateTarget) (keyTy valueTy : Ty)
       (key : Expr keyTy) (value : Expr valueTy)
   | requireAbsent (state : StateTarget) (keyTy : Ty) (key : Expr keyTy)
@@ -200,7 +205,8 @@ structure ModuleEntrypoint where
   span : SourceSpan := {}
   opaqueCellHashReturns : List OpaqueCellHashReturn := []
   returns : List Output := []
-  cellReturns : List CellValueReturn := []
+  cellReturns : List StateValueReturn := []
+  mapReturns : List MapValueReturn := []
   callInputs : List String := []
   deriving Repr
 
@@ -290,12 +296,12 @@ structure Expansion where
   instances : List ModuleInstance := []
   deriving Repr, Inhabited
 
-inductive CellInputCheck where
-  | scalar (name : String) (type : Ty) (span : SourceSpan)
-  | record (view : CallInputView) (layout : String) (span : SourceSpan)
+inductive StateInputCheck where
+  | scalar (name : String) (type : Ty) (span : SourceSpan) (stateKind : String)
+  | record (view : CallInputView) (layout : String) (span : SourceSpan) (stateKind : String)
   deriving Repr
 
-private def CellInputCheck.name : CellInputCheck → String
+private def StateInputCheck.name : StateInputCheck → String
   | .scalar name .. => name
   | .record view .. => view.name
 
@@ -309,7 +315,7 @@ structure ResolvedEntrypoint where
   returnViews : List ReturnView := []
   callInputs : List String := []
   callInputViews : List CallInputView := []
-  cellInputChecks : List CellInputCheck := []
+  stateInputChecks : List StateInputCheck := []
   stateIdentities : List MemberIdentity
   span : SourceSpan
   effectSpans : List SourceSpan
@@ -627,10 +633,11 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     if entrypoint.effects.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint effects"
     if entrypoint.opaqueCellHashReturns.length + entrypoint.returns.length +
-        entrypoint.cellReturns.length > limits.maxSourceNodes then
+        entrypoint.cellReturns.length + entrypoint.mapReturns.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint returns"
     unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name) ++
-        entrypoint.cellReturns.map (·.name) ++ entrypoint.returns.map (·.name)) do
+        entrypoint.cellReturns.map (·.name) ++ entrypoint.mapReturns.map (·.name) ++
+        entrypoint.returns.map (·.name)) do
       fail entrypoint.span "duplicate module entrypoint return name"
     if entrypoint.callInputs.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint call arguments"
@@ -647,7 +654,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       match returned.ty.validate Capabilities.crypto with
       | .ok _ => pure ()
       | .error message => fail returned.span message
-    for returned in entrypoint.cellReturns do
+    for returned in entrypoint.cellReturns ++ entrypoint.mapReturns.map (·.toStateValueReturn) do
       validText returned.span returned.name
       unless Types.validFieldName returned.name do
         fail returned.span s!"invalid module return name '{returned.name}'"
@@ -656,7 +663,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       match effect.effect with
       | .writeCellOutput _ outputName => validText effect.span outputName
       | .readRecordCell _ destination => validText effect.span destination
-      | .writeCellInput _ inputName _ => validText effect.span inputName
+      | .writeCellInput _ inputName _ | .writeMapInput _ _ inputName _ => validText effect.span inputName
       | .writeRecordCell _ fields =>
         if fields.length > Noctium.maxEntrypointReturnFields then
           resource effect.span "record Cell fields"
@@ -704,7 +711,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     definition.imports.length + definition.exports.length + definition.entrypoints.length + recordEffectFields +
     definition.entrypoints.foldl (fun count entry =>
       count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length +
-        entry.cellReturns.length + entry.callInputs.length) 0 +
+        entry.cellReturns.length + entry.mapReturns.length + entry.callInputs.length) 0 +
     definition.imports.foldl (fun count item => count + item.arguments.length + item.selections.length) 0 +
     definition.members.foldl (fun count member => count + match member.stateSchema? with
       | none => 0
@@ -934,9 +941,16 @@ private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
   | .cell value => resolveModuleCellKind limits span types naturals value
   | .map key value => do
     let keyTy ← resolveStateScalar limits span types naturals key
+    if keyTy.isOpaqueBytes || keyTy.isOpaqueString then
+      fail span "opaque types are not supported by module Map state specialization"
+    if let .parameter name := value then
+      if let some moduleType := types.lookup name then
+        if let .structure _ := moduleType.value then
+          match LedgerValueType.ledgerRecordWriteFields moduleType.environment moduleType.value with
+          | .ok _ => return .tree (.map keyTy (.composite moduleType.environment moduleType.value))
+          | .error message => fail span message
     let valueTy ← resolveStateScalar limits span types naturals value
-    if keyTy.isOpaqueBytes || keyTy.isOpaqueString ||
-        valueTy.isOpaqueBytes || valueTy.isOpaqueString then
+    if valueTy.isOpaqueBytes || valueTy.isOpaqueString then
       fail span "opaque types are not supported by module Map state specialization"
     pure (.map keyTy valueTy)
 
@@ -1046,6 +1060,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | .readCell target _ _ | .readMap target _ _ _ _
         | .writeCell target _ _ | .writeCellOutput target _ | .writeMap target _ _ _ _
         | .readRecordCell target _ | .writeRecordCell target _ | .writeCellInput target _ _
+        | .writeMapInput target _ _ _
         | .requireAbsent target _ _ => some target
         | .require _ => none
       if let some stateTarget := stateTarget? then
@@ -1062,7 +1077,9 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | .readRecordCell .., some (.tree (.composite ..))
         | .writeCellInput .., some (.cell _)
         | .writeCellInput .., some (.tree (.composite ..))
-        | .writeRecordCell .., some (.tree (.composite ..)) => pure ()
+        | .writeRecordCell .., some (.tree (.composite ..))
+        | .writeMapInput .., some (.map ..)
+        | .writeMapInput .., some (.tree (.map _ (.composite ..))) => pure ()
         | .readMap _ _ keyTy valueTy _, some (.map actualKeyTy actualValueTy)
         | .writeMap _ keyTy valueTy _ _, some (.map actualKeyTy actualValueTy) =>
           unless keyTy == actualKeyTy && valueTy == actualValueTy do
@@ -1074,7 +1091,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | .require _ , _ => pure ()
         | .readCell .., _ | .writeCell .., _ | .writeCellOutput .., _ |
             .readRecordCell .., _ | .writeRecordCell .., _ | .writeCellInput .., _ |
-            .readMap .., _ | .writeMap .., _ |
+            .readMap .., _ | .writeMap .., _ | .writeMapInput .., _ |
             .requireAbsent .., _ =>
           fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
     for returned in entrypoint.opaqueCellHashReturns do
@@ -1411,17 +1428,16 @@ private def decodeRecordInputField : (ty : Ty) → List (Expr .native) → Excep
   | .uint maximum, [value] => pure (.cast (.uint maximum) value)
   | .bytes length, octets => Helpers.fixedBytesFromOctets length octets
   | .jubjubPoint, [x, y] => pure (.jubjubFromCoordinates x y)
-  | _, _ => throw "module record Cell input field has an unsupported layout"
+  | _, _ => throw "module record input field has an unsupported layout"
 
-private def lowerRecordCellInput (span : SourceSpan) (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) (name : String) (disclosed : Bool) :
-    Except Diagnostic (List LedgerFieldExpr × CellInputCheck) := do
-  let fields ← (LedgerValueType.cellWriteRecordFields environment type).mapError fun message =>
-    {span, message}
+private def lowerRecordInput (span : SourceSpan) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (fields : List (String × Ty))
+    (stateKind name : String) (disclosed : Bool) :
+    Except Diagnostic (List LedgerFieldExpr × StateInputCheck) := do
   let checked ← (Types.checkedLayout Types.defaultLimits environment type span).mapError
     fun diagnostic => {span, message := diagnostic.message}
   let .structure _ members := checked.value
-    | fail span "module record Cell input requires a named structure"
+    | fail span s!"module record {stateKind} input requires a named structure"
   let names := Helpers.sourceLeafPaths checked.value name
   let leafTypes := Helpers.callViewLeafTypes checked.value
   let release (ty : Ty) (value : Expr ty) : LedgerFieldExpr :=
@@ -1437,11 +1453,11 @@ private def lowerRecordCellInput (span : SourceSpan) (environment : Types.Compos
       let value ← (decodeRecordInputField ty leaves).mapError fun message => {span, message}
       pure (release ty value)
   let view : CallInputView := {name, fields := names.zip leafTypes}
-  pure (values, .record view (Types.CompositeType.fingerprint environment type) span)
+  pure (values, .record view (Types.CompositeType.fingerprint environment type) span stateKind)
 
 private def resolveContractEffect (expansion : Expansion) (moduleInstance : ModuleInstance)
     (effectSpec : ModuleEffectSpec) :
-    Except Diagnostic (Effect × List MemberIdentity × Option CellInputCheck) := do
+    Except Diagnostic (Effect × List MemberIdentity × Option StateInputCheck) := do
   let resolveState := resolveContractState expansion moduleInstance effectSpec.span
   match effectSpec.effect with
   | .readCell target destination ty => do
@@ -1484,11 +1500,30 @@ private def resolveContractEffect (expansion : Expansion) (moduleInstance : Modu
     | .cell ty =>
       let source : Expr ty := .ref name
       let value := if disclosed then Expr.disclose effectSpec.span source else source
-      pure (.writeCell fieldName ty value, [identity], some (.scalar name ty effectSpec.span))
+      pure (.writeCell fieldName ty value, [identity], some (.scalar name ty effectSpec.span "Cell"))
     | .tree (.composite environment type) => do
-      let (values, layout) ← lowerRecordCellInput effectSpec.span environment type name disclosed
+      let fields ← (LedgerValueType.cellWriteRecordFields environment type).mapError fun message =>
+        {span := effectSpec.span, message}
+      let (values, layout) ← lowerRecordInput effectSpec.span environment type fields "Cell" name disclosed
       pure (.writeCompositePath fieldName [] type values, [identity], some layout)
     | _ => fail effectSpec.span "module input write requires a root Cell"
+  | .writeMapInput target key name disclosed => do
+    let (identity, fieldName, kind) ← resolveState target
+    match kind with
+    | .map expectedKeyTy valueTy => do
+      let .mk keyTy keyValue := key
+      unless keyTy == expectedKeyTy do fail effectSpec.span "module Map key type mismatch"
+      let source : Expr valueTy := .ref name
+      let value := if disclosed then Expr.disclose effectSpec.span source else source
+      pure (.writeMap fieldName keyTy valueTy keyValue value, [identity],
+        some (.scalar name valueTy effectSpec.span "Map"))
+    | .tree (.map keyTy (.composite environment type)) => do
+      unless key.ty == keyTy do fail effectSpec.span "module Map key type mismatch"
+      let fields ← (LedgerValueType.ledgerRecordWriteFields environment type).mapError fun message =>
+        {span := effectSpec.span, message}
+      let (values, layout) ← lowerRecordInput effectSpec.span environment type fields "Map" name disclosed
+      pure (.writeCompositePath fieldName [key] type values, [identity], some layout)
+    | _ => fail effectSpec.span "module input write requires a root Map"
   | .writeMap target keyTy valueTy key value => do
     let (identity, fieldName, _) ← resolveState target
     pure (.writeMap fieldName keyTy valueTy key value, [identity], none)
@@ -1521,40 +1556,65 @@ private def resolveOpaqueCellHashReturn (expansion : Expansion)
     span := returned.span}
   pure (output, .readCell fieldName destination ty, identity)
 
+private def scalarValueReturn (returned : StateValueReturn) (ty : Ty) (stateKind : String)
+    (read : String → Effect) (identity : MemberIdentity) :
+    List Output × Option ReturnView × Effect × MemberIdentity :=
+  let destination := s!"module{stateKind}Value_{returned.name}"
+  let output : Output := {name := returned.name, ty, value := .ref destination, span := returned.span}
+  ([output], none, read destination, identity)
+
+private def recordValueReturn (returned : StateValueReturn) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (fields : List (String × Ty)) (fieldName : String)
+    (keys : List PathKey) (identity : MemberIdentity) :
+    List Output × Option ReturnView × Effect × MemberIdentity := Id.run do
+  let destination := s!"moduleRecordValue_{returned.name}"
+  let destinations := recordCellDestinations destination fields
+  let read := Effect.readCompositePath fieldName destination keys type destinations
+  let values := destinations.flatMap fun (name, ty) =>
+    match ty with
+    | .bytes length =>
+      (List.range length).map fun index =>
+        Expr.cast .native (Expr.bytesAt (Expr.ref name : Expr (.bytes length)) index)
+    | _ => (Expr.ref name : Expr ty).nativeCallFields
+  let outputs : List Output := values.zipIdx.map fun (value, index) =>
+    {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
+      value, span := returned.span}
+  return (outputs, some {name := returned.name, environment, type, fields := outputs.map (·.name)},
+    read, identity)
+
 private def resolveCellValueReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
-    (returned : CellValueReturn) :
+    (returned : StateValueReturn) :
     Except Diagnostic (List Output × Option ReturnView × Effect × MemberIdentity) := do
   let (identity, fieldName, kind) ←
     resolveContractState expansion moduleInstance returned.span returned.state
   match kind with
   | .cell .opaqueBytes | .cell .opaqueString =>
     fail returned.span "opaque module Cell returns require opaqueCellHashReturns"
-  | .cell ty => do
-    let destination := s!"moduleCellValue_{returned.name}"
-    let read := Effect.readCell fieldName destination ty
-    let output : Output := {
-      name := returned.name
-      ty
-      value := .ref destination
-      span := returned.span}
-    pure ([output], none, read, identity)
+  | .cell ty =>
+    pure (scalarValueReturn returned ty "Cell" (fun destination => .readCell fieldName destination ty) identity)
   | .tree (.composite environment type) => do
     let fields ← recordCellReadFields returned.span environment type
-    let destination := s!"moduleRecordValue_{returned.name}"
-    let destinations := recordCellDestinations destination fields
-    let read := Effect.readCompositePath fieldName destination [] type destinations
-    let values := destinations.flatMap fun (name, ty) =>
-      match ty with
-      | .bytes length =>
-        (List.range length).map fun index =>
-          Expr.cast .native (Expr.bytesAt (Expr.ref name : Expr (.bytes length)) index)
-      | _ => (Expr.ref name : Expr ty).nativeCallFields
-    let outputs : List Output := values.zipIdx.map fun (value, index) =>
-      {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
-        value, span := returned.span}
-    pure (outputs, some {name := returned.name, environment, type, fields := outputs.map (·.name)},
-      read, identity)
+    pure (recordValueReturn returned environment type fields fieldName [] identity)
   | _ => fail returned.span "module return requires a root Cell"
+
+private def resolveMapValueReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
+    (returned : MapValueReturn) :
+    Except Diagnostic (List Output × Option ReturnView × Effect × MemberIdentity) := do
+  let (identity, fieldName, kind) ←
+    resolveContractState expansion moduleInstance returned.span returned.state
+  match kind with
+  | .map expectedKeyTy valueTy => do
+    let .mk keyTy key := returned.key
+    unless keyTy == expectedKeyTy do fail returned.span "module Map key type mismatch"
+    pure (scalarValueReturn returned.toStateValueReturn valueTy "Map"
+      (fun destination => .readMap fieldName destination keyTy valueTy key) identity)
+  | .tree (.map keyTy (.composite environment type)) => do
+    unless returned.key.ty == keyTy do fail returned.span "module Map key type mismatch"
+    let fields ← (LedgerValueType.ledgerRecordFields environment type).mapError fun message =>
+      {span := returned.span, message}
+    pure (recordValueReturn returned.toStateValueReturn environment type fields fieldName
+      [returned.key] identity)
+  | _ => fail returned.span "module lookup return requires a root Map"
 
 /-- Resolve a root-exported module entrypoint. Aliases affect only its visible
 name. Circuit and state references retain their original member identities. -/
@@ -1575,10 +1635,10 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
   unless circuit.kind == .circuit || circuit.kind == .witness do
     fail entrypoint.span "module entrypoint must use a circuit or witness member"
   let resolvedEffects ← entrypoint.effects.mapM (resolveContractEffect expansion origin)
-  let cellInputChecks := resolvedEffects.filterMap (·.2.2)
-  let generatedInputs := cellInputChecks.foldl (fun inputs checked =>
+  let stateInputChecks := resolvedEffects.filterMap (·.2.2)
+  let generatedInputs := stateInputChecks.foldl (fun inputs checked =>
     if inputs.any (·.name == checked.name) then inputs else inputs ++ [checked])
-    ([] : List CellInputCheck)
+    ([] : List StateInputCheck)
   let callInputViews := generatedInputs.filterMap fun
     | .record view .. => some view
     | .scalar .. => none
@@ -1589,26 +1649,29 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
     (resolveOpaqueCellHashReturn expansion origin)
   let cellReturns ← entrypoint.cellReturns.mapM
     (resolveCellValueReturn expansion origin)
-  let returnStateIdentities := resolvedReturns.map (·.2.2) ++ cellReturns.map (·.2.2.2)
+  let mapReturns ← entrypoint.mapReturns.mapM (resolveMapValueReturn expansion origin)
+  let valueReturns := cellReturns ++ mapReturns
+  let returnStateIdentities := resolvedReturns.map (·.2.2) ++ valueReturns.map (·.2.2.2)
   let guards := entrypoint.effects.map (·.guard)
   pure {
     name := exportName
     identity := exported.identity
     circuit
     effects := resolvedEffects.map (·.1) ++ resolvedReturns.map (·.2.1) ++
-      cellReturns.map (·.2.2.1)
+      valueReturns.map (·.2.2.1)
     effectGuards := if guards.any Option.isSome then
-      guards ++ List.replicate (resolvedReturns.length + cellReturns.length) none
+      guards ++ List.replicate (resolvedReturns.length + valueReturns.length) none
       else []
-    returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ cellReturns.flatMap (·.1)
-    returnViews := cellReturns.filterMap (·.2.1)
+    returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ valueReturns.flatMap (·.1)
+    returnViews := valueReturns.filterMap (·.2.1)
     callInputs := entrypoint.callInputs ++ generatedNames
     callInputViews
-    cellInputChecks
+    stateInputChecks
     stateIdentities := (resolvedEffects.flatMap (·.2.1) ++ returnStateIdentities).eraseDups
     span := entrypoint.span
     effectSpans := entrypoint.effects.map (·.span) ++
-      entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.cellReturns.map (·.span)}
+      entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.cellReturns.map (·.span) ++
+      entrypoint.mapReturns.map (·.span)}
 
 /-- Build canonical state declarations and entrypoint templates for one module
 root. The frontend attaches checked monomorphic circuit values before creating
@@ -1719,34 +1782,34 @@ def ModuleContractPlan.specializationGroups (plan : ModuleContractPlan) :
       decide (left.outputName < right.outputName)}
   pure (orderedGroups.mergeSort fun left right => Name.lt left.sourceProgram right.sourceProgram)
 
-private def ModuleContractPlan.checkCellInputs (plan : ModuleContractPlan)
+private def ModuleContractPlan.checkStateInputs (plan : ModuleContractPlan)
     (batches : List (Name × BatchResult)) : Except Diagnostic ModuleContractPlan := do
   let entrypoints ← plan.entrypoints.mapM fun operation => do
-    if operation.cellInputChecks.isEmpty then return operation
+    if operation.stateInputChecks.isEmpty then return operation
     let some source := plan.circuits.find? (·.identity == operation.circuit)
-      | fail operation.span "module Cell input circuit source is missing"
+      | fail operation.span "module state input circuit source is missing"
     let some batch := batches.lookup source.source.program
-      | fail operation.span "module Cell input specialization is missing"
+      | fail operation.span "module state input specialization is missing"
     let some signature := batch.program.exports.find? (·.name == source.outputName)
-      | fail operation.span "module Cell input export is missing"
-    for checked in operation.cellInputChecks do
+      | fail operation.span "module state input export is missing"
+    for checked in operation.stateInputChecks do
       match checked with
-      | .scalar name ty span =>
+      | .scalar name ty span stateKind =>
         let some input := signature.inputs.find? (·.name == name)
-          | fail span s!"module scalar Cell input '{name}' must be a scalar circuit input"
+          | fail span s!"module scalar {stateKind} input '{name}' must be a scalar circuit input"
         unless input.visibility == .private do
-          fail span s!"module scalar Cell input '{name}' must be a private circuit input"
+          fail span s!"module scalar {stateKind} input '{name}' must be a private circuit input"
         unless input.ty == ty do
-          fail span s!"module scalar Cell input '{name}' does not match the checked Cell type"
-      | .record view layout span =>
+          fail span s!"module scalar {stateKind} input '{name}' does not match the checked {stateKind} type"
+      | .record view layout span stateKind =>
         let name := view.name
         let some input := signature.compositeInputs.find? (·.name == name)
-          | fail span s!"module record Cell input '{name}' must be a checked aggregate argument"
+          | fail span s!"module record {stateKind} input '{name}' must be a checked aggregate argument"
         unless input.visibility == .private do
-          fail span s!"module record Cell input '{name}' must be a private circuit input"
+          fail span s!"module record {stateKind} input '{name}' must be a private circuit input"
         unless Types.CompositeType.fingerprint batch.program.composites input.type == layout do
-          fail span s!"module record Cell input '{name}' does not match the checked Cell layout"
-    pure {operation with cellInputChecks := []}
+          fail span s!"module record {stateKind} input '{name}' does not match the checked {stateKind} layout"
+    pure {operation with stateInputChecks := []}
   pure {plan with entrypoints}
 
 /-- Specialize the exact grouped source requests from an already expanded
@@ -1768,7 +1831,7 @@ def ModuleContractPlan.specializeWithSources (plan : ModuleContractPlan)
     let batch ← Noctium.Helpers.Specialization.specializeRequestsWithLimits
       specializationLimits source group.requests
     batches := batches ++ [(group.sourceProgram, batch)]
-  pure {plan := ← plan.checkCellInputs batches, batches}
+  pure {plan := ← plan.checkStateInputs batches, batches}
 
 /-- Expand a root, collect its visible circuits, and specialize each exact
 source program in one issue46 batch session. The caller supplies source values
@@ -1792,8 +1855,8 @@ def ModuleContractPlan.assembleContract (plan : ModuleContractPlan) (name : Stri
     fail {} "duplicate compiled circuit name in module contract"
   let mut entrypoints : List Entrypoint := []
   for template in plan.entrypoints do
-    unless template.cellInputChecks.isEmpty do
-      fail template.span "module Cell inputs must be checked against the specialized source"
+    unless template.stateInputChecks.isEmpty do
+      fail template.span "module state inputs must be checked against the specialized source"
     let some source := plan.circuits.find? (·.identity == template.circuit)
       | fail template.span "module contract circuit source is missing"
     let some circuit := circuits.find? (·.name == source.outputName)

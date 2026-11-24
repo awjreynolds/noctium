@@ -1,0 +1,33 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Receipt {
+  amount: Field;
+  active: Boolean;
+}
+
+module GenericMap<K, V> {
+  export ledger values: Map<K, V>;
+
+  export circuit put(enabled: Boolean, key: K, next: V): [] {
+    if (disclose(enabled)) {
+      values.insert(disclose(key), disclose(next));
+    }
+    return [];
+  }
+
+  export circuit lookup(key: K): V {
+    return values.lookup(disclose(key));
+  }
+}
+
+import GenericMap<Field, Receipt> prefix receiptMap_;
+export {receiptMap_values, receiptMap_put, receiptMap_lookup};
+
+export circuit put(enabled: Boolean, key: Field, next: Receipt): [] {
+  return receiptMap_put(disclose(enabled), disclose(key), disclose(next));
+}
+
+export circuit lookup(key: Field): Receipt {
+  return receiptMap_lookup(disclose(key));
+}

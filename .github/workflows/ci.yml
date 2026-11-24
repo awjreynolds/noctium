@@ -409,6 +409,9 @@ jobs:
           .lake/build/bin/noctium compile tests/modules/GenericRecordCell.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/generic-record-cell"
+          .lake/build/bin/noctium compile tests/modules/GenericRecordMap.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/generic-record-map"
           .lake/build/bin/noctium compile tests/modules/GenericScalarCellConstructor.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/generic-scalar-cell-constructor"
@@ -524,13 +527,15 @@ jobs:
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_CONSTRUCTOR_RECORD_LIST_DIR="$artifacts/constructor-record-list" \
             NOCTIUM_GENERIC_RECORD_CELL_DIR="$artifacts/generic-record-cell" \
+            NOCTIUM_GENERIC_RECORD_MAP_DIR="$artifacts/generic-record-map" \
             NOCTIUM_GENERIC_SCALAR_CELL_CONSTRUCTOR_DIR="$artifacts/generic-scalar-cell-constructor" \
             NOCTIUM_ORDERED_CONSTRUCTOR_COUNTER_READ_DIR="$artifacts/ordered-constructor-counter-read" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
               --test guarded_constructor_set --test guarded_constructor_list_counter \
               --test ordered_constructor_counter_read --test constructor_record_list \
-              --test generic_record_cell --test generic_scalar_cell_constructor -- --ignored
+              --test generic_record_cell --test generic_record_map \
+              --test generic_scalar_cell_constructor -- --ignored
           NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_record_cell \
