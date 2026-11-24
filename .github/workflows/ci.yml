@@ -277,6 +277,7 @@ jobs:
           lake env lean tests/CompositeMaybeInput.lean
           lake env lean tests/NominalUInt.lean
           lake env lean tests/NominalFieldCells.lean
+          lake env lean tests/NominalFieldRecords.lean
           lake env lean tests/NominalUIntNestedRecords.lean
           lake env lean tests/NominalRecordMaybe.lean
           lake env lean tests/MaybeBytesCurves.lean
