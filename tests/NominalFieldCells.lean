@@ -1,6 +1,7 @@
 import Noctium.Frontend
 
 open scoped Noctium
+open Noctium.Helpers
 
 namespace NominalFieldCells
 
@@ -13,6 +14,53 @@ noctium_circuit arguments where
   public raw : Native
   public other : Count
 end
+
+private def nominalFieldCellHelper : Program := {
+  ledger := [
+    {name := "balance", kind := .cell .native},
+    {name := "cap", kind := .cell .native, «sealed» := Bool.true}]
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "update"
+    parameters := [
+      ⟨"enabled", .bool⟩, ⟨"next", .native⟩, ⟨"raw", .native⟩, ⟨"other", .native⟩]
+    nominalFieldParameters := [
+      ("next", "NominalFieldCells.Amount"), ("other", "NominalFieldCells.Count")]
+    result := .scalar .native
+    nominalFieldResult := some "NominalFieldCells.Amount"
+    body := [
+      .readCell "balance" "before" .native,
+      .branch (.ref "enabled") [
+        .bind "updated" (.scalar .native)
+          (.binary .add (.ref "next")
+            (.castNominalField "NominalFieldCells.Amount" (.ref "raw"))),
+        .writeCell "balance" .native (.disclose {} (.ref "updated")),
+        .readCell "balance" "after" .native,
+        .return (some (.ref "after"))
+      ] [
+        .return (some (.ref "before"))
+      ]]
+  }]
+  exports := [{name := "update", target := ⟨0, 0⟩, inputs := [
+    {name := "enabled", ty := .bool, visibility := .public},
+    {name := "next", ty := .native, visibility := .public},
+    {name := "raw", ty := .native, visibility := .public},
+    {name := "other", ty := .native, visibility := .public}]}]
+}
+
+private def mismatchedNominalFieldCellHelper : Program := {
+  ledger := [{name := "balance", kind := .cell .native}]
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "writeOtherField"
+    parameters := [⟨"other", .native⟩]
+    nominalFieldParameters := [("other", "NominalFieldCells.Count")]
+    result := .unit
+    body := [.writeCell "balance" .native (.ref "other"), .return none]
+  }]
+  exports := [{name := "writeOtherField", target := ⟨0, 0⟩, inputs := [
+    {name := "other", ty := .native, visibility := .public}]}]
+}
 
 noctium_contract Account where
   cell balance : Amount
@@ -29,6 +77,8 @@ noctium_contract Account where
     return balanceAfter : Amount := stored
     return capAfter : Native := cast(Native, capValue)
   end
+
+  entry updateWithHelper from nominalFieldCellHelper entry "update" end
 end
 
 /-- error: nominal Field values require an explicit cast and must match the target type -/
@@ -75,11 +125,18 @@ private def erasedCellReader : Noctium.Helpers.Program := {
     body := [.readCell "balance" "value" .native, .return (some (.ref "value"))]}]
   exports := [{name := "get", target := ⟨0, 0⟩}]}
 
-/-- error: structured helpers do not support nominal Field Cells -/
+/-- error: :1:1: nominal Field values require an explicit cast and must match the target type -/
 #guard_msgs (substring := true) in
 noctium_contract RejectStructuredErasure where
   cell balance : Amount
   entry get from erasedCellReader entry "get" end
+end
+
+/-- error: :1:1: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectStructuredFieldWrite where
+  cell balance : Amount
+  entry writeOtherField from mismatchedNominalFieldCellHelper entry "writeOtherField" end
 end
 
 end NominalFieldCells

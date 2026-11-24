@@ -1,18 +1,38 @@
 #![cfg(feature = "zkir-321")]
 
 use coin_structure::contract::ContractAddress;
-use noctium_runtime::{Plan, check, construct_state, prepare, zkir::IrSource};
+use noctium_runtime::{Db, Plan, check, construct_state, field_value, prepare, zkir::IrSource};
+use onchain_runtime::state::{ChargedState, StateValue};
 use serde_json::json;
-use std::{collections::BTreeMap, fs::File, path::PathBuf};
+use std::collections::BTreeMap;
+use transient_crypto::curve::Fr;
+
+const PLAN: &str = include_str!(
+    "fixtures/nominal-field-cells/321/NominalFieldCells.Account.updateWithHelper.impact.json"
+);
+const CIRCUIT: &[u8] = include_bytes!(
+    "fixtures/nominal-field-cells/321/NominalFieldCells.Account.updateWithHelper.zkir"
+);
+
+fn cell<'a>(
+    plan: &Plan,
+    state: &'a ChargedState<Db>,
+    name: &str,
+) -> &'a base_crypto::fab::AlignedValue {
+    let slot = plan.state.iter().position(|decl| decl.name == name).unwrap();
+    let StateValue::Array(root) = state.get_ref() else {
+        panic!("expected state array")
+    };
+    let StateValue::Cell(value) = root.get(slot).unwrap() else {
+        panic!("expected cell")
+    };
+    value
+}
 
 #[test]
-#[ignore = "requires fresh NominalFieldCells artifacts in NOCTIUM_NOMINAL_FIELD_CELLS_DIR"]
 fn nominal_field_cell_returns_preserve_native_values() -> anyhow::Result<()> {
-    let directory = PathBuf::from(std::env::var_os("NOCTIUM_NOMINAL_FIELD_CELLS_DIR").unwrap());
-    let stem = "NominalFieldCells.Account.update";
-    let plan: Plan =
-        serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
-    let relation = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+    let plan: Plan = serde_json::from_str(PLAN)?;
+    let relation = IrSource::load(CIRCUIT)?;
     let initial = construct_state(
         &plan,
         &BTreeMap::from([("seed".into(), json!("11")), ("rawCap".into(), json!("77"))]),
@@ -34,10 +54,15 @@ fn nominal_field_cell_returns_preserve_native_values() -> anyhow::Result<()> {
         assert_eq!(check(&execution, &relation)?, execution.activity_schedule);
         assert_eq!(
             execution.returns_json(),
-            BTreeMap::from([
-                ("balanceAfter".into(), json!(expected)),
-                ("capAfter".into(), json!("77")),
-            ])
+            BTreeMap::from([("result".into(), json!(expected))])
+        );
+        assert_eq!(
+            cell(&plan, &execution.after.state, "balance"),
+            &field_value(Fr::from(expected.parse::<u64>()?))
+        );
+        assert_eq!(
+            cell(&plan, &execution.after.state, "cap"),
+            &field_value(Fr::from(77u64))
         );
         assert_eq!(
             execution.after.state.get_ref() == initial.get_ref(),

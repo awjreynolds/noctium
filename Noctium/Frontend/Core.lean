@@ -86,6 +86,9 @@ structure CircuitInfo where
   /-- Source nominal identities for scalar cells in the owning structured
   contract. These tags are reapplied when the helper source is rebuilt. -/
   stateNominalUIntCells : List (String × NominalUIntType) := []
+  /-- Source nominal Field identities for scalar Cells in the owning
+  structured contract. -/
+  stateNominalFieldCells : List (String × NominalFieldType) := []
   /-- Source nominal identities for direct Map keys and values in the owning
   structured contract. These tags are reapplied when the helper source is rebuilt. -/
   stateNominalUIntMaps : List (String × NominalUIntMap) := []
@@ -6476,6 +6479,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
+        unless info.stateNominalFieldCells.isEmpty do
+          throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Cell circuit to its contract"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         unless args.getElems.size ≤ 256 && uniqueNames (args.getElems.toList.map (·.getId.toString)) do
@@ -6544,6 +6549,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
+        unless info.stateNominalFieldCells.isEmpty do
+          throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Cell circuit to its contract"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         let env ← addReferences [] (info.inputs ++ info.outputs)
@@ -6589,15 +6596,16 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let sourceName ← liftCoreM <| resolveGlobalConstNoOverload source
         let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
         let entryNominalUIntMaps := directNominalUIntMaps schema nominalUIntCollections
-        let program := program.withNominalUIntState nominalUIntCells entryNominalUIntMaps
+        let entryNominalFieldCells := nominalFieldCells.map fun (storage, field) => (storage, field.name)
+        let program := Helpers.Program.withNominalFieldState
+          (program.withNominalUIntState nominalUIntCells entryNominalUIntMaps)
+          entryNominalFieldCells
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
         for effect in value.effects do
           match effect with
           | .readCell storage _ _ | .writeCell storage _ _ =>
-            if (nominalFieldCells.lookup storage).isSome then
-              throwErrorAt entryStx "structured helpers do not support nominal Field Cells"
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
           | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
@@ -6625,8 +6633,12 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let key ← quoteOptionalNominal nominalMap.key
           let value ← quoteOptionalNominal nominalMap.value
           `(($(stringTerm storage), ({key := $key, value := $value} : Noctium.NominalUIntMap)))
-        let taggedProgram ← `(Noctium.Helpers.Program.withNominalUIntState $sourceTerm
-          [$nominalUIntCellTerms,*] [$nominalUIntMapTerms,*])
+        let nominalFieldCellTerms ← entryNominalFieldCells.toArray.mapM fun (storage, nominal) => do
+          `(($(stringTerm storage), $(stringTerm nominal)))
+        let taggedProgram ← `(Noctium.Helpers.Program.withNominalFieldState
+          (Noctium.Helpers.Program.withNominalUIntState $sourceTerm
+            [$nominalUIntCellTerms,*] [$nominalUIntMapTerms,*])
+          [$nominalFieldCellTerms,*])
         elabCommand (← `(def $circuitId : Noctium.Circuit :=
           match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with
           | .ok compiledEntry => {compiledEntry.circuit with name := $circuitName}
@@ -6639,6 +6651,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           outputs := []
           stateProgram? := some (sourceName, exportName.getString)
           stateNominalUIntCells := nominalUIntCells
+          stateNominalFieldCells := nominalFieldCells
           stateNominalUIntMaps := entryNominalUIntMaps}
         let circuitTerm := mkIdent fullCircuitName
         entryTerms := entryTerms.push (← `(
