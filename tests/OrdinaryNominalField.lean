@@ -27,13 +27,38 @@ noctium_circuit addAmount where
   output product : Amount := disclose(mul(left, right))
 end
 
-/- error: contract entrypoints do not retain nominal Field circuit ABI identity -/
-#guard_msgs (substring := true) in
 noctium_contract FieldContractAlias where
   entry echo uses addAmount where
-    return result : Native := result
+    return returned : Amount := result
+  end
+  entry echoAsNative uses addAmount where
+    return returned : Native := cast(Native, result)
   end
 end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectImplicitFieldErasure where
+  entry echo uses addAmount where
+    return returned : Native := result
+  end
+end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectForeignFieldErasure where
+  entry echo uses addAmount where
+    return returned : Count := result
+  end
+end
+
+noctium_interface NativeFieldEcho where
+  entry echo accepts [] yields [returned : Native]
+end
+
+/- error: entry 'echo' does not match interface -/
+#guard_msgs (substring := true) in
+noctium_implements FieldContractAlias implements NativeFieldEcho
 
 noctium_circuit castField where
   private raw : Native
@@ -91,6 +116,16 @@ end
 
 #guard addAmount.inputs.map (·.ty) == [.native, .native]
 #guard addAmount.outputs.map (·.ty) == [.native, .native, .native]
+
+private def attachedEcho : Entrypoint :=
+  (FieldContractAlias.entrypoints.find? (·.name == "echo")).getD
+    {name := "", circuit := {name := ""}}
+private def attachedNativeEcho : Entrypoint :=
+  (FieldContractAlias.entrypoints.find? (·.name == "echoAsNative")).getD
+    {name := "", circuit := {name := ""}}
+
+#guard attachedEcho.returns.map (·.ty) == [.native]
+#guard attachedNativeEcho.returns.map (·.ty) == [.native]
 
 private def fieldModulus := Field.modulus
 private def fieldContext : EvalContext := {
