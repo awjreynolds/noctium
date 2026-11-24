@@ -143,6 +143,22 @@ noctium_circuit wrongImportedKeySetInputs where
   public removing : Bool
 end
 
+noctium_circuit nestedKeySetInitializeInputs where
+  public owner : Bytes32
+end
+
+noctium_circuit nestedKeySetInputs where
+  public owner : Bytes32
+  private amount : Amount
+  public adding : Bool
+  public removing : Bool
+end
+
+noctium_circuit wrongNestedKeySetInputs where
+  public owner : Bytes32
+  private amount : Count
+end
+
 noctium_contract ImportedKeySet where
   set members : ImportedKey
 
@@ -157,6 +173,68 @@ noctium_contract ImportedKeySet where
     return afterRemove : Bool := presentAfterRemove
   end
 end
+
+noctium_contract NestedImportedKeySet where
+  tree buckets : Bytes32 => Set ImportedKey
+
+  entry initializeOwner uses nestedKeySetInitializeInputs where
+    insert buckets[owner] := emptyMap
+  end
+
+  entry update uses nestedKeySetInputs where
+    member buckets[owner][fields(disclose(amount))] as presentBefore
+    when adding insert buckets[owner][fields(disclose(amount))]
+    when removing remove buckets[owner][fields(disclose(amount))]
+    member buckets[owner][fields(disclose(amount))] as presentAfter
+    return before : Bool := presentBefore
+    return after : Bool := presentAfter
+  end
+end
+
+#guard match NestedImportedKeySet.state with
+  | [{name := "buckets", kind := .tree (.map (.bytes 32) (.recordSet environment type)), ..}] =>
+    match LedgerValueType.recordSetKeyFields environment type with
+    | .ok [("amount", .native)] => _root_.Bool.true
+    | _ => _root_.Bool.false
+  | _ => _root_.Bool.false
+
+private def nestedKeySetEntry (name : String) : Entrypoint :=
+  (NestedImportedKeySet.entrypoints.find? (·.name == name)).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+private def nestedKeySetContext : EvalContext := {
+  modulus := Field.modulus
+  poseidon2 := fun _ _ _ => .error "unused by nested imported record Set fixture"
+}
+
+private def nestedKeySetInitial : LedgerState := {trees := [("buckets", .map [])]}
+private def nestedKeySetOwner : List Nat := List.replicate 32 9
+
+private def nestedKeySetInitialize (state : LedgerState) :=
+  (nestedKeySetEntry "initializeOwner").run nestedKeySetContext
+    [("owner", .bytes 32 nestedKeySetOwner)] state
+
+private def nestedKeySetUpdate (amount : Nat) (adding removing : _root_.Bool) (state : LedgerState) :=
+  (nestedKeySetEntry "update").run nestedKeySetContext [
+    ("owner", .bytes 32 nestedKeySetOwner), ("amount", .native amount),
+    ("adding", .bool adding), ("removing", .bool removing)] state
+
+#guard !(nestedKeySetUpdate 17 _root_.Bool.true _root_.Bool.false nestedKeySetInitial).isOk
+
+#guard match nestedKeySetInitialize nestedKeySetInitial with
+  | .ok (_, state) =>
+    match nestedKeySetUpdate 17 _root_.Bool.true _root_.Bool.false state with
+    | .ok (outputs, insertedState) =>
+      outputs.lookup "before" == some (.bool _root_.Bool.false) &&
+      outputs.lookup "after" == some (.bool _root_.Bool.true) &&
+      match nestedKeySetUpdate 17 _root_.Bool.false _root_.Bool.true insertedState with
+      | .ok (removed, finalState) =>
+        removed.lookup "before" == some (.bool _root_.Bool.true) &&
+        removed.lookup "after" == some (.bool _root_.Bool.false) &&
+        finalState.trees.lookup "buckets" == state.trees.lookup "buckets"
+      | .error _ => _root_.Bool.false
+    | .error _ => _root_.Bool.false
+  | .error _ => _root_.Bool.false
 
 #guard match ImportedKeySet.state with
   | [{name := "members", kind := .tree (.recordSet environment type), ..}] =>
@@ -174,6 +252,32 @@ noctium_contract RejectWrongImportedKeySet where
     member members[fields(disclose(amount))] as present
     when adding insert members[fields(disclose(amount))]
     when removing remove members[fields(disclose(amount))]
+  end
+end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectWrongNestedImportedKeySet where
+  tree buckets : Bytes32 => Set ImportedKey
+  entry update uses wrongNestedKeySetInputs where
+    member buckets[owner][fields(disclose(amount))] as present
+  end
+end
+
+noctium_uint_type ImportedSetOwner := UInt 8
+noctium_uint_type UnrelatedSetOwner := UInt 8
+
+noctium_circuit wrongNamedSetOwnerInputs where
+  public owner : UnrelatedSetOwner
+  private amount : Amount
+end
+
+/- error: nominal UInt values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectWrongNamedSetOwner where
+  tree buckets : ImportedSetOwner => Set ImportedKey
+  entry inspect uses wrongNamedSetOwnerInputs where
+    member buckets[owner][fields(disclose(amount))] as present
   end
 end
 
