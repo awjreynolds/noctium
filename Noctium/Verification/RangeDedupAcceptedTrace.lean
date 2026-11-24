@@ -47,6 +47,9 @@ private theorem loopAppend {expected : Expected} {prelude suffix : List (Json ×
 assertion, two accepted comparisons, and one checked output preserves the
 comparison's decoded witness relation when reuse emits its exact Copy JSON.
 
+The prelude may include accepted guarded public reads. Its private inputs still
+follow the producer's unguarded-input rule.
+
 This covers the listed trace shape only. Other producer opcodes and complete
 program equivalence remain separate proof obligations. -/
 theorem acceptedPrefixAssertComparisonOutputCopyBridge
@@ -61,7 +64,7 @@ theorem acceptedPrefixAssertComparisonOutputCopyBridge
     (initialMeaning : StateMeaning hash inputs witness initial)
     (initialNativeDefinitions : ScalarValidationArithmeticLoop.NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (prefixSteps : ∀ item ∈ prelude, NativeStepHolds hash witness item.1)
