@@ -2,6 +2,7 @@ import Noctium.Backend.Impact
 import Noctium.Backend.NativeExpected
 import Noctium.Backend.Zkir
 import Noctium.Frontend
+import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.GuardedImpactObservation
 import Noctium.Verification.GuardedScalarInput
 
@@ -113,6 +114,7 @@ private def emittedMarkerGuardMatches : Except String _root_.Bool := do
 private def emittedGuardedImpactMatches : Except String _root_.Bool := do
   let pruned := Passes.pruneEntrypoint issue43GuardedEntry
   let expected ← (Backend.Native.expectedEntrypoint Issue43GuardedReads.state pruned).mapError (·.message)
+  let plan ← (Backend.Impact.lower Issue43GuardedReads.state pruned).mapError (·.message)
   let artifact ← (Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state
     issue43GuardedEntry).mapError (·.message)
   let rawInputs ← Backend.Native.arrayField artifact "inputs"
@@ -127,6 +129,9 @@ private def emittedGuardedImpactMatches : Except String _root_.Bool := do
   let raw :: _ := rest | throw "missing guarded marker Impact payload"
   let before ← Backend.Native.validateInstructionLoop expected prelude.zipIdx {}
   let after ← Backend.Native.validateInstruction expected before raw
+  let sourceGuards := Verification.GenericStateCircuitParts.activityGuardSources plan
+  let some (some (.ref sourceName)) := sourceGuards[before.groupCount]?
+    | throw "missing source Impact condition"
   let guard ← Verification.NativeRelationJson.decodeOperandField raw "guard"
   let operands ← Verification.NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")
   let some guardTerm := Verification.ScalarValidationOutputMeaning.sourceImpactGuard expected before
@@ -149,6 +154,7 @@ private def emittedGuardedImpactMatches : Except String _root_.Bool := do
       transcript => row >>= (Verification.GuardedImpactObservation.consume · transcript)
   let changed := replaceJsonField raw "guard" (toJson ("0x01" : String))
   return after.groupCount == before.groupCount + 1 &&
+    sourceName == "enabled" &&
     guardTerm == .input "%input_enabled" &&
     group.length == operands.length &&
     !(Backend.Native.validateInstruction expected before changed).isOk &&
