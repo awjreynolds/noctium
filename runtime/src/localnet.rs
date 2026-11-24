@@ -6133,6 +6133,347 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "submits funded GenericRecordCell updates to the authorized isolated localnet"]
+    fn generic_record_cell_finalizes_guarded_record_updates() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_GENERIC_RECORD_CELL_FUNDED_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "GenericRecordCell requires the authorized loopback node on port 19944"
+            );
+
+            let entries = [
+                (
+                    "inspect",
+                    "NOCTIUM_GENERIC_RECORD_CELL_FUNDED_INSPECT_BUNDLE",
+                    "NOCTIUM_GENERIC_RECORD_CELL_FUNDED_INSPECT_SHA256",
+                ),
+                (
+                    "update",
+                    "NOCTIUM_GENERIC_RECORD_CELL_FUNDED_UPDATE_BUNDLE",
+                    "NOCTIUM_GENERIC_RECORD_CELL_FUNDED_UPDATE_SHA256",
+                ),
+            ];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            let mut pins = BTreeMap::new();
+            for (entry, directory_env, digest_env) in entries {
+                let directory = setting(directory_env)?;
+                let digest = setting(digest_env)?;
+                let bundle = artifacts::verify(Path::new(&directory), Some(&digest))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(
+                    plan.entrypoint == entry,
+                    "unexpected GenericRecordCell {entry} plan"
+                );
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry.to_owned(), circuit.k());
+                plans.insert(entry.to_owned(), plan);
+                circuits.insert(entry.to_owned(), circuit);
+                pins.insert(entry.to_owned(), digest);
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_GENERIC_RECORD_CELL_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let mut parameters = BTreeMap::new();
+            for entry in ["inspect", "update"] {
+                parameters.insert(entry, cache.parameters(degrees[entry]).await?);
+            }
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let constructor_inputs = BTreeMap::from([
+                ("issued".to_owned(), json!("5")),
+                ("spent".to_owned(), json!("42")),
+                (
+                    "initialTag".to_owned(),
+                    json!({"kind":"bytes", "values":[1, 2, 3, 4]}),
+                ),
+            ]);
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &serde_json::to_vec(&json!({"state": &constructor_inputs}))?,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let inspect = target.operation("inspect", &parameters["inspect"], ttl)?;
+            let update = target.operation("update", &parameters["update"], ttl)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid GenericRecordCell address"))?,
+            ));
+            let mut model_state = crate::construct_state(&plans["inspect"], &constructor_inputs)?;
+            let (state, deployment) = funded.deploy(&target, "inspect").await?;
+            let mut current = Some(state);
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.contract_address == target.contract_address()
+                    && deployment.chain.genesis == DEVELOPMENT_GENESIS
+                    && deployed.data.get_ref() == model_state.get_ref(),
+                "deployed GenericRecordCell state differs from the native constructor"
+            );
+            let mut last_state_bytes = deployment.contract_state.clone();
+
+            let record_result = |issued: &str, spent: &str, tag: [u8; 4]| {
+                json!({
+                    "kind":"struct",
+                    "id":"GenericRecordCell.Ledger",
+                    "fields":[
+                        {"name":"issued", "value":{"kind":"native", "value":issued}},
+                        {"name":"spent", "value":{"kind":"native", "value":spent}},
+                        {"name":"tag", "value":{"kind":"bytes", "values":tag}},
+                    ],
+                })
+            };
+            let expected_returns = |value| BTreeMap::from([("result".to_owned(), value)]);
+            let mut expected_issued = "5".to_owned();
+            let mut expected_spent = "42".to_owned();
+            let mut expected_tag = [1, 2, 3, 4];
+            let update_inputs = |enabled: bool, issued: &str, spent: &str, tag: [u8; 4]| {
+                let mut inputs = BTreeMap::from([
+                    ("enabled".to_owned(), json!(enabled)),
+                    ("next.issued".to_owned(), json!(issued)),
+                    ("next.spent".to_owned(), json!(spent)),
+                ]);
+                for (index, byte) in tag.into_iter().enumerate() {
+                    inputs.insert(format!("next.tag.{index}"), json!(byte.to_string()));
+                }
+                inputs
+            };
+            let receipt_record = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height,
+                    "finalizedHeight": receipt.finalized_height,
+                    "blockHash": receipt.block_hash,
+                    "finalizedHash": receipt.finalized_hash,
+                    "transactionId": receipt.transaction_id,
+                    "stateBytes": receipt.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                })
+            };
+            let record_call = |entry: &str, receipt: &FinalizedReceipt, returns: Json| {
+                json!({
+                    "entrypoint": entry,
+                    "checkedReturns": returns,
+                    "receipt": receipt_record(receipt),
+                })
+            };
+
+            let empty = BTreeMap::new();
+            let mut calls = Vec::new();
+            let snapshot = funded.node.sync()?;
+            let initial_read = crate::prepare(
+                &plans["inspect"],
+                &empty,
+                &model_state,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            ensure!(
+                crate::check(&initial_read, &circuits["inspect"])?
+                    == initial_read.activity_schedule
+                    && initial_read.returns_json()
+                        == expected_returns(record_result("5", "42", [1, 2, 3, 4])),
+                "initial GenericRecordCell read differs from the constructor"
+            );
+            let (bound, initial_read_receipt) = funded
+                .call_with_bound(
+                    &inspect,
+                    &mut current,
+                    &parameters["inspect"],
+                    empty.clone(),
+                )
+                .await?;
+            bound.check_receipt(&initial_read_receipt)?;
+            ensure!(
+                initial_read_receipt.contract_state == deployment.contract_state
+                    && initial_read_receipt.contract_state == bound.expected_state(),
+                "initial GenericRecordCell read changed exact state bytes"
+            );
+            let initial_read_state: ContractState<Db> =
+                native_decode(&initial_read_receipt.contract_state)?;
+            ensure!(
+                initial_read_state.data.get_ref() == model_state.get_ref(),
+                "initial GenericRecordCell read differs from the native constructor state"
+            );
+            calls.push(record_call(
+                "inspect",
+                &initial_read_receipt,
+                json!(initial_read.returns_json()),
+            ));
+
+            for (enabled, issued, spent, tag, label) in [
+                (false, "11", "13", [9, 8, 7, 6], "disabled update"),
+                (true, "8", "99", [128, 0, 255, 42], "enabled update"),
+            ] {
+                let inputs = update_inputs(enabled, issued, spent, tag);
+                let snapshot = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plans["update"],
+                    &inputs,
+                    &model_state,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                let returns = if enabled {
+                    record_result(issued, spent, tag)
+                } else {
+                    record_result(&expected_issued, &expected_spent, expected_tag)
+                };
+                ensure!(
+                    crate::check(&execution, &circuits["update"])?
+                        == execution.activity_schedule
+                        && execution.returns_json() == expected_returns(returns.clone()),
+                    "native GenericRecordCell {label} return or relation mismatch"
+                );
+                let (bound, receipt) = funded
+                    .call_with_bound(
+                        &update,
+                        &mut current,
+                        &parameters["update"],
+                        inputs,
+                    )
+                    .await?;
+                bound.check_receipt(&receipt)?;
+                ensure!(
+                    receipt.chain.genesis == DEVELOPMENT_GENESIS
+                        && receipt.contract_address == target.contract_address()
+                        && receipt.contract_state == bound.expected_state(),
+                    "finalized GenericRecordCell {label} has the wrong chain, contract, or state"
+                );
+                let decoded: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    decoded.data.get_ref() == execution.after.state.get_ref(),
+                    "finalized GenericRecordCell {label} differs from checked native state"
+                );
+                if enabled {
+                    ensure!(
+                        receipt.contract_state != last_state_bytes,
+                        "enabled GenericRecordCell update did not change state"
+                    );
+                    expected_issued = issued.to_owned();
+                    expected_spent = spent.to_owned();
+                    expected_tag = tag;
+                } else {
+                    ensure!(
+                        receipt.contract_state == last_state_bytes
+                            && execution.after.state.get_ref() == model_state.get_ref(),
+                        "disabled GenericRecordCell update changed exact state bytes"
+                    );
+                }
+                model_state = execution.after.state;
+                last_state_bytes = receipt.contract_state.clone();
+                calls.push(record_call(
+                    "update",
+                    &receipt,
+                    json!(expected_returns(returns)),
+                ));
+            }
+
+            let invalid = update_inputs(true, "8", "99", [128, 0, 255, 42]);
+            let mut invalid = invalid;
+            invalid.insert("next.tag.0".into(), json!("256"));
+            let snapshot = funded.node.sync()?;
+            let invalid_execution = crate::prepare(
+                &plans["update"],
+                &invalid,
+                &model_state,
+                &snapshot.state.parameters,
+                address,
+            )
+            .and_then(|execution| {
+                crate::check(&execution, &circuits["update"]).map(|_| ())
+            });
+            ensure!(
+                invalid_execution.is_err(),
+                "out-of-range GenericRecordCell byte passed native preparation"
+            );
+
+            let snapshot = funded.node.sync()?;
+            let final_read = crate::prepare(
+                &plans["inspect"],
+                &empty,
+                &model_state,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            ensure!(
+                crate::check(&final_read, &circuits["inspect"])?
+                    == final_read.activity_schedule
+                    && final_read.returns_json()
+                        == expected_returns(record_result(
+                            &expected_issued,
+                            &expected_spent,
+                            expected_tag,
+                        )),
+                "final GenericRecordCell read differs from enabled update"
+            );
+            let (bound, final_read_receipt) = funded
+                .call_with_bound(
+                    &inspect,
+                    &mut current,
+                    &parameters["inspect"],
+                    empty,
+                )
+                .await?;
+            bound.check_receipt(&final_read_receipt)?;
+            let final_state: ContractState<Db> = native_decode(&final_read_receipt.contract_state)?;
+            ensure!(
+                final_read_receipt.contract_state == bound.expected_state()
+                    && final_read_receipt.contract_state == last_state_bytes
+                    && final_state.data.get_ref() == model_state.get_ref(),
+                "final GenericRecordCell inspect does not preserve enabled state"
+            );
+            calls.push(record_call(
+                "inspect",
+                &final_read_receipt,
+                json!(final_read.returns_json()),
+            ));
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "genesis": funded.node.policy.genesis,
+                    "ledgerVersion": "9.1.0.1",
+                    "zkirRelease": "3.2.1",
+                    "profile": crate::profile::NAME,
+                    "bundleManifestSha256": pins,
+                    "k": degrees,
+                    "deployment": receipt_record(&deployment),
+                    "calls": calls,
+                    "constructorStateMatchedNativePlan": true,
+                    "disabledUpdatePreservedExactStateBytes": true,
+                    "enabledUpdateStoredExactRecord": true,
+                    "finalizedStateMatchedNativeExecution": true,
+                    "outOfRangeByteRejectedBeforeSubmission": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated OpaqueCells bundles and a funded development node"]
     fn opaque_root_cells_finalize_typed_store_and_reads() -> anyhow::Result<()> {
         use crate::{

@@ -100,6 +100,12 @@ argument to the header. Record writes add the grouped fields in layout order.
 List separate arguments such as an update guard in `callInputs`.
 [Scalar Cell fixture](../../tests/modules/GenericScalarCellConstructor.lean) · [Record Cell fixture](../../tests/modules/GenericRecordCell.lean) · [Compact comparison](../../tests/compact/generic-record-cell.mjs)
 
+The generic record Cell fixture finalized on Ledger 9.1.0.1 using the
+ZKIR 3.2.1 profile. The disabled update preserved the constructor state byte
+for byte. The enabled update and a separate read returned issued 8, spent 99,
+and tag `[128, 0, 255, 42]`. Both K9 relations used authenticated bundles.
+[Funded localnet receipt](generic-record-cell-localnet-receipt.json)
+
 ## Generic record Maps
 
 A generic `Map<K, V>` accepts an admitted scalar or `Bytes32` key and a

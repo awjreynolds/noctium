@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "sourceFixture": "tests/modules/GenericRecordCell.lean",
+  "sourceCompilerRevision": "5cccb48e303da1a51c269c713e40fcde321cc499",
+  "sourceSha256": "a8c66c070e4c806cd6f85f09a12cf38b04009f386811b8ad9f5e8d20e294f473",
+  "ledgerVersion": "9.1.0.1",
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "zkirRelease": "3.2.1",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "runtimeSpecVersion": 2001100,
+  "transactionVersion": 4,
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "contractAddress": "e8b1d2d6c5fdca7a2411835b58f879a454c7a1838153842df70a7324172044dd",
+  "constructorInputs": {
+    "issued": "5",
+    "spent": "42",
+    "initialTag": {
+      "kind": "bytes",
+      "values": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  },
+  "bundleManifestSha256": {
+    "inspect": "40e371568d4a0ffba9bc04e1ddd78d85554fea96359b68ebdc146239815c71ab",
+    "update": "186a32fc5e3c076327439a43b99caa8d6f3c15216988d7d46dc77fa75ac03b62"
+  },
+  "k": {
+    "inspect": 9,
+    "update": 9
+  },
+  "rows": {
+    "inspect": 115,
+    "update": 400
+  },
+  "deployment": {
+    "height": 80950,
+    "finalizedHeight": 80950,
+    "blockHash": "a1801cc72dafe202debeac4b9f4c92c5233a21743e0151405043ff2f14db6261",
+    "finalizedHash": "a1801cc72dafe202debeac4b9f4c92c5233a21743e0151405043ff2f14db6261",
+    "transactionId": "43d4a699205c54dcb8386f3c3eb52294b6080277cba6bbe346defab4ed773a78",
+    "stateBytes": 2916,
+    "stateSha256": "dfb791de7cbf93d0f2accdb6e458ae7b8d60c6a777be2c54e0e26881a6a27c5f"
+  },
+  "calls": [
+    {
+      "entrypoint": "inspect",
+      "checkedReturns": {
+        "result": {
+          "kind": "struct",
+          "id": "GenericRecordCell.Ledger",
+          "fields": [
+            {
+              "name": "issued",
+              "value": {
+                "kind": "native",
+                "value": "5"
+              }
+            },
+            {
+              "name": "spent",
+              "value": {
+                "kind": "native",
+                "value": "42"
+              }
+            },
+            {
+              "name": "tag",
+              "value": {
+                "kind": "bytes",
+                "values": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "height": 80953,
+        "finalizedHeight": 80953,
+        "blockHash": "3178779a16df1ec97bac1f75e9c02a5f7b2c5033cdb7212aa578a47de92587d6",
+        "finalizedHash": "3178779a16df1ec97bac1f75e9c02a5f7b2c5033cdb7212aa578a47de92587d6",
+        "transactionId": "2541f6304a5275afb62ca0a9975863462a961f1cdd1767a9b8e9fbb033ce17cf",
+        "stateBytes": 2916,
+        "stateSha256": "dfb791de7cbf93d0f2accdb6e458ae7b8d60c6a777be2c54e0e26881a6a27c5f"
+      }
+    },
+    {
+      "entrypoint": "update",
+      "enabled": false,
+      "attemptedRecord": {
+        "issued": "11",
+        "spent": "13",
+        "tag": [
+          9,
+          8,
+          7,
+          6
+        ]
+      },
+      "checkedReturns": {
+        "result": {
+          "kind": "struct",
+          "id": "GenericRecordCell.Ledger",
+          "fields": [
+            {
+              "name": "issued",
+              "value": {
+                "kind": "native",
+                "value": "5"
+              }
+            },
+            {
+              "name": "spent",
+              "value": {
+                "kind": "native",
+                "value": "42"
+              }
+            },
+            {
+              "name": "tag",
+              "value": {
+                "kind": "bytes",
+                "values": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "height": 80956,
+        "finalizedHeight": 80956,
+        "blockHash": "ec771974232bb66fec78089931402dcf8d6adb15991514348f319a100a376379",
+        "finalizedHash": "ec771974232bb66fec78089931402dcf8d6adb15991514348f319a100a376379",
+        "transactionId": "4505e2c74759d476dd2691f4caf7f1836fdeb99d343c2042dfde104456ff41f9",
+        "stateBytes": 2916,
+        "stateSha256": "dfb791de7cbf93d0f2accdb6e458ae7b8d60c6a777be2c54e0e26881a6a27c5f"
+      }
+    },
+    {
+      "entrypoint": "update",
+      "enabled": true,
+      "attemptedRecord": {
+        "issued": "8",
+        "spent": "99",
+        "tag": [
+          128,
+          0,
+          255,
+          42
+        ]
+      },
+      "checkedReturns": {
+        "result": {
+          "kind": "struct",
+          "id": "GenericRecordCell.Ledger",
+          "fields": [
+            {
+              "name": "issued",
+              "value": {
+                "kind": "native",
+                "value": "8"
+              }
+            },
+            {
+              "name": "spent",
+              "value": {
+                "kind": "native",
+                "value": "99"
+              }
+            },
+            {
+              "name": "tag",
+              "value": {
+                "kind": "bytes",
+                "values": [
+                  128,
+                  0,
+                  255,
+                  42
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "height": 80959,
+        "finalizedHeight": 80959,
+        "blockHash": "5a457a9209b3286785f8cc97db821daf1ba9ee7398d701e308e9d033f86db489",
+        "finalizedHash": "5a457a9209b3286785f8cc97db821daf1ba9ee7398d701e308e9d033f86db489",
+        "transactionId": "9369ba10174ff15390d4e9811e0ed6c6e26a6e6f0c18599f1058b0d24f5ac024",
+        "stateBytes": 2916,
+        "stateSha256": "2200660c6b6b56c783d09c2b96c1db244a628de646b020c5ba09e2c290af137d"
+      }
+    },
+    {
+      "entrypoint": "inspect",
+      "checkedReturns": {
+        "result": {
+          "kind": "struct",
+          "id": "GenericRecordCell.Ledger",
+          "fields": [
+            {
+              "name": "issued",
+              "value": {
+                "kind": "native",
+                "value": "8"
+              }
+            },
+            {
+              "name": "spent",
+              "value": {
+                "kind": "native",
+                "value": "99"
+              }
+            },
+            {
+              "name": "tag",
+              "value": {
+                "kind": "bytes",
+                "values": [
+                  128,
+                  0,
+                  255,
+                  42
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "height": 80962,
+        "finalizedHeight": 80962,
+        "blockHash": "aad152eb1bb66e7451a59a56c0d4e58559fd814e7e75a416d0df6c27d3791a16",
+        "finalizedHash": "aad152eb1bb66e7451a59a56c0d4e58559fd814e7e75a416d0df6c27d3791a16",
+        "transactionId": "8b8297efe44011e88c79f7468d43c014b8ca2795ad6cbc199b2f442293cc2c81",
+        "stateBytes": 2916,
+        "stateSha256": "2200660c6b6b56c783d09c2b96c1db244a628de646b020c5ba09e2c290af137d"
+      }
+    }
+  ],
+  "constructorStateMatchedNativePlan": true,
+  "disabledUpdatePreservedExactStateBytes": true,
+  "enabledUpdateStoredExactRecord": true,
+  "finalizedStateMatchedNativeExecution": true,
+  "outOfRangeByteRejectedBeforeSubmission": true,
+  "artifactSha256": {
+    "inspect": {
+      "circuit": "79a3a439ad4ffecd2e3c5ad8d6d145e77cab42fea4ef45114be54dd8b64c10f3",
+      "plan": "0187bed3ce6dfbf659c132cbbbede8f101718f393000e46155b44349b9353cc2",
+      "ledgerParameters": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+      "verifierKey": "dc79bfb001809cf72a12191c80498ab809e34403efe3263c723ed8151b1bed40"
+    },
+    "update": {
+      "circuit": "60f51db66b1a5dd89ea887021e525a617fb2e1b8d04054c1b91a37baadb2adfb",
+      "plan": "ec861cd323012052441e3f2a3c8d1d947b1102d91a40359a3886d077ea1d6e99",
+      "ledgerParameters": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+      "verifierKey": "a26b94e624fc94ffec22f2691f3eab0d6b703be4a93d3b83a41c7d652f406d20"
+    }
+  }
+}
