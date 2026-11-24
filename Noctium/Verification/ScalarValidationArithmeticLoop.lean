@@ -32,6 +32,27 @@ theorem argument_native_of_state {state : State} {raw : Json} {name : String}
       exact nativeDefinitions text _ (lookup_member found)
     · contradiction
 
+/-- A producer Copy aliases one already defined scalar fact under a fresh
+output name. The producer itself accepts foreign copies too, so callers must
+carry the native-definition invariant to establish this scalar subset. -/
+theorem accepted_copy_components {expected : Expected} {state next : State}
+    {raw : Json}
+    (nativeDefinitions : NativeDefinitions state)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "copy")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ∃ value,
+      argument state raw "val" = .ok value ∧ value.valueType = .native ∧
+      defineResult state raw value = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "copy" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp [bind_ok] at accepted
+  rcases accepted with ⟨_, value, valueAccepted, defined⟩
+  have valueNative := argument_native_of_state nativeDefinitions valueAccepted
+  exact ⟨value, valueAccepted, valueNative, defined⟩
+
 theorem accepted_add_components {expected : Expected} {state next : State}
     {raw : Json}
     (nativeDefinitions : NativeDefinitions state)
