@@ -25,6 +25,18 @@ initialize noctiumNominalUIntTypeRegistry : SimplePersistentEnvExtension
     addEntryFn := Array.push
   }
 
+/-- Source-only labels for ordinary Field values represented by Native. -/
+structure NominalFieldType where
+  name : String
+  deriving Repr, BEq, DecidableEq
+
+initialize noctiumNominalFieldTypeRegistry : SimplePersistentEnvExtension
+    (String × NominalFieldType) (Array (String × NominalFieldType)) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
 /-- Source-only labels for Midnight address and key values represented by
 Bytes32 expressions at circuit and native boundaries. -/
 inductive NominalBytes32 where
@@ -52,6 +64,9 @@ structure CircuitInfo where
   /-- Source-only nominal UInt identities for circuit inputs and outputs. -/
   nominalUIntInputs : List (String × NominalUIntType) := []
   nominalUIntOutputs : List (String × NominalUIntType) := []
+  /-- Source-only nominal Field identities on ordinary circuit parameters/results. -/
+  nominalFieldInputs : List (String × NominalFieldType) := []
+  nominalFieldOutputs : List (String × NominalFieldType) := []
   /-- Interface identities on byte-encoded contract addresses. -/
   contractRefBindings : List (String × Name) := []
   /-- Logical witness-circuit results retained when a grouped helper result is
@@ -729,6 +744,7 @@ private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
 private structure CircuitSourceType where
   type : Ty
   nominalUInt : Option NominalUIntType := none
+  nominalField : Option NominalFieldType := none
   contractRef : Option Name := none
 
 private def readCircuitSourceType (stx : TSyntax `nltype) : CommandElabM CircuitSourceType := do
@@ -740,6 +756,12 @@ private def readCircuitSourceType (stx : TSyntax `nltype) : CommandElabM Circuit
     if (← interfaceMethods name).isEmpty then
       throwErrorAt interface s!"'{name}' is not a declared contract interface"
     return {type := .bytes 32, contractRef := some name}
+  if let `(nltype| $name:ident) := stx then
+    let registry := noctiumNominalFieldTypeRegistry.getState (← getEnv)
+    let current := ((← getCurrNamespace) ++ name.getId).toString
+    if let some (_, declaration) := registry.find? (·.1 == current) <|>
+        registry.find? (·.1 == name.getId.toString) then
+      return {type := .native, nominalField := some declaration}
   if let some name := nominalUIntTypeIdentifier stx then
     let declaration ← resolveNominalUIntType name.getId name
     return {type := .uint declaration.maximum, nominalUInt := some declaration}
@@ -2047,6 +2069,95 @@ private def checkedCircuitSourceExpression (env : Bindings) (nominalEnv : Circui
     throwErrorAt stx "nominal UInt values require an explicit cast and must match the target type"
   coerceExpression stx found target.type value
 
+private partial def hasCircuitNominalFieldReference (env : List (String × Option NominalFieldType))
+    (stx : Syntax) : _root_.Bool :=
+  match stx with
+  | .ident _ _ name _ => env.any fun (binding, nominal) =>
+      binding == name.toString && nominal.isSome
+  | .node _ _ children => children.toList.any (hasCircuitNominalFieldReference env)
+  | _ => _root_.Bool.false
+
+/-- Ordinary circuits keep nominal Field aliases in this source-only side channel.
+The generated expression and ABI both remain Native. -/
+private partial def circuitFieldExpression (env : Bindings)
+    (fieldEnv : List (String × Option NominalFieldType)) (stx : TSyntax `nlexpr) :
+    CommandElabM (Ty × TSyntax `term × Option NominalFieldType) := do
+  match stx with
+  | `(nlexpr| cast($target:nltype, $value:nlexpr)) => do
+    let target ← readCircuitSourceType target
+    let (source, value, _) ← circuitFieldExpression env fieldEnv value
+    unless source == .native && target.type == .native do
+      throwErrorAt stx "nominal Field casts require Native representation"
+    pure (.native, ← `(Noctium.Expr.cast Noctium.Ty.native $value), target.nominalField)
+  | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
+    let (valueType, valueTerm, valueField) ← circuitFieldExpression env fieldEnv value
+    let valueTypeTerm ← tyTerm valueType
+    let valueRef ← `(Noctium.Expr.ref (ty := $valueTypeTerm) $(stringTerm id.getId.toString))
+    let bodyEnv := (id.getId.toString, valueType, valueRef) :: env.filter
+      (fun binding => binding.1 != id.getId.toString)
+    let bodyFields := (id.getId.toString, valueField) :: fieldEnv.filter
+      (fun binding => binding.1 != id.getId.toString)
+    let (bodyType, bodyTerm, bodyField) ← circuitFieldExpression bodyEnv bodyFields body
+    pure (bodyType, ← `(Noctium.Expr.letE $(stringTerm id.getId.toString) $valueTerm $bodyTerm), bodyField)
+  | `(nlexpr| disclose($value)) => do
+    let (type, term, nominalField) ← circuitFieldExpression env fieldEnv value
+    pure (type, ← `(Noctium.Expr.disclose $(← spanTerm stx) $term), nominalField)
+  | `(nlexpr| copyValue($value)) => do
+    let (type, term, nominalField) ← circuitFieldExpression env fieldEnv value
+    pure (type, ← `(Noctium.Expr.copyValue $term), nominalField)
+  | `(nlexpr| $id:ident) => do
+    let some (_, type, value) := env.find? (fun binding => binding.1 == id.getId.toString)
+      | throwErrorAt id s!"unknown Noctium value '{id.getId}'"
+    pure (type, value, (fieldEnv.lookup id.getId.toString).join)
+  | `(nlexpr| add($left, $right)) | `(nlexpr| sub($left, $right)) | `(nlexpr| mul($left, $right)) => do
+    let (leftType, _leftTerm, leftField) ← circuitFieldExpression env fieldEnv left
+    let (rightType, _rightTerm, rightField) ← circuitFieldExpression env fieldEnv right
+    if leftField.isSome || rightField.isSome then
+      unless leftField == rightField && leftType == .native && rightType == .native do
+        throwErrorAt stx "nominal Field arithmetic requires matching nominal operands"
+      let (type, term) ← expression env stx
+      pure (type, term, leftField)
+    else
+      let (type, term) ← expression env stx
+      pure (type, term, none)
+  | `(nlexpr| eq($left, $right)) => do
+    let (leftType, leftTerm, leftField) ← circuitFieldExpression env fieldEnv left
+    let (rightType, rightTerm, rightField) ← circuitFieldExpression env fieldEnv right
+    if leftField.isSome || rightField.isSome then
+      unless leftField == rightField && leftType == .native && rightType == .native do
+        throwErrorAt stx "nominal Field equality requires matching nominal operands"
+      pure (.bool, ← `(Noctium.Expr.eq $leftTerm $rightTerm), none)
+    else
+      let (type, term) ← expression env stx
+      pure (type, term, none)
+  | `(nlexpr| select($condition, $yes, $no)) => do
+    let (conditionType, conditionTerm, conditionField) ← circuitFieldExpression env fieldEnv condition
+    unless conditionType == .bool && conditionField.isNone do throwErrorAt condition "select condition requires Bool"
+    let (yesType, yesTerm, yesField) ← circuitFieldExpression env fieldEnv yes
+    let (noType, noTerm, noField) ← circuitFieldExpression env fieldEnv no
+    if yesField.isSome || noField.isSome then
+      unless yesField == noField && yesType == .native && noType == .native do
+        throwErrorAt stx "select branches require the same nominal Field type"
+    let type ← commonType stx yesType noType
+    let yesTerm ← coerceExpression stx yesType type yesTerm
+    let noTerm ← coerceExpression stx noType type noTerm
+    pure (type, ← `(Noctium.Expr.select $conditionTerm $yesTerm $noTerm), yesField)
+  | _ =>
+    if !hasCircuitNominalFieldReference fieldEnv stx.raw then
+      let (type, value) ← expression env stx
+      return (type, value, none)
+    throwErrorAt stx "nominal Field values require an explicit cast before this operation"
+
+private def checkedCircuitFieldExpression (env : Bindings)
+    (fieldEnv : List (String × Option NominalFieldType)) (stx : TSyntax `nlexpr)
+    (target : CircuitSourceType) : CommandElabM (TSyntax `term) := do
+  if target.nominalField.isNone && !hasCircuitNominalFieldReference fieldEnv stx.raw then
+    return ← checkedExpression env stx target.type
+  let (found, value, nominalField) ← circuitFieldExpression env fieldEnv stx
+  unless nominalField == target.nominalField do
+    throwErrorAt stx "nominal Field values require an explicit cast and must match the target type"
+  coerceExpression stx found target.type value
+
 private def bindContractRef (bindings : List (String × Name)) (name : String)
     (interface : Option Name) : List (String × Name) :=
   let rest := bindings.filter (·.1 != name)
@@ -2330,11 +2441,14 @@ private unsafe def checkGeneratedContract (name : Name)
     let mut inputInfo := []
     let mut publicInputInfo := []
     let mut nominalUIntInputInfo := []
+    let mut nominalFieldEnv : List (String × Option NominalFieldType) := []
+    let mut nominalFieldInputInfo := []
     let mut contractRefEnv : List (String × Name) := []
     let mut contractRefInfo : List (String × Name) := []
     let mut outputs : Array (TSyntax `term) := #[]
     let mut outputInfo : List (String × Ty) := []
     let mut nominalUIntOutputInfo := []
+    let mut nominalFieldOutputInfo := []
     let mut constraints : Array (TSyntax `term) := #[]
     for stmt in stmts do
       match stmt with
@@ -2350,19 +2464,26 @@ private unsafe def checkGeneratedContract (name : Name)
         inputs := inputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
         env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        nominalFieldEnv := (id.getId.toString, sourceType.nominalField) ::
+          nominalFieldEnv.filter (·.1 != id.getId.toString)
         contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
         if let some interface := sourceType.contractRef then
           contractRefInfo := (id.getId.toString, interface) :: contractRefInfo
         inputInfo := inputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntInputInfo := nominalUIntInputInfo ++ [(id.getId.toString, nominalUInt)]
+        if let some nominalField := sourceType.nominalField then
+          nominalFieldInputInfo := nominalFieldInputInfo ++ [(id.getId.toString, nominalField)]
         if isPublic then publicInputInfo := publicInputInfo ++ [(id.getId.toString, t)]
       | `(nlcstmt| let $id:ident : $ty:nltype := $value:nlexpr) =>
         ensureFresh env id
         let sourceType ← readCircuitSourceType ty
         let t := sourceType.type
         let retain := (match t with | .uint _ => Bool.true | _ => Bool.false) || hasPartialScalar value
-        let value ← checkedSourceValue env nominalEnv contractRefEnv value sourceType
+        let value ← if sourceType.nominalField.isSome ||
+            hasCircuitNominalFieldReference nominalFieldEnv value.raw then
+          checkedCircuitFieldExpression env nominalFieldEnv value sourceType
+        else checkedSourceValue env nominalEnv contractRefEnv value sourceType
         if retain then
           -- Equality keeps partial range/underflow checks in unused bindings.
           -- Byte expressions have no equality operator on the source surface, so
@@ -2375,22 +2496,30 @@ private unsafe def checkGeneratedContract (name : Name)
             constraints := constraints.push (← `(Noctium.Expr.eq $value $value))
         env := (id.getId.toString, t, value) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        nominalFieldEnv := (id.getId.toString, sourceType.nominalField) ::
+          nominalFieldEnv.filter (·.1 != id.getId.toString)
         contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
       | `(nlcstmt| assert $value:nlexpr) =>
-        constraints := constraints.push (← checkedSourceValue env nominalEnv contractRefEnv value
-          {type := .bool})
+        constraints := constraints.push (← if hasCircuitNominalFieldReference nominalFieldEnv value.raw then
+          checkedCircuitFieldExpression env nominalFieldEnv value {type := .bool}
+          else checkedSourceValue env nominalEnv contractRefEnv value {type := .bool})
       | `(nlcstmt| output $id:ident : $ty:nltype := $value:nlexpr) =>
         if outputInfo.any (fun p => p.1 == id.getId.toString) || inputInfo.any (fun p => p.1 == id.getId.toString) then
           throwErrorAt id "duplicate Noctium output '{id.getId}'"
         let sourceType ← readCircuitSourceType ty
         let t := sourceType.type
         let tt ← tyTerm t
-        let value ← checkedSourceValue env nominalEnv contractRefEnv value sourceType
+        let value ← if sourceType.nominalField.isSome ||
+            hasCircuitNominalFieldReference nominalFieldEnv value.raw then
+          checkedCircuitFieldExpression env nominalFieldEnv value sourceType
+        else checkedSourceValue env nominalEnv contractRefEnv value sourceType
         let span ← spanTerm stmt
         outputs := outputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, value := $value, span := $span : Noctium.Output }))
         outputInfo := outputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntOutputInfo := nominalUIntOutputInfo ++ [(id.getId.toString, nominalUInt)]
+        if let some nominalField := sourceType.nominalField then
+          nominalFieldOutputInfo := nominalFieldOutputInfo ++ [(id.getId.toString, nominalField)]
         if let some interface := sourceType.contractRef then
           contractRefInfo := (id.getId.toString, interface) :: contractRefInfo
       | _ => throwErrorAt stmt "unsupported Noctium circuit statement"
@@ -2405,6 +2534,8 @@ private unsafe def checkGeneratedContract (name : Name)
       outputs := outputInfo
       nominalUIntInputs := nominalUIntInputInfo
       nominalUIntOutputs := nominalUIntOutputInfo
+      nominalFieldInputs := nominalFieldInputInfo
+      nominalFieldOutputs := nominalFieldOutputInfo
       contractRefBindings := contractRefInfo
     }
   | _ => throwUnsupportedSyntax
