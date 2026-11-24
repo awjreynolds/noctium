@@ -340,6 +340,46 @@ theorem private_input_step_meaning {hash : Hash} {inputs witness : Assignment}
     change StateMeaning hash inputs witness definedState
     exact define_meaning invariant (input_fact_meaning inputEq) defined
 
+/-- A conditional source-bound ledger input installs the same input term as an
+unconditional one. The producer separately checks that its declared guard is
+the already-defined Boolean term selected by the source. -/
+theorem guarded_public_input_step_meaning {hash : Hash} {inputs witness : Assignment}
+    {expected : Expected} {state next : State} {raw : Lean.Json}
+    {requirement : InputRequirement} {guardTerm : Term}
+    (invariant : StateMeaning hash inputs witness state)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (inputAgreement : witness requirement.identifier = inputs requirement.identifier)
+    (opcodeParsed : stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    StateMeaning hash inputs witness next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq : opcode = "public_input" := Except.ok.inj (op.symm.trans opcodeParsed)
+  simp only [opcodeEq, selected] at accepted
+  split at accepted
+  · simp_all [Ty.isForeign]
+  · simp only [guarded] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+      _, _, guardJson, guardParsed, _, guardChecked, _, _, _, _, output, outputParsed,
+      _, schema, definedState, defined, result⟩
+    cases valueParsed
+    have outputEq : output = requirement.identifier := eq_of_beq
+      (Bool.and_eq_true_iff.mp (ensure_ok.mp schema)).1
+    have inputEq : witness output = inputs output := by
+      rw [outputEq]
+      exact inputAgreement
+    let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
+    have nextEq : nextState = next := by
+      change Except.ok nextState = .ok next at result
+      exact Except.ok.inj result
+    subst next
+    change StateMeaning hash inputs witness definedState
+    exact define_meaning invariant (input_fact_meaning inputEq) defined
+
 theorem combine_meaning {hash : Hash} {inputs witness : Assignment}
     {term : Term} {maximum : Nat} {children : List Fact} {fact : Fact}
     {value : Scalar}
