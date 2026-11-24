@@ -113,6 +113,24 @@ List element's nominal type and orders the tag before the record fields.
 The paired fixture checks an empty List and a List seeded with `{17, 23}`.
 [Compact runner](../../tests/compact/record-list-head-maybe.mjs) · [Native checker](../../runtime/tests/record_list_head_maybe.rs)
 
+## Opaque List heads
+
+Root Lists accept `OpaqueString` and `OpaqueBytes`. The ledger stores each
+payload as one FAB Compress atom. Use `headOrDefault` followed by
+`returnMaybe` to return a Boolean tag and the exact typed value. An absent
+head carries an empty string or byte array. An active empty pop writes
+`Null`, and the next read rejects.
+
+Private byte inputs require `disclose` at the write. Opaque string
+circuit inputs currently require public visibility.
+
+The paired check exercises LIFO order, embedded NUL and zero bytes,
+trailing-zero rejection, and altered public inputs and returns. The test
+uses fresh ZKIR 3.2.1 and the native Ledger 9 checker.
+[Lean fixture](../../tests/OpaqueLists.lean) ·
+[Compact oracle](../../tests/compact/opaque-lists.mjs) ·
+[Native checker](../../runtime/tests/opaque_lists.rs)
+
 ## Check emptiness for zero-width and nested record Lists
 
 The paired fixture compares an empty `List<Bytes<0>>` with a List containing

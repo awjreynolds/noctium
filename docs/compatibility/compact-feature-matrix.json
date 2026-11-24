@@ -633,7 +633,7 @@
       "layer": "language",
       "surface": "Opaque string and Uint8Array",
       "noctiumStatus": "subset",
-      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field. Same-kind opaque equality matches the pinned Compact return and ledger Bool update for the exercised canonical inputs. ZKIR compares the Compress fields; mixed kinds, implicit disclosure and a changed return reject.",
+      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field. Same-kind opaque equality matches the pinned Compact return and ledger Bool update for the exercised canonical inputs. ZKIR compares the Compress fields; mixed kinds, implicit disclosure and a changed return reject. A paired root List case stores both opaque types as Compress, returns typed Maybe heads, and rejects changed public payloads.",
       "source": [
         "reference"
       ],
@@ -642,6 +642,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/OpaqueLists.lean",
+        "tests/compact/opaque-lists.mjs",
+        "runtime/tests/opaque_lists.rs",
         "tests/OpaqueEquality.lean",
         "tests/compact/opaque-equality.mjs",
         "runtime/tests/opaque_equality.rs",
@@ -3514,7 +3517,7 @@
       "layer": "language-ledger",
       "surface": "List.head",
       "noctiumStatus": "subset",
-      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The native snapshot ABI exposes the optional scalar or record head for admitted root and nested paths. It validates List nodes with the paging reader and returns explicit absence for a valid empty List. The paired one-parent Map/List fixture checks head on A after pushes 11 and 22 over [5], then on A after one pop, while B remains [99]. A paired root List case returns an optional nested record with Native and Bool leaves. It preserves the inner field paths and canonical absent payload. A paired Lean and Compact fixture covers List<Bytes<0>>: empty head returns None with an empty value, push returns Some with an empty value, and popping the populated list restores None. `returnMaybe` keeps the logical `value` typed as Bytes0 while the physical return view contains only its Bool tag. The fresh Native 3.2.1 Rust check matches Compact's typed results, then confirms that popping an already empty List writes Null and a following read rejects.",
+      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The native snapshot ABI exposes the optional scalar or record head for admitted root and nested paths. It validates List nodes with the paging reader and returns explicit absence for a valid empty List. The paired one-parent Map/List fixture checks head on A after pushes 11 and 22 over [5], then on A after one pop, while B remains [99]. A paired root List case returns an optional nested record with Native and Bool leaves. It preserves the inner field paths and canonical absent payload. A paired Lean and Compact fixture covers List<Bytes<0>>: empty head returns None with an empty value, push returns Some with an empty value, and popping the populated list restores None. `returnMaybe` keeps the logical `value` typed as Bytes0 while the physical return view contains only its Bool tag. The fresh Native 3.2.1 Rust check matches Compact's typed results, then confirms that popping an already empty List writes Null and a following read rejects. A paired root opaque List case returns a Bool tag and exact typed OpaqueString or OpaqueBytes payload. It checks empty defaults and populated heads after each push and pop.",
       "source": [
         "adt"
       ],
@@ -3524,6 +3527,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/OpaqueLists.lean",
+        "tests/compact/opaque-lists.mjs",
+        "runtime/tests/opaque_lists.rs",
         "tests/NestedRecordList.lean",
         "tests/compact/nested-record-list.mjs",
         "runtime/tests/nested_record_list.rs",
@@ -3623,7 +3629,7 @@
       "layer": "language-ledger",
       "surface": "List.popFront",
       "noctiumStatus": "subset",
-      "notes": "Removes a nonempty head from a standalone or nested scalar or named-record List. The matched Native and Bytes128 case checks the next value and length. Pinned Compact 0.36.1 and Runtime 0.21.0 accept an active pop from an initialized empty root or nested List and store native Null, after which head rejects. The pinned Ledger 9 List_pop_front fragment independently writes Null to the selected slot or Map entry when executed directly in QueryContext. Sibling state is preserved and an absent Map key fails. Noctium source evaluation and the emitted ZKIR 3.2.1 native case also write Null for an active empty pop and reject typed reads of the resulting value. Both skip a guarded-off pop through an absent parent and reject an active lookup of an absent parent. The paired one-parent Map/List fixture pops A from [22,11,5] to [11,5] and confirms B remains [99] in both Compact and the native checker. The paired root List case pops two nested records in reverse insertion order and observes an absent head after both removals.",
+      "notes": "Removes a nonempty head from a standalone or nested scalar or named-record List. The matched Native and Bytes128 case checks the next value and length. Pinned Compact 0.36.1 and Runtime 0.21.0 accept an active pop from an initialized empty root or nested List and store native Null, after which head rejects. The pinned Ledger 9 List_pop_front fragment independently writes Null to the selected slot or Map entry when executed directly in QueryContext. Sibling state is preserved and an absent Map key fails. Noctium source evaluation and the emitted ZKIR 3.2.1 native case also write Null for an active empty pop and reject typed reads of the resulting value. Both skip a guarded-off pop through an absent parent and reject an active lookup of an absent parent. The paired one-parent Map/List fixture pops A from [22,11,5] to [11,5] and confirms B remains [99] in both Compact and the native checker. The paired root List case pops two nested records in reverse insertion order and observes an absent head after both removals. The paired root opaque List fixture checks LIFO removal and an active empty pop that stores Null, after which a head read rejects.",
       "source": [
         "adt"
       ],
@@ -3633,6 +3639,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/OpaqueLists.lean",
+        "tests/compact/opaque-lists.mjs",
+        "runtime/tests/opaque_lists.rs",
         "tests/NestedRecordList.lean",
         "tests/compact/nested-record-list.mjs",
         "runtime/tests/nested_record_list.rs",
@@ -3660,7 +3669,7 @@
       "layer": "language-ledger",
       "surface": "List.pushFront",
       "noctiumStatus": "subset",
-      "notes": "Prepends a scalar or named record to a standalone or nested List. Public writes require explicit disclosure of private values and activity. The scalar fixture covers Native, Bytes0 and Bytes128, including a present zero-byte element. Named-record evidence covers Native, Bytes32 and JubjubPoint fields. General aggregate and coin element shapes remain open. The paired one-parent Map/List fixture starts with A [5] and B [99], then pushes 11 and 22 onto A. Both pinned Compact and the native checker observe A [22,11,5] with B [99] intact. A paired root List case checks writes and LIFO order for one nested record level with Native and Bool leaves. The paired root record List constructor also checks ordered initial pushes and an inactive guarded push.",
+      "notes": "Prepends a scalar or named record to a standalone or nested List. Public writes require explicit disclosure of private values and activity. The scalar fixture covers Native, Bytes0 and Bytes128, including a present zero-byte element. Named-record evidence covers Native, Bytes32 and JubjubPoint fields. General aggregate and coin element shapes remain open. The paired one-parent Map/List fixture starts with A [5] and B [99], then pushes 11 and 22 onto A. Both pinned Compact and the native checker observe A [22,11,5] with B [99] intact. A paired root List case checks writes and LIFO order for one nested record level with Native and Bool leaves. The paired root record List constructor also checks ordered initial pushes and an inactive guarded push. The paired root opaque List fixture checks Compress storage, LIFO order, embedded zeros and rejection of trailing zeros and changed transcript fields.",
       "source": [
         "adt"
       ],
@@ -3670,6 +3679,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/OpaqueLists.lean",
+        "tests/compact/opaque-lists.mjs",
+        "runtime/tests/opaque_lists.rs",
         "tests/ConstructorRecordList.lean",
         "tests/compact/constructor-record-list.mjs",
         "runtime/tests/constructor_record_list.rs",
