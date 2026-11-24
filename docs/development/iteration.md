@@ -154,6 +154,11 @@ even when both callback result arms have unresolved types. A value used at a
 typed boundary still needs an element type.
 In a readable fold, the seed determines the omitted accumulator type.
 
+A paired map over witness vectors `[1, 2]` and `[10, 20]` calls the two providers
+in source order, then calls the operator for `(1, 10)` and `(2, 20)`. The
+pinned Compact comparator and the Noctium native relation both return 33.
+The fixed-sequence expansion limits still apply.
+
 The [empty-tuple fixture](../../tests/EmptyTupleIteration.lean) folds over the result
 of an empty map and another empty tuple, with omitted callback parameter types.
 The Rust host asks for the seed first,

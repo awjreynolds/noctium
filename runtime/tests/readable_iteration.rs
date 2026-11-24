@@ -39,6 +39,16 @@ fn items() -> Json {
     })
 }
 
+fn pair_items(first: &str, second: &str) -> Json {
+    json!({
+        "kind":"vector",
+        "items":[
+            {"kind":"uint","maximum":"255","value":first},
+            {"kind":"uint","maximum":"255","value":second}
+        ]
+    })
+}
+
 fn output(first: &str, second: &str, total: &str) -> Json {
     json!({
         "kind":"struct",
@@ -523,5 +533,64 @@ fn empty_map_tuple_equality_uses_only_the_empty_tuple_witness() -> anyhow::Resul
         check(&execution, &fixture.circuit)?,
         execution.activity_schedule
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableIteration outputs in NOCTIUM_READABLE_ITERATION_DIR"]
+fn two_provider_map_pairs_elements_by_index_and_matches_native_relation() -> anyhow::Result<()> {
+    let fixture = EmptyMapFixture::load(
+        "twoProviderMap",
+        "noctium.witness-circuit.twoProviderMap.v1",
+        &["pairLeftItems", "pairRightItems", "pairVisit", "pairVisit"],
+    )?;
+    let attempt_id = format!("{:064x}", 5);
+    let mut session = fixture.session(&attempt_id, "twoProviderMap", BTreeMap::new())?;
+
+    let callbacks = [
+        ("pairLeftItems", json!({}), pair_items("1", "2")),
+        ("pairRightItems", json!({}), pair_items("10", "20")),
+        (
+            "pairVisit",
+            json!({"left":"1","right":"10"}),
+            json!("11"),
+        ),
+        (
+            "pairVisit",
+            json!({"left":"2","right":"20"}),
+            json!("22"),
+        ),
+    ];
+    for (name, expected_arguments, value) in callbacks {
+        let pending = session.advance()?;
+        assert_eq!(pending["status"], "need_host");
+        assert_eq!(pending["request"]["name"], name);
+        assert_eq!(
+            session.private_request()?["arguments"],
+            expected_arguments,
+            "unexpected arguments for {name}"
+        );
+        session.resume_typed(reply(&pending["request"], &attempt_id, value)?)?;
+    }
+
+    let completed = session.advance()?;
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["result"], "33");
+
+    let completion = session.private_completion(&fixture.binding["nativeRelation"])?;
+    let inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
+    let initial = create_state(
+        &fixture.plan,
+        &BTreeMap::from([("total".into(), json!("0"))]),
+    )?;
+    let execution = prepare(
+        &fixture.plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(execution.returns_json()["sum"], "33");
+    assert_eq!(check(&execution, &fixture.circuit)?, execution.activity_schedule);
     Ok(())
 }

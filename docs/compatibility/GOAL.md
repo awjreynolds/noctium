@@ -33,7 +33,7 @@ The final assurance goals above remain release requirements. They must not block
 
 The stable feature reference is Compact toolchain 0.36.1, language 0.28.0, at source revision `7fa3a117c5e7efe9d2c51da04263e5f0b3509144`. The 17 November public-network client release lists the same version and ledger library 9.1.0.2. The networks run ledger 9.1.0.1. Noctium preserves its 3.2.0 default and provides a selectable ZKIR 3.2.1 compiler/runtime profile. An isolated exact-commit build produced authenticated bundles and finalized claim and scalar operations on localnet with matching state bytes. [Midnight release profile](https://docs.midnight.network/relnotes/ledger-9) · [Noctium 3.2.1 scope](../development/zkir-3.2.1-integrated.md) · [Midnight roadmap assessment](../research/midnight-roadmap.md)
 
-The [baseline report](../research/compact-equivalence-baseline.md) and [machine inventory](compact-feature-matrix.json) contain the source register, version distinctions, observed implementation gaps, and acceptance requirements. The initial 221 entries are inventory records, not independent delivery units or a percentage-complete score. All equivalence results are unverified.
+The [baseline report](../research/compact-equivalence-baseline.md) and [machine inventory](compact-feature-matrix.json) contain the source register, version distinctions, observed implementation gaps, and acceptance requirements. The baseline lists 221 inventory records with equivalence unverified. The machine inventory tracks which feature rows have since met their evidence requirements.
 
 ## Required outcomes
 

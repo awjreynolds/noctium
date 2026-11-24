@@ -64,6 +64,15 @@ const arithmeticWithoutItemType = compileProbe('empty-map-arithmetic-without-ite
 assert.notEqual(arithmeticWithoutItemType.status, 0,
   'Compact should reject callback arithmetic when an empty tuple leaves the item type unresolved');
 
+const mismatchedPairLengths = compileProbe('mismatched-map-sequences', `
+  export circuit mismatchedMapSequences(): Field {
+    const mapped = map((left, right) => pairVisit(left, right), pairLeftItems(), [1]);
+    return mapped[0];
+  }
+`);
+assert.notEqual(mismatchedPairLengths.status, 0);
+assert.match(`${mismatchedPairLengths.stderr}\n${mismatchedPairLengths.stdout}`, /length|size/);
+
 const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
 mkdirSync(dirname(runtimeLink), { recursive: true });
 symlinkSync(runtimeDirectory, runtimeLink, 'dir');
@@ -74,6 +83,8 @@ const { createCircuitContext, createConstructorContext, dummyContractAddress } =
 assert.equal(runtime.versionString, '0.21.0');
 
 const blockCalls = [];
+const pairCalls = [];
+const pairOrder = [];
 let blockOffset = 10n;
 const emptyNativeMapCalls = [];
 const emptyMapVisitCalls = [];
@@ -81,6 +92,19 @@ const contract = new Contract({
   iterationSeed: ({ privateState }) => [[...privateState, 'seed'], 7n],
   iterationBytes: ({ privateState }) => [[...privateState, 'bytes'], Uint8Array.from([4, 5])],
   iterationVisit: ({ privateState }, item) => [[...privateState, `visit:${item}`], item * 2n],
+  pairLeftItems: ({ privateState }) => {
+    pairOrder.push('leftItems');
+    return [[...privateState, 'leftItems'], [1n, 2n]];
+  },
+  pairRightItems: ({ privateState }) => {
+    pairOrder.push('rightItems');
+    return [[...privateState, 'rightItems'], [10n, 20n]];
+  },
+  pairVisit: ({ privateState }, left, right) => {
+    pairCalls.push(`${left}:${right}`);
+    pairOrder.push(`visit:${left}:${right}`);
+    return [[...privateState, `visit:${left}:${right}`], left + right];
+  },
   emptyTupleItems: ({ privateState }) => {
     emptyNativeMapCalls.push('emptyTupleItems');
     return [privateState, []];
@@ -121,6 +145,14 @@ assert.equal(result, 31n);
 assert.equal(total, 31n);
 assert.deepEqual(context.callContext.currentPrivateState, ['seed', 'bytes', 'visit:4', 'visit:5']);
 console.log(JSON.stringify({ result: result.toString(), total: total.toString(), order: context.callContext.currentPrivateState }));
+
+const pairMap = await contract.circuits.runPairMap(circuitContext('runPairMap'));
+assert.equal(pairMap.result, 33n);
+assert.deepEqual(pairCalls, ['1:10', '2:20']);
+assert.deepEqual(pairOrder, ['leftItems', 'rightItems', 'visit:1:10', 'visit:2:20']);
+assert.deepEqual(pairMap.context.callContext.currentPrivateState,
+  ['leftItems', 'rightItems', 'visit:1:10', 'visit:2:20']);
+console.log(JSON.stringify({ result: pairMap.result.toString(), order: pairOrder }));
 
 const runBlock = () => contract.circuits.runBlock(createCircuitContext({
   circuitId: 'runBlock', contractAddress: dummyContractAddress(), coinPublicKeyOrZswapState: wallet,

@@ -5,6 +5,9 @@ export ledger total: Field;
 witness iterationSeed(): Field;
 witness iterationBytes(): Bytes<2>;
 witness iterationVisit(item: Uint<8>): Field;
+witness pairLeftItems(): Vector<2, Field>;
+witness pairRightItems(): Vector<2, Field>;
+witness pairVisit(left: Field, right: Field): Field;
 witness emptyTupleItems(): [];
 witness emptyMapVisit(item: Field): Field;
 witness acceptEmptyNativeVector(values: Vector<0, Field>): Field;
@@ -17,6 +20,11 @@ export circuit update(offset: Field): Field {
     map((item) => iterationVisit(item), iterationBytes()));
   total = disclose(sum);
   return disclose(sum);
+}
+
+export circuit runPairMap(): Field {
+  const mapped = map((left, right) => pairVisit(left, right), pairLeftItems(), pairRightItems());
+  return disclose(fold((acc, value) => acc + value, 0 as Field, mapped));
 }
 
 export circuit runBlock(seed: Field): [Field, Field, Field] {
