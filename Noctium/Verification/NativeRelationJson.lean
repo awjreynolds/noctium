@@ -77,6 +77,16 @@ def decodeImmediate (text : String) : Except String Nat := do
 def validIdentifier (name : String) : Bool :=
   name.startsWith "%" && name.length > 1 && name.utf8ByteSize ≤ 1024
 
+/-- A percent-prefixed SSA reference cannot be parsed as a hexadecimal
+immediate. -/
+theorem reference_not_immediate {text : String} (reference : text.startsWith "%" = true) :
+    text.startsWith "0x" = false := by
+  have prefixed : ['%'] <+: text.toList := by simpa using reference
+  rcases prefixed with ⟨tail, equal⟩
+  apply String.startsWith_string_eq_false_iff.mpr
+  rw [← equal]
+  simp
+
 private theorem digitChar_byteSize (digit : Nat) (single : digit < 10) :
     (String.singleton digit.digitChar).utf8ByteSize = 1 := by
   have decimal : ∀ digit : Fin 10,

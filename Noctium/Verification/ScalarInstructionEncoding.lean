@@ -1,5 +1,4 @@
 import Noctium.Verification.ScalarImmediate
-import Noctium.Verification.ScalarValidation
 
 namespace Noctium.Verification.ScalarInstructionEncoding
 
@@ -22,7 +21,7 @@ theorem OperandEncoding.decode {text : String} {value : Operand}
   | reference name valid =>
     have starts : text.startsWith "%" = true :=
       (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp valid).1).1
-    have notImmediate := ScalarValidation.reference_not_immediate starts
+    have notImmediate := NativeRelationJson.reference_not_immediate starts
     unfold NativeRelationJson.decodeOperand
     change (if text.startsWith "0x" then
       (do return Operand.immediate (scalar (← NativeRelationJson.decodeImmediate text))) else
@@ -293,35 +292,11 @@ theorem fresh_name_injective {left right : Nat} (same : s!"%v{left}" = s!"%v{rig
   change "%v" ++ left.repr = "%v" ++ right.repr at same
   exact Nat.repr_injective ((String.append_right_inj "%v").mp same)
 
-set_option maxRecDepth 20000 in
-set_option maxHeartbeats 4000000 in
-private theorem fresh_identifier_table : ∀ index : Fin (Native.maxInstructions + 1),
-    index.val.repr.utf8ByteSize ≤ 1022 := by decide
-
 /-- The actual producer's instruction budget bounds the generated SSA names. -/
 theorem fresh_identifier (index : Nat) (bounded : index ≤ Native.maxInstructions) :
     NativeRelationJson.validIdentifier s!"%v{index}" = true := by
-  have size := fresh_identifier_table ⟨index, by omega⟩
-  change index.repr.utf8ByteSize ≤ 1022 at size
-  change NativeRelationJson.validIdentifier ("%v" ++ index.repr) = true
-  unfold NativeRelationJson.validIdentifier
-  have starts : ("%v" ++ index.repr).startsWith "%" = true := by
-    apply String.startsWith_string_iff.mpr
-    rw [String.toList_append]
-    have head : "%v".toList = ['%', 'v'] := by decide
-    have marker : "%".toList = ['%'] := by decide
-    rw [head, marker]
-    exact ⟨'v' :: index.repr.toList, rfl⟩
-  have length : ("%v" ++ index.repr).length > 1 := by
-    rw [String.length_append]
-    have head : "%v".length = 2 := by decide
-    rw [head]
-    omega
-  have bytes : ("%v" ++ index.repr).utf8ByteSize ≤ 1024 := by
-    rw [String.utf8ByteSize_append]
-    have head : "%v".utf8ByteSize = 2 := by decide
-    rw [head]
-    omega
-  simp only [starts, length, bytes, decide_true, Bool.true_and]
+  apply NativeRelationJson.generatedIdentifier_valid
+  have budget : Native.maxInstructions < 10 ^ 8 := by decide
+  omega
 
 end Noctium.Verification.ScalarInstructionEncoding
