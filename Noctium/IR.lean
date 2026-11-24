@@ -1801,11 +1801,12 @@ where
       for (_, ty) in fields do
         validateStateScalar caps ty
 
-/-- Validate a root Cell tree value. Nested composites still use the generic
-schema validator, so typed records do not spread into Map values. -/
+/-- Validate a root tree value. Nested composites still use the generic schema
+validator, so root-only opaque string handling does not spread into Map values. -/
 def LedgerValueType.validateCellRoot (caps : Capabilities)
     (schema : LedgerValueType) : Except String Unit := do
   match schema with
+  | .list _ (.scalar .opaqueString) => Ty.validate caps .opaqueString
   | .composite environment type => do
     let fields ← LedgerValueType.cellRecordFields environment type
     for (_, ty) in fields do

@@ -3098,9 +3098,10 @@ fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> R
             .ok_or_else(|| anyhow!("invalid list element schema"))?;
         ensure!(parts.len() == 1, "invalid list element schema");
         if let Some(ty) = parts.get("scalar").and_then(Json::as_str) {
+            let ty = validate_tree_scalar_type(ty)?;
             ensure!(
-                validate_tree_scalar_type(ty)? != ScalarType::OpaqueString,
-                "OpaqueString is only supported as a Bytes32-keyed Map value"
+                ty != ScalarType::OpaqueString || depth == 0,
+                "OpaqueString Lists are only supported at the root"
             );
             return Ok(());
         }
@@ -6250,7 +6251,7 @@ fn scalar_storage_alignment(ty: &ScalarType) -> String {
     match ty {
         ScalarType::Bytes32 => "bytes32".to_owned(),
         ScalarType::Bytes(length) => format!("bytes:{length}"),
-        ScalarType::OpaqueBytes => "compress".to_owned(),
+        ScalarType::OpaqueBytes | ScalarType::OpaqueString => "compress".to_owned(),
         _ => "field".to_owned(),
     }
 }

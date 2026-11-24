@@ -57,6 +57,8 @@ private def ledgerFieldAtomCount : LedgerFieldExpr → Nat
 private def ledgerFieldTags : LedgerFieldExpr → List Scalar
   | .mk (.bytes 0) value => [.letE "_noctium_empty_bytes" value (.native 0)]
   | .mk (.bytes length) _ => [.native length]
+  | .mk .opaqueBytes _ => [.native (Field.modulus - 1)]
+  | .mk .opaqueString _ => [.native (Field.modulus - 1)]
   | .mk .jubjubPoint _ => List.replicate 2 (.native (Field.modulus - 2))
   | .mk (.foreign kind) _ => List.replicate kind.encodedFieldCount (.native (Field.modulus - 2))
   | .mk _ _ => [.native (Field.modulus - 2)]
