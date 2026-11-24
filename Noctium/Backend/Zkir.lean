@@ -3242,6 +3242,26 @@ def lowerEntrypointAliases (entry : Entrypoint) : LowerM Unit := do
       let value ← lowerExpr value
       modify fun s => {s with aliases := (name, value) :: s.aliases}
 
+/-- Compose the output-capacity frame across every typed alias path in the
+entrypoint output loop. The expression lowerers supply their own frame proofs. -/
+theorem lowerEntrypointAliases_preservesOutputCapacityFrame (entry : Entrypoint)
+    (frames : ∀ output ∈ entry.circuit.outputs, match output with
+      | {ty := .bytes _, value, ..} => PreservesOutputCapacityFrame (lowerBytes value)
+      | {ty := .opaqueBytes, value, ..} => PreservesOutputCapacityFrame (lowerOpaqueBytes value)
+      | {ty := .opaqueString, value, ..} => PreservesOutputCapacityFrame (lowerOpaqueString value)
+      | {value, ..} => PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerEntrypointAliases entry) := by
+  unfold lowerEntrypointAliases
+  apply forIn_preservesOutputCapacityFrame_of_mem
+  intro output member _
+  have frame := frames output member
+  cases output with
+  | mk name ty value span =>
+    cases ty <;>
+      apply bind_preservesOutputCapacityFrame _ _ frame <;>
+      intro lowered <;>
+      exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
+
 private def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
   for scalarRead in Impact.Read.scalarReads read do
     let activity ← (match scalarRead.guard with
