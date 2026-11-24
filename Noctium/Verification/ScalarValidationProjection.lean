@@ -306,4 +306,20 @@ theorem validate_driver_result_empty_seed {expected : Expected} {program : Json}
   cases facts.emptyRawSeed noRawInputs
   exact ⟨instructions, rawInputs, final, facts⟩
 
+/-- An independently parsed empty header establishes the empty initial
+state through the actual producer's raw-input count and seeding checks. -/
+theorem validate_driver_result_empty_header {expected : Expected} {program : Json}
+    (accepted : validate expected program = .ok ())
+    (header : arrayField program "inputs" = .ok #[]) :
+    expected.rawInputs = [] ∧
+      ∃ instructions : Array Json, ∃ final : State,
+        NativeValidationDriverFacts expected program instructions #[] {} final := by
+  obtain ⟨instructions, rawInputs, seed, final, facts⟩ := validate_driver_result accepted
+  have rawEmpty := Except.ok.inj (facts.rawInputsParsed.symm.trans header)
+  have requiredEmpty : expected.rawInputs = [] := List.length_eq_zero_iff.mp (by
+    simpa [rawEmpty] using facts.rawInputCount.symm)
+  have seedEmpty := facts.emptyRawSeed requiredEmpty
+  subst rawInputs seed
+  exact ⟨requiredEmpty, instructions, final, facts⟩
+
 end Noctium.Verification.ScalarValidationProjection

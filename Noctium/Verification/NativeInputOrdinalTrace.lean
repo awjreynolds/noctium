@@ -14,12 +14,6 @@ open Noctium.Verification.ScalarValidationNativeLoop
 open Noctium.Verification.ScalarValidationOpcodeProfile
 open Noctium.Verification.ScalarValidationProjection
 
-private theorem zipIdx_values {α : Type} (items : List α) (offset : Nat) :
-    (items.zipIdx offset).map Prod.fst = items := by
-  induction items generalizing offset with
-  | nil => rfl
-  | cons head tail ih => simp only [List.zipIdx_cons, List.map_cons, ih]
-
 def expectedInputDescriptor (requirement : InputRequirement) : Visibility × String :=
   (requirement.visibility, requirement.identifier)
 
@@ -172,43 +166,28 @@ theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
       expected.rawInputs = [] ∧
       program.instructions.flatMap strictInstructionInputDescriptors =
         expected.inputs.map expectedInputDescriptor := by
-  obtain ⟨_, expected, _, _, expectedAccepted, validated, _, _, _⟩ :=
-    NativeRelationInstructionProjection.lowerEntrypoint_instructionProjection
-      state entry json program lowered decoded
+  obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
+    Backend.Zkir.lowerEntrypoint_validation_and_instructions state entry json lowered
   obtain ⟨headerInstructions, rawInputsHeader, headerInstructionsParsed,
     decodedRows⟩ := NativeRelationInstructionProjection.decode_headerAndInstructions decoded
   obtain ⟨profileInstructions, profileParsed, profile⟩ := checkedProfile
-  obtain ⟨driverInstructions, rawInputs, seed, final, driver⟩ :=
-    validate_driver_result validated
+  obtain ⟨expectedRawInputsEmpty, driverInstructions, final, driver⟩ :=
+    validate_driver_result_empty_header validated rawInputsHeader
   have driverMatchesHeader : driverInstructions = headerInstructions :=
     Except.ok.inj (driver.instructionsParsed.symm.trans headerInstructionsParsed)
   have profileMatchesHeader : profileInstructions = headerInstructions :=
     Except.ok.inj (profileParsed.symm.trans headerInstructionsParsed)
-  have rawInputsEmpty : rawInputs = #[] :=
-    Except.ok.inj (driver.rawInputsParsed.symm.trans rawInputsHeader)
-  have expectedRawInputCount : expected.rawInputs.length = 0 := by
-    rw [← driver.rawInputCount, rawInputsEmpty]
-    rfl
-  have expectedRawInputsEmpty : expected.rawInputs = [] := by
-    cases rawInputs : expected.rawInputs with
-    | nil => rfl
-    | cons head tail => simp [rawInputs] at expectedRawInputCount
-  have emptySeed : seed = ({} : State) :=
-    driver.emptyRawSeed expectedRawInputsEmpty
-  have definitions : NativeDefinitions seed := by
-    rw [emptySeed]
-    exact empty_nativeDefinitions
   let items := headerInstructions.toList.zipIdx
   have decodedItems : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction =
       .ok program.instructions := by
-    simpa [items, zipIdx_values] using decodedRows
+    simpa [items, List.zipIdx_map_fst] using decodedRows
   have checkedTrace : NativeDefinitionTrace items program.instructions := by
     apply NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems
     simpa [items, profileMatchesHeader] using profile
-  have driverTrace : validateInstructionLoop expected items seed = .ok final := by
+  have driverTrace : validateInstructionLoop expected items {} = .ok final := by
     simpa [items, driverMatchesHeader] using driver.instructionTrace
   have inputDescriptors := validateInstructionLoop_input_descriptors_of_trace
-    (inputSchema expected expectedAccepted) definitions checkedTrace driverTrace
+    (inputSchema expected expectedAccepted) empty_nativeDefinitions checkedTrace driverTrace
   have exactDescriptors :
       program.instructions.flatMap strictInstructionInputDescriptors =
         expected.inputs.map expectedInputDescriptor := by
@@ -216,6 +195,5 @@ theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
     simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
       using inputDescriptors.symm
   exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
-
 
 end Noctium.Verification.NativeInputOrdinalTrace

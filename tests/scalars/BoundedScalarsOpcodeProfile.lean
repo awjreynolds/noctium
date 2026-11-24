@@ -23,12 +23,6 @@ open Noctium.Verification.ScalarValidationMeaning (StateMeaning)
 open Noctium.Verification.ScalarValidationOpcodeProfile
 open Noctium.Verification.ScalarValidationNativeDefinitions
 
-private theorem zipIdx_values {α : Type} (items : List α) (offset : Nat) :
-    (items.zipIdx offset).map Prod.fst = items := by
-  induction items generalizing offset with
-  | nil => rfl
-  | cons head tail ih => simp only [List.zipIdx_cons, List.map_cons, ih]
-
 /-- Select the source entrypoint compiled from `BoundedScalars.apply`. -/
 def selectedEntrypoint : Entrypoint :=
   (BoundedScalars.entrypoints.find? (·.name == "apply")).getD {name := "", circuit := {name := ""}}
@@ -124,7 +118,7 @@ theorem boundedApply_instructionsDecode :
   have same : instructions = emittedInstructions :=
     Except.ok.inj (parsed.symm.trans boundedApply_instructionsParsed)
   subst instructions
-  simpa [emittedItems, zipIdx_values] using decoded
+  simpa [emittedItems, List.zipIdx_map_fst] using decoded
 
 theorem boundedApply_decodedInstructionBudget :
     decodedProgram.instructions.length ≤ Native.maxInstructions := by
@@ -193,27 +187,23 @@ theorem boundedApply_nativeValidationTrace :
     driverFacts, boundedApply_nativeDefinitionTrace⟩
 
 /-- The decoded input rows of the accepted fixture preserve source visibility,
-names and order for the strict scalar input fragment. -/
-theorem boundedApply_decodedInputDescriptors :
+names and order for the strict scalar input fragment. Its empty producer seed
+is derived from the emitted header. -/
+theorem boundedApply_decodedInputDescriptors
+    (inputSchema : ∀ expected,
+      Native.expectedEntrypoint BoundedScalars.state
+        (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false) :
     ∃ expected,
       Native.expectedEntrypoint BoundedScalars.state
         (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
-      (expected.rawInputs = [] →
-        (∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false) →
-        decodedProgram.instructions.flatMap strictInstructionInputDescriptors =
-          expected.inputs.map expectedInputDescriptor) := by
-  obtain ⟨_, expected, _, seed, _, _, source, _, driver, trace⟩ :=
-    boundedApply_nativeValidationTrace
-  refine ⟨expected, source, ?_⟩
-  intro noRawInputs inputSchema
-  have definitions : NativeDefinitions seed := by
-    rw [driver.emptyRawSeed noRawInputs]
-    intro name fact factMember
-    simp at factMember
-  have descriptors := validateInstructionLoop_input_descriptors_of_trace
-    inputSchema definitions trace driver.instructionTrace
-  rw [driver.inputCount, driver.seedInputCount] at descriptors
-  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append] using descriptors.symm
+      expected.rawInputs = [] ∧
+      decodedProgram.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor :=
+  lowerEntrypoint_inputDescriptors_of_checkedScalarProfile BoundedScalars.state
+    selectedEntrypoint emittedProgram decodedProgram boundedApply_lowered boundedApply_decoded
+    inputSchema ⟨emittedInstructions, boundedApply_instructionsParsed,
+      boundedApply_checkedScalarOpcodeProfile⟩
 
 /-- Exact decoding of production `BoundedScalars.apply` preserves each ordered
 Impact group boundary and width from its actual Impact plan. This is the first

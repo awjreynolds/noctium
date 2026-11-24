@@ -40,14 +40,10 @@ theorem lowerEntrypoint_comparison_preserves_scalar_kernel
   obtain ⟨optimizedRows, optimizedParsed, runDecoded⟩ := decode_instructionProjection comparisonDecoded
   have optimizedEq := Except.ok.inj (optimizedParsed.symm.trans rewrittenArray)
   subst optimizedRows
-  obtain ⟨driverRows, rawHeader, seed, final, driver⟩ :=
-    ScalarValidationProjection.validate_driver_result rangeValid
-  have rawEmpty := Except.ok.inj (driver.rawInputsParsed.symm.trans header)
-  have requiredEmpty : expected.rawInputs = [] := List.length_eq_zero_iff.mp (by
-    simpa [rawEmpty] using driver.rawInputCount.symm)
+  obtain ⟨_, driverRows, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result_empty_header rangeValid header
   have trace := driver.instructionTrace
-  rw [Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed),
-    driver.emptyRawSeed requiredEmpty] at trace
+  rw [Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)] at trace
   have definitions : NativeDefinitions ({} : Native.State) := by
     intro name fact member
     simp at member
