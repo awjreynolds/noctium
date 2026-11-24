@@ -1,6 +1,7 @@
 import Noctium.Frontend
 import Noctium.Verification.GenericStateAdmissionBridge
 import Noctium.Verification.GenericStateAdmissionPrefix
+import Noctium.Verification.GenericStateCellAdmission
 import Noctium.Verification.GenericStateOps
 import Noctium.Verification.GuardedEffectEvaluation
 import Noctium.Verification.GuardedEffectPrefix
@@ -84,9 +85,8 @@ theorem exact_evalPlan_success :
       simp [evaluationSucceeded, result] at succeeded
   | ok evaluated => simp [operations, result]
 
-/-- The exact accepted guarded Cell plan decomposes into the accepted public
-input prefix and guarded append. Its separate evalPlan success preserves the
-ordered native field groups and establishes scalar operation support. -/
+/-- The accepted guarded Cell plan preserves the ordered native field groups.
+Scalar operation support follows separately from its typed inputs and effect. -/
 theorem lower_guarded_cell_plan_groups :
     ∃ boundaries inputPlan,
       Backend.Impact.lowerWithEffectBoundaries sourceState updateEntry =
@@ -101,9 +101,21 @@ theorem lower_guarded_cell_plan_groups :
         GenericStateOps.evalFields context environment operation.fields) =
           .ok (NativeState.groups operations) ∧
       (∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation) := by
-  obtain ⟨fields, scalarSupport⟩ :=
+  obtain ⟨fields, _⟩ :=
     GenericStateAdmissionBridge.lower_evaluated_plan_groups sourceState updateEntry plan
       context environment operations lowered rfl exact_evalPlan_success
+  have scalarSupport : ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation := by
+    apply GenericStateCellAdmission.lower_scalar_cell_operations_supported
+      sourceState updateEntry plan lowered
+    · intro parameter parameterIn
+      change parameter ∈ [guardedScalarCellInputs.inputs[0]'(by decide)] at parameterIn
+      rw [List.mem_singleton.mp parameterIn]
+      exact Or.inr (Or.inr (Or.inl rfl))
+    · intro sourceEffect effectIn
+      obtain ⟨_, exactEffects, _⟩ := guard_witness
+      rw [exactEffects] at effectIn
+      rw [List.mem_singleton.mp effectIn]
+      exact .writeCell _ _ _ .native
   obtain ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend⟩ :=
     GenericStateAdmissionPrefix.lower_input_prefix sourceState updateEntry plan lowered
   have trace := Backend.Impact.appendEffectsGuardedWithBoundaries_trace sourceState
