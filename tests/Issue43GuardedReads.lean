@@ -2,6 +2,7 @@ import Noctium.Backend.Impact
 import Noctium.Backend.NativeExpected
 import Noctium.Backend.Zkir
 import Noctium.Frontend
+import Noctium.Verification.GuardedImpactObservation
 import Noctium.Verification.GuardedScalarInput
 
 open scoped Noctium
@@ -108,3 +109,48 @@ private def emittedMarkerGuardMatches : Except String _root_.Bool := do
       Verification.GuardedScalarInput.consume (operand.read active) [] = none)
 
 #guard emittedMarkerGuardMatches.toOption == some Bool.true
+
+private def emittedGuardedImpactMatches : Except String _root_.Bool := do
+  let pruned := Passes.pruneEntrypoint issue43GuardedEntry
+  let expected ← (Backend.Native.expectedEntrypoint Issue43GuardedReads.state pruned).mapError (·.message)
+  let artifact ← (Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state
+    issue43GuardedEntry).mapError (·.message)
+  let rawInputs ← Backend.Native.arrayField artifact "inputs"
+  unless rawInputs.isEmpty do
+    throw "fixture has raw inputs before the instruction trace"
+  let instructions ← Backend.Native.arrayField artifact "instructions"
+  let (prelude, rest) := instructions.toList.span fun row =>
+    Backend.Native.opcode row != "impact" ||
+      (Backend.Native.stringField row "guard").toOption != some "%input_enabled" ||
+      !((Backend.Native.arrayField row "inputs").toOption.getD #[]).any
+        (·.getStr?.toOption == some "%input_markerValue")
+  let raw :: _ := rest | throw "missing guarded marker Impact payload"
+  let before ← Backend.Native.validateInstructionLoop expected prelude.zipIdx {}
+  let after ← Backend.Native.validateInstruction expected before raw
+  let guard ← Verification.NativeRelationJson.decodeOperandField raw "guard"
+  let operands ← Verification.NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")
+  let some guardTerm := Verification.ScalarValidationOutputMeaning.sourceImpactGuard expected before
+    | throw "missing source Impact guard"
+  let some group := expected.groups[before.groupCount]? | throw "missing source Impact group"
+  let inactive : Verification.NativeRelation.Assignment := fun name =>
+    if name == "%input_enabled" then Verification.NativeRelation.zero
+    else Verification.NativeRelation.scalar 23
+  let active : Verification.NativeRelation.Assignment := fun name =>
+    if name == "%input_enabled" then Verification.NativeRelation.one
+    else Verification.NativeRelation.scalar 23
+  let masked := Verification.GuardedImpactObservation.observeImpact
+    (guard.read inactive) (operands.map (·.read inactive))
+  let observed := Verification.GuardedImpactObservation.observeImpact
+    (guard.read active) (operands.map (·.read active))
+  let unusedHash : Verification.NativeRelation.Hash := fun _ => Verification.NativeRelation.zero
+  let changed := replaceJsonField raw "guard" (toJson ("0x01" : String))
+  return after.groupCount == before.groupCount + 1 &&
+    guardTerm == .input "%input_enabled" &&
+    group.length == operands.length &&
+    !(Backend.Native.validateInstruction expected before changed).isOk &&
+    decide (Verification.GuardedImpactObservation.sourceObservation unusedHash inactive guardTerm group =
+      masked ∧ Verification.GuardedImpactObservation.sourceObservation unusedHash active guardTerm group =
+      observed ∧ masked = some ⟨Bool.false, List.replicate group.length Verification.NativeRelation.zero⟩ ∧
+      observed = some ⟨Bool.true, operands.map (·.read active)⟩)
+
+#guard emittedGuardedImpactMatches.toOption == some Bool.true
