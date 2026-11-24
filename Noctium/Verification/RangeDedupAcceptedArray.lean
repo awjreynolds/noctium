@@ -134,6 +134,11 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.assert condition))
       (holds : Instruction.Holds hash witness (.assert condition)) :
       AcceptedMeaningStep hash witness raw
+  | constrainEq {left right : Operand}
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal left right))
+      (holds : Instruction.Holds hash witness (.equal left right)) :
+      AcceptedMeaningStep hash witness raw
   | copy {source destination : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "copy")
       (decoded : NativeRelationJson.decodeInstruction raw =
@@ -173,6 +178,27 @@ private theorem decodedLessThanFields {raw : Json} {left right : Operand}
   injection resultEq with leftEq rightEq widthEq outputEq
   subst left right width output
   exact ⟨leftParsed, rightParsed, bitsParsed⟩
+
+private theorem decodedConstrainEqOperands {raw : Json} {left right : Operand}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal left right)) :
+    NativeRelationJson.decodeOperandField raw "a" = .ok left ∧
+      NativeRelationJson.decodeOperandField raw "b" = .ok right := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [ScalarValidationMeaning.bind_ok,
+    ScalarValidationOutputMeaning.nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
+  have opcodeEq : opcodeName = "constrain_eq" :=
+    Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp only [ScalarValidationMeaning.bind_ok] at body
+  rcases body with ⟨_, _, leftValue, leftParsed, rightValue, result⟩
+  rcases result with ⟨rightParsed, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
+  injection resultEq with leftEq rightEq
+  subst left right
+  exact ⟨leftParsed, rightParsed⟩
 
 private theorem decodedBooleanField {raw : Json} {value : Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
@@ -427,6 +453,100 @@ private theorem acceptedMeaningStep_preserves
       subst identifier
       exact destinationMeaning
     exact ⟨defineResult_meaning meaning outputMeaning defined, typed⟩
+  | @constrainEq left right opcode decoded holds =>
+    unfold Backend.Native.validateInstruction at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
+      registry, fieldsParsed, accepted⟩
+    have opcodeEq : opcodeName = "constrain_eq" :=
+      Except.ok.inj (opcodeParsed.symm.trans opcode)
+    subst opcodeName
+    simp at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨leftText, leftTextParsed, rightText, rightTextParsed,
+      leftFact, leftAccepted, rightFact, rightAccepted, _, transition⟩
+    have leftArgument : Backend.Native.argument state raw "a" = .ok leftFact := by
+      unfold Backend.Native.argument
+      rw [leftTextParsed]
+      exact leftAccepted
+    have rightArgument : Backend.Native.argument state raw "b" = .ok rightFact := by
+      unfold Backend.Native.argument
+      rw [rightTextParsed]
+      exact rightAccepted
+    have leftNative := argument_native_of_state definitions leftArgument
+    have rightNative := argument_native_of_state definitions rightArgument
+    have fields := decodedConstrainEqOperands opcode decoded
+    have leftMeaning := argument_decoded_meaning meaning leftArgument fields.1
+    have rightMeaning := argument_decoded_meaning meaning rightArgument fields.2
+    have readsEqual : left.read witness = right.read witness := holds
+    have sameType : (leftFact.valueType == rightFact.valueType) = true := by
+      rw [leftNative, rightNative]
+      decide
+    have nativeType : (leftFact.valueType == Backend.Native.NativeValueType.native) = true := by
+      rw [leftNative]
+      decide
+    rw [sameType, nativeType] at transition
+    simp [Backend.Native.ensure] at transition
+    rcases transition with ⟨_, transition⟩
+    simp only [ScalarValidationMeaning.bind_ok] at transition
+    rcases transition with ⟨middle, leftRefined, transition⟩
+    cases rightRefined : Backend.Native.refine middle rightText
+        (min leftFact.maximum rightFact.maximum) with
+    | error message =>
+      simp [rightRefined, Except.map, Functor.map] at transition
+    | ok afterRight =>
+      simp [rightRefined, Except.map, Functor.map] at transition
+      have finalStateEq := transition
+      have definitionsEq : next.definitions = afterRight.definitions := by
+        have projected := congrArg (fun value : Backend.Native.State => value.definitions) finalStateEq
+        simpa using projected.symm
+      have afterLeftMeaning : StateMeaning hash inputs witness middle := by
+        have boundedLeft : leftText.startsWith "%" = true →
+            (witness leftText).val ≤ min leftFact.maximum rightFact.maximum := by
+          intro reference
+          have leftReference := decodedReference leftTextParsed fields.1 reference
+          have rightBound : (left.read witness).val ≤ rightFact.maximum := by
+            calc
+              (left.read witness).val = (right.read witness).val := by
+                exact congrArg (fun value : Scalar => value.val) readsEqual
+              _ ≤ rightFact.maximum := rightMeaning.bound
+          have leftBound : (witness leftText).val ≤ leftFact.maximum := by
+            simpa [leftReference, Operand.read] using leftMeaning.bound
+          have rightBoundAtText : (witness leftText).val ≤ rightFact.maximum := by
+            simpa [leftReference, Operand.read] using rightBound
+          exact Nat.le_min.mpr ⟨leftBound, rightBoundAtText⟩
+        exact RangeDedupAssertMeaning.refineMeaning meaning boundedLeft leftRefined
+      have afterLeftDefinitions : NativeDefinitions middle :=
+        refine_nativeDefinitions definitions leftRefined
+      have afterRightMeaning : StateMeaning hash inputs witness afterRight := by
+        have boundedRight : rightText.startsWith "%" = true →
+            (witness rightText).val ≤ min leftFact.maximum rightFact.maximum := by
+          intro reference
+          have rightReference := decodedReference rightTextParsed fields.2 reference
+          have leftBound : (right.read witness).val ≤ leftFact.maximum := by
+            calc
+              (right.read witness).val = (left.read witness).val := by
+                exact congrArg (fun value : Scalar => value.val) readsEqual.symm
+              _ ≤ leftFact.maximum := leftMeaning.bound
+          have rightBound : (witness rightText).val ≤ rightFact.maximum := by
+            simpa [rightReference, Operand.read] using rightMeaning.bound
+          have leftBoundAtText : (witness rightText).val ≤ leftFact.maximum := by
+            simpa [rightReference, Operand.read] using leftBound
+          exact Nat.le_min.mpr ⟨leftBoundAtText, rightBound⟩
+        exact RangeDedupAssertMeaning.refineMeaning afterLeftMeaning boundedRight rightRefined
+      have afterRightDefinitions : NativeDefinitions afterRight :=
+        refine_nativeDefinitions afterLeftDefinitions rightRefined
+      have finalMeaning : StateMeaning hash inputs witness next := by
+        intro identifier fact member
+        have sameMember : (identifier, fact) ∈ afterRight.definitions := by
+          simpa [definitionsEq] using member
+        exact afterRightMeaning identifier fact sameMember
+      have finalDefinitions : NativeDefinitions next := by
+        intro identifier fact member
+        have sameMember : (identifier, fact) ∈ afterRight.definitions := by
+          simpa [definitionsEq] using member
+        exact afterRightDefinitions identifier fact sameMember
+      exact ⟨finalMeaning, finalDefinitions⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
