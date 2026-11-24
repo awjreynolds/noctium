@@ -894,6 +894,7 @@ theorem nativeDefinitionStep_supportsMeaning {raw : Json} {instruction : Instruc
     | neg a output opcode =>
       exact .native (.arithmetic (.neg a output opcode decoded (holds _ decoded)))
     | bits value width opcode => exact .bits opcode decoded (holds _ decoded)
+    | boolean value opcode => exact .boolean opcode decoded (holds _ decoded)
     | lessThan a b width output opcode =>
       exact .lessThan opcode decoded (holds _ decoded)
     | assertion condition opcode => exact .assertion opcode decoded (holds _ decoded)
