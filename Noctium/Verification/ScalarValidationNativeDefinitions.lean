@@ -60,6 +60,24 @@ theorem defineResult_groupCount {state next : State} {raw : Json} {fact : Fact}
   rcases accepted with ⟨_, _, defined⟩
   exact define_groupCount defined
 
+private theorem define_inputCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.inputCount = state.inputCount := by
+  unfold define at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  cases result
+  rfl
+
+theorem defineResult_counters {state next : State} {raw : Json} {fact : Fact}
+    (accepted : defineResult state raw fact = .ok next) :
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
+  unfold defineResult at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, defined⟩
+  exact ⟨define_groupCount defined, define_inputCount defined⟩
+
 theorem refine_groupCount {state next : State} {text : String} {maximum : Nat}
     (accepted : refine state text maximum = .ok next) :
     next.groupCount = state.groupCount := by
@@ -77,6 +95,24 @@ theorem refine_groupCount {state next : State} {text : String} {maximum : Nat}
     have stateEq := Except.ok.inj result
     subst next
     rfl
+
+theorem refine_counters {state next : State} {text : String} {maximum : Nat}
+    (accepted : refine state text maximum = .ok next) :
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
+  unfold refine at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, accepted⟩
+  split at accepted
+  · rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    exact ⟨rfl, rfl⟩
+  · simp only [bind_ok] at accepted
+    rcases accepted with ⟨_, _, accepted⟩
+    rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    exact ⟨rfl, rfl⟩
 
 theorem accepted_copy_nativeDefinitions {expected : Expected} {state next : State} {raw : Json}
     (nativeDefinitions : NativeDefinitions state)
@@ -261,84 +297,69 @@ private theorem accepted_output_nativeDefinitions
   subst next
   exact definitions
 
-theorem accepted_copy_groupCount
+theorem accepted_copy_counters
     {expected : Expected} {state next : State} {raw : Json}
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "copy")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, defined⟩ := accepted_copy_components definitions opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_add_groupCount
+theorem accepted_add_counters
     {expected : Expected} {state next : State} {raw : Json}
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "add")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
     accepted_add_components definitions opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_mul_groupCount
+theorem accepted_mul_counters
     {expected : Expected} {state next : State} {raw : Json}
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "mul")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
     accepted_mul_components definitions opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_neg_groupCount
+theorem accepted_neg_counters
     {expected : Expected} {state next : State} {raw : Json}
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "neg")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, _, _, defined⟩ :=
     accepted_neg_components definitions opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_testEq_groupCount
+theorem accepted_testEq_counters
     {expected : Expected} {state next : State} {raw : Json}
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
     accepted_testEq_components definitions opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_lessThan_groupCount
+theorem accepted_lessThan_counters
     {expected : Expected} {state next : State} {raw : Json}
     (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
     RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
-  exact defineResult_groupCount defined
+  exact defineResult_counters defined
 
-theorem accepted_output_groupCount
-    {expected : Expected} {state next : State} {raw : Json}
-    (opcode : Backend.Native.stringField raw "op" = .ok "output")
-    (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
-  unfold validateInstruction at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
-  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
-  subst found
-  simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at accepted
-  rcases accepted with ⟨_, _, _, _, _, _, result⟩
-  subst next
-  rfl
-
-theorem accepted_constrainBits_groupCount
+theorem accepted_constrainBits_counters
     {expected : Expected} {state next : State} {raw : Json}
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
@@ -347,13 +368,13 @@ theorem accepted_constrainBits_groupCount
   simp only [bind_ok] at accepted
   rcases accepted with ⟨valueText, valueTextParsed, accepted⟩
   rcases accepted with ⟨bits, bitsParsed, refined⟩
-  exact refine_groupCount refined
+  exact refine_counters refined
 
-theorem accepted_constrainBoolean_groupCount
+theorem accepted_constrainBoolean_counters
     {expected : Expected} {state next : State} {raw : Json}
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
@@ -361,13 +382,13 @@ theorem accepted_constrainBoolean_groupCount
   subst found
   simp only [bind_ok] at accepted
   rcases accepted with ⟨valueText, valueParsed, refined⟩
-  exact refine_groupCount refined
+  exact refine_counters refined
 
-theorem accepted_assert_groupCount
+theorem accepted_assert_counters
     {expected : Expected} {state next : State} {raw : Json}
     (opcode : Backend.Native.stringField raw "op" = .ok "assert")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
   unfold Backend.Native.validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
@@ -382,17 +403,141 @@ theorem accepted_assert_groupCount
   let assertionState : Backend.Native.State :=
     {assertionCounted with
       establishedAssertions := (value.term :: assertionCounted.establishedAssertions).eraseDups}
-  have assertionGroupCount : assertionState.groupCount = state.groupCount := by
+  have assertionCounters :
+      assertionState.groupCount = state.groupCount ∧
+        assertionState.inputCount = state.inputCount := by
     by_cases matched : expected.assertions[state.assertionCount]? == some value.term <;>
       simp [assertionState, assertionCounted, matched]
   split at accepted
   · simp only [bind_ok] at accepted
     rcases accepted with ⟨_, _, refined⟩
-    calc
-      next.groupCount = assertionState.groupCount := refine_groupCount refined
-      _ = state.groupCount := assertionGroupCount
+    have counters := refine_counters refined
+    exact ⟨counters.1.trans assertionCounters.1, counters.2.trans assertionCounters.2⟩
   · cases accepted
-    exact assertionGroupCount
+    exact assertionCounters
+
+theorem accepted_output_counters
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "output")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, result⟩
+  subst next
+  exact ⟨rfl, rfl⟩
+
+theorem accepted_constrainEq_counters
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨leftText, leftTextParsed, rightText, rightTextParsed,
+    leftFact, leftParsed, rightFact, rightParsed, middle, leftRefined, rightRefined⟩
+  have leftArgument : argument state raw "a" = .ok leftFact := by
+    unfold argument
+    rw [leftTextParsed]
+    exact leftParsed
+  have leftNative := argument_native_of_state definitions leftArgument
+  simp only [leftNative, Backend.Native.ensure] at rightRefined
+  simp only [Bind.bind, Except.bind] at rightRefined
+  rcases bind_ok.mp rightRefined with ⟨middleState, leftRefined, rest⟩
+  rcases bind_ok.mp rest with ⟨nextState, rightRefined, final⟩
+  have counters :
+      nextState.groupCount = state.groupCount ∧ nextState.inputCount = state.inputCount := by
+    exact ⟨
+      (refine_counters rightRefined).1.trans (refine_counters leftRefined).1,
+      (refine_counters rightRefined).2.trans (refine_counters leftRefined).2⟩
+  simp only [Pure.pure, Except.pure] at final
+  have finalEq := Except.ok.inj final
+  subst next
+  exact ⟨by simp [counters.1], by simp [counters.2]⟩
+
+theorem accepted_copy_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "copy")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_copy_counters definitions opcode accepted).1
+
+theorem accepted_add_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "add")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_add_counters definitions opcode accepted).1
+
+theorem accepted_mul_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "mul")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_mul_counters definitions opcode accepted).1
+
+theorem accepted_neg_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "neg")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_neg_counters definitions opcode accepted).1
+
+theorem accepted_testEq_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_testEq_counters definitions opcode accepted).1
+
+theorem accepted_lessThan_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_lessThan_counters opcode accepted).1
+
+theorem accepted_output_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "output")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_output_counters opcode accepted).1
+
+theorem accepted_constrainBits_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_constrainBits_counters opcode accepted).1
+
+theorem accepted_constrainBoolean_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_constrainBoolean_counters opcode accepted).1
+
+theorem accepted_assert_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "assert")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount :=
+  (accepted_assert_counters opcode accepted).1
 
 theorem accepted_input_groupCount {expected : Expected} {state next : State}
     {raw : Json} {visibility : Visibility} {requirement : InputRequirement}
@@ -426,32 +571,15 @@ theorem accepted_constrainEq_groupCount {expected : Expected} {state next : Stat
     (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.groupCount = state.groupCount := by
-  unfold validateInstruction at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
-  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
-  subst found
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨leftText, leftTextParsed, rightText, rightTextParsed,
-    leftFact, leftParsed, rightFact, rightParsed, middle, leftRefined, rightRefined⟩
-  have leftArgument : argument state raw "a" = .ok leftFact := by
-    unfold argument
-    rw [leftTextParsed]
-    exact leftParsed
-  have leftNative := argument_native_of_state definitions leftArgument
-  simp only [leftNative, Backend.Native.ensure] at rightRefined
-  simp only [Bind.bind, Except.bind] at rightRefined
-  rcases bind_ok.mp rightRefined with ⟨middleState, leftRefined, rest⟩
-  rcases bind_ok.mp rest with ⟨nextState, rightRefined, final⟩
-  have stateCount : nextState.groupCount = state.groupCount := by
-    calc
-      nextState.groupCount = middleState.groupCount := refine_groupCount rightRefined
-      _ = state.groupCount := refine_groupCount leftRefined
-  simp only [Pure.pure, Except.pure] at final
-  have finalEq := Except.ok.inj final
-  subst next
-  simp [stateCount]
+    next.groupCount = state.groupCount :=
+  (accepted_constrainEq_counters definitions opcode accepted).1
+
+theorem accepted_impact_inputCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.inputCount = state.inputCount := by
+  rw [accepted_impact_state opcode accepted]
 
 /-- The supported opcode profile for this trace fragment. Copy and constrain_eq
 both decode to `.equal`, so the profile records which producer opcode was used. -/
@@ -534,41 +662,67 @@ theorem accepted_supportedScalarOpcode_groupCount_step
     rw [unchanged]
     simp [impactGroupIncrement]
   | add _ _ _ opcode =>
-    rw [accepted_add_groupCount definitions opcode accepted]
+    rw [(accepted_add_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
   | mul _ _ _ opcode =>
-    rw [accepted_mul_groupCount definitions opcode accepted]
+    rw [(accepted_mul_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
   | neg _ _ opcode =>
-    rw [accepted_neg_groupCount definitions opcode accepted]
+    rw [(accepted_neg_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
   | bits _ _ opcode =>
-    rw [accepted_constrainBits_groupCount opcode accepted]
+    rw [(accepted_constrainBits_counters opcode accepted).1]
     simp [impactGroupIncrement]
   | boolean _ opcode =>
-    rw [accepted_constrainBoolean_groupCount opcode accepted]
+    rw [(accepted_constrainBoolean_counters opcode accepted).1]
     simp [impactGroupIncrement]
   | lessThan _ _ _ _ opcode =>
-    rw [accepted_lessThan_groupCount opcode accepted]
+    rw [(accepted_lessThan_counters opcode accepted).1]
     simp [impactGroupIncrement]
   | assertion _ opcode =>
-    rw [accepted_assert_groupCount opcode accepted]
+    rw [(accepted_assert_counters opcode accepted).1]
     simp [impactGroupIncrement]
   | testEq _ _ _ opcode =>
-    rw [accepted_testEq_groupCount definitions opcode accepted]
+    rw [(accepted_testEq_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
   | copy _ _ opcode =>
-    rw [accepted_copy_groupCount definitions opcode accepted]
+    rw [(accepted_copy_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
   | impact _ _ opcode =>
     rw [accepted_impact_state opcode accepted]
     simp [impactGroupIncrement]
   | output _ opcode =>
-    rw [accepted_output_groupCount opcode accepted]
+    rw [(accepted_output_counters opcode accepted).1]
     simp [impactGroupIncrement]
   | constrainEq _ _ opcode =>
-    rw [accepted_constrainEq_groupCount definitions opcode accepted]
+    rw [(accepted_constrainEq_counters definitions opcode accepted).1]
     simp [impactGroupIncrement]
+
+/-- Accepted rows outside the input constructors leave the producer's live
+input ordinal unchanged. Each branch follows the matching validator helper,
+so unsupported opcodes and the older scalar validator never enter this proof. -/
+theorem accepted_supportedScalarOpcode_noninput_inputCount_preserved
+    {expected : Expected} {state next : State} {raw : Json} {instruction : Instruction}
+    (definitions : NativeDefinitions state)
+    (supported : SupportedScalarOpcode raw instruction)
+    (noninput : ∀ visibility output, instruction ≠ .input visibility output)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.inputCount = state.inputCount := by
+  cases supported with
+  | publicInput output _ => exact (noninput .«public» output rfl).elim
+  | privateInput output _ => exact (noninput .«private» output rfl).elim
+  | add _ _ _ opcode => exact (accepted_add_counters definitions opcode accepted).2
+  | mul _ _ _ opcode => exact (accepted_mul_counters definitions opcode accepted).2
+  | neg _ _ opcode => exact (accepted_neg_counters definitions opcode accepted).2
+  | bits _ _ opcode => exact (accepted_constrainBits_counters opcode accepted).2
+  | boolean _ opcode => exact (accepted_constrainBoolean_counters opcode accepted).2
+  | lessThan _ _ _ _ opcode => exact (accepted_lessThan_counters opcode accepted).2
+  | assertion _ opcode => exact (accepted_assert_counters opcode accepted).2
+  | testEq _ _ _ opcode => exact (accepted_testEq_counters definitions opcode accepted).2
+  | copy _ _ opcode => exact (accepted_copy_counters definitions opcode accepted).2
+  | impact _ _ opcode => exact accepted_impact_inputCount opcode accepted
+  | output _ opcode => exact (accepted_output_counters opcode accepted).2
+  | constrainEq _ _ opcode => exact (accepted_constrainEq_counters definitions opcode accepted).2
 
 structure NativeDefinitionStep (raw : Json) (instruction : Instruction) : Prop where
   supported : SupportedScalarOpcode raw instruction
@@ -621,7 +775,7 @@ theorem empty_nativeDefinitions : NativeDefinitions ({} : State) := by
   intro identifier fact found
   simp at found
 
-private theorem nativeDefinitions_step {expected : Expected} {state next : State}
+theorem nativeDefinitions_step {expected : Expected} {state next : State}
     {raw : Json} {instruction : Instruction}
     (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
     (nativeDefinitions : NativeDefinitions state)
