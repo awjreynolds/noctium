@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -20,6 +21,8 @@ MODEL_ROOTS = ["Noctium.Verification.FunctionalObligation", "Noctium.Verificatio
 AXIOMS = ["propext", "Classical.choice", "Quot.sound"]
 OPERATION_ROOTS = ["Noctium.Contract.name", "Noctium.Entrypoint.name"]
 SOURCE_COVERAGE_PREFIX = "NOCTIUM_SOURCE_PROOF_COVERAGE "
+FUNCTIONAL_OBLIGATION = "Noctium.Verification.FunctionalObligation"
+PRIVACY_OBLIGATION = "Noctium.Verification.PrivacyObligation"
 
 
 def expected_source_operations(metadata: dict) -> list[tuple[str, int, str]]:
@@ -127,6 +130,41 @@ def run(args: list[str], env: dict[str, str] | None = None, stdin: str | None = 
     return result.stdout
 
 
+def direct_axioms(report: str, proof: str) -> list[str]:
+    match = re.search(rf"^{re.escape(repr(proof))} depends on axioms: \[(.*?)\]$",
+                      report, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"missing fresh Lean axiom output for {proof}")
+    return [item.strip() for item in match.group(1).split(",") if item.strip()]
+
+
+def validate_role_records(result: dict, report: str, roles: list[tuple[str, str, str]]) -> None:
+    records = result.get("roleRecords")
+    if not isinstance(records, list) or len(records) != len(roles):
+        raise AssertionError(f"wrong source proof role record count: {result}")
+    aggregate = set()
+    for record, (role, obligation, proof) in zip(records, roles, strict=True):
+        if (record.get("schemaVersion") != 1 or record.get("role") != role
+                or record.get("obligationDeclaration") != obligation
+                or record.get("policyDeclaration") != f"{NS}.policy"
+                or record.get("proofDeclaration") != proof
+                or record.get("proposition") != f"{obligation} {NS}.policy"
+                or not isinstance(record.get("policyNormalizedProposition"), str)
+                or f"{NS}.policy" not in record["policyNormalizedProposition"]):
+            raise AssertionError(f"invalid {role} role record: {record}")
+        actual = record.get("axioms")
+        expected = direct_axioms(report, proof)
+        if actual != expected or len(actual) != len(set(actual)):
+            raise AssertionError(
+                f"{role} axiom record differs from fresh Lean closure: actual={actual}, expected={expected}")
+        aggregate.update(actual)
+    reported_aggregate = result.get("axioms")
+    if (not isinstance(reported_aggregate, list)
+            or len(reported_aggregate) != len(set(reported_aggregate))
+            or set(reported_aggregate) != aggregate):
+        raise AssertionError("aggregate axiom identity changed from role records")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path)
@@ -203,6 +241,7 @@ open Noctium Noctium.Verification Noctium.PrivateClaimVerification
 namespace PrivateClaimAuditNegative
 def wrongPolicy : AuditPolicy :=
   {policy with subject := {subject with specification := {specification with postcondition := fun _ _ _ _ _ => True}}}
+axiom forbiddenFunctional : FunctionalObligation policy
 end PrivateClaimAuditNegative
 '''
             build("proofs/PrivateClaimAuditNegative.lean", negative)
@@ -221,25 +260,39 @@ end PrivateClaimAuditNegative
             pin = MODEL_PIN.read_text().strip() if args.report else hashlib.sha256(model.read_bytes()).hexdigest()
         (output / "trusted-model.sha256").write_text(pin + "\n")
 
-        def audit(candidate: Path, expected_error: str | None = None, policy: str = f"{NS}.policy") -> dict:
+        def audit(candidate: Path, expected_error: str | None = None,
+                  policy: str = f"{NS}.policy", functional_proof: str = f"{NS}.functional",
+                  privacy_proof: str | None = f"{NS}.privacy") -> dict:
             command = ["python3", "scripts/proofs/audit-source-proof.py", "--model-export", str(model),
                        "--proof-export", str(candidate), "--trusted-model-sha256", pin,
-                       "--policy", policy, "--functional-proof", f"{NS}.functional", "--privacy-proof", f"{NS}.privacy"]
+                       "--policy", policy, "--functional-proof", functional_proof]
+            if privacy_proof is not None:
+                command.extend(["--privacy-proof", privacy_proof])
             checked = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=240)
             result = json.loads(checked.stdout)
-            if args.report and checked.returncode != 0:
+            if args.report and checked.returncode != 0 and not expected_error:
                 parser.exit(1, f"{OPERATION}: {result['error']}\n")
             if expected_error:
                 assert checked.returncode != 0 and expected_error in result["error"], result
             else:
                 assert checked.returncode == 0, result
                 assert result["compiledContractVerified"] is False, result
-                assert result["sourceFunctionalChecked"] and result["sourcePrivacyChecked"], result
-                assert set(result["axioms"]) <= {"propext", "Classical.choice", "Quot.sound"}, result
+                assert result["sourceFunctionalChecked"] is True, result
+                assert result["sourcePrivacyChecked"] is (privacy_proof is not None), result
+                assert set(result["axioms"]) <= set(AXIOMS), result
             return result
 
         accepted = audit(proof)
+        validate_role_records(accepted, report, [
+            ("functional", FUNCTIONAL_OBLIGATION, f"{NS}.functional"),
+            ("privacy", PRIVACY_OBLIGATION, f"{NS}.privacy"),
+        ])
         (output / "audit.json").write_text(json.dumps(accepted, indent=2, sort_keys=True) + "\n")
+        functional_only = export("functional-only-proofs.ndjson", [f"{NS}.functional"])
+        single_role = audit(functional_only, privacy_proof=None)
+        validate_role_records(single_role, report, [
+            ("functional", FUNCTIONAL_OBLIGATION, f"{NS}.functional"),
+        ])
         if args.report:
             if (accepted.get("operation") != OPERATION
                     or accepted.get("operation") not in selected_operations
@@ -263,6 +316,14 @@ end PrivateClaimAuditNegative
         if not args.trusted_model_export:
             wrong_policy = audit(proof, "wrong_obligation", "PrivateClaimAuditNegative.wrongPolicy")
             (output / "wrong-policy-rejection.json").write_text(json.dumps(wrong_policy, indent=2) + "\n")
+            forged = export("forbidden-axiom.ndjson",
+                            ["PrivateClaimAuditNegative.forbiddenFunctional"],
+                            "proofs.PrivateClaimAuditNegative")
+            forbidden = audit(forged, "forbidden_axiom",
+                              functional_proof="PrivateClaimAuditNegative.forbiddenFunctional",
+                              privacy_proof=None)
+            (output / "forbidden-axiom-rejection.json").write_text(
+                json.dumps(forbidden, indent=2) + "\n")
         # Deliberately stale proof objects plus a freshly compiled changed actual
         # source relation. Exact retained-model identity must reject before replay.
         source = (ROOT / "examples/PrivateClaim.lean").read_text()

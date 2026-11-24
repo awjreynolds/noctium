@@ -63,6 +63,21 @@ private def reduced (environment : Environment) (expression : Lean.Expr) : IO Le
   | .ok result => pure result
   | .error _ => throw <| IO.userError "policy_projection_failed"
 
+private def roleRecord (environment : Environment)
+    (registration : Audit.Registration) : IO Json := do
+  let obligation := registration.role.obligation
+  let proposition := mkApp (mkConst obligation) (mkConst registration.policy)
+  let normalized ← reduced environment proposition
+  return Json.mkObj [
+    ("schemaVersion", toJson (1 : Nat)),
+    ("role", toJson (roleName registration.role)),
+    ("obligationDeclaration", toJson obligation.toString),
+    ("policyDeclaration", toJson registration.policy.toString),
+    ("proposition", toJson (← pretty environment proposition)),
+    ("policyNormalizedProposition", toJson (← pretty environment normalized)),
+    ("proofDeclaration", toJson registration.proof.toString),
+    ("axioms", toJson (registration.axioms.toList.map Name.toString))]
+
 private def operationName (environment : Environment) (policy : Name) : IO (Option String) := do
   let policyExpr := mkConst policy
   let subject := mkApp (mkConst ``AuditPolicy.subject) policyExpr
@@ -145,9 +160,11 @@ def run (args : List String) : IO UInt32 := do
     let operation ← try operationName environment policyName catch _ => pure none
     let functional ← checked environment policyName functionalName .functional
     let mut allAxioms := functional.axioms.toList
+    let mut roleRecords := #[← roleRecord environment functional]
     if let some privacy := privacyText then
       let result ← checked environment policyName (← parseName privacy) .privacy
       allAxioms := allAxioms ++ result.axioms.toList
+      roleRecords := roleRecords.push (← roleRecord environment result)
     let scope ← descriptions environment policyName
     IO.println <| (Json.mkObj [
       ("status", toJson (if privacyText.isSome then "source-functional-and-scoped-privacy-checked" else "source-functional-only")),
@@ -156,6 +173,7 @@ def run (args : List String) : IO UInt32 := do
       ("operation", toJson operation),
       ("policy", toJson policyText), ("functionalProof", toJson functionalText),
       ("privacyProof", toJson privacyText),
+      ("roleRecords", toJson roleRecords),
       ("axioms", toJson ((allAxioms.eraseDups.mergeSort Name.lt).map Name.toString)),
       ("specification", scope),
       ("externalModelPinRequired", toJson true),
