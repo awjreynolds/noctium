@@ -1,0 +1,134 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+module GenericForeignCell<T> {
+  export ledger value: T;
+
+  export circuit read(): T {
+    return value;
+  }
+
+  export circuit update(next: T): T {
+    value = disclose(next);
+    return value;
+  }
+}
+
+import GenericForeignCell<Secp256k1Base> prefix secp256k1Base_;
+import GenericForeignCell<Secp256k1Scalar> prefix secp256k1Scalar_;
+import GenericForeignCell<Secp256k1Point> prefix secp256k1Point_;
+import GenericForeignCell<Secp256r1Base> prefix secp256r1Base_;
+import GenericForeignCell<Secp256r1Scalar> prefix secp256r1Scalar_;
+import GenericForeignCell<Secp256r1Point> prefix secp256r1Point_;
+import GenericForeignCell<Curve25519Base> prefix curve25519Base_;
+import GenericForeignCell<Curve25519Scalar> prefix curve25519Scalar_;
+import GenericForeignCell<Curve25519Point> prefix curve25519Point_;
+
+export {
+  secp256k1Base_value, secp256k1Scalar_value, secp256k1Point_value,
+  secp256r1Base_value, secp256r1Scalar_value, secp256r1Point_value,
+  curve25519Base_value, curve25519Scalar_value, curve25519Point_value,
+  secp256k1Base_read, secp256k1Base_update,
+  secp256k1Scalar_read, secp256k1Scalar_update,
+  secp256k1Point_read, secp256k1Point_update,
+  secp256r1Base_read, secp256r1Base_update,
+  secp256r1Scalar_read, secp256r1Scalar_update,
+  secp256r1Point_read, secp256r1Point_update,
+  curve25519Base_read, curve25519Base_update,
+  curve25519Scalar_read, curve25519Scalar_update,
+  curve25519Point_read, curve25519Point_update,
+};
+
+constructor(
+  initialSecp256k1Base: Secp256k1Base,
+  initialSecp256k1Scalar: Secp256k1Scalar,
+  initialSecp256k1Point: Secp256k1Point,
+  initialSecp256r1Base: Secp256r1Base,
+  initialSecp256r1Scalar: Secp256r1Scalar,
+  initialSecp256r1Point: Secp256r1Point,
+  initialCurve25519Base: Curve25519Base,
+  initialCurve25519Scalar: Curve25519Scalar,
+  initialCurve25519Point: Curve25519Point
+) {
+  secp256k1Base_value = disclose(initialSecp256k1Base);
+  secp256k1Scalar_value = disclose(initialSecp256k1Scalar);
+  secp256k1Point_value = disclose(initialSecp256k1Point);
+  secp256r1Base_value = disclose(initialSecp256r1Base);
+  secp256r1Scalar_value = disclose(initialSecp256r1Scalar);
+  secp256r1Point_value = disclose(initialSecp256r1Point);
+  curve25519Base_value = disclose(initialCurve25519Base);
+  curve25519Scalar_value = disclose(initialCurve25519Scalar);
+  curve25519Point_value = disclose(initialCurve25519Point);
+}
+
+export circuit readSecp256k1Base(): Secp256k1Base {
+  return secp256k1Base_read();
+}
+
+export circuit readSecp256k1Scalar(): Secp256k1Scalar {
+  return secp256k1Scalar_read();
+}
+
+export circuit readSecp256k1Point(): Secp256k1Point {
+  return secp256k1Point_read();
+}
+
+export circuit readSecp256r1Base(): Secp256r1Base {
+  return secp256r1Base_read();
+}
+
+export circuit readSecp256r1Scalar(): Secp256r1Scalar {
+  return secp256r1Scalar_read();
+}
+
+export circuit readSecp256r1Point(): Secp256r1Point {
+  return secp256r1Point_read();
+}
+
+export circuit readCurve25519Base(): Curve25519Base {
+  return curve25519Base_read();
+}
+
+export circuit readCurve25519Scalar(): Curve25519Scalar {
+  return curve25519Scalar_read();
+}
+
+export circuit readCurve25519Point(): Curve25519Point {
+  return curve25519Point_read();
+}
+
+export circuit updateSecp256k1Base(next: Secp256k1Base): Secp256k1Base {
+  return secp256k1Base_update(disclose(next));
+}
+
+export circuit updateSecp256k1Scalar(next: Secp256k1Scalar): Secp256k1Scalar {
+  return secp256k1Scalar_update(disclose(next));
+}
+
+export circuit updateSecp256k1Point(next: Secp256k1Point): Secp256k1Point {
+  return secp256k1Point_update(disclose(next));
+}
+
+export circuit updateSecp256r1Base(next: Secp256r1Base): Secp256r1Base {
+  return secp256r1Base_update(disclose(next));
+}
+
+export circuit updateSecp256r1Scalar(next: Secp256r1Scalar): Secp256r1Scalar {
+  return secp256r1Scalar_update(disclose(next));
+}
+
+export circuit updateSecp256r1Point(next: Secp256r1Point): Secp256r1Point {
+  return secp256r1Point_update(disclose(next));
+}
+
+export circuit updateCurve25519Base(next: Curve25519Base): Curve25519Base {
+  return curve25519Base_update(disclose(next));
+}
+
+export circuit updateCurve25519Scalar(next: Curve25519Scalar): Curve25519Scalar {
+  return curve25519Scalar_update(disclose(next));
+}
+
+export circuit updateCurve25519Point(next: Curve25519Point): Curve25519Point {
+  return curve25519Point_update(disclose(next));
+}
