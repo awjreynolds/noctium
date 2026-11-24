@@ -15,6 +15,7 @@ NS = "Noctium.PrivateClaimVerification"
 MODULE = "proofs.PrivateClaimVerification"
 OPERATION = "PrivateClaim.claim"
 TARGET = ROOT / "profiles/midnight-ledger-9-zkir-3.2.1-target.json"
+TARGET_PROFILE_SHA256 = "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
 MODEL_PIN = ROOT / "proofs/PrivateClaimVerification.model.sha256"
 MODEL_ROOTS = ["Noctium.Verification.FunctionalObligation", "Noctium.Verification.PrivacyObligation",
                f"{NS}.policy"]
@@ -179,7 +180,8 @@ def main() -> int:
         parser.error("--report uses the checked-in fixture model pin")
     if args.proof_export and not args.report:
         parser.error("--proof-export requires --report")
-    run(["lake", "build", "Noctium", "Noctium.Frontend", "Noctium.Verification.ExportAudit"])
+    run(["lake", "build", "Noctium", "Noctium.Cli", "Noctium.Compiler", "Noctium.Frontend",
+         "Noctium.Verification.ExportAudit"])
     with tempfile.TemporaryDirectory(prefix="noctium-private-claim-audit-") as directory:
         scratch = Path(directory)
         default_output = scratch / "evidence" if args.report else ROOT / ".noctium/audits/private-claim-source"
@@ -217,8 +219,13 @@ def main() -> int:
         source_coverage = []
         if args.report:
             compiler_output = scratch / "compiler-artifacts"
-            run(["lake", "exe", "noctium", "compile", "examples/PrivateClaim.lean",
+            run(["lake", "env", "lean", "--run", "NoctiumMain.lean", "compile",
+                 "examples/PrivateClaim.lean",
                  "--target", str(TARGET), "--emit", "ledger", "--output", str(compiler_output)])
+            profile_bytes = TARGET.read_bytes()
+            profile_sha256 = hashlib.sha256(profile_bytes).hexdigest()
+            if profile_sha256 != TARGET_PROFILE_SHA256:
+                parser.exit(1, f"{OPERATION}: target profile pin mismatch\n")
             metadata = json.loads((compiler_output / "noctium.json").read_text())
             operations = expected_source_operations(metadata)
             contract_names = list(dict.fromkeys(contract for contract, _, _ in operations))
@@ -235,6 +242,17 @@ def main() -> int:
                 selected_operations = validate_source_coverage(operations, source_coverage)
             except ValueError as error:
                 parser.exit(1, f"{OPERATION}: {error}\n")
+            contract, entrypoint = OPERATION.split(".", 1)
+            association = json.loads(run([
+                "python3", "scripts/proofs/check-source-operation-artifacts.py",
+                "--artifacts", str(compiler_output), "--profile", str(TARGET),
+                "--profile-sha256", TARGET_PROFILE_SHA256,
+                "--contract", contract, "--entrypoint", entrypoint,
+            ]))
+            if (association.get("status") != "operation-artifacts-associated"
+                    or association.get("operation", {}).get("contract") != contract
+                    or association.get("operation", {}).get("entrypoint") != entrypoint):
+                parser.exit(1, f"{OPERATION}: operation artifact association mismatch\n")
         if not args.report:
             negative = '''import proofs.PrivateClaimVerification
 open Noctium Noctium.Verification Noctium.PrivateClaimVerification
@@ -304,12 +322,12 @@ end PrivateClaimAuditNegative
             specification = accepted["specification"]
             for key in ("initial", "invariant", "precondition", "enabled", "postcondition", "releaseDefinition"):
                 del specification[key]
-            profile_bytes = TARGET.read_bytes()
             profile = json.loads(profile_bytes)
             accepted.update(schemaVersion=1, targetProfile={
                 "name": profile["name"], "ledger": profile["ledger"], "zkir": profile["zkir"],
-                "sha256": hashlib.sha256(profile_bytes).hexdigest(),
+                "sha256": profile_sha256,
             })
+            accepted["operationArtifacts"] = association
             print(json.dumps(accepted, indent=2, sort_keys=True))
             return 0
         run(["lake", "env", "leanchecker", "--from-export", str(proof)])
