@@ -106,12 +106,8 @@ theorem stringField_eq (value : Json) (name : String) :
     NativeRelationJson.stringField value name = stringField value name := rfl
 
 theorem reference_not_immediate {text : String} (reference : text.startsWith "%" = true) :
-    text.startsWith "0x" = false := by
-  have prefixed : ['%'] <+: text.toList := by simpa using reference
-  rcases prefixed with ⟨tail, equal⟩
-  apply String.startsWith_string_eq_false_iff.mpr
-  rw [← equal]
-  simp
+    text.startsWith "0x" = false :=
+  NativeRelationJson.reference_not_immediate reference
 
 theorem lessThan_opcode (bits : Nat) : (s!"less_than:{bits}").startsWith "less_than:" = true := by
   apply String.startsWith_string_iff.mpr
