@@ -1157,6 +1157,7 @@
         "tests/compact/generic-jubjub-map.mjs",
         "tests/modules/GenericJubjubCell.lean",
         "tests/compact/generic-jubjub-cell.mjs",
+        "docs/development/generic-jubjub-point-cell-localnet-receipt.json",
         "runtime/tests/generic_jubjub_cell.rs",
         "tests/modules/GenericRecordMap.lean",
         "tests/compact/generic-record-map.mjs",

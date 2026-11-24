@@ -1,0 +1,62 @@
+{
+  "bundleManifestSha256": {
+    "read": "462fadb1cfd21e4546d7e725c4fdcccddd795039f8b28ef03d8c20305b49201d",
+    "update": "356688537cd7efb6c6825d255f8a982d8dd255aa19647dd21b265d9921aae8cd"
+  },
+  "contractAddress": "781ab59f56321e2b0773b7cd29cf52426d43d016637dc3677d221da5b25eed5b",
+  "deployment": {
+    "blockHash": "d296577756a5e94ee2efc714feca5a267472808e6133f531e438a49d55b871a8",
+    "finalizedHash": "d296577756a5e94ee2efc714feca5a267472808e6133f531e438a49d55b871a8",
+    "stateSha256": "3fa8613cb93815f89ec14f67c606ce525d2f591ca0ef2739d4f197695ef91cc6",
+    "transactionId": "8b25909f56c276b8c1f26f9c19a6a5fee580aa316d307680f8bb5918c4482963"
+  },
+  "fetchedCanonicalState": {
+    "blockHash": "8489dce8b9c6d356c244d21bfdc2300afc18c664ea3a33c89c2c0363950ef1fd",
+    "readCircuitChecked": true,
+    "readMatchesUpdatedPoint": true,
+    "readReturnsSha256": "3722f27a9bdff65979f12ae7e41c53c362cbfa9a3ad23dbf7828840ce1641d22",
+    "stateSha256": "6506e2ede400c21106cc4776009198c23e63da19a80cca7ac4b54db957aeff55"
+  },
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "ledger": {
+    "initialParametersSha256": "6b7cd98fb0b10d884db5b357877c7c26bf17f28a726918321a619913e90f7679",
+    "nodeImageSha256": "0c1ad548d523c1109aa1f16daab1bf72dcb78c7e17b8a8c6d97424ad0eba7b8a",
+    "revision": "9.1.0.1"
+  },
+  "metadataSha256": "0ac5917f03f657e594e7c6c6544a37440fbce7f19e58d07a7773c50fc1461713",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "runtimeCodeHash": "110283b44ab3f1ce35165efc00cc24ef4bf6ca5aefab6c97652a0c9e68c30fb6",
+  "schemaVersion": 1,
+  "scope": "funded generic Jubjub point Cell deploy, update, fetched-state native read",
+  "source": {
+    "path": "tests/modules/GenericJubjubCell.lean",
+    "revision": "6c33e3f12f86d16888093f147bb703329cdd9e3f",
+    "sha256": "bc69ac65e3730500b0fa0f4879b04521567f655ff64a20309ef4c1359785e12f"
+  },
+  "update": {
+    "blockHash": "8489dce8b9c6d356c244d21bfdc2300afc18c664ea3a33c89c2c0363950ef1fd",
+    "finalizedHash": "8489dce8b9c6d356c244d21bfdc2300afc18c664ea3a33c89c2c0363950ef1fd",
+    "stateSha256": "6506e2ede400c21106cc4776009198c23e63da19a80cca7ac4b54db957aeff55",
+    "transactionId": "ef013197e4560700cc0334a819f809964c3c5523662d4154f7b3e190673e9fa2"
+  },
+  "zkir": {
+    "compilerSha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "operations": {
+      "read": {
+        "k": 7,
+        "planSha256": "5bd36c9c2db8fe752a4735a3986bd603d6566e8d7fed6067a0284baa463098b7",
+        "rows": 64,
+        "zkirSha256": "3d6d71231af4e350ad23ae445d3859c69b2e8ab052118fb40360358ebe30212a"
+      },
+      "update": {
+        "k": 7,
+        "planSha256": "58e2d177345cef3c3895efd13dc74e2b3672a2c5a09a48f0bb819e1b9325ffcd",
+        "rows": 106,
+        "zkirSha256": "63e518882eb86526046bf7ba86e9ecd5b53d3343d1ae77b043aad3b3de8433dc"
+      }
+    },
+    "proofParametersK7Sha256": "e82ae890c080188355f37feaffe91372584cd810615082d9143d4dec0453fd9d",
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "version": "3.2.1"
+  }
+}

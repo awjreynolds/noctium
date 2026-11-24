@@ -106,6 +106,12 @@ for byte. The enabled update and a separate read returned issued 8, spent 99,
 and tag `[128, 0, 255, 42]`. Both K9 relations used authenticated bundles.
 [Funded localnet receipt](generic-record-cell-localnet-receipt.json)
 
+The generic Jubjub point Cell finalized a deployment and an update on the
+same profile. The funded update stored the generator point. The native
+read circuit checked both coordinates against canonical state fetched at the
+finalized block. The read used K7 and 64 rows. The update used K7 and 106 rows.
+[Funded point Cell receipt](generic-jubjub-point-cell-localnet-receipt.json)
+
 ## Generic record Maps
 
 A generic `Map<K, V>` accepts scalar, `Bytes32` or checked nominal record
