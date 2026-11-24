@@ -5192,7 +5192,7 @@
       "layer": "standard-library",
       "surface": "left",
       "noctiumStatus": "subset",
-      "notes": "The left branch of a scalar returnEither preserves its typed left payload and emits typed zero for the inactive right side. The UInt8/UInt16 case matches Compact left in the public native return. General constructors remain open. The readable composite Either fixture also qualifies the true-tag branch for a record and Boolean vector.",
+      "notes": "The left branch of a scalar returnEither preserves its typed left payload and emits typed zero for the inactive right side. The UInt8/UInt16 case matches Compact left in the public native return. The typed readable left constructor now accepts the active payload alone and initializes the other arm. The pinned record and vector case preserves the Either return identity and matches Compact 0.36.1. The readable composite Either fixture also qualifies the true-tag branch for a record and Boolean vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5206,6 +5206,8 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/EitherBranchConstruction.lean",
+        "tests/compact/either-branch-construction.mjs",
         "tests/NativeScalarEitherReturns.lean",
         "runtime/tests/scalar_either_returns.rs",
         "tests/compact/scalar-either-returns.mjs",
@@ -5220,7 +5222,7 @@
       "layer": "standard-library",
       "surface": "right",
       "noctiumStatus": "subset",
-      "notes": "The right branch of a scalar returnEither preserves its typed right payload and emits typed zero for the inactive left side. The UInt8/UInt16 case matches Compact right in the public native return. General constructors remain open. The readable composite Either fixture also qualifies the false-tag branch for a record and Boolean vector.",
+      "notes": "The right branch of a scalar returnEither preserves its typed right payload and emits typed zero for the inactive left side. The UInt8/UInt16 case matches Compact right in the public native return. The typed readable right constructor now accepts the active payload alone and initializes the other arm. The pinned record and vector case preserves the Either return identity and matches Compact 0.36.1. The readable composite Either fixture also qualifies the false-tag branch for a record and Boolean vector.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5234,6 +5236,8 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/EitherBranchConstruction.lean",
+        "tests/compact/either-branch-construction.mjs",
         "tests/NativeScalarEitherReturns.lean",
         "runtime/tests/scalar_either_returns.rs",
         "tests/compact/scalar-either-returns.mjs",

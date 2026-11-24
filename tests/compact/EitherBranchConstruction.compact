@@ -1,0 +1,19 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Limits {
+  count: Uint<8>;
+  enabled: Boolean;
+  memo: Bytes<4>;
+}
+
+witness loadLimits(): Limits;
+witness loadFlags(): Vector<2, Boolean>;
+
+export circuit makeLeft(): Either<Limits, Vector<2, Boolean>> {
+  return left<Limits, Vector<2, Boolean>>(disclose(loadLimits()));
+}
+
+export circuit makeRight(): Either<Limits, Vector<2, Boolean>> {
+  return right<Limits, Vector<2, Boolean>>(disclose(loadFlags()));
+}
