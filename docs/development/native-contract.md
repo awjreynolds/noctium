@@ -30,7 +30,19 @@ Place a target requirement before the contract declarations in any source file t
 set_option noctium.requiredTarget "midnight-ledger-9-zkir-3.2.1"
 ```
 
-Use `--target profiles/midnight-ledger-9-zkir-3.2.1-target.json` for both `noctium check` and `noctium compile`. A mismatched or unknown requirement fails before artifact publication.
+The option applies to the source file being compiled. A library may declare a
+requirement that also applies to its importers.
+
+```lean
+noctium_require_target "midnight-ledger-9-zkir-3.2.1"
+```
+
+The command records the requirement in the compiled Lean module. Every declared
+requirement in the import closure must match the selected profile. Use
+`--target profiles/midnight-ledger-9-zkir-3.2.1-target.json` with both
+`noctium check` and `noctium compile`. A mismatch identifies the requiring
+module and fails before artifact publication. Unknown names fail at the
+declaration. [Target requirement CLI checks](../../tests/source-target-requirement.sh)
 
 ```sh
 .lake/build/bin/noctium compile examples/PrivateClaim.lean --output build/native-claim/source

@@ -7,6 +7,8 @@ register_option noctium.requiredTarget : String := {
 
 namespace Noctium
 
+open Lean Elab Command
+
 /-- The upstream source identity used by the selected native toolchain profile. -/
 structure NativeSourcePin where
   repository : String
@@ -66,7 +68,32 @@ def selected321 : TargetProfile := {
   nativeSource := some native321Source
 }
 
+def supportsName (name : String) : Bool :=
+  name == sourceBaseline.name || name == selected321.name
+
 end TargetProfile
+
+structure SourceTargetRequirement where
+  moduleName : Name
+  profileName : String
+
+private initialize moduleTargetRequirements : SimplePersistentEnvExtension
+    SourceTargetRequirement (Array SourceTargetRequirement) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
+def sourceTargetRequirements (env : Environment) : Array SourceTargetRequirement :=
+  moduleTargetRequirements.getState env
+
+/-- Require an exact Midnight profile in this module and its importers. -/
+elab "noctium_require_target" profile:str : command => do
+  let profileName := profile.getString
+  unless TargetProfile.supportsName profileName do
+    throwErrorAt profile "unknown Noctium source target requirement '{profileName}'"
+  let moduleName ← getMainModule
+  modifyEnv fun env => moduleTargetRequirements.addEntry env {moduleName, profileName}
 
 instance : Lean.FromJson TargetProfile where
   fromJson? json := do

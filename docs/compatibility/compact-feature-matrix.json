@@ -1239,7 +1239,7 @@
       "layer": "language",
       "surface": "Version pragmas and compatibility declarations",
       "noctiumStatus": "subset",
-      "notes": "A file-level Lean option declares an exact Midnight target profile. Normal check and compile accept the matching target and reject a mismatch or an unknown name before publishing artifacts. Version ranges and imported-library requirements remain unverified.",
+      "notes": "A file-level Lean option declares an exact Midnight target profile. Normal check and compile accept the matching target and reject a mismatch or an unknown name before publishing artifacts. A module-level exact target requirement persists through compiled Lean imports. Check and compile enforce requirements from the transitive import closure and reject incompatible dependencies before artifact publication. Version ranges remain open.",
       "source": [
         "reference"
       ],
