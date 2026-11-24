@@ -2647,6 +2647,167 @@ def appendEffectsGuardedWithBoundaries (state : List StateDecl) (effects : List 
     boundaries := plan.operations.length :: boundaries
   pure (plan, boundaries.reverse)
 
+private theorem guardedLoop_boundary_count (state : List StateDecl)
+    (guards : List (Option (Expr .bool))) (items : List (Effect × Nat))
+    (initial result : Plan) (before after : List Nat)
+    (accepted : forIn items (initial, before)
+      (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+      let next ← appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) current.1
+      pure (ForInStep.yield (next, next.operations.length :: current.2))) =
+        .ok (result, after)) :
+    after.length = before.length + items.length := by
+  induction items generalizing initial result before after with
+  | nil =>
+    simp only [List.forIn_nil] at accepted
+    have pairEq := Except.ok.inj accepted
+    cases pairEq
+    simp
+  | cons item rest ih =>
+    rw [List.forIn_cons] at accepted
+    simp only [bind, Except.bind] at accepted
+    cases first : appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) initial with
+    | error message => simp [first] at accepted
+    | ok next =>
+      simp only [first, pure_bind] at accepted
+      have restAccepted : forIn rest (next, next.operations.length :: before)
+          (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+            let later ← appendEffectWithActivity state item.1
+              (guards[item.2]?.getD none) current.1
+            pure (ForInStep.yield (later, later.operations.length :: current.2))) =
+          .ok (result, after) := by
+        change (forIn rest (next, next.operations.length :: before)
+          (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+            let later ← appendEffectWithActivity state item.1
+              (guards[item.2]?.getD none) current.1
+            pure (ForInStep.yield (later, later.operations.length :: current.2)))) =
+          .ok (result, after) at accepted
+        exact accepted
+      have tail := ih next result (next.operations.length :: before) after restAccepted
+      simp only [List.length_cons] at tail ⊢
+      omega
+
+private theorem guardedLoop_last_boundary (state : List StateDecl)
+    (guards : List (Option (Expr .bool))) (items : List (Effect × Nat))
+    (initial result : Plan) (before after : List Nat)
+    (accepted : forIn items (initial, before)
+      (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+      let next ← appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) current.1
+      pure (ForInStep.yield (next, next.operations.length :: current.2))) =
+        .ok (result, after)) :
+    items ≠ [] → after.head? = some result.operations.length := by
+  induction items generalizing initial result before after with
+  | nil => simp
+  | cons item rest ih =>
+    intro _
+    rw [List.forIn_cons] at accepted
+    simp only [bind, Except.bind] at accepted
+    cases first : appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) initial with
+    | error message => simp [first] at accepted
+    | ok next =>
+      simp only [first, pure_bind] at accepted
+      have restAccepted : forIn rest (next, next.operations.length :: before)
+          (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+            let later ← appendEffectWithActivity state item.1
+              (guards[item.2]?.getD none) current.1
+            pure (ForInStep.yield (later, later.operations.length :: current.2))) =
+          .ok (result, after) := by
+        change (forIn rest (next, next.operations.length :: before)
+          (fun (item : Effect × Nat) (current : Plan × List Nat) => do
+            let later ← appendEffectWithActivity state item.1
+              (guards[item.2]?.getD none) current.1
+            pure (ForInStep.yield (later, later.operations.length :: current.2)))) =
+          .ok (result, after) at accepted
+        exact accepted
+      cases rest with
+      | nil =>
+        simp only [List.forIn_nil] at restAccepted
+        have pairEq := Except.ok.inj restAccepted
+        have resultEq := (Prod.mk.inj pairEq).1
+        have afterEq := (Prod.mk.inj pairEq).2
+        cases resultEq
+        cases afterEq
+        rfl
+      | cons head tail =>
+        exact ih next result (next.operations.length :: before) after
+          restAccepted (by simp)
+
+/-- Successful guarded lowering records exactly one exclusive end offset for
+each source effect, including effects that emit no operations. -/
+theorem appendEffectsGuardedWithBoundaries_count (state : List StateDecl)
+    (effects : List Effect) (guards : List (Option (Expr .bool)))
+    (initial result : Plan) (boundaries : List Nat)
+    (accepted : appendEffectsGuardedWithBoundaries state effects guards
+      initial = .ok (result, boundaries)) :
+    boundaries.length = effects.length := by
+  unfold appendEffectsGuardedWithBoundaries at accepted
+  split at accepted
+  · let step := fun (item : Effect × Nat) (current : Plan × List Nat) => do
+      let next ← appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) current.1
+      pure (ForInStep.yield (next, next.operations.length :: current.2))
+    change (forIn effects.zipIdx (initial, []) step).map
+      (fun current => (current.1, current.2.reverse)) = .ok (result, boundaries) at accepted
+    cases loop : forIn effects.zipIdx (initial, []) step with
+    | error message =>
+      simp [loop, Functor.map, Except.map] at accepted
+    | ok current =>
+      have mapped : (Except.ok (current.1, current.2.reverse) :
+          Except String (Plan × List Nat)) = .ok (result, boundaries) := by
+        simpa [loop, Functor.map, Except.map] using accepted
+      have outputEq : (current.1, current.2.reverse) = (result, boundaries) :=
+        Except.ok.inj mapped
+      have count := guardedLoop_boundary_count state guards effects.zipIdx
+        initial current.1 [] current.2 loop
+      have boundaryEq : current.2.reverse = boundaries := (Prod.mk.inj outputEq).2
+      have count' : current.2.length = effects.length := by simpa using count
+      calc
+        boundaries.length = current.2.reverse.length := by rw [boundaryEq]
+        _ = current.2.length := List.length_reverse
+        _ = effects.length := count'
+  · simp [bind, Except.bind] at accepted
+
+/-- The last returned offset is the operation length after the final source
+effect. Equal offsets are valid when an effect emits no operations. -/
+theorem appendEffectsGuardedWithBoundaries_lastOffset (state : List StateDecl)
+    (effects : List Effect) (guards : List (Option (Expr .bool)))
+    (initial result : Plan) (boundaries : List Nat)
+    (accepted : appendEffectsGuardedWithBoundaries state effects guards
+      initial = .ok (result, boundaries)) (nonempty : effects ≠ []) :
+    boundaries.reverse.head? = some result.operations.length := by
+  unfold appendEffectsGuardedWithBoundaries at accepted
+  split at accepted
+  · let step := fun (item : Effect × Nat) (current : Plan × List Nat) => do
+      let next ← appendEffectWithActivity state item.1
+        (guards[item.2]?.getD none) current.1
+      pure (ForInStep.yield (next, next.operations.length :: current.2))
+    change (forIn effects.zipIdx (initial, []) step).map
+      (fun current => (current.1, current.2.reverse)) = .ok (result, boundaries) at accepted
+    cases loop : forIn effects.zipIdx (initial, []) step with
+    | error message => simp [loop, Functor.map, Except.map] at accepted
+    | ok current =>
+      have mapped : (Except.ok (current.1, current.2.reverse) :
+          Except String (Plan × List Nat)) = .ok (result, boundaries) := by
+        simpa [loop, Functor.map, Except.map] using accepted
+      have outputEq := Except.ok.inj mapped
+      have latest := guardedLoop_last_boundary state guards effects.zipIdx
+        initial current.1 [] current.2 loop (by
+          cases effects with
+          | nil => contradiction
+          | cons _ _ => simp [List.zipIdx])
+      have planEq := (Prod.mk.inj outputEq).1
+      have boundaryEq := (Prod.mk.inj outputEq).2
+      calc
+        boundaries.reverse.head? = current.2.head? := by
+          rw [← boundaryEq]
+          simp
+        _ = some current.1.operations.length := latest
+        _ = some result.operations.length := by rw [planEq]
+  · simp [bind, Except.bind] at accepted
+
 /-- Lower ordered effects while keeping optional activity guards aligned with
 each emitted opcode group. -/
 def appendEffectsGuarded (state : List StateDecl) (effects : List Effect)
