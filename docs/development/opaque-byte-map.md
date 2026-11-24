@@ -209,3 +209,17 @@ matches both results and rejects an altered active return for either
 type. The Lean authoring check rejects publishing a private tag or
 payload without explicit disclosure. The emitted relation sizes at K8
 with 174 rows. [Lean fixture](../../tests/OpaqueEither.lean) · [Compact oracle](../../tests/compact/opaque-either.mjs) · [Native checker](../../runtime/tests/opaque_either.rs)
+
+### Opaque equality
+
+Use `eq(a, b)` for two opaque values of the same kind. The host compares
+the exact string or byte array. ZKIR `test_eq` compares the two native
+Compress fields, so the proof binds the result at the ledger encoding
+boundary. Opaque inputs must satisfy the existing canonical Compress
+encoding, which excludes a nonempty payload ending in zero.
+
+The paired fixture checks empty values, equality, distinct and prefix-related
+values, and interior zero bytes. Native execution matches the Compact
+return and Bool Cell update. The native checker rejects an altered return,
+and Lean rejects mixed kinds or implicit disclosure of a private operand.
+[Lean source](../../tests/OpaqueEquality.lean) · [Compact oracle](../../tests/compact/opaque-equality.mjs) · [Native checker](../../runtime/tests/opaque_equality.rs)

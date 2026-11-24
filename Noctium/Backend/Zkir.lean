@@ -2656,8 +2656,11 @@ def lowerExpr : Expr ty → LowerM String
     let result ← lowerExpr body
     modify fun state => {state with byteAliases}
     pure result
-  | .letE name value body => do
-    let value ← lowerExpr value
+  | .letE (source := source) name value body => do
+    let value ← match source, value with
+      | .opaqueBytes, value => lowerOpaqueBytes value
+      | .opaqueString, value => lowerOpaqueString value
+      | _, value => lowerExpr value
     let aliases := (← get).aliases
     modify fun s => {s with aliases := (name, value) :: aliases}
     let result ← lowerExpr body
@@ -2667,6 +2670,8 @@ def lowerExpr : Expr ty → LowerM String
     emit "assert" [("cond", toJson (← lowerExpr condition))]
     lowerExpr body
   | .disclose _ value => lowerExpr value
+  | .eq (ty := .opaqueBytes) a b => do binary "test_eq" (← lowerOpaqueBytes a) (← lowerOpaqueBytes b)
+  | .eq (ty := .opaqueString) a b => do binary "test_eq" (← lowerOpaqueString a) (← lowerOpaqueString b)
   | .eq a b => do binary "test_eq" (← lowerExpr a) (← lowerExpr b)
   | .select condition yes no => do
     let bit ← lowerExpr condition
