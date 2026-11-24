@@ -102,9 +102,18 @@ private def update (amount : Nat) (adding removing : _root_.Bool) (state : Ledge
           outputs.lookup "inserted" == some (.bool _root_.Bool.true) &&
           outputs.lookup "removed" == some (.bool _root_.Bool.true) &&
           afterInsert.trees.lookup "buckets" == some (.map [(.bytes 32 ownerBytes,
-            .map [(.record [(.native, [17])], .null)])])
+            .map [(.record [(.native, [17])], .null)])]) &&
+          (match update 17 _root_.Bool.false _root_.Bool.true afterInsert with
+          | .ok (removed, afterRemove) =>
+              removed.lookup "before" == some (.bool _root_.Bool.true) &&
+              removed.lookup "inserted" == some (.bool _root_.Bool.true) &&
+              removed.lookup "removed" == some (.bool _root_.Bool.false) &&
+              afterRemove.trees.lookup "buckets" == state.trees.lookup "buckets"
+          | .error _ => _root_.Bool.false)
       | .error _ => _root_.Bool.false
   | .error _ => _root_.Bool.false
+
+#guard !(update 17 _root_.Bool.false _root_.Bool.false initialState).isOk
 
 #guard match Backend.Impact.lower NestedRecordSet.state (getEntry "update") with
   | .ok plan => plan.operations.any (fun op => match op with
