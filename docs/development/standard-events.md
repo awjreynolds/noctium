@@ -50,7 +50,7 @@ The first catalog used a bytewise public prologue for the 256-byte memo. Its 19,
 
 The same full-width payload digests passed with each layout. [Public byte inputs](fixed-bytes.md#public-byte-arguments) · [Committed call arguments](committed-returns.md#native-call-arguments) · [Node error codes](https://docs.midnight.network/nodes/error-codes) · [Issue 74](https://github.com/awjreynolds/noctium/issues/74)
 
-The funded isolated localnet accepted the catalog deployment and proved call. The checked helper also finalized on Ledger 9.1.0.1. Replay of the exact accepted transaction checked the ordered version 1 logs and their payload bytes. The active call at height 64918 emitted `Paused`, `ShieldedSpend` with the 32-byte nullifier, and `Unpaused`. The inactive call at height 64921 emitted `Paused` and `Unpaused`. [Finalized helper receipts](../../tests/standard-helper-event-localnet-evidence.json)
+The funded isolated localnet accepted the catalog deployment and proved call. The checked helper also finalized on Ledger 9.1.0.1. Replay of the exact accepted transaction checked the ordered version 1 logs and their payload bytes. The active call at height 64918 emitted `Paused`, `ShieldedSpend` with the 32-byte nullifier, and `Unpaused`. The inactive call at height 64921 emitted `Paused` and `Unpaused`. The pinned Compact and fresh Noctium checks reject 31- and 33-byte nullifiers. Fresh `logHelperSpend` output matches the archived ZKIR and Impact plan hashes. [Finalized helper receipts](../../tests/standard-helper-event-localnet-evidence.json)
 
 | Localnet action | Block | Transaction ID |
 | --- | ---: | --- |

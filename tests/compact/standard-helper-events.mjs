@@ -78,6 +78,10 @@ try {
 
   checkEvents(await invoke('logHelperSpend', true, nullifier), reference.receipts.active.events);
   checkEvents(await invoke('logHelperSpend', false, nullifier), reference.receipts.inactive.events);
+  for (const width of [31, 33]) {
+    const invalidNullifier = new Uint8Array(width).fill(1);
+    await assert.rejects(() => invoke('logHelperSpend', true, invalidNullifier), /Bytes<32>/);
+  }
   checkEvents(await invoke('logGuardedPause', true), reference.receipts.inactive.events);
   checkEvents(await invoke('logGuardedPause', false), []);
   for (const event of ['Paused', 'Unpaused']) {
