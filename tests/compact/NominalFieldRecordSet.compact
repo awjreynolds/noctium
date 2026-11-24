@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export struct Key {
+  amount: Amount;
+}
+
+export ledger members: Set<Key>;
+
+export circuit update(amount: Amount, adding: Boolean, removing: Boolean):
+                       [Boolean, Boolean, Boolean] {
+  const key = Key { amount: disclose(amount) };
+  const before = members.member(key);
+  if (disclose(adding)) { members.insert(key); }
+  const afterInsert = members.member(key);
+  if (disclose(removing)) { members.remove(key); }
+  const afterRemove = members.member(key);
+  return [before, afterInsert, afterRemove];
+}
