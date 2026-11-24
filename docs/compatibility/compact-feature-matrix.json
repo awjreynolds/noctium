@@ -1064,8 +1064,8 @@
       "id": "C-LANG-PURITY",
       "layer": "language",
       "surface": "Pure/impure analysis",
-      "noctiumStatus": "subset",
-      "notes": "Pure circuits exclude ledger operations, events and witness calls. Source purity checking follows reachable helper calls before removing empty finite ranges. Compact 0.36.1 and the Noctium control compiler reject a declared-pure helper whose empty range calls a witness. The ordinary helper remains valid and the emitted Noctium plan has no callback.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium agree on declared purity through transitive helper calls. Effect checks run before pruning inactive branches and empty ranges. Witness calls, ledger reads and writes, and events reject in the matched cases. The helper analysis also classifies private-state access, assets and cross-contract calls as impure. Pure assertions and checked casts are permitted and still reject active invalid arguments. An argument-only helper checks against the native relation and verifies with a K6 proof whose return commitment is bound. Ledger call eligibility uses the separate cross-contract gate.",
       "source": [
         "reference"
       ],
@@ -1075,23 +1075,16 @@
       ],
       "observedEvidence": [
         "SEM",
+        "ZK",
+        "tests/Helpers.lean",
         "tests/Control.lean",
-        "tests/compact/empty-range-purity.mjs"
+        "tests/compact/empty-range-purity.mjs",
+        "tests/PureHelpers.lean",
+        "tests/compact/PureHelpers.compact",
+        "tests/compact/pure-helpers.mjs",
+        "runtime/tests/pure_helpers.rs"
       ],
-      "equivalence": "unverified",
-      "implementationUpdate": {
-        "checkedOn": "2026-11-16",
-        "scope": "Structured Lean helper declarations support lexical overload groups, typed scalar/unit signatures, ordered once-only arguments, recursion rejection, transitive effects and scalar disclosure checks. Source/expansion/execution resource policies are enforced. Structured branch purity and external effect backend execution remain open.",
-        "evidence": [
-          "Noctium/Helpers.lean",
-          "tests/Helpers.lean",
-          "tests/HelperSource.lean",
-          "runtime/tests/helpers.rs",
-          "docs/development/named-helpers.md",
-          "tests/helpers/qualification-evidence.json"
-        ],
-        "fullEquivalence": "unverified"
-      }
+      "equivalence": "verified"
     },
     {
       "id": "C-LANG-GENERICS",
