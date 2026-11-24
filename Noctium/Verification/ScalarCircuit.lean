@@ -464,6 +464,61 @@ structure ScalarCircuitAdmission (circuit : Circuit) : Prop where
   outputs : ∀ output ∈ circuit.outputs,
     ∃ scalarType : ScalarType output.ty, ScalarExpression output.value
 
+/-- Scalar expression admission survives literal-true constraint pruning.
+The retained constraints and outputs inherit admission from the source. -/
+theorem ScalarCircuitAdmission.pruneCircuit (circuit : Circuit)
+    (admitted : ScalarCircuitAdmission circuit) :
+    ScalarCircuitAdmission (Passes.pruneCircuit circuit) := by
+  have pruneTrue_subset : ∀ conditions condition,
+      condition ∈ pruneTrue conditions → condition ∈ conditions := by
+    intro conditions
+    induction conditions with
+    | nil =>
+      intro condition member
+      simp [pruneTrue] at member
+    | cons head rest ih =>
+      intro condition member
+      by_cases literal : head = .bool true
+      · subst head
+        simp only [pruneTrue] at member
+        exact List.mem_cons_of_mem _ (ih condition member)
+      · have retained : pruneTrue (head :: rest) = head :: pruneTrue rest := by
+          simp [pruneTrue, literal]
+        rw [retained] at member
+        rcases List.mem_cons.mp member with same | member
+        · exact List.mem_cons.mpr (Or.inl same)
+        · exact List.mem_cons.mpr (Or.inr (ih condition member))
+  constructor
+  · intro condition member
+    exact admitted.constraints condition (pruneTrue_subset circuit.constraints condition member)
+  · intro output member
+    exact admitted.outputs output (by simpa [Passes.pruneCircuit] using member)
+
+/-- A scalar-admitted return lowers through exactly one native ABI field, and
+that field remains inside the admitted scalar expression fragment. Bool and
+UInt fields use the admitted `.cast .native` projection. -/
+theorem ScalarCircuitAdmission.nativeReturnFields (circuit : Circuit)
+    (admitted : ScalarCircuitAdmission circuit) (output : Output)
+    (member : output ∈ circuit.outputs) :
+    ∃ field : Expr .native,
+      output.nativeReturnFields = .ok [field] ∧ ScalarExpression field := by
+  cases output with
+  | mk name ty value span =>
+    obtain ⟨scalarType, expressionAdmission⟩ :=
+      admitted.outputs ⟨name, ty, value, span⟩ member
+    cases scalarType with
+    | native =>
+      refine ⟨value, ?_, expressionAdmission⟩
+      rfl
+    | bool =>
+      refine ⟨.cast .native value, ?_,
+        ScalarExpression.cast value .bool .native expressionAdmission⟩
+      rfl
+    | uint maximum =>
+      refine ⟨.cast .native value, ?_,
+        ScalarExpression.cast value (.uint maximum) .native expressionAdmission⟩
+      rfl
+
 private theorem expectedAliases_eq_circuitAliases (circuit : Circuit)
     (values : EvalEnv) (inputs : Assignment)
     (admitted : CanonicalInputs circuit values inputs) :
