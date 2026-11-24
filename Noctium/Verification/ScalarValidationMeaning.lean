@@ -213,6 +213,30 @@ theorem decoded_neg_argument {raw : Lean.Json} {a : Operand} {output : String}
   cases result
   exact ⟨aDecoded, outputParsed⟩
 
+theorem decoded_select_arguments {raw : Lean.Json}
+    {condition yes no : Operand} {output : String}
+    (opcodeParsed : stringField raw "op" = .ok "cond_select")
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.select condition yes no output)) :
+    NativeRelationJson.decodeOperandField raw "bit" = .ok condition ∧
+      NativeRelationJson.decodeOperandField raw "a" = .ok yes ∧
+      NativeRelationJson.decodeOperandField raw "b" = .ok no ∧
+      stringField raw "output" = .ok output := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [bind_ok, nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcode, opParsed, body⟩
+  have opcodeEq : opcode = "cond_select" := Except.ok.inj (opParsed.symm.trans opcodeParsed)
+  subst opcode
+  simp only [bind_ok] at body
+  simp [NativeRelationJson.ensure] at body
+  rcases body with ⟨_, conditionValue, conditionField, yesValue, yesField,
+    noValue, noField, outputValue, outputField, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
+  injection resultEq with conditionEq yesEq noEq outputEq
+  subst condition yes no output
+  exact ⟨conditionField, yesField, noField, outputField⟩
+
 theorem decoded_not_argument {raw : Lean.Json} {a : Operand} {output : String}
     (opcodeParsed : stringField raw "op" = .ok "not")
     (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not a output)) :
