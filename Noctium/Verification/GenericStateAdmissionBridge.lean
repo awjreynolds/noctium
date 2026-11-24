@@ -1,8 +1,95 @@
 import Noctium.Verification.GenericStateAdmissionPrefix
+import Noctium.Verification.GenericStateAliases
 import Noctium.Verification.GenericStateOps
 
 namespace Noctium.Verification.GenericStateAdmissionBridge
 open Backend
+
+private theorem bind_ok {α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
+    (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem lower_plan_validated (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (lowered : Impact.lower state entry = .ok plan) :
+    plan.validate entry = .ok () := by
+  obtain ⟨_, _, accepted, _, _⟩ :=
+    GenericStateAdmissionPrefix.lower_input_prefix state entry plan lowered
+  unfold Impact.lowerWithEffectBoundaries at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, ⟨⟨raw, _⟩, _, finished, finishAccepted, returned⟩⟩
+  unfold Impact.finishPlan at finishAccepted
+  cases checked : raw.validate entry with
+  | error message => simp [checked, MonadExcept.throw] at finishAccepted
+  | ok valid =>
+    cases valid
+    simp only [checked, Pure.pure, Except.pure, Except.ok.injEq] at finishAccepted
+    subst finished
+    simp only [Pure.pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at returned
+    exact returned.1 ▸ checked
+
+private theorem plan_native_literals_checked (plan : Impact.Plan) (entry : Entrypoint)
+    (accepted : plan.validate entry = .ok ()) (n : Nat) (member : Expr.native n ∈ plan.fields) :
+    n < Field.modulus := by
+  unfold Impact.Plan.validate at accepted
+  by_cases physical : (entry.returns.map Output.nativeReturnFieldCount).sum ≤ maxEntrypointReturnFields
+  · by_cases logical : entry.returnViews.length ≤ maxEntrypointReturnFields
+    · simp only [physical, logical, ite_true, bind_ok] at accepted
+      rcases accepted with ⟨_, _, value, fields, _⟩
+      cases value
+      let property := fun (field : Impact.Scalar) =>
+        ∀ value, field = .native value → value < Field.modulus
+      have actions := GenericStateAliases.forIn_extract _ property plan.fields (by
+        intro field step checked
+        simp only [bind_ok] at checked
+        rcases checked with ⟨result, evaluated, equality⟩
+        cases result
+        refine ⟨(Except.ok.inj equality).symm, ?_⟩
+        intro value same
+        subst field
+        simp only [Expr.validate] at evaluated
+        change (if value < Field.modulus then Except.ok () else
+          Except.error "noncanonical native constant") = (Except.ok () : Except String Unit) at evaluated
+        by_cases fits : value < Field.modulus
+        · exact fits
+        · simp [fits] at evaluated) fields
+      exact actions (.native n) member n rfl
+    · simp [physical, logical, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+  · simp [physical, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+
+/-- Accepted Impact lowering checks the native literals before the scalar VM
+evaluates the plan. Index slots and insert encodings are field-admissible. -/
+theorem lower_field_admission (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (lowered : Impact.lower state entry = .ok plan) :
+    ∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation := by
+  have checked := lower_plan_validated state entry plan lowered
+  intro operation present
+  have bound (n : Nat) (member : Expr.native n ∈ operation.fields) : n < Field.modulus :=
+    plan_native_literals_checked plan entry checked n
+      (List.mem_flatMap.mpr ⟨operation, present, member⟩)
+  cases operation <;> simp only [GenericStateOps.FieldAdmitted]
+  · exact bound _ (by simp [Impact.Op.fields, Impact.Aligned.fields])
+  · exact bound _ (by simp [Impact.Op.fields, Impact.Aligned.fields])
+  · exact bound _ (by simp [Impact.Op.fields])
+  all_goals trivial
+
+/-- The actual lowered plan and its successful scalar VM evaluation fix the
+ordered native field groups and the supported operation fragment together. -/
+theorem lower_evaluated_plan_groups (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (ctx : EvalContext) (values : EvalEnv)
+    (ops : List NativeState.Op)
+    (lowered : Impact.lower state entry = .ok plan)
+    (modulus : ctx.modulus = Field.modulus)
+    (evaluated : GenericStateOps.evalPlan ctx values plan = .ok ops) :
+    plan.operations.mapM (fun operation =>
+      GenericStateOps.evalFields ctx values operation.fields) =
+        .ok (NativeState.groups ops) ∧
+      (∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation) := by
+  exact ⟨GenericStateOps.evalOperations_fields ctx values plan.operations ops
+    modulus (lower_field_admission state entry plan lowered)
+    (by simpa only [GenericStateOps.evalPlan] using evaluated),
+    GenericStateOps.evalPlan_supported ctx values plan ops evaluated⟩
 
 private theorem public_input_operation_admitted (input : Input)
     (compatible : Impact.publicInputScalarCompatible input)
