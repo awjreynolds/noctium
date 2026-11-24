@@ -5,6 +5,7 @@ import Noctium.Verification.RangeDedupWholeTrace
 import Noctium.Verification.RangeDedupKernel
 import Noctium.Verification.ScalarValidationNativeDefinitions
 import Noctium.Verification.ScalarValidationOutputMeaning
+import Noctium.Verification.ScalarValidationProjectionComparison
 
 namespace Noctium.Verification.RangeDedupAcceptedArray
 
@@ -17,6 +18,8 @@ open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeLoop
 open Noctium.Verification.ScalarValidationNativeDefinitions
 open Noctium.Verification.ScalarValidationOutputMeaning
+open Noctium.Verification.ScalarValidationProjection
+open Noctium.Verification.ScalarValidationProjectionComparison
 open Noctium.Verification.ScalarNormalization
 
 /-- The bounded producer trace class used below permits arbitrary ordering of
@@ -663,6 +666,50 @@ theorem accepted_loop_meaning_at_steps
           after.1, after.2⟩
       · exact tailVisits raw index tailMember
 
+/-- Add scalar projection facts at every position of the actual indexed
+producer fold, reusing meaning and Native typing for all existing steps. -/
+theorem accepted_loop_projection_at_steps
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {initial final : Backend.Native.State}
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (steps : ∀ item ∈ items, AcceptedMeaningStep hash witness item.1)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
+    StateScalarProjection hash inputs witness final ∧
+      ∀ raw index, (raw, index) ∈ items →
+        ∃ state next, StateScalarProjection hash inputs witness state ∧
+          Backend.Native.validateInstruction expected state raw = .ok next ∧
+          StateScalarProjection hash inputs witness next := by
+  obtain ⟨finalMeaning, finalDefinitions, visits⟩ := accepted_loop_meaning_at_steps
+    initialMeaning initialDefinitions inputSchema inputAgreement steps accepted
+  have finalProjection := stateScalarProjection_of_meaning_and_nativeDefinitions
+    finalMeaning finalDefinitions
+  refine ⟨finalProjection, ?_⟩
+  intro raw index member
+  obtain ⟨state, next, beforeMeaning, beforeDefinitions, checked, afterMeaning,
+    afterDefinitions⟩ := visits raw index member
+  have beforeProjection := stateScalarProjection_of_meaning_and_nativeDefinitions
+    beforeMeaning beforeDefinitions
+  have afterProjection := stateScalarProjection_of_meaning_and_nativeDefinitions
+    afterMeaning afterDefinitions
+  cases step : steps (raw, index) member with
+  | lessThan opcode decoded holds =>
+    exact ⟨state, next, beforeProjection, checked,
+      accepted_lessThan_projection_step beforeProjection opcode checked decoded holds⟩
+  | testEq opcode decoded holds =>
+    have leftSupported : ∀ {fact}, Backend.Native.argument state raw "a" = .ok fact →
+        FactScalarType fact.valueType := by
+      intro fact argumentAccepted
+      have native := argument_native_of_state beforeDefinitions argumentAccepted
+      rw [native]
+      exact .native
+    exact ⟨state, next, beforeProjection, checked,
+      accepted_testEq_projection_step beforeProjection leftSupported opcode checked decoded holds⟩
+  | _ => exact ⟨state, next, beforeProjection, checked, afterProjection⟩
+
 private theorem foldObservation_copyJson (source destination : String) :
     Noctium.Verification.RangeDedupWholeTrace.foldObservation
         (comparisonCopyJson source destination) =
@@ -675,7 +722,8 @@ private theorem foldObservation_copyJson (source destination : String) :
 arbitrary traces in `AcceptedMeaningStep`, including any number of comparisons
 interleaved with inputs, arithmetic, assertions, and outputs. The existing
 all-witness fold theorem still requires `ComparisonBitChecks`; this result also
-exposes producer-derived bounds at every accepted comparison for the chosen
+returns scalar projections before and after every accepted equality or order
+comparison, plus producer-derived bounds at each comparison for the chosen
 assignment. -/
 theorem acceptedArrayWholeFold
     {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
@@ -702,6 +750,11 @@ theorem acceptedArrayWholeFold
           Noctium.Verification.RangeDedupWholeTrace.foldObservation =
         source.toList.flatMap Noctium.Verification.RangeDedupWholeTrace.foldObservation ∧
       StateMeaning hash inputs witness final ∧ NativeDefinitions final ∧
+      (StateScalarProjection hash inputs witness final ∧
+        (∀ raw index, (raw, index) ∈ source.toList.zipIdx →
+          ∃ state next, StateScalarProjection hash inputs witness state ∧
+            Backend.Native.validateInstruction expected state raw = .ok next ∧
+            StateScalarProjection hash inputs witness next)) ∧
       (∀ raw index, (raw, index) ∈ source.toList.zipIdx →
         ∀ left right width output,
           Backend.Native.stringField raw "op" = .ok "less_than" →
@@ -720,10 +773,12 @@ theorem acceptedArrayWholeFold
       intro earlier earlierMember later laterMember key first output earlierKey laterKey
       rw [foldObservation_copyJson first output]
       simp [Noctium.Verification.RangeDedupWholeTrace.foldObservation, laterKey])
+  have projected := accepted_loop_projection_at_steps initialMeaning
+    initialDefinitions inputSchema inputAgreement steps accepted
   obtain ⟨finalMeaning, finalDefinitions, visits⟩ := accepted_loop_meaning_at_steps
     initialMeaning initialDefinitions inputSchema inputAgreement steps accepted
   refine ⟨optimized, optimizedDecoded, stable, equivalent, observations,
-    finalMeaning, finalDefinitions, ?_, ?_⟩
+    finalMeaning, finalDefinitions, projected, ?_, ?_⟩
   · intro raw index member left right width output opcode decodedComparison
     obtain ⟨state, next, before, _, checked, _, _⟩ := visits raw index member
     exact accepted_lessThan_witnessBounds before opcode decodedComparison checked
