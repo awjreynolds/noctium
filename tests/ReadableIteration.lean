@@ -38,8 +38,10 @@ noctium_witness_circuit emptyNativeMap using emptyTupleIterationWire,
   output result : Native := disclose(
     let mapped := map([witness iterationEmptyTuple()], fun item => do
       let alias := item
-      return alias
-    end) in witness acceptEmptyNativeVector(mapped))
+      let aliasAgain := alias
+      return aliasAgain
+    end) in
+    witness acceptEmptyNativeVector(let forwarded := mapped in forwarded))
 end
 
 #guard
@@ -55,9 +57,11 @@ noctium_witness_circuit emptyNativeMapStatement using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
   let mapped := map([witness iterationEmptyTuple()], fun item => do
     let alias := item
-    return alias
+    let aliasAgain := alias
+    return aliasAgain
   end)
-  output result : Native := disclose(witness acceptEmptyNativeVector(mapped))
+  let forwarded := mapped
+  output result : Native := disclose(witness acceptEmptyNativeVector(forwarded))
 end
 
 #guard
@@ -66,14 +70,27 @@ end
   compiled.toOption.map (fun source => source.calls.map (·.name)) ==
     some ["iterationEmptyTuple", "acceptEmptyNativeVector"]
 
+noctium_witness_circuit emptyNativeMapBranch using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  public active : Bool
+  if active then
+    let mapped := map([witness iterationEmptyTuple()], fun item => item)
+    let forwarded := mapped
+    let received := witness acceptEmptyNativeVector(forwarded)
+    prove eq(received, 41)
+  end
+  output result : Native := 0
+end
+
 /- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsShadowedEmptyNativeMap using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
   output result : Native := disclose(
     let mapped := map([witness iterationEmptyTuple()], fun item => item) in
-    let mapped := default(Payload emptyNativeVectorIterationWire) in
-      witness acceptEmptyNativeVector(mapped))
+    let forwarded := mapped in
+    let forwarded := default(Payload emptyNativeVectorIterationWire) in
+      witness acceptEmptyNativeVector(forwarded))
 end
 
 /- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/

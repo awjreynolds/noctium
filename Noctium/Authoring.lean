@@ -580,20 +580,56 @@ private def expressionIdentifierName (stx : TSyntax `nlexpr) : Option String :=
   | `(nlexpr| $id:ident) => some id.getId.toString
   | _ => none
 
+private def callbackExpectedSourceIndex (name : String)
+    (steps : Array (TSyntax `noctium_callback_step)) : Option Nat := Id.run do
+  let mut currentName := name
+  let mut selected : Option Nat := none
+  for (step, index) in steps.toList.zipIdx.reverse do
+    let some (some binder, value) := callbackStep step | continue
+    if binder.getId.toString == currentName then
+      selected := some index
+      match expressionIdentifierName value with
+      | some sourceName => currentName := sourceName
+      | none => return selected
+  return selected
+
 private def isMapExpression (stx : TSyntax `nlexpr) : _root_.Bool :=
   match stx with
   | `(nlexpr| map([$_,*], fun $_:ident* => $_)) => _root_.Bool.true
   | _ => _root_.Bool.false
 
-/-- Collect typed vector witness arguments that directly consume a lexical name.
-The walk respects let and callback parameter scopes, so a same-named inner
-binding does not constrain an outer binding. -/
-private partial def expectedVectorWitnessArguments (name : String)
+private def aliasAfterBinding (aliases : List String) (binder : String)
+    (source : TSyntax `nlexpr) : List String :=
+  let sourceAliases := match expressionIdentifierName source with
+    | some sourceName => aliases.contains sourceName
+    | none => _root_.Bool.false
+  let aliases := aliases.filter (· != binder)
+  if sourceAliases then binder :: aliases else aliases
+
+private partial def expressionReturnsAlias (aliases : List String)
+    (stx : TSyntax `nlexpr) : _root_.Bool :=
+  match stx with
+  | `(nlexpr| $id:ident) => aliases.contains id.getId.toString
+  | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) =>
+    expressionReturnsAlias (aliasAfterBinding aliases (id.getId.toString) value) body
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => Id.run do
+    let mut localAliases := aliases
+    for step in steps do
+      let some (binder, value) := callbackStep step | continue
+      if let some binder := binder then
+        localAliases := aliasAfterBinding localAliases (binder.getId.toString) value
+    return expressionReturnsAlias localAliases result
+  | _ => _root_.Bool.false
+
+/-- Collect typed vector witness arguments that consume a lexical name or one of
+its direct aliases. The walk respects lexical scopes and masks shadowed names. -/
+private partial def expectedVectorWitnessArgumentsIn (aliases : List String)
     (stx : TSyntax `nlexpr) : CommandElabM (List ResultType) := do
+  if aliases.isEmpty then return []
   match stx with
   | `(nlexpr| witness $function:ident($arguments:nlexpr,*)) => do
     let directArguments := (arguments.getElems.toList.zipIdx).filterMap fun (argument, index) =>
-      if expressionIdentifierName argument == some name then some index else none
+      if expressionReturnsAlias aliases argument then some index else none
     let mut found := []
     if !directArguments.isEmpty then
       let signature ← witnessSignature function
@@ -603,60 +639,61 @@ private partial def expectedVectorWitnessArguments (name : String)
           | .composite (.vector ..) => found := found ++ [parameter.type]
           | _ => pure ()
     for argument in arguments.getElems do
-      found := found ++ (← expectedVectorWitnessArguments name argument)
+      found := found ++ (← expectedVectorWitnessArgumentsIn aliases argument)
     pure found
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
-    let inValue ← expectedVectorWitnessArguments name value
-    if id.getId.toString == name then
-      pure inValue
-    else
-      pure (inValue ++ (← expectedVectorWitnessArguments name body))
+    let inValue ← expectedVectorWitnessArgumentsIn aliases value
+    let bodyAliases := aliasAfterBinding aliases (id.getId.toString) value
+    pure (inValue ++ (← expectedVectorWitnessArgumentsIn bodyAliases body))
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => do
     let mut found := []
-    let mut shadowed := _root_.Bool.false
+    let mut localAliases := aliases
     for step in steps do
       let some (binder, value) := callbackStep step | continue
-      if !shadowed then
-        found := found ++ (← expectedVectorWitnessArguments name value)
-      if binder.map (·.getId.toString) == some name then
-        shadowed := _root_.Bool.true
-    if !shadowed then
-      found := found ++ (← expectedVectorWitnessArguments name result)
+      found := found ++ (← expectedVectorWitnessArgumentsIn localAliases value)
+      if let some binder := binder then
+        localAliases := aliasAfterBinding localAliases (binder.getId.toString) value
+    found := found ++ (← expectedVectorWitnessArgumentsIn localAliases result)
     pure found
   | `(nlexpr| map([$sequences,*], fun $parameters:ident* => $body)) => do
     let mut found := []
     for sequence in sequences.getElems do
-      found := found ++ (← expectedVectorWitnessArguments name sequence)
-    unless parameters.toList.any (·.getId.toString == name) do
-      found := found ++ (← expectedVectorWitnessArguments name body)
+      found := found ++ (← expectedVectorWitnessArgumentsIn aliases sequence)
+    let bodyAliases := aliases.filter fun name =>
+      !parameters.toList.any (·.getId.toString == name)
+    found := found ++ (← expectedVectorWitnessArgumentsIn bodyAliases body)
     pure found
   | `(nlexpr| fold($initial, [$sequences,*], fun $parameters:ident* => $body)) => do
-    let mut found ← expectedVectorWitnessArguments name initial
+    let mut found ← expectedVectorWitnessArgumentsIn aliases initial
     for sequence in sequences.getElems do
-      found := found ++ (← expectedVectorWitnessArguments name sequence)
-    unless parameters.toList.any (·.getId.toString == name) do
-      found := found ++ (← expectedVectorWitnessArguments name body)
+      found := found ++ (← expectedVectorWitnessArgumentsIn aliases sequence)
+    let bodyAliases := aliases.filter fun name =>
+      !parameters.toList.any (·.getId.toString == name)
+    found := found ++ (← expectedVectorWitnessArgumentsIn bodyAliases body)
     pure found
   | _ => do
     let mut found := []
     for child in stx.raw.getArgs do
       let childExpr : TSyntax `nlexpr := ⟨child⟩
-      found := found ++ (← expectedVectorWitnessArguments name childExpr)
+      found := found ++ (← expectedVectorWitnessArgumentsIn aliases childExpr)
     pure found
+
+private def expectedVectorWitnessArguments (name : String)
+    (stx : TSyntax `nlexpr) : CommandElabM (List ResultType) :=
+  expectedVectorWitnessArgumentsIn [name] stx
 
 private def expectedVectorFromFollowingStatements (name : String)
     (following : List (TSyntax `noctium_witness_statement)) : CommandElabM (Option ResultType) := do
   let mut contexts : List ResultType := []
-  let mut shadowed := _root_.Bool.false
+  let mut aliases := [name]
   for statement in following do
-    if shadowed then break
+    if aliases.isEmpty then break
     match statement with
     | `(noctium_witness_statement| let $id:ident $[: $type:nltype]? := $source:nlexpr) => do
-      contexts := contexts ++ (← expectedVectorWitnessArguments name source)
-      if id.getId.toString == name then
-        shadowed := _root_.Bool.true
+      contexts := contexts ++ (← expectedVectorWitnessArgumentsIn aliases source)
+      aliases := aliasAfterBinding aliases (id.getId.toString) source
     | `(noctium_witness_statement| output $_:ident $[: $type:nltype]? := $source:nlexpr) =>
-      contexts := contexts ++ (← expectedVectorWitnessArguments name source)
+      contexts := contexts ++ (← expectedVectorWitnessArgumentsIn aliases source)
     | _ => pure ()
   match contexts.eraseDups with
   | [type] => pure (some type)
@@ -1823,9 +1860,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let contextualUses ← if isMapExpression value then
       liftM <| expectedVectorWitnessArguments name body
       else pure []
-    let valueExpected := match expected, expressionIdentifierName body with
-      | some type, some bodyName => if bodyName == name then some type else none
-      | _, _ =>
+    let valueExpected :=
+      if expected.isSome && expressionReturnsAlias [name] body then expected
+      else
         match contextualUses.eraseDups with
         | [type] => some type
         | _ => none
@@ -1844,11 +1881,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let resultName := expressionIdentifierName result
     let expectedBinderIndex := match expected, resultName with
       | some _, some resultName =>
-        (steps.toList.zipIdx).foldl (fun selected (step, index) =>
-          match callbackStep step with
-          | some (some id, _) =>
-            if id.getId.toString == resultName then some index else selected
-          | _ => selected) none
+        callbackExpectedSourceIndex resultName steps
       | _, _ => none
     let mut localEnv := env
     let mut loweredSteps := []
@@ -3437,10 +3470,12 @@ private partial def lowerReadableStatement (programName path : String)
     let body := body.observe conditionValue [condition]
     let mut yesBody := {body with statements := [], logicalAliases := []}
     for (child, ordinal) in yes.toList.zipIdx do
-      yesBody ← lowerReadableStatement programName s!"{path}.0.{ordinal}" exprState codecTerms yesBody child
+      yesBody ← lowerReadableStatement programName s!"{path}.0.{ordinal}"
+        exprState codecTerms yesBody child (fun _ => yes.toList.drop (ordinal + 1))
     let mut noBody := {yesBody with env := body.env, statements := [], logicalAliases := []}
     for (child, ordinal) in (no.getD #[]).toList.zipIdx do
-      noBody ← lowerReadableStatement programName s!"{path}.1.{ordinal}" exprState codecTerms noBody child
+      noBody ← lowerReadableStatement programName s!"{path}.1.{ordinal}"
+        exprState codecTerms noBody child (fun _ => (no.getD #[]).toList.drop (ordinal + 1))
     let span ← spanValue statement
     let arm : Lowered := {
       type := .unit
@@ -3469,7 +3504,8 @@ private partial def lowerReadableStatement (programName path : String)
       statements := []
       logicalAliases := []}
     for (child, ordinal) in nested.toList.zipIdx do
-      loop ← lowerReadableStatement programName s!"{path}.{ordinal}" exprState codecTerms loop child
+      loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
+        exprState codecTerms loop child (fun _ => nested.toList.drop (ordinal + 1))
     pure {body with
       statements := body.statements ++ [.forRange indexName start.getNat stop.getNat loop.statements]
       witnesses := loop.witnesses
@@ -3528,7 +3564,8 @@ private partial def lowerReadableStatement (programName path : String)
       nextLet := loopExprState.nextLet
       iterationParameters := loopExprState.iterationParameters}
     for (child, ordinal) in nested.toList.zipIdx do
-      loop ← lowerReadableStatement programName s!"{path}.{ordinal}" exprState codecTerms loop child
+      loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
+        exprState codecTerms loop child (fun _ => nested.toList.drop (ordinal + 1))
     let localViews := iterationViewBindings loop.iterationParameters [elementRef]
     let retainedParameters := retainIterationScope loop.iterationParameters [elementRef]
     let resolvedHelperEnv := iterationEnvironment
