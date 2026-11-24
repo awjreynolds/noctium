@@ -3507,15 +3507,14 @@ def lowerEntrypoint (state : List StateDecl) (entry : Entrypoint)
   let result ← lowerPrunedEntrypoint state (Passes.pruneEntrypoint entry) rewrites
   pure result.2
 
-/-- Accepted ledger-call JSON passes producer validation for the pruned
-entrypoint and retains the emitted instructions for the exact accepted plan. -/
-theorem lowerEntrypoint_validation_and_instructions (state : List StateDecl) (entry : Entrypoint)
-    (program : Json) (accepted : lowerEntrypoint state entry = .ok program) :
+private theorem lowerEntrypoint_validation_and_instructions_with_rewrites
+    (state : List StateDecl) (entry : Entrypoint) (rewrites : Rewrites)
+    (program : Json) (accepted : lowerEntrypoint state entry rewrites = .ok program) :
     ∃ plan expected, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
       Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
-      Native.validate expected program = .ok () ∧
-      Native.arrayField program "instructions" =
-        .ok ((lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.instructions := by
+      Native.validate (optimizedExpected rewrites expected) program = .ok () ∧
+      Native.arrayField program "instructions" = .ok (optimizedInstructions rewrites
+        ((lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.instructions) := by
   simp only [lowerEntrypoint, bind, bind_ok] at accepted
   obtain ⟨⟨resultPlan, relation⟩, lowered, result⟩ := accepted
   cases result
@@ -3533,6 +3532,46 @@ theorem lowerEntrypoint_validation_and_instructions (state : List StateDecl) (en
       exact checked
     · rw [equal, produced]
       rfl
+
+/-- Accepted ledger-call JSON passes producer validation for the pruned
+entrypoint and retains the emitted instructions for the exact accepted plan. -/
+theorem lowerEntrypoint_validation_and_instructions (state : List StateDecl) (entry : Entrypoint)
+    (program : Json) (accepted : lowerEntrypoint state entry = .ok program) :
+    ∃ plan expected, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      Native.validate expected program = .ok () ∧
+      Native.arrayField program "instructions" =
+        .ok ((lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.instructions :=
+  lowerEntrypoint_validation_and_instructions_with_rewrites state entry .disabled program accepted
+
+/-- Both accepted ledger rewrite modes share the exact Impact plan and source
+validation schedule. Comparison reuse acts on the accepted range-and-assertion
+instruction vector. -/
+theorem lowerEntrypoint_comparison_instructions_reuse_range_instructions
+    (state : List StateDecl) (entry : Entrypoint) (rangeProgram comparisonProgram : Json)
+    (rangeAccepted : lowerEntrypoint state entry .rangeAndAssertions = .ok rangeProgram)
+    (comparisonAccepted : lowerEntrypoint state entry .includingComparisons = .ok comparisonProgram) :
+    ∃ plan expected rangeInstructions,
+      Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      Native.validate {expected with assertions := expected.assertions.eraseDups} rangeProgram = .ok () ∧
+      Native.validate {expected with assertions := expected.assertions.eraseDups} comparisonProgram = .ok () ∧
+      Native.arrayField rangeProgram "instructions" = .ok rangeInstructions ∧
+      Native.arrayField comparisonProgram "instructions" =
+        .ok (RangeDedup.reuseComparisons rangeInstructions) := by
+  obtain ⟨plan, expected, impact, schedule, rangeValid, rangeArray⟩ :=
+    lowerEntrypoint_validation_and_instructions_with_rewrites state entry .rangeAndAssertions
+      rangeProgram rangeAccepted
+  obtain ⟨comparisonPlan, comparisonExpected, comparisonImpact, comparisonSchedule,
+      comparisonValid, comparisonArray⟩ :=
+    lowerEntrypoint_validation_and_instructions_with_rewrites state entry .includingComparisons
+      comparisonProgram comparisonAccepted
+  have samePlan := Except.ok.inj (comparisonImpact.symm.trans impact)
+  have sameExpected := Except.ok.inj (comparisonSchedule.symm.trans schedule)
+  subst comparisonPlan comparisonExpected
+  refine ⟨plan, expected, _, impact, schedule, rangeValid, comparisonValid, rangeArray, ?_⟩
+  rw [comparisonArray]
+  simp only [optimizedInstructions, RangeDedup.reuseComparisons_removeDuplicateAssertions]
 
 /-- Accepted ledger-call JSON retains the exact instruction vector emitted by
 the production body over the actual accepted pruned plan. -/

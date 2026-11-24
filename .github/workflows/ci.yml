@@ -645,7 +645,7 @@ jobs:
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.NativeRelationInstructionProjection \
             Noctium.Verification.NativeInputOrdinalTrace \
-            Noctium.Verification.RangeDedupAcceptedArray \
+            Noctium.Verification.RangeDedupAcceptedEntrypoint \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
             Noctium.Verification.ScalarValidationProjectionComparison \
