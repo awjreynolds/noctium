@@ -3100,8 +3100,10 @@ fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> R
         if let Some(ty) = parts.get("scalar").and_then(Json::as_str) {
             let ty = validate_tree_scalar_type(ty)?;
             ensure!(
-                ty != ScalarType::OpaqueString || depth == 0,
-                "OpaqueString Lists are only supported at the root"
+                ty != ScalarType::OpaqueString
+                    || depth == 0
+                    || (depth == 1 && bytes32_parents),
+                "OpaqueString Lists require a root or Bytes32-keyed Map path"
             );
             return Ok(());
         }

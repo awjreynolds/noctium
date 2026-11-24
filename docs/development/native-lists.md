@@ -148,6 +148,14 @@ uses fresh ZKIR 3.2.1 and the native Ledger 9 checker.
 [Compact oracle](../../tests/compact/opaque-lists.mjs) ·
 [Native checker](../../runtime/tests/opaque_lists.rs)
 
+A `Bytes32` Map also accepts a `List OpaqueString` value. The paired
+Compact and native fixture updates two owners and checks typed heads,
+pop order, and exact sibling state. An active read of an absent Map key
+rejects. The native relation also rejects a changed Compress field.
+[Lean fixture](../../tests/NestedOpaqueLists.lean) ·
+[Compact oracle](../../tests/compact/nested-opaque-lists.mjs) ·
+[Native checker](../../runtime/tests/nested_opaque_lists.rs)
+
 ## Check emptiness for zero-width and nested record Lists
 
 The paired fixture compares an empty `List<Bytes<0>>` with a List containing

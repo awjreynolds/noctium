@@ -1761,6 +1761,7 @@ def LedgerValueType.validate (caps : Capabilities) (schema : LedgerValueType) : 
   | .map (.bytes 32) (.scalar .opaqueString) => Ty.validate caps .opaqueString
   | .map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString)) =>
     Ty.validate caps .opaqueString
+  | .map (.bytes 32) (.list _ (.scalar .opaqueString)) => Ty.validate caps .opaqueString
   | _ => nested 0 schema
 where
   nested : Nat → LedgerValueType → Except String Unit
@@ -1801,8 +1802,8 @@ where
       for (_, ty) in fields do
         validateStateScalar caps ty
 
-/-- Validate a root tree value. Nested composites still use the generic schema
-validator, so root-only opaque string handling does not spread into Map values. -/
+/-- Validate a root tree value. Opaque strings use the root List exception or
+one of the specifically supported Bytes32 Map leaf schemas. -/
 def LedgerValueType.validateCellRoot (caps : Capabilities)
     (schema : LedgerValueType) : Except String Unit := do
   match schema with
