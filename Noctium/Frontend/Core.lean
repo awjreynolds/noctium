@@ -4870,11 +4870,35 @@ private def isRootScalarMap (schema : List (String × StateKind))
   | some (.map ..) => _root_.Bool.true
   | _ => _root_.Bool.false
 
+private def isTwoKeyScalarMap (schema : List (String × StateKind))
+    (storage : TSyntax `ident) : _root_.Bool :=
+  match schema.lookup storage.getId.toString with
+  | some (.tree (.map _ (.map _ (.scalar _)))) => _root_.Bool.true
+  | _ => _root_.Bool.false
+
 private def hasNominalFieldRootScalarMapPath (schema : List (String × StateKind))
     (state : EntryEffects) (path : TSyntax `nlpath) : _root_.Bool :=
   match path with
   | `(nlpath| $storage:ident [ $key:nlexpr ]) =>
     isRootScalarMap schema storage &&
+      hasCircuitNominalFieldReference state.nominalFieldBindings key.raw
+  | _ => _root_.Bool.false
+
+private def hasNominalFieldTwoKeyScalarMapPath (schema : List (String × StateKind))
+    (state : EntryEffects) (path : TSyntax `nlpath) : _root_.Bool :=
+  match path with
+  | `(nlpath| $storage:ident [ $first:nlexpr ] [ $second:nlexpr ]) =>
+    isTwoKeyScalarMap schema storage &&
+      (state.collectionNominals storage).pathFieldKeys.length == 2 &&
+      (hasCircuitNominalFieldReference state.nominalFieldBindings first.raw ||
+        hasCircuitNominalFieldReference state.nominalFieldBindings second.raw)
+  | _ => _root_.Bool.false
+
+private def hasNominalFieldTwoKeyScalarMapParentPath (schema : List (String × StateKind))
+    (state : EntryEffects) (path : TSyntax `nlpath) : _root_.Bool :=
+  match path with
+  | `(nlpath| $storage:ident [ $key:nlexpr ]) =>
+    isTwoKeyScalarMap schema storage &&
       hasCircuitNominalFieldReference state.nominalFieldBindings key.raw
   | _ => _root_.Bool.false
 
@@ -4889,6 +4913,9 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
     hasNominalFieldRecordSetKey schema state storage (some owner) keyFields
   let typedScalarSetPath := hasNominalFieldRootScalarSetPath schema state
   let typedScalarMapPath := hasNominalFieldRootScalarMapPath schema state
+  let typedTwoKeyScalarMapPath := hasNominalFieldTwoKeyScalarMapPath schema state
+  let typedTwoKeyScalarMapParentPath :=
+    hasNominalFieldTwoKeyScalarMapParentPath schema state
   match effect with
   | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
   | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
@@ -4905,6 +4932,10 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
       !hasCircuitNominalFieldReference fieldBindings first.raw &&
         !hasCircuitNominalFieldReference fieldBindings second.raw &&
         hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| write $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $value:nlexpr)
+  | `(nleffect| insert $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $value:nlexpr) =>
+      isTwoKeyScalarMap schema storage &&
+        !hasCircuitNominalFieldReference fieldBindings value.raw
   | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
       (typedKey storage keyFields ||
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw) &&
@@ -4946,25 +4977,33 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         typedRecordSetKey storage keyFields
   | `(nleffect| insert $path:nlpath) => typedScalarSetPath path
+  | `(nleffect| insert $storage:ident [ $key:nlexpr ] := emptyMap) =>
+      isTwoKeyScalarMap schema storage &&
+        hasCircuitNominalFieldReference fieldBindings key.raw
   | `(nleffect| remove $path:nlpath) =>
-      typedScalarSetPath path || typedScalarMapPath path
+      typedScalarSetPath path || typedScalarMapPath path || typedTwoKeyScalarMapPath path
   | `(nleffect| member $path:nlpath as $_:ident) =>
-      typedScalarSetPath path || typedScalarMapPath path
+      typedScalarSetPath path || typedScalarMapPath path || typedTwoKeyScalarMapPath path
   | `(nleffect| read $path:nlpath as $_:ident) =>
-      typedScalarMapPath path
+      typedScalarMapPath path || typedTwoKeyScalarMapPath path
   | `(nleffect| when $condition:nlexpr insert $path:nlpath) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarSetPath path
   | `(nleffect| when $condition:nlexpr remove $path:nlpath) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
-        (typedScalarSetPath path || typedScalarMapPath path)
+        (typedScalarSetPath path || typedScalarMapPath path || typedTwoKeyScalarMapPath path)
   | `(nleffect| when $condition:nlexpr member $path:nlpath as $_:ident) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
-        (typedScalarSetPath path || typedScalarMapPath path)
+        (typedScalarSetPath path || typedScalarMapPath path || typedTwoKeyScalarMapPath path)
   | `(nleffect| when $condition:nlexpr read $path:nlpath as $_:ident) =>
-      !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarMapPath path
-  | `(nleffect| insertDefault $path:nlpath) => typedScalarMapPath path
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        (typedScalarMapPath path || typedTwoKeyScalarMapPath path)
+  | `(nleffect| insertDefault $path:nlpath) =>
+      typedScalarMapPath path || typedTwoKeyScalarMapPath path ||
+        typedTwoKeyScalarMapParentPath path
   | `(nleffect| when $condition:nlexpr insertDefault $path:nlpath) =>
-      !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarMapPath path
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        (typedScalarMapPath path || typedTwoKeyScalarMapPath path ||
+          typedTwoKeyScalarMapParentPath path)
   | `(nleffect| absent $storage:ident [ $key:nlexpr ]) =>
       isRootScalarMap schema storage && hasCircuitNominalFieldReference fieldBindings key.raw
   | `(nleffect| read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
@@ -6740,11 +6779,12 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           let (kind, term) ← elaborateScalarListDecl [outer, inner] sourceType.type
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $value:nltype) => do
-          let outer ← readCollectionScalarSourceType outer
-          let inner ← readCollectionScalarSourceType inner
+          let outer ← readCollectionScalarSourceType outer _root_.Bool.true
+          let inner ← readCollectionScalarSourceType inner _root_.Bool.true
           let value ← readCollectionScalarSourceType value
           let nominal : CollectionNominals := {
             pathKeys := [outer.nominalUInt, inner.nominalUInt],
+            pathFieldKeys := [outer.nominalField, inner.nominalField],
             scalarValue := value.nominalUInt}
           unless nominal.isEmpty do
             nominalCollections := (id.getId.toString, nominal) :: nominalCollections
