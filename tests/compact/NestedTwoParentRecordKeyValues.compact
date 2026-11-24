@@ -1,0 +1,48 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct ProfileKey {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export struct Profile {
+  label: Bytes<1>;
+  digest: Bytes<33>;
+}
+
+export ledger profiles: Map<Bytes<32>, Map<Bytes<32>, Map<ProfileKey, Profile>>>;
+
+export circuit store(
+  owner: Bytes<32>, group: Bytes<32>, tag: Bytes<1>, id: Bytes<33>,
+  label: Bytes<1>, digest: Bytes<33>,
+): [] {
+  const ownerKey = disclose(owner);
+  const groupKey = disclose(group);
+  if (!profiles.member(ownerKey)) { profiles.insertDefault(ownerKey); }
+  if (!profiles.lookup(ownerKey).member(groupKey)) {
+    profiles.lookup(ownerKey).insertDefault(groupKey);
+  }
+  const key = ProfileKey { tag: disclose(tag), id: disclose(id) };
+  const value = disclose(Profile { label, digest });
+  profiles.lookup(ownerKey).lookup(groupKey).insert(key, value);
+}
+
+export circuit lookup(
+  owner: Bytes<32>, group: Bytes<32>, tag: Bytes<1>, id: Bytes<33>,
+): [Bytes<1>, Bytes<33>] {
+  const ownerKey = disclose(owner);
+  const groupKey = disclose(group);
+  const key = ProfileKey { tag: disclose(tag), id: disclose(id) };
+  const value = profiles.lookup(ownerKey).lookup(groupKey).lookup(key);
+  return [value.label, value.digest];
+}
+
+export circuit remove(
+  owner: Bytes<32>, group: Bytes<32>, tag: Bytes<1>, id: Bytes<33>,
+): [] {
+  const ownerKey = disclose(owner);
+  const groupKey = disclose(group);
+  const key = ProfileKey { tag: disclose(tag), id: disclose(id) };
+  profiles.lookup(ownerKey).lookup(groupKey).remove(key);
+}
