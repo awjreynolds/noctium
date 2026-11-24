@@ -303,6 +303,12 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
+          .lake/build/bin/noctium compile tests/MerklePathRootNoLeafHash.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/merkle-path-types"
+          .lake/build/bin/noctium compile tests/TypedMerklePathRoot.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/typed-merkle-path-root"
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
@@ -474,6 +480,8 @@ jobs:
             NOCTIUM_STRUCTURAL_EQUALITY_DIR="$artifacts/structural-equality-widening" \
             NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR="$artifacts/readable-lazy-conditional" \
             NOCTIUM_READABLE_ITERATION_DIR="$artifacts/readable-iteration" \
+            NOCTIUM_MERKLE_PATH_TYPES_DIR="$artifacts/merkle-path-types" \
+            NOCTIUM_TYPED_MERKLE_PATH_ROOT_DIR="$artifacts/typed-merkle-path-root" \
             NOCTIUM_QUALIFIED_COIN_ABI_DIR="$artifacts/qualified-coin-info" \
             NOCTIUM_NOMINAL_RECORD_EQUALITY_DIR="$artifacts/nominal-record-equality" \
             NOCTIUM_CURVE_DEFAULTS_DIR="$artifacts/curve-defaults" \
@@ -513,7 +521,7 @@ jobs:
               --test bounded_fab_hash_commit \
               --test named_enum_members --test checked_enum_casts --test nested_aggregate_equality \
               --test structural_equality_widening \
-              --test readable_lazy_conditional --test readable_iteration \
+              --test readable_lazy_conditional --test readable_iteration --test merkle_path_types \
               --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
               --test typed_contract_reference --test nominal_contract_interface \
               --test nominal_record_maybe \
@@ -529,6 +537,7 @@ jobs:
                 --skip jubjub_projection_generates_and_binds_native_proof \
                 --skip jubjub_construction_generates_and_binds_native_proof \
                 --skip readable_iteration_generates_and_binds_native_proof \
+                --skip merkle_path_entry_generates_and_binds_native_proof \
                 --skip checked_enum_casts_generates_and_binds_native_proof \
                 --skip module_enum_comparison_generates_and_binds_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
