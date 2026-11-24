@@ -4,26 +4,6 @@ import Noctium.Verification.GenericStateOps
 namespace Noctium.Verification.GenericStateAdmissionBridge
 open Backend
 
-/-- An accepted production plan retains its fallible public-input plan and
-guarded effect append, including the exact boundary list. -/
-theorem lower_source (state : List StateDecl) (entry : Entrypoint)
-    (plan : Impact.Plan)
-    (lowered : Impact.lower state entry = .ok plan) :
-    ∃ boundaries inputPlan,
-      Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries) ∧
-      Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
-      Impact.appendEffectsGuardedWithBoundaries state entry.effects entry.effectGuards inputPlan =
-        .ok (plan, boundaries) := by
-  exact GenericStateAdmissionPrefix.lower_input_prefix state entry plan lowered
-
-/-- A completed scalar interpretation admits only operations in the explicit
-scalar VM fragment. This premise refers to the same plan as the interpretation. -/
-theorem evaluated_operations_supported (ctx : EvalContext) (values : EvalEnv)
-    (plan : Impact.Plan) (ops : List NativeState.Op)
-    (evaluated : GenericStateOps.evalPlan ctx values plan = .ok ops) :
-    ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation :=
-  GenericStateOps.evalPlan_supported ctx values plan ops evaluated
-
 private theorem public_input_operation_admitted (input : Input)
     (compatible : Impact.publicInputScalarCompatible input)
     (operation : Impact.Op)
@@ -53,7 +33,7 @@ theorem lower_public_input_only_admitted (state : List StateDecl)
       Impact.publicInputScalarCompatible input) :
     ∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation := by
   obtain ⟨_, inputPlan, _, inputAccepted, effectsAccepted⟩ :=
-    lower_source state entry plan lowered
+    GenericStateAdmissionPrefix.lower_input_prefix state entry plan lowered
   have guardsEmpty : entry.effectGuards = [] := by
     cases guards : entry.effectGuards with
     | nil => rfl
@@ -97,10 +77,10 @@ theorem lower_plan_groups_supported (state : List StateDecl) (entry : Entrypoint
       GenericStateOps.evalFields ctx values operation.fields) =
         .ok (NativeState.groups ops) ∧
       (∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation) := by
-  have source := lower_source state entry plan lowered
+  have source := GenericStateAdmissionPrefix.lower_input_prefix state entry plan lowered
   have admitted := lower_public_input_only_admitted state entry plan lowered
     noEffects compatible
-  refine ⟨source, ?_, evaluated_operations_supported ctx values plan ops evaluated⟩
+  refine ⟨source, ?_, GenericStateOps.evalPlan_supported ctx values plan ops evaluated⟩
   exact GenericStateOps.evalOperations_fields ctx values plan.operations ops
     modulus admitted (by simpa only [GenericStateOps.evalPlan] using evaluated)
 
