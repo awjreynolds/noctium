@@ -142,8 +142,9 @@ result is still unresolved, pass `expectedElement` to the staged `mapWithLimits`
 API from the surrounding result type. For example, `some (.scalar .native)`
 chooses `Vector 0 Native` for the unannotated identity callback. Readable map
 gets the element type when a declared vector witness argument specifies it.
-The map result may be bound first in a `let ... in ...` expression or in a
-statement in the same block. The callback may bind its item before returning
+The map result may pass through direct aliases in a `let ... in ...`
+expression or statements in the same block. A shadowed binding has its own
+scope. The callback may pass its item through local aliases before returning
 it. In a readable fold, the seed determines the omitted accumulator type.
 
 The [empty-tuple fixture](../../tests/EmptyTupleIteration.lean) folds over the result
