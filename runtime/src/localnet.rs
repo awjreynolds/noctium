@@ -2295,6 +2295,189 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the authenticated RootFixedByteRecordValuedMap bundle and the funded development node"]
+    fn root_fixed_byte_record_valued_map_finalizes_on_funded_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::{
+            fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom},
+            hash::HashOutput,
+        };
+        use coin_structure::contract::ContractAddress;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::{Digest, Sha256};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let path = setting("NOCTIUM_ROOT_RECORD_MAP_BUNDLE")?;
+            let manifest = setting("NOCTIUM_ROOT_RECORD_MAP_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&path), Some(&manifest))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_ROOT_RECORD_MAP_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_ROOT_RECORD_MAP_NODE")?,
+                &cache,
+            )
+            .await
+            .context("connect funded development node and admit DUST material")?;
+            let parameters = cache
+                .parameters(circuit.k())
+                .await
+                .with_context(|| format!("load root Map k{} parameters", circuit.k()))?;
+            let snapshot = funded
+                .node
+                .sync()
+                .context("replay finalized localnet ledger")?;
+            let ttl = snapshot.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{"receipts":[]}}"#,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid fixture address"))?,
+            ));
+            let update = target.operation("update", &parameters, ttl)?;
+            let (state, deployment) = funded.deploy(&target, "update").await?;
+            let initial: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            let mut last = [3u8; 33];
+            last[32] = 4;
+            let mut inputs = BTreeMap::from([
+                ("tag".into(), json!({"kind":"bytes", "values":[7]})),
+                (
+                    "firstId".into(),
+                    json!({"kind":"bytes", "values":vec![3u8; 33]}),
+                ),
+                (
+                    "lateId".into(),
+                    json!({"kind":"bytes", "values":last.as_slice()}),
+                ),
+                ("firstAccepted".into(), json!(true)),
+                ("firstCode".into(), json!("101")),
+                ("lateAccepted".into(), json!(false)),
+                ("lateCode".into(), json!("303")),
+            ]);
+            let execution = crate::prepare(
+                &plan,
+                &inputs,
+                &initial.data,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            crate::check(&execution, &circuit)?;
+            let returns = execution.returns_json();
+            ensure!(
+                returns
+                    == BTreeMap::from([
+                        ("first".into(), json!(true)),
+                        ("late".into(), json!(true)),
+                        ("firstAcceptedResult".into(), json!(true)),
+                        ("firstCodeResult".into(), json!("101")),
+                        ("lateAcceptedResult".into(), json!(false)),
+                        ("lateCodeResult".into(), json!("303")),
+                        ("firstRemaining".into(), json!(false)),
+                        ("lateRemaining".into(), json!(true)),
+                        ("retainedAccepted".into(), json!(false)),
+                        ("retainedCode".into(), json!("303")),
+                    ]),
+                "root record-valued Map returned a different lifecycle"
+            );
+            let late = inputs.insert(
+                "lateId".into(),
+                json!({"kind":"bytes", "values":&last[..32]}),
+            );
+            ensure!(
+                crate::prepare(
+                    &plan,
+                    &inputs,
+                    &initial.data,
+                    &snapshot.state.parameters,
+                    address
+                )
+                .is_err(),
+                "wrong-width key unexpectedly passed native admission"
+            );
+            inputs.insert("lateId".into(), late.context("missing retained key input")?);
+            let call = funded
+                .call(&update, &mut Some(state), &parameters, inputs)
+                .await?;
+            let observed: ContractState<Db> = native_decode(&call.contract_state)?;
+            ensure!(
+                observed.data == execution.after.state,
+                "finalized state differs from preparation"
+            );
+            let StateValue::Array(slots) = observed.data.get_ref() else {
+                anyhow::bail!("expected root state slots");
+            };
+            let Some(StateValue::Map(receipts)) = slots.get(0) else {
+                anyhow::bail!("expected root record-valued Map");
+            };
+            let key = AlignedValue::new(
+                FabValue(vec![
+                    ValueAtom::from([7u8].as_slice()),
+                    ValueAtom::from(last.as_slice()),
+                ]),
+                Alignment::concat(&[
+                    Alignment::singleton(AlignmentAtom::Bytes { length: 1 }),
+                    Alignment::singleton(AlignmentAtom::Bytes { length: 33 }),
+                ]),
+            )
+            .context("invalid expected key alignment")?;
+            let value = AlignedValue::concat(&[
+                crate::field_value(Fr::from(0u64)),
+                crate::field_value(Fr::from(303u64)),
+            ]);
+            ensure!(
+                receipts.size() == 1
+                    && receipts.get(&key).is_some_and(|entry| match &*entry {
+                        StateValue::Cell(cell) => **cell == value,
+                        _ => false,
+                    }),
+                "finalized Map lost the exact late-byte key or record value"
+            );
+            let receipt = |value: &FinalizedReceipt| {
+                json!({
+                    "height": value.height, "blockHash": value.block_hash,
+                    "finalizedHeight": value.finalized_height, "finalizedHash": value.finalized_hash,
+                    "transactionId": value.transaction_id, "extrinsicHash": value.extrinsic_hash,
+                    "extrinsicIndex": value.extrinsic_index,
+                })
+            };
+            println!(
+                "{}",
+                json!({
+                    "manifestSha256": manifest,
+                    "k": circuit.k(),
+                    "contractAddress": target.contract_address(),
+                    "deploy": receipt(&deployment),
+                    "call": receipt(&call),
+                    "returns": returns,
+                    "stateSha256": hex::encode(Sha256::digest(&call.contract_state)),
+                    "stateBytes": call.contract_state.len(),
+                    "exactLateByteKeyAndRecordValue": true,
+                    "wrongWidthRejectedBeforeSubmission": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated NativeSet bundles and the funded development node"]
     fn native_sets_finalize_on_funded_ledger() -> anyhow::Result<()> {
         use crate::{

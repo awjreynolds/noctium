@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "network": "funded development localnet",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "ledgerParameterSource": {
+    "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "specVersion": 2001100,
+    "transactionVersion": 4,
+    "sha256": "b83717ae6b9cbffa2585f0db97d42796331d395b5e089772565f46290a23719a"
+  },
+  "runtime": {
+    "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+    "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "rust": "1.100.0",
+    "host": "darwin-arm64"
+  },
+  "artifactProvenance": {
+    "compilerRevision": "6a371a4dcb00a5d9fda142615e78f8ca44e5b610",
+    "sourceSha256": "927146442df5f8970b2a8b400c650a66e5ec90e62cdf93447f1f7b1155b07319",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "compilerBinarySha256": "0914f83976aac1bfa26f787f632189d522efee1b5e79d7bbe23e72ab58fe921e",
+    "nativeZkirBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "compactReferenceSha256": "872c4a2f1f28512a3b304615ae5cb52b3a98e6185b9a2762458f0c55903116b7",
+    "proofParametersSha256": {
+      "bls_midnight_2p10": "46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42",
+      "dust/10/spend.prover": "3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81",
+      "dust/10/spend.verifier": "d15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb",
+      "dust/10/spend.bzkir": "d211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1"
+    },
+    "operation": {
+      "name": "RootFixedByteRecordValuedMap.update",
+      "k": 10,
+      "rows": 568,
+      "bundleManifestSha256": "cf3ec98ea19cddacabff8a499858eacad413ec964659824b8c8de49f27c6cd39",
+      "circuitSha256": "53de3b753584914bd8d7f6af8761597ec91a52dec20cae8c1013ff02213b5390",
+      "impactPlanSha256": "d5952b015d45b351e67602f433f261b122f990d48c12760a3cdc3cfb8f8e92fd",
+      "proverKeySha256": "3dfd2100fdca9b70619a7d66d32f3ead3d3a9f4c09b73d0007e4d137f59ebb89",
+      "verifierKeySha256": "1a8d881006f1a726a68d2b359812a3c95a28fed9f50d647676ba836f93017ce2"
+    }
+  },
+  "fixtureInputs": {
+    "tag": "07",
+    "firstId": "03 repeated 33 bytes",
+    "lateId": "03 repeated 32 bytes followed by 04",
+    "firstReceipt": {"accepted": true, "code": "101"},
+    "lateReceipt": {"accepted": false, "code": "303"}
+  },
+  "finalized": {
+    "contractAddress": "0b2cef600dcecadc34444c5e352d1432026023b219b5fd8605e94a1c9cde3e4e",
+    "deploy": {
+      "blockHash": "fa8ffaab6bb91b14734614e0bbe445767f113a64f3b290d484dcc814e6530b3b",
+      "extrinsicHash": "87efcb1ef81a0d4ccc9a2fab4e4e4ed8f6e98d26f4459826c64ffaec039dde27",
+      "extrinsicIndex": 4,
+      "finalizedHash": "fa8ffaab6bb91b14734614e0bbe445767f113a64f3b290d484dcc814e6530b3b",
+      "finalizedHeight": 83321,
+      "height": 83321,
+      "transactionId": "eb6061c7b6bc869c91bfe295fa69d33c7815ea32a3e39d02e9575bfed5dded10"
+    },
+    "call": {
+      "blockHash": "44d63903377d50857bee7ae2d6f290e63930652d15296394eede5c71da1d822b",
+      "extrinsicHash": "80171536ea32887960dc08a878d4f535e64f46fdfc3214503269e1ff19e685bc",
+      "extrinsicIndex": 4,
+      "finalizedHash": "44d63903377d50857bee7ae2d6f290e63930652d15296394eede5c71da1d822b",
+      "finalizedHeight": 83324,
+      "height": 83324,
+      "transactionId": "cc82a432523c907e231f8020c6b0d14bb21d6771e6021b2f6e66763a76661dae"
+    },
+    "stateBytes": 1687,
+    "stateSha256": "eacf6283542b316d48afbc9c0d5bcbee7486bd584b38ffe7e2b05c0f5431be26"
+  },
+  "checks": {
+    "returns": {
+      "first": true,
+      "late": true,
+      "firstAcceptedResult": true,
+      "firstCodeResult": "101",
+      "lateAcceptedResult": false,
+      "lateCodeResult": "303",
+      "firstRemaining": false,
+      "lateRemaining": true,
+      "retainedAccepted": false,
+      "retainedCode": "303"
+    },
+    "exactLateByteKeyAndRecordValue": true,
+    "wrongWidthRejectedBeforeSubmission": true,
+    "finalizedStateMatchesPreparation": true
+  }
+}
