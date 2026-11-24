@@ -102,11 +102,13 @@ List separate arguments such as an update guard in `callInputs`.
 
 ## Generic record Maps
 
-A generic `Map<K, V>` accepts an admitted scalar key and a checked record
-value. Use `writeMapInput` with a typed key and a named value input to insert
-or replace one entry. Use `mapReturns` to look up its typed value. A lookup
-requires a present key. Disclose private data used as a key, write value,
-or write guard. [Lean fixture](../../tests/modules/GenericRecordMap.lean) · [Compact comparison](../../tests/compact/generic-record-map.mjs)
+A generic `Map<K, V>` accepts an admitted scalar or `Bytes32` key and a
+checked record value. Use `writeMapInput` to insert or replace an entry, and
+`mapReturns` to look up its typed value. A lookup requires a present key.
+Use `.argument "key" (disclosed := Bool.true)` when the key comes from a
+private helper argument. The compiler checks the specialized type and derives
+the scalar or grouped byte input header. Disclose private write values and
+guards where they affect public ledger state. [Lean fixture](../../tests/modules/GenericRecordMap.lean) · [Compact comparison](../../tests/compact/generic-record-map.mjs)
 
 ## Import exported types
 
