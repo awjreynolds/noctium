@@ -143,6 +143,12 @@ The native constructor, the pinned Compact fixture and the finalized Ledger
 both records and preserved the exact deployed state bytes.
 [Finalized receipt](record-constructor-localnet-receipt.json)
 
+Use `when enabled insert positions[key] := fields(...)` for a guarded record
+Map insertion. The constructor evaluates the Bool guard before the key and
+payload expressions. With a false guard the prior record survives. The pinned
+Compact case and native readback agree for both guard values.
+[Guarded record fixture](../../tests/RecordConstructor.lean) · [Compact comparison](../../tests/compact/record-constructor.mjs)
+
 ## Initialize an opaque string
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one

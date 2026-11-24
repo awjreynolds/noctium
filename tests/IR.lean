@@ -23,7 +23,7 @@ private def entry : Entrypoint := {
 }
 private def contract : Contract := {
   name := "sample"
-  state := [⟨"spent", .map .native .bool, {}⟩]
+  state := [{name := "spent", kind := .map .native .bool}]
   entrypoints := [entry]
 }
 

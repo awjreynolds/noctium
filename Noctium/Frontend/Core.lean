@@ -471,6 +471,7 @@ declare_syntax_cat nlleaves
 scoped syntax "fields(" nlexpr,* ")" : nlleaves
 scoped syntax "initialize" ident ":=" nlleaves : nlconstructorinit
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
+scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlleaves : nlconstructorinit
 scoped syntax "when" nlexpr "pushFront" ident ":=" nlleaves : nlconstructorinit
 
@@ -5154,7 +5155,9 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       orderedActionTerms := orderedActionTerms.push
         (← `(Noctium.ConstructorAction.initializeRecordCell $(stringTerm destination) $values))
       hasOrderedActions := _root_.Bool.true
-    | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $payload:nlleaves) => do
+    | `(nlconstructorinit| insert $stateName:ident[$key:nlexpr] := $payload:nlleaves)
+    | `(nlconstructorinit|
+        when $_:nlexpr insert $stateName:ident[$key:nlexpr] := $payload:nlleaves) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
           setInsertTerms.size >= 64 then
         throwErrorAt initializer "constructor collection action limit exceeded"
@@ -5169,8 +5172,17 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         | .error message => throwErrorAt payload message
       let values ← elaborateLedgerFieldValues bindings payload fields
         ((recordFieldTypes.lookup destination).getD [])
+      let guard ← match initializer with
+        | `(nlconstructorinit|
+            when $condition:nlexpr insert $_:ident[$_:nlexpr] := $_:nlleaves) => do
+          let conditionExpression ← checkedCircuitSourceExpression scalarBindings
+            nominalUIntBindings condition {type := .bool}
+          `(some $conditionExpression)
+        | `(nlconstructorinit|
+            insert $_:ident[$_:nlexpr] := $_:nlleaves) => `(none)
+        | _ => throwErrorAt initializer "invalid constructor record Map insert"
       orderedActionTerms := orderedActionTerms.push
-        (← `(Noctium.ConstructorAction.insertRecordMap $(stringTerm destination) $key $values))
+        (← `(Noctium.ConstructorAction.insertRecordMap $(stringTerm destination) $key $values $guard))
       hasOrderedActions := _root_.Bool.true
     | `(nlconstructorinit| when $condition:nlexpr insert $stateName:ident[$key:nlexpr] := $value:nlexpr) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +

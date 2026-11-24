@@ -44,9 +44,42 @@ end
   | some ctor =>
     match ctor.actions with
     | [.initializeRecordCell "position" cellFields,
-       .insertRecordMap "positions" _ firstFields,
-       .insertRecordMap "positions" _ finalFields] =>
+       .insertRecordMap "positions" _ firstFields none,
+       .insertRecordMap "positions" _ finalFields none] =>
       [cellFields, firstFields, finalFields].all
+        (fun fields => fields.map LedgerFieldExpr.ty == [.uint 255, .uint 255, .bool])
+    | _ => Bool.false
+  | none => Bool.false
+
+noctium_contract GuardedRecordConstructor where
+  tree positions : Bytes32 => struct Position {
+    amount : RecordAmount
+    count : RecordCount
+    active : Bool
+  }
+
+  constructor(owner : Bytes32, amount : RecordAmount, count : RecordCount, active : Bool, enabled : Bool) where
+    insert positions[disclose(owner)] := fields(cast(RecordAmount, 0), disclose(count), false)
+    when enabled insert positions[disclose(owner)] := fields(disclose(amount), disclose(count), disclose(active))
+  end
+
+  entry inspect uses recordConstructorOwner arguments [owner] where
+    read positions[disclose(owner)] as stored
+    return mapAmount : RecordAmount := stored_amount
+    return mapCount : RecordCount := stored_count
+    return mapActive : Bool := stored_active
+  end
+end
+
+#guard GuardedRecordConstructor.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint GuardedRecordConstructor.state operation).isOk
+
+#guard match GuardedRecordConstructor.constructor with
+  | some ctor =>
+    match ctor.actions with
+    | [.insertRecordMap "positions" _ seedFields none,
+       .insertRecordMap "positions" _ guardedFields (some (.ref "enabled"))] =>
+      [seedFields, guardedFields].all
         (fun fields => fields.map LedgerFieldExpr.ty == [.uint 255, .uint 255, .bool])
     | _ => Bool.false
   | none => Bool.false
