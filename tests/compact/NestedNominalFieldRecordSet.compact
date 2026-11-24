@@ -1,0 +1,31 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export struct Key {
+  amount: Amount;
+}
+
+export ledger buckets: Map<Bytes<32>, Set<Key>>;
+
+export circuit initBucket(owner: Bytes<32>): [] {
+  buckets.insertDefault(disclose(owner));
+  return [];
+}
+
+export circuit update(owner: Bytes<32>, amount: Amount, adding: Boolean, removing: Boolean):
+                       [Boolean, Boolean, Boolean] {
+  const selected = disclose(owner);
+  const key = Key { amount: disclose(amount) };
+  const before = buckets.lookup(selected).member(key);
+  if (disclose(adding)) {
+    buckets.lookup(selected).insert(key);
+  }
+  const afterInsert = buckets.lookup(selected).member(key);
+  if (disclose(removing)) {
+    buckets.lookup(selected).remove(key);
+  }
+  return [before, afterInsert, buckets.lookup(selected).member(key)];
+}
