@@ -539,8 +539,9 @@ private def packBytesRec : List String → LowerM String
   | [byte] => pure byte
   | byte :: rest => do
     let suffix ← packBytesRec rest
-    let scaled ← binary "mul" "0x0001" suffix
-    binary "add" byte scaled
+    if suffix == "0x00" then pure byte else do
+      let scaled ← binary "mul" "0x0001" suffix
+      binary "add" byte scaled
 
 /-- Skip symbolic packing when every already-lowered byte is canonical zero.
 The one linear scan runs before the existing recurrence. -/

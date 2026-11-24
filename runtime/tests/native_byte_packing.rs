@@ -8,6 +8,39 @@ const PLAN: &str =
     include_str!("fixtures/native-byte-packing/321/NativeBytePacking.pack.impact.json");
 const CIRCUIT: &[u8] =
     include_bytes!("fixtures/native-byte-packing/321/NativeBytePacking.pack.zkir");
+const ZERO_SUFFIX_PLAN: &str = include_str!(
+    "fixtures/byte-pack-zero-padding/321/BytePackZeroPadding.decode.impact.json"
+);
+const ZERO_SUFFIX_CIRCUIT: &[u8] = include_bytes!(
+    "fixtures/byte-pack-zero-padding/321/BytePackZeroPadding.decode.zkir"
+);
+
+#[test]
+fn mixed_byte_pack_zero_suffix_matches_zero_and_one_and_rejects_forged_values() {
+    let plan: Plan = serde_json::from_str(ZERO_SUFFIX_PLAN).unwrap();
+    let circuit = IrSource::load(ZERO_SUFFIX_CIRCUIT).unwrap();
+    let initial = create_state(&plan, &BTreeMap::new()).unwrap();
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+
+    for value in [0u8, 1] {
+        let inputs = BTreeMap::from([(
+            "value".into(),
+            json!({"kind":"bytes","values":[value]}),
+        )]);
+        let expected = value.to_string();
+        let execution = prepare(&plan, &inputs, &initial, params, address).unwrap();
+        check(&execution, &circuit).unwrap();
+        assert_eq!(execution.returns_json()["decodedResult"], json!(expected));
+
+        let mut forged = plan.clone();
+        forged.returns[0].expression = Expr::Constant {
+            value: (1 - value).to_string(),
+        };
+        let forged = prepare(&forged, &inputs, &initial, params, address).unwrap();
+        assert!(check(&forged, &circuit).is_err());
+    }
+}
 
 #[test]
 fn typed_byte_packing_preserves_chunk_order_and_committed_results() {

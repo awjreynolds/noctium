@@ -131,10 +131,17 @@ def allLiteralZeroTerms : List Term → Bool
   | .constant 0 :: rest => allLiteralZeroTerms rest
   | _ => false
 
-/-- Pack a normalized byte chunk, collapsing an all-zero chunk while retaining
-the original symbolic fold for every mixed or dynamic chunk. -/
+/-- Fold exact zero suffixes from mixed chunks while keeping the source byte order. -/
+def packByteTermsRec : List Term → Term
+  | [] => .constant 0
+  | [byte] => byte
+  | byte :: rest =>
+    if allLiteralZeroTerms rest then byte
+    else .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRec rest))
+
+/-- Pack a normalized byte chunk, folding exact literal-zero suffixes. -/
 def packByteTerms (values : List Term) : Term :=
-  if allLiteralZeroTerms values then .constant 0 else packByteTermsRaw values
+  if allLiteralZeroTerms values then .constant 0 else packByteTermsRec values
 
 /-- Canonical typed source term for persistent_hash(Bytes32). The operands are
 the exact FAB-aligned fields: the high byte, then the packed low 31 bytes. -/
