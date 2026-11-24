@@ -58,6 +58,18 @@ def decodedProgram : Program :=
   (Noctium.Verification.NativeRelationJson.decode emittedProgram).toOption.getD
     (Noctium.Verification.NativeRelation.Program.mk [] 0 Bool.false)
 
+def boundedApplyImpactPlan : Impact.Plan :=
+  (Impact.lower BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint)).toOption.getD {}
+
+def decodedImpactGroupWidths (program : Program) : List Nat :=
+  program.instructions.filterMap fun instruction =>
+    match instruction with
+    | .impact _ values => some values.length
+    | _ => none
+
+def impactPlanGroupWidths (plan : Impact.Plan) : List Nat :=
+  plan.fieldGroups.map List.length
+
 -- Keep this closed compiler-output check in the fixture. The general profile
 -- and validation theorems build without trusting native reduction.
 #guard selectedEntrypoint.name == "apply"
@@ -148,5 +160,25 @@ theorem boundedApply_nativeValidationTrace :
   subst instructions
   exact ⟨plan, expected, rawInputs, seed, final, lowered, expectedParsed, validated,
     driverFacts, boundedApply_nativeDefinitionTrace⟩
+
+/-- Exact decoding of production `BoundedScalars.apply` preserves each ordered
+Impact group boundary and width from its actual Impact plan. This is the first
+structural join between the optimized ZKIR target and ledger schedule; values
+and their witness semantics remain separate obligations. -/
+theorem boundedApply_decodedImpactGroupWidths :
+    loweredResult = .ok emittedProgram ∧
+    Noctium.Verification.NativeRelationJson.decode emittedProgram = .ok decodedProgram ∧
+    Impact.lower BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint) =
+      .ok boundedApplyImpactPlan ∧
+    decodedImpactGroupWidths decodedProgram = impactPlanGroupWidths boundedApplyImpactPlan := by
+  refine ⟨boundedApply_lowered, boundedApply_decoded, ?_, ?_⟩
+  · obtain ⟨plan, _, lowered, _, _, _⟩ := boundedApply_nativeAdmission
+    rw [lowered]
+    apply congrArg Except.ok
+    change plan = (Impact.lower BoundedScalars.state
+      (Passes.pruneEntrypoint selectedEntrypoint)).toOption.getD {}
+    rw [lowered]
+    rfl
+  · native_decide
 
 end BoundedScalarsOpcodeProfile
