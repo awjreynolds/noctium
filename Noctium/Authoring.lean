@@ -572,6 +572,9 @@ private def quoteSignature (signature : WitnessSignature) : CommandElabM (TSynta
   let resultNominal ← match signature.resultNominal with
     | none => `(none)
     | some name => `(some $(stringTerm name))
+  let resultNominalField ← match signature.resultNominalField with
+    | none => `(none)
+    | some name => `(some $(stringTerm name))
   let privateKey ← match signature.privateKey with
     | none => `(none)
     | some key => `(some $(stringTerm key))
@@ -584,6 +587,7 @@ private def quoteSignature (signature : WitnessSignature) : CommandElabM (TSynta
     parameters := $parameters,
     result := $result,
     resultNominal := $resultNominal,
+    resultNominalField := $resultNominalField,
     span := $span : Noctium.Helpers.WitnessSignature }))
 
 private def quoteField (field : PrivateStateField) : CommandElabM (TSyntax `term) := do
@@ -2876,6 +2880,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure
       { mergeLowered result term loweredArgs with
         nominalUInt := resultNominal,
+        nominalField := signature.resultNominalField,
         signatures := uniqueWitnesses (signature :: loweredArgs.flatMap (·.signatures)),
         witnessNames := (signatureName :: loweredArgs.flatMap (·.witnessNames)).eraseDups,
         generatedValidity := (loweredArgs.flatMap (·.generatedValidity) ++
@@ -3520,21 +3525,20 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
     unless uniqueStrings parameterNames do throwErrorAt name "duplicate witness parameter"
     let mut resultCodec : Option Name := none
     let mut resultNominal : Option String := none
+    let mut resultNominalField : Option String := none
     let result ← match result with
       | `(noctium_witness_result| $type:nltype) => do
         if let some name := nominalUIntTypeIdentifier type then
           if name.getId == `Unit then pure .unit
           else do
             let sourceType ← readSourceScalarType type
-            if sourceType.nominalField.isSome then
-              throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
             resultNominal := sourceType.nominalUInt.map (·.name)
+            resultNominalField := sourceType.nominalField
             pure (.scalar sourceType.type)
         else do
           let sourceType ← readSourceScalarType type
-          if sourceType.nominalField.isSome then
-            throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
           resultNominal := sourceType.nominalUInt.map (·.name)
+          resultNominalField := sourceType.nominalField
           pure (.scalar sourceType.type)
       | `(noctium_witness_result| Payload $codecName:ident) => do
         let source ← liftCoreM <| resolveGlobalConstNoOverload codecName
@@ -3557,6 +3561,7 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
         parameters := parameters,
         result := result,
         resultNominal := resultNominal,
+        resultNominalField := resultNominalField,
         span := signatureSpan }
     let generated := generatedName ((← getCurrNamespace) ++ name.getId) "__witnessSignature"
     let generatedSyntaxName := generatedName name.getId "__witnessSignature"

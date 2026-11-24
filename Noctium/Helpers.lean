@@ -61,6 +61,7 @@ structure WitnessSignature where
   parameters : List WitnessParameter := []
   result : ResultType
   resultNominal : Option String := none
+  resultNominalField : Option String := none
   span : SourceSpan := {}
   deriving Repr
 
