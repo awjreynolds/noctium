@@ -70,8 +70,8 @@ try {
   const contract = new Contract({});
   const wallet = '00'.repeat(32);
   const {currentContractState} = await contract.initialState(createConstructorContext(null, wallet));
-  const context = createCircuitContext({
-    circuitId: 'arithmetic',
+  const context = circuitId => createCircuitContext({
+    circuitId,
     contractAddress: dummyContractAddress(),
     coinPublicKeyOrZswapState: wallet,
     contractState: currentContractState.data,
@@ -79,12 +79,27 @@ try {
   });
 
   for (const vector of vectors) {
-    const actual = (await contract.circuits.arithmetic(context, vector.left, vector.right)).result;
+    const actual = (await contract.circuits.arithmetic(context('arithmetic'), vector.left, vector.right)).result;
     assert.deepEqual(actual, vector.expected, vector.name);
     assert.ok(actual.slice(0, 4).every(value => typeof value === 'bigint' && value >= 0n && value < modulus),
       `${vector.name}: arithmetic output was not canonical`);
   }
 
+  const uintMax = (1n << 248n) - 1n;
+  for (const [left, right] of [[0n, 0n], [modulus - 1n, 1n], [modulus - 1n, uintMax], [uintMax, uintMax]]) {
+    const sum = (left + right) % modulus;
+    const product = (left * right) % modulus;
+    const equal = left === right;
+    const { result } = await contract.circuits.mixed(context('mixed'), left, right, 0n);
+    assert.deepEqual(result, [
+      sum, sum, (left - right + modulus) % modulus, (right - left + modulus) % modulus,
+      product, product, left, equal, equal, !equal, !equal,
+    ]);
+  }
+  await assert.rejects(async () => contract.circuits.mixed(context('mixed'), 0n, 0n, 1n));
+
+  rejectsFieldOperation('mixed-equality', 'value == (1 as Uint<8>)', 'Boolean', /incompatible types.*equality/i);
+  rejectsFieldOperation('mixed-inequality', '(1 as Uint<8>) != value', 'Boolean', /incompatible types.*equality/i);
   rejectsFieldOperation('ordered-comparison', 'value < value', 'Boolean', /incompatible combination.*relational operator/i);
   rejectsFieldOperation('field-inverse', 'inv(value)', 'Field', /no compatible function named inv/i);
   rejectsFieldOperation('field-negation', 'neg(value)', 'Field', /no compatible function named neg/i);
@@ -96,7 +111,8 @@ try {
       name,
       output: expected.map(value => typeof value === 'bigint' ? value.toString() : value),
     })),
-    rejected: ['ordered Field comparison', 'inv(Field)', 'neg(Field)'],
+    mixedVectors: 4,
+    rejected: ['implicit mixed equality and inequality', 'ordered Field comparison', 'inv(Field)', 'neg(Field)'],
   }, null, 2));
 } finally {
   rmSync(scratch, {recursive: true, force: true});

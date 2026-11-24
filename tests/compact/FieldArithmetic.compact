@@ -13,3 +13,17 @@ export pure circuit arithmetic(left: Field, right: Field): [
     left != right
   ];
 }
+
+export pure circuit mixed(fieldValue: Field, amount: Uint<248>, zero: Uint<0..1>): [
+  Field, Field, Field, Field, Field, Field, Field, Boolean, Boolean, Boolean, Boolean
+] {
+  const asField = amount as Field;
+  return [
+    fieldValue + amount, amount + fieldValue,
+    fieldValue - amount, amount - fieldValue,
+    fieldValue * amount, amount * fieldValue,
+    fieldValue + zero,
+    fieldValue == asField, asField == fieldValue,
+    fieldValue != asField, asField != fieldValue
+  ];
+}
