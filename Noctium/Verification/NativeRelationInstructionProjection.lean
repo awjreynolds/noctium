@@ -14,6 +14,26 @@ private theorem ensure_ok {condition : Bool} {message : String} :
     Native.ensure condition message = .ok () ↔ condition = true := by
   cases condition <;> simp [Native.ensure] <;> rfl
 
+/-- The strict decoder checks the empty call header and reads the exact
+instruction array used by producer validation. -/
+theorem decode_headerAndInstructions {json : Json} {program : NativeRelation.Program}
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    ∃ instructions : Array Json,
+      Native.arrayField json "inputs" = .ok #[] ∧
+      Native.arrayField json "instructions" = .ok instructions ∧
+      instructions.toList.mapM NativeRelationJson.decodeInstruction = .ok program.instructions := by
+  unfold NativeRelationJson.decode at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨_, _, _, _, _, _, _, _, _, _, _, _, header, headerParsed,
+    emptyCheck, headerChecked, _, _, _, _, _, _, _, _,
+    instructions, parsed, decodedInstructions, decodedParsed, result⟩
+  cases result
+  cases emptyCheck
+  have empty : header = #[] := Array.isEmpty_iff.mp
+    (ensure_ok.mp (show Native.ensure header.isEmpty
+      "native root input declarations are unsupported" = .ok () from headerChecked))
+  exact ⟨instructions, empty ▸ headerParsed, parsed, decodedParsed⟩
+
 /-- Recover the checked raw instruction array and its exact decoded vector
 from the successful relation decoder. -/
 theorem decode_instructionProjection {json : Json} {program : NativeRelation.Program}
@@ -21,12 +41,8 @@ theorem decode_instructionProjection {json : Json} {program : NativeRelation.Pro
     ∃ instructions : Array Json,
       Native.arrayField json "instructions" = .ok instructions ∧
       instructions.toList.mapM NativeRelationJson.decodeInstruction = .ok program.instructions := by
-  unfold NativeRelationJson.decode at decoded
-  simp only [bind_ok] at decoded
-  rcases decoded with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
-    _, _, _, _, _, _, instructions, parsed, decodedInstructions, decodedParsed, result⟩
-  cases result
-  exact ⟨instructions, parsed, decodedParsed⟩
+  obtain ⟨instructions, _, parsed, rows⟩ := decode_headerAndInstructions decoded
+  exact ⟨instructions, parsed, rows⟩
 
 /-- Connect accepted entrypoint lowering, its validated Impact plan, and the
 exact vector parsed by the strict native relation decoder. The raw JSON array
