@@ -1,0 +1,27 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger texts: Map<Bytes<32>, List<Opaque<"string">>>;
+
+export circuit reset(owner: Bytes<32>): [] {
+  const key = disclose(owner);
+  if (!texts.member(key)) {
+    texts.insertDefault(key);
+  } else {
+    texts.lookup(key).resetToDefault();
+  }
+}
+
+export circuit push(owner: Bytes<32>, text: Opaque<"string">): [] {
+  const key = disclose(owner);
+  if (!texts.member(key)) { texts.insertDefault(key); }
+  texts.lookup(key).pushFront(disclose(text));
+}
+
+export circuit inspect(owner: Bytes<32>): Maybe<Opaque<"string">> {
+  return texts.lookup(disclose(owner)).head();
+}
+
+export circuit pop(owner: Bytes<32>): [] {
+  texts.lookup(disclose(owner)).popFront();
+}
