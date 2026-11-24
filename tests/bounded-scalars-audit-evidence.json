@@ -1,0 +1,118 @@
+{
+  "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+  ],
+  "byteStableAuditReport": true,
+  "compiledContractVerified": false,
+  "externalModelRoots": [
+    "Noctium.Verification.FunctionalObligation",
+    "Noctium.Verification.PrivacyObligation",
+    "Noctium.BoundedScalarsVerification.policy",
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+  ],
+  "functionalProof": "Noctium.BoundedScalarsVerification.functional",
+  "operation": "BoundedScalars.apply",
+  "operationArtifacts": {
+    "artifacts": [
+      {
+        "bytes": 2456,
+        "file": "BoundedScalars.apply.impact.json",
+        "role": "impact",
+        "sha256": "e1d29e220ab016de0df7366381ae4c634a4fdad193e34a1387ff8d3d328d1f2c"
+      },
+      {
+        "bytes": 3048,
+        "file": "BoundedScalars.apply.zkir",
+        "role": "zkir",
+        "sha256": "42295d09dfeaf9420f607ea848875522a867dd6f34ce5e7c97c35b393b3c1364"
+      }
+    ],
+    "manifest": {
+      "bytes": 1636,
+      "file": "noctium.json",
+      "sha256": "3f33edf973b476d9cca7a8913b9aa41da24e7d9b8a085e501aca426471dde208"
+    },
+    "operation": {
+      "circuit": "boundedRelation",
+      "circuitFile": "BoundedScalars.apply.zkir",
+      "contract": "BoundedScalars",
+      "entrypoint": "apply",
+      "planFile": "BoundedScalars.apply.impact.json"
+    },
+    "schemaVersion": 1,
+    "status": "operation-artifacts-associated",
+    "targetProfile": {
+      "bytes": 528,
+      "name": "midnight-ledger-9-zkir-3.2.1",
+      "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
+    }
+  },
+  "operationSubjectCheckedByKernel": true,
+  "policy": "Noctium.BoundedScalarsVerification.policy",
+  "privacyObservation": {
+    "privacyDomain": "exact pinned functional invariant and precondition; invalid/ineligible attempts are not implied covered",
+    "privacyScope": "successful-only-under-pinned-precondition",
+    "publicEquivalence": "declared public inputs in declaration order, identical public state and EvalContext",
+    "publicObserver": "source public outputs and final public LedgerState; errors only within selected scope",
+    "releasePolicy": "none"
+  },
+  "privacyProof": "Noctium.BoundedScalarsVerification.privacy",
+  "proofExportSha256": "f5b2f650297e904a0bc165995055b563f46b1a309db2583a3f148899bc804983",
+  "rejections": {
+    "missingRequestedPrivacyProof": "unknown_proof: privacy",
+    "substitutedProofRole": "wrong_obligation: functional"
+  },
+  "remainingGates": [
+    "native preservation",
+    "exact artifact certificate",
+    "deployed identity",
+    "reviewed privacy/native observation correspondence"
+  ],
+  "reviewedModelRevision": "5e843ebdfcfcc3b5656d842d7ccafa0eb375a2e7",
+  "roleRecords": [
+    {
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "obligationDeclaration": "Noctium.Verification.FunctionalObligation",
+      "policyDeclaration": "Noctium.BoundedScalarsVerification.policy",
+      "policyNormalizedProposition": "Noctium.Verification.Correctness Noctium.BoundedScalarsVerification.policy.subject",
+      "proofDeclaration": "Noctium.BoundedScalarsVerification.functional",
+      "proposition": "Noctium.Verification.FunctionalObligation Noctium.BoundedScalarsVerification.policy",
+      "role": "functional",
+      "schemaVersion": 1
+    },
+    {
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "obligationDeclaration": "Noctium.Verification.PrivacyObligation",
+      "policyDeclaration": "Noctium.BoundedScalarsVerification.policy",
+      "policyNormalizedProposition": "\u2200 (left right : Noctium.Verification.Invocation),\n  Noctium.BoundedScalarsVerification.policy.subject.admissible left \u2192\n    Noctium.BoundedScalarsVerification.policy.subject.admissible right \u2192\n      Noctium.BoundedScalarsVerification.policy.subject.publicEquivalent left right \u2192\n        Noctium.BoundedScalarsVerification.policy.privacy.releases.agrees left right \u2192\n          Noctium.BoundedScalarsVerification.policy.privacy.scope.covers\n              (Noctium.BoundedScalarsVerification.policy.subject.execute left)\n              (Noctium.BoundedScalarsVerification.policy.subject.execute right) \u2192\n            @Eq Noctium.Verification.Outcome (Noctium.BoundedScalarsVerification.policy.subject.execute left)\n              (Noctium.BoundedScalarsVerification.policy.subject.execute right)",
+      "proofDeclaration": "Noctium.BoundedScalarsVerification.privacy",
+      "proposition": "Noctium.Verification.PrivacyObligation Noctium.BoundedScalarsVerification.policy",
+      "role": "privacy",
+      "schemaVersion": 1
+    }
+  ],
+  "scope": "BoundedScalars.apply",
+  "sourceAuthorizationCorrespondenceProved": false,
+  "specificationReviewVerified": false,
+  "status": "passed",
+  "targetProfile": {
+    "ledger": "9.1.0.1",
+    "name": "midnight-ledger-9-zkir-3.2.1",
+    "path": "profiles/midnight-ledger-9-zkir-3.2.1-target.json",
+    "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "zkir": "3.2.1"
+  },
+  "trustedModelSha256": "f570ba99a309ae2dd26d532a01ed38e98e2336c910e0fe634398cab0ae33c25e"
+}
