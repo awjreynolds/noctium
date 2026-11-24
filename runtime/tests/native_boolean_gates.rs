@@ -232,14 +232,14 @@ fn lazy_conditionals_check_both_skipped_cast_branches() {
     let initial = create_state(&plan, &BTreeMap::new()).unwrap();
     let parameters = &ledger::structure::INITIAL_PARAMETERS;
     let address = coin_structure::contract::ContractAddress::default();
-    let inputs = |then_condition: bool, else_condition: bool| {
+    let inputs = |then_condition: bool, else_condition: bool, amount: &str| {
         BTreeMap::from([
             ("thenCondition".into(), json!(then_condition)),
             ("elseCondition".into(), json!(else_condition)),
-            ("amount".into(), json!("3")),
+            ("amount".into(), json!(amount)),
         ])
     };
-    let accepted_inputs = inputs(false, true);
+    let accepted_inputs = inputs(false, true, "3");
 
     let accepted = prepare(&plan, &accepted_inputs, &initial, parameters, address)
         .expect("false then and true else skip both invalid UInt1 casts");
@@ -249,6 +249,7 @@ fn lazy_conditionals_check_both_skipped_cast_branches() {
         BTreeMap::from([
             ("thenResult".into(), json!(true)),
             ("elseResult".into(), json!(true)),
+            ("boundedResult".into(), json!("3")),
         ])
     );
     assert_eq!(
@@ -256,11 +257,22 @@ fn lazy_conditionals_check_both_skipped_cast_branches() {
         vec![Fr::from(0u64), Fr::from(1u64), Fr::from(3u64)]
     );
 
+    let active_valid = prepare(
+        &plan,
+        &inputs(true, true, "1"),
+        &initial,
+        parameters,
+        address,
+    )
+    .expect("active UInt1 narrowing accepts one");
+    check(&active_valid, &circuit).unwrap();
+    assert_eq!(active_valid.returns_json()["boundedResult"], json!("1"));
+
     for (private_index, active_then, active_else, active_value, result_name) in [
         (0, true, true, 1u64, "thenResult"),
         (1, false, false, 0u64, "elseResult"),
     ] {
-        let active_inputs = inputs(active_then, active_else);
+        let active_inputs = inputs(active_then, active_else, "3");
         assert!(
             prepare(&plan, &active_inputs, &initial, parameters, address).is_err(),
             "host preparation rejects active {result_name} narrowing"
@@ -277,4 +289,64 @@ fn lazy_conditionals_check_both_skipped_cast_branches() {
             "native relation rejects active UInt1 narrowing for {result_name}"
         );
     }
+}
+
+#[test]
+#[ignore = "requires fresh LazyConditional artifacts and official K7 parameters"]
+fn lazy_conditional_bounded_join_generates_and_binds_native_proof() -> anyhow::Result<()> {
+    use futures::executor::block_on;
+    use noctium_runtime::proof::TrustedParameters;
+    use rand::rngs::OsRng;
+    use transient_crypto::proofs::{ParamsVerifier, Zkir};
+
+    let directory = PathBuf::from(
+        env::var_os("NOCTIUM_LAZY_CONDITIONAL_DIR").expect("NOCTIUM_LAZY_CONDITIONAL_DIR"),
+    );
+    let parameter_directory = PathBuf::from(
+        env::var_os("NOCTIUM_LAZY_CONDITIONAL_PROOF_PARAMETERS_DIR")
+            .expect("NOCTIUM_LAZY_CONDITIONAL_PROOF_PARAMETERS_DIR"),
+    );
+    let plan: Plan = serde_json::from_slice(
+        &fs::read(directory.join("LazyConditional.branches.impact.json"))?,
+    )?;
+    let relation = IrSource::load(
+        fs::File::open(directory.join("LazyConditional.branches.zkir"))?,
+    )?;
+    assert_eq!(relation.k(), 7);
+    let execution = prepare(
+        &plan,
+        &BTreeMap::from([
+            ("thenCondition".into(), json!(false)),
+            ("elseCondition".into(), json!(true)),
+            ("amount".into(), json!("3")),
+        ]),
+        &create_state(&plan, &BTreeMap::new())?,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(execution.returns_json()["boundedResult"], json!("3"));
+    check(&execution, &relation)?;
+
+    let parameter_bytes = fs::read(parameter_directory.join("bls_midnight_2p7"))?;
+    let parameters = TrustedParameters::from_bytes(
+        &parameter_bytes,
+        7,
+        "e82ae890c080188355f37feaffe91372584cd810615082d9143d4dec0453fd9d",
+    )?;
+    let verifier_parameters = ParamsVerifier::read(parameter_bytes.as_slice())?;
+    let (prover_key, verifier_key) = block_on(relation.keygen(&parameters))?;
+    let (proof, mut statement, activity) =
+        block_on(relation.prove(OsRng, &parameters, prover_key, &execution.preimage))?;
+    assert_eq!(activity, execution.activity_schedule);
+    verifier_key.verify(&verifier_parameters, &proof, statement.iter().copied())?;
+    let (commitment, _) = execution.preimage.communications_commitment.unwrap();
+    assert_eq!(statement.get(1), Some(&commitment));
+    statement[1] = commitment + Fr::from(1u64);
+    assert!(
+        verifier_key
+            .verify(&verifier_parameters, &proof, statement.iter().copied())
+            .is_err(),
+        "proof must bind the original communications commitment"
+    );
+    Ok(())
 }

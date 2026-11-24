@@ -351,6 +351,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableLazyConditional.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-lazy-conditional"
+          .lake/build/bin/noctium compile tests/LazyConditional.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/lazy-conditional"
           .lake/build/bin/noctium compile tests/ReadableIteration.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-iteration"
@@ -484,6 +487,7 @@ jobs:
             NOCTIUM_NESTED_EQUALITY_DIR="$artifacts/nested-aggregate-equality" \
             NOCTIUM_STRUCTURAL_EQUALITY_DIR="$artifacts/structural-equality-widening" \
             NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR="$artifacts/readable-lazy-conditional" \
+            NOCTIUM_LAZY_CONDITIONAL_DIR="$artifacts/lazy-conditional" \
             NOCTIUM_READABLE_ITERATION_DIR="$artifacts/readable-iteration" \
             NOCTIUM_MERKLE_PATH_TYPES_DIR="$artifacts/merkle-path-types" \
             NOCTIUM_TYPED_MERKLE_PATH_ROOT_DIR="$artifacts/typed-merkle-path-root" \
@@ -545,8 +549,8 @@ jobs:
                 --skip readable_iteration_generates_and_binds_native_proof \
                 --skip merkle_path_entry_generates_and_binds_native_proof \
                 --skip boolean_relations_generate_and_bind_native_proofs \
-                --skip lazy_conditionals_check_both_skipped_cast_branches \
                 --skip checked_enum_casts_generates_and_binds_native_proof \
+                --skip lazy_conditional_bounded_join_generates_and_binds_native_proof \
                 --skip module_enum_comparison_generates_and_binds_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
