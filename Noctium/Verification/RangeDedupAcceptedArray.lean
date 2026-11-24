@@ -150,6 +150,12 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not value output))
       (holds : Instruction.Holds hash witness (.not value output)) :
       AcceptedMeaningStep hash witness raw
+  | nativeSelect {condition yes no : Operand} {output : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "cond_select")
+      (decoded : NativeRelationJson.decodeInstruction raw =
+        .ok (.select condition yes no output))
+      (holds : Instruction.Holds hash witness (.select condition yes no output)) :
+      AcceptedMeaningStep hash witness raw
   | copy {source destination : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "copy")
       (decoded : NativeRelationJson.decodeInstruction raw =
@@ -642,6 +648,44 @@ private theorem acceptedMeaningStep_preserves
     have meaningNext := defineResult_meaning meaning (by
       intro identifier parsed
       have same : identifier = output := Except.ok.inj (parsed.symm.trans fields.2)
+      subst identifier
+      exact factMeaning) defined
+    have factNative := combine_native combined
+    have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
+    exact ⟨meaningNext, definitionsNext⟩
+  | @nativeSelect condition yes no output opcode decoded holds =>
+    obtain ⟨conditionFact, yesFact, noFact, fact, conditionAccepted,
+      yesAccepted, noAccepted, _conditionNative, _yesNative, _noNative, _conditionBound,
+      combined, defined⟩ := accepted_native_select_components definitions opcode accepted
+    have fields := decoded_select_arguments opcode decoded
+    have conditionMeaning := argument_decoded_meaning meaning conditionAccepted fields.1
+    have yesMeaning := argument_decoded_meaning meaning yesAccepted fields.2.1
+    have noMeaning := argument_decoded_meaning meaning noAccepted fields.2.2.1
+    have conditionIsBoolean : condition.read witness = zero ∨ condition.read witness = one :=
+      holds.1
+    have resultMeaning :
+        interpret hash inputs (.select conditionFact.term yesFact.term noFact.term) =
+          some (witness output) := by
+      cases conditionIsBoolean with
+      | inl isZero =>
+        have isNotOne : condition.read witness ≠ one := by
+          intro equal
+          exact zero_ne_one (isZero.symm.trans equal)
+        simp [interpret, conditionMeaning.term, yesMeaning.term, noMeaning.term,
+          isNotOne, holds.2]
+      | inr isOne =>
+        simp [interpret, conditionMeaning.term, yesMeaning.term, noMeaning.term,
+          isOne, holds.2]
+    have resultBound : (witness output).val ≤ max yesFact.maximum noFact.maximum := by
+      rw [holds.2]
+      split
+      · exact Nat.le_trans yesMeaning.bound (Nat.le_max_left _ _)
+      · exact Nat.le_trans noMeaning.bound (Nat.le_max_right _ _)
+    have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+      combine_meaning combined resultMeaning resultBound
+    have meaningNext := defineResult_meaning meaning (by
+      intro identifier parsed
+      have same : identifier = output := Except.ok.inj (parsed.symm.trans fields.2.2.2)
       subst identifier
       exact factMeaning) defined
     have factNative := combine_native combined

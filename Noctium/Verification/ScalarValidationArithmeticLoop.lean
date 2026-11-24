@@ -144,6 +144,64 @@ theorem accepted_not_components {expected : Expected} {state next : State}
   rcases reducer with ⟨fact, combined, defined⟩
   exact ⟨value, fact, valueAccepted, valueNative, boolBound, combined, defined⟩
 
+theorem accepted_native_select_components {expected : Expected} {state next : State}
+    {raw : Json}
+    (nativeDefinitions : NativeDefinitions state)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "cond_select")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ∃ condition yes no fact,
+      argument state raw "bit" = .ok condition ∧
+      argument state raw "a" = .ok yes ∧ argument state raw "b" = .ok no ∧
+      (condition.valueType == .native) = true ∧
+      yes.valueType = .native ∧ no.valueType = .native ∧
+      condition.maximum ≤ 1 ∧
+      combine (.select condition.term yes.term no.term) (max yes.maximum no.maximum)
+        [condition, yes, no] = .ok fact ∧
+      defineResult state raw fact = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "cond_select" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp [bind_ok] at accepted
+  rcases accepted with ⟨_, accepted⟩
+  rcases accepted with ⟨condition, conditionAccepted, booleanCheck, accepted⟩
+  rcases accepted with ⟨yes, yesAccepted, accepted⟩
+  rcases accepted with ⟨no, noAccepted, accepted⟩
+  rcases accepted with ⟨matchingTypes, _, _, branch⟩
+  have conditionParts := Backend.Native.nativeArgument_parts conditionAccepted
+  rcases booleanCheck with ⟨⟨⟩, booleanAccepted⟩
+  have conditionBound :=
+    Backend.Native.require_boolean_iff condition |>.mp booleanAccepted
+  have yesNative := argument_native_of_state nativeDefinitions yesAccepted
+  have noNative := argument_native_of_state nativeDefinitions noAccepted
+  have yesNotBool : (yes.valueType == Backend.Native.NativeValueType.bool) = false := by
+    rw [yesNative]
+    decide
+  simp [yesNotBool, bind_ok] at branch
+  rcases branch with ⟨fact, combined, defined⟩
+  have factNative : fact.valueType = .native := by
+    unfold combine at combined
+    dsimp [Backend.Native.ensure] at combined
+    split at combined
+    · simp only [Pure.pure, Except.pure] at combined
+      cases combined
+      rfl
+    · contradiction
+  have factNotForeign : fact.foreignValid = false := by
+    unfold combine at combined
+    dsimp [Backend.Native.ensure] at combined
+    split at combined
+    · simp only [Pure.pure, Except.pure] at combined
+      cases combined
+      rfl
+    · contradiction
+  have outputFactEq :=
+    Backend.Native.nativeSelectOutputFact_eq_combineFact fact yes no yesNative factNative factNotForeign
+  rw [outputFactEq] at defined
+  exact ⟨condition, yes, no, fact, conditionParts.1, yesAccepted, noAccepted,
+    conditionParts.2, yesNative, noNative, conditionBound, combined, defined⟩
+
 theorem combine_native {term : Backend.Native.Term} {maximum : Nat}
     {children : List Fact} {fact : Fact}
     (accepted : combine term maximum children = .ok fact) :

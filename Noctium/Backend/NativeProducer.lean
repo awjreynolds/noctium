@@ -166,6 +166,43 @@ private theorem bind_ok {ε α β} {first : Except ε α} {next : α → Except 
     ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+/-- A successful native argument is also an ordinary argument with a checked
+Native type. This exposes the exact fact selected by native-only opcodes. -/
+theorem nativeArgument_parts {state : State} {instruction : Json}
+    {name : String} {fact : Fact}
+    (accepted : nativeArgument state instruction name = .ok fact) :
+    argument state instruction name = .ok fact ∧
+      (fact.valueType == .native) = true := by
+  unfold nativeArgument nativeOperand at accepted
+  rcases bind_ok.mp accepted with ⟨text, textParsed, accepted⟩
+  rcases bind_ok.mp accepted with ⟨found, operandAccepted, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, nativeAccepted, result⟩
+  have sameFact : found = fact := by simpa using Except.ok.inj result
+  subst fact
+  constructor
+  · unfold argument
+    simp only [Bind.bind, Except.bind, textParsed]
+    exact operandAccepted
+  · have nativeCheck : (found.valueType == NativeValueType.native) = true := by
+      cases h : found.valueType == NativeValueType.native with
+      | false => simp [requireNative, ensure, h] at nativeAccepted
+      | true => simp
+    exact nativeCheck
+
+/-- A native conditional selection keeps the native `combine` fact unchanged
+when the producer applies its output type metadata. -/
+theorem nativeSelectOutputFact_eq_combineFact (fact yes no : Fact)
+    (yesNative : yes.valueType = .native)
+    (factNative : fact.valueType = .native)
+    (factNotForeign : fact.foreignValid = false) :
+    ({fact with
+      valueType := yes.valueType
+      foreignValid := isForeignType yes.valueType && yes.foreignValid && no.foreignValid} : Fact) = fact := by
+  rw [yesNative]
+  cases fact with
+  | mk term maximum valueType foreignValid foreignNonidentity nodes depth assertedLessThan =>
+    simp_all [isForeignType]
+
 private theorem ensure_ok {condition : Bool} {message : String} :
     ensure condition message = .ok () ↔ condition = true := by
   cases condition <;> simp [ensure] <;> rfl
