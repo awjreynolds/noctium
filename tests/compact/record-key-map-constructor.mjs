@@ -47,6 +47,12 @@ try {
     assert.equal(entries.size(), BigInt(Number(enabled)));
     assert.equal(entries.member(key), enabled);
     assert.equal((await contract.circuits.member(context(state), tag, id)).result, enabled);
+    const neighboringId = id.slice();
+    neighboringId[neighboringId.length - 1] += 1;
+    assert.equal(
+      (await contract.circuits.member(context(state), tag, neighboringId)).result,
+      false,
+    );
     if (enabled) {
       assert.equal(await entries.lookup(key), 513n);
       assert.equal((await contract.circuits.inspect(context(state), tag, id)).result, 513n);

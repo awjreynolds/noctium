@@ -49,6 +49,27 @@ fn guarded_root_record_key_map_constructor_matches_native_state_and_rejects_bad_
             BTreeMap::from([("present".into(), json!(enabled))])
         );
         assert_eq!(inspection.after.state.get_ref(), initial.get_ref());
+
+        let mut neighboring_id = id.clone();
+        *neighboring_id.last_mut().unwrap() += 1;
+        let neighboring_inputs = BTreeMap::from([
+            ("tag".into(), json!({"kind":"bytes","values":[7]})),
+            ("id".into(), json!({"kind":"bytes","values":neighboring_id})),
+        ]);
+        let neighboring = prepare(
+            &plan,
+            &neighboring_inputs,
+            &initial,
+            parameters,
+            address,
+        )
+        .unwrap();
+        check(&neighboring, &relation).unwrap();
+        assert_eq!(
+            neighboring.returns_json(),
+            BTreeMap::from([("present".into(), json!(false))])
+        );
+
         if enabled {
             let value = prepare(
                 &value_plan,
