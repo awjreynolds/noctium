@@ -1,4 +1,7 @@
 import Noctium.Verification.NativeInputOrdinal
+import Noctium.Verification.NativeRelationInstructionProjection
+import Noctium.Verification.ScalarValidationOpcodeProfile
+import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationNativeDefinitions
 
 namespace Noctium.Verification.NativeInputOrdinalTrace
@@ -8,6 +11,8 @@ open Noctium.Verification.NativeInputOrdinal
 open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeDefinitions
 open Noctium.Verification.ScalarValidationNativeLoop
+open Noctium.Verification.ScalarValidationOpcodeProfile
+open Noctium.Verification.ScalarValidationProjection
 
 def expectedInputDescriptor (requirement : InputRequirement) : Visibility × String :=
   (requirement.visibility, requirement.identifier)
@@ -136,5 +141,59 @@ theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
       rw [restDescriptors, headDescriptors]
       simp [strictInstructionInputDescriptors, List.append_assoc]
 
+/-- An actually lowered entrypoint whose JSON also passes the strict relation
+decoder and checked scalar opcode profile exposes exactly the producer's
+ordered input descriptors. The strict decoder enforces an empty root input
+header. The producer's validated raw-input count therefore proves that the
+raw seed is empty. Source input types remain restricted to the nonforeign
+fragment; this theorem establishes names and visibility, not assignment
+value equality. -/
+theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
+    (state : List StateDecl) (entry : Entrypoint)
+    (json : Lean.Json) (program : NativeRelation.Program)
+    (lowered : Backend.Zkir.lowerEntrypoint state entry = .ok json)
+    (decoded : NativeRelationJson.decode json = .ok program)
+    (inputSchema : ∀ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
+        .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (checkedProfile : ∃ instructions : Array Lean.Json,
+      Backend.Native.arrayField json "instructions" = .ok instructions ∧
+      checkedScalarOpcodeProfile (instructions.toList.zipIdx) program.instructions = true) :
+    ∃ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
+        .ok expected ∧
+      expected.rawInputs = [] ∧
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor := by
+  obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
+    Backend.Zkir.lowerEntrypoint_validation_and_instructions state entry json lowered
+  obtain ⟨headerInstructions, rawInputsHeader, headerInstructionsParsed,
+    decodedRows⟩ := NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  obtain ⟨profileInstructions, profileParsed, profile⟩ := checkedProfile
+  obtain ⟨expectedRawInputsEmpty, driverInstructions, final, driver⟩ :=
+    validate_driver_result_empty_header validated rawInputsHeader
+  have driverMatchesHeader : driverInstructions = headerInstructions :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans headerInstructionsParsed)
+  have profileMatchesHeader : profileInstructions = headerInstructions :=
+    Except.ok.inj (profileParsed.symm.trans headerInstructionsParsed)
+  let items := headerInstructions.toList.zipIdx
+  have decodedItems : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction =
+      .ok program.instructions := by
+    simpa [items, List.zipIdx_map_fst] using decodedRows
+  have checkedTrace : NativeDefinitionTrace items program.instructions := by
+    apply NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems
+    simpa [items, profileMatchesHeader] using profile
+  have driverTrace : validateInstructionLoop expected items {} = .ok final := by
+    simpa [items, driverMatchesHeader] using driver.instructionTrace
+  have inputDescriptors := validateInstructionLoop_input_descriptors_of_trace
+    (inputSchema expected expectedAccepted) empty_nativeDefinitions checkedTrace driverTrace
+  have exactDescriptors :
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor := by
+    rw [driver.inputCount, driver.seedInputCount] at inputDescriptors
+    simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
+      using inputDescriptors.symm
+  exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
 
 end Noctium.Verification.NativeInputOrdinalTrace
