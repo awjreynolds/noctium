@@ -392,18 +392,26 @@ structure ScalarCall where
   body : Program
   deriving Repr, DecidableEq
 
+/-- Decode one ordered scalar call-header argument. -/
+def decodeScalarCallArgument (input : Json) : Except String String := do
+  exactFields input ["name", "type"]
+  checkNativeType (← input.getObjVal? "type")
+  let name ← stringField input "name"
+  ensure (validIdentifier name) "invalid scalar call input name"
+  pure name
+
+/-- Keep the source JSON headers beside their decoded ordered names. -/
+def decodeScalarCallHeader (json : Json) : Except String (Array Json × List String) := do
+  let inputs ← arrayField json "inputs"
+  let arguments ← inputs.toList.mapM decodeScalarCallArgument
+  ensure (arguments.eraseDups.length == arguments.length) "repeated scalar call input"
+  pure (inputs, arguments)
+
 /-- Preserve ordered scalar call-header names separately from transcript inputs.
 Their values are fixed in the assignment used to interpret the body. -/
 def decodeScalarCall (json : Json) : Except String ScalarCall := do
   let fields ← json.getObj?
-  let inputs ← arrayField json "inputs"
-  let arguments ← inputs.toList.mapM fun input => do
-    exactFields input ["name", "type"]
-    checkNativeType (← input.getObjVal? "type")
-    let name ← stringField input "name"
-    ensure (validIdentifier name) "invalid scalar call input name"
-    pure name
-  ensure (arguments.eraseDups.length == arguments.length) "repeated scalar call input"
+  let (_, arguments) ← decodeScalarCallHeader json
   let body ← decode (.obj (fields.insert "inputs" (.arr #[])))
   pure {arguments, body}
 
