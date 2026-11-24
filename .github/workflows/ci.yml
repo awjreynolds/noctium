@@ -296,6 +296,7 @@ jobs:
           lake env lean tests/NominalFieldMapKeys.lean
           lake env lean tests/NominalFieldRecordMap.lean
           lake env lean tests/NominalFieldRecordSet.lean
+          lake env lean tests/NominalFieldScalarSet.lean
           lake env lean tests/NominalFieldRecordSetConstructor.lean
           lake env lean tests/NestedNominalFieldRecordSet.lean
           lake env lean tests/NominalUIntNestedRecords.lean
