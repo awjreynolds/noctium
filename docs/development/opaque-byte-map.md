@@ -180,3 +180,17 @@ NOCTIUM_OPAQUE_MAYBE_PROOF_SRS="$PARAMS/bls_midnight_2p8" \
   cargo test --locked --manifest-path runtime/Cargo.toml --no-default-features \
   --features zkir-321 --test opaque_maybe -- --ignored
 ```
+
+### Opaque Either values
+
+Readable witness circuits support `either(tag, left, right)` with an
+opaque string or byte array arm. The chosen opaque payload keeps its
+type and exact contents. An inactive opaque arm uses its typed empty
+value. ZKIR selects the Compress field using the same tag as the witness.
+
+The Compact 0.36.1 fixture checks both tags with an opaque string on the
+left and an opaque byte array on the right. The pinned native execution
+matches both results and rejects an altered active return for either
+type. The Lean authoring check rejects publishing a private tag or
+payload without explicit disclosure. The emitted relation sizes at K8
+with 174 rows. [Lean fixture](../../tests/OpaqueEither.lean) · [Compact oracle](../../tests/compact/opaque-either.mjs) · [Native checker](../../runtime/tests/opaque_either.rs)

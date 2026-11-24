@@ -2115,6 +2115,11 @@ private def lowerOpaqueBytes : Expr .opaqueBytes → LowerM String
   | .disclose _ value => lowerOpaqueBytes value
   | .copyValue value => do
     unary "copy" (← lowerOpaqueBytes value) "val"
+  | .select condition yes no => do
+    let bit ← lowerExpr condition
+    let a ← lowerOpaqueBytes yes
+    let b ← lowerOpaqueBytes no
+    selectOperands bit a b
   | @Expr.letE .bool .opaqueBytes name value body => do
     let value ← lowerExpr value
     let aliases := (← get).aliases
@@ -2146,6 +2151,11 @@ private def lowerOpaqueString : Expr .opaqueString → LowerM String
   | .disclose _ value => lowerOpaqueString value
   | .copyValue value => do
     unary "copy" (← lowerOpaqueString value) "val"
+  | .select condition yes no => do
+    let bit ← lowerExpr condition
+    let a ← lowerOpaqueString yes
+    let b ← lowerOpaqueString no
+    selectOperands bit a b
   | @Expr.letE .bool .opaqueString name value body => do
     let value ← lowerExpr value
     let aliases := (← get).aliases

@@ -1682,7 +1682,7 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     a.validate caps env
     b.validate caps env
   | .select c a b => do
-    if ty.isJubjub || ty.isOpaqueBytes || ty.isOpaqueString || (ty.isBytes && !caps.bytes32Conversions) then
+    if ty.isJubjub || (ty.isBytes && !caps.bytes32Conversions) then
       throw "byte string and Jubjub selection is not supported by this source surface"
     if ty.isForeign && !caps.foreignValues then
       throw "target lacks typed foreign-curve value support"
