@@ -3495,7 +3495,8 @@ private def recordSetKeyValuesAt (schema : List (String × StateKind))
   let fields ← match LedgerValueType.recordSetKeyFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let values ← elaborateLedgerFieldValues state payload fields
+  let fieldTypes := (state.recordKeyFieldTypes.lookup storage.getId.toString).getD []
+  let values ← elaborateLedgerFieldValues state payload fields fieldTypes
   pure (← pathKeysTerm keys, fields, values)
 
 private def recordSetKeyValues (schema : List (String × StateKind))
@@ -4792,11 +4793,25 @@ private def hasNominalFieldRootRecordMapKey (schema : List (String × StateKind)
   return rootRecordMap && keyHasNominalField &&
     hasCircuitNominalFieldReference state.nominalFieldBindings keyFields.raw
 
+private def hasNominalFieldRootRecordSetKey (schema : List (String × StateKind))
+    (state : EntryEffects) (storage : TSyntax `ident) (keyFields : TSyntax `nlleaves) : _root_.Bool := Id.run do
+  let storageName := storage.getId.toString
+  let rootRecordSet := match schema.lookup storageName with
+    | some (.tree (.recordSet ..)) => _root_.Bool.true
+    | _ => _root_.Bool.false
+  let keyHasNominalField :=
+    ((state.recordKeyFieldTypes.lookup storageName).getD []).any fun (_, sourceType) =>
+      sourceType.nominalField.isSome
+  return rootRecordSet && keyHasNominalField &&
+    hasCircuitNominalFieldReference state.nominalFieldBindings keyFields.raw
+
 private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKind))
     (state : EntryEffects) (effect : TSyntax `nleffect) : _root_.Bool := Id.run do
   let fieldBindings := state.nominalFieldBindings
   let typedKey storage keyFields :=
     hasNominalFieldRootRecordMapKey schema state storage keyFields
+  let typedRecordSetKey storage keyFields :=
+    hasNominalFieldRootRecordSetKey schema state storage keyFields
   match effect with
   | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
   | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
@@ -4829,13 +4844,20 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
   | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         typedKey storage keyFields
+  | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ])
+  | `(nleffect| remove $storage:ident [ $keyFields:nlleaves ]) =>
+      typedRecordSetKey storage keyFields
+  | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ])
+  | `(nleffect| when $condition:nlexpr remove $storage:ident [ $keyFields:nlleaves ]) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        typedRecordSetKey storage keyFields
   | `(nleffect| read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
   | `(nleffect| member $storage:ident [ $keyFields:nlleaves ] as $_:ident) =>
-      typedKey storage keyFields
+      typedKey storage keyFields || typedRecordSetKey storage keyFields
   | `(nleffect| when $condition:nlexpr read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
   | `(nleffect| when $condition:nlexpr member $storage:ident [ $keyFields:nlleaves ] as $_:ident) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
-        typedKey storage keyFields
+        (typedKey storage keyFields || typedRecordSetKey storage keyFields)
   | `(nleffect| insert $_:ident [ $outerKey:nlexpr ] [ $keyFields:nlleaves ] := $payload:nlleaves) =>
       !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
@@ -6037,16 +6059,29 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         | `(nlstate| set $id:ident : struct $record:ident { $recordFields:nlcompositefield* })
         | `(nlstate| sealed set $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), sourceFields) ←
+            elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           match LedgerValueType.shieldedCoinRecordFields environment compositeType with
           | .ok _ =>
+            if sourceFields.any (fun (_, field) => field.contractRef.isSome) then
+              throwErrorAt state "typed contract reference fields are unsupported for this ledger layout"
+            if sourceFields.any (fun (_, field) => field.nominalField.isSome) then
+              throwErrorAt state "nominal Field record fields are unsupported for this ledger layout"
+            if sourceFields.any (fun (_, field) => field.nominalUInt.isSome) then
+              throwErrorAt state "nominal UInt record fields are unsupported for this ledger layout"
             let valueSchema := LedgerValueType.shieldedCoinSet environment compositeType
             let valueTerm ← `(Noctium.LedgerValueType.shieldedCoinSet $environmentTerm $compositeTypeTerm)
             pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
           | .error _ => do
+            if sourceFields.any (fun (_, field) => field.contractRef.isSome) then
+              throwErrorAt state "typed contract reference fields are unsupported for this ledger layout"
+            if sourceFields.any (fun (_, field) => field.nominalUInt.isSome) then
+              throwErrorAt state "nominal UInt record fields are unsupported for this ledger layout"
             match LedgerValueType.recordSetKeyFields environment compositeType with
             | .ok _ =>
+              unless sourceFields.isEmpty do
+                recordKeyFieldTypes := (id.getId.toString, sourceFields) :: recordKeyFieldTypes
               let valueSchema := LedgerValueType.recordSet environment compositeType
               let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm)
               pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
