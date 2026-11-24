@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "network": "funded development localnet",
+  "ledgerVersion": "9.1.0.1",
+  "ledgerParameterSource": {
+    "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "finalized": "0x0ffd01b072baff7c178b075418424e60bf5d1b106655b573e75a3cfad26048cb",
+    "specVersion": 2001100,
+    "transactionVersion": 4,
+    "sha256": "b83717ae6b9cbffa2585f0db97d42796331d395b5e089772565f46290a23719a"
+  },
+  "runtime": {
+    "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+    "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "rust": "1.100.0",
+    "host": "darwin-arm64"
+  },
+  "artifactProvenance": {
+    "compiler": {
+      "implementation": "Lean4",
+      "sourceRevision": "fbd4d167f5ad91b07d034ace477a22925e347432",
+      "toolchain": "leanprover/lean4:v4.35.0"
+    },
+    "entries": [
+      {
+        "name": "tests/NominalFieldRecordSet.lean",
+        "path": "source/tests/NominalFieldRecordSet.lean",
+        "role": "source",
+        "sha256": "f13c74bdb7dbc60951ae0eb43add0b14aac45245166a89175d5fc1ba44702a84",
+        "size": 3463
+      },
+      {
+        "name": "NominalFieldRecordSet.RecordSet.update.zkir",
+        "path": "circuit/entrypoint.zkir",
+        "role": "circuit",
+        "sha256": "f8192f003040de6dcb92b28f1655d3833e0469cb18cf077b9af92054ef96bc55",
+        "size": 5189
+      },
+      {
+        "name": "NominalFieldRecordSet.RecordSet.update.impact.json",
+        "path": "plan/entrypoint.impact.json",
+        "role": "plan",
+        "sha256": "fa873e290302f8dad0f15725bb5556dc0a57e37f908292ae8ed07e86a2ad293e",
+        "size": 6315
+      },
+      {
+        "name": "noctium.json",
+        "path": "schema/noctium.json",
+        "role": "metadata",
+        "sha256": "dfb73f06ce0d1a7959c013ac837a59f65aa7ac34695d919f59341c45d63a1b47",
+        "size": 3218
+      },
+      {
+        "name": "noctium_runtime.h",
+        "path": "schema/noctium_runtime.h",
+        "role": "abi",
+        "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+        "size": 5282
+      },
+      {
+        "name": "target.json",
+        "path": "profile/target.json",
+        "role": "profile",
+        "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+        "size": 528
+      },
+      {
+        "name": "ledger.params",
+        "path": "parameters/ledger.params",
+        "role": "ledgerParameters",
+        "sha256": "b83717ae6b9cbffa2585f0db97d42796331d395b5e089772565f46290a23719a",
+        "size": 791
+      },
+      {
+        "name": "entrypoint.prover",
+        "path": "keys/entrypoint.prover",
+        "role": "proverKey",
+        "sha256": "2344b461815d22710c2c5859d1624753e594618f08481f3f3b95c787ecfdecf9",
+        "size": 226324
+      },
+      {
+        "name": "entrypoint.verifier",
+        "path": "keys/entrypoint.verifier",
+        "role": "verifierKey",
+        "sha256": "36502acc7225d83e8703767dfc6ac2134a34085aead2870d7eca570ebcb8961e",
+        "size": 1353
+      },
+      {
+        "name": "native-zkir.json",
+        "path": "provenance/native-zkir.json",
+        "role": "toolchain",
+        "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+        "size": 529
+      }
+    ],
+    "proofParameterSha256": {
+      "bls_midnight_2p8": "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+      "bls_midnight_2p13": "d3324910969c4cc54143b8045b649e5c3a4bd5fb7b8f85fe1b770f640ce1c803",
+      "dust/10/spend.prover": "3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81",
+      "dust/10/spend.verifier": "d15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb",
+      "dust/10/spend.bzkir": "d211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1"
+    },
+    "rows": 150
+  },
+  "scope": "Flat root nominal Field RecordSet. One deployment and two finalized mutations.",
+  "exactAlignedFieldMemberAbsentAfterRemove": true,
+  "exactAlignedFieldMemberAfterInsert": true,
+  "insertReturns": {
+    "afterInsert": true,
+    "afterRemove": true,
+    "before": false
+  },
+  "k": 8,
+  "manifestSha256": "b06f88611f95dc22261869cfef82a89f41656f801419b996907e0e795806496d",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "receipts": [
+    {
+      "finalizedHash": "a31c896cd0daa61532d95b1c8f9a89c2c9bdc4b94637af6a1c6f7bc0fdf8e257",
+      "finalizedHeight": 85939,
+      "height": 85939,
+      "stage": "deploy",
+      "stateBytes": 1478,
+      "stateSha256": "64f89b969bebe7622b0e5018998bb7017b580cee8d3364eeb7a03180b6513993",
+      "blockHash": "a31c896cd0daa61532d95b1c8f9a89c2c9bdc4b94637af6a1c6f7bc0fdf8e257"
+    },
+    {
+      "finalizedHash": "ffb1068857a1002a2741bf34d4049a2429f8843230607f01388be0a24b60e221",
+      "finalizedHeight": 85942,
+      "height": 85942,
+      "stage": "insert",
+      "stateBytes": 1584,
+      "stateSha256": "7437e8c58d772d9e6f56a274819f23fe17a19d787767ff34ca241a90e73d007f",
+      "blockHash": "ffb1068857a1002a2741bf34d4049a2429f8843230607f01388be0a24b60e221"
+    },
+    {
+      "finalizedHash": "2b2a2c1a37ddf2a742f1ea6107b7988f33938c5a18fe773c982daa132df9742e",
+      "finalizedHeight": 85945,
+      "height": 85945,
+      "stage": "remove",
+      "stateBytes": 1478,
+      "stateSha256": "64f89b969bebe7622b0e5018998bb7017b580cee8d3364eeb7a03180b6513993",
+      "blockHash": "2b2a2c1a37ddf2a742f1ea6107b7988f33938c5a18fe773c982daa132df9742e"
+    }
+  ],
+  "removeReturns": {
+    "afterInsert": true,
+    "afterRemove": false,
+    "before": true
+  }
+}

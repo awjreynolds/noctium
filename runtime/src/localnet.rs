@@ -2295,6 +2295,199 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the authenticated NominalFieldRecordSet bundle and the funded development node"]
+    fn nominal_field_record_set_finalizes_mutations_on_funded_ledger() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::hash::HashOutput;
+        use coin_structure::contract::ContractAddress;
+        use onchain_runtime::state::{ContractState, StateValue};
+        use rand::{SeedableRng, rngs::StdRng};
+        use sha2::{Digest, Sha256};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::{curve::Fr, proofs::Zkir};
+
+        futures::executor::block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let path = setting("NOCTIUM_NOMINAL_RECORD_SET_BUNDLE")?;
+            let manifest = setting("NOCTIUM_NOMINAL_RECORD_SET_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&path), Some(&manifest))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(
+                plan.entrypoint == "update",
+                "unexpected nominal RecordSet entrypoint"
+            );
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_NOMINAL_RECORD_SET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_NOMINAL_RECORD_SET_NODE")?,
+                &cache,
+            )
+            .await
+            .context("connect funded development node and admit DUST material")?;
+            let parameters = cache
+                .parameters(circuit.k())
+                .await
+                .with_context(|| format!("load nominal RecordSet k{} parameters", circuit.k()))?;
+            let snapshot = funded
+                .node
+                .sync()
+                .context("replay finalized localnet ledger")?;
+            let ttl = snapshot.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{"members":[]}}"#,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let update = target.operation("update", &parameters, ttl)?;
+            let (state, deployment) = funded.deploy(&target, "update").await?;
+            let mut current = Some(state);
+            let initial: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid fixture address"))?,
+            ));
+            let inputs = |adding, removing| {
+                BTreeMap::from([
+                    ("amount".into(), json!("17")),
+                    ("adding".into(), json!(adding)),
+                    ("removing".into(), json!(removing)),
+                ])
+            };
+            let expected_returns = |before, after_insert, after_remove| {
+                BTreeMap::from([
+                    ("before".into(), json!(before)),
+                    ("afterInsert".into(), json!(after_insert)),
+                    ("afterRemove".into(), json!(after_remove)),
+                ])
+            };
+            let key = crate::field_value(Fr::from(17u64));
+
+            let insert_inputs = inputs(true, false);
+            let insert_snapshot = funded.node.sync()?;
+            let inserted = crate::prepare(
+                &plan,
+                &insert_inputs,
+                &initial.data,
+                &insert_snapshot.state.parameters,
+                address,
+            )?;
+            crate::check(&inserted, &circuit)?;
+            let insert_returns = inserted.returns_json();
+            ensure!(
+                insert_returns == expected_returns(false, true, true),
+                "nominal RecordSet insertion returned unexpected membership values"
+            );
+            let insert = funded
+                .call(
+                    &update,
+                    &mut current,
+                    &parameters,
+                    insert_inputs,
+                )
+                .await?;
+            let inserted_state: ContractState<Db> = native_decode(&insert.contract_state)?;
+            ensure!(
+                inserted_state.data == inserted.after.state,
+                "finalized inserted state differs from native preparation"
+            );
+            let StateValue::Array(insert_slots) = inserted_state.data.get_ref() else {
+                anyhow::bail!("expected inserted root state slots");
+            };
+            let Some(StateValue::Map(inserted_members)) = insert_slots.get(0) else {
+                anyhow::bail!("expected inserted root RecordSet");
+            };
+            ensure!(
+                inserted_members.size() == 1
+                    && matches!(inserted_members.get(&key), Some(value) if matches!(&*value, StateValue::Null)),
+                "finalized RecordSet does not contain the exact aligned Field key"
+            );
+
+            let remove_inputs = inputs(false, true);
+            let remove_snapshot = funded.node.sync()?;
+            let removed = crate::prepare(
+                &plan,
+                &remove_inputs,
+                &inserted_state.data,
+                &remove_snapshot.state.parameters,
+                address,
+            )?;
+            crate::check(&removed, &circuit)?;
+            let remove_returns = removed.returns_json();
+            ensure!(
+                remove_returns == expected_returns(true, true, false),
+                "nominal RecordSet removal returned unexpected membership values"
+            );
+            let remove = funded
+                .call(
+                    &update,
+                    &mut current,
+                    &parameters,
+                    remove_inputs,
+                )
+                .await?;
+            let removed_state: ContractState<Db> = native_decode(&remove.contract_state)?;
+            ensure!(
+                removed_state.data == removed.after.state,
+                "finalized removed state differs from native preparation"
+            );
+            ensure!(
+                remove.contract_state == deployment.contract_state,
+                "removing the only member did not restore the exact initial state bytes"
+            );
+            let StateValue::Array(remove_slots) = removed_state.data.get_ref() else {
+                anyhow::bail!("expected removed root state slots");
+            };
+            let Some(StateValue::Map(removed_members)) = remove_slots.get(0) else {
+                anyhow::bail!("expected removed root RecordSet");
+            };
+            ensure!(
+                removed_members.size() == 0 && removed_members.get(&key).is_none(),
+                "finalized RecordSet retained the removed aligned Field key"
+            );
+
+            let receipt = |stage: &str, value: &FinalizedReceipt| {
+                json!({
+                    "stage": stage,
+                    "height": value.height,
+                    "finalizedHeight": value.finalized_height,
+                    "finalizedHash": value.finalized_hash,
+                    "stateBytes": value.contract_state.len(),
+                    "stateSha256": hex::encode(Sha256::digest(&value.contract_state)),
+                })
+            };
+            println!(
+                "{}",
+                json!({
+                    "manifestSha256": manifest,
+                    "profile": crate::profile::NAME,
+                    "k": circuit.k(),
+                    "receipts": [
+                        receipt("deploy", &deployment),
+                        receipt("insert", &insert),
+                        receipt("remove", &remove),
+                    ],
+                    "insertReturns": insert_returns,
+                    "removeReturns": remove_returns,
+                    "exactAlignedFieldMemberAfterInsert": true,
+                    "exactAlignedFieldMemberAbsentAfterRemove": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the authenticated RootFixedByteRecordValuedMap bundle and the funded development node"]
     fn root_fixed_byte_record_valued_map_finalizes_on_funded_ledger() -> anyhow::Result<()> {
         use crate::{
