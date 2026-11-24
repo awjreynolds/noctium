@@ -55,6 +55,10 @@ jobs:
           PY
       - name: Build the POC compiler
         run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup
+      - name: Check readable private state source and disclosure
+        run: |
+          bash tests/private-authoring-cli.sh
+          bash tests/disclosure-cli.sh
       - name: Check the private claim source-proof report
         run: |
           python3 tests/check-public-audit-assertions.py
@@ -588,10 +592,6 @@ jobs:
         run: |
           lake build Noctium.Witness.Semantics
           lake env lean tests/WitnessSemantics.lean
-      - name: Check readable private state source and disclosure
-        run: |
-          bash tests/private-authoring-cli.sh
-          bash tests/disclosure-cli.sh
       - name: Check module identity and re-export disclosure
         run: bash tests/modules/check.sh
       - name: Check source target compatibility

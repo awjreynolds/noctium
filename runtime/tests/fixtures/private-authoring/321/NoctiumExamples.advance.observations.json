@@ -13,4 +13,5 @@
  "explicitReleases": [],
  "entryName": "noctium.witness-circuit.NoctiumExamples.advance.v1",
  "authoredProves":
- ["eq(next, cast(UInt 8, add(previous, uint(1))))", "eq(next, expected)"]}
+ ["eq(next, cast(UInt 8, add(previous, uint(1))))", "eq(next, expected)"],
+ "assertionDiagnostics": []}
