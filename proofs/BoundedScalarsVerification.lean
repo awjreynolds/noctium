@@ -1,4 +1,5 @@
 import examples.BoundedScalars
+import Noctium.Verification
 import Noctium.Verification.ScalarNormalization
 import Noctium.Verification.SourceEffects
 
@@ -507,5 +508,115 @@ theorem sample_apply_run :
     applyEntry.run context (inputEnvironment ⟨5, 2, 3⟩) (state 0) =
       .ok ([("result", .uint 510 5)], state 5) := by
   with_unfolding_all rfl
+
+def initial (before : LedgerState) : Prop := before = state 0
+
+def invariant (before : LedgerState) : Prop :=
+  ∃ total, total ≤ 510 ∧ before = state total
+
+def precondition (ctx : EvalContext) (inputs : EvalEnv) (_before : LedgerState) : Prop :=
+  ctx = context ∧ ∃ input, inputs = inputEnvironment input ∧
+    input.expected ≤ 510 ∧ input.left ≤ 255 ∧ input.right ≤ 255
+
+def enabled (_ctx : EvalContext) (inputs : EvalEnv) (before : LedgerState) : Prop :=
+  before = state 0 ∧ ∃ input, inputs = inputEnvironment input ∧
+    input.expected = input.left + input.right ∧ input.left ≤ 255 ∧ input.right ≤ 255
+
+def postcondition (_ctx : EvalContext) (inputs : EvalEnv) (before : LedgerState)
+    (outputs : EvalEnv) (after : LedgerState) : Prop :=
+  ∃ input, inputs = inputEnvironment input ∧ input.expected = input.left + input.right ∧
+    before = state 0 ∧ outputs = [("result", .uint 510 input.expected)] ∧
+    after = state input.expected
+
+def specification : Specification := { initial, invariant, precondition, enabled, postcondition }
+
+def subject : Subject := { contract := BoundedScalars, entrypoint := ⟨0, by decide⟩, specification }
+
+private theorem subject_entry : subject.entry = applyEntry := by rfl
+
+def policy : AuditPolicy := {
+  subject
+  privacy := { releases := .none, scope := .successfulOnly }
+  functionalGuarantee := "For canonical bounded inputs and a canonical total cell, accepted apply runs start from zero, return the exact sum, and set total to that value. Every enabled run succeeds."
+  privacyGuarantee := "Successful source outcomes have equal returned values and ledger state for equal public expected input, context, and starting state."
+}
+
+theorem sample_nonvacuity : ∃ ctx inputs before,
+    initial before ∧ precondition ctx inputs before ∧ enabled ctx inputs before := by
+  let sample : Inputs := ⟨5, 2, 3⟩
+  refine ⟨context, inputEnvironment sample, state 0, rfl, ?_, ?_⟩
+  · exact ⟨rfl, sample, rfl, by decide, by decide, by decide⟩
+  · exact ⟨rfl, sample, rfl, by decide, by decide, by decide⟩
+
+theorem functional : FunctionalObligation policy := by
+  change Correctness subject
+  constructor
+  · intro before started
+    exact ⟨0, by decide, started⟩
+  · intro ctx inputs before outputs after canonical pre success
+    change invariant before at canonical
+    change precondition ctx inputs before at pre
+    rcases canonical with ⟨total, totalBound, stateEq⟩
+    rcases pre with ⟨contextEq, input, inputsEq, expectedBound, leftBound, rightBound⟩
+    subst ctx inputs before
+    obtain ⟨sumCorrect, totalZero, resultEq, afterEq⟩ :=
+      successful_apply_run_from_acceptance input total outputs after totalBound
+        expectedBound leftBound rightBound success
+    exact ⟨⟨input, rfl, sumCorrect, congrArg state totalZero, resultEq, afterEq⟩,
+      input.expected, expectedBound, afterEq⟩
+  · intro ctx inputs before _canonical pre active
+    change precondition ctx inputs before at pre
+    change enabled ctx inputs before at active
+    rcases active with ⟨beforeEq, input, inputsEq, sumCorrect, leftBound, rightBound⟩
+    have contextEq := pre.1
+    subst ctx inputs before
+    exact ⟨[("result", .uint 510 input.expected)], state input.expected,
+      apply_runs_when_enabled input sumCorrect leftBound rightBound⟩
+  · exact sample_nonvacuity
+
+private theorem actual_public_inputs (input : Inputs) :
+    subject.publicInputs (inputEnvironment input) =
+      [("expected", some (.uint 510 input.expected))] := by rfl
+
+theorem privacy : PrivacyObligation policy := by
+  intro left right leftAdmissible rightAdmissible equivalent _releaseAgreement covered
+  rcases left with ⟨leftContext, leftInputs, leftState⟩
+  rcases right with ⟨rightContext, rightInputs, rightState⟩
+  change invariant leftState ∧ precondition leftContext leftInputs leftState at leftAdmissible
+  change invariant rightState ∧ precondition rightContext rightInputs rightState at rightAdmissible
+  change leftContext = rightContext ∧ leftState = rightState ∧
+    subject.publicInputs leftInputs = subject.publicInputs rightInputs at equivalent
+  rcases equivalent with ⟨_sameContext, sameState, publicInputsEqual⟩
+  rcases leftAdmissible.1 with ⟨total, totalBound, leftStateEq⟩
+  have rightStateEq := sameState.symm.trans leftStateEq
+  rcases leftAdmissible.2 with
+    ⟨leftContextEq, leftInput, leftInputsEq, leftExpectedBound, leftBound, leftRightBound⟩
+  rcases rightAdmissible.2 with
+    ⟨rightContextEq, rightInput, rightInputsEq, rightExpectedBound, rightBound, rightRightBound⟩
+  have publicHeadEqual :
+      some ("expected", some (Value.uint 510 leftInput.expected)) =
+        some ("expected", some (Value.uint 510 rightInput.expected)) := by
+    simpa [leftInputsEq, rightInputsEq, actual_public_inputs] using
+      congrArg List.head? publicInputsEqual
+  have expectedEqual : leftInput.expected = rightInput.expected := by
+    have valuesEqual := congrArg Prod.snd (Option.some.inj publicHeadEqual)
+    exact (Value.uint.inj (Option.some.inj valuesEqual)).2
+  subst leftContext rightContext leftInputs rightInputs leftState rightState
+  simp only [policy, ObservationScope.covers, Subject.execute, subject_entry] at covered
+  rcases covered with ⟨⟨leftOutputs, leftAfter, leftRun⟩, ⟨rightOutputs, rightAfter, rightRun⟩⟩
+  have observation := successful_apply_private_observation leftInput rightInput total
+    leftOutputs rightOutputs leftAfter rightAfter expectedEqual totalBound
+    leftExpectedBound rightExpectedBound leftBound leftRightBound rightBound rightRightBound
+    leftRun rightRun
+  change subject.entry.run context (inputEnvironment leftInput) (state total) =
+    subject.entry.run context (inputEnvironment rightInput) (state total)
+  rw [subject_entry, leftRun, rightRun]
+  exact congrArg Except.ok observation
+
+#noctium_register_functional functional for policy
+#noctium_register_privacy privacy for policy
+
+#print axioms functional
+#print axioms privacy
 
 end Noctium.BoundedScalarsVerification
