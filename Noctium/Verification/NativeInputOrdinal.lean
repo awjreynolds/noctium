@@ -3,7 +3,7 @@ import Noctium.Verification.GenericStateCircuitParts
 
 namespace Noctium.Verification.NativeInputOrdinal
 
-open Lean Backend.Native NativeRelationJson
+open Lean Backend.Native NativeRelation NativeRelationJson
 open Noctium.Verification.ScalarValidationMeaning
 open Noctium.Verification.ScalarValidationNativeLoop
 
@@ -260,9 +260,9 @@ theorem accepted_input_output_identifier {expected : Expected}
       rw [guarded] at unguarded
       cases unguarded
 
-/-- An accepted guarded public read supplies its guard through the producer's
-string field parser. -/
-theorem accepted_guarded_public_input_guard_string {expected : Expected}
+/-- Project the exact raw guard and the native fact checked by the producer for
+an accepted guarded public ledger read. -/
+theorem accepted_guarded_public_input_guard_fact {expected : Expected}
     {state next : State} {raw : Json} {requirement : InputRequirement}
     {guardTerm : Backend.Native.Term}
     (selected : expected.inputs[state.inputCount]? = some requirement)
@@ -270,7 +270,9 @@ theorem accepted_guarded_public_input_guard_string {expected : Expected}
     (guarded : requirement.activityGuard = some guardTerm)
     (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
     (accepted : validateInstruction expected state raw = .ok next) :
-    ∃ guardText, Backend.Native.stringField raw "guard" = .ok guardText := by
+    ∃ guardText fact, Backend.Native.stringField raw "guard" = .ok guardText ∧
+      operand state guardText = .ok fact ∧ (fact.valueType == NativeValueType.native) = true ∧
+      fact.maximum ≤ 1 ∧ fact.term = guardTerm := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
@@ -286,7 +288,66 @@ theorem accepted_guarded_public_input_guard_string {expected : Expected}
       guardTextParsed, guardFact, guardOperand, guardBoolean, guardBooleanChecked,
       guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
       definedState, defined, result⟩
-    exact ⟨guardText, guardTextParsed⟩
+    change (do
+      let value ← operand state guardText
+      Backend.Native.ensure (value.valueType == NativeValueType.native)
+        "native instruction operand must have Native type"
+      pure value) = .ok guardFact at guardOperand
+    rcases bind_ok.mp guardOperand with ⟨fact, operandParsed, typed⟩
+    rcases bind_ok.mp typed with ⟨_, native, same⟩
+    change Except.ok fact = Except.ok guardFact at same
+    have factEq := Except.ok.inj same
+    subst guardFact
+    exact ⟨guardText, fact, guardTextParsed, operandParsed, ensure_ok.mp native,
+      of_decide_eq_true (ensure_ok.mp guardBooleanChecked),
+      eq_of_beq (ensure_ok.mp guardMatch)⟩
+
+/-- The guarded row supplies its guard through the producer's string parser. -/
+theorem accepted_guarded_public_input_guard_string {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ∃ guardText, Backend.Native.stringField raw "guard" = .ok guardText := by
+  obtain ⟨guardText, _, parsed, _, _, _, _⟩ :=
+    accepted_guarded_public_input_guard_fact selected nonforeignInput guarded opcodeParsed accepted
+  exact ⟨guardText, parsed⟩
+
+/-- An independently decoded guard of an accepted Native public read denotes
+the source-selected guard term and has a Boolean field value. The caller
+supplies the meaning invariant at the actual row pre-state. -/
+theorem accepted_guarded_public_input_guard_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term} {guard : Operand}
+    (invariant : StateMeaning hash inputs witness state)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next)
+    (decoded : NativeRelationJson.decodeOperandField raw "guard" = .ok guard) :
+    ScalarNormalization.interpret hash inputs guardTerm = some (guard.read witness) ∧
+      (guard.read witness = zero ∨ guard.read witness = one) := by
+  obtain ⟨guardText, fact, stringParsed, parsed, _, maximum, termEq⟩ :=
+    accepted_guarded_public_input_guard_fact selected nonforeignInput guarded opcodeParsed accepted
+  unfold Backend.Native.stringField at stringParsed
+  unfold NativeRelationJson.decodeOperandField at decoded
+  obtain ⟨guardJson, jsonParsed, textParsed⟩ := bind_ok.mp stringParsed
+  rw [jsonParsed] at decoded
+  change NativeRelationJson.decodeOperand guardJson = .ok guard at decoded
+  have meaning := operand_decoded_meaning invariant textParsed parsed decoded
+  have bound := Nat.le_trans meaning.bound maximum
+  refine ⟨termEq ▸ meaning.term, ?_⟩
+  have values : (guard.read witness).val = 0 ∨ (guard.read witness).val = 1 := by omega
+  rcases values with inactive | active
+  · left
+    exact Fin.ext inactive
+  · right
+    exact Fin.ext active
 
 /-- The strict input decoder preserves its output string and admits only a
 null guard. The opcode premise selects its public or private input branch. -/
