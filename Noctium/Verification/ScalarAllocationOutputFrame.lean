@@ -292,19 +292,7 @@ theorem sha512ThreeChunk_has_actual_output_capacity_frame :
       exact fieldFrame)
   simpa [sha512ThreeChunkState, pruned] using bodyFrame {}
 
-private def sha512ThreeChunkProgram : Lean.Json :=
-  (Zkir.lowerCircuit sha512ThreeChunkCircuit).toOption.getD Lean.Json.null
-
-theorem sha512ThreeChunk_is_accepted_by_native_producer :
-    Zkir.lowerCircuit sha512ThreeChunkCircuit = .ok sha512ThreeChunkProgram := by
-  have accepted : (Zkir.lowerCircuit sha512ThreeChunkCircuit).isOk = true := by
-    native_decide
-  cases lowered : Zkir.lowerCircuit sha512ThreeChunkCircuit with
-  | error message => simp [lowered, Except.toBool] at accepted
-  | ok program =>
-      have programEq : program = sha512ThreeChunkProgram := by
-        simp [sha512ThreeChunkProgram, lowered, Except.toOption, Option.getD]
-      exact congrArg Except.ok programEq
+#guard (Zkir.lowerCircuit sha512ThreeChunkCircuit).isOk
 
 private theorem bytes32ReturnPreflight_preservesOutputCapacityFrame
     (name : String) (value : Expr (.bytes 32)) :
