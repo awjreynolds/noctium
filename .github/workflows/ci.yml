@@ -55,6 +55,10 @@ jobs:
           PY
       - name: Build the POC compiler
         run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup Noctium.Witness.HostCasCorrelation
+      - name: Check bounded witness recording and replay
+        run: |
+          lake build Noctium.Witness.Semantics
+          lake env lean tests/WitnessSemantics.lean
       - name: Check readable private state source and disclosure
         run: |
           bash tests/private-authoring-cli.sh
@@ -64,6 +68,12 @@ jobs:
           python3 tests/check-public-audit-assertions.py
           PYTHONDONTWRITEBYTECODE=1 python3 tests/test_private_claim_operation_coverage.py
           python3 scripts/proofs/check-private-claim-audit.py --report
+      - name: Check module identity and re-export disclosure
+        run: bash tests/modules/check.sh
+      - name: Check source target compatibility
+        run: |
+          bash tests/source-target-requirement.sh
+          bash tests/source-api-requirement.sh
       - name: Check source contract examples
         run: |
           lake env lean examples/PrivateClaim.lean
@@ -593,13 +603,3 @@ jobs:
           lake env lean tests/Verification.lean
           lake env lean tests/SourceProofCoverage.lean
           bash tests/private-claim-source-coverage.sh
-      - name: Check bounded witness recording and replay
-        run: |
-          lake build Noctium.Witness.Semantics
-          lake env lean tests/WitnessSemantics.lean
-      - name: Check module identity and re-export disclosure
-        run: bash tests/modules/check.sh
-      - name: Check source target compatibility
-        run: |
-          bash tests/source-target-requirement.sh
-          bash tests/source-api-requirement.sh
