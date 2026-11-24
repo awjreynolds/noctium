@@ -1,0 +1,27 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export ledger balances: Map<Amount, Field>;
+
+export circuit lifecycle(enabled: Boolean, key: Amount, value: Field):
+  [Boolean, Field, Field, Boolean] {
+  const exposedKey = disclose(key);
+  assert(!balances.member(exposedKey), "Map key already exists");
+  if (disclose(enabled)) {
+    balances.insert(exposedKey, disclose(value));
+  }
+  const present = balances.member(exposedKey);
+  const stored = balances.lookup(exposedKey);
+  balances.insertDefault(exposedKey);
+  const defaulted = balances.lookup(exposedKey);
+  if (disclose(enabled)) {
+    balances.remove(exposedKey);
+  }
+  balances.remove(exposedKey);
+  const remains = balances.member(exposedKey);
+  assert(!remains, "Map key remains");
+  return [present, stored, defaulted, remains];
+}
