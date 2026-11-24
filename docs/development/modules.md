@@ -108,13 +108,13 @@ and tag `[128, 0, 255, 42]`. Both K9 relations used authenticated bundles.
 
 ## Generic record Maps
 
-A generic `Map<K, V>` accepts an admitted scalar or `Bytes32` key and a
-checked record value. Use `writeMapInput` to insert or replace an entry, and
-`mapReturns` to look up its typed value. A lookup requires a present key.
-Use `.argument "key" (disclosed := Bool.true)` when the key comes from a
-private helper argument. The compiler checks the specialized type and derives
-the scalar or grouped byte input header. Disclose private write values and
-guards where they affect public ledger state. [Lean fixture](../../tests/modules/GenericRecordMap.lean) · [Compact comparison](../../tests/compact/generic-record-map.mjs)
+A generic `Map<K, V>` accepts scalar or `Bytes32` keys with checked record
+values, and checked nominal record keys with scalar values. Use `writeMapInput`
+to insert or replace an entry and `mapReturns` to read its typed value.
+A lookup requires a present key. Use `.argument "key" (disclosed := Bool.true)`
+for a private helper key. The compiler checks the specialized type and derives
+the grouped key input from its layout. Record keys preserve nominal identity.
+Disclose private write values and guards where they affect public ledger state. [Lean fixture](../../tests/modules/GenericRecordMap.lean) · [Compact comparison](../../tests/compact/generic-record-map.mjs)
 
 ## Import exported types
 

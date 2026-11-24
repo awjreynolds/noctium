@@ -53,6 +53,13 @@ fn byte_key(suffix: u8) -> BTreeMap<String, Json> {
         .collect()
 }
 
+fn record_key(active: bool, epoch: u16) -> BTreeMap<String, Json> {
+    BTreeMap::from([
+        ("key.active".into(), json!(u8::from(active).to_string())),
+        ("key.epoch".into(), json!(epoch.to_string())),
+    ])
+}
+
 fn empty_maps_state(plan: &Plan) -> Result<ChargedState<Db>> {
     let config = plan
         .state
@@ -63,7 +70,7 @@ fn empty_maps_state(plan: &Plan) -> Result<ChargedState<Db>> {
 }
 
 fn assert_same_map_schema(left: &Plan, right: &Plan) {
-    assert_eq!(left.state.len(), 2, "fixture has both root Maps");
+    assert_eq!(left.state.len(), 3, "fixture has all three root Maps");
     assert_eq!(right.state.len(), left.state.len());
     for (left_state, right_state) in left.state.iter().zip(&right.state) {
         assert_eq!(left_state.name, right_state.name);
@@ -146,6 +153,59 @@ fn check_map(
     Ok(())
 }
 
+fn check_record_key_map() -> Result<()> {
+    let directory = artifacts();
+    let put = fixture(&directory, "putRecordKey")?;
+    let lookup = fixture(&directory, "lookupRecordKey")?;
+    assert_same_map_schema(&put.0, &lookup.0);
+    assert!(put.0.returns.is_empty(), "put has no returns");
+
+    let insert = |state: &ChargedState<Db>, enabled, active, epoch, next: u16| {
+        let mut inputs = record_key(active, epoch);
+        inputs.insert("enabled".into(), json!(enabled));
+        inputs.insert("next".into(), json!(next.to_string()));
+        let execution = run(&put, &inputs, state)?;
+        assert!(execution.returns_json().is_empty(), "put has no returns");
+        Ok::<_, anyhow::Error>(execution.after.state)
+    };
+    let read = |state: &ChargedState<Db>, active, epoch, expected: u16| {
+        let execution = run(&lookup, &record_key(active, epoch), state)?;
+        assert_eq!(execution.returns_json(), BTreeMap::from([
+            ("result".into(), json!(expected.to_string())),
+        ]));
+        assert_eq!(execution.after.state, *state);
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let initial = empty_maps_state(&put.0)?;
+    let first = insert(&initial, true, true, 513, 101)?;
+    read(&first, true, 513, 101)?;
+    let second = insert(&first, true, false, 513, 303)?;
+    read(&second, true, 513, 101)?;
+    read(&second, false, 513, 303)?;
+
+    let disabled = insert(&second, false, true, 513, 999)?;
+    assert_eq!(disabled, second);
+    read(&disabled, true, 513, 101)?;
+    read(&disabled, false, 513, 303)?;
+
+    let overwritten = insert(&disabled, true, true, 513, 202)?;
+    read(&overwritten, true, 513, 202)?;
+    read(&overwritten, false, 513, 303)?;
+    assert!(
+        prepare(
+            &lookup.0,
+            &record_key(true, 514),
+            &overwritten,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )
+        .is_err(),
+        "lookup of a missing checked record key must reject"
+    );
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
 fn generic_record_map_put_updates_one_checked_record() -> Result<()> {
@@ -156,4 +216,10 @@ fn generic_record_map_put_updates_one_checked_record() -> Result<()> {
 #[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
 fn generic_record_map_put_bytes_updates_one_checked_record() -> Result<()> {
     check_map("putBytes", "lookupBytes", byte_key)
+}
+
+#[test]
+#[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
+fn generic_record_map_put_record_key_updates_one_uint16() -> Result<()> {
+    check_record_key_map()
 }
