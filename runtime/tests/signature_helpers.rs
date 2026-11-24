@@ -793,3 +793,78 @@ fn signature_helpers_match_known_vectors_and_reject_invalid_preconditions() {
     );
     rejects("computed identity ECDSA point", &computed_identity);
 }
+
+#[test]
+#[ignore = "requires pinned Compact results in NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS"]
+fn ordinary_ethereum_address_matches_pinned_compact_and_checks_typed_boundary() -> anyhow::Result<()>
+{
+    let compact_path = std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS")
+        .expect("NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS must point to Compact vectors");
+    let oracle: Json = serde_json::from_slice(&fs::read(compact_path)?)?;
+    assert!(
+        oracle["compiler"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
+    assert_eq!(oracle["runtime"], "0.21.0");
+    let cases = oracle["cases"].as_array().expect("Compact case array");
+    assert_eq!(cases.len(), 3);
+    assert!(oracle["identityRejected"].as_bool().unwrap());
+    let case_ids = ["generator", "double-generator", "negative-double-generator"];
+
+    let plan: Plan = serde_json::from_str(PLAN)?;
+    assert_eq!(plan.target.as_deref(), Some("midnight-ledger-9-zkir-3.2.1"));
+    let circuit = IrSource::load(CIRCUIT)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let contract = coin_structure::contract::ContractAddress::default();
+
+    for (case, id) in cases.iter().zip(case_ids) {
+        assert_eq!(case["id"], id);
+        let point = &case["point"];
+        assert_eq!(point["kind"], "foreign", "{}", case["id"]);
+        assert_eq!(point["type"], "Secp256k1Point", "{}", case["id"]);
+        let encoded = point["bytes"].as_array().expect("typed SEC1 bytes");
+        assert_eq!(encoded.len(), 33, "{}", case["id"]);
+        assert!(matches!(encoded[0].as_u64(), Some(2 | 3)), "{}", case["id"]);
+        assert_eq!(
+            case["preimage"].as_array().unwrap().len(),
+            64,
+            "{}",
+            case["id"]
+        );
+        assert_eq!(case["expected"]["kind"], "bytes", "{}", case["id"]);
+        assert_eq!(
+            case["expected"]["values"].as_array().unwrap().len(),
+            20,
+            "{}",
+            case["id"]
+        );
+
+        let mut supplied = inputs();
+        supplied.insert("ethKey".into(), point.clone());
+        let execution = prepare(&plan, &supplied, &initial, params, contract)?;
+        assert_eq!(
+            check(&execution, &circuit)?,
+            execution.activity_schedule,
+            "{}",
+            case["id"]
+        );
+        let mut expected = returns(true, true, true);
+        expected.insert("ethereumAddress".into(), case["expected"].clone());
+        assert_eq!(execution.returns_json(), expected, "{}", case["id"]);
+    }
+
+    let mut identity = inputs();
+    identity.insert("ethKey".into(), foreign("Secp256k1Point", vec![0; 33]));
+    assert!(prepare(&plan, &identity, &initial, params, contract).is_err());
+
+    let mut malformed = inputs();
+    let mut encoded =
+        hex::decode("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")?;
+    encoded[0] = 4;
+    malformed.insert("ethKey".into(), foreign("Secp256k1Point", encoded));
+    assert!(prepare(&plan, &malformed, &initial, params, contract).is_err());
+    Ok(())
+}

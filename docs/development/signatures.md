@@ -68,9 +68,13 @@ Ethereum address derivation applies Keccak-256 to the two 32-byte big-endian aff
 Readable witness circuits also accept `secp256k1EthereumAddress(point)`. A
 provider expression supplies one checked `Secp256k1Point`, and the circuit
 rejects identity before encoding either coordinate. A result derived
-from a private witness requires `disclose` at a public return. The Rust witness
-session and native ZKIR 3.2.1 checker match the Compact 0.36.1 generator address.
-The Compact and Rust witness cases both reject a canonical identity point.
+from a private witness requires `disclose` at a public return. The ordinary
+SignatureChecks route and readable route match pinned Compact 0.36.1/runtime
+0.21.0 outputs for the generator, 2G and -2G. Checks compare 64-byte
+big-endian coordinate preimages and exact 20-byte results. The selected-profile
+native checker rejects identity and malformed SEC1 input. A native proof for
+the readable route verifies the disclosed return and rejects an altered return
+commitment.
 [Lean source](../../tests/ReadableEthereumAddress.lean) · [Compact reference](../../tests/compact/readable-ethereum-address.mjs) · [Rust integration](../../runtime/tests/witness_control.rs)
 
 The [pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/standard-library.compact#L354) and [ZKIR v3 helpers](https://github.com/LFDT-Minokawa/compact/blob/7fa3a117c5e7efe9d2c51da04263e5f0b3509144/compiler/zkir-v3-library.compact) serve as semantic references. The MIT implementation does not copy their Apache-2.0 source. Ed25519's published vector and encoding rules come from [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html#section-7.1).
@@ -79,10 +83,33 @@ The [pinned standard library](https://github.com/LFDT-Minokawa/compact/blob/7fa3
 
 [Source fixture](../../tests/SignatureChecks.lean), [native runtime case](../../runtime/tests/signature_helpers.rs), [retained artifacts](../../runtime/tests/fixtures/signature-helpers/321), [issue 82](https://github.com/awjreynolds/noctium/issues/82).
 
-The Source fixture exercises every helper, explicit disclosure, wrong-curve rejection and the Ed25519 message cap. The native case uses RustCrypto's secp256k1 prehash fixture, its P-256 FIPS 186-4 CAVP fixture, RFC 8032's empty-message Ed25519 vector and the Ethereum address for private key 1. The Jubjub case independently constructs a signature with native group arithmetic and the pinned native transient hash. Altered digest/message values, precondition failures and tampered native witness values receive focused checks through the same Rust `prepare` and native `check` route.
+The Source fixture exercises every helper, explicit disclosure, wrong-curve rejection and the Ed25519 message cap. The native case uses RustCrypto's secp256k1 prehash fixture, its P-256 FIPS 186-4 CAVP fixture, RFC 8032's empty-message Ed25519 vector and the Ethereum address for private key 1. The Jubjub case independently constructs a signature with native group arithmetic and the pinned native transient hash. Altered digest/message values, precondition failures and tampered native witness values receive focused checks through the same Rust `prepare` and native `check` route. Issue 982 adds Compact-matched Ethereum address vectors for the generator, 2G and -2G in both the ordinary SignatureChecks relation and the readable witness route. The readable k14 native proof binds the public address return and rejects an altered return commitment.
 
-These checks establish scoped Source/native behavior. They do not establish cryptographic security, complete Compact equivalence or compiler preservation. No new keys, proofs, deployments, K benchmark or web/mobile qualification accompanies this slice. Broader assurance remains tracked in issues [21](https://github.com/awjreynolds/noctium/issues/21) and [23](https://github.com/awjreynolds/noctium/issues/23).
+These checks establish the listed vectors, routes and selected-profile proof binding. They do not establish cryptographic security, complete Compact equivalence or compiler preservation. Broader assurance remains tracked in issues [21](https://github.com/awjreynolds/noctium/issues/21) and [23](https://github.com/awjreynolds/noctium/issues/23).
 
 The focused native cases cover a valid identity-announcement Schnorr signature, ECDSA computed-identity rejection and the distinct zero-`r` and zero-`s` outcomes. The ordinary fixture uses re-exported Source artifacts.
 
-Reproduce the focused runtime case with `cargo test --manifest-path runtime/Cargo.toml --no-default-features --features zkir-321 --test signature_helpers` using the pinned Rust toolchain described in the runtime setup.
+Set `NOCTIUM_COMPACTC` to Compact 0.36.1, `NOCTIUM_COMPACT_RUNTIME` to the installed Compact runtime 0.21.0 package directory, and `NOCTIUM_SRS_DIRECTORY` to the directory containing the selected-profile k14 SRS. Then run:
+
+```sh
+mkdir -p build/experiments
+SCRATCH=$(mktemp -d "$PWD/build/experiments/982-address.XXXXXX")
+trap 'rm -rf "$SCRATCH"' EXIT
+ARTIFACTS="$SCRATCH/noctium"
+COMPACT_RESULTS="$SCRATCH/compact.json"
+lake exe noctium compile tests/ReadableEthereumAddress.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json --output "$ARTIFACTS"
+node tests/compact/readable-ethereum-address.mjs \
+  "$NOCTIUM_COMPACTC" "$NOCTIUM_COMPACT_RUNTIME" "$COMPACT_RESULTS"
+NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS="$COMPACT_RESULTS" \
+  cargo +1.100.0 test --offline --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test signature_helpers \
+  ordinary_ethereum_address_matches_pinned_compact_and_checks_typed_boundary -- --ignored
+NOCTIUM_ETHEREUM_ADDRESS_DIR="$ARTIFACTS" \
+NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS="$COMPACT_RESULTS" \
+NOCTIUM_ETHEREUM_ADDRESS_PROOF_PARAMETERS="$NOCTIUM_SRS_DIRECTORY/bls_midnight_2p14" \
+NOCTIUM_ETHEREUM_ADDRESS_PROOF_PARAMETERS_SHA256=fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244 \
+  cargo +1.100.0 test --offline --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test witness_control \
+  readable_ethereum_address_matches_compact_and_binds_a_native_proof -- --ignored
+```

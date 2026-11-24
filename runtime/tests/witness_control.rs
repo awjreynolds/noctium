@@ -1158,60 +1158,169 @@ fn typed_point_keccak_runs_through_the_witness_plan() -> anyhow::Result<()> {
 
 #[cfg(feature = "zkir-321")]
 #[test]
-#[ignore = "requires fresh ReadableEthereumAddress Lean artifacts"]
-fn readable_ethereum_address_accepts_generator_and_rejects_identity() -> anyhow::Result<()> {
+#[ignore = "requires fresh artifacts, pinned Compact results and the profile SRS"]
+fn readable_ethereum_address_matches_compact_and_binds_a_native_proof() -> anyhow::Result<()> {
     use coin_structure::contract::ContractAddress;
-    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use noctium_runtime::{
+        Plan, check, create_state, prepare, proof::TrustedParameters, zkir::IrSource,
+    };
+    use rand::rngs::OsRng;
     use std::{fs, path::PathBuf};
-    use transient_crypto::curve::Fr;
+    use transient_crypto::{
+        curve::Fr,
+        proofs::{ParamsVerifier, Zkir},
+    };
 
     let root = PathBuf::from(std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_DIR").unwrap());
+    let compact_path = std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS")
+        .expect("NOCTIUM_ETHEREUM_ADDRESS_COMPACT_RESULTS must point to Compact vectors");
+    let proof_parameters_path = std::env::var_os("NOCTIUM_ETHEREUM_ADDRESS_PROOF_PARAMETERS")
+        .expect("NOCTIUM_ETHEREUM_ADDRESS_PROOF_PARAMETERS must point to the official SRS");
+    let proof_parameters_bytes = fs::read(&proof_parameters_path)?;
+    let proof_parameters_sha256 =
+        std::env::var("NOCTIUM_ETHEREUM_ADDRESS_PROOF_PARAMETERS_SHA256")?;
+    let oracle: serde_json::Value = serde_json::from_slice(&fs::read(compact_path)?)?;
+    assert!(
+        oracle["compiler"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
+    assert_eq!(oracle["runtime"], "0.21.0");
+    let cases = oracle["cases"].as_array().expect("Compact case array");
+    assert_eq!(cases.len(), 3);
+    assert!(oracle["identityRejected"].as_bool().unwrap());
+    let case_ids = ["generator", "double-generator", "negative-double-generator"];
     let stem = "ReadableEthereumAddress.derive";
     let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
     let relation_bytes = fs::read(root.join(format!("{stem}.zkir")))?;
     let relation = serde_json::from_slice(&relation_bytes)?;
-    let plan: Plan =
-        serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    let plan: Plan = serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
+    assert_eq!(plan.target.as_deref(), Some("midnight-ledger-9-zkir-3.2.1"));
     let circuit = IrSource::load(relation_bytes.as_slice())?;
-    let expected = json!({"kind":"bytes", "values":hex::decode(
-        "7e5f4552091a69125d5dfcb7b8c2659029395bdf"
-    )?});
-    let generator = json!({"kind":"foreign", "type":"Secp256k1Point", "bytes":hex::decode(
-        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
-    )?});
-
-    let attempt = "d".repeat(64);
-    let (mut session, _) = bound_session(&control, BTreeMap::new(), &attempt);
-    let pending = session.advance()?;
-    assert_eq!(pending["status"], "need_host");
-    let request = &pending["request"];
-    assert_eq!(request["name"], "keyForAddress");
-    assert_eq!(request["arguments"], json!([]));
-    assert_eq!(session.advance()?, pending, "pending callback was not correlated");
-    session.resume_typed(reply(request, &attempt, "value", Some(generator)))?;
-    let completed = session.advance()?;
-    assert_eq!(completed["status"], "completed");
-    assert!(completed.get("request").is_none(), "expected one callback request");
-
-    let completion = session.private_completion(&relation)?;
-    let inputs = serde_json::from_value(completion["inputs"].clone())?;
-    let initial = create_state(&plan, &BTreeMap::new())?;
-    let mut execution = prepare(
-        &plan,
-        &inputs,
-        &initial,
-        &ledger::structure::INITIAL_PARAMETERS,
-        ContractAddress::default(),
-    )?;
-    assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
-    assert_eq!(execution.returns_json()["derivedAddress"], expected);
-    assert!(
-        !execution.preimage.private_transcript.is_empty(),
-        "provider key should remain a private native witness"
+    assert_eq!(circuit.k(), 14);
+    assert_eq!(
+        proof_parameters_sha256,
+        "fc253016885ec830e97808c9ec920bb5cab5c21af590380a6cb5eb0538e2b244"
     );
-    execution.preimage.private_transcript[0] =
-        execution.preimage.private_transcript[0] + Fr::from(1u64);
-    assert!(check(&execution, &circuit).is_err());
+
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let proof_parameters = TrustedParameters::from_bytes(
+        &proof_parameters_bytes,
+        circuit.k(),
+        &proof_parameters_sha256,
+    )?;
+    let verifier_parameters = ParamsVerifier::read(proof_parameters_bytes.as_slice())?;
+    let mut proof_generated = false;
+    for (index, (case, id)) in cases.iter().zip(case_ids).enumerate() {
+        assert_eq!(case["id"], id);
+        let attempt = format!("{:x}", index + 10).repeat(64);
+        let (mut session, _) = bound_session(&control, BTreeMap::new(), &attempt);
+        let pending = session.advance()?;
+        assert_eq!(pending["status"], "need_host");
+        let request = &pending["request"];
+        assert_eq!(request["name"], "keyForAddress");
+        assert_eq!(request["arguments"], json!([]));
+        assert_eq!(
+            session.advance()?,
+            pending,
+            "pending callback was not correlated"
+        );
+        session.resume_typed(reply(
+            request,
+            &attempt,
+            "value",
+            Some(case["point"].clone()),
+        ))?;
+        let completed = session.advance()?;
+        assert_eq!(completed["status"], "completed", "{}", case["id"]);
+        assert!(
+            completed.get("request").is_none(),
+            "expected one callback request"
+        );
+
+        let completion = session.private_completion(&relation)?;
+        let inputs = serde_json::from_value(completion["inputs"].clone())?;
+        let mut execution = prepare(
+            &plan,
+            &inputs,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )?;
+        assert_eq!(
+            check(&execution, &circuit)?,
+            execution.activity_schedule,
+            "{}",
+            case["id"]
+        );
+        assert_eq!(
+            execution.returns_json()["derivedAddress"],
+            case["expected"],
+            "{}",
+            case["id"]
+        );
+        assert_eq!(
+            case["expected"]["values"].as_array().unwrap().len(),
+            20,
+            "{}",
+            case["id"]
+        );
+        assert!(
+            !execution.preimage.private_transcript.is_empty(),
+            "provider key should remain a private native witness"
+        );
+
+        if case["id"] == "generator" {
+            let (prover_key, verifier_key) =
+                futures::executor::block_on(circuit.keygen(&proof_parameters))?;
+            let (proof, statement, activity) = futures::executor::block_on(circuit.prove(
+                OsRng,
+                &proof_parameters,
+                prover_key,
+                &execution.preimage,
+            ))?;
+            assert_eq!(activity, execution.activity_schedule);
+            verifier_key.verify(&verifier_parameters, &proof, statement.iter().copied())?;
+            let (commitment, _) = execution
+                .preimage
+                .communications_commitment
+                .expect("public address return has a communication commitment");
+            assert_eq!(statement.get(1), Some(&commitment));
+            let mut changed_statement = statement;
+            changed_statement[1] = commitment + Fr::from(1u64);
+            assert!(
+                verifier_key
+                    .verify(
+                        &verifier_parameters,
+                        &proof,
+                        changed_statement.iter().copied(),
+                    )
+                    .is_err(),
+                "proof accepted an altered public address return"
+            );
+            proof_generated = true;
+        }
+
+        execution.preimage.private_transcript[0] =
+            execution.preimage.private_transcript[0] + Fr::from(1u64);
+        assert!(
+            check(&execution, &circuit).is_err(),
+            "{} accepted an altered private witness",
+            case["id"]
+        );
+    }
+    assert!(
+        proof_generated,
+        "Compact vectors must include the generator proof case"
+    );
+    println!(
+        "Ethereum address proof passed: profile={}, k={}, srs_sha256={}, vectors={}, altered_return_commitment=rejected",
+        plan.target.as_deref().unwrap(),
+        circuit.k(),
+        proof_parameters.sha256(),
+        cases.len(),
+    );
 
     let identity_attempt = "f".repeat(64);
     let (mut identity_session, _) = bound_session(&control, BTreeMap::new(), &identity_attempt);

@@ -6085,7 +6085,7 @@
       "layer": "standard-library",
       "surface": "secp256k1EthereumAddress",
       "noctiumStatus": "subset",
-      "notes": "Ordinary and readable witnesses derive an Ethereum address from the big-endian affine coordinates of a typed Secp256k1Point. The pinned Compact circuit, Rust witness session and native ZKIR 3.2.1 checker match the generator address. Compact and the Rust witness session reject a canonical identity point. Public returns derived from a private witness require disclosure.",
+      "notes": "The ordinary SignatureChecks route and readable witness route derive an Ethereum address from the big-endian affine coordinates of a typed Secp256k1Point. Pinned Compact 0.36.1 and runtime 0.21.0 results match exact Bytes20 outputs for the generator, 2G and -2G, with independently checked x || y preimages. The selected-profile native checker accepts all three canonical compressed point inputs, rejects identity and malformed SEC1 input, and the readable native proof verifies its public return while rejecting an altered return commitment. A private witness result requires disclosure. This qualifies the listed vectors and routes, not full compiler preservation or security.",
       "source": [
         "stdlib",
         "stdlibSource",
