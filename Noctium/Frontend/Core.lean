@@ -3683,6 +3683,7 @@ private def elaborateRecordMapWrite (schema : List (String × StateKind))
   let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
     {type := valueTy, nominalUInt := (state.collectionNominals storage).scalarValue,
       contractRef := state.contractRefState.lookup storage.getId.toString}
+    state.nominalFieldBindings
   let term ← `(Noctium.Effect.writeRecordMap
     $(stringTerm storage.getId.toString) $values $(← tyTerm valueTy) $value $keys)
   pure {state with terms := state.terms.push term}
@@ -4779,8 +4780,23 @@ private def elaborateEffect (schema : List (String × StateKind))
   | _ => throwErrorAt effect "unsupported Noctium state effect"
   pure state
 
-private def hasOnlyNominalFieldRecordPayload (fieldBindings : List (String × Option NominalFieldType))
-    (effect : TSyntax `nleffect) : _root_.Bool :=
+private def hasNominalFieldRootRecordMapKey (schema : List (String × StateKind))
+    (state : EntryEffects) (storage : TSyntax `ident) (keyFields : TSyntax `nlleaves) : _root_.Bool := Id.run do
+  let storageName := storage.getId.toString
+  let rootRecordMap := match schema.lookup storageName with
+    | some (.tree (.recordMapKey ..)) | some (.tree (.recordMapComposite ..)) => _root_.Bool.true
+    | _ => _root_.Bool.false
+  let keyHasNominalField :=
+    ((state.recordKeyFieldTypes.lookup storageName).getD []).any fun (_, sourceType) =>
+      sourceType.nominalField.isSome
+  return rootRecordMap && keyHasNominalField &&
+    hasCircuitNominalFieldReference state.nominalFieldBindings keyFields.raw
+
+private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKind))
+    (state : EntryEffects) (effect : TSyntax `nleffect) : _root_.Bool := Id.run do
+  let fieldBindings := state.nominalFieldBindings
+  let typedKey storage keyFields :=
+    hasNominalFieldRootRecordMapKey schema state storage keyFields
   match effect with
   | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
   | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
@@ -4797,13 +4813,29 @@ private def hasOnlyNominalFieldRecordPayload (fieldBindings : List (String × Op
       !hasCircuitNominalFieldReference fieldBindings first.raw &&
         !hasCircuitNominalFieldReference fieldBindings second.raw &&
         hasCircuitNominalFieldReference fieldBindings payload.raw
-  | `(nleffect| insert $_:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
-      !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
-        hasCircuitNominalFieldReference fieldBindings payload.raw
-  | `(nleffect| when $condition:nlexpr insert $_:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+  | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+      (typedKey storage keyFields ||
+        !hasCircuitNominalFieldReference fieldBindings keyFields.raw) &&
+        (hasCircuitNominalFieldReference fieldBindings payload.raw ||
+          hasCircuitNominalFieldReference fieldBindings keyFields.raw)
+  | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
-        !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
-        hasCircuitNominalFieldReference fieldBindings payload.raw
+        (typedKey storage keyFields ||
+          !hasCircuitNominalFieldReference fieldBindings keyFields.raw) &&
+        (hasCircuitNominalFieldReference fieldBindings payload.raw ||
+          hasCircuitNominalFieldReference fieldBindings keyFields.raw)
+  | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
+      typedKey storage keyFields
+  | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        typedKey storage keyFields
+  | `(nleffect| read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
+  | `(nleffect| member $storage:ident [ $keyFields:nlleaves ] as $_:ident) =>
+      typedKey storage keyFields
+  | `(nleffect| when $condition:nlexpr read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
+  | `(nleffect| when $condition:nlexpr member $storage:ident [ $keyFields:nlleaves ] as $_:ident) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        typedKey storage keyFields
   | `(nleffect| insert $_:ident [ $outerKey:nlexpr ] [ $keyFields:nlleaves ] := $payload:nlleaves) =>
       !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
@@ -4832,7 +4864,7 @@ private partial def elaborateStatements (schema : List (String × StateKind))
     match statement with
     | `(nlstatement| $effect:nleffect) =>
       if hasCircuitNominalFieldReference state.nominalFieldBindings effect.raw &&
-          !hasOnlyNominalFieldRecordPayload state.nominalFieldBindings effect then
+          !hasOnlyCheckedNominalFieldPosition schema state effect then
         throwErrorAt effect "nominal Field effects require a direct scalar Cell write"
       state ← elaborateEffect schema parent depth state effect
     | `(nlstatement| if $condition:nlexpr then { $thenStatements:nlstatement* }
@@ -6023,6 +6055,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), sourceKeys) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           match LedgerValueType.recordMapKeyFields environment compositeType with
@@ -6044,6 +6077,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm), sourceKeys) ←
             elaborateTypedLedgerRecord contractName keyRecord keyFields state
+              _root_.Bool.false _root_.Bool.true
           let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
             elaborateTypedLedgerRecord contractName valueRecord valueFields state
               _root_.Bool.false _root_.Bool.true
