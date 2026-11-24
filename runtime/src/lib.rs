@@ -3131,9 +3131,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        if depth == 0 {
-            checked_cell_record_schema(schema)?;
-        } else if depth == 1 {
+        if depth <= 1 {
             checked_cell_record_schema(schema)?;
         } else {
             checked_map_record_schema(schema)?;
