@@ -1,10 +1,13 @@
 import Noctium.Backend.NativeProducer
 import Noctium.Verification.ScalarValidationMeaning
+import Noctium.Verification.ScalarValidationNativeLoop
 
 namespace Noctium.Verification.ScalarValidationRawSeedMeaning
 
 open Lean Backend.Native NativeRelation
 open Noctium.Verification.ScalarValidationMeaning
+open Noctium.Verification.ScalarValidationArithmeticLoop (NativeDefinitions)
+open Noctium.Verification.ScalarValidationNativeLoop (define_nativeDefinitions)
 
 private theorem forIn_preserves {α : Type} {items : List α}
     {initial final : State} {step : α → State → Except String State}
@@ -28,24 +31,30 @@ private theorem forIn_preserves {α : Type} {items : List α}
       simp only [checked, bind_pure_comp] at accepted
       exact ih (preserved head initial middle initialProperty checked) accepted
 
-/-- A successful raw header seed establishes scalar meaning for every fact
-defined by the producer. Header names use the same assignment for source inputs
-and satisfying witnesses, so each seeded field input has its canonical field
-bound. Foreign requirements stay outside this theorem. -/
-theorem seedRawInputs_meaning {hash : Hash} {inputs witness : Assignment}
+private theorem emptyNativeDefinitions : NativeDefinitions ({} : State) := by
+  intro identifier fact found
+  simp at found
+
+/-- A successful raw header seed establishes scalar meaning and Native typing
+for every fact defined by the producer. Header names use the same assignment
+for source inputs and satisfying witnesses, so each seeded field input has its
+canonical field bound. Foreign requirements stay outside this theorem. -/
+theorem seedRawInputs_meaning_and_nativeDefinitions
+    {hash : Hash} {inputs witness : Assignment}
     {expected : Expected} {rawInputs : Array Json} {seed : State}
     (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
     (inputAgreement : ∀ required ∈ expected.rawInputs,
       witness required.identifier = inputs required.identifier)
     (accepted : seedRawInputs expected rawInputs = .ok seed) :
-    StateMeaning hash inputs witness seed := by
+    StateMeaning hash inputs witness seed ∧ NativeDefinitions seed := by
   unfold seedRawInputs at accepted
   simp only [Noctium.Verification.ScalarValidationMeaning.bind_ok] at accepted
   rcases accepted with ⟨loopState, loopAccepted, result⟩
   cases result
-  apply forIn_preserves (StateMeaning hash inputs witness)
-    (empty_meaning hash inputs witness)
-  · intro item state next invariant stepAccepted
+  apply forIn_preserves
+    (fun state => StateMeaning hash inputs witness state ∧ NativeDefinitions state)
+    ⟨empty_meaning hash inputs witness, emptyNativeDefinitions⟩
+  · intro item state next invariants stepAccepted
     obtain ⟨required, requiredLookup, _, _, defined⟩ :=
       seedRawInput_native_parts nativeOnly stepAccepted
     have requiredMember : required ∈ expected.rawInputs := by
@@ -53,8 +62,20 @@ theorem seedRawInputs_meaning {hash : Hash} {inputs witness : Assignment}
       have member := List.getElem_mem inRange
       rw [indexEq] at member
       exact member
-    exact define_meaning invariant
-      (input_fact_meaning (inputAgreement required requiredMember)) defined
+    refine ⟨define_meaning invariants.1
+      (input_fact_meaning (inputAgreement required requiredMember)) defined, ?_⟩
+    exact define_nativeDefinitions invariants.2 rfl defined
   · exact loopAccepted
+
+/-- Scalar meaning remains available to callers that do not need the Native
+type invariant. -/
+theorem seedRawInputs_meaning {hash : Hash} {inputs witness : Assignment}
+    {expected : Expected} {rawInputs : Array Json} {seed : State}
+    (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
+    (inputAgreement : ∀ required ∈ expected.rawInputs,
+      witness required.identifier = inputs required.identifier)
+    (accepted : seedRawInputs expected rawInputs = .ok seed) :
+    StateMeaning hash inputs witness seed :=
+  (seedRawInputs_meaning_and_nativeDefinitions nativeOnly inputAgreement accepted).1
 
 end Noctium.Verification.ScalarValidationRawSeedMeaning

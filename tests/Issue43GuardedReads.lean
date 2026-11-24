@@ -5,6 +5,7 @@ import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.GuardedImpactObservation
 import Noctium.Verification.GuardedScalarInput
+import Noctium.Verification.ScalarValidationOpcodeProfile
 
 open scoped Noctium
 open Lean Noctium
@@ -110,6 +111,29 @@ private def emittedMarkerGuardMatches : Except String _root_.Bool := do
       Verification.GuardedScalarInput.consume (operand.read active) [] = none)
 
 #guard emittedMarkerGuardMatches.toOption == some Bool.true
+
+private def emittedSkippedCellPrefixMatches : Except String _root_.Bool := do
+  let pruned := Passes.pruneEntrypoint issue43GuardedEntry
+  let expected ← (Backend.Native.expectedEntrypoint Issue43GuardedReads.state pruned).mapError (·.message)
+  let artifact ← (Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state
+    issue43GuardedEntry).mapError (·.message)
+  let instructions ← Backend.Native.arrayField artifact "instructions"
+  let (prelude, rest) := instructions.toList.span fun row =>
+    Backend.Native.opcode row != "public_input" ||
+      (Backend.Native.stringField row "output").toOption != some "%input_skippedCell"
+  let raw :: _ := rest | throw "missing guarded skippedCell read"
+  let before ← Backend.Native.validateInstructionLoop expected prelude.zipIdx {}
+  let _ ← Backend.Native.validateInstruction expected before raw
+  let decoded ← prelude.mapM Verification.NativeRelationJson.decodeInstruction
+  let profile := Verification.ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile
+    prelude.zipIdx decoded
+  let some requirement := expected.inputs[before.inputCount]? | throw "missing skippedCell input"
+  return profile && prelude.map Backend.Native.opcode == ["public_input", "public_input",
+      "constrain_to_boolean", "public_input", "constrain_to_boolean"] &&
+    requirement.identifier == "%input_skippedCell" &&
+    requirement.activityGuard == some (.input "%input_existed")
+
+#guard emittedSkippedCellPrefixMatches.toOption == some Bool.true
 
 private def emittedGuardedImpactMatches : Except String _root_.Bool := do
   let pruned := Passes.pruneEntrypoint issue43GuardedEntry

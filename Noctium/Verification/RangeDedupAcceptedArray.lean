@@ -972,6 +972,42 @@ theorem nativeDefinitionTrace_supportsMeaning {items : List (Json × Nat)}
       exact nativeDefinitionStep_supportsMeaning step
     · exact ih item member
 
+/-- A decoded producer trace plus satisfaction of each decoded instruction
+supplies the AcceptedMeaningStep premise used by the accepted-state loop. -/
+theorem nativeDefinitionTrace_acceptedMeaningSteps
+    {hash : Hash} {witness : Assignment} {items : List (Json × Nat)}
+    {instructions : List Instruction}
+    (trace : NativeDefinitionTrace items instructions)
+    (holds : ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction) :
+    ∀ item ∈ items, AcceptedMeaningStep hash witness item.1 := by
+  induction trace with
+  | nil => simp
+  | @cons raw index instruction rest restInstructions head tail ih =>
+    intro item member
+    rcases List.mem_cons.mp member with same | member
+    · cases same
+      have support := nativeDefinitionStep_supportsMeaning head hash witness (by
+        intro decodedInstruction decoded
+        have decodedEq := Except.ok.inj (decoded.symm.trans head.decoded)
+        subst decodedInstruction
+        exact holds instruction (by simp))
+      exact support
+    · exact ih (fun instruction member =>
+        holds instruction (List.mem_cons_of_mem _ member)) item member
+
+/-- A decoded trace passing the exact scalar opcode profile supplies the
+accepted meaning-step premise without a separately authored opcode trace. -/
+theorem checkedScalarOpcodeProfile_acceptedMeaningSteps
+    {hash : Hash} {witness : Assignment} {items : List (Json × Nat)}
+    {instructions : List Instruction}
+    (decoded : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction = .ok instructions)
+    (profile : ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile items instructions = true)
+    (holds : ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction) :
+    ∀ item ∈ items, AcceptedMeaningStep hash witness item.1 := by
+  exact nativeDefinitionTrace_acceptedMeaningSteps
+    (ScalarValidationOpcodeProfile.NativeDefinitionTrace.ofDecodedCheckedProfile decoded profile)
+    holds
+
 /-- Convert the indexed trace premise into the unindexed per-row premise used
 by accepted-array comparison bounds. -/
 theorem nativeDefinitionTrace_arraySupportsMeaning (source : Array Json)
