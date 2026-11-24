@@ -203,6 +203,38 @@ Maps and counters start empty and supply starts at zero. The lifecycle uses
 `construct_state`, then checks Noctium Token/NOC/6 metadata again at the end.
 Opaque strings use native Compress alignment with their exact UTF-8 bytes.
 
+### Source proof for `totalSupply`
+
+`proofs/ConfidentialTokenTotalSupply.lean` binds its subject to
+`ConfidentialToken.entrypoints[7]` in the imported example. The registered
+functional proof covers a fixed source context with the production field
+modulus, no inputs, initialized state, a canonical UInt128 supply cell and no
+pending unshielded settlement data. Other ledger fields remain arbitrary. Under
+those assumptions the actual source entrypoint returns exactly
+`("supply", UInt128 supply)` and preserves the full ledger state. The
+nonvacuity witness assumes the constructor's explicit `initialized = true`
+write and the default `totalSupply = 0`. Constructor execution has its own
+native evidence.
+
+The getter circuit declares no public inputs. The privacy obligation compares
+successful source outcomes for the same context and ledger state. Focused
+controls reject a missing supply cell, a changed returned value, a privacy
+proof submitted for the functional role, and a proof submitted for a different
+source entrypoint. This is source interpreter evidence. It does not qualify
+native bytes, deployed keys, mint or burn invariants, or a release policy for
+other entrypoints.
+
+Replay the checked source module with:
+
+```sh
+source .lake/noctium-dev.env
+lake build Noctium
+mkdir -p .lake/build/lib/lean/examples/openzeppelin
+lake env lean -o .lake/build/lib/lean/examples/openzeppelin/ConfidentialToken.olean \
+  examples/openzeppelin/ConfidentialToken.lean
+lake env lean proofs/ConfidentialTokenTotalSupply.lean
+```
+
 All sixteen reference circuit entrypoints and the constructor metadata path
 are present. Nominal result layouts and composition remain open. The completed
 localnet scenario now exercises every entrypoint with native proofs and receipts. Constructor execution is off chain,
