@@ -16,6 +16,26 @@ private def genericRecordMapReceiptEnvironment : Types.CompositeEnv := {
   }]
 }
 
+private def genericRecordMapKeyEnvironment : Types.CompositeEnv := {
+  structures := [{
+    id := "GenericRecordMap.Key"
+    fields := [
+      {name := "active", type := .scalar .bool},
+      {name := "epoch", type := .scalar (.uint 65535)}
+    ]
+  }]
+}
+
+private def genericRecordMapOtherKeyEnvironment : Types.CompositeEnv := {
+  structures := [{
+    id := "GenericRecordMap.OtherKey"
+    fields := [
+      {name := "active", type := .scalar .bool},
+      {name := "epoch", type := .scalar (.uint 65535)}
+    ]
+  }]
+}
+
 def genericRecordMapPutProgram : Program := {
   declarations := [{
     id := ⟨0, 0⟩
@@ -141,6 +161,20 @@ def genericRecordMapRoot : Definition := {
         {sourceName := "put", localName := "putBytes"},
         {sourceName := "lookup", localName := "lookupBytes"}
       ]
+    },
+    {
+      viewName := "recordKeyMap"
+      target := `genericRecordMapModule
+      arguments := [
+        .checkedTypeValue (.structure "GenericRecordMap.Key")
+          genericRecordMapKeyEnvironment,
+        .typeValue (.scalar (.uint 65535))
+      ]
+      selections := [
+        {sourceName := "receipts", localName := "recordKeyValues"},
+        {sourceName := "put", localName := "putRecordKey"},
+        {sourceName := "lookup", localName := "lookupRecordKey"}
+      ]
     }
   ]
   exports := [
@@ -149,11 +183,42 @@ def genericRecordMapRoot : Definition := {
     {name := "put", target := .importedMember "receiptMap" "put"},
     {name := "lookup", target := .importedMember "receiptMap" "lookup"},
     {name := "putBytes", target := .importedMember "receiptBytesMap" "putBytes"},
-    {name := "lookupBytes", target := .importedMember "receiptBytesMap" "lookupBytes"}
+    {name := "lookupBytes", target := .importedMember "receiptBytesMap" "lookupBytes"},
+    {name := "recordKeyValues", target := .importedMember "recordKeyMap" "recordKeyValues"},
+    {name := "putRecordKey", target := .importedMember "recordKeyMap" "putRecordKey"},
+    {name := "lookupRecordKey", target := .importedMember "recordKeyMap" "lookupRecordKey"}
   ]
 }
 
 noctium_module from genericRecordMapRoot
+
+def genericRecordMapWrongKeyModule : Definition := {
+  genericRecordMapModule with
+  members := genericRecordMapModule.members.map fun item =>
+    if item.id == 1 then
+      {item with sourceExport? := some {
+        program := `genericRecordMapPutProgram
+        exportName := "put"
+        arguments := [
+          .checkedTypeValue (.structure "GenericRecordMap.OtherKey")
+            genericRecordMapOtherKeyEnvironment,
+          .typeParameter "V"
+        ]
+      }}
+    else item
+}
+
+noctium_module from genericRecordMapWrongKeyModule
+
+def genericRecordMapWrongKeyRoot : Definition := {
+  genericRecordMapRoot with
+  imports := genericRecordMapRoot.imports.map fun item =>
+    if item.viewName == "recordKeyMap" then
+      {item with target := `genericRecordMapWrongKeyModule}
+    else item
+}
+
+noctium_module from genericRecordMapWrongKeyRoot
 
 def genericRecordMapRequest : Request := {
   sourceName := `genericRecordMapRoot
@@ -192,17 +257,75 @@ private def genericRecordMapReceiptInputFields : List (String × Ty) := [
   ("next.amount", .native), ("next.active", .bool)
 ]
 
+private def genericRecordMapKeyInputFields : List (String × Ty) := [
+  ("key.active", .bool), ("key.epoch", .uint 65535)
+]
+
+private def genericRecordMapRegistry : Registry := {
+  modules := [
+    {sourceName := `genericRecordMapModule, definition := genericRecordMapModule},
+    {sourceName := `genericRecordMapRoot, definition := genericRecordMapRoot}
+  ]
+}
+
+private def genericRecordMapWrongKeySpecialization : Except Diagnostic SpecializedModule := do
+  let request : Request := {sourceName := `genericRecordMapWrongKeyRoot, arguments := []}
+  let registry : Registry := {
+    modules := genericRecordMapRegistry.modules ++ [
+      {sourceName := `genericRecordMapWrongKeyModule,
+        definition := genericRecordMapWrongKeyModule},
+      {sourceName := `genericRecordMapWrongKeyRoot,
+        definition := genericRecordMapWrongKeyRoot}
+    ]
+  }
+  let expansion ← Modules.expand registry request.sourceName request.arguments
+  let plan ← expansion.contractPlan expansion.root request.constructorInputs
+  plan.specializeWithSources {} [
+    (`genericRecordMapPutProgram, genericRecordMapPutProgram),
+    (`genericRecordMapLookupProgram, genericRecordMapLookupProgram)
+  ]
+
+private def genericRecordMapHasRecordKeyState : _root_.Bool :=
+  GenericRecordMap.state.any fun declared =>
+    match declared.kind with
+    | .tree (.recordMapKey environment type (.uint 65535)) =>
+      environment == genericRecordMapKeyEnvironment &&
+        type == .structure "GenericRecordMap.Key"
+    | _ => _root_.Bool.false
+
 #guard genericRecordMapStateHasKeyType .native &&
-  genericRecordMapStateHasKeyType (.bytes 32)
+  genericRecordMapStateHasKeyType (.bytes 32) &&
+  genericRecordMapHasRecordKeyState
 
 #guard genericRecordMapHasHeader "put" ["enabled", "key", "next.amount", "next.active"] &&
   genericRecordMapHasHeader "lookup" ["key"] &&
   genericRecordMapHasHeader "putBytes"
     (["enabled"] ++ genericRecordMapBytesKeyFields.map Prod.fst ++
       genericRecordMapReceiptInputFields.map Prod.fst) &&
-  genericRecordMapHasHeader "lookupBytes" (genericRecordMapBytesKeyFields.map Prod.fst)
+  genericRecordMapHasHeader "lookupBytes" (genericRecordMapBytesKeyFields.map Prod.fst) &&
+  genericRecordMapHasHeader "putRecordKey"
+    (["enabled"] ++ genericRecordMapKeyInputFields.map Prod.fst ++ ["next"]) &&
+  genericRecordMapHasHeader "lookupRecordKey" (genericRecordMapKeyInputFields.map Prod.fst)
 
 #guard genericRecordMapHasInputView "put" "next" genericRecordMapReceiptInputFields &&
   genericRecordMapHasInputView "putBytes" "next" genericRecordMapReceiptInputFields &&
   genericRecordMapHasInputView "putBytes" "key" genericRecordMapBytesKeyFields &&
-  genericRecordMapHasInputView "lookupBytes" "key" genericRecordMapBytesKeyFields
+  genericRecordMapHasInputView "lookupBytes" "key" genericRecordMapBytesKeyFields &&
+  genericRecordMapHasInputView "putRecordKey" "key" genericRecordMapKeyInputFields &&
+  genericRecordMapHasInputView "lookupRecordKey" "key" genericRecordMapKeyInputFields
+
+#guard match genericRecordMapEntry "lookupRecordKey" with
+  | some operation => operation.returns.map (fun returned => (returned.name, returned.ty)) ==
+      [("result", .uint 65535)]
+  | none => _root_.Bool.false
+
+#guard match genericRecordMapEntry "putRecordKey" with
+  | some operation =>
+    operation.effects.length == 1 &&
+      (match operation.effectGuards with | [some _] => _root_.Bool.true | _ => _root_.Bool.false)
+  | none => _root_.Bool.false
+
+#guard match genericRecordMapWrongKeySpecialization with
+  | .error diagnostic =>
+    diagnostic.message.contains "module record Map key input 'key' does not match the checked Map key layout"
+  | .ok _ => _root_.Bool.false
