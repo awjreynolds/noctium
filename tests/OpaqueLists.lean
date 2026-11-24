@@ -26,10 +26,8 @@ noctium_contract OpaqueLists where
   entry inspect uses opaqueListNoInputs where
     headOrDefault strings as (stringPresent, currentString)
     headOrDefault byteArrays as (bytesPresent, currentBytes)
-    return stringIsPresent : Bool := stringPresent
-    return stringValue : OpaqueString := disclose(currentString)
-    return bytesArePresent : Bool := bytesPresent
-    return bytesValue : OpaqueBytes := disclose(currentBytes)
+    returnMaybe stringHead as (stringPresent, currentString)
+    returnMaybe bytesHead as (bytesPresent, currentBytes)
   end
 
   entry pop uses opaqueListNoInputs where
@@ -56,6 +54,14 @@ private def opaqueListEntry (name : String) : Entrypoint :=
   | .ok _ => Bool.true
   | .error _ => Bool.false
 
+#guard match opaqueListEntry "inspect" with
+  | {returns := [stringTag, text, bytesTag, bytes], returnViews := [stringHead, bytesHead], ..} =>
+      stringTag.ty == .native && text.ty == .opaqueString &&
+      bytesTag.ty == .native && bytes.ty == .opaqueBytes &&
+      stringHead.fields == ["stringHead_is_some", "stringHead_value"] &&
+      bytesHead.fields == ["bytesHead_is_some", "bytesHead_value"]
+  | _ => Bool.false
+
 #guard match Backend.Impact.lower OpaqueLists.state (opaqueListEntry "push") with
   | .ok _ => Bool.true
   | .error _ => Bool.false
@@ -79,3 +85,17 @@ private def opaqueListEntry (name : String) : Entrypoint :=
 #guard match Backend.Zkir.lowerPrunedEntrypoint OpaqueLists.state (opaqueListEntry "pop") with
   | .ok _ => Bool.true
   | .error _ => Bool.false
+
+noctium_circuit opaqueListPrivateInput where
+  private bytes : OpaqueBytes
+end
+
+/-- undisclosed private parameter 'bytes' -/
+#guard_msgs (substring := true) in
+noctium_contract UndisclosedOpaqueListWrite where
+  list byteArrays : OpaqueBytes
+
+  entry push uses opaqueListPrivateInput where
+    pushFront byteArrays := bytes
+  end
+end

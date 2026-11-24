@@ -42,7 +42,7 @@ try {
   const textBytes = value => Buffer.from(value, 'utf8').toString('hex');
   const byteHex = value => Buffer.from(value).toString('hex');
   const first = {text: 'first\0middle', bytes: Uint8Array.from([0, 23, 0, 17])};
-  const second = {text: 'second\0middle', bytes: Uint8Array.from([0, 42, 0, 99])};
+  const second = {text: 'é\0λ', bytes: Uint8Array.from([0, 42, 0, 99])};
   const absent = [[false, ''], [false, new Uint8Array(0)]];
   const expected = value => [[true, value.text], [true, value.bytes]];
   const snapshot = state => {
