@@ -42,7 +42,8 @@ noctium_contract NestedOpaqueMap where
   end
 
   entry hasBytes uses nestedOpaqueBytesPathInputs where
-    member byteBuckets[disclose(owner)][disclose(key)] as present
+    member byteBuckets[disclose(owner)] as ownerPresent
+    when ownerPresent member byteBuckets[disclose(owner)][disclose(key)] as present
     return found : Bool := disclose(present)
   end
 
@@ -61,7 +62,8 @@ noctium_contract NestedOpaqueMap where
   end
 
   entry hasString uses nestedOpaqueStringPathInputs where
-    member stringBuckets[disclose(owner)][disclose(key)] as present
+    member stringBuckets[disclose(owner)] as ownerPresent
+    when ownerPresent member stringBuckets[disclose(owner)][disclose(key)] as present
     return found : Bool := disclose(present)
   end
 

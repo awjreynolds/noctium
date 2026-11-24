@@ -11,9 +11,11 @@ use transient_crypto::fab::AlignedValueExt;
 const COMPACT_VERSION: &str = "0.36.1 (7fa3a117c 2026-11-11)";
 
 fn artifacts() -> Result<PathBuf> {
-    Ok(PathBuf::from(env::var_os("NOCTIUM_NESTED_OPAQUE_MAP_DIR").ok_or_else(
-        || anyhow::anyhow!("set fresh NestedOpaqueMap artifacts in NOCTIUM_NESTED_OPAQUE_MAP_DIR"),
-    )?))
+    Ok(PathBuf::from(
+        env::var_os("NOCTIUM_NESTED_OPAQUE_MAP_DIR").ok_or_else(|| {
+            anyhow::anyhow!("set fresh NestedOpaqueMap artifacts in NOCTIUM_NESTED_OPAQUE_MAP_DIR")
+        })?,
+    ))
 }
 
 fn compact_reference() -> Result<Json> {
@@ -25,12 +27,8 @@ fn compact_reference() -> Result<Json> {
 
 fn fixture(directory: &PathBuf, entry: &str) -> Result<(Plan, IrSource)> {
     let stem = format!("NestedOpaqueMap.{entry}");
-    let plan = serde_json::from_slice(&fs::read(
-        directory.join(format!("{stem}.impact.json")),
-    )?)?;
-    let circuit = IrSource::load(
-        fs::read(directory.join(format!("{stem}.zkir")))?.as_slice(),
-    )?;
+    let plan = serde_json::from_slice(&fs::read(directory.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::read(directory.join(format!("{stem}.zkir")))?.as_slice())?;
     Ok((plan, circuit))
 }
 
@@ -105,12 +103,18 @@ fn run(
         &ledger::structure::INITIAL_PARAMETERS,
         coin_structure::contract::ContractAddress::default(),
     )?;
-    assert_eq!(check(&execution, &operation.1)?, execution.activity_schedule);
+    assert_eq!(
+        check(&execution, &operation.1)?,
+        execution.activity_schedule
+    );
     Ok(execution)
 }
 
 fn assert_bool(execution: &Execution, expected: bool) {
-    assert_eq!(execution.returns_json().get("found"), Some(&json!(expected)));
+    assert_eq!(
+        execution.returns_json().get("found"),
+        Some(&json!(expected))
+    );
     assert_eq!(execution.returns().len(), 1);
     assert_eq!(execution.returns()[0].0, "found");
     assert_eq!(execution.returns()[0].1.public_json(), json!(expected));
@@ -125,7 +129,12 @@ fn assert_opaque_read(execution: &Execution, name: &str, expected: Json, raw: &[
 
     let mut projection = Vec::new();
     compressed(raw).value_only_field_repr(&mut projection);
-    assert!(execution.preimage.public_transcript_outputs.ends_with(&projection));
+    assert!(
+        execution
+            .preimage
+            .public_transcript_outputs
+            .ends_with(&projection)
+    );
 }
 
 fn assert_nested_value(
@@ -149,12 +158,12 @@ fn assert_nested_value(
     };
     let owner_key = aligned_bytes32(&owner(owner_byte));
     let owner_bucket = owners.get(&owner_key).expect("owner bucket initialized");
-    let StateValue::Map(entries) = &**owner_bucket else {
+    let StateValue::Map(entries) = &*owner_bucket else {
         panic!("expected inner opaque Map");
     };
     let entry_key = aligned_bytes32(&key(key_byte));
     let entry = entries.get(&entry_key).expect("nested opaque entry exists");
-    let StateValue::Cell(value) = &**entry else {
+    let StateValue::Cell(value) = &*entry else {
         panic!("expected an opaque value Cell at each inner Map leaf");
     };
     assert_eq!(**value, compressed(expected));
@@ -183,7 +192,7 @@ fn assert_bucket_sizes(
     for (owner_byte, expected_size) in [(0x11, owner_one_size), (0x22, owner_two_size)] {
         let owner_key = aligned_bytes32(&owner(owner_byte));
         let owner_bucket = owners.get(&owner_key).expect("owner bucket exists");
-        let StateValue::Map(entries) = &**owner_bucket else {
+        let StateValue::Map(entries) = &*owner_bucket else {
             panic!("expected inner opaque Map");
         };
         assert_eq!(entries.size(), expected_size);
@@ -191,7 +200,10 @@ fn assert_bucket_sizes(
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>> {
-    ensure!(value.len() % 2 == 0, "Compact returned an odd-length byte string");
+    ensure!(
+        value.len() % 2 == 0,
+        "Compact returned an odd-length byte string"
+    );
     value
         .as_bytes()
         .chunks_exact(2)
@@ -228,7 +240,11 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
         ("ownerTwoSameKey", 0x22, 0x44),
     ];
     for (name, owner_byte, key_byte) in byte_cases {
-        let payload = decode_hex(compact["byteReads"][name].as_str().expect("Compact byte hex"))?;
+        let payload = decode_hex(
+            compact["byteReads"][name]
+                .as_str()
+                .expect("Compact byte hex"),
+        )?;
         let stored = run(
             &store_bytes,
             &store_bytes_inputs(owner_byte, key_byte, &payload),
@@ -275,18 +291,34 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
     assert_bucket_sizes(&state, &store_bytes.0, "byteBuckets", 2, 2, 1);
     assert_bucket_sizes(&state, &store_bytes.0, "stringBuckets", 2, 2, 1);
 
+    let mut wrong_bytes = path_inputs(0x11, 0x44);
+    wrong_bytes.insert("payload".into(), opaque_string_json("wrong kind"));
+    let mut wrong_string = path_inputs(0x11, 0x44);
+    wrong_string.insert("value".into(), opaque_bytes_json(b"wrong kind"));
+    for (operation, inputs) in [(&store_bytes, &wrong_bytes), (&store_string, &wrong_string)] {
+        assert!(
+            prepare(
+                &operation.0,
+                inputs,
+                &state,
+                &ledger::structure::INITIAL_PARAMETERS,
+                coin_structure::contract::ContractAddress::default(),
+            )
+            .is_err()
+        );
+    }
+
     for (name, owner_byte, key_byte) in byte_cases {
-        let payload = decode_hex(compact["byteReads"][name].as_str().expect("Compact byte hex"))?;
+        let payload = decode_hex(
+            compact["byteReads"][name]
+                .as_str()
+                .expect("Compact byte hex"),
+        )?;
         let inputs = path_inputs(owner_byte, key_byte);
         let present = run(&has_bytes, &inputs, &state)?;
         assert_bool(&present, compact["bytePresence"][name].as_bool().unwrap());
         let read = run(&read_bytes, &inputs, &state)?;
-        assert_opaque_read(
-            &read,
-            "payload",
-            opaque_bytes_json(&payload),
-            &payload,
-        );
+        assert_opaque_read(&read, "payload", opaque_bytes_json(&payload), &payload);
     }
 
     for (name, owner_byte, key_byte) in string_cases {
@@ -297,12 +329,7 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
         let present = run(&has_string, &inputs, &state)?;
         assert_bool(&present, compact["stringPresence"][name].as_bool().unwrap());
         let read = run(&read_string, &inputs, &state)?;
-        assert_opaque_read(
-            &read,
-            "value",
-            opaque_string_json(value),
-            value.as_bytes(),
-        );
+        assert_opaque_read(&read, "value", opaque_string_json(value), value.as_bytes());
     }
 
     let missing_child = path_inputs(0x11, 0x66);
@@ -329,24 +356,31 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
     );
 
     for (operation, inputs) in [(&read_bytes, &missing_child), (&read_bytes, &missing_owner)] {
-        assert!(prepare(
-            &operation.0,
-            inputs,
-            &state,
-            &ledger::structure::INITIAL_PARAMETERS,
-            coin_structure::contract::ContractAddress::default(),
-        )
-        .is_err());
+        assert!(
+            prepare(
+                &operation.0,
+                inputs,
+                &state,
+                &ledger::structure::INITIAL_PARAMETERS,
+                coin_structure::contract::ContractAddress::default(),
+            )
+            .is_err()
+        );
     }
-    for (operation, inputs) in [(&read_string, &missing_child), (&read_string, &missing_owner)] {
-        assert!(prepare(
-            &operation.0,
-            inputs,
-            &state,
-            &ledger::structure::INITIAL_PARAMETERS,
-            coin_structure::contract::ContractAddress::default(),
-        )
-        .is_err());
+    for (operation, inputs) in [
+        (&read_string, &missing_child),
+        (&read_string, &missing_owner),
+    ] {
+        assert!(
+            prepare(
+                &operation.0,
+                inputs,
+                &state,
+                &ledger::structure::INITIAL_PARAMETERS,
+                coin_structure::contract::ContractAddress::default(),
+            )
+            .is_err()
+        );
     }
 
     ensure!(compact["missingReadsRejected"]["byteChild"].as_bool() == Some(true));
