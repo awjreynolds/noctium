@@ -53,6 +53,26 @@ private def inactiveImpure : Program := {
 }
 #guard errorContains (analyze inactiveImpure) "transitive effects"
 
+-- An empty range is omitted from execution after source-level purity checking.
+private def emptyRangeImpure (declaredPure : Bool) (callHelper := true) : Program := {
+  declarations := [
+    {id := ⟨0, 0⟩, name := "main",
+      body := if callHelper then [.evaluate (.call "checkRange" [])] else []},
+    {id := ⟨0, 1⟩, name := "checkRange", declaredPure,
+      body := [.forRange "index" 0 0 [.evaluate (.call "witnessLeaf" [])]]},
+    {id := ⟨0, 2⟩, name := "witnessLeaf", body := [.evaluate (.witness "registered" .native)]}]
+  exports := [{name := "main", target := ⟨0, 0⟩}]
+}
+#guard errorContains (analyze (emptyRangeImpure true))
+  "declared-pure helper 'checkRange' has transitive effects"
+#guard errorContains (Control.compile (emptyRangeImpure true) "main")
+  "declared-pure helper 'checkRange' has transitive effects"
+#guard match Control.compile (emptyRangeImpure false) "main" with
+  | .ok plan => (plan.compress.splitOn "\"registered\"").length == 1
+  | .error _ => false
+#guard accepted (Control.compile (emptyRangeImpure true false) "main")
+
+
 private def guarded (condition : Term) (yes no : Term) : Program := {
   declarations := [{id := ⟨0, 0⟩, name := "main", parameters := [⟨"secret", .bool⟩], result := .scalar .native, body := [.branch condition (returned yes) (returned no)]}]
   exports := [{name := "main", target := ⟨0, 0⟩, inputs := [{name := "secret", ty := .bool, visibility := .private}]}]
