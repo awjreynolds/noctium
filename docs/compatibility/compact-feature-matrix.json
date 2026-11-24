@@ -517,8 +517,8 @@
       "id": "C-LANG-ENUM",
       "layer": "language",
       "surface": "Enum",
-      "noctiumStatus": "subset",
-      "notes": "The pinned Compact grammar declares fieldless enums. Paired cases check named members, equality and identity casts, the first-member default, checked Field and Uint ordinal conversion, and rejected ordinals and narrowing. The Noctium K8 conversion relation proves the typed results, rejects invalid public ordinals, and rejects a changed return commitment. Compact also compares same-name enums with identical ordered members declared in separate modules. Noctium rejects that comparison when the checked enum IDs differ. Cross-module identity remains open in issue 923.",
+      "noctiumStatus": "equivalent",
+      "notes": "Paired Compact 0.36.1 and Noctium cases cover fieldless named members, first-member defaults, identity casts, checked Field and Uint ordinal conversions, and ordinal or narrowing rejection. Equality and explicit casts between module-qualified enums require the same local name and ordered member names. Different names, reordered members and changed member sets reject. Noctium preserves checked module IDs at the host ABI boundary. The K8 conversion and cross-module relations prove and verify with official parameters. Both relations reject invalid public ordinals and changed return commitments fail verification.",
       "source": [
         "reference"
       ],
@@ -528,17 +528,20 @@
       ],
       "observedEvidence": [
         "SEM",
+        "ZK",
         "tests/NamedEnumMembers.lean",
+        "tests/compact/NamedEnumMembers.compact",
         "runtime/tests/named_enum_members.rs",
         "tests/compact/named-enum-members.mjs",
         "tests/CheckedEnumCasts.lean",
+        "tests/compact/CheckedEnumCasts.compact",
         "tests/compact/checked-enum-casts.mjs",
         "runtime/tests/checked_enum_casts.rs"
       ],
-      "equivalence": "unverified",
+      "equivalence": "verified",
       "implementationUpdate": {
         "checkedOn": "2026-11-18",
-        "scope": "Checked Lean source construction supports tuple/vector, nominal record/enum and Unit values with canonical bounds and tag/padding rules. Structural tuple/vector widening and component disclosure checks preserve field origins. Helper entrypoints now commit composite results as physical Native outputs with canonical returnViews, reconstructed as typed SDK JSON. The selected native receipt contains record/vector/enum/bytes/Unit fields and an explicitly released private field. The readable payment entrypoint now commits and reconstructs a named record with these nested layouts. Wider combinations, full equivalence and preservation remain unverified.",
+        "scope": "Checked Lean source construction supports tuple/vector, nominal record/enum and Unit values with canonical bounds and tag/padding rules. Structural tuple/vector widening and component disclosure checks preserve field origins. Helper entrypoints now commit composite results as physical Native outputs with canonical returnViews, reconstructed as typed SDK JSON. The selected native receipt contains record/vector/enum/bytes/Unit fields and an explicitly released private field. The readable payment entrypoint now commits and reconstructs a named record with these nested layouts. The named-enum and numeric-cast fixtures qualify the pinned fieldless enum behavior.",
         "evidence": [
           "Noctium/Types/Composite.lean",
           "tests/CompositeTypes.lean",
@@ -551,7 +554,7 @@
           "runtime/src/witness_execution/iteration_ledger_tests.rs",
           "docs/development/committed-returns.md"
         ],
-        "fullEquivalence": "unverified"
+        "fullEquivalence": "verified"
       }
     },
     {

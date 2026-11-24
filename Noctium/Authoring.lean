@@ -1069,14 +1069,33 @@ private def checkedPayloadLayout (site : Syntax) (payload : Types.CompositeType)
   | .ok compiled => pure compiled
   | .error diagnostic => throwErrorAt site diagnostic.message
 
+private def fieldlessEnumMembers? (site : Syntax) (payload : Types.CompositeType) :
+    ExprM (Option (List String)) := do
+  let compiled ← checkedPayloadLayout site payload
+  match compiled.checked.value with
+  | .enumeration _ _ _ 0 _ variants =>
+    pure (if variants.all (·.2.1.isEmpty) then some (variants.map Prod.fst) else none)
+  | _ => pure none
+
 private def checkedFieldlessEnumMembers (site : Syntax) (payload : Types.CompositeType) :
     ExprM (List String) := do
-  let compiled ← checkedPayloadLayout site payload
-  let .enumeration _ _ _ 0 _ variants := compiled.checked.value
+  let some members ← fieldlessEnumMembers? site payload
     | throwErrorAt site "expected a checked fieldless enum"
-  unless variants.all (·.2.1.isEmpty) do
-    throwErrorAt site "expected a checked fieldless enum"
-  pure (variants.map Prod.fst)
+  pure members
+
+/-- Compare Compact-style enum names at the source level while preserving the
+checked nominal IDs in lowered values and host-facing schemas. -/
+private def compactFieldlessEnumCompatible (site : Syntax)
+    (left right : Types.CompositeType) : ExprM _root_.Bool := do
+  match left, right with
+  | .enumeration leftId, .enumeration rightId =>
+    if leftId == rightId || (leftId.splitOn ".").getLast? != (rightId.splitOn ".").getLast? then
+      pure _root_.Bool.false
+    else do
+      match (← fieldlessEnumMembers? site left) with
+      | none => pure _root_.Bool.false
+      | some leftMembers => pure ((← fieldlessEnumMembers? site right) == some leftMembers)
+  | _, _ => pure _root_.Bool.false
 
 private def zeroSourceLeaf (site : Syntax) : Ty → ExprM Helpers.Term
   | .native => pure (.native 0)
@@ -1768,6 +1787,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let tag ← match source.type with
       | .scalar .native => pure source.term
       | .scalar (.uint _) => pure (.cast .native source.term)
+      | .composite sourceType@(.enumeration _) => do
+        unless (← compactFieldlessEnumCompatible stx codec.payload sourceType) do
+          throwErrorAt stx "enum casts require a Native or UInt value"
+        pure (.project source.term .enumTag)
       | .scalar _ => throwErrorAt stx "enum casts require a Native or UInt value"
       | _ => throwErrorAt stx "enum casts require a Native or UInt value"
     let result := mergeLowered (.composite codec.payload)
@@ -1815,14 +1838,20 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let right ← lowerExpr programName callPrefix env right
     match left.type, right.type with
     | .composite leftType, .composite rightType => do
-      unless (leftType.leastUpperBound? rightType).isSome do
+      let compactEnumMatch ← compactFieldlessEnumCompatible stx leftType rightType
+      unless (leftType.leastUpperBound? rightType).isSome || compactEnumMatch do
         let message := match leftType, rightType with
           | .enumeration _, .enumeration _ => "eq enum operands must have the same nominal type"
           | .structure _, .structure _ => "eq record operands must have the same nominal type"
           | _, _ => "eq aggregate operands must have compatible checked types"
         throwErrorAt stx message
       modify fun state => {state with requiresOutputViews := _root_.Bool.true}
-      pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
+      if compactEnumMatch then
+        let leftTag : Helpers.Term := .project left.term .enumTag
+        let rightTag : Helpers.Term := .project right.term .enumTag
+        pure (mergeLowered (.scalar .bool) (.eq leftTag rightTag) [left, right])
+      else
+        pure (mergeLowered (.scalar .bool) (.eq left.term right.term) [left, right])
     | .composite _, _ | _, .composite _ =>
       throwErrorAt stx "eq aggregate operands must have compatible checked types"
     | _, _ => do

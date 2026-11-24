@@ -7,44 +7,23 @@ open Noctium.Types
 
 namespace NamedEnumMembers
 
-private def recipientWire : Helpers.Wire.Codec := {
-  payload := .enumeration "NamedEnumMembers.RecipientKind"
+private def fieldlessRecipientWire (id : String)
+    (members : List String := ["ShieldedUser", "UnshieldedUser", "Contract"]) : Helpers.Wire.Codec := {
+  payload := .enumeration id
   frameBytes := 1
   composites := {enumerations := [{
-    id := "NamedEnumMembers.RecipientKind"
-    variants := [
-      {name := "ShieldedUser"},
-      {name := "UnshieldedUser"},
-      {name := "Contract"}
-    ]
+    id
+    variants := members.map fun name => {name}
   }]}
 }
 
-private def otherRecipientWire : Helpers.Wire.Codec := {
-  payload := .enumeration "NamedEnumMembers.OtherRecipientKind"
-  frameBytes := 1
-  composites := {enumerations := [{
-    id := "NamedEnumMembers.OtherRecipientKind"
-    variants := [
-      {name := "ShieldedUser"},
-      {name := "UnshieldedUser"},
-      {name := "Contract"}
-    ]
-  }]}
-}
-
-private def sameNameRecipientWire : Helpers.Wire.Codec := {
-  payload := .enumeration "OtherModule.RecipientKind"
-  frameBytes := 1
-  composites := {enumerations := [{
-    id := "OtherModule.RecipientKind"
-    variants := [
-      {name := "ShieldedUser"},
-      {name := "UnshieldedUser"},
-      {name := "Contract"}
-    ]
-  }]}
-}
+private def recipientWire := fieldlessRecipientWire "NamedEnumMembers.RecipientKind"
+private def otherRecipientWire := fieldlessRecipientWire "NamedEnumMembers.OtherRecipientKind"
+private def sameNameRecipientWire := fieldlessRecipientWire "OtherModule.RecipientKind"
+private def reorderedRecipientWire := fieldlessRecipientWire "ReorderedModule.RecipientKind"
+  ["UnshieldedUser", "ShieldedUser", "Contract"]
+private def changedRecipientWire := fieldlessRecipientWire "ChangedModule.RecipientKind"
+  ["ShieldedUser", "UnshieldedUser", "Application"]
 
 private def payloadRecipientWire : Helpers.Wire.Codec := {
   payload := .enumeration "NamedEnumMembers.PayloadRecipientKind"
@@ -97,12 +76,19 @@ noctium_witness_circuit rejectsOtherNominalType using recipientWire, otherRecipi
   output isContractValue : Bool := eq(choice, enumMember(otherRecipientWire, Contract))
 end
 
-/- error: eq enum operands must have the same nominal type -/
-#guard_msgs (substring := true) in
-noctium_witness_circuit rejectsSameNameAcrossModules using recipientWire, sameNameRecipientWire where
+noctium_witness_circuit compareAcrossModules using recipientWire, sameNameRecipientWire where
   public choice : Payload recipientWire
   public selected : Payload sameNameRecipientWire
-  output equal : Bool := eq(choice, selected)
+  output equals : Bool := eq(choice, selected)
+  output converted := cast(Payload sameNameRecipientWire, choice)
+end
+
+/- error: eq enum operands must have the same nominal type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsReorderedMembers using recipientWire, reorderedRecipientWire where
+  public choice : Payload recipientWire
+  public selected : Payload reorderedRecipientWire
+  output equals : Bool := eq(choice, selected)
 end
 
 /- error: enum casts require a Native or UInt value -/
@@ -110,6 +96,13 @@ end
 noctium_witness_circuit rejectsOtherEnumCast using recipientWire, otherRecipientWire where
   public choice : Payload recipientWire
   output changed := cast(Payload otherRecipientWire, choice)
+end
+
+/- error: enum casts require a Native or UInt value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsChangedEnumMembers using recipientWire, changedRecipientWire where
+  public choice : Payload recipientWire
+  output changed := cast(Payload changedRecipientWire, choice)
 end
 
 /- error: expected a checked fieldless enum -/
@@ -124,5 +117,9 @@ noctium_contract NamedEnumMembers where
   entry describe uses NamedEnumMembers.describe where
     return isContract : Bool := isContractValue
     return selectedTag : Native := selectedTagValue
+  end
+  entry compareModules uses NamedEnumMembers.compareAcrossModules where
+    return same : Bool := equals
+    return converted
   end
 end
