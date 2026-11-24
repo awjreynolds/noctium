@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type OwnerId = Field;
+export new type AssetId = Field;
+export new type Amount = Field;
+export new type Count = Field;
+
+export ledger holdings: Map<OwnerId, Map<AssetId, Amount>>;
+
+export circuit writeHolding(
+  enabled: Boolean, owner: OwnerId, asset: AssetId, amount: Amount,
+): [Amount, Boolean] {
+  const ownerKey = disclose(owner);
+  holdings.insertDefault(ownerKey);
+  const assetKey = disclose(asset);
+  holdings.lookup(ownerKey).insert(assetKey, disclose(amount));
+  const stored = disclose(enabled) ? holdings.lookup(ownerKey).lookup(assetKey) : 0 as Amount;
+  const exists = disclose(enabled) ? holdings.lookup(ownerKey).member(assetKey) : false;
+  if (disclose(enabled)) { holdings.lookup(ownerKey).remove(assetKey); }
+  return [stored, exists];
+}

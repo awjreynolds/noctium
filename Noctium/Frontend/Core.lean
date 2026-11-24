@@ -4947,10 +4947,9 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
       !hasCircuitNominalFieldReference fieldBindings first.raw &&
         !hasCircuitNominalFieldReference fieldBindings second.raw &&
         hasCircuitNominalFieldReference fieldBindings payload.raw
-  | `(nleffect| write $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $value:nlexpr)
-  | `(nleffect| insert $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $value:nlexpr) =>
-      isTwoKeyScalarMap schema storage &&
-        !hasCircuitNominalFieldReference fieldBindings value.raw
+  | `(nleffect| write $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $_value:nlexpr)
+  | `(nleffect| insert $storage:ident [ $_first:nlexpr ] [ $_second:nlexpr ] := $_value:nlexpr) =>
+      isTwoKeyScalarMap schema storage
   | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
       (typedKey storage keyFields ||
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw) &&
@@ -6799,11 +6798,12 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => $value:nltype) => do
           let outer ← readCollectionScalarSourceType outer _root_.Bool.true
           let inner ← readCollectionScalarSourceType inner _root_.Bool.true
-          let value ← readCollectionScalarSourceType value
+          let value ← readCollectionScalarSourceType value _root_.Bool.true
           let nominal : CollectionNominals := {
             pathKeys := [outer.nominalUInt, inner.nominalUInt],
             pathFieldKeys := [outer.nominalField, inner.nominalField],
-            scalarValue := value.nominalUInt}
+            scalarValue := value.nominalUInt
+            scalarFieldValue := value.nominalField}
           unless nominal.isEmpty do
             nominalCollections := (id.getId.toString, nominal) :: nominalCollections
           let outerTy := outer.type
