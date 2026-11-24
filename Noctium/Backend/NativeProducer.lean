@@ -998,6 +998,29 @@ private def seedRawInput (expected : Expected) (rawInput : Json) (index : Nat)
   let (name, fact) ← seedRawInputFact expected rawInput index
   define state name fact
 
+/-- A successful raw header seed consumed the corresponding producer input
+name at the same ordinal. -/
+theorem seedRawInput_header_name {expected : Expected} {rawInput : Json}
+    {index : Nat} {state next : State}
+    (accepted : seedRawInput expected rawInput index state = .ok next) :
+    ∃ required, expected.rawInputs[index]? = some required ∧
+      stringField rawInput "name" = .ok required.identifier := by
+  unfold seedRawInput at accepted
+  rcases bind_ok.mp accepted with ⟨_, factAccepted, _⟩
+  unfold seedRawInputFact at factAccepted
+  cases requiredLookup : expected.rawInputs[index]? with
+  | none => simp [requiredLookup] at factAccepted
+  | some required =>
+    rw [requiredLookup] at factAccepted
+    simp only [bind_ok] at factAccepted
+    rcases factAccepted with ⟨_, _, rest⟩
+    rcases rest with ⟨_, _, rest⟩
+    rcases rest with ⟨rawName, rawNameParsed, rest⟩
+    rcases rest with ⟨_, nameAccepted, _⟩
+    have headerName : rawName = required.identifier :=
+      eq_of_beq (ensure_ok.mp nameAccepted)
+    exact ⟨required, rfl, by rw [rawNameParsed, headerName]⟩
+
 theorem seedRawInput_native_parts {expected : Expected} {rawInput : Json}
     {index : Nat} {state next : State}
     (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
@@ -1076,6 +1099,68 @@ def seedRawInputs (expected : Expected) (rawInputs : Array Json) : Except String
   for (rawInput, index) in rawInputs.toList.zipIdx do
     state ← seedRawInput expected rawInput index state
   pure state
+
+private theorem seedRawInputs_header_names_loop {expected : Expected}
+    {headers : List Json} {remaining : List InputRequirement} {offset : Nat}
+    {initial final : State}
+    (suffix : expected.rawInputs.drop offset = remaining)
+    (sameLength : headers.length = remaining.length)
+    (accepted : forIn (headers.zipIdx offset) initial
+      (fun (item : Json × Nat) state => do
+        let next ← seedRawInput expected item.1 item.2 state
+        pure (.yield next)) = .ok final) :
+    headers.mapM (fun header => stringField header "name") =
+      .ok (remaining.map (·.identifier)) := by
+  induction headers generalizing remaining offset initial final with
+  | nil =>
+    have remainingNil : remaining = [] := by
+      cases remaining with
+      | nil => rfl
+      | cons _ _ => simp at sameLength
+    rw [remainingNil]
+    simp only [List.mapM_nil, List.map_nil, Pure.pure, Except.pure]
+  | cons header tail ih =>
+    cases remaining with
+    | nil => simp at sameLength
+    | cons required rest =>
+      have tailLength : tail.length = rest.length := by
+        simp only [List.length_cons] at sameLength
+        omega
+      simp only [List.zipIdx_cons] at accepted
+      rw [List.forIn_cons] at accepted
+      cases stepAccepted : seedRawInput expected header offset initial with
+      | error message => simp [stepAccepted, Bind.bind, Except.bind] at accepted
+      | ok middle =>
+        simp only [stepAccepted, bind_pure_comp] at accepted
+        obtain ⟨seeded, seededAt, headerName⟩ := seedRawInput_header_name stepAccepted
+        have expectedAt : expected.rawInputs[offset]? = some required := by
+          have headInSuffix : (expected.rawInputs.drop offset).head? = some required := by
+            simp [suffix]
+          simpa only [List.head?_drop] using headInSuffix
+        have seededEq : seeded = required := Option.some.inj (seededAt.symm.trans expectedAt)
+        subst seeded
+        have suffixTail : expected.rawInputs.drop (offset + 1) = rest := by
+          calc
+            expected.rawInputs.drop (offset + 1) =
+                (expected.rawInputs.drop offset).drop 1 := by rw [List.drop_drop]
+            _ = rest := by simp [suffix]
+        have tailNames := ih suffixTail tailLength accepted
+        simp only [List.mapM_cons, List.map_cons, headerName, tailNames,
+          Bind.bind, Except.bind, Pure.pure, Except.pure]
+
+theorem seedRawInputs_header_names {expected : Expected} {rawInputs : Array Json}
+    {seed : State} (accepted : seedRawInputs expected rawInputs = .ok seed)
+    (rawInputCount : rawInputs.size = expected.rawInputs.length) :
+    rawInputs.toList.mapM (fun rawInput => stringField rawInput "name") =
+      .ok (expected.rawInputs.map (·.identifier)) := by
+  unfold seedRawInputs at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨loopState, loopAccepted, result⟩
+  cases result
+  have names := seedRawInputs_header_names_loop (expected := expected)
+    (headers := rawInputs.toList) (remaining := expected.rawInputs) (offset := 0)
+    (by simp) (by simpa using rawInputCount) loopAccepted
+  simpa using names
 
 /-- Raw input definitions preserve the Native transcript input count. -/
 theorem seedRawInputs_inputCount {expected : Expected} {rawInputs : Array Json}

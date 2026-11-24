@@ -1,6 +1,7 @@
 import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.RangeDedupAcceptedArray
+import Noctium.Verification.ScalarCallHeaderProjection
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationRawSeedMeaning
 
@@ -102,6 +103,23 @@ theorem acceptedAdvanceSeedMeaning
     rw [ordered] at inHeader
     rw [List.mem_singleton.mp inHeader]
     exact amountAgrees
+
+/-- An accepted decoded call for the actual advance entrypoint carries its
+source-declared raw input names in order. -/
+theorem advanceCallHeaderArguments
+    {program : Lean.Json} {call : NativeRelationJson.ScalarCall}
+    (lowered : Zkir.lowerEntrypoint NativeReturns.state advance = .ok program)
+    (decoded : NativeRelationJson.decodeScalarCall program = .ok call) :
+    call.arguments = ["%input_amount"] := by
+  obtain ⟨_, expected, _, schedule, validated, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions NativeReturns.state advance program lowered
+  have ordered : expected.rawInputs =
+      [{identifier := "%input_amount", visibility := .private, ty := .native}] :=
+    GenericStateCircuitParts.expectedEntrypoint_rawInputs NativeReturns.state
+      (Passes.pruneEntrypoint advance) expected schedule
+  have headerNames := ScalarCallHeaderProjection.validate_decodeScalarCall_header_names
+    validated decoded
+  simpa [ordered] using headerNames
 
 /-- Carry the actual seeded argument meaning through every accepted decoded
 instruction in the scalar profile, for any assignment satisfying those rows. -/
