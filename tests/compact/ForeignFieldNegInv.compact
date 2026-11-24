@@ -13,7 +13,13 @@ export pure circuit arithmetic(
   r1BaseZero: Secp256r1Base,
   r1ScalarZero: Secp256r1Scalar,
   c255BaseZero: Curve25519Base,
-  c255ScalarZero: Curve25519Scalar
+  c255ScalarZero: Curve25519Scalar,
+  k1BaseBoundary: Secp256k1Base,
+  k1ScalarBoundary: Secp256k1Scalar,
+  r1BaseBoundary: Secp256r1Base,
+  r1ScalarBoundary: Secp256r1Scalar,
+  c255BaseBoundary: Curve25519Base,
+  c255ScalarBoundary: Curve25519Scalar
 ): [
   Secp256k1Base, Secp256k1Base,
   Secp256k1Scalar, Secp256k1Scalar,
@@ -23,7 +29,13 @@ export pure circuit arithmetic(
   Curve25519Scalar, Curve25519Scalar,
   Secp256k1Base, Secp256k1Scalar,
   Secp256r1Base, Secp256r1Scalar,
-  Curve25519Base, Curve25519Scalar
+  Curve25519Base, Curve25519Scalar,
+  Secp256k1Base, Secp256k1Base,
+  Secp256k1Scalar, Secp256k1Scalar,
+  Secp256r1Base, Secp256r1Base,
+  Secp256r1Scalar, Secp256r1Scalar,
+  Curve25519Base, Curve25519Base,
+  Curve25519Scalar, Curve25519Scalar
 ] {
   return [
     neg(k1Base), inv(k1Base),
@@ -34,7 +46,13 @@ export pure circuit arithmetic(
     neg(c255Scalar), inv(c255Scalar),
     neg(k1BaseZero), neg(k1ScalarZero),
     neg(r1BaseZero), neg(r1ScalarZero),
-    neg(c255BaseZero), neg(c255ScalarZero)
+    neg(c255BaseZero), neg(c255ScalarZero),
+    neg(k1BaseBoundary), inv(k1BaseBoundary),
+    neg(k1ScalarBoundary), inv(k1ScalarBoundary),
+    neg(r1BaseBoundary), inv(r1BaseBoundary),
+    neg(r1ScalarBoundary), inv(r1ScalarBoundary),
+    neg(c255BaseBoundary), inv(c255BaseBoundary),
+    neg(c255ScalarBoundary), inv(c255ScalarBoundary)
   ];
 }
 

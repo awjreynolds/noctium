@@ -65,11 +65,15 @@ try {
     {label: 'curve25519Base', inv: 'inverseZeroC255Base', modulus: (1n << 255n) - 19n, value: 17n},
     {label: 'curve25519Scalar', inv: 'inverseZeroC255Scalar', modulus: (1n << 252n) + 27742317777372353535851937790883648493n, value: 19n},
   ];
-  const result = await invoke('arithmetic', ...fields.map(({value}) => value), ...fields.map(() => 0n));
+  const boundary = fields.map(({modulus}) => modulus - 1n);
+  const result = await invoke('arithmetic',
+    ...fields.map(({value}) => value),
+    ...fields.map(() => 0n),
+    ...boundary);
   const expected = fields.flatMap(({modulus, value}) => [
     value === 0n ? 0n : modulus - value,
     powMod(value, modulus - 2n, modulus),
-  ]).concat(fields.map(() => 0n));
+  ]).concat(fields.map(() => 0n), fields.flatMap(({modulus}) => [1n, modulus - 1n]));
   assert.deepEqual(result, expected);
 
   const zeroInverse = [];
@@ -91,6 +95,8 @@ try {
       negative: result[index * 2].toString(),
       inverse: result[index * 2 + 1].toString(),
       negativeZero: result[12 + index].toString(),
+      negativeBoundary: result[18 + index * 2].toString(),
+      inverseBoundary: result[19 + index * 2].toString(),
     })),
     zeroInverse,
   }));
