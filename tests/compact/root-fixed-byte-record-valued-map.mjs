@@ -38,51 +38,108 @@ try {
   const firstId = new Uint8Array(33).fill(3);
   const lateId = new Uint8Array(firstId);
   lateId[32] = 4;
-  const firstReceipt = { accepted: true, code: 101n };
-  const lateReceipt = { accepted: false, code: 303n };
-  const run = async (state, suppliedFirstId = firstId, suppliedLateId = lateId) => {
+  const firstReceipt = { label: new Uint8Array([11]), digest: new Uint8Array(33).fill(21) };
+  const lateReceipt = { label: new Uint8Array([12]), digest: new Uint8Array(33).fill(22) };
+  const firstAccount = new Uint8Array(32).fill(5);
+  const lateAccount = new Uint8Array(32).fill(6);
+  const firstProfile = { label: new Uint8Array([31]), digest: new Uint8Array(33).fill(41) };
+  const lateProfile = { label: new Uint8Array([32]), digest: new Uint8Array(33).fill(42) };
+  const arguments_ = [tag, firstId, lateId,
+    firstReceipt.label, firstReceipt.digest, lateReceipt.label, lateReceipt.digest,
+    firstAccount, lateAccount, firstProfile.label, firstProfile.digest,
+    lateProfile.label, lateProfile.digest];
+  const run = async (state, supplied = arguments_) => {
     const { result, context } = await contract.circuits.update(createCircuitContext({
       circuitId: 'update', contractAddress: dummyContractAddress(),
       coinPublicKeyOrZswapState: wallet, contractState: state, privateState: null,
-    }), tag, suppliedFirstId, suppliedLateId,
-    firstReceipt.accepted, firstReceipt.code, lateReceipt.accepted, lateReceipt.code);
+    }), ...supplied);
     return [result, context.callContext.currentQueryContext.state];
   };
 
   assert.equal(ledger(initial).receipts.size(), 0n);
-  const [outputs, state] = await run(initial);
-  assert.deepEqual(outputs, [true, true, true, 101n, false, 303n, false, true, false, 303n]);
+  assert.equal(ledger(initial).profiles.size(), 0n);
+  const [result, state] = await run(initial);
+  const names = [
+    'first', 'late', 'firstStoredLabel', 'firstStoredDigest',
+    'lateStoredLabel', 'lateStoredDigest', 'firstRemaining', 'lateRemaining',
+    'retainedLabel', 'retainedDigest', 'firstProfile', 'lateProfile',
+    'firstProfileStoredLabel', 'firstProfileStoredDigest',
+    'lateProfileStoredLabel', 'lateProfileStoredDigest',
+    'firstProfileRemaining', 'lateProfileRemaining',
+    'retainedProfileLabel', 'retainedProfileDigest',
+  ];
+  const byteNames = new Set(names.filter(name => name.toLowerCase().includes('label') ||
+    name.toLowerCase().includes('digest')));
+  const outputs = Object.fromEntries(names.map((name, index) => [
+    name, byteNames.has(name) ? { kind: 'bytes', values: Array.from(result[index]) } : result[index],
+  ]));
+  const expectedOutputs = {
+    first: true,
+    late: true,
+    firstStoredLabel: { kind: 'bytes', values: [11] },
+    firstStoredDigest: { kind: 'bytes', values: Array(33).fill(21) },
+    lateStoredLabel: { kind: 'bytes', values: [12] },
+    lateStoredDigest: { kind: 'bytes', values: Array(33).fill(22) },
+    firstRemaining: false,
+    lateRemaining: true,
+    retainedLabel: { kind: 'bytes', values: [12] },
+    retainedDigest: { kind: 'bytes', values: Array(33).fill(22) },
+    firstProfile: true,
+    lateProfile: true,
+    firstProfileStoredLabel: { kind: 'bytes', values: [31] },
+    firstProfileStoredDigest: { kind: 'bytes', values: Array(33).fill(41) },
+    lateProfileStoredLabel: { kind: 'bytes', values: [32] },
+    lateProfileStoredDigest: { kind: 'bytes', values: Array(33).fill(42) },
+    firstProfileRemaining: false,
+    lateProfileRemaining: true,
+    retainedProfileLabel: { kind: 'bytes', values: [32] },
+    retainedProfileDigest: { kind: 'bytes', values: Array(33).fill(42) },
+  };
+  assert.deepEqual(outputs, expectedOutputs);
+
   const receipts = ledger(state).receipts;
+  const profiles = ledger(state).profiles;
   const key = id => ({ tag, id });
   assert.equal(receipts.size(), 1n);
   assert.equal(receipts.member(key(firstId)), false);
   assert.equal(receipts.member(key(lateId)), true);
   assert.deepEqual(receipts.lookup(key(lateId)), lateReceipt);
-  await assert.rejects(() => run(initial, firstId, lateId.slice(0, 32)));
+  assert.equal(profiles.size(), 1n);
+  assert.equal(profiles.member(firstAccount), false);
+  assert.equal(profiles.member(lateAccount), true);
+  assert.deepEqual(profiles.lookup(lateAccount), lateProfile);
+
+  const wrongKeyWidth = [...arguments_];
+  wrongKeyWidth[2] = lateId.slice(0, 32);
+  await assert.rejects(() => run(initial, wrongKeyWidth));
+  const wrongRecordValueWidth = [...arguments_];
+  wrongRecordValueWidth[6] = lateReceipt.digest.slice(0, 32);
+  await assert.rejects(() => run(initial, wrongRecordValueWidth));
+  const wrongValueWidth = [...arguments_];
+  wrongValueWidth[12] = lateProfile.digest.slice(0, 32);
+  await assert.rejects(() => run(initial, wrongValueWidth));
 
   console.log(JSON.stringify({
     fixture: 'RootFixedByteRecordValuedMap',
     compact: compilerVersion,
     runtime: runtimePackage.version,
-    key: { tag: [7], firstId: '03'.repeat(33), lateId: '03'.repeat(32) + '04' },
-    receipts: {
-      first: { accepted: firstReceipt.accepted, code: firstReceipt.code.toString() },
-      late: { accepted: lateReceipt.accepted, code: lateReceipt.code.toString() },
+    inputs: {
+      recordKey: { tag: [7], firstId: '03'.repeat(33), lateId: '03'.repeat(32) + '04' },
+      recordValues: {
+        first: { label: [11], digest: Array(33).fill(21) },
+        late: { label: [12], digest: Array(33).fill(22) },
+      },
+      scalarKey: { firstAccount: '05'.repeat(32), lateAccount: '06'.repeat(32) },
+      scalarValues: {
+        first: { label: [31], digest: Array(33).fill(41) },
+        late: { label: [32], digest: Array(33).fill(42) },
+      },
     },
-    outputs: {
-      first: true,
-      late: true,
-      firstAcceptedResult: true,
-      firstCodeResult: '101',
-      lateAcceptedResult: false,
-      lateCodeResult: '303',
-      firstRemaining: false,
-      lateRemaining: true,
-      retainedAccepted: false,
-      retainedCode: '303',
-    },
-    remainingEntries: 1,
+    outputs,
+    remainingEntries: { receipts: Number(receipts.size()), profiles: Number(profiles.size()) },
     wrongKeyWidthRejected: true,
+    wrongRecordValueWidthRejected: true,
+    wrongValueWidthRejected: true,
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

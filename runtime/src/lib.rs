@@ -3131,7 +3131,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        if depth == 0 {
+        if depth <= 1 {
             checked_cell_record_schema(schema)?;
         } else {
             checked_map_record_schema(schema)?;
@@ -3184,7 +3184,11 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
                     && !is_shielded_coin_record_schema(value_record),
                 "record-key Maps require an ordinary typed record value"
             );
-            checked_map_record_schema(value_record)?;
+            if depth == 0 {
+                checked_cell_record_schema(value_record)?;
+            } else {
+                checked_map_record_schema(value_record)?;
+            }
         } else {
             bail!("record-key Maps require a scalar or record value")
         }
@@ -3651,7 +3655,7 @@ fn checked_map_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     let schema = checked_typed_record_schema(json)?;
     ensure!(
         schema.fields.iter().all(|field| !matches!(field.ty, ScalarType::Bytes(_))),
-        "fixed Bytes fields are unsupported in nested Map keys and record Map values"
+        "fixed Bytes fields are unsupported in nested Map values"
     );
     Ok(schema)
 }

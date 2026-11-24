@@ -2,35 +2,462 @@
   "fixture": "RootFixedByteRecordValuedMap",
   "compact": "0.36.1 (7fa3a117c 2026-11-11)",
   "runtime": "0.21.0",
-  "key": {
-    "tag": [
-      7
-    ],
-    "firstId": "030303030303030303030303030303030303030303030303030303030303030303",
-    "lateId": "030303030303030303030303030303030303030303030303030303030303030304"
-  },
-  "receipts": {
-    "first": {
-      "accepted": true,
-      "code": "101"
+  "inputs": {
+    "recordKey": {
+      "tag": [
+        7
+      ],
+      "firstId": "030303030303030303030303030303030303030303030303030303030303030303",
+      "lateId": "030303030303030303030303030303030303030303030303030303030303030304"
     },
-    "late": {
-      "accepted": false,
-      "code": "303"
+    "recordValues": {
+      "first": {
+        "label": [
+          11
+        ],
+        "digest": [
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21,
+          21
+        ]
+      },
+      "late": {
+        "label": [
+          12
+        ],
+        "digest": [
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22
+        ]
+      }
+    },
+    "scalarKey": {
+      "firstAccount": "0505050505050505050505050505050505050505050505050505050505050505",
+      "lateAccount": "0606060606060606060606060606060606060606060606060606060606060606"
+    },
+    "scalarValues": {
+      "first": {
+        "label": [
+          31
+        ],
+        "digest": [
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41,
+          41
+        ]
+      },
+      "late": {
+        "label": [
+          32
+        ],
+        "digest": [
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42,
+          42
+        ]
+      }
     }
   },
   "outputs": {
     "first": true,
     "late": true,
-    "firstAcceptedResult": true,
-    "firstCodeResult": "101",
-    "lateAcceptedResult": false,
-    "lateCodeResult": "303",
+    "firstStoredLabel": {
+      "kind": "bytes",
+      "values": [
+        11
+      ]
+    },
+    "firstStoredDigest": {
+      "kind": "bytes",
+      "values": [
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21,
+        21
+      ]
+    },
+    "lateStoredLabel": {
+      "kind": "bytes",
+      "values": [
+        12
+      ]
+    },
+    "lateStoredDigest": {
+      "kind": "bytes",
+      "values": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ]
+    },
     "firstRemaining": false,
     "lateRemaining": true,
-    "retainedAccepted": false,
-    "retainedCode": "303"
+    "retainedLabel": {
+      "kind": "bytes",
+      "values": [
+        12
+      ]
+    },
+    "retainedDigest": {
+      "kind": "bytes",
+      "values": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ]
+    },
+    "firstProfile": true,
+    "lateProfile": true,
+    "firstProfileStoredLabel": {
+      "kind": "bytes",
+      "values": [
+        31
+      ]
+    },
+    "firstProfileStoredDigest": {
+      "kind": "bytes",
+      "values": [
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41,
+        41
+      ]
+    },
+    "lateProfileStoredLabel": {
+      "kind": "bytes",
+      "values": [
+        32
+      ]
+    },
+    "lateProfileStoredDigest": {
+      "kind": "bytes",
+      "values": [
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42
+      ]
+    },
+    "firstProfileRemaining": false,
+    "lateProfileRemaining": true,
+    "retainedProfileLabel": {
+      "kind": "bytes",
+      "values": [
+        32
+      ]
+    },
+    "retainedProfileDigest": {
+      "kind": "bytes",
+      "values": [
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42,
+        42
+      ]
+    }
   },
-  "remainingEntries": 1,
-  "wrongKeyWidthRejected": true
+  "remainingEntries": {
+    "receipts": 1,
+    "profiles": 1
+  },
+  "wrongKeyWidthRejected": true,
+  "wrongRecordValueWidthRejected": true,
+  "wrongValueWidthRejected": true
 }

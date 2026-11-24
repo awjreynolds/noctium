@@ -1545,7 +1545,9 @@ private def recordMapCompositeSchemas (state : List StateDecl) (name : String)
     parentKeys.length
   unless keyFields.map Prod.snd == keyValues.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
-  let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
+  let valueFields ← if parentKeys.isEmpty then
+    LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType
+  else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
   unless valueFields.map Prod.snd == valueValues.map LedgerFieldExpr.ty do
     throw "record Map value field type mismatch"
   let keySchema ← recordSchemaForFields keyEnvironment keyType keyFields
@@ -1567,7 +1569,9 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
     let .composite environment foundType ← resolveTreeState state name keys
       | throw "nested composite write must select a composite value"
     unless foundType == type do throw "nested composite write type mismatch"
-    pure (environment, ← LedgerValueType.ledgerRecordWriteFields environment type)
+    pure (environment, ← if keys.length == 1 then
+      LedgerValueType.rootMapRecordWriteFields environment type
+    else LedgerValueType.ledgerRecordWriteFields environment type)
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "nested composite write field type mismatch"
   let alignedKeys ← nativePathKeys keys
@@ -2267,12 +2271,14 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     unless foundType == type do throw "nested composite read type mismatch"
     let fields ← if keys.isEmpty then
       LedgerValueType.cellRecordFields environment type
+    else if keys.length == 1 then
+      LedgerValueType.rootMapRecordFields environment type
     else LedgerValueType.ledgerRecordFields environment type
     unless fields.map Prod.snd == destinations.map Prod.snd do
       throw "nested composite read destination type mismatch"
     let alignedKeys ← nativePathKeys keys
     let schema ← if keys.isEmpty then cellRecordSchema environment type
-      else recordSchema environment type
+      else recordSchemaForFields environment type fields
     let values := destinations.map fun (name, ty) => refLedgerFieldExpr name ty
     let components := destinations
     pure {plan with
@@ -3330,12 +3336,14 @@ private def previousEffectStep (state : List StateDecl) (effect : Effect)
     unless foundType == type do throw "nested composite read type mismatch"
     let fields ← if keys.isEmpty then
       LedgerValueType.cellRecordFields environment type
+    else if keys.length == 1 then
+      LedgerValueType.rootMapRecordFields environment type
     else LedgerValueType.ledgerRecordFields environment type
     unless fields.map Prod.snd == destinations.map Prod.snd do
       throw "nested composite read destination type mismatch"
     let alignedKeys ← nativePathKeys keys
     let schema ← if keys.isEmpty then cellRecordSchema environment type
-      else recordSchema environment type
+      else recordSchemaForFields environment type fields
     let values := destinations.map fun (name, ty) => refLedgerFieldExpr name ty
     let components := destinations
     plan := {plan with

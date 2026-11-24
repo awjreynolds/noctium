@@ -3124,6 +3124,10 @@ private def elaborateTreeRead (storage destination : TSyntax `ident)
       match LedgerValueType.cellRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
+    else if path.length == 1 then
+      match LedgerValueType.rootMapRecordFields environment (.structure typeId) with
+      | .ok fields => pure fields
+      | .error message => throwErrorAt destination message
     else match LedgerValueType.ledgerRecordFields environment (.structure typeId) with
       | .ok fields => pure fields
       | .error message => throwErrorAt destination message
@@ -3381,7 +3385,9 @@ private def elaborateMapDefault (schema : List (String × StateKind)) (path : TS
       let type ← tyTerm ty
       `(Noctium.Effect.writePath $name $keys $type (Noctium.GuardedExpression.zeroValue $type))
     | .composite environment (.structure id) => do
-      let fields ← match LedgerValueType.ledgerRecordFields environment (.structure id) with
+      let fields ← match (if sourceKeys.length == 1 then
+          LedgerValueType.rootMapRecordFields environment (.structure id)
+        else LedgerValueType.ledgerRecordFields environment (.structure id)) with
         | .ok fields => pure fields
         | .error message => throwErrorAt path message
       let values ← zeroLedgerFieldValues fields
@@ -3413,7 +3419,9 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
-      let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+      let valueFields ← match (if parentPath.isEmpty then
+          LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType
+        else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let values ← zeroLedgerFieldValues valueFields
@@ -3439,6 +3447,7 @@ private def elaborateCompositePathWrite (schema : List (String × StateKind))
     | throwErrorAt payload "composite write must select a composite record"
   let fields ← match (if path.isEmpty then
       LedgerValueType.cellWriteRecordFields environment type
+    else if path.length == 1 then LedgerValueType.rootMapRecordWriteFields environment type
     else LedgerValueType.ledgerRecordWriteFields environment type) with
     | .ok fields => pure fields
     | .error message => throwErrorAt payload message
@@ -3619,7 +3628,9 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+  let valueFields ← match (if parentKeys.isEmpty then
+      LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType
+    else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   pure (← pathKeysTerm keys, keyType, keyFields, valueType, valueFields)
@@ -5419,7 +5430,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
         {type := .bytes 32}
       let key ← `(Noctium.PathKey.mk (Noctium.Ty.bytes 32) $keyExpression)
-      let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+      let fields ← match LedgerValueType.rootMapRecordWriteFields environment type with
         | .ok fields => pure fields
         | .error message => throwErrorAt payload message
       let values ← elaborateLedgerFieldValues bindings payload fields
@@ -5990,7 +6001,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
-          match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+          match LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
           let valueSchema := LedgerValueType.recordMapComposite
@@ -6054,7 +6065,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
               sourceValues) ← elaborateTypedLedgerRecord contractName record recordFields state
           unless sourceValues.isEmpty do
             recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
-          match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+          match LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
           let valueSchema := LedgerValueType.recordMapComposite

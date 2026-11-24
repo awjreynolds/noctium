@@ -5758,7 +5758,7 @@
       "scope": "Source Bytes0 through Bytes1024 in direct cells, map values and nested scalar leaves. Uses length-indexed FAB byte alignment, preserves existing bytes32 JSON and key encodings, and adds no opcode name.",
       "readBoundary": "Nonempty reads use bounded Native chunk bindings in FAB high-to-low order, reconstructed as low-to-high logical bytes. Active reads validate declared scalar leaf type, exact alignment and canonical atom encoding. Inactive reads return zero bytes without inspecting skipped paths.",
       "emptySemantics": "Source Bytes0 inputs/results remain valid singleton values with zero native payload fields. Empty ledger bytes remain explicit Cell values distinct from Null. Native typed Bytes0 inputs are not emitted. Empty write expressions retain evaluation and assertions in the length-header let expression.",
-      "limits": "No new key/proof generation or deployment. Byte keys other than Bytes32, composite record leaves, full source/native preservation and portable SDK qualification remain separate work.",
+      "limits": "No new key/proof generation or deployment. Byte keys other than Bytes32, nested composite leaves, full source/native preservation and portable SDK qualification remain separate work.",
       "focusedChecks": "66-job compiler build, Source fixture, exact input/instruction over-cap guards and guide snippet pass. One native case checks three invocations, all 14 old/new results, 1,122 private fields, lengths 0/1/31/32/33/1024, trailing zeros, inactive missing defaults, overwrite and sibling preservation. Altered transcript, false empty-write assertion, bad input length, Null/wrong-alignment/noncanonical cells and wrong leaf/key schemas reject. Focused control projection/range/length check and retained public Bytes32 native compatibility pass. Legacy 3.2.0 library compilation passes. Clean CI explicitly builds the existing Claim module and runs the producer inventory/claim-lowering check.",
       "nativeSeconds": 0.05,
       "artifactMetrics": {
@@ -5779,7 +5779,16 @@
         "symbolicNodes": 65536,
         "symbolicDepth": 256
       },
-      "supersedes": "Earlier byte scalar storage exclusions are superseded for direct cells, map values and nested scalar leaves. Composite leaves and non-Bytes32 byte keys remain separate work."
+      "rootMapRecordValues": {
+        "issue": 1048,
+        "source": "../../tests/RootFixedByteRecordValuedMap.lean",
+        "compact": "../../tests/compact/root-fixed-byte-record-valued-map.mjs",
+        "native": "../../runtime/tests/root_fixed_byte_record_valued_map.rs",
+        "scope": "Flat root Map records accept Bytes1 and Bytes33 values for both Bytes32 scalar keys and fixed-byte record keys. Existing Cell schema and aligned value codecs apply. Nested record values keep their narrower policy.",
+        "focusedChecks": "Compact 0.36.1/runtime 0.21.0 and the pinned Ledger 9/ZKIR 3.2.1 checker match returned fields and retained aligned values after sibling removal. Wrong scalar/record key widths and wrong value widths reject. Native state validation rejects nested scalar-key and nested record-key record values.",
+        "limits": "Checker-only. No key generation, proof, ledger transaction, non-Bytes32 scalar keys, nested fixed-byte record values or full compiler preservation."
+      },
+      "supersedes": "Earlier byte scalar storage exclusions are superseded for direct cells, scalar map values, nested scalar leaves and flat root Map record values. Nested composite leaves and non-Bytes32 byte keys remain separate work."
     },
     "genericScalarByteDecoding": {
       "issue": 80,
