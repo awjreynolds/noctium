@@ -652,7 +652,8 @@ jobs:
             Noctium.Verification.ScalarValidationProjectionComparison \
             Noctium.Verification.GuardedEffectEvaluation \
             Noctium.Verification.GuardedEffectPrefix \
-            Noctium.Verification.GenericStateAdmissionBridge
+            Noctium.Verification.GenericStateAdmissionBridge \
+            Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
           lake env lean tests/Verification.lean
