@@ -12,6 +12,11 @@ private def curveTypeName : Ty → String
   | .foreign kind => kind.sourceName
   | _ => ""
 
+private def opaqueTypeName : Ty → String
+  | .opaqueBytes => "OpaqueBytes"
+  | .opaqueString => "OpaqueString"
+  | _ => ""
+
 private def layoutJsonSize : Nat → Layout → Except String Nat
   | 0, _ => throw "aggregate schema traversal exhausted checked fuel"
   | fuel + 1, layout => do
@@ -21,6 +26,11 @@ private def layoutJsonSize : Nat → Layout → Except String Nat
     | .scalar .booleanField => pure "{\"kind\":\"scalar\",\"leaf\":{\"kind\":\"bool\"}}".utf8ByteSize
     | .scalar (.boundedUnsignedField maximum) =>
       pure ("{\"kind\":\"scalar\",\"leaf\":{\"kind\":\"uint\",\"maximum\":\"\"}}".utf8ByteSize + (toString maximum).utf8ByteSize)
+    | .opaque type => do
+      unless type == .opaqueBytes || type == .opaqueString do
+        throw "opaque layout requires OpaqueBytes or OpaqueString"
+      pure ("{\"kind\":\"opaque\",\"type\":\"\"}".utf8ByteSize +
+        (opaqueTypeName type).utf8ByteSize)
     | .tuple items =>
       pure ("{\"kind\":\"tuple\",\"items\":[]}".utf8ByteSize + commaCount items.length +
         (← items.mapM (layoutJsonSize fuel)).sum)
@@ -56,6 +66,10 @@ private def layoutJson : Nat → Layout → Except String Json
         | .boundedUnsignedField maximum => pure [("kind", toJson ("uint" : String)), ("maximum", toJson (toString maximum))]
         | _ => throw "unsupported aggregate schema scalar"
       pure (Json.mkObj [("kind", toJson ("scalar" : String)), ("leaf", Json.mkObj fields)])
+    | .opaque type => do
+      let typeName := opaqueTypeName type
+      unless !typeName.isEmpty do throw "opaque layout requires OpaqueBytes or OpaqueString"
+      pure (Json.mkObj [("kind", toJson ("opaque" : String)), ("type", toJson typeName)])
     | .tuple items => pure (Json.mkObj [("kind", toJson ("tuple" : String)),
         ("items", toJson (← items.mapM (layoutJson fuel)))])
     | .structure id fields =>

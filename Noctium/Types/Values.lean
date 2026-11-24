@@ -154,6 +154,8 @@ private def flattenAux : Nat → Layout → AggregateValue → Except String (Li
   | fuel + 1, layout, value => do
     match layout, value with
     | .unit, .unit => pure []
+    | .opaque (.opaqueBytes), _ => throw "OpaqueBytes use one Compress field and are not reversible aggregate values"
+    | .opaque (.opaqueString), _ => throw "OpaqueString uses one Compress field and is not a reversible aggregate value"
     | .scalar leaf, .scalar type number =>
       unless type == (← leafType leaf) do throw "aggregate scalar type mismatch"
       scalarValid type number
@@ -197,6 +199,8 @@ private def unflattenAux : Nat → Layout → List Nat → Except String (Aggreg
   | fuel + 1, layout, leaves => do
     match layout with
     | .unit => pure (.unit, leaves)
+    | .opaque (.opaqueBytes) => throw "OpaqueBytes Compress fields cannot reconstruct the logical value"
+    | .opaque (.opaqueString) => throw "OpaqueString Compress fields cannot reconstruct the logical value"
     | .scalar leaf =>
       let number :: rest := leaves | throw "short aggregate scalar input"
       let type ← leafType leaf

@@ -156,6 +156,9 @@ length, so layout construction never allocates one node per vector element. -/
 inductive Layout where
   | unit
   | scalar (leaf : ScalarLeaf)
+  /-- An opaque logical value with one native Compress ABI field. This layout
+  does not make the value reversible as a scalar or aggregate byte sequence. -/
+  | opaque (type : Ty)
   | curve (type : Ty)
   | tuple (items : List Layout)
   | structure (id : DeclId) (fields : List (String × Layout))
@@ -191,6 +194,7 @@ mutual
   def Layout.leafCount : Layout → Nat
     | .unit => 0
     | .scalar _ => 1
+    | .opaque _ => 1
     | .curve type => type.nativeCallFieldCount
     | .tuple items => LayoutList.leafCount items
     | .structure _ fields => LayoutFields.leafCount fields
@@ -209,7 +213,7 @@ end
 
 mutual
   def Layout.nodeCount : Layout → Nat
-    | .unit | .scalar _ | .curve _ | .bytes _ _ => 1
+    | .unit | .scalar _ | .opaque _ | .curve _ | .bytes _ _ => 1
     | .tuple items => 1 + LayoutList.nodeCount items
     | .structure _ fields => 1 + LayoutFields.nodeCount fields
     | .vector _ element => 1 + element.nodeCount
@@ -245,7 +249,7 @@ partial def Layout.byteRangeAtFieldPath (layout : Layout) (path : List String)
 
 mutual
   def Layout.expandedNodeCount : Layout → Nat
-    | .unit | .scalar _ => 1
+    | .unit | .scalar _ | .opaque _ => 1
     | .curve type => 1 + type.nativeCallFieldCount
     | .tuple items => 1 + LayoutList.expandedNodeCount items
     | .structure _ fields => 1 + LayoutFields.expandedNodeCount fields
@@ -292,6 +296,10 @@ def scalarLeaf : Ty → Except String ScalarLeaf
   | .jubjubScalar | .jubjubPoint => .error "Jubjub values require a qualified curve schema"
   | .foreign _ => .error "foreign values require a qualified curve schema"
 
+private def isOpaqueType : Ty → Bool
+  | .opaqueBytes | .opaqueString => true
+  | _ => false
+
 private def validateScalarLayoutTy (ty : Ty) : Except String Unit := do
   if ty.isBytes then throw "byte strings require a composite bytes layout"
   if ty.isJubjub then throw "Jubjub values require a qualified curve schema"
@@ -302,6 +310,8 @@ mutual
     | unit : CompositeSubtype .unit .unit
     | native : CompositeSubtype (.scalar .native) (.scalar .native)
     | boolean : CompositeSubtype (.scalar .bool) (.scalar .bool)
+    | opaqueBytes : CompositeSubtype (.scalar .opaqueBytes) (.scalar .opaqueBytes)
+    | opaqueString : CompositeSubtype (.scalar .opaqueString) (.scalar .opaqueString)
     | jubjubScalar : CompositeSubtype (.scalar .jubjubScalar) (.scalar .jubjubScalar)
     | jubjubPoint : CompositeSubtype (.scalar .jubjubPoint) (.scalar .jubjubPoint)
     | foreign (kind : Foreign.Kind) :
@@ -578,6 +588,8 @@ private def measureType (fuel : Nat) (limits : Limits) (environment : CompositeE
       if ty.isJubjub || ty.isForeign then
         let width := ty.nativeCallFieldCount
         return ← checkedMeasure limits span width (1 + width) 1
+      if isOpaqueType ty then
+        return ← checkedMeasure limits span 1 1 1
       match validateScalarLayoutTy ty with
       | .ok _ => pure ()
       | .error message => throw {span, message}
@@ -650,6 +662,7 @@ private def layoutType (fuel : Nat) (limits : Limits) (environment : CompositeEn
     | .unit => pure .unit
     | .scalar ty => do
       if ty.isJubjub || ty.isForeign then return .curve ty
+      if isOpaqueType ty then return .opaque ty
       match validateScalarLayoutTy ty with
       | .ok _ => pure ()
       | .error message => throw {span, message}
