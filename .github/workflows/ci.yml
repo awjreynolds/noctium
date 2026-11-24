@@ -585,7 +585,8 @@ jobs:
               record_constructor_initializes_cell_and_map -- --ignored
       - name: Check source proof registration
         run: |
-          lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness
+          lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness \
+            Noctium.Verification.ScalarValidationTypedBool
           lake env lean tests/Verification.lean
           lake env lean tests/SourceProofCoverage.lean
           bash tests/private-claim-source-coverage.sh
