@@ -27,6 +27,19 @@ cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
 
 The [native client guide](docs/development/native-client.md#retained-qualification) adds the optional `localnet` feature, exclusive 3.2.1 profile and real-chain prerequisites. Do not interpret an ordinary test pass as a new proof or ledger qualification.
 
+## Focused local fixture generation
+
+Run the CLI through Lean's interpreter to emit fixtures for local checks.
+
+```sh
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+lake env lean --run NoctiumMain.lean compile examples/PrivateClaim.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output build/experiments/private-claim
+```
+
+Choose a new or empty output directory and remove it after the check. Use `lake build noctium` for native executable packaging checks.
+
 ## Reuse Lean builds across worktrees
 
 Point each local worktree at the same absolute Lake cache directory. Keep the
