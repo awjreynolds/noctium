@@ -2727,6 +2727,42 @@ theorem lowerBytes_ref_preservesOutputCapacityFrame {length : Nat} (name : Strin
     simpa only [hit] using rejectThenPure_preservesOutputCapacityFrame
       s!"unbound Bytes32 source symbol '{name}'" ({values := []} : ByteOperands)
 
+/-- Byte selection packs both arms, then allocates or reuses one native select
+result for each aligned chunk. -/
+theorem lowerBytes_select_preservesOutputCapacityFrame {length : Nat}
+    (condition : Expr .bool) (yes no : Expr (.bytes length))
+    (conditionFrame : PreservesOutputCapacityFrame (lowerExpr condition))
+    (yesFrame : PreservesOutputCapacityFrame (lowerBytes yes))
+    (noFrame : PreservesOutputCapacityFrame (lowerBytes no)) :
+    PreservesOutputCapacityFrame (lowerBytes (.select condition yes no)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ conditionFrame
+  intro bit
+  apply bind_preservesOutputCapacityFrame _ _ yesFrame
+  intro yesBytes
+  apply bind_preservesOutputCapacityFrame _ _
+    (byteChunks_preservesOutputCapacityFrame length yesBytes)
+  intro yesChunks
+  apply bind_preservesOutputCapacityFrame _ _ noFrame
+  intro noBytes
+  apply bind_preservesOutputCapacityFrame _ _
+    (byteChunks_preservesOutputCapacityFrame length noBytes)
+  intro noChunks
+  exact listMapM_preservesOutputCapacityFrame (yesChunks.zip noChunks)
+    (fun pair => selectOperands bit pair.1 pair.2)
+    (by
+      intro pair
+      unfold selectOperands
+      apply cachedScalarOutput_preservesOutputCapacityFrame
+      intro output
+      apply instruction_scalarOutputDefinitions _ _ _
+        ⟨by decide, by decide, by decide⟩ _
+      all_goals
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+          Lean.ToJson.toJson]
+        rfl)
+
 theorem lowerBytes_persistentHash32_preservesOutputCapacityFrame (value : Expr (.bytes 32))
     (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
     PreservesOutputCapacityFrame (lowerBytes (.persistentHash32 value)) := by
