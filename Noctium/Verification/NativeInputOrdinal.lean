@@ -180,22 +180,56 @@ theorem accepted_generic_state_input_row_step (state : List StateDecl)
     accepted_input_row_step inputSchema opcodeParsed accepted
   exact ⟨plan, inputState, requirement, lowered, inputsExact, selected, increment⟩
 
-private theorem input_schema_output_identifier {raw : Json} {output identifier : String}
+private theorem input_schema_output_facts {raw : Json} {output identifier : String}
     {schemaUnit : Unit} {otherCheck : Bool}
     (outputParsed : Backend.Native.stringField raw "output" = .ok output)
     (schemaChecked : Backend.Native.ensure (output == identifier && otherCheck)
       "native transcript input schema/order mismatch" = .ok schemaUnit) :
-    Backend.Native.stringField raw "output" = .ok identifier := by
+    Backend.Native.stringField raw "output" = .ok identifier ∧ otherCheck = true := by
   cases schemaUnit
   have checked := ScalarValidationMeaning.ensure_ok.mp schemaChecked
   simp only [Bool.and_eq_true] at checked
   have outputEq : output = identifier := eq_of_beq checked.1
   rw [outputEq] at outputParsed
-  exact outputParsed
+  exact ⟨outputParsed, checked.2⟩
 
-/-- The producer's input schema check ties the raw output field to the exact
-requirement selected by the live input ordinal. -/
-theorem accepted_input_output_identifier {expected : Expected}
+private instance : LawfulBEq Visibility where
+  rfl := by
+    intro visibility
+    cases visibility <;> rfl
+  eq_of_beq := by
+    intro left right matched
+    cases left <;> cases right
+    · rfl
+    · have different : (Visibility.public == Visibility.private) = false := by decide
+      rw [different] at matched
+      cases matched
+    · have different : (Visibility.private == Visibility.public) = false := by decide
+      rw [different] at matched
+      cases matched
+    · rfl
+
+private theorem input_descriptor_visibility_matches (visibility : Visibility)
+    {descriptor : Backend.Native.Descriptor}
+    (parsed : Backend.Native.requireInstruction (inputOpcode visibility) = .ok descriptor) :
+    descriptor.privacy.inputVisibility = some visibility := by
+  have registered :
+      (Backend.Native.requireInstruction (inputOpcode visibility)).map
+        (fun item => item.privacy.inputVisibility) = .ok (some visibility) := by
+    cases visibility <;> rfl
+  have parsedMapped := congrArg (fun result : Except String Backend.Native.Descriptor =>
+    result.map (fun item => item.privacy.inputVisibility)) parsed
+  have mappedDescriptor :
+      (Except.ok descriptor : Except String Backend.Native.Descriptor).map
+        (fun item => item.privacy.inputVisibility) =
+      .ok descriptor.privacy.inputVisibility := rfl
+  have mappedVisibility := mappedDescriptor.symm.trans parsedMapped.symm
+  have checked := mappedVisibility.trans registered
+  exact Except.ok.inj checked
+
+/-- The producer's input schema check ties the raw output field and visibility
+to the exact requirement selected by the live input ordinal. -/
+theorem accepted_input_output_descriptor {expected : Expected}
     {state next : State} {raw : Json} {visibility : Visibility}
     {requirement : InputRequirement}
     (selected : expected.inputs[state.inputCount]? = some requirement)
@@ -203,7 +237,8 @@ theorem accepted_input_output_identifier {expected : Expected}
     (opcodeParsed : Backend.Native.stringField raw "op" =
       .ok (inputOpcode visibility))
     (accepted : validateInstruction expected state raw = .ok next) :
-    Backend.Native.stringField raw "output" = .ok requirement.identifier := by
+    Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
+      requirement.visibility = visibility := by
   cases guarded : requirement.activityGuard with
   | none =>
     unfold validateInstruction at accepted
@@ -214,6 +249,8 @@ theorem accepted_input_output_identifier {expected : Expected}
     | «public» =>
       have opcodeEq : opcode = "public_input" := by simpa [inputOpcode] using opcodeEq
       subst opcode
+      have descriptorVisibility := input_descriptor_visibility_matches .public
+        (by simpa [inputOpcode] using registry)
       simp only [opcodeEq, selected, guarded] at accepted
       cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
       all_goals
@@ -222,10 +259,16 @@ theorem accepted_input_output_identifier {expected : Expected}
         rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
           valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
           output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
-        exact input_schema_output_identifier outputParsed schemaChecked
+        have schema := input_schema_output_facts outputParsed schemaChecked
+        have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
+          eq_of_beq schema.2
+        rw [descriptorVisibility] at checkedVisibility
+        exact ⟨schema.1, (Option.some.inj checkedVisibility).symm⟩
     | «private» =>
       have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
       subst opcode
+      have descriptorVisibility := input_descriptor_visibility_matches .private
+        (by simpa [inputOpcode] using registry)
       simp only [opcodeEq, selected, guarded] at accepted
       cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
       all_goals
@@ -234,7 +277,11 @@ theorem accepted_input_output_identifier {expected : Expected}
         rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
           valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
           output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
-        exact input_schema_output_identifier outputParsed schemaChecked
+        have schema := input_schema_output_facts outputParsed schemaChecked
+        have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
+          eq_of_beq schema.2
+        rw [descriptorVisibility] at checkedVisibility
+        exact ⟨schema.1, (Option.some.inj checkedVisibility).symm⟩
   | some guardTerm =>
     cases visibility with
     | «public» =>
@@ -243,7 +290,10 @@ theorem accepted_input_output_identifier {expected : Expected}
       rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
       have opcodeEq : opcode = "public_input" :=
         Except.ok.inj (op.symm.trans opcodeParsed)
-      simp only [opcodeEq, selected, guarded] at accepted
+      subst opcode
+      have descriptorVisibility := input_descriptor_visibility_matches .public
+        (by simpa [inputOpcode] using registry)
+      simp only [selected, guarded] at accepted
       cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
       all_goals
         simp only [ty] at accepted
@@ -253,12 +303,28 @@ theorem accepted_input_output_identifier {expected : Expected}
           guardTextParsed, guardFact, guardOperand, guardBoolean, guardBooleanChecked,
           guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
           definedState, defined, result⟩
-        exact input_schema_output_identifier outputParsed schemaChecked
+        have schema := input_schema_output_facts outputParsed schemaChecked
+        have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
+          eq_of_beq schema.2
+        rw [descriptorVisibility] at checkedVisibility
+        exact ⟨schema.1, (Option.some.inj checkedVisibility).symm⟩
     | «private» =>
       have unguarded := accepted_private_input_unguarded selected
         (by simpa [inputOpcode] using opcodeParsed) accepted
       rw [guarded] at unguarded
       cases unguarded
+
+/-- Project the producer's checked output identifier from its input descriptor. -/
+theorem accepted_input_output_identifier {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    Backend.Native.stringField raw "output" = .ok requirement.identifier := by
+  exact (accepted_input_output_descriptor selected nonforeignInput opcodeParsed accepted).1
 
 /-- Project the exact raw guard and the native fact checked by the producer for
 an accepted guarded public ledger read. -/
@@ -457,124 +523,6 @@ theorem accepted_guarded_public_input_rejected_by_strict_decoder
   unfold Json.getStr? at stringParsed
   cases stringParsed
 
-private theorem visibility_eq_of_beq_true (left right : Visibility)
-    (matched : (left == right) = true) : left = right := by
-  cases left with
-  | «public» =>
-    cases right with
-    | «public» => rfl
-    | «private» =>
-      have different : (Visibility.public == Visibility.private) = false := by decide
-      rw [different] at matched
-      cases matched
-  | «private» =>
-    cases right with
-    | «public» =>
-      have different : (Visibility.private == Visibility.public) = false := by decide
-      rw [different] at matched
-      cases matched
-    | «private» => rfl
-
-private theorem option_visibility_eq_of_beq_true {left right : Option Visibility}
-    (matched : (left == right) = true) : left = right := by
-  cases left with
-  | none =>
-    cases right with
-    | none => rfl
-    | some right =>
-      have different : ((none : Option Visibility) == some right) = false := by
-        cases right <;> decide
-      rw [different] at matched
-      cases matched
-  | some left =>
-    cases right with
-    | none =>
-      have different : (some left == (none : Option Visibility)) = false := by
-        cases left <;> decide
-      rw [different] at matched
-      cases matched
-    | some right =>
-      change (left == right) = true at matched
-      exact congrArg some (visibility_eq_of_beq_true left right matched)
-
-private theorem accepted_input_row_visibility_matches {expected : Expected}
-    {state next : State} {raw : Json} {visibility : Visibility}
-    {requirement : InputRequirement}
-    (selected : expected.inputs[state.inputCount]? = some requirement)
-    (nonforeignInput : requirement.ty.isForeign = false)
-    (unguarded : requirement.activityGuard = none)
-    (opcodeParsed : Backend.Native.stringField raw "op" =
-      .ok (inputOpcode visibility))
-    (accepted : validateInstruction expected state raw = .ok next) :
-    requirement.visibility = visibility := by
-  unfold validateInstruction at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨opcode, op, descriptor, descriptorParsed, _, fields, accepted⟩
-  have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
-  cases visibility with
-  | «public» =>
-    have opcodeEq : opcode = "public_input" := by simpa [inputOpcode] using opcodeEq
-    subst opcode
-    have descriptorVisibility : descriptor.privacy.inputVisibility = some .«public» := by
-      have registered :
-          (Backend.Native.requireInstruction "public_input").map
-            (fun item => item.privacy.inputVisibility) = .ok (some .«public») := by
-        rfl
-      have parsed := congrArg (fun result : Except String Backend.Native.Descriptor =>
-        result.map (fun item => item.privacy.inputVisibility)) descriptorParsed
-      have mappedDescriptor :
-          (Except.ok descriptor : Except String Backend.Native.Descriptor).map
-            (fun item => item.privacy.inputVisibility) =
-          .ok descriptor.privacy.inputVisibility := rfl
-      have mappedVisibility := mappedDescriptor.symm.trans parsed.symm
-      have checked := mappedVisibility.trans registered
-      exact Except.ok.inj checked
-    simp only [opcodeEq, selected, unguarded] at accepted
-    cases ty : requirement.ty <;>
-      try simp [Ty.isForeign, ty] at nonforeignInput
-    all_goals
-      simp only [ty] at accepted
-      simp only [bind_ok] at accepted
-      rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
-        valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
-        output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
-      have schema := Bool.and_eq_true_iff.mp (ensure_ok.mp schemaChecked)
-      have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
-        option_visibility_eq_of_beq_true schema.2
-      rw [descriptorVisibility] at checkedVisibility
-      exact (Option.some.inj checkedVisibility).symm
-  | «private» =>
-    have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
-    subst opcode
-    have descriptorVisibility : descriptor.privacy.inputVisibility = some .«private» := by
-      have registered :
-          (Backend.Native.requireInstruction "private_input").map
-            (fun item => item.privacy.inputVisibility) = .ok (some .«private») := by
-        rfl
-      have parsed := congrArg (fun result : Except String Backend.Native.Descriptor =>
-        result.map (fun item => item.privacy.inputVisibility)) descriptorParsed
-      have mappedDescriptor :
-          (Except.ok descriptor : Except String Backend.Native.Descriptor).map
-            (fun item => item.privacy.inputVisibility) =
-          .ok descriptor.privacy.inputVisibility := rfl
-      have mappedVisibility := mappedDescriptor.symm.trans parsed.symm
-      have checked := mappedVisibility.trans registered
-      exact Except.ok.inj checked
-    simp only [opcodeEq, selected, unguarded] at accepted
-    cases ty : requirement.ty <;>
-      try simp [Ty.isForeign, ty] at nonforeignInput
-    all_goals
-      simp only [ty] at accepted
-      simp only [bind_ok] at accepted
-      rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
-        valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
-        output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
-      have schema := Bool.and_eq_true_iff.mp (ensure_ok.mp schemaChecked)
-      have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
-        option_visibility_eq_of_beq_true schema.2
-      rw [descriptorVisibility] at checkedVisibility
-      exact (Option.some.inj checkedVisibility).symm
-
 /-- When a producer input row also passes the strict decoder's input shape,
 both boundaries expose the same ordered visibility and name. Guarded producer
 rows remain outside this bridge because the strict decoder requires a null guard. -/
@@ -590,25 +538,10 @@ theorem accepted_input_row_descriptor_agrees {expected : Expected}
       .ok (.input visibility decodedOutput)) :
     Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
       (visibility, decodedOutput) = (requirement.visibility, requirement.identifier) := by
-  have producerName := accepted_input_output_identifier selected
+  obtain ⟨producerName, requirementVisibility⟩ := accepted_input_output_descriptor selected
     nonforeignInput opcodeParsed accepted
   have decoderName := strict_decoded_input_output_identifier opcodeParsed decoded
   have outputEq := Except.ok.inj (decoderName.symm.trans producerName)
-  have unguarded : requirement.activityGuard = none := by
-    cases visibility with
-    | «public» =>
-      cases guard : requirement.activityGuard with
-      | none => rfl
-      | some guardTerm =>
-        have rejected := accepted_guarded_public_input_rejected_by_strict_decoder
-          selected nonforeignInput guard
-          (by simpa [inputOpcode] using opcodeParsed) accepted
-        exact False.elim (rejected ⟨decodedOutput, decoded⟩)
-    | «private» =>
-      exact accepted_private_input_unguarded selected
-        (by simpa [inputOpcode] using opcodeParsed) accepted
-  have requirementVisibility := accepted_input_row_visibility_matches selected
-    nonforeignInput unguarded opcodeParsed accepted
   exact ⟨producerName, Prod.ext requirementVisibility.symm outputEq⟩
 
 /-- The ordered input descriptor includes the visibility and name checked by
