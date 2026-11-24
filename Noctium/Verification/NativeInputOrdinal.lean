@@ -180,4 +180,273 @@ theorem accepted_generic_state_input_row_step (state : List StateDecl)
     accepted_input_row_step inputSchema opcodeParsed accepted
   exact ⟨plan, inputState, requirement, lowered, inputsExact, selected, increment⟩
 
+private theorem input_schema_output_identifier {raw : Json} {output identifier : String}
+    {schemaUnit : Unit} {otherCheck : Bool}
+    (outputParsed : Backend.Native.stringField raw "output" = .ok output)
+    (schemaChecked : Backend.Native.ensure (output == identifier && otherCheck)
+      "native transcript input schema/order mismatch" = .ok schemaUnit) :
+    Backend.Native.stringField raw "output" = .ok identifier := by
+  cases schemaUnit
+  have checked := ScalarValidationMeaning.ensure_ok.mp schemaChecked
+  simp only [Bool.and_eq_true] at checked
+  have outputEq : output = identifier := eq_of_beq checked.1
+  rw [outputEq] at outputParsed
+  exact outputParsed
+
+/-- The producer's input schema check ties the raw output field to the exact
+requirement selected by the live input ordinal. -/
+theorem accepted_input_output_identifier {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    Backend.Native.stringField raw "output" = .ok requirement.identifier := by
+  cases guarded : requirement.activityGuard with
+  | none =>
+    unfold validateInstruction at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+    have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
+    cases visibility with
+    | «public» =>
+      have opcodeEq : opcode = "public_input" := by simpa [inputOpcode] using opcodeEq
+      subst opcode
+      simp only [opcodeEq, selected, guarded] at accepted
+      cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
+      all_goals
+        simp only [ty] at accepted
+        simp only [bind_ok] at accepted
+        rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+          valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
+          output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
+        exact input_schema_output_identifier outputParsed schemaChecked
+    | «private» =>
+      have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
+      subst opcode
+      simp only [opcodeEq, selected, guarded] at accepted
+      cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
+      all_goals
+        simp only [ty] at accepted
+        simp only [bind_ok] at accepted
+        rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+          valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
+          output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
+        exact input_schema_output_identifier outputParsed schemaChecked
+  | some guardTerm =>
+    cases visibility with
+    | «public» =>
+      unfold validateInstruction at accepted
+      simp only [bind_ok] at accepted
+      rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+      have opcodeEq : opcode = "public_input" :=
+        Except.ok.inj (op.symm.trans opcodeParsed)
+      simp only [opcodeEq, selected, guarded] at accepted
+      cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
+      all_goals
+        simp only [ty] at accepted
+        simp only [bind_ok] at accepted
+        rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+          valueType, valueParsed, guardModeUnit, guardModeChecked, guardText,
+          guardTextParsed, guardFact, guardOperand, guardBoolean, guardBooleanChecked,
+          guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
+          definedState, defined, result⟩
+        exact input_schema_output_identifier outputParsed schemaChecked
+    | «private» =>
+      have unguarded := accepted_private_input_unguarded selected
+        (by simpa [inputOpcode] using opcodeParsed) accepted
+      rw [guarded] at unguarded
+      cases unguarded
+
+/-- An accepted guarded public read supplies its guard through the producer's
+string field parser. -/
+theorem accepted_guarded_public_input_guard_string {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ∃ guardText, Backend.Native.stringField raw "guard" = .ok guardText := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq : opcode = "public_input" :=
+    Except.ok.inj (op.symm.trans opcodeParsed)
+  simp only [opcodeEq, selected, guarded] at accepted
+  cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
+  all_goals
+    simp only [ty] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+      valueType, valueParsed, guardModeUnit, guardModeChecked, guardText,
+      guardTextParsed, guardFact, guardOperand, guardBoolean, guardBooleanChecked,
+      guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
+      definedState, defined, result⟩
+    exact ⟨guardText, guardTextParsed⟩
+
+/-- The strict input decoder preserves its output string and admits only a
+null guard. The opcode premise selects its public or private input branch. -/
+private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibility}
+    {output : String}
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility output)) :
+    Backend.Native.stringField raw "output" = .ok output ∧
+      raw.getObjVal? "guard" = .ok Json.null := by
+  have nativeJson_stringField_eq (value : Json) (name : String) :
+      NativeRelationJson.stringField value name = Backend.Native.stringField value name := rfl
+  cases visibility with
+  | «public» =>
+    have decoderOpcode : NativeRelationJson.stringField raw "op" = .ok "public_input" := by
+      rw [nativeJson_stringField_eq]
+      simpa [inputOpcode] using opcodeParsed
+    unfold NativeRelationJson.decodeInstruction at decoded
+    simp only [ScalarValidationMeaning.bind_ok] at decoded
+    rcases decoded with ⟨opcode, op, decoded⟩
+    have opcodeEq : opcode = "public_input" :=
+      Except.ok.inj (op.symm.trans decoderOpcode)
+    subst opcode
+    simp only [ScalarValidationMeaning.bind_ok] at decoded
+    rcases decoded with ⟨fieldsUnit, fieldsChecked, guardJson, guardParsed,
+      guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
+      decodedOutput, outputParsed, validUnit, validChecked, result⟩
+    cases result
+    constructor
+    · exact (nativeJson_stringField_eq raw "output").symm.trans outputParsed
+    · have guardNull : guardJson.isNull = true := by
+        cases guardUnit
+        cases isNull : guardJson.isNull with
+        | false => simp [NativeRelationJson.ensure, isNull] at guardChecked
+        | true => rfl
+      cases guardJson <;> simp_all [Json.isNull]
+  | «private» =>
+    have decoderOpcode : NativeRelationJson.stringField raw "op" = .ok "private_input" := by
+      rw [nativeJson_stringField_eq]
+      simpa [inputOpcode] using opcodeParsed
+    unfold NativeRelationJson.decodeInstruction at decoded
+    simp only [ScalarValidationMeaning.bind_ok] at decoded
+    rcases decoded with ⟨opcode, op, decoded⟩
+    have opcodeEq : opcode = "private_input" :=
+      Except.ok.inj (op.symm.trans decoderOpcode)
+    subst opcode
+    simp only [ScalarValidationMeaning.bind_ok] at decoded
+    rcases decoded with ⟨fieldsUnit, fieldsChecked, guardJson, guardParsed,
+      guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
+      decodedOutput, outputParsed, validUnit, validChecked, result⟩
+    cases result
+    constructor
+    · exact (nativeJson_stringField_eq raw "output").symm.trans outputParsed
+    · have guardNull : guardJson.isNull = true := by
+        cases guardUnit
+        cases isNull : guardJson.isNull with
+        | false => simp [NativeRelationJson.ensure, isNull] at guardChecked
+        | true => rfl
+      cases guardJson <;> simp_all [Json.isNull]
+
+/-- A strictly decoded input exposes the same output string stored in its
+`Instruction.input` constructor. -/
+theorem strict_decoded_input_output_identifier {raw : Json} {visibility : Visibility}
+    {output : String}
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility output)) :
+    Backend.Native.stringField raw "output" = .ok output :=
+  (strict_decoded_input_fields opcodeParsed decoded).1
+
+/-- Strict input admission rejects preprocessing guards. -/
+theorem strict_decoded_input_guard_is_null {raw : Json} {visibility : Visibility}
+    {output : String}
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility output)) :
+    raw.getObjVal? "guard" = .ok Json.null :=
+  (strict_decoded_input_fields opcodeParsed decoded).2
+
+/-- Producer-accepted guarded public reads cannot satisfy the strict decoder's
+input shape: the producer parses a string guard and the decoder requires null. -/
+theorem accepted_guarded_public_input_rejected_by_strict_decoder
+    {expected : Expected} {state next : State} {raw : Json}
+    {requirement : InputRequirement} {guardTerm : Backend.Native.Term}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ¬ ∃ output,
+      NativeRelationJson.decodeInstruction raw = .ok (.input .«public» output) := by
+  obtain ⟨guardText, producerGuard⟩ := accepted_guarded_public_input_guard_string
+    selected nonforeignInput guarded opcodeParsed accepted
+  intro decodedInput
+  obtain ⟨output, decoded⟩ := decodedInput
+  have decoderGuard := strict_decoded_input_guard_is_null
+    (by simpa [inputOpcode] using opcodeParsed) decoded
+  unfold Backend.Native.stringField at producerGuard
+  simp only [ScalarValidationMeaning.bind_ok] at producerGuard
+  rcases producerGuard with ⟨found, fieldParsed, stringParsed⟩
+  have foundNull : found = Json.null :=
+    Except.ok.inj (fieldParsed.symm.trans decoderGuard)
+  rw [foundNull] at stringParsed
+  unfold Json.getStr? at stringParsed
+  cases stringParsed
+
+/-- When a producer input row also passes the strict decoder's input shape,
+both boundaries name the same expected input. Guarded producer rows remain
+outside this bridge because the strict decoder requires a null guard. -/
+theorem accepted_input_row_names_agree {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement} {decodedOutput : String}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next)
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility decodedOutput)) :
+    Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
+      decodedOutput = requirement.identifier := by
+  have producerName := accepted_input_output_identifier selected
+    nonforeignInput opcodeParsed accepted
+  have decoderName := strict_decoded_input_output_identifier opcodeParsed decoded
+  have outputEq := Except.ok.inj (decoderName.symm.trans producerName)
+  exact ⟨producerName, outputEq⟩
+
+/-- The ordered production read row, producer output field and strict decoded
+input name agree in one step, with the producer cursor advanced once. -/
+theorem accepted_generic_state_input_row_names_agree (state : List StateDecl)
+    (entry : Entrypoint) {expected : Expected} {producerState next : State}
+    {raw : Json} {visibility : Visibility} {decodedOutput : String}
+    (expectedAccepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected producerState raw = .ok next)
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility decodedOutput)) :
+    ∃ (plan : Backend.Impact.Plan)
+      (inputState : List InputRequirement × List Backend.Native.Term ×
+        List (Backend.Native.Term × Nat) × Nat)
+      (requirement : InputRequirement),
+      Backend.Impact.lower state entry = .ok plan ∧
+      expected.inputs = inputState.1 ∧
+      expected.inputs[producerState.inputCount]? = some requirement ∧
+      next.inputCount = producerState.inputCount + 1 ∧
+      Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
+      decodedOutput = requirement.identifier := by
+  obtain ⟨plan, inputState, requirement, lowered, inputsExact, selected, increment⟩ :=
+    accepted_generic_state_input_row_step state entry expectedAccepted inputSchema
+      opcodeParsed accepted
+  have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+  obtain ⟨producerName, decodedName⟩ := accepted_input_row_names_agree selected
+    (inputSchema requirement member) opcodeParsed accepted decoded
+  exact ⟨plan, inputState, requirement, lowered, inputsExact, selected,
+    increment, producerName, decodedName⟩
+
 end Noctium.Verification.NativeInputOrdinal

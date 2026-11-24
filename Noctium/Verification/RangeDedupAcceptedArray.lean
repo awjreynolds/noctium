@@ -904,6 +904,61 @@ theorem nativeDefinitionStep_supportsMeaning {raw : Json} {instruction : Instruc
     | output values opcode => exact .output opcode decoded
     | constrainEq a b opcode => exact .constrainEq opcode decoded (holds _ decoded)
 
+/-- Across the accepted strict scalar decoder trace, the source observation
+prefix grows by each decoded Impact payload in order. The initial producer
+typing invariant and unguarded input schema enable the exact cursor proof. -/
+theorem acceptedProfileOrderedImpactPayloads
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {instructions : List Instruction}
+    {initial final : Backend.Native.State}
+    (trace : NativeDefinitionTrace items instructions)
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputGuards : ∀ requirement ∈ expected.inputs, requirement.activityGuard = none)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (holds : ∀ instruction ∈ instructions, Instruction.Holds hash witness instruction)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
+    (expected.groups.take final.groupCount).map (List.map (interpret hash inputs)) =
+      (expected.groups.take initial.groupCount).map (List.map (interpret hash inputs)) ++
+        ((Program.mk instructions 0 false).groups witness).map (List.map some) := by
+  induction trace generalizing initial final with
+  | nil =>
+    have same : initial = final := by injection accepted
+    subst final
+    simp [Program.groups]
+  | @cons raw index instruction rest restInstructions row tail ih =>
+    rw [Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial raw with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have step := nativeDefinitionStep_supportsMeaning row hash witness (by
+        intro decodedInstruction decoded
+        have same := Except.ok.inj (decoded.symm.trans row.decoded)
+        subst decodedInstruction
+        exact holds instruction (by simp))
+      have ⟨nextMeaning, nextDefinitions⟩ :=
+        acceptedMeaningStep_preserves initialMeaning initialDefinitions inputSchema
+          inputAgreement step checked
+      rw [ih nextMeaning nextDefinitions
+        (fun instruction member => holds instruction (List.mem_cons_of_mem _ member)) accepted]
+      have count := accepted_supportedScalarOpcode_groupCount_step
+        initialDefinitions inputSchema inputGuards row.supported checked
+      cases instruction <;> try (
+        have same : next.groupCount = initial.groupCount := by
+          simpa [impactGroupIncrement] using count
+        simp [Program.groups, same])
+      case impact guard values =>
+        have opcode : Backend.Native.stringField raw "op" = .ok "impact" := by
+          cases row.supported
+          assumption
+        obtain ⟨group, selected, _, observed⟩ :=
+          accepted_impact_meaning initialMeaning checked opcode row.decoded
+        simp [Program.groups, count, impactGroupIncrement, List.take_add_one,
+          selected, observed, List.append_assoc]
+
 /-- Lift the row result across the existing strict decoded producer trace. -/
 theorem nativeDefinitionTrace_supportsMeaning {items : List (Json × Nat)}
     {instructions : List Instruction} (trace : NativeDefinitionTrace items instructions) :

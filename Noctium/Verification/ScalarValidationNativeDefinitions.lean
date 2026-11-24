@@ -42,6 +42,42 @@ theorem refine_nativeDefinitions {state next : State} {text : String} {maximum :
     cases stateEq
     exact nativeDefinitions
 
+theorem define_groupCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold define at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  cases result
+  rfl
+
+theorem defineResult_groupCount {state next : State} {raw : Json} {fact : Fact}
+    (accepted : defineResult state raw fact = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold defineResult at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, defined⟩
+  exact define_groupCount defined
+
+theorem refine_groupCount {state next : State} {text : String} {maximum : Nat}
+    (accepted : refine state text maximum = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold refine at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, accepted⟩
+  split at accepted
+  · rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    rfl
+  · simp only [bind_ok] at accepted
+    rcases accepted with ⟨_, _, accepted⟩
+    rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    rfl
+
 theorem accepted_copy_nativeDefinitions {expected : Expected} {state next : State} {raw : Json}
     (nativeDefinitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "copy")
@@ -225,6 +261,198 @@ private theorem accepted_output_nativeDefinitions
   subst next
   exact definitions
 
+theorem accepted_copy_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "copy")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, defined⟩ := accepted_copy_components definitions opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_add_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "add")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
+    accepted_add_components definitions opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_mul_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "mul")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
+    accepted_mul_components definitions opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_neg_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "neg")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, _, _, defined⟩ :=
+    accepted_neg_components definitions opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_testEq_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
+    accepted_testEq_components definitions opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_lessThan_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+    RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
+  exact defineResult_groupCount defined
+
+theorem accepted_output_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "output")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, result⟩
+  subst next
+  rfl
+
+theorem accepted_constrainBits_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨valueText, valueTextParsed, accepted⟩
+  rcases accepted with ⟨bits, bitsParsed, refined⟩
+  exact refine_groupCount refined
+
+theorem accepted_constrainBoolean_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨valueText, valueParsed, refined⟩
+  exact refine_groupCount refined
+
+theorem accepted_assert_groupCount
+    {expected : Expected} {state next : State} {raw : Json}
+    (opcode : Backend.Native.stringField raw "op" = .ok "assert")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold Backend.Native.validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
+    registry, fieldsParsed, accepted⟩
+  have opcodeEq : opcodeName = "assert" := Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨value, valueParsed, _, booleanAccepted, accepted⟩
+  let assertionCounted := if expected.assertions[state.assertionCount]? == some value.term then
+    {state with assertionCount := state.assertionCount + 1} else state
+  let assertionState : Backend.Native.State :=
+    {assertionCounted with
+      establishedAssertions := (value.term :: assertionCounted.establishedAssertions).eraseDups}
+  have assertionGroupCount : assertionState.groupCount = state.groupCount := by
+    by_cases matched : expected.assertions[state.assertionCount]? == some value.term <;>
+      simp [assertionState, assertionCounted, matched]
+  split at accepted
+  · simp only [bind_ok] at accepted
+    rcases accepted with ⟨_, _, refined⟩
+    calc
+      next.groupCount = assertionState.groupCount := refine_groupCount refined
+      _ = state.groupCount := assertionGroupCount
+  · cases accepted
+    exact assertionGroupCount
+
+theorem accepted_input_groupCount {expected : Expected} {state next : State}
+    {raw : Json} {visibility : Visibility} {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (unguarded : requirement.activityGuard = none)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  cases visibility <;> all_goals
+    unfold validateInstruction at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+    have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
+    simp only [opcodeEq, inputOpcode, selected] at accepted
+    split at accepted
+    · simp_all [Ty.isForeign]
+    · simp only [unguarded] at accepted
+      simp only [bind_ok] at accepted
+      rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+        guardJson, guardParsed, _, guardChecked, output, outputParsed, _, schema,
+        definedState, defined, result⟩
+      have groupCountEq := define_groupCount defined
+      have nextEq : ({definedState with inputCount := definedState.inputCount + 1}) = next :=
+        Except.ok.inj result
+      subst next
+      simpa using groupCountEq
+
+theorem accepted_constrainEq_groupCount {expected : Expected} {state next : State}
+    {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨leftText, leftTextParsed, rightText, rightTextParsed,
+    leftFact, leftParsed, rightFact, rightParsed, middle, leftRefined, rightRefined⟩
+  have leftArgument : argument state raw "a" = .ok leftFact := by
+    unfold argument
+    rw [leftTextParsed]
+    exact leftParsed
+  have leftNative := argument_native_of_state definitions leftArgument
+  simp only [leftNative, Backend.Native.ensure] at rightRefined
+  simp only [Bind.bind, Except.bind] at rightRefined
+  rcases bind_ok.mp rightRefined with ⟨middleState, leftRefined, rest⟩
+  rcases bind_ok.mp rest with ⟨nextState, rightRefined, final⟩
+  have stateCount : nextState.groupCount = state.groupCount := by
+    calc
+      nextState.groupCount = middleState.groupCount := refine_groupCount rightRefined
+      _ = state.groupCount := refine_groupCount leftRefined
+  simp only [Pure.pure, Except.pure] at final
+  have finalEq := Except.ok.inj final
+  subst next
+  simp [stateCount]
+
 /-- The supported opcode profile for this trace fragment. Copy and constrain_eq
 both decode to `.equal`, so the profile records which producer opcode was used. -/
 inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
@@ -270,6 +498,77 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | constrainEq (a b : Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq") :
       SupportedScalarOpcode raw (.equal a b)
+
+def impactGroupIncrement : Instruction → Nat
+  | .impact _ _ => 1
+  | _ => 0
+
+/-- One accepted producer step advances the impact-group counter exactly when
+the supported opcode is `impact`. Scalar inputs in this fragment are native
+and unguarded. -/
+theorem accepted_supportedScalarOpcode_groupCount_step
+    {expected : Expected} {state next : State} {raw : Json} {instruction : Instruction}
+    (definitions : NativeDefinitions state)
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputGuards : ∀ requirement ∈ expected.inputs, requirement.activityGuard = none)
+    (supported : SupportedScalarOpcode raw instruction)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount + impactGroupIncrement instruction := by
+  cases supported with
+  | publicInput output opcode =>
+    obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+      (visibility := .«public») (by simpa [inputOpcode] using opcode) accepted
+    have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+    have unchanged := accepted_input_groupCount (visibility := .«public») selected
+      (inputSchema requirement member)
+      (inputGuards requirement member) (by simpa [inputOpcode] using opcode) accepted
+    rw [unchanged]
+    simp [impactGroupIncrement]
+  | privateInput output opcode =>
+    obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+      (visibility := .«private») (by simpa [inputOpcode] using opcode) accepted
+    have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+    have unchanged := accepted_input_groupCount (visibility := .«private») selected
+      (inputSchema requirement member)
+      (inputGuards requirement member) (by simpa [inputOpcode] using opcode) accepted
+    rw [unchanged]
+    simp [impactGroupIncrement]
+  | add _ _ _ opcode =>
+    rw [accepted_add_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
+  | mul _ _ _ opcode =>
+    rw [accepted_mul_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
+  | neg _ _ opcode =>
+    rw [accepted_neg_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
+  | bits _ _ opcode =>
+    rw [accepted_constrainBits_groupCount opcode accepted]
+    simp [impactGroupIncrement]
+  | boolean _ opcode =>
+    rw [accepted_constrainBoolean_groupCount opcode accepted]
+    simp [impactGroupIncrement]
+  | lessThan _ _ _ _ opcode =>
+    rw [accepted_lessThan_groupCount opcode accepted]
+    simp [impactGroupIncrement]
+  | assertion _ opcode =>
+    rw [accepted_assert_groupCount opcode accepted]
+    simp [impactGroupIncrement]
+  | testEq _ _ _ opcode =>
+    rw [accepted_testEq_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
+  | copy _ _ opcode =>
+    rw [accepted_copy_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
+  | impact _ _ opcode =>
+    rw [accepted_impact_state opcode accepted]
+    simp [impactGroupIncrement]
+  | output _ opcode =>
+    rw [accepted_output_groupCount opcode accepted]
+    simp [impactGroupIncrement]
+  | constrainEq _ _ opcode =>
+    rw [accepted_constrainEq_groupCount definitions opcode accepted]
+    simp [impactGroupIncrement]
 
 structure NativeDefinitionStep (raw : Json) (instruction : Instruction) : Prop where
   supported : SupportedScalarOpcode raw instruction
