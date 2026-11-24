@@ -1,0 +1,34 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+export pure circuit jubjubGroup(
+  point: JubjubPoint,
+  other: JubjubPoint,
+  scalar: JubjubScalar
+): [JubjubPoint, JubjubPoint, JubjubPoint, JubjubPoint] {
+  return [ecAdd(point, other), ecNeg(point), ecMul(point, scalar), ecMulGenerator(scalar)];
+}
+
+export pure circuit secp256k1Group(
+  point: Secp256k1Point,
+  other: Secp256k1Point,
+  scalar: Secp256k1Scalar
+): [Secp256k1Point, Secp256k1Point, Secp256k1Point] {
+  return [ecAdd(point, other), ecMul(point, scalar), ecMulGenerator(scalar)];
+}
+
+export pure circuit secp256r1Group(
+  point: Secp256r1Point,
+  other: Secp256r1Point,
+  scalar: Secp256r1Scalar
+): [Secp256r1Point, Secp256r1Point, Secp256r1Point] {
+  return [ecAdd(point, other), ecMul(point, scalar), ecMulGenerator(scalar)];
+}
+
+export pure circuit curve25519Group(
+  point: Curve25519Point,
+  other: Curve25519Point,
+  scalar: Curve25519Scalar
+): [Curve25519Point, Curve25519Point, Curve25519Point] {
+  return [ecAdd(point, other), ecMul(point, scalar), ecMulGenerator(scalar)];
+}
