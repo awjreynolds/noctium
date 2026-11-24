@@ -3903,8 +3903,12 @@ private partial def lowerReadableStatement (programName path : String)
         pure lowered
       | .unit => throwErrorAt fieldPath "private stage requires a cell value"
     let body := body.observe value [source] [s!"typed staged private-state value: {field.key}"]
+    let stagedTerm := if field.signature.resultNominalField.isSome then
+      .cast .native value.term
+    else
+      value.term
     pure {body with
-      statements := body.statements ++ value.before ++ [.stage field.capability field.key type (.at (← spanValue statement) value.term)]
+      statements := body.statements ++ value.before ++ [.stage field.capability field.key type (.at (← spanValue statement) stagedTerm)]
       observation := {body.observation with
         privateStages := (body.observation.privateStages ++ [field.key]).eraseDups}}
   | `(noctium_witness_statement| if $condition:nlexpr then $yes:noctium_witness_statement*
