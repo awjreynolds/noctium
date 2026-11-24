@@ -167,13 +167,15 @@ theorem lowerExpr_admitted_preservesOutputCapacityFrame (value : Expr ty)
   | disclose span value supported valueFrame =>
     simpa only [Zkir.lowerExpr] using valueFrame
   | eq left right scalarType leftSupported rightSupported leftFrame rightFrame =>
-    simp only [Zkir.lowerExpr]
-    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
-    intro leftValue
-    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
-    intro rightValue
-    exact Zkir.ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
-      ⟨by decide, by decide, by decide⟩
+    cases scalarType
+    all_goals
+      simp only [Zkir.lowerExpr]
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+      intro leftValue
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+      intro rightValue
+      exact Zkir.ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+        ⟨by decide, by decide, by decide⟩
   | select condition yes no scalarType conditionSupported yesSupported noSupported
       conditionFrame yesFrame noFrame =>
     exact Zkir.lowerExpr_select_preservesOutputCapacityFrame condition yes no
@@ -218,6 +220,79 @@ private def packedInputHashCircuit : Circuit := {
 
 private def packedInputHashState : Zkir.LowerState :=
   ((Zkir.lowerBody (Passes.pruneCircuit packedInputHashCircuit)).run {}).2
+
+private def sha512ThreeChunkValue : Expr (.bytes 64) :=
+  .sha512 (length := 1) (.bytesLiteral 1 [0])
+
+private def sha512ThreeChunkField : Expr .native :=
+  .disclose {} (.bytesField sha512ThreeChunkValue 0)
+
+private def sha512ThreeChunkOutput : Output := {
+  name := "firstChunk"
+  ty := .native
+  value := sha512ThreeChunkField
+}
+
+private def sha512ThreeChunkCircuit : Circuit := {
+  name := "sha512ThreeChunkOutputFrame"
+  outputs := [sha512ThreeChunkOutput]
+}
+
+private def sha512ThreeChunkState : Zkir.LowerState :=
+  ((Zkir.lowerBody (Passes.pruneCircuit sha512ThreeChunkCircuit)).run {}).2
+
+theorem sha512ThreeChunk_actualEmission_counts :
+    sha512ThreeChunkState.next = 4 ∧
+      sha512ThreeChunkState.instructions.size = 4 ∧
+      sha512ThreeChunkState.outputDefinitions = 4 ∧
+      Native.opcode sha512ThreeChunkState.instructions[0]! = "sha512" ∧
+      Native.opcode sha512ThreeChunkState.instructions[1]! = "bytes_into_natives" ∧
+      Native.outputDefinitionsInInstruction sha512ThreeChunkState.instructions[1]! = 3 := by
+  decide +kernel
+
+/-- A concrete SHA-512 return exercises the three fresh SSA names emitted by
+one dynamic bytes_into_natives instruction. The frame uses the actual ZKIR
+lowering and its output slot count. -/
+theorem sha512ThreeChunk_has_actual_output_capacity_frame :
+    Zkir.OutputCapacityFrame {} sha512ThreeChunkState := by
+  let pruned := Passes.pruneCircuit sha512ThreeChunkCircuit
+  have digestFrame := Zkir.lowerBytes_sha512_preservesOutputCapacityFrame
+      (.bytesLiteral 1 [0])
+      (Zkir.lowerBytes_literal_preservesOutputCapacityFrame [0])
+  have projectedFrame := Zkir.lowerExpr_bytesField_preservesOutputCapacityFrame
+    sha512ThreeChunkValue 0 digestFrame
+  have fieldFrame : Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr sha512ThreeChunkField) := by
+    simpa [sha512ThreeChunkField, Zkir.lowerExpr] using projectedFrame
+  have bodyFrame := Zkir.lowerBody_preservesOutputCapacityFrame pruned
+    (by
+      intro condition member
+      simp [pruned, sha512ThreeChunkCircuit, Passes.pruneCircuit, pruneTrue] at member)
+    (by
+      intro output member
+      have outputEq : output = sha512ThreeChunkOutput := by
+        simpa [pruned, sha512ThreeChunkCircuit, Passes.pruneCircuit, pruneTrue] using member
+      subst output
+      simpa [Zkir.lowerReturnPreflight, sha512ThreeChunkOutput] using
+        (Zkir.pure_preservesOutputCapacityFrame ()))
+    (by
+      intro output member projections fieldsAccepted field fieldMember
+      have outputEq : output = sha512ThreeChunkOutput := by
+        simpa [pruned, sha512ThreeChunkCircuit, Passes.pruneCircuit, pruneTrue] using member
+      subst output
+      have projectionsEq : [sha512ThreeChunkField] = projections := by
+        have parsed : (Except.ok [sha512ThreeChunkField] : Except String (List (Expr .native))) =
+            .ok projections := by
+          change Except.ok [sha512ThreeChunkField] = Except.ok projections at fieldsAccepted
+          exact fieldsAccepted
+        exact Except.ok.inj parsed
+      have fieldIn : field ∈ [sha512ThreeChunkField] := by
+        simpa [projectionsEq] using fieldMember
+      have fieldEq : field = sha512ThreeChunkField := by simpa using fieldIn
+      subst field
+      exact fieldFrame)
+  simpa [sha512ThreeChunkState, pruned] using bodyFrame {}
+
+#guard (Zkir.lowerCircuit sha512ThreeChunkCircuit).isOk
 
 private theorem bytes32ReturnPreflight_preservesOutputCapacityFrame
     (name : String) (value : Expr (.bytes 32)) :
