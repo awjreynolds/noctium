@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit stringChoice(isLeft: Boolean, textValue: Opaque<"string">, boolValue: Boolean): Either<Opaque<"string">, Boolean> {
+  return isLeft
+    ? left<Opaque<"string">, Boolean>(textValue)
+    : right<Opaque<"string">, Boolean>(boolValue);
+}
+
+export pure circuit bytesChoice(isLeft: Boolean, boolValue: Boolean, bytesValue: Opaque<"Uint8Array">): Either<Boolean, Opaque<"Uint8Array">> {
+  return isLeft
+    ? left<Boolean, Opaque<"Uint8Array">>(boolValue)
+    : right<Boolean, Opaque<"Uint8Array">>(bytesValue);
+}
