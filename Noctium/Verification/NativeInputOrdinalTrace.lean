@@ -148,7 +148,7 @@ enforces an empty root input header. The producer's validated raw-input count
 therefore proves that the raw seed is empty. Source input types remain
 restricted to the nonforeign fragment; this theorem establishes names and
 visibility, not assignment value equality. -/
-theorem lowerEntrypoint_inputDescriptors_with_rewrites_of_checkedScalarProfile
+theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
     (rewrites : Backend.Zkir.Rewrites)
     (state : List StateDecl) (entry : Entrypoint)
     (json : Lean.Json) (program : NativeRelation.Program)
@@ -216,26 +216,5 @@ theorem lowerEntrypoint_inputDescriptors_with_rewrites_of_checkedScalarProfile
     exact validatedDescriptors
   exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
 
-/-- Default-rewrite specialization of the compiler-facing descriptor theorem. -/
-theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
-    (state : List StateDecl) (entry : Entrypoint)
-    (json : Lean.Json) (program : NativeRelation.Program)
-    (lowered : Backend.Zkir.lowerEntrypoint state entry = .ok json)
-    (decoded : NativeRelationJson.decode json = .ok program)
-    (inputSchema : ∀ expected,
-      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
-        .ok expected →
-      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
-    (checkedProfile : ∃ instructions : Array Lean.Json,
-      Backend.Native.arrayField json "instructions" = .ok instructions ∧
-      checkedScalarOpcodeProfile (instructions.toList.zipIdx) program.instructions = true) :
-    ∃ expected,
-      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
-        .ok expected ∧
-      expected.rawInputs = [] ∧
-      program.instructions.flatMap strictInstructionInputDescriptors =
-        expected.inputs.map expectedInputDescriptor := by
-  exact lowerEntrypoint_inputDescriptors_with_rewrites_of_checkedScalarProfile
-    .disabled state entry json program lowered decoded inputSchema checkedProfile
 
 end Noctium.Verification.NativeInputOrdinalTrace

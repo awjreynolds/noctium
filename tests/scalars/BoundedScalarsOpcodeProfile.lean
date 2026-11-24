@@ -200,10 +200,26 @@ theorem boundedApply_decodedInputDescriptors
       expected.rawInputs = [] ∧
       decodedProgram.instructions.flatMap strictInstructionInputDescriptors =
         expected.inputs.map expectedInputDescriptor :=
-  lowerEntrypoint_inputDescriptors_of_checkedScalarProfile BoundedScalars.state
+  lowerEntrypoint_inputDescriptors_of_checkedScalarProfile .disabled BoundedScalars.state
     selectedEntrypoint emittedProgram decodedProgram boundedApply_lowered boundedApply_decoded
     inputSchema ⟨emittedInstructions, boundedApply_instructionsParsed,
       boundedApply_checkedScalarOpcodeProfile⟩
+
+private def boundedApply_rangeInputDescriptorsMatch : _root_.Bool :=
+  match Zkir.lowerEntrypoint BoundedScalars.state selectedEntrypoint .rangeAndAssertions,
+      Native.expectedEntrypoint BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint) with
+  | .ok artifact, .ok expected =>
+    match Noctium.Verification.NativeRelationJson.decode artifact,
+        Native.arrayField artifact "instructions" with
+    | .ok relation, .ok instructions =>
+      checkedScalarOpcodeProfile instructions.toList.zipIdx relation.instructions &&
+        expected.rawInputs.isEmpty &&
+        relation.instructions.flatMap strictInstructionInputDescriptors ==
+          expected.inputs.map expectedInputDescriptor
+    | _, _ => Bool.false
+  | _, _ => Bool.false
+
+#guard boundedApply_rangeInputDescriptorsMatch
 
 /-- Exact decoding of production `BoundedScalars.apply` preserves each ordered
 Impact group boundary and width from its actual Impact plan. This is the first
