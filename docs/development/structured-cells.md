@@ -124,7 +124,10 @@ Typed state implementation revision: `fe73696b64e3d1170aab3e31a17f3ae97b799d6a`.
 
 ## Finite range loops
 
-Readable witness circuits accept half-open ranges with literal bounds.
+Readable witness circuits accept half-open ranges with literal bounds or
+parenthesized Lean terms that reduce to closed `Nat` values. For example, a Lean
+definition `def loopEnd (n : Nat) := n + 1` gives the same bounds in
+`for i in 1 ..< (loopEnd 2) do` as in the literal example below.
 
 ```lean
 for i in 1 ..< 3 do
@@ -137,7 +140,10 @@ end
 
 The [readable example](../../tests/ReadableFiniteRange.lean) uses nested ranges and passes the
 result to a ledger entrypoint. Loop-local values are scoped to the body.
-Structured programs use the same lowering through the Helpers API.
+A reusable Lean command macro may supply the two bound terms to the same
+readable loop body. The compiler resolves them during elaboration. Circuit
+inputs are outside the Lean bound scope. Structured programs use the same
+lowering through the Helpers API.
 
 ```lean
 .forRange "index" 1 4 [

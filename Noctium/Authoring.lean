@@ -199,8 +199,11 @@ scoped syntax "stage" ident ":=" nlexpr : noctium_witness_statement
 scoped syntax "output" ident (":" nltype)? ":=" nlexpr : noctium_witness_statement
 scoped syntax "if" nlexpr "then" noctium_witness_statement*
   ("else" noctium_witness_statement*)? "end" : noctium_witness_statement
-scoped syntax "for" ident "in" num "..<" num "do" noctium_witness_statement* "end" :
-  noctium_witness_statement
+declare_syntax_cat noctium_range_bound
+scoped syntax num : noctium_range_bound
+scoped syntax "(" term ")" : noctium_range_bound
+scoped syntax "for" ident "in" noctium_range_bound "..<" noctium_range_bound "do"
+  noctium_witness_statement* "end" : noctium_witness_statement
 scoped syntax "for" ident (":" nltype)? "in" nlexpr "do" noctium_witness_statement* "end" :
   noctium_witness_statement
 scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_circuit" ident
@@ -3567,6 +3570,22 @@ private def lowerReadablePattern (programName path : String) (exprState : Author
     nextLet := state.nextLet
     requiresOutputViews := _root_.Bool.true}
 
+private def readRangeBound (source : TSyntax `noctium_range_bound) : CommandElabM Nat :=
+  match source with
+  | `(noctium_range_bound| $value:num) => pure value.getNat
+  | `(noctium_range_bound| ($value:term)) => liftTermElabM do
+    let bound ← Term.withoutErrToSorry do
+      let bound ← Term.elabTermEnsuringType value (mkConst ``Nat)
+      Term.synthesizeSyntheticMVarsNoPostponing
+      instantiateMVars bound
+    unless !bound.hasFVar && !bound.hasMVar do
+      throwErrorAt value "range endpoint must be a closed Lean Nat expression"
+    let bound ← Meta.whnf bound
+    let some result := bound.nat? <|> bound.rawNatLit?
+      | throwErrorAt value "range endpoint must reduce to a Lean Nat numeral"
+    pure result
+  | _ => throwErrorAt source "expected a literal or parenthesized Lean Nat expression"
+
 private partial def lowerReadableStatement (programName path : String)
     (exprState : AuthoringExprState) (codecTerms : Array (TSyntax `term))
     (body : ReadableBody) (statement : TSyntax `noctium_witness_statement)
@@ -3709,8 +3728,10 @@ private partial def lowerReadableStatement (programName path : String)
       logicalAliases := body.logicalAliases
       statements := body.statements ++ conditionValue.before ++ [.evaluate term]
       helperProgram := lowered.iterationProgram}
-  | `(noctium_witness_statement| for $index:ident in $start:num ..< $stop:num do
-      $nested:noctium_witness_statement* end) => do
+  | `(noctium_witness_statement| for $index:ident in $start:noctium_range_bound ..<
+      $stop:noctium_range_bound do $nested:noctium_witness_statement* end) => do
+    let start ← readRangeBound start
+    let stop ← readRangeBound stop
     let indexName := index.getId.toString
     if body.env.any (·.1 == indexName) then
       throwErrorAt index s!"finite loop index '{indexName}' conflicts with an enclosing readable witness value"
@@ -3722,7 +3743,7 @@ private partial def lowerReadableStatement (programName path : String)
       loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
         exprState codecTerms loop child (fun _ => nested.toList.drop (ordinal + 1))
     pure {body with
-      statements := body.statements ++ [.forRange indexName start.getNat stop.getNat loop.statements]
+      statements := body.statements ++ [.forRange indexName start stop loop.statements]
       witnesses := loop.witnesses
       observation := loop.observation
       nextLet := loop.nextLet

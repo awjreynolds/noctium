@@ -934,7 +934,7 @@
       "layer": "language",
       "surface": "Statically bounded for loops",
       "noctiumStatus": "subset",
-      "notes": "Readable witness circuits and Helpers.Statement.forRange support half-open Native ranges with literal bounds, a 1024-iteration limit for general bodies and a weighted preflight expansion budget. Body types are checked even when empty. Loop returns reject. Generic Helpers ranges accept compile-time Nat expressions through the same bounds and normalization after specialization. Readable container loops share the checked iteration backend. Native Rust, browser WASM and the pinned Compact oracle agree on the selected byte iteration and invalid callback. The guarded range finalized on Ledger 9 with exact state and private writes committed after finality. Flat effect-free assertion ranges lower to ordered constraints and ledger requirements without one continuation per iteration. The focused checks cover 1025 and 1200 iterations, along with rejection of a nested range that exceeds the weighted budget. General range support remains narrower than the pinned Compact release. See tests/ReadableContainerLoop.lean and docs/development/structured-cells.md#finite-range-loops.",
+      "notes": "Readable witness circuits and Helpers.Statement.forRange support half-open Native ranges with literal bounds or parenthesized closed Lean Nat expressions, a 1024-iteration limit for general bodies and a weighted preflight expansion budget. Body types are checked even when empty. Loop returns reject. Generic Helpers ranges accept compile-time Nat expressions through the same bounds and normalization after specialization. One Lean macro instantiates the same readable loop at 1..3 and 2..2. The pinned Compact case and emitted Noctium witness plan agree on indices 1 and 2 in order and no calls for equal endpoints. Both reject runtime-derived bounds. Readable container loops share the checked iteration backend. Native Rust, browser WASM and the pinned Compact oracle agree on the selected byte iteration and invalid callback. The guarded range finalized on Ledger 9 with exact state and private writes committed after finality. Flat effect-free assertion ranges lower to ordered constraints and ledger requirements without one continuation per iteration. The focused checks cover 1025 and 1200 iterations, along with rejection of a nested range that exceeds the weighted budget. General range support remains narrower than the pinned Compact release. See tests/ReadableContainerLoop.lean and docs/development/structured-cells.md#finite-range-loops.",
       "source": [
         "reference"
       ],
@@ -944,7 +944,10 @@
       ],
       "observedEvidence": [
         "SEM",
-        "tests/StaticAssertionRanges.lean"
+        "tests/StaticAssertionRanges.lean",
+        "tests/ReadableFiniteRange.lean",
+        "tests/compact/ReadableGenericRange.compact",
+        "tests/compact/readable-generic-range.mjs"
       ],
       "equivalence": "unverified"
     },
