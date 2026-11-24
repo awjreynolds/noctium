@@ -90,6 +90,12 @@ pub enum ConstructorAction {
         #[serde(default)]
         guard: Option<Expr>,
     },
+    InsertRecordSet {
+        state: String,
+        fields: Vec<Expr>,
+        #[serde(default)]
+        guard: Option<Expr>,
+    },
     InsertRecordMap {
         state: String,
         key: Expr,
@@ -528,6 +534,17 @@ fn record_list_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRec
     Ok((slot, crate::checked_list_record_schema(schema)?))
 }
 
+fn record_set_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRecordSchema)> {
+    let slot = plan
+        .state
+        .iter()
+        .position(|declaration| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor record Set state"))?;
+    let schema = crate::ordinary_record_set_schema(plan, u32::try_from(slot)?)
+        .ok_or_else(|| anyhow!("constructor record insert requires a root record Set"))?;
+    Ok((slot, crate::checked_typed_record_schema(schema)?))
+}
+
 fn evaluate_map_insert(
     plan: &Plan,
     state: &str,
@@ -585,6 +602,13 @@ fn validate_ordered_action_targets(
             }
             ConstructorAction::PushRecordList { state, fields, .. } => {
                 let (_, schema) = record_list_slot(plan, state)?;
+                ensure!(
+                    fields.len() == schema.fields.len(),
+                    "record expression count mismatch"
+                );
+            }
+            ConstructorAction::InsertRecordSet { state, fields, .. } => {
+                let (_, schema) = record_set_slot(plan, state)?;
                 ensure!(
                     fields.len() == schema.fields.len(),
                     "record expression count mismatch"
@@ -721,6 +745,26 @@ fn apply_ordered_actions(
                 let values = crate::record_values_from_expressions(&schema, fields, environment)?;
                 let head = crate::aligned_record_value(&schema, &values)?;
                 slots = push_list_head(slots, slot, head)?;
+            }
+            ConstructorAction::InsertRecordSet {
+                state: set_name,
+                fields,
+                guard,
+            } => {
+                if !constructor_guard_enabled(
+                    guard.as_ref(), environment, "constructor record Set insert",
+                )? {
+                    continue;
+                }
+                let (slot, schema) = record_set_slot(plan, set_name)?;
+                let values = crate::record_values_from_expressions(&schema, fields, environment)?;
+                let key = crate::aligned_record_value(&schema, &values)?;
+                let Some(StateValue::Map(set)) = slots.get(slot) else {
+                    bail!("constructor record Set requires map storage");
+                };
+                slots = slots
+                    .insert(slot, StateValue::Map(set.insert(key, StateValue::Null)))
+                    .ok_or_else(|| anyhow!("constructor record Set slot is outside state"))?;
             }
             ConstructorAction::InsertRecordMap {
                 state: map_name,

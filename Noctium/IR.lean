@@ -983,6 +983,7 @@ inductive ConstructorAction where
   | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
       (guard : Option (Expr .bool))
   | pushRecordList (state : String) (fields : List LedgerFieldExpr) (guard : Option (Expr .bool))
+  | insertRecordSet (state : String) (fields : List LedgerFieldExpr) (guard : Option (Expr .bool))
   | counterIncrement (action : ConstructorCounterIncrement)
   | initializeCellFromCounter (state counter : String)
   deriving Repr
@@ -2078,6 +2079,24 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       | .error message => throw {span, message}
       | .ok _ => pure ()
       let checkedFields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+        | .ok checkedFields => pure checkedFields
+        | .error message => throw {span := destination.span, message}
+      match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
+      | .error message => throw {span := destination.span, message}
+      | .ok _ => pure ()
+      if let some guard := guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
+    | .insertRecordSet stateName fields guard => do
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor Set state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor inserts into unknown Set '{stateName}'"}
+      let .tree (.recordSet environment type) := destination.kind
+        | throw {span := destination.span, message :=
+          s!"constructor record insert requires a root record Set '{stateName}'"}
+      let checkedFields ← match LedgerValueType.recordSetKeyFields environment type with
         | .ok checkedFields => pure checkedFields
         | .error message => throw {span := destination.span, message}
       match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
