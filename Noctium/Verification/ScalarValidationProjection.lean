@@ -2,6 +2,8 @@ import Noctium.Backend.NativeProducer
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarParserAgreement
 import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.ScalarValidationMeaning
+import Noctium.Verification.ScalarValidationArithmeticLoop
 
 namespace Noctium.Verification.ScalarValidationProjection
 
@@ -32,6 +34,20 @@ admits a field projection. Other native facts impose no scalar interpretation. -
 def StateScalarProjection (hash : Hash) (inputs witness : Assignment) (state : State) : Prop :=
   ∀ identifier fact, (identifier, fact) ∈ state.definitions →
     FactScalarType fact.valueType → ScalarProjection hash inputs witness fact (witness identifier)
+
+/-- Native producer meaning and typing jointly imply the partial scalar
+projection invariant for every definition in the state. -/
+theorem stateScalarProjection_of_meaning_and_nativeDefinitions
+    {hash : Hash} {inputs witness : Assignment} {state : State}
+    (meaning : ScalarValidationMeaning.StateMeaning hash inputs witness state)
+    (definitions : ScalarValidationArithmeticLoop.NativeDefinitions state) :
+    StateScalarProjection hash inputs witness state := by
+  intro identifier fact member scalarType
+  have native : fact.valueType = NativeValueType.native := definitions identifier fact member
+  have meaning := meaning identifier fact member
+  rw [native] at scalarType
+  cases scalarType
+  exact ⟨meaning.term, meaning.bound, meaning.comparison⟩
 
 private theorem scalar_le (number : Nat) : (scalar number).val ≤ number := Nat.mod_le _ _
 
