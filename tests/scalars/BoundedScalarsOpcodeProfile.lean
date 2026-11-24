@@ -186,6 +186,46 @@ theorem boundedApply_nativeValidationTrace :
   exact ⟨plan, expected, rawInputs, seed, final, lowered, expectedParsed, validated,
     driverFacts, boundedApply_nativeDefinitionTrace⟩
 
+private def isOldRead (requirement : Native.InputRequirement) : _root_.Bool :=
+  requirement.identifier == "%input_old" && decide (requirement.ty = .uint 510) &&
+    decide (requirement.canonicalJubjubScalar = Bool.false)
+
+private def boundedApplyScalarInputs : _root_.Bool :=
+  match Native.expectedEntrypoint BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint) with
+  | .ok expected =>
+    expected.rawInputs.isEmpty && expected.inputs.all (fun item => !item.ty.isForeign) &&
+      expected.inputs.any isOldRead
+  | .error _ => Bool.false
+
+private theorem boundedApplyScalarInputs_checked : boundedApplyScalarInputs = Bool.true := by
+  decide +kernel
+
+/-- A satisfying assignment for the emitted fixture has the source bound of
+the ledger read. The bound comes from the final producer input check. -/
+theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
+    (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
+    (assignment "%input_old").val ≤ 510 := by
+  obtain ⟨_, expected, _, seed, final, _, schedule, _, driver, trace⟩ :=
+    boundedApply_nativeValidationTrace
+  have checked := boundedApplyScalarInputs_checked
+  simp only [boundedApplyScalarInputs, schedule, Bool.and_eq_true] at checked
+  obtain ⟨⟨emptyHeader, scalarInputs⟩, readFound⟩ := checked
+  have empty : expected.rawInputs = [] := List.isEmpty_iff.mp emptyHeader
+  cases driver.emptyRawSeed empty
+  have schema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false := by
+    intro requirement inList
+    simpa using List.all_eq_true.mp scalarInputs requirement inList
+  obtain ⟨meaning, _, _⟩ := accepted_loop_meaning_at_steps
+    (Noctium.Verification.ScalarValidationMeaning.empty_meaning hash assignment assignment)
+    empty_nativeDefinitions schema (fun _ _ => rfl)
+    (nativeDefinitionTrace_acceptedMeaningSteps trace holds) driver.instructionTrace
+  obtain ⟨requirement, inList, fieldChecks⟩ := List.any_eq_true.mp readFound
+  simp only [isOldRead, Bool.and_eq_true, decide_eq_true_eq] at fieldChecks
+  obtain ⟨⟨name, ty⟩, ordinary⟩ := fieldChecks
+  have bound := driver.inputBound meaning (List.mem_append_right _ inList)
+    (schema requirement inList) ordinary
+  simpa [eq_of_beq name, ty, Native.sourceMaximum] using bound
+
 /-- The decoded input rows of the accepted fixture preserve source visibility,
 names and order for the strict scalar input fragment. Its empty producer seed
 is derived from the emitted header. -/

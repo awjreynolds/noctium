@@ -1435,6 +1435,22 @@ def checkBound (state : State) (term : Term) (maximum : Nat) : Except String Uni
     | _ => state.definitions.any fun (_, fact) => fact.term == term && fact.maximum ≤ maximum
   ensure bounded "typed source range/Boolean requirement is absent from native constraints"
 
+/-- Validate the source type and required constraints for a bound input. -/
+def checkInputRequirement (state : State) (input : InputRequirement) : Except String Unit := do
+  ensure (!input.ty.isBytes) "Bytes32 must be expanded into UInt8 native inputs"
+  match input.ty with
+  | .foreign kind => do
+    let value ← operand state input.identifier
+    ensure (value.valueType == .foreign kind) "foreign input lost its source type"
+    requireForeignValid value
+  | _ => do
+    let maximum := if input.canonicalJubjubScalar then Jubjub.scalarOrder - 1
+      else sourceMaximum input.ty
+    checkBound state (.input input.identifier) maximum
+  if input.canonicalJubjubScalar then
+    ensure (state.canonicalScalarInputs.contains input.identifier)
+      "typed JubjubScalar input lacks its canonical reduce/encode equality bridge"
+
 /-- Validate a generated Native-scalar program against an independently derived
 typed statement/schedule. This does not authenticate a raw caller's Expected. -/
 def validate (expected : Expected) (program : Json) : Except String Unit := do
@@ -1470,19 +1486,7 @@ def validate (expected : Expected) (program : Json) : Except String Unit := do
   ensure (state.groupCount == expected.groups.length) "missing native transcript activity group"
   ensure (state.assertionCount == expected.assertions.length) "missing or reordered typed source assertion"
   for input in expected.rawInputs ++ expected.inputs do
-    ensure (!input.ty.isBytes) "Bytes32 must be expanded into UInt8 native inputs"
-    match input.ty with
-    | .foreign kind => do
-      let value ← operand state input.identifier
-      ensure (value.valueType == .foreign kind) "foreign input lost its source type"
-      requireForeignValid value
-    | _ => do
-      let maximum := if input.canonicalJubjubScalar then Jubjub.scalarOrder - 1
-        else sourceMaximum input.ty
-      checkBound state (.input input.identifier) maximum
-    if input.canonicalJubjubScalar then
-      ensure (state.canonicalScalarInputs.contains input.identifier)
-        "typed JubjubScalar input lacks its canonical reduce/encode equality bridge"
+    checkInputRequirement state input
   for pair in state.requiredCoordinateEqualities do
     ensure (state.establishedCoordinateEqualities.contains pair)
       "Jubjub FromCoordinates lacks exact Native x/y roundtrip constraints"
