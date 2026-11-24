@@ -127,5 +127,5 @@ open Noctium
   | .ok _ => Bool.false
 
 #guard match (LedgerValueType.set (.bytes 31)).validate Capabilities.source with
-  | .error message => message == "only Bytes32 is supported as a ledger map key"
-  | .ok _ => Bool.false
+  | .ok _ => Bool.true
+  | .error _ => Bool.false

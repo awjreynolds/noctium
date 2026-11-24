@@ -136,10 +136,10 @@ example : (Expr.reverseBytes (Expr.reverseBytes ascendingBytes64)).eval
 #guard match (Ty.bytes 1025).validate Capabilities.source with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false
-#guard match ({name := "unsupportedByteKey", state := [
+#guard match ({name := "bytes31MapKey", state := [
     {name := "lookup", kind := .map (.bytes 31) .native}]} : Contract).validate Capabilities.source with
-  | .error _ => _root_.Bool.true
-  | .ok _ => _root_.Bool.false
+  | .ok _ => _root_.Bool.true
+  | .error _ => _root_.Bool.false
 #guard match ({name := "bytes32MapKey", state := [
     {name := "lookup", kind := .map (.bytes 32) .native}]} : Contract).validate Capabilities.source with
   | .ok _ => _root_.Bool.true

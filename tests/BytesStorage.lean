@@ -112,9 +112,9 @@ private def bytesStorageEntry : Entrypoint :=
   | .error diagnostic => diagnostic.message == "byte string length exceeds the maximum of 1024"
   | .ok _ => Bool.false
 
-#guard match ({name := "unsupportedBytesKey", state := [
-    {name := "value", kind := .map (.bytes 31) .native}]} : Contract).validate Capabilities.source with
-  | .error diagnostic => diagnostic.message == "only Bytes32 is supported as a ledger map key"
+#guard match ({name := "tooWideBytesKey", state := [
+    {name := "value", kind := .map (.bytes 1025) .native}]} : Contract).validate Capabilities.source with
+  | .error diagnostic => diagnostic.message == "byte string length exceeds the maximum of 1024"
   | .ok _ => Bool.false
 
 private def bytesStorageUndisclosedWrite : Entrypoint := {
