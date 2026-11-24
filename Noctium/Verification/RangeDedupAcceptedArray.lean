@@ -145,6 +145,11 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
         .ok (.testEq left right output))
       (holds : Instruction.Holds hash witness (.testEq left right output)) :
       AcceptedMeaningStep hash witness raw
+  | logicalNot {value : Operand} {output : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "not")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not value output))
+      (holds : Instruction.Holds hash witness (.not value output)) :
+      AcceptedMeaningStep hash witness raw
   | copy {source destination : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "copy")
       (decoded : NativeRelationJson.decodeInstruction raw =
@@ -607,6 +612,38 @@ private theorem acceptedMeaningStep_preserves
       subst identifier
       exact factMeaning
     have meaningNext := defineResult_meaning meaning outputMeaning defined
+    have factNative := combine_native combined
+    have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
+    exact ⟨meaningNext, definitionsNext⟩
+  | @logicalNot value output opcode decoded holds =>
+    obtain ⟨factInput, fact, valueAccepted, valueNative, booleanBound,
+      combined, defined⟩ := accepted_not_components definitions opcode accepted
+    have fields := decoded_not_argument opcode decoded
+    have valueMeaning := argument_decoded_meaning meaning valueAccepted fields.1
+    have booleanEvidence : value.read witness = zero ∨ value.read witness = one := by
+      rcases holds.1 with isZero | isOne
+      · exact Or.inl isZero
+      · exact Or.inr isOne
+    have resultMeaning :
+        interpret hash inputs (.unary "not" factInput.term) = some (witness output) := by
+      have termMeaning : interpret hash inputs factInput.term = some (value.read witness) := by
+        simp only [valueMeaning.term]
+      rw [interpret_not, termMeaning]
+      cases booleanEvidence with
+      | inl isZero => simp [isZero, holds.2, bit]
+      | inr isOne => simp [isOne, holds.2, bit]
+    have resultBound : (witness output).val ≤ 1 := by
+      rw [holds.2]
+      cases booleanEvidence with
+      | inl isZero => simp [isZero, one]
+      | inr isOne => simp [isOne, zero, one]
+    have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+      combine_meaning combined resultMeaning resultBound
+    have meaningNext := defineResult_meaning meaning (by
+      intro identifier parsed
+      have same : identifier = output := Except.ok.inj (parsed.symm.trans fields.2)
+      subst identifier
+      exact factMeaning) defined
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
     exact ⟨meaningNext, definitionsNext⟩

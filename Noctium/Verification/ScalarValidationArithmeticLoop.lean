@@ -117,6 +117,33 @@ theorem accepted_testEq_components {expected : Expected} {state next : State}
   exact ⟨left, right, _, leftAccepted, rightAccepted, leftNative, rightNative,
     combined, defined⟩
 
+theorem accepted_not_components {expected : Expected} {state next : State}
+    {raw : Json}
+    (nativeDefinitions : NativeDefinitions state)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "not")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    ∃ value fact,
+      argument state raw "a" = .ok value ∧ value.valueType = .native ∧
+      value.maximum ≤ 1 ∧
+      combine (.unary "not" value.term) 1 [value] = .ok fact ∧
+      defineResult state raw fact = .ok next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, support, fields, accepted⟩
+  have opcodeEq : opcode = "not" := Except.ok.inj (op.symm.trans opcodeParsed)
+  subst opcode
+  simp [bind_ok] at accepted
+  rcases accepted with ⟨_, value, valueAccepted, nativeCheck, booleanCheck, reducer⟩
+  have valueNative := argument_native_of_state nativeDefinitions valueAccepted
+  rcases nativeCheck with ⟨⟨⟩, _nativeAccepted⟩
+  rcases booleanCheck with ⟨⟨⟩, booleanAccepted⟩
+  have boolBound : value.maximum ≤ 1 := by
+    by_cases bound : value.maximum ≤ 1
+    · exact bound
+    · simp [Backend.Native.requireBoolean, Backend.Native.ensure, bound] at booleanAccepted
+  rcases reducer with ⟨fact, combined, defined⟩
+  exact ⟨value, fact, valueAccepted, valueNative, boolBound, combined, defined⟩
+
 theorem combine_native {term : Backend.Native.Term} {maximum : Nat}
     {children : List Fact} {fact : Fact}
     (accepted : combine term maximum children = .ok fact) :
