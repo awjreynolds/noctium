@@ -6137,8 +6137,8 @@
       "id": "C-STDLIB-MERKLETREEPATHROOTNOLEAFHASH",
       "layer": "standard-library",
       "surface": "merkleTreePathRootNoLeafHash",
-      "noctiumStatus": "subset",
-      "notes": "A reusable Lean source helper degrades the Bytes32 leaf and folds the canonical path entries at a declared depth. The depth-two native ZKIR 3.2.1 fixture matches the pinned Compact root field and returns its canonical MerkleTreeDigest wrapper. Path directions remain private through fixed arithmetic and the source explicitly releases the root. The K9 proof still verifies over the exact same native relation bytes. The Lean checker rejects an undisclosed root, and the typed provider rejects malformed directions and path lengths. Broader depth and host coverage remain open.",
+      "noctiumStatus": "equivalent",
+      "notes": "The static Lean fold matches the pinned Compact helper. Both degrade the prehashed Bytes32 leaf and hash each ordered sibling pair according to its checked Bool direction. Native and Compact cases agree at depths zero, two and three, with the canonical MerkleTreeDigest return. The typed host rejects malformed directions, path lengths and nominal IDs. The unchanged depth-two K9 relation proves and verifies with official parameters, rejects a forged direction, and binds the root to its return commitment. Source disclosure is explicit.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6152,12 +6152,16 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
+        "tests/compact/MerklePathRootNoLeafHash.compact",
         "Noctium/Helpers/MerklePath.lean",
         "tests/MerklePathRootNoLeafHash.lean",
         "tests/compact/merkle-path-root-no-leaf-hash.mjs",
         "runtime/tests/merkle_path_types.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-NATIVETOKEN",

@@ -29,8 +29,42 @@ private def merkleLeafWire : Helpers.Wire.Codec := {
 private def merklePathRootNoLeafHashProgram : Helpers.Program :=
   Helpers.MerklePath.rootNoLeafHashProgram merklePathId 2
 
+private def merklePathZeroId : DeclId := "MerklePathRootNoLeafHashZero.Path"
+
+private def merklePathZeroWire : Helpers.Wire.Codec := {
+  payload := MerklePath.pathType merklePathZeroId
+  frameBytes := 32
+  composites := MerklePath.environment {} merklePathZeroId (.bytes 32) 0
+}
+
+private def merklePathZeroProgram : Helpers.Program :=
+  Helpers.MerklePath.rootNoLeafHashProgram merklePathZeroId 0
+
+private def merklePathThreeId : DeclId := "MerklePathRootNoLeafHashThree.Path"
+
+private def merklePathThreeWire : Helpers.Wire.Codec := {
+  payload := MerklePath.pathType merklePathThreeId
+  frameBytes := 131
+  composites := MerklePath.environment {} merklePathThreeId (.bytes 32) 3
+}
+
+private def merklePathThreeProgram : Helpers.Program :=
+  Helpers.MerklePath.rootNoLeafHashProgram merklePathThreeId 3
+
 #guard
   let helper := Helpers.MerklePath.rootNoLeafHashProgram merklePathId 3
+  match helper.declarations with
+  | [declaration] => (Helpers.checkDeclaration helper declaration).isOk
+  | _ => Bool.false
+
+#guard
+  let helper := merklePathZeroProgram
+  match helper.declarations with
+  | [declaration] => (Helpers.checkDeclaration helper declaration).isOk
+  | _ => Bool.false
+
+#guard
+  let helper := merklePathThreeProgram
   match helper.declarations with
   | [declaration] => (Helpers.checkDeclaration helper declaration).isOk
   | _ => Bool.false
@@ -57,8 +91,42 @@ noctium_witness_circuit rejectsUndisclosedMerklePathRoot
   output root := currentRoot
 end
 
+noctium_witness proofPathZero() : Payload merklePathZeroWire
+
+noctium_witness_circuit merklePathZeroRootInputs using merklePathZeroWire, merkleLeafWire
+    with merklePathZeroProgram where
+  let proof := witness proofPathZero()
+  let encodedLeaf := encode(merkleLeafWire, field(proof, leaf))
+  let path := field(proof, path)
+  let currentRoot := invoke(merklePathRootNoLeafHash, [encodedLeaf, path])
+  output root := disclose(currentRoot)
+end
+
+noctium_witness proofPathThree() : Payload merklePathThreeWire
+
+noctium_witness_circuit merklePathThreeRootInputs using merklePathThreeWire, merkleLeafWire
+    with merklePathThreeProgram where
+  let proof := witness proofPathThree()
+  let encodedLeaf := encode(merkleLeafWire, field(proof, leaf))
+  let path := field(proof, path)
+  let currentRoot := invoke(merklePathRootNoLeafHash, [encodedLeaf, path])
+  output root := disclose(currentRoot)
+end
+
 noctium_contract MerklePathRootNoLeafHashSource where
   entry digest uses merklePathRootInputs where
+    return root
+  end
+end
+
+noctium_contract MerklePathRootNoLeafHashZeroSource where
+  entry digestZero uses merklePathZeroRootInputs where
+    return root
+  end
+end
+
+noctium_contract MerklePathRootNoLeafHashThreeSource where
+  entry digestThree uses merklePathThreeRootInputs where
     return root
   end
 end
