@@ -3,3 +3,24 @@ pragma language_version 0.28;
 export circuit negate(value: Boolean): Boolean {
   return !value;
 }
+
+export circuit truthTable(left: Boolean, right: Boolean): [Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean] {
+  return [false, true, !left, left && right, left || right, left == right, left != right];
+}
+
+export circuit convert(flag: Boolean, field: Field, amount: Uint<8>): [Field, Uint<1>, Boolean, Boolean, Boolean] {
+  return [flag as Field, flag as Uint<1>, field as Boolean, amount as Boolean, default<Boolean>];
+}
+
+export circuit narrow(flag: Boolean): Uint<0..1> {
+  return flag as Uint<0..1>;
+}
+
+export circuit lazy(andEnabled: Boolean, orEnabled: Boolean, nestedOuter: Boolean,
+                    nestedInner: Boolean, amount: Uint<8>): [Boolean, Boolean, Boolean] {
+  return [
+    andEnabled && ((amount as Uint<1>) == 1),
+    orEnabled || ((amount as Uint<1>) == 1),
+    nestedOuter && (nestedInner || ((amount as Uint<1>) == 1))
+  ];
+}

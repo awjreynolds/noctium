@@ -102,19 +102,20 @@ fn lazy_boolean_inputs(
     or_enabled: bool,
     nested_outer: bool,
     nested_inner: bool,
+    amount: u8,
 ) -> BTreeMap<String, serde_json::Value> {
     BTreeMap::from([
         ("andEnabled".into(), json!(and_enabled)),
         ("orEnabled".into(), json!(or_enabled)),
         ("nestedOuter".into(), json!(nested_outer)),
         ("nestedInner".into(), json!(nested_inner)),
-        ("amount".into(), json!("2")),
+        ("amount".into(), json!(amount.to_string())),
     ])
 }
 
 #[test]
 #[ignore = "requires fresh LazyBoolean outputs in NOCTIUM_LAZY_BOOLEAN_DIR"]
-fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
+fn lazy_boolean_gates_skip_inactive_uint1_narrowing() -> anyhow::Result<()> {
     let directory =
         PathBuf::from(env::var_os("NOCTIUM_LAZY_BOOLEAN_DIR").expect("NOCTIUM_LAZY_BOOLEAN_DIR"));
     let plan: Plan =
@@ -128,7 +129,7 @@ fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
 
     let inactive_narrowing = prepare(
         &plan,
-        &lazy_boolean_inputs(false, true, false, false),
+        &lazy_boolean_inputs(false, true, false, false, 2),
         &initial,
         parameters,
         address,
@@ -155,7 +156,7 @@ fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
     );
     let nested_short_circuit = prepare(
         &plan,
-        &lazy_boolean_inputs(false, true, true, true),
+        &lazy_boolean_inputs(false, true, true, true, 2),
         &initial,
         parameters,
         address,
@@ -165,6 +166,23 @@ fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
     assert_eq!(
         nested_short_circuit.returns_json()["nestedResult"],
         json!(true)
+    );
+
+    let valid_narrowing = prepare(
+        &plan,
+        &lazy_boolean_inputs(true, false, true, false, 1),
+        &initial,
+        parameters,
+        address,
+    )?;
+    check(&valid_narrowing, &circuit)?;
+    assert_eq!(
+        valid_narrowing.returns_json(),
+        BTreeMap::from([
+            ("andResult".into(), json!(true)),
+            ("orResult".into(), json!(true)),
+            ("nestedResult".into(), json!(true)),
+        ])
     );
 
     let mut active_and = inactive_narrowing;
@@ -187,7 +205,7 @@ fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
         assert!(
             prepare(
                 &plan,
-                &lazy_boolean_inputs(and_enabled, or_enabled, nested_outer, nested_inner),
+                &lazy_boolean_inputs(and_enabled, or_enabled, nested_outer, nested_inner, 2),
                 &initial,
                 parameters,
                 address,
@@ -196,6 +214,7 @@ fn lazy_boolean_gates_skip_inactive_uint1_narrowing() {
             "active UInt1 narrowing must reject amount 2"
         );
     }
+    Ok(())
 }
 
 #[test]
