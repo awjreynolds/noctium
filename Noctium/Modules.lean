@@ -78,6 +78,10 @@ structure TypeTemplate where
   source : Noctium.Helpers.Specialization.Program
   value : GenericType
   nominalUInt? : Option NominalUIntType := none
+  /-- Checked nominal Field aliases attached to flat record fields. Paths name
+  fields in the specialized record and identities use their canonical source
+  names. -/
+  nominalFieldPaths : List (List String × String) := []
   span : SourceSpan := {}
   deriving Repr
 
@@ -87,6 +91,7 @@ structure TypeInfo where
   value : Types.CompositeType
   environment : Types.CompositeEnv
   nominalUInt? : Option NominalUIntType := none
+  nominalFieldPaths : List (List String × String) := []
   deriving Repr, BEq, DecidableEq
 
 instance : Inhabited TypeInfo := ⟨{value := .unit, environment := {}}⟩
@@ -552,6 +557,26 @@ private def validateNominalUInt (span : SourceSpan) (value : Types.CompositeType
       resource span "module nominal UInt bound"
     unless value == .scalar (.uint nominalUInt.maximum) do
       fail span "module nominal UInt identity does not match its scalar type"
+
+private def validateNominalFieldPaths (span : SourceSpan)
+    (value : Types.CompositeType) (environment : Types.CompositeEnv)
+    (fields : List (List String × String)) : Except Diagnostic Unit := do
+  unless uniqueStrings (fields.map (fun (path, _) => String.intercalate "." path)) do
+    fail span "duplicate module nominal Field path"
+  for (path, identity) in fields do
+    unless Types.validDeclId identity do
+      fail span s!"invalid module nominal Field identity '{identity}'"
+    let [name] := path | fail span "module nominal Field paths must name one flat record field"
+    unless Types.validFieldName name do
+      fail span s!"invalid module nominal Field path '{name}'"
+    let .structure typeId := value
+      | fail span "module nominal Field paths require a flat named record"
+    let some declaration := environment.structures.find? (·.id == typeId)
+      | fail span s!"module nominal Field record '{typeId}' is missing"
+    let some field := declaration.fields.find? (·.name == name)
+      | fail span s!"module nominal Field path '{name}' does not exist"
+    unless field.type == .scalar .native do
+      fail span s!"module nominal Field path '{name}' must have Native physical type"
 
 private def validateDefinition (limits : Limits) (definition : Definition) :
     Except Diagnostic Nat := do
@@ -1227,8 +1252,11 @@ mutual
         let info : TypeInfo := {
           value := specialized.value
           environment := specialized.environment
-          nominalUInt? := template.nominalUInt?}
+          nominalUInt? := template.nominalUInt?
+          nominalFieldPaths := template.nominalFieldPaths}
         liftE (validateNominalUInt template.span info.value info.nominalUInt?)
+        liftE (validateNominalFieldPaths template.span info.value info.environment
+          info.nominalFieldPaths)
         resolvedMember := {resolvedMember with typeInfo? := some info}
       resolvedMembers := resolvedMembers ++ [resolvedMember]
     let mut sourceExports : List (Nat × ResolvedSourceExport) := []
