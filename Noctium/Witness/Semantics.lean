@@ -36,7 +36,7 @@ def witnessOccurrences : Term → List (String × String)
   | .andThen left right | .orElse left right | .index left right =>
       witnessOccurrences left ++ witnessOccurrences right
   | .curve _ arguments | .bytes _ arguments => arguments.flatMap witnessOccurrences
-  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .bytesAt value _
+  | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value | .bytesAt value _
   | .at _ value | .project value _ => witnessOccurrences value
   | .select condition yes no | .ite condition yes no =>
       witnessOccurrences condition ++ witnessOccurrences yes ++ witnessOccurrences no
@@ -389,7 +389,7 @@ private def eligibilityChildren : EligibilityNode → Option (List EligibilityNo
     | .unit | .native _ | .bool _ | .uint _ _ | .ref _ => some []
     | .binary _ left right | .eq left right | .poseidon2 _ left right | .index left right =>
         some [.term left, .term right]
-    | .cast _ value | .castNominalUInt _ value | .disclose _ value | .at _ value
+    | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .at _ value
     | .project value _ => some [.term value]
     | .select condition yes no => some [.term condition, .term yes, .term no]
     | .witnessCall _ _ arguments | .call _ arguments | .composite _ arguments =>
@@ -1349,6 +1349,9 @@ mutual
       | .castNominalUInt target value => do
           let value ← evalTerm fuel program context grants provider scope environment value
           liftResult (castRuntime context (.uint target.maximum) value)
+      | .castNominalField _ value => do
+          let value ← evalTerm fuel program context grants provider scope environment value
+          liftResult (castRuntime context .native value)
       | .disclose _ value | .at _ value =>
           evalTerm fuel program context grants provider scope environment value
       | .select condition yes no => do
@@ -3758,6 +3761,15 @@ private theorem evalTerm_successSim_step (fuel : Nat) (program : Program)
       · exact termSim scope environment value
       · intro result
         exact successSim_liftResult (castRuntime context (.uint target.maximum) result)
+        | castNominalField _ value =>
+            simp only [evalTerm]
+            apply successSim_bind
+            · exact termSafe scope environment value
+            · intro _
+              exact recordSafe_liftResult _
+            · exact termSim scope environment value
+            · intro result
+              exact successSim_liftResult (castRuntime context .native result)
   | disclose span value =>
       simp only [evalTerm]
       exact termSim scope environment value
@@ -5499,6 +5511,16 @@ private theorem evalTerm_failureSim_step (fuel : Nat) (program : Program)
       · exact termSuccess scope environment value
       · intro result
         exact failureSim_liftResult (castRuntime context (.uint target.maximum) result)
+  | castNominalField _ value =>
+      simp only [evalTerm]
+      apply failureSim_bind
+      · exact termSafe scope environment value
+      · intro _
+        exact recordSafe_liftResult _
+      · exact termFailure scope environment value
+      · exact termSuccess scope environment value
+      · intro result
+        exact failureSim_liftResult (castRuntime context .native result)
   | disclose span value | «at» span value =>
       simp only [evalTerm]
       exact termFailure scope environment value

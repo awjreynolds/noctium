@@ -1,0 +1,53 @@
+{"targetProfile":
+ {"zkir": "3.2.1",
+  "zkStdlib": "2.4.0",
+  "schemaVersion": 1,
+  "qualification": "selected-native-subset-qualified",
+  "proofServer": "9.0.0",
+  "onchainRuntime": "4.0.1",
+  "nativeSource":
+  {"tag": "zkir-3.2.1",
+   "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+   "repository": "https://github.com/midnightntwrk/midnight-zkir",
+   "reportedCliVersion": "midnight-zkir 3.2.0",
+   "declaredCrateVersion": "3.2.0"},
+  "name": "midnight-ledger-9-zkir-3.2.1",
+  "ledger": "9.1.0.1",
+  "circuits": "7.3.0"},
+ "target": "midnight-ledger-9-zkir-3.2.1",
+ "state": [],
+ "schemaVersion": 1,
+ "returns":
+ [{"visibility": "public",
+   "type": "Native",
+   "name": "returned",
+   "expression":
+   {"value": {"tag": "reference", "name": "value"},
+    "type": "Native",
+    "tag": "cast"}}],
+ "reads": [],
+ "operations": [],
+ "nativeCircuitFile":
+ "NominalField.NominalFieldHelperContract.explicitInput.zkir",
+ "guards": [],
+ "entrypoint": "explicitInput",
+ "contractName": "NominalField.NominalFieldHelperContract",
+ "circuit":
+ {"outputs":
+  [{"visibility": "public",
+    "type": "Native",
+    "name": "value",
+    "expression":
+    {"tag": "lets",
+     "body": {"tag": "reference", "name": "$helper2"},
+     "bindings":
+     [["$helper0", {"tag": "reference", "name": "raw"}],
+      ["$helper1",
+       {"value": {"tag": "reference", "name": "$helper0"},
+        "type": "Native",
+        "tag": "cast"}],
+      ["$helper2", {"tag": "reference", "name": "$helper1"}]]}}],
+  "name": "NominalField.acceptsExplicitFieldHelperCast",
+  "inputs": [{"visibility": "private", "type": "Native", "name": "raw"}],
+  "file": "NominalField.acceptsExplicitFieldHelperCast.zkir",
+  "constraints": []}}

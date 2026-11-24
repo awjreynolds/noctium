@@ -1215,7 +1215,7 @@ private partial def collectWitnessTerms (providers : List Helpers.WitnessSignatu
   | .boolXor left right | .eq left right | .poseidon2 _ left right
   | .andThen left right | .orElse left right | .index left right =>
     collectWitnessTerms providers right (collectWitnessTerms providers left result)
-  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value
+  | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value
   | .at _ value | .project value _ | .bytesAt value _ => collectWitnessTerms providers value result
   | .select condition yes no | .ite condition yes no =>
     collectWitnessTerms providers no
