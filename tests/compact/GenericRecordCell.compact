@@ -37,12 +37,6 @@ export circuit inspect(): Ledger {
   return cell_inspect();
 }
 
-export circuit update(enabled: Boolean, nextIssued: Field, nextSpent: Field,
-                      nextTag: Bytes<4>): Ledger {
-  const next = Ledger {
-    issued: disclose(nextIssued),
-    spent: disclose(nextSpent),
-    tag: disclose(nextTag),
-  };
-  return cell_update(disclose(enabled), next);
+export circuit update(enabled: Boolean, next: Ledger): Ledger {
+  return cell_update(disclose(enabled), disclose(next));
 }

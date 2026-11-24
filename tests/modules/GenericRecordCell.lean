@@ -32,11 +32,10 @@ def genericRecordCellUpdateProgram : Program := {
   declarations := [{
     id := ⟨0, 0⟩
     name := "unit"
+    parameters := [⟨"T", .type⟩]
     values := [
       ("enabled", .bool),
-      ("nextIssued", .native),
-      ("nextSpent", .native),
-      ("nextTag", .bytes (.literal 4))
+      ("next", .parameter "T")
     ]
     result := .unit
     body := [.return]
@@ -46,9 +45,7 @@ def genericRecordCellUpdateProgram : Program := {
     target := ⟨0, 0⟩
     inputs := [
       {name := "enabled", type := .bool, visibility := .private},
-      {name := "nextIssued", type := .native, visibility := .private},
-      {name := "nextSpent", type := .native, visibility := .private},
-      {name := "nextTag", type := .bytes (.literal 4), visibility := .private}
+      {name := "next", type := .parameter "T", visibility := .private}
     ]
   }]
 }
@@ -68,14 +65,6 @@ private def genericRecordCellEntrypointMember (id : Nat) (name : String) : Membe
   visibility := .«public»
 }
 
-private def genericRecordCellTagInputs : List String :=
-  (List.range 4).map fun index => s!"nextTag.{index}"
-
-private def genericRecordCellTag : Expr (.bytes 4) :=
-  let packed := genericRecordCellTagInputs.zipIdx.foldl (fun total (name, index) =>
-    Expr.add total (Expr.mul (.ref name) (.native (256 ^ index)))) (.native 0)
-  .sliceBytes (.toBytes32 packed) 0 4
-
 def genericRecordCellModule : Definition := {
   parameters := [⟨"T", .type⟩]
   members := [
@@ -90,6 +79,7 @@ def genericRecordCellModule : Definition := {
       sourceExport? := some {
         program := `genericRecordCellUpdateProgram
         exportName := "update"
+        arguments := [.typeParameter "T"]
       }},
     genericRecordCellEntrypointMember 3 "inspect",
     genericRecordCellEntrypointMember 4 "update"
@@ -105,13 +95,9 @@ def genericRecordCellModule : Definition := {
       «member» := 4
       name := "update"
       circuit := .localMember 2
-      callInputs := ["enabled", "nextIssued", "nextSpent"] ++ genericRecordCellTagInputs
+      callInputs := ["enabled"]
       effects := [{
-        effect := .writeRecordCell (.localMember 0) [
-          ("issued", .mk .native (.disclose {} (.ref "nextIssued" : Expr .native))),
-          ("spent", .mk .native (.disclose {} (.ref "nextSpent" : Expr .native))),
-          ("tag", .mk (.bytes 4) (.disclose {} genericRecordCellTag))
-        ]
+        effect := .writeRecordCellInput (.localMember 0) "next" (disclosed := Bool.true)
         guard := some (.disclose {} (.ref "enabled" : Expr .bool))
       }]
       recordCellReturns := [{name := "result", state := .localMember 0}]
@@ -179,41 +165,64 @@ private def genericRecordCellWrongFieldsRequest : Request := {
   }]
 }
 
-private def genericRecordCellWrongTypeEnvironment : Types.CompositeEnv := {
+private def genericRecordCellWrongInputEnvironment : Types.CompositeEnv := {
   structures := [{
-    id := "GenericRecordCell.Ledger"
+    id := "GenericRecordCell.OtherLedger"
     fields := [
       {name := "issued", type := .scalar .native},
-      {name := "spent", type := .scalar .bool},
+      {name := "spent", type := .scalar .native},
       {name := "tag", type := .bytes 4}
     ]
   }]
 }
 
-def genericRecordCellWrongLayoutRoot : Definition := {
-  genericRecordCellRoot with
-  imports := genericRecordCellRoot.imports.map fun item =>
-    {item with arguments := [
-      .checkedTypeValue (.structure "GenericRecordCell.Ledger")
-        genericRecordCellWrongTypeEnvironment
-    ]}
+def genericRecordCellWrongUpdateProgram : Program := genericRecordCellUpdateProgram
+
+def genericRecordCellWrongInputModule : Definition := {
+  genericRecordCellModule with
+  members := genericRecordCellModule.members.map fun item =>
+    if item.id == 2 then
+      {item with sourceExport? := some {
+        program := `genericRecordCellWrongUpdateProgram
+        exportName := "update"
+        arguments := [.checkedTypeValue (.structure "GenericRecordCell.OtherLedger")
+          genericRecordCellWrongInputEnvironment]
+      }}
+    else item
 }
 
-private def genericRecordCellWrongLayoutRegistry : Registry := {
+noctium_module from genericRecordCellWrongInputModule
+
+def genericRecordCellWrongInputRoot : Definition := {
+  genericRecordCellRoot with
+  imports := genericRecordCellRoot.imports.map fun item =>
+    {item with target := `genericRecordCellWrongInputModule}
+}
+
+noctium_module from genericRecordCellWrongInputRoot
+
+private def genericRecordCellWrongInputRegistry : Registry := {
   modules := genericRecordCellRegistry.modules ++ [
-    {sourceName := `genericRecordCellWrongLayoutRoot,
-      definition := genericRecordCellWrongLayoutRoot}
+    {sourceName := `genericRecordCellWrongInputModule,
+      definition := genericRecordCellWrongInputModule},
+    {sourceName := `genericRecordCellWrongInputRoot,
+      definition := genericRecordCellWrongInputRoot}
   ]
 }
 
-private def genericRecordCellWrongLayoutRequest : Request := {
-  genericRecordCellRequest with sourceName := `genericRecordCellWrongLayoutRoot
+private def genericRecordCellWrongInputRequest : Request := {
+  genericRecordCellRequest with sourceName := `genericRecordCellWrongInputRoot
 }
 
-private def genericRecordCellWrongLayoutPlan : Except Diagnostic ModuleContractPlan := do
-  let expansion ← Modules.expand genericRecordCellWrongLayoutRegistry
-    genericRecordCellWrongLayoutRequest.sourceName genericRecordCellWrongLayoutRequest.arguments
-  expansion.contractPlan expansion.root genericRecordCellWrongLayoutRequest.constructorInputs
+private def genericRecordCellWrongInputSpecialization : Except Diagnostic SpecializedModule := do
+  let expansion ← Modules.expand genericRecordCellWrongInputRegistry
+    genericRecordCellWrongInputRequest.sourceName genericRecordCellWrongInputRequest.arguments
+  let plan ← expansion.contractPlan expansion.root
+    genericRecordCellWrongInputRequest.constructorInputs
+  plan.specializeWithSources {} [
+    (`genericRecordCellInspectProgram, genericRecordCellInspectProgram),
+    (`genericRecordCellWrongUpdateProgram, genericRecordCellWrongUpdateProgram)
+  ]
 
 #guard match LedgerValueType.cellRecordFields genericRecordCellLedgerEnvironment
     (.structure "GenericRecordCell.Ledger") with
@@ -236,12 +245,37 @@ private def genericRecordCellWrongLayoutPlan : Except Diagnostic ModuleContractP
     | none => Bool.false
   | .error _ => Bool.false
 
+#guard match GenericRecordCell.entrypoints.find? (·.name == "update") with
+  | some update =>
+    let viewMatches := match update.callInputViews with
+      | [view] =>
+        view.name == "next" && view.fields == [
+          ("next.issued", .native),
+          ("next.spent", .native),
+          ("next.tag.0", .uint 255),
+          ("next.tag.1", .uint 255),
+          ("next.tag.2", .uint 255),
+          ("next.tag.3", .uint 255)
+        ]
+      | _ => Bool.false
+    update.callInputs == [
+      "enabled",
+      "next.issued",
+      "next.spent",
+      "next.tag.0",
+      "next.tag.1",
+      "next.tag.2",
+      "next.tag.3"
+    ] && viewMatches
+  | none => Bool.false
+
 #guard match genericRecordCellPlanFor genericRecordCellWrongFieldsRequest with
   | .error diagnostic => diagnostic.message.contains "module record Cell is missing field 'spent'"
   | .ok _ => Bool.false
 
-#guard match genericRecordCellWrongLayoutPlan with
-  | .error diagnostic => diagnostic.message.contains "module record Cell write field type mismatch"
+#guard match genericRecordCellWrongInputSpecialization with
+  | .error diagnostic =>
+    diagnostic.message.contains "module record Cell input 'next' does not match the checked Cell layout"
   | .ok _ => Bool.false
 
 -- Making an input a call argument does not authorize its use as a public write guard.

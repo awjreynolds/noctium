@@ -43,11 +43,11 @@ fn update_inputs(
 ) -> BTreeMap<String, Json> {
     let mut inputs = BTreeMap::from([
         ("enabled".into(), json!(enabled)),
-        ("nextIssued".into(), json!(next_issued)),
-        ("nextSpent".into(), json!(next_spent)),
+        ("next.issued".into(), json!(next_issued)),
+        ("next.spent".into(), json!(next_spent)),
     ]);
     for (index, byte) in next_tag.into_iter().enumerate() {
-        inputs.insert(format!("nextTag.{index}"), json!(byte.to_string()));
+        inputs.insert(format!("next.tag.{index}"), json!(byte.to_string()));
     }
     inputs
 }
@@ -111,6 +111,24 @@ fn generic_record_cell_constructor_and_guarded_write_round_trip() -> Result<()> 
     let after_change = run(&inspect, &no_inputs, &changed.after.state)?;
     assert_result(&after_change, "8", "99", [128, 0, 255, 42]);
     assert_eq!(after_change.after.state, changed.after.state);
+
+    let mut invalid_byte = update_inputs(true, "8", "99", [128, 0, 255, 42]);
+    invalid_byte.insert("next.tag.0".into(), json!("256"));
+    let invalid_execution = prepare(
+        &update.0,
+        &invalid_byte,
+        &changed.after.state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )
+    .and_then(|execution| {
+        check(&execution, &update.1)?;
+        Ok(())
+    });
+    assert!(
+        invalid_execution.is_err(),
+        "a byte input outside 0..=255 must reject"
+    );
 
     let mut wrong_width = constructor_inputs;
     wrong_width.insert(

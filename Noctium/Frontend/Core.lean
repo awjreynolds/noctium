@@ -114,19 +114,6 @@ private structure CallInterfaceSourceRefs where
 inductive ContractInterface where
   | declared
 
-private partial def callViewLeafTypes : Types.Layout → List Ty
-  | .unit => []
-  | .scalar .nativeField => [.native]
-  | .scalar .booleanField => [.bool]
-  | .scalar (.boundedUnsignedField maximum) | .scalar (.enumTagField maximum) => [.uint maximum]
-  | .scalar .byteField => [.uint 255]
-  | .curve type => List.replicate type.nativeCallFieldCount .native
-  | .tuple items => items.flatMap callViewLeafTypes
-  | .structure _ fields => fields.flatMap (callViewLeafTypes ∘ Prod.snd)
-  | .vector length element => (List.replicate length (callViewLeafTypes element)).flatten
-  | .bytes length _ => List.replicate length (.uint 255)
-  | .enumeration _ _ maximum payloadLeaves _ _ => .uint maximum :: List.replicate payloadLeaves .native
-
 initialize callInterfaceRegistry : SimplePersistentEnvExtension CallInterface (Array CallInterface) ←
   registerSimplePersistentEnvExtension {
     addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
@@ -2313,7 +2300,7 @@ private unsafe def checkGeneratedContract (name : Name)
           let checked ← match Types.checkedLayout {} view.environment view.type entrypoint.span with
             | .ok checked => pure checked
             | .error diagnostic => throwError diagnostic.message
-          pure (view.name, view.fields.zip (callViewLeafTypes checked.value))
+          pure (view.name, view.fields.zip (Helpers.callViewLeafTypes checked.value))
         modifyEnv fun env => callInterfaceRegistry.addEntry env {
           contract := name, operation := entrypoint.name
           argumentFields := entrypoint.callArguments.map fun input => (input.name, input.ty)
@@ -6519,7 +6506,8 @@ unsafe def registerWitnessCircuit (name : Syntax) (sourceName : Name) (exportNam
       let checked ← match Types.checkedLayout {} program.composites input.type input.span with
         | .ok checked => pure checked
         | .error diagnostic => throwError diagnostic.message
-      let fields := (Helpers.sourceLeafPaths checked.value input.name).zip (callViewLeafTypes checked.value)
+      let fields := (Helpers.sourceLeafPaths checked.value input.name).zip
+        (Helpers.callViewLeafTypes checked.value)
       pure (CallInputView.mk input.name fields)
     modifyEnv fun env => circuitRegistry.addEntry env {
       declName := fullName,
@@ -6670,7 +6658,7 @@ unsafe def rebuildModuleBuild (buildInfo : ModuleBuildInfo) : CommandElabM Modul
       circuit
       signatureArtifact}]
     circuitValues := circuitValues ++ [circuit]
-  let contract ← match plan.assembleContract buildInfo.contractName.toString circuitValues with
+  let contract ← match specialized.plan.assembleContract buildInfo.contractName.toString circuitValues with
     | .ok value => pure value
     | .error diagnostic => failDisclosure diagnostic *> throwError "module contract assembly failed"
   match contract.validate moduleCapabilities with
