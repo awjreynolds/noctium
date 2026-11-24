@@ -637,6 +637,7 @@ jobs:
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
+            Noctium.Verification.ScalarValidationProjectionComparison \
             Noctium.Verification.GuardedEffectEvaluation \
             Noctium.Verification.GuardedEffectPrefix \
             Noctium.Verification.GenericStateAdmissionBridge
