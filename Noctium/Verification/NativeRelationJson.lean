@@ -1,4 +1,5 @@
 import Lean
+import Noctium.Backend.NativeProducer
 import Noctium.Verification.NativeRelation
 
 namespace Noctium.Verification.NativeRelationJson
@@ -75,6 +76,62 @@ def decodeImmediate (text : String) : Except String Nat := do
 
 def validIdentifier (name : String) : Bool :=
   name.startsWith "%" && name.length > 1 && name.utf8ByteSize ≤ 1024
+
+private theorem digitChar_byteSize (digit : Nat) (single : digit < 10) :
+    (String.singleton digit.digitChar).utf8ByteSize = 1 := by
+  have decimal : ∀ digit : Fin 10,
+      (String.singleton digit.val.digitChar).utf8ByteSize = 1 := by decide
+  exact decimal ⟨digit, single⟩
+
+private theorem repr_byteSize_eq_length (index : Nat) :
+    index.repr.utf8ByteSize = index.repr.length := by
+  induction index using Nat.strongRecOn with
+  | ind index smaller =>
+    by_cases single : index < 10
+    · rw [Nat.repr_of_lt single, digitChar_byteSize index single, String.length_singleton]
+    · have quotient : index / 10 < index := Nat.div_lt_self (by omega) (by decide)
+      rw [Nat.repr_of_ge (by omega), String.utf8ByteSize_append, String.length_append,
+        smaller _ quotient, digitChar_byteSize _ (by omega), String.length_singleton]
+
+/-- Generated numeric SSA names fit the identifier limit whenever the
+index uses at most eight decimal digits. -/
+theorem generatedIdentifier_valid (index : Nat) (bounded : index < 10 ^ 8) :
+    validIdentifier s!"%v{index}" = true := by
+  have digits : index.repr.length ≤ 8 :=
+    (Nat.length_repr_le_iff (by decide)).mpr bounded
+  have size : index.repr.utf8ByteSize ≤ 8 := by simpa [repr_byteSize_eq_length] using digits
+  change validIdentifier ("%v" ++ index.repr) = true
+  unfold validIdentifier
+  have starts : ("%v" ++ index.repr).startsWith "%" = true := by
+    apply String.startsWith_string_iff.mpr
+    rw [String.toList_append]
+    have head : "%v".toList = ['%', 'v'] := by decide
+    have marker : "%".toList = ['%'] := by decide
+    rw [head, marker]
+    exact ⟨'v' :: index.repr.toList, rfl⟩
+  have length : ("%v" ++ index.repr).length > 1 := by
+    rw [String.length_append]
+    have head : "%v".length = 2 := by decide
+    rw [head]
+    omega
+  have bytes : ("%v" ++ index.repr).utf8ByteSize ≤ 1024 := by
+    rw [String.utf8ByteSize_append]
+    have head : "%v".utf8ByteSize = 2 := by decide
+    rw [head]
+    omega
+  simp only [starts, length, bytes, decide_true, Bool.true_and]
+
+/-- Generated SSA identifiers fit the decoder's 1024-byte limit at every
+index permitted by the native output-slot capacity. -/
+theorem generatedIdentifier_fits_output_capacity (index : Nat)
+    (bounded : index < Noctium.Backend.Native.maxInstructions *
+      Noctium.Backend.Native.maxVectorLength) :
+    validIdentifier s!"%v{index}" = true := by
+  apply generatedIdentifier_valid
+  have capacity : Noctium.Backend.Native.maxInstructions *
+      Noctium.Backend.Native.maxVectorLength < 10 ^ 8 := by
+    decide
+  omega
 
 def decodeOperand (value : Json) : Except String Operand := do
   let text ← value.getStr?

@@ -41,6 +41,58 @@ private def packedInputHashCircuit : Circuit := {
 private def packedInputHashState : Zkir.LowerState :=
   ((Zkir.lowerBody (Passes.pruneCircuit packedInputHashCircuit)).run {}).2
 
+private def publicSecpPointInput : Input := {
+  name := "point"
+  ty := .foreign (.point .secp256k1)
+  visibility := .public
+}
+
+private def publicSecpPointReturnCircuit : Circuit := {
+  name := "publicSecpPointReturn"
+  inputs := [publicSecpPointInput]
+  outputs := [{
+    name := "pointResult"
+    ty := .foreign (.point .secp256k1)
+    value := .ref "point"
+  }]
+}
+
+private def publicSecpPointReturnState : Zkir.LowerState :=
+  ((Zkir.lowerBody (Passes.pruneCircuit publicSecpPointReturnCircuit)).run {}).2
+
+private def publicSecpPointInputPrefixState : Zkir.LowerState :=
+  (Zkir.lowerPublicForeignInputPrefix publicSecpPointInput (.point .secp256k1)).run {} |>.2
+
+theorem publicSecpPointInputPrefix_has_output_capacity_frame :
+    Zkir.OutputCapacityFrame {} publicSecpPointInputPrefixState := by
+  simpa [publicSecpPointInputPrefixState, publicSecpPointInput] using
+    (Zkir.lowerPublicForeignInputPrefix_preservesOutputCapacityFrame "point"
+      (.point .secp256k1) {}) {}
+
+set_option maxHeartbeats 0 in
+theorem publicSecpPointReturn_counts_and_reuses_encoding :
+    publicSecpPointReturnCircuit.outputs.map (·.nativeReturnFieldCount) = [5] ∧
+      publicSecpPointReturnState.next = 5 ∧
+      publicSecpPointReturnState.instructions.size = 9 ∧
+      publicSecpPointReturnState.outputDefinitions = 6 ∧
+      (publicSecpPointReturnState.instructions.toList.map Native.opcode).count "encode" = 1 ∧
+      Native.outputDefinitionsInInstruction publicSecpPointReturnState.instructions[1]! = 5 := by
+  decide +kernel
+
+set_option maxHeartbeats 0 in
+theorem publicSecpPointReturn_has_actual_output_capacity_frame :
+    Zkir.OutputCapacityFrame {} publicSecpPointReturnState := by
+  have counts := publicSecpPointReturn_counts_and_reuses_encoding
+  rcases counts with ⟨_, next, _, definitions, _, _⟩
+  constructor
+  · change 0 ≤ publicSecpPointReturnState.next
+    rw [next]
+    omega
+  · change 0 + (publicSecpPointReturnState.next - 0) ≤
+      publicSecpPointReturnState.outputDefinitions
+    rw [next, definitions]
+    omega
+
 private def publicFixedBytesInputPrefixState (length : Nat) : Zkir.LowerState :=
   (Zkir.lowerPublicFixedBytesInputPrefix
     {name := "preimage", ty := .bytes length, visibility := .«public»}).run {} |>.2
@@ -170,6 +222,8 @@ theorem cachedTwoLimbHash_names_fit_producerCapacity :
 
 #guard accepted (Zkir.lowerCircuit packedInputHashCircuit)
 
+#guard accepted (Zkir.lowerCircuit publicSecpPointReturnCircuit)
+
 theorem packedInputHash_has_producerCapacity {program : Lean.Json}
     (produced : Zkir.lowerCircuit packedInputHashCircuit = .ok program) :
     packedInputHashState.outputDefinitions ≤ Native.maxInstructions * Native.maxVectorLength :=
@@ -180,6 +234,19 @@ theorem packedInputHash_names_fit_producerCapacity :
       packedInputHashState.next ≤ Native.maxInstructions * Native.maxVectorLength :=
   fun produced => lowerCircuit_output_budget_of_frame packedInputHashCircuit produced
     packedInputHash_has_actual_output_capacity_frame
+
+theorem publicSecpPointReturn_has_producerCapacity {program : Lean.Json}
+    (produced : Zkir.lowerCircuit publicSecpPointReturnCircuit = .ok program) :
+    publicSecpPointReturnState.outputDefinitions ≤
+      Native.maxInstructions * Native.maxVectorLength :=
+  lowerCircuit_outputDefinitions_budget publicSecpPointReturnCircuit produced
+
+theorem publicSecpPointReturn_names_fit_producerCapacity :
+    ∀ {program : Lean.Json},
+      Zkir.lowerCircuit publicSecpPointReturnCircuit = .ok program →
+      publicSecpPointReturnState.next ≤ Native.maxInstructions * Native.maxVectorLength :=
+  fun produced => lowerCircuit_output_budget_of_frame publicSecpPointReturnCircuit produced
+    publicSecpPointReturn_has_actual_output_capacity_frame
 
 /-- The producer's output-slot bound applies to the exact ledger body.
 The instruction cap stays a separate bound. This checks default lowering. -/
