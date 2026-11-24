@@ -6,6 +6,7 @@ open scoped Noctium
 namespace ModuleTypes
 
 noctium_field_type Amount := Field
+noctium_field_type Count := Field
 
 end ModuleTypes
 
@@ -125,6 +126,84 @@ noctium_module_type LocalCount from importedModuleTypesRequest with "selected", 
 noctium_module_type AlsoCount from importedModuleTypesRequest with "selected", "AlsoCount"
 noctium_module_type LocalFlag from importedModuleTypesRequest with "selected", "LocalFlag"
 noctium_module_type LocalKey from importedModuleTypesRequest with "selected", "LocalKey"
+
+namespace ModuleTypes
+
+noctium_module_type ImportedKey from importedModuleTypesRequest with "selected", "LocalKey"
+
+noctium_circuit importedKeySetInputs where
+  private amount : Amount
+  public adding : Bool
+  public removing : Bool
+end
+
+noctium_circuit wrongImportedKeySetInputs where
+  private amount : Count
+  public adding : Bool
+  public removing : Bool
+end
+
+noctium_contract ImportedKeySet where
+  set members : ImportedKey
+
+  entry update uses importedKeySetInputs where
+    member members[fields(disclose(amount))] as presentBefore
+    when adding insert members[fields(disclose(amount))]
+    member members[fields(disclose(amount))] as presentAfterInsert
+    when removing remove members[fields(disclose(amount))]
+    member members[fields(disclose(amount))] as presentAfterRemove
+    return before : Bool := presentBefore
+    return afterInsert : Bool := presentAfterInsert
+    return afterRemove : Bool := presentAfterRemove
+  end
+end
+
+#guard match ImportedKeySet.state with
+  | [{name := "members", kind := .tree (.recordSet environment type), ..}] =>
+    match LedgerValueType.recordSetKeyFields environment type with
+    | .ok [("amount", .native)] => _root_.Bool.true
+    | _ => _root_.Bool.false
+  | _ => _root_.Bool.false
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_contract RejectWrongImportedKeySet where
+  set members : ImportedKey
+
+  entry update uses wrongImportedKeySetInputs where
+    member members[fields(disclose(amount))] as present
+    when adding insert members[fields(disclose(amount))]
+    when removing remove members[fields(disclose(amount))]
+  end
+end
+
+end ModuleTypes
+
+namespace ImportedTypeConsumer
+
+noctium_circuit inspectInputs where
+  public amount : ModuleTypes.Amount
+end
+
+noctium_contract SealedKeySet where
+  sealed set members : ModuleTypes.ImportedKey
+
+  constructor(seed : ModuleTypes.Amount) where
+    insert members[fields(seed)]
+  end
+
+  entry inspect uses inspectInputs where
+    member members[fields(amount)] as present
+    return isPresent : Bool := present
+  end
+end
+
+#guard (SealedKeySet.validate Capabilities.source).isOk
+#guard match SealedKeySet.state with
+  | [{kind := .tree (.recordSet ..), «sealed» := isSealed, ..}] => isSealed
+  | _ => _root_.Bool.false
+
+end ImportedTypeConsumer
 
 /- error: module view 'selected' does not expose 'Secret' -/
 #guard_msgs (substring := true) in
