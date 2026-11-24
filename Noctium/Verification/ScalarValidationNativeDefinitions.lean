@@ -85,6 +85,21 @@ theorem accepted_constrainBits_nativeDefinitions {expected : Expected} {state ne
   rcases accepted with ⟨bits, bitsParsed, refined⟩
   exact refine_nativeDefinitions nativeDefinitions refined
 
+theorem accepted_constrainBoolean_nativeDefinitions {expected : Expected} {state next : State}
+    {raw : Json}
+    (nativeDefinitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨valueText, valueParsed, refined⟩
+  exact refine_nativeDefinitions nativeDefinitions refined
+
 theorem accepted_assert_nativeDefinitions
     {expected : Backend.Native.Expected} {state next : Backend.Native.State}
     {raw : Json}
@@ -231,6 +246,9 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | bits (value : Operand) (width : Nat)
       (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits") :
       SupportedScalarOpcode raw (.bits value width)
+  | boolean (value : Operand)
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean") :
+      SupportedScalarOpcode raw (.boolean value)
   | lessThan (a b : Operand) (width : Nat) (output : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "less_than") :
       SupportedScalarOpcode raw (.lessThan a b width output)
@@ -347,6 +365,8 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
       exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
   | bits _ _ opcode =>
       exact accepted_constrainBits_nativeDefinitions nativeDefinitions opcode accepted
+  | boolean _ opcode =>
+      exact accepted_constrainBoolean_nativeDefinitions nativeDefinitions opcode accepted
   | lessThan _ _ _ _ opcode =>
       exact accepted_lessThan_nativeDefinitions nativeDefinitions opcode accepted
   | assertion _ opcode => exact accepted_assert_nativeDefinitions nativeDefinitions opcode accepted

@@ -40,6 +40,7 @@ def supportedScalarOpcodeProfile (raw : Json) : Instruction → Bool
   | .mul _ _ _ => rawHasOpcode raw "mul"
   | .neg _ _ => rawHasOpcode raw "neg"
   | .bits _ _ => rawHasOpcode raw "constrain_bits"
+  | .boolean _ => rawHasOpcode raw "constrain_to_boolean"
   | .lessThan _ _ _ _ => rawHasOpcode raw "less_than"
   | .assert _ => rawHasOpcode raw "assert"
   | .testEq _ _ _ => rawHasOpcode raw "test_eq"
@@ -48,7 +49,7 @@ def supportedScalarOpcodeProfile (raw : Json) : Instruction → Bool
   | .equal _ _ => rawHasOpcode raw "constrain_eq"
   | .impact _ _ => rawHasOpcode raw "impact"
   | .output _ => rawHasOpcode raw "output"
-  | .boolean _ | .not _ _ | .select _ _ _ _ | .hash _ _ => false
+  | .not _ _ | .select _ _ _ _ | .hash _ _ => false
 
 /-- A successful check yields the corresponding producer-tagged opcode proof. -/
 theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction}
@@ -75,6 +76,9 @@ theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction
   | bits value width =>
     change rawHasOpcode raw "constrain_bits" = true at checked
     exact .bits value width (rawHasOpcode_eq checked)
+  | boolean value =>
+    change rawHasOpcode raw "constrain_to_boolean" = true at checked
+    exact .boolean value (rawHasOpcode_eq checked)
   | lessThan a b width output =>
     change rawHasOpcode raw "less_than" = true at checked
     exact .lessThan a b width output (rawHasOpcode_eq checked)
@@ -113,7 +117,6 @@ theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction
   | output values =>
     change rawHasOpcode raw "output" = true at checked
     exact .output values (rawHasOpcode_eq checked)
-  | boolean _ => simp [supportedScalarOpcodeProfile] at checked
   | not _ _ => simp [supportedScalarOpcodeProfile] at checked
   | select _ _ _ _ => simp [supportedScalarOpcodeProfile] at checked
   | hash _ _ => simp [supportedScalarOpcodeProfile] at checked
@@ -141,6 +144,9 @@ theorem profile_of_supportedScalarOpcode {raw : Json} {instruction : Instruction
     exact rawHasOpcode_of_eq opcode
   | bits value width opcode =>
     change rawHasOpcode raw "constrain_bits" = true
+    exact rawHasOpcode_of_eq opcode
+  | boolean value opcode =>
+    change rawHasOpcode raw "constrain_to_boolean" = true
     exact rawHasOpcode_of_eq opcode
   | lessThan a b width output opcode =>
     change rawHasOpcode raw "less_than" = true
