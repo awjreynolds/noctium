@@ -560,7 +560,8 @@ fn collection_map_key(key: &CollectionValueSchema, value: &Json) -> Result<Align
     match key {
         CollectionValueSchema::Scalar { ty, name } => {
             let value = crate::input_value(name, value).map_err(|_| INVALID_ARGUMENT)?;
-            crate::aligned(&value, crate::key_alignment(ty)).map_err(|_| INVALID_ARGUMENT)
+            crate::aligned(&value, crate::key_alignment(ty).as_ref())
+                .map_err(|_| INVALID_ARGUMENT)
         }
         CollectionValueSchema::Record(schema) => {
             let values = crate::record_values_from_json(schema, value)
@@ -679,7 +680,7 @@ fn collection_page(
             | CollectionSchema::Set {
                 key: CollectionValueSchema::Scalar { ty, name },
             } => {
-                let key = crate::decode_state_cell(key, name, crate::key_alignment(ty))
+                let key = crate::decode_state_cell(key, name, crate::key_alignment(ty).as_ref())
                     .map_err(|_| INVALID_ARGUMENT)?;
                 let order = key_order(&key)?;
                 (order, key.public_json())

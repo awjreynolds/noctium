@@ -1740,11 +1740,6 @@ theorem validateFabHashValues_members (caps : Capabilities) (env : TypeEnv)
 def PathKey.validate (caps : Capabilities) (env : TypeEnv) : PathKey → Except String Unit
   | .mk _ value => value.validate caps env
 
-private def validateLedgerMapKeyType (keyTy : Ty) : Except String Unit := do
-  match keyTy with
-  | .bytes length => unless length == 32 do throw "only Bytes32 is supported as a ledger map key"
-  | _ => pure ()
-
 private def validateStateScalar (caps : Capabilities) (ty : Ty) : Except String Unit := do
   if ty.isOpaqueString then
     throw "OpaqueString is only supported as a root Bytes32 tree Map value"
@@ -1768,11 +1763,9 @@ where
         throw "MerkleTree depth must be between 2 and 32"
     | _, .scalar ty => validateStateScalar caps ty
     | mapDepth, .map keyTy value => do
-      validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
       nested (mapDepth + 1) value
     | _, .set keyTy => do
-      validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
     | _, .recordSet environment type => do
       let fields ← LedgerValueType.recordSetKeyFields environment type
@@ -2378,10 +2371,6 @@ private def validateCallArguments (inputs : List Input) (names : List String)
 /-- Validate state names, typed reads, guards and writes in execution order. -/
 def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entrypoint) : Except Diagnostic Unit := do
   for decl in decls do
-    if let .map keyTy _ := decl.kind then
-      match validateLedgerMapKeyType keyTy with
-      | .error message => throw {span := decl.span, message}
-      | .ok _ => pure ()
     match decl.kind with
     | .tree schema =>
       match schema.validateCellRoot caps with
@@ -3164,10 +3153,6 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
           throw {span := decl.span, message := "u128 cell alignment requires UInt 128"}
       | _, _ =>
         throw {span := decl.span, message := "cell alignment applies only to UInt 128 cells"}
-    if let .map keyTy _ := decl.kind then
-      match validateLedgerMapKeyType keyTy with
-      | .error message => throw {span := decl.span, message}
-      | .ok _ => pure ()
     let types := match decl.kind with
       | .cell ty => [ty]
       | .map keyTy valueTy => [keyTy, valueTy]

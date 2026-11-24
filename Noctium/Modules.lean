@@ -976,8 +976,7 @@ private def resolveModuleMapKeyType (limits : Limits) (span : SourceSpan)
     let some moduleType := types.lookup name
       | fail span s!"unbound Noctium module type parameter '{name}'"
     match moduleType.value with
-    | .bytes 32 => pure (.bytes 32)
-    | .bytes _ => fail span "module Map byte keys only support Bytes32"
+    | .bytes length => pure (.bytes length)
     | _ => resolveStateScalar limits span types naturals value
   | _ => resolveStateScalar limits span types naturals value
 
@@ -1574,7 +1573,6 @@ private def resolveModuleMapKey (span : SourceSpan) (keyType : Ty) (key : Module
     validText span name
     match keyType with
     | .bytes length => do
-      unless length == 32 do fail span "module Map byte keys only support Bytes32"
       let environment : Types.CompositeEnv := {}
       let type : Types.CompositeType := .bytes length
       let checked ← (Types.checkedLayout Types.defaultLimits environment type span).mapError
