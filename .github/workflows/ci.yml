@@ -598,6 +598,8 @@ jobs:
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness \
             Noctium.Verification.ScalarValidationTypedBool \
+            Noctium.Verification.NativeTypedBoolRelation \
+            Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.GenericStateAdmissionBridge
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
