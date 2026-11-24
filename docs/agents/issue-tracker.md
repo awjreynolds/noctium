@@ -42,6 +42,26 @@ that boundary or calls for new evidence. Acquire live parameters and prepare
 key provenance while the build runs. Keep the exact finalized identifiers
 with the sanitized receipt.
 
+For changes in shared lowering or elaboration, run the existing fixture for
+the closest affected caller as well as the new fixture. Use the
+[interpreted fixture path](../../CONTRIBUTING.md#focused-local-fixture-generation)
+when the check needs compiler outputs and has no native executable dependency.
+When placing a compiler ticket in the ready queue, note the source variants
+that share its implementation. For example, check sealed and unsealed state
+in one constructor slice when both use the same path. Keep separate slices
+when the variants need different lowering or ledger behavior.
+
 ## Pull requests
 
 Pull requests are not a request surface for triage.
+
+Keep parallel implementation in separate worktrees. Sequence merges that touch
+the same compiler path or change the same evidence. Reuse the recorded check
+at integration when the diff and its relevant inputs still match. Combine
+dependent proof steps in one PR when they share a ticket and only their
+composed result satisfies its next checkpoint.
+
+Let a running compiler CI check on `main` finish. GitHub keeps one pending run
+for the newer changes while agents continue working. Check the failure on the
+revision that ran and prioritize a shared regression over merging more changes
+through the affected compiler path.
