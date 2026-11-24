@@ -43,10 +43,6 @@ private structure SourceScalarType where
   nominalField : Option String := none
   deriving Repr, BEq, DecidableEq
 
-structure NominalFieldType where
-  name : String
-  deriving Repr, BEq, DecidableEq
-
 structure ObservationInput where
   name : String
   type : String
@@ -125,13 +121,6 @@ initialize noctiumWitnessResultCodecRegistry : SimplePersistentEnvExtension
 
 initialize noctiumWitnessParameterCodecRegistry : SimplePersistentEnvExtension
     Noctium.Authoring.WitnessParameterCodec (Array Noctium.Authoring.WitnessParameterCodec) ←
-  registerSimplePersistentEnvExtension {
-    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
-    addEntryFn := Array.push
-  }
-
-initialize noctiumNominalFieldTypeRegistry : SimplePersistentEnvExtension
-    (String × NominalFieldType) (Array (String × NominalFieldType)) ←
   registerSimplePersistentEnvExtension {
     addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
     addEntryFn := Array.push
@@ -564,7 +553,7 @@ private def lowerSchemaName (id : TSyntax `ident) : CommandElabM String := do
     if registry.any (·.1 == fullName) then
       throwErrorAt name s!"duplicate nominal Field type '{name.getId}'"
     let declaration : NominalFieldType := {name := fullName}
-    elabCommand (← `(def $(mkIdent (name.getId ++ `nominalType)) : Noctium.Authoring.NominalFieldType :=
+    elabCommand (← `(def $(mkIdent (name.getId ++ `nominalType)) : Noctium.NominalFieldType :=
       {name := $(stringTerm fullName)}))
     modifyEnv fun env => noctiumNominalFieldTypeRegistry.addEntry env (fullName, declaration)
   | _ => throwUnsupportedSyntax
