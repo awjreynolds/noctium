@@ -169,7 +169,7 @@
       "layer": "language",
       "surface": "Field arithmetic",
       "noctiumStatus": "subset",
-      "notes": "Native canonical Field inputs, add, subtract, multiply, equality and inequality have focused source, Compact runtime and native relation evidence. Pinned Compact 0.36.1 and the Ledger 9 ZKIR 3.2.1 checker agree at zero/one and modulus-boundary vectors. Compact rejects ordered Field comparison, inv(Field) and neg(Field). Full operator/context and foreign-field equivalence remain unverified.",
+      "notes": "Native Field addition, subtraction, multiplication, equality and inequality match the pinned reference at zero, one and modulus boundaries. Compact 0.36.1 and ordinary and readable Noctium circuits match mixed Field and Uint arithmetic in both operand orders, including Uint248 maxima and a zero-only Uint. Compact requires an explicit Uint-to-Field cast for mixed equality and inequality. Noctium also accepts implicit widening for those comparisons. The ordinary mixed relation proves and verifies using the official K8 parameters, and a changed return commitment fails verification. Compact rejects ordered Field comparison, inv(Field) and neg(Field). Nominal Field aliases and foreign-field arithmetic need separate qualification.",
       "source": [
         "reference"
       ],
@@ -188,8 +188,8 @@
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
-        "checkedOn": "2026-11-23",
-        "scope": "Focused Lean, pinned Compact and native relation checks cover modular addition, subtraction, multiplication, equality and inequality at zero/one and modulus-boundary vectors. Compact rejects ordered Field comparison, inv(Field) and neg(Field). The native checker rejects a forged private field input. Broader operator contexts, proof generation, ledger deployment and foreign-field equivalence remain unqualified.",
+        "checkedOn": "2026-11-24",
+        "scope": "Pinned ordinary and readable mixed Field and bounded Uint checks add both operand orders, maximum canonical values, zero-only rejection and a native K8 proof. Broader nominal and foreign-field semantics remain open.",
         "evidence": [
           "Noctium/Semantics.lean",
           "Noctium/ScalarPolicy.lean",
