@@ -213,6 +213,24 @@ theorem decoded_neg_argument {raw : Lean.Json} {a : Operand} {output : String}
   cases result
   exact ⟨aDecoded, outputParsed⟩
 
+theorem decoded_not_argument {raw : Lean.Json} {a : Operand} {output : String}
+    (opcodeParsed : stringField raw "op" = .ok "not")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not a output)) :
+    NativeRelationJson.decodeOperandField raw "a" = .ok a ∧
+    stringField raw "output" = .ok output := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [bind_ok, nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcode, opParsed, body⟩
+  have opcodeEq : opcode = "not" := Except.ok.inj (opParsed.symm.trans opcodeParsed)
+  subst opcode
+  simp only [bind_ok] at body
+  simp [NativeRelationJson.ensure] at body
+  rcases body with ⟨_, _, aDecoded, rest⟩
+  rcases rest with ⟨_, outputParsed, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  cases result
+  exact ⟨aDecoded, outputParsed⟩
+
 /-- The ordinary public/private input fact has a scalar meaning exactly when
 the satisfying witness agrees with the declared input assignment. -/
 theorem input_fact_meaning {hash : Hash} {inputs witness : Assignment}

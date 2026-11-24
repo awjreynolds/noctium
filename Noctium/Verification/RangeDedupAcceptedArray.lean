@@ -139,6 +139,17 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal left right))
       (holds : Instruction.Holds hash witness (.equal left right)) :
       AcceptedMeaningStep hash witness raw
+  | testEq {left right : Operand} {output : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
+      (decoded : NativeRelationJson.decodeInstruction raw =
+        .ok (.testEq left right output))
+      (holds : Instruction.Holds hash witness (.testEq left right output)) :
+      AcceptedMeaningStep hash witness raw
+  | logicalNot {value : Operand} {output : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "not")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not value output))
+      (holds : Instruction.Holds hash witness (.not value output)) :
+      AcceptedMeaningStep hash witness raw
   | copy {source destination : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "copy")
       (decoded : NativeRelationJson.decodeInstruction raw =
@@ -199,6 +210,29 @@ private theorem decodedConstrainEqOperands {raw : Json} {left right : Operand}
   injection resultEq with leftEq rightEq
   subst left right
   exact ⟨leftParsed, rightParsed⟩
+
+private theorem decodedTestEqFields {raw : Json} {left right : Operand} {output : String}
+    (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.testEq left right output)) :
+    NativeRelationJson.decodeOperandField raw "a" = .ok left ∧
+      NativeRelationJson.decodeOperandField raw "b" = .ok right ∧
+      Backend.Native.stringField raw "output" = .ok output := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [ScalarValidationMeaning.bind_ok,
+    ScalarValidationOutputMeaning.nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
+  have opcodeEq : opcodeName = "test_eq" :=
+    Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp only [ScalarValidationMeaning.bind_ok] at body
+  rcases body with ⟨_, _, leftName, leftParsed, rightName, rightParsed,
+    outputName, outputParsed, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
+  injection resultEq with leftEq rightEq outputEq
+  subst left right output
+  exact ⟨leftParsed, rightParsed, outputParsed⟩
 
 private theorem decodedBooleanField {raw : Json} {value : Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
@@ -547,6 +581,72 @@ private theorem acceptedMeaningStep_preserves
           simpa [definitionsEq] using member
         exact afterRightDefinitions identifier fact sameMember
       exact ⟨finalMeaning, finalDefinitions⟩
+  | @testEq left right output opcode decoded holds =>
+    obtain ⟨leftFact, rightFact, fact, leftAccepted, rightAccepted,
+      leftNative, rightNative, combined, defined⟩ :=
+      accepted_testEq_components definitions opcode accepted
+    have fields := decodedTestEqFields opcode decoded
+    have leftMeaning := argument_decoded_meaning meaning leftAccepted fields.1
+    have rightMeaning := argument_decoded_meaning meaning rightAccepted fields.2.1
+    have holdsEquation : witness output =
+        bit (decide (left.read witness = right.read witness)) := by
+      simpa [Instruction.Holds] using holds
+    have resultMeaning :
+        interpret hash inputs (.binary "test_eq" leftFact.term rightFact.term) =
+          some (witness output) := by
+      simp [interpret, leftMeaning.term, rightMeaning.term, holdsEquation]
+    have resultBound : (witness output).val ≤ 1 := by
+      rw [holdsEquation]
+      rcases bit_canonical (decide (left.read witness = right.read witness)) with zeroValue | oneValue
+      · rw [zeroValue]
+        omega
+      · rw [oneValue]
+        omega
+    have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+      combine_meaning combined resultMeaning resultBound
+    have outputMeaning : ∀ identifier,
+        Backend.Native.stringField raw "output" = .ok identifier →
+        FactMeaning hash inputs witness fact (witness identifier) := by
+      intro identifier parsed
+      have same : identifier = output := Except.ok.inj (parsed.symm.trans fields.2.2)
+      subst identifier
+      exact factMeaning
+    have meaningNext := defineResult_meaning meaning outputMeaning defined
+    have factNative := combine_native combined
+    have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
+    exact ⟨meaningNext, definitionsNext⟩
+  | @logicalNot value output opcode decoded holds =>
+    obtain ⟨factInput, fact, valueAccepted, valueNative, booleanBound,
+      combined, defined⟩ := accepted_not_components definitions opcode accepted
+    have fields := decoded_not_argument opcode decoded
+    have valueMeaning := argument_decoded_meaning meaning valueAccepted fields.1
+    have booleanEvidence : value.read witness = zero ∨ value.read witness = one := by
+      rcases holds.1 with isZero | isOne
+      · exact Or.inl isZero
+      · exact Or.inr isOne
+    have resultMeaning :
+        interpret hash inputs (.unary "not" factInput.term) = some (witness output) := by
+      have termMeaning : interpret hash inputs factInput.term = some (value.read witness) := by
+        simp only [valueMeaning.term]
+      rw [interpret_not, termMeaning]
+      cases booleanEvidence with
+      | inl isZero => simp [isZero, holds.2, bit]
+      | inr isOne => simp [isOne, holds.2, bit]
+    have resultBound : (witness output).val ≤ 1 := by
+      rw [holds.2]
+      cases booleanEvidence with
+      | inl isZero => simp [isZero, one]
+      | inr isOne => simp [isOne, zero, one]
+    have factMeaning : FactMeaning hash inputs witness fact (witness output) :=
+      combine_meaning combined resultMeaning resultBound
+    have meaningNext := defineResult_meaning meaning (by
+      intro identifier parsed
+      have same : identifier = output := Except.ok.inj (parsed.symm.trans fields.2)
+      subst identifier
+      exact factMeaning) defined
+    have factNative := combine_native combined
+    have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
+    exact ⟨meaningNext, definitionsNext⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
