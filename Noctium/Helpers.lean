@@ -414,6 +414,8 @@ structure Program where
   ledger : List StateDecl := []
   /-- Source labels from the owning contract. Native ledger atoms remain scalar UInts. -/
   nominalUIntCells : List (String × NominalUIntType) := []
+  /-- Source labels for scalar Native cells in the owning contract. -/
+  nominalFieldCells : List (String × String) := []
   /-- Source labels for scalar keys and values in direct ledger Maps. -/
   nominalUIntMaps : List (String × NominalUIntMap) := []
   deriving Repr
@@ -424,6 +426,11 @@ def Program.withNominalUIntState (program : Program)
     (cells : List (String × NominalUIntType))
     (maps : List (String × NominalUIntMap)) : Program :=
   {program with nominalUIntCells := cells, nominalUIntMaps := maps}
+
+/-- Reapply nominal Field identities for scalar Cells in the owning contract. -/
+def Program.withNominalFieldState (program : Program)
+    (cells : List (String × String)) : Program :=
+  {program with nominalFieldCells := cells}
 
 /-- Link independently declared helper libraries into one deterministic lexical
 program. Each library's root declarations become members of the shared root
@@ -438,6 +445,7 @@ def linkPrograms (libraries : List Program) : Except String Program := do
   let mut composites : Types.CompositeEnv := {}
   let mut ledger : List StateDecl := []
   let mut nominalUIntCells : List (String × NominalUIntType) := []
+  let mut nominalFieldCells : List (String × String) := []
   let mut nominalUIntMaps : List (String × NominalUIntMap) := []
   let mut rootValues : List String := []
   let mut nextScope := 1
@@ -478,10 +486,12 @@ def linkPrograms (libraries : List Program) : Except String Program := do
       enumerations := (composites.enumerations ++ library.composites.enumerations).eraseDups}
     ledger := ledger ++ library.ledger
     nominalUIntCells := nominalUIntCells ++ library.nominalUIntCells
+    nominalFieldCells := nominalFieldCells ++ library.nominalFieldCells
     nominalUIntMaps := nominalUIntMaps ++ library.nominalUIntMaps
   scopes := [{id := 0, values := rootValues.eraseDups}] ++ scopes.drop 1
   return {
-    scopes, declarations, witnesses, composites, ledger, nominalUIntCells, nominalUIntMaps
+    scopes, declarations, witnesses, composites, ledger, nominalUIntCells,
+    nominalFieldCells, nominalUIntMaps
   }
 
 private def fail (span : SourceSpan) (message : String) : Except Diagnostic α :=
@@ -895,6 +905,16 @@ private def sourcePreflight (limits : Limits) (program : Program) :
   if program.ledger.length > limits.maxDeclarations then resource {} "ledger declarations"
   if program.nominalUIntCells.length > limits.maxDeclarations then resource {} "nominal UInt cells"
   unless uniqueNames (program.nominalUIntCells.map Prod.fst) do fail {} "duplicate nominal UInt Cell"
+  if program.nominalFieldCells.length > limits.maxDeclarations then resource {} "nominal Field cells"
+  unless uniqueNames (program.nominalFieldCells.map Prod.fst) do fail {} "duplicate nominal Field Cell"
+  for (name, nominal) in program.nominalFieldCells do
+    let some declaration := program.ledger.find? (·.name == name)
+      | fail {} s!"unknown nominal Field Cell '{name}'"
+    let .cell ty := declaration.kind
+      | fail {} s!"nominal Field state '{name}' is not a scalar Cell"
+    unless ty == .native do fail {} s!"nominal Field Cell '{name}' must use Native storage"
+    textMetadata nominal
+    unless validWitnessIdentifier nominal do fail {} "invalid nominal Field identity"
   if program.nominalUIntMaps.length > limits.maxDeclarations then resource {} "nominal UInt Maps"
   unless uniqueNames (program.nominalUIntMaps.map Prod.fst) do fail {} "duplicate nominal UInt Map"
   for (name, nominalMap) in program.nominalUIntMaps do
@@ -1657,6 +1677,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let arguments ← arguments.mapM (fun value => inferPartialTerm fuel program scope env span value nominals)
       unless arguments.length == signature.parameters.length do fail span "typed witness argument arity mismatch"
       let useNominals := nominals.isSome && (!program.nominalUIntCells.isEmpty ||
+        !program.nominalFieldCells.isEmpty ||
         !program.nominalUIntMaps.isEmpty ||
         program.witnesses.any (fun signature =>
           signature.resultNominalField.isSome || signature.parameters.any (·.sourceNominalField.isSome)) ||
@@ -1899,23 +1920,29 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           if locals.contains destination || (inputNames program declaration.id).contains destination then
             fail span s!"ledger read destination '{destination}' shadows an existing binding"
           let nominalUInt := program.nominalUIntCells.lookup state
+          let nominalField := program.nominalFieldCells.lookup state
           if let some nominal := nominalUInt then
             unless ty == .uint nominal.maximum do fail span "nominal UInt Cell bound mismatch"
+          if nominalField.isSome then
+            unless ty == .native do fail span "nominal Field Cell type mismatch"
           env := (destination, some (.scalar ty)) :: env
           nominals := {
             nominals with
             uints := (destination, nominalUInt) :: nominals.uints,
-            fields := (destination, none) :: nominals.fields}
+            fields := (destination, nominalField) :: nominals.fields}
           locals := destination :: locals
           pure {ty := some .unit, effects := [.ledgerRead]}
         | .writeCell state ty value => do
           checkedCell program span state ty true
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
           let expected := program.nominalUIntCells.lookup state
+          let expectedField := program.nominalFieldCells.lookup state
           if let some nominal := expected then
             unless ty == .uint nominal.maximum do fail span "nominal UInt Cell bound mismatch"
+          if expectedField.isSome then
+            unless ty == .native do fail span "nominal Field Cell type mismatch"
           checkNominalUInt span expected info.nominalUInt
-          checkNominalField span none info.nominalField
+          checkNominalField span expectedField info.nominalField
           unless partialSubtype info.ty (.scalar ty) do fail span "ledger cell write type mismatch"
           pure {info with effects := (.ledgerWrite :: info.effects).eraseDups}
         | .readMap state destination keyTy valueTy key
