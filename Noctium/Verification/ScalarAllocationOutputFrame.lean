@@ -520,6 +520,26 @@ theorem lowerEntrypoint_outputDefinitions_budget (state : List StateDecl)
   refine ⟨plan, planAccepted, ?_⟩
   simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
 
+/-- Connect a frame for the exact accepted ledger plan to the native decoder's
+identifier limit. The producer validates the emitted output-slot budget. -/
+theorem lowerEntrypoint_name_budget_of_frame (state : List StateDecl)
+    (entry : Entrypoint) (program : Lean.Json)
+    (accepted : Zkir.lowerEntrypoint state entry = .ok program)
+    (frame : ∀ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan →
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan)) :
+    ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      let next := ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.next
+      next ≤ Native.maxInstructions * Native.maxVectorLength ∧
+        ∀ index, index < next → NativeRelationJson.validIdentifier s!"%v{index}" = true := by
+  obtain ⟨plan, planAccepted, capacity⟩ :=
+    lowerEntrypoint_outputDefinitions_budget state entry program accepted
+  have bounded := Zkir.OutputCapacityFrame.next_le_producerCapacity
+    (frame plan planAccepted {}) capacity
+  refine ⟨plan, planAccepted, bounded, ?_⟩
+  intro index indexBound
+  exact NativeRelationJson.generatedIdentifier_fits_output_capacity index
+    (Nat.lt_of_lt_of_le indexBound bounded)
+
 private theorem scalarReturnPreflight_preservesOutputCapacityFrame
     (circuit : Circuit)
     (admitted : ScalarNormalization.ScalarCircuitAdmission circuit)
