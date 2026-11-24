@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "name": "foundation-source-v1",
+  "targetProfile": {
+    "path": "profiles/midnight-ledger-9-zkir-3.2.1-target.json",
+    "name": "midnight-ledger-9-zkir-3.2.1",
+    "ledger": "9.1.0.1",
+    "zkir": "3.2.1",
+    "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
+  },
+  "operations": [
+    {
+      "operation": "PrivateClaim.claim",
+      "contract": "PrivateClaim",
+      "entrypoint": "claim",
+      "circuit": "claimRelation",
+      "policy": "Noctium.PrivateClaimVerification.policy",
+      "functionalProof": "Noctium.PrivateClaimVerification.functional",
+      "privacyProof": "Noctium.PrivateClaimVerification.privacy",
+      "modelPinPath": "proofs/PrivateClaimVerification.model.sha256",
+      "reportKind": "private-claim-source-audit-v1"
+    },
+    {
+      "operation": "BoundedScalars.apply",
+      "contract": "BoundedScalars",
+      "entrypoint": "apply",
+      "circuit": "boundedRelation",
+      "policy": "Noctium.BoundedScalarsVerification.policy",
+      "functionalProof": "Noctium.BoundedScalarsVerification.functional",
+      "privacyProof": "Noctium.BoundedScalarsVerification.privacy",
+      "modelPinSha256": "f570ba99a309ae2dd26d532a01ed38e98e2336c910e0fe634398cab0ae33c25e",
+      "reportKind": "bounded-scalars-source-audit-v1"
+    }
+  ],
+  "privacyObservation": {
+    "releasePolicy": "none",
+    "privacyScope": "successful-only-under-pinned-precondition",
+    "publicObserver": "source public outputs and final public LedgerState; errors only within selected scope",
+    "publicEquivalence": "declared public inputs in declaration order, identical public state and EvalContext",
+    "privacyDomain": "exact pinned functional invariant and precondition; invalid/ineligible attempts are not implied covered"
+  },
+  "openRequirements": [
+    {
+      "name": "source-elaboration",
+      "requiredEvidence": "Prove elaboration preserves the selected entrypoint semantics, call arguments, state writes, and rejected cases."
+    },
+    {
+      "name": "native-semantics",
+      "requiredEvidence": "Show accepted ZKIR and Impact executions preserve the checked source postcondition, state invariant, observer, and host ABI."
+    },
+    {
+      "name": "deployment-identity",
+      "requiredEvidence": "Bind the checked operation bytes to authenticated keys, a deployed identity, and a finalized receipt on the selected network."
+    },
+    {
+      "name": "independent-review",
+      "requiredEvidence": "Record independent approval of the pinned application policy, assumptions, and public observer."
+    }
+  ],
+  "excludedScope": [
+    "constructors",
+    "generic operations",
+    "generated operations",
+    "aliased operations"
+  ]
+}
