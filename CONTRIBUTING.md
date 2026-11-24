@@ -27,6 +27,28 @@ cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
 
 The [native client guide](docs/development/native-client.md#retained-qualification) adds the optional `localnet` feature, exclusive 3.2.1 profile and real-chain prerequisites. Do not interpret an ordinary test pass as a new proof or ledger qualification.
 
+## Reuse Lean builds across worktrees
+
+Point each local worktree at the same absolute Lake cache directory. Keep the
+cache under the main checkout's ignored `.lake/` directory.
+
+```sh
+export LAKE_CACHE_DIR=/absolute/path/to/noctium/.lake/artifact-cache
+export LAKE_ARTIFACT_CACHE=true LAKE_RESTORE_ARTIFACTS=true
+lake build noctium Noctium:shared
+```
+
+The first build populates the cache. Lake matches artifacts to their build
+inputs, so branches reuse the matching modules and rebuild changed ones and
+their affected dependents. This command uses the local cache and restores the
+compiler and shared library in each worktree.
+
+On one arm64 macOS host with Lean 4.35.0, a cold build at `927da217` took
+255.71 seconds. A fresh worktree restored the same targets in 0.49 seconds
+and emitted byte-identical PrivateClaim metadata, Impact and ZKIR. Changing
+the CLI version rebuilt the affected targets in 2.40 seconds and produced the
+updated version string.
+
 ## What a useful change includes
 
 - A bounded problem and an explanation of the resulting behavior.
