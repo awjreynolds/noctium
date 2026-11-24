@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+
+circuit increment(value: Field): Field {
+  return value + 1;
+}
+
+export pure circuit calculate(value: Field, expected: Field): Field {
+  const small = value as Uint<8>;
+  assert((small as Field) == expected, "expected a matching value");
+  return increment(small as Field);
+}
