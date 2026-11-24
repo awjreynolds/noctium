@@ -631,6 +631,7 @@ jobs:
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness \
             Noctium.Verification.ScalarValidationTypedBool \
             Noctium.Verification.ScalarValidationNativeDefinitions \
+            Noctium.Verification.ScalarValidationOpcodeProfile \
             Noctium.Verification.NativeTypedBoolRelation \
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.ScalarAllocationOutputFrame \
@@ -642,5 +643,6 @@ jobs:
           lake env lean tests/GuardedScalarCellAdmission.lean
           lake env lean tests/Verification.lean
           lake env lean proofs/BoundedScalarsVerification.lean
+          lake env lean tests/scalars/BoundedScalarsOpcodeProfile.lean
           lake env lean tests/SourceProofCoverage.lean
           bash tests/private-claim-source-coverage.sh
