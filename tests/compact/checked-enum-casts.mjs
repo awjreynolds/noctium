@@ -37,6 +37,7 @@ try {
   assert.equal(pureCircuits.fromUint(2n), 2);
   assert.throws(() => pureCircuits.fromField(3n), /greater than maximum enum value 2/);
   assert.throws(() => pureCircuits.fromUint(3n), /greater than maximum enum value 2/);
+  assert.equal(pureCircuits.identity(2), 2);
 
   assert.equal(pureCircuits.toField(2), 2n);
   assert.equal(pureCircuits.toUint(2), 2n);
@@ -51,6 +52,7 @@ try {
     casts: {
       fieldToEnum: { accepted: [0, 2], rejected: [3] },
       uintToEnum: { accepted: [0, 2], rejected: [3] },
+      enumToSameEnum: { input: 2, output: 2 },
       enumToField: { input: 2, output: '2' },
       enumToUint2: { input: 2, output: '2' },
       enumToUint1: { accepted: [1], rejected: [2] },

@@ -330,6 +330,9 @@ jobs:
           .lake/build/bin/noctium compile tests/NamedEnumMembers.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-enum-members"
+          .lake/build/bin/noctium compile tests/CheckedEnumCasts.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/checked-enum-casts"
           .lake/build/bin/noctium compile tests/NestedAggregateEquality.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/nested-aggregate-equality"
@@ -466,6 +469,7 @@ jobs:
             NOCTIUM_NESTED_TRANSIENT_HASH_DIR="$artifacts/nested-transient-hash" \
             NOCTIUM_READABLE_FAB_HASH_DIR="$artifacts/readable-fab-hash" \
             NOCTIUM_NAMED_ENUM_MEMBERS_DIR="$artifacts/named-enum-members" \
+            NOCTIUM_CHECKED_ENUM_CASTS_DIR="$artifacts/checked-enum-casts" \
             NOCTIUM_NESTED_EQUALITY_DIR="$artifacts/nested-aggregate-equality" \
             NOCTIUM_STRUCTURAL_EQUALITY_DIR="$artifacts/structural-equality-widening" \
             NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR="$artifacts/readable-lazy-conditional" \
@@ -507,7 +511,7 @@ jobs:
               --test curve_defaults \
               --test mixed_fab_commitments --test nested_transient_hash --test readable_fab_hash \
               --test bounded_fab_hash_commit \
-              --test named_enum_members --test nested_aggregate_equality \
+              --test named_enum_members --test checked_enum_casts --test nested_aggregate_equality \
               --test structural_equality_widening \
               --test readable_lazy_conditional --test readable_iteration \
               --test readable_unit_bindings --test named_proof_unit --test raw_shielded_claims \
@@ -523,7 +527,8 @@ jobs:
                 --skip unshielded_balance_helpers_generate_and_bind_native_proof \
                 --skip indexed_shielded_nonce_generates_and_binds_native_proof \
                 --skip jubjub_projection_generates_and_binds_native_proof \
-                --skip jubjub_construction_generates_and_binds_native_proof
+                --skip jubjub_construction_generates_and_binds_native_proof \
+                --skip checked_enum_casts_generates_and_binds_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_CONSTRUCTOR_RECORD_LIST_DIR="$artifacts/constructor-record-list" \

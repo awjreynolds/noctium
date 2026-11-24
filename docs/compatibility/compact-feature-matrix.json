@@ -518,7 +518,7 @@
       "layer": "language",
       "surface": "Enum",
       "noctiumStatus": "subset",
-      "notes": "Readable enumMember constructs a named member from a checked fieldless enum codec. Equality requires the same nominal enum on both sides. enumTag selects a checked ordinal as Native. A paired Compact and native case checks named Contract construction and comparison with two input members. Payload variant access and full cast and default equivalence remain open.",
+      "notes": "The pinned Compact grammar declares fieldless enums. Paired cases check named members, equality and identity casts, the first-member default, checked Field and Uint ordinal conversion, and rejected ordinals and narrowing. The Noctium K8 conversion relation proves the typed results, rejects invalid public ordinals, and rejects a changed return commitment. Compact also compares same-name enums with identical ordered members declared in separate modules. Noctium rejects that comparison when the checked enum IDs differ. Cross-module identity remains open in issue 923.",
       "source": [
         "reference"
       ],
@@ -530,7 +530,10 @@
         "SEM",
         "tests/NamedEnumMembers.lean",
         "runtime/tests/named_enum_members.rs",
-        "tests/compact/named-enum-members.mjs"
+        "tests/compact/named-enum-members.mjs",
+        "tests/CheckedEnumCasts.lean",
+        "tests/compact/checked-enum-casts.mjs",
+        "runtime/tests/checked_enum_casts.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
