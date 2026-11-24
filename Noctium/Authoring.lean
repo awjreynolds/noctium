@@ -564,8 +564,12 @@ private def quoteSignature (signature : WitnessSignature) : CommandElabM (TSynta
     let sourceNominal ← match parameter.sourceNominal with
       | none => `(none)
       | some name => `(some $(stringTerm name))
+    let sourceNominalField ← match parameter.sourceNominalField with
+      | none => `(none)
+      | some name => `(some $(stringTerm name))
     `({ name := $(stringTerm parameter.name), type := $result,
-        sourceNominal := $sourceNominal : Noctium.Helpers.WitnessParameter })
+        sourceNominal := $sourceNominal,
+        sourceNominalField := $sourceNominalField : Noctium.Helpers.WitnessParameter })
   let params := params.toArray
   let parameters ← `([$params,*])
   let result ← resultTypeTerm signature.result
@@ -2852,11 +2856,16 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           let nominalUInt ← match parameter.sourceNominal with
             | none => pure none
             | some name => some <$> nominalUIntByName name
-          let target := {type := parameterTy, nominalUInt}
+          let target := {
+            type := parameterTy,
+            nominalUInt,
+            nominalField := parameter.sourceNominalField}
           let value ← match ← lowerExpectedIterationRef env (.scalar parameterTy) argument with
             | some value =>
               if nominalUInt.isSome then
                 throwErrorAt argument "nominal UInt helper arguments cannot infer callback element identity"
+              else if parameter.sourceNominalField.isSome then
+                throwErrorAt argument "nominal Field helper arguments cannot infer callback element identity"
               else pure value
             | none => lowerExpr programName callPrefix env argument
           coerceSourceType argument value target
@@ -3496,12 +3505,11 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
       match parameterStx with
       | `(noctium_witness_parameter| $parameter:ident : $type:nltype) => do
         let sourceType ← readSourceScalarType type
-        if sourceType.nominalField.isSome then
-          throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
         parameters := parameters ++ [{
           name := parameter.getId.toString,
           type := .scalar sourceType.type,
-          sourceNominal := sourceType.nominalUInt.map (·.name)
+          sourceNominal := sourceType.nominalUInt.map (·.name),
+          sourceNominalField := sourceType.nominalField
         }]
       | `(noctium_witness_parameter| $parameter:ident : Payload $codecName:ident) => do
         let source ← liftCoreM <| resolveGlobalConstNoOverload codecName

@@ -50,6 +50,7 @@ structure WitnessParameter where
   name : String
   type : ResultType
   sourceNominal : Option String := none
+  sourceNominalField : Option String := none
   deriving Repr
 
 /-- Explicit host identity. Returning a value grants no circuit truth or release authority. -/
