@@ -123,6 +123,14 @@ rejects a changed byte field.
 [Compact oracle](../../tests/compact/fixed-byte-list-maybe.mjs) ·
 [Native checker](../../runtime/tests/fixed_byte_list_maybe.rs)
 
+Root `JubjubScalar` and `JubjubPoint` List heads also support `returnMaybe`.
+An absent head carries zero or the identity point `(0, 1)`. A present
+head preserves its typed scalar or point. The native test pushes both
+values, reads them in the same and a later call, and rejects substituting
+the valid identity point for the stored point.
+[Lean fixture](../../tests/JubjubListMaybe.lean) ·
+[Native checker](../../runtime/tests/jubjub_list_maybe.rs)
+
 ## Opaque List heads
 
 Root Lists accept `OpaqueString` and `OpaqueBytes`. The ledger stores each
