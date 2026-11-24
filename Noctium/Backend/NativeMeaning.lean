@@ -493,6 +493,28 @@ private def normalizeReverseBytes (length : Nat) (normalized : Normalized) : Exc
     reverseBytesTerm length (bytesFromChunksTerm length chunks)
   pure {normalized with term}
 
+private def normalizeBytesAt (length index : Nat) (normalized : Normalized) :
+    Except String Normalized := do
+  unless index < length do throw "byte index is out of range"
+  match normalized.term with
+  | .bytes terms => do
+    unless terms.length == length do throw "byte source term has wrong length"
+    let some term := terms[index]? | throw "byte index is out of range"
+    pure {
+      term := term
+      bounds := normalized.bounds ++ [(term, 255)]
+      assertions := normalized.assertions
+    }
+  | term => do
+    let chunks ← bytesChunksTerm length term
+    let reconstructed := bytesFromChunksTerm length chunks
+    let byte := bytesByteAtTerm length reconstructed index
+    pure {
+      term := byte
+      bounds := normalized.bounds ++ [(byte, 255)]
+      assertions := normalized.assertions
+    }
+
 private def arithmetic (ty : Ty) (opcode : String) (left right : Normalized) : Normalized :=
   {requireSourceType ty (.binary opcode left.term right.term) (left.bounds ++ right.bounds) with assertions := left.assertions ++ right.assertions}
 
@@ -630,19 +652,13 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
         let some chunk := chunks.reverse[index]? | throw "byte field chunk index is out of range"
         pure chunk
     pure {term, bounds := normalized.bounds, assertions := normalized.assertions}
+  | .bytesAt (length := 32) (.reverseBytes32 value) index => do
+    let normalized ← normalize env value
+    unless index < 32 do throw "byte index is out of range"
+    normalizeBytesAt 32 (31 - index) normalized
   | .bytesAt (length := length) value index => do
     let normalized ← normalize env value
-    unless index < length do throw "byte index is out of range"
-    match normalized.term with
-    | .bytes terms => do
-      unless terms.length == length do throw "byte source term has wrong length"
-      let some term := terms[index]? | throw "byte index is out of range"
-      pure {term := term, bounds := normalized.bounds ++ [(term, 255)], assertions := normalized.assertions}
-    | term => do
-      let chunks ← bytesChunksTerm length term
-      let reconstructed := bytesFromChunksTerm length chunks
-      let byte := bytesByteAtTerm length reconstructed index
-      pure {term := byte, bounds := normalized.bounds ++ [(byte, 255)], assertions := normalized.assertions}
+    normalizeBytesAt length index normalized
   | .reverseBytes (length := length) value => do
     let normalized ← normalize env value
     normalizeReverseBytes length normalized
