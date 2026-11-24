@@ -12,16 +12,23 @@ export pure circuit describe(choice: RecipientKind): [Boolean, RecipientKind] {
 }
 
 module LeftKinds {
-  export enum Status { Pending, Done }
+  export enum RecipientKind { ShieldedUser, UnshieldedUser, Contract }
 }
 
 module RightKinds {
-  export enum Status { Pending, Done }
+  export enum RecipientKind { ShieldedUser, UnshieldedUser, Contract }
 }
 
-import {Status as LeftStatus} from LeftKinds;
-import {Status as RightStatus} from RightKinds;
+import {RecipientKind as LeftRecipientKind} from LeftKinds;
+import {RecipientKind as RightRecipientKind} from RightKinds;
 
-export pure circuit compareSameNamedEnums(left: LeftStatus, right: RightStatus): Boolean {
+export pure circuit compareSameNamedEnums(
+  left: LeftRecipientKind,
+  right: RightRecipientKind
+): Boolean {
   return left == right;
+}
+
+export pure circuit castSameNamedEnum(value: LeftRecipientKind): RightRecipientKind {
+  return value as RightRecipientKind;
 }

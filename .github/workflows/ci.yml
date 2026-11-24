@@ -528,7 +528,8 @@ jobs:
                 --skip indexed_shielded_nonce_generates_and_binds_native_proof \
                 --skip jubjub_projection_generates_and_binds_native_proof \
                 --skip jubjub_construction_generates_and_binds_native_proof \
-                --skip checked_enum_casts_generates_and_binds_native_proof
+                --skip checked_enum_casts_generates_and_binds_native_proof \
+                --skip module_enum_comparison_generates_and_binds_native_proof
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_CONSTRUCTOR_RECORD_LIST_DIR="$artifacts/constructor-record-list" \
