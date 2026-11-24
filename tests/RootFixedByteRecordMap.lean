@@ -72,8 +72,8 @@ private def rootFixedByteRecordMapRun (tag : List Nat) (firstId lateId : List Na
         | .ok _ => _root_.Bool.false) &&
       (match LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.recordMapKey environment type valueTy)) with
-        | .error _ => _root_.Bool.true
-        | .ok _ => _root_.Bool.false)
+        | .ok _ => _root_.Bool.true
+        | .error _ => _root_.Bool.false)
   | _ => _root_.Bool.false
 
 #guard match rootFixedByteRecordMapRun [7] (byteRange 33 3) (byteRange 32 3 ++ [4]) 101 303 with

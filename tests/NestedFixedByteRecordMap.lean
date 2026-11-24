@@ -140,7 +140,9 @@ private def nestedFixedByteRecordMapKeyEnvironment : Types.CompositeEnv := {
 private def nestedFixedByteRecordMapValueEnvironment : Types.CompositeEnv := {
   structures := [{
     id := "NestedFixedByteRecordMap.BadValue"
-    fields := [{name := "payload", type := .bytes 1}]
+    fields := [
+      {name := "label", type := .bytes 1},
+      {name := "digest", type := .bytes 33}]
   }]
 }
 
@@ -310,8 +312,8 @@ private def nestedFixedByteRecordMapScenario : Except String _root_.Bool := do
     (.map (.bytes 32) (.recordMapComposite nestedFixedByteRecordMapKeyEnvironment
       (.structure "NestedFixedByteRecordMap.Key") nestedFixedByteRecordMapValueEnvironment
       (.structure "NestedFixedByteRecordMap.BadValue"))) with
-  | .error _ => _root_.Bool.true
-  | .ok _ => _root_.Bool.false
+  | .ok _ => _root_.Bool.true
+  | .error _ => _root_.Bool.false
 
 #guard match nestedFixedByteRecordMapScenario with
   | .ok _root_.Bool.true => _root_.Bool.true

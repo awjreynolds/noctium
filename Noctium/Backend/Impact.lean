@@ -1545,7 +1545,7 @@ private def recordMapCompositeSchemas (state : List StateDecl) (name : String)
     parentKeys.length
   unless keyFields.map Prod.snd == keyValues.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
-  let valueFields ← if parentKeys.isEmpty then
+  let valueFields ← if parentKeys.length ≤ 1 then
     LedgerValueType.mapRecordWriteFields valueEnvironment valueType
   else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
   unless valueFields.map Prod.snd == valueValues.map LedgerFieldExpr.ty do
