@@ -232,14 +232,12 @@ fn nested_record_set_preserves_members_and_sibling_buckets() -> anyhow::Result<(
     Ok(())
 }
 
-#[test]
-#[ignore = "requires fresh artifacts in NOCTIUM_FIXED_BYTE_RECORD_SET_DIR"]
-fn fixed_byte_record_set_keys_distinguish_late_bytes_and_sibling_buckets() -> anyhow::Result<()> {
-    use base_crypto::fab::{Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
+fn bytes_value(value: &[u8]) -> Json {
+    json!({"kind":"bytes", "values":value})
+}
 
-    fn bytes_value(value: &[u8]) -> Json {
-        json!({"kind":"bytes", "values":value})
-    }
+fn fixed_bytes_record_key(tag: &[u8], id: &[u8]) -> AlignedValue {
+    use base_crypto::fab::{Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
 
     fn aligned_bytes(value: &[u8]) -> AlignedValue {
         AlignedValue::new(
@@ -251,10 +249,12 @@ fn fixed_byte_record_set_keys_distinguish_late_bytes_and_sibling_buckets() -> an
         .unwrap()
     }
 
-    fn record_key(tag: &[u8], id: &[u8]) -> AlignedValue {
-        AlignedValue::concat(&[aligned_bytes(tag), aligned_bytes(id)])
-    }
+    AlignedValue::concat(&[aligned_bytes(tag), aligned_bytes(id)])
+}
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_FIXED_BYTE_RECORD_SET_DIR"]
+fn fixed_byte_record_set_keys_distinguish_late_bytes_and_sibling_buckets() -> anyhow::Result<()> {
     let directory = std::path::PathBuf::from(
         std::env::var_os("NOCTIUM_FIXED_BYTE_RECORD_SET_DIR")
             .expect("fixed-byte record Set artifacts"),
@@ -309,11 +309,57 @@ fn fixed_byte_record_set_keys_distinguish_late_bytes_and_sibling_buckets() -> an
         anyhow::bail!("expected sibling Set");
     };
     assert_eq!(selected_set.size(), 2);
-    assert_eq!(selected_set.get(&record_key(&tag, &first_id)).is_some(), true);
-    assert_eq!(selected_set.get(&record_key(&tag, &late_id)).is_some(), true);
-    assert_eq!(selected_set.get(&record_key(&tag, &absent_id)).is_some(), false);
+    assert_eq!(selected_set.get(&fixed_bytes_record_key(&tag, &first_id)).is_some(), true);
+    assert_eq!(selected_set.get(&fixed_bytes_record_key(&tag, &late_id)).is_some(), true);
+    assert_eq!(selected_set.get(&fixed_bytes_record_key(&tag, &absent_id)).is_some(), false);
     assert_eq!(sibling_set.size(), 1);
-    assert_eq!(sibling_set.get(&record_key(&tag, &first_id)).is_some(), true);
+    assert_eq!(sibling_set.get(&fixed_bytes_record_key(&tag, &first_id)).is_some(), true);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_ROOT_FIXED_BYTE_RECORD_SET_DIR"]
+fn root_fixed_byte_record_set_keeps_exact_late_byte_after_removal() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_ROOT_FIXED_BYTE_RECORD_SET_DIR")
+            .expect("root fixed-byte record Set artifacts"),
+    );
+    let plan = load_plan(&directory, "RootFixedByteRecordSet.update.impact.json");
+    let circuit = load_circuit(&directory, "RootFixedByteRecordSet.update.zkir");
+    let state = create_state(&plan, &BTreeMap::from([("members".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let tag = [7u8];
+    let first_id = [3u8; 33];
+    let mut late_id = first_id;
+    late_id[32] = 4;
+    let mut inputs = BTreeMap::from([
+        ("tag".into(), bytes_value(&tag)),
+        ("firstId".into(), bytes_value(&first_id)),
+        ("lateId".into(), bytes_value(&late_id)),
+    ]);
+
+    let result = prepare(&plan, &inputs, &state, parameters, address)?;
+    check(&result, &circuit)?;
+    let returns = result.returns_json();
+    assert_eq!(returns["first"], json!(true));
+    assert_eq!(returns["late"], json!(true));
+    assert_eq!(returns["firstAfter"], json!(false));
+    assert_eq!(returns["lateAfter"], json!(true));
+    assert_eq!(returns["count"], json!("1"));
+
+    let StateValue::Array(slots) = result.after.state.get_ref() else {
+        anyhow::bail!("expected state slots");
+    };
+    let Some(StateValue::Map(members)) = slots.get(0) else {
+        anyhow::bail!("expected root Set");
+    };
+    assert_eq!(members.size(), 1);
+    assert!(members.get(&fixed_bytes_record_key(&tag, &first_id)).is_none());
+    assert!(members.get(&fixed_bytes_record_key(&tag, &late_id)).is_some());
+
+    inputs.insert("lateId".into(), bytes_value(&late_id[..32]));
+    assert!(prepare(&plan, &inputs, &state, parameters, address).is_err());
     Ok(())
 }
 
