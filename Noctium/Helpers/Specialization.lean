@@ -1297,7 +1297,7 @@ private def canonicalDecimal (text : String) : Except String Nat := do
   unless toString value == text do throw "decimal string has a leading zero or invalid form"
   pure value
 
-private partial def validateSignatureType (fuel : Nat) (allowOpaqueRoot : Bool)
+private partial def validateSignatureType (fuel : Nat) (allowOpaque : Bool)
     (value : SignatureType) : Except String Unit := do
   match fuel with
   | 0 => throw "signature type nesting exceeds the parser limit"
@@ -1305,8 +1305,8 @@ private partial def validateSignatureType (fuel : Nat) (allowOpaqueRoot : Bool)
     | .unit | .native | .bool => pure ()
     | .jubjubScalar | .jubjubPoint => pure ()
     | .opaqueBytes | .opaqueString =>
-      unless allowOpaqueRoot do
-        throw "opaque types are supported only as root scalar helper signatures"
+      unless allowOpaque do
+        throw "opaque types are unsupported in specialization witness signatures"
     | .foreign sourceName => do
       unless Foreign.kinds.any (fun kind => kind.sourceName == sourceName) do
         throw "unsupported foreign helper signature type"
@@ -1315,13 +1315,13 @@ private partial def validateSignatureType (fuel : Nat) (allowOpaqueRoot : Bool)
       unless maximum ≤ ScalarPolicy.maxUint do throw "unsigned signature exceeds target maximum"
     | .tuple items => do
       if items.length > Types.defaultLimits.maxLayoutNodes then throw "signature tuple exceeds the parser limit"
-      for item in items do validateSignatureType fuel false item
+      for item in items do validateSignatureType fuel allowOpaque item
     | .structure id | .enumeration id =>
       unless Types.validDeclId id do throw "invalid nominal signature identity"
     | .vector length element => do
       let length ← canonicalDecimal length
       unless length ≤ Types.defaultLimits.maxVectorLength do throw "signature vector exceeds target maximum"
-      validateSignatureType fuel false element
+      validateSignatureType fuel allowOpaque element
     | .bytes length => do
       let length ← canonicalDecimal length
       unless length ≤ Types.defaultLimits.maxVectorLength do throw "signature byte array exceeds target maximum"
@@ -1333,9 +1333,9 @@ private def validateSignatureArgument (argument : SignatureArgument) : Except St
     let value ← canonicalDecimal value
     unless value ≤ ScalarPolicy.maxUint do throw "natural signature argument exceeds target maximum"
 
-private def validateSignatureValue (allowOpaqueRoot : Bool) (value : SignatureValue) : Except String Unit := do
+private def validateSignatureValue (allowOpaque : Bool) (value : SignatureValue) : Except String Unit := do
   if value.name.utf8ByteSize > 1024 then throw "signature value name exceeds parser limit"
-  validateSignatureType 128 allowOpaqueRoot value.type
+  validateSignatureType 128 allowOpaque value.type
 
 private def validateArtifact (artifact : SignatureArtifact) : Except String Unit := do
   unless artifact.schemaVersion == 1 do throw "unsupported specialization signature schema version"
