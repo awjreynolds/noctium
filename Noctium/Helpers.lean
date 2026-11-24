@@ -420,6 +420,65 @@ def Program.withNominalUIntState (program : Program)
     (maps : List (String × NominalUIntMap)) : Program :=
   {program with nominalUIntCells := cells, nominalUIntMaps := maps}
 
+/-- Link independently declared helper libraries into one deterministic lexical
+program. Each library's root declarations become members of the shared root
+scope. Its nested scopes receive fresh IDs, and root declaration ordinals are
+rebased in library order. Names remain unchanged so normal overload resolution
+reports ambiguous helper names instead of depending on import order. -/
+def linkPrograms (libraries : List Program) : Except String Program := do
+  if libraries.length > 256 then throw "too many helper program libraries"
+  let mut scopes : List Scope := [{id := 0}]
+  let mut declarations : List Declaration := []
+  let mut witnesses : List WitnessSignature := []
+  let mut composites : Types.CompositeEnv := {}
+  let mut ledger : List StateDecl := []
+  let mut nominalUIntCells : List (String × NominalUIntType) := []
+  let mut nominalUIntMaps : List (String × NominalUIntMap) := []
+  let mut rootValues : List String := []
+  let mut nextScope := 1
+  let mut nextRootOrdinal := 0
+  for library in libraries do
+    let roots := library.scopes.filter (·.id == 0)
+    let [root] := roots | throw "helper library must define exactly one root scope"
+    if root.parent.isSome then throw "helper library root scope cannot have a parent"
+    rootValues := rootValues ++ root.values
+    let nested := library.scopes.filter (·.id != 0)
+    let mut scopeMap : List (Nat × Nat) := [(0, 0)]
+    for scope in nested do
+      scopeMap := scopeMap ++ [(scope.id, nextScope)]
+      nextScope := nextScope + 1
+    for scope in nested do
+      let some (_, newId) := scopeMap.find? (·.1 == scope.id)
+        | throw "helper library scope remapping failed"
+      let parent ← match scope.parent with
+        | none => pure none
+        | some parent => do
+          let some (_, mapped) := scopeMap.find? (·.1 == parent)
+            | throw "helper library scope has an unknown parent"
+          pure (some mapped)
+      scopes := scopes ++ [{scope with id := newId, parent}]
+    let mut seenIds : List DeclarationId := []
+    for declaration in library.declarations do
+      if seenIds.contains declaration.id then
+        throw s!"helper library has duplicate declaration ID {declaration.id.scope}:{declaration.id.ordinal}"
+      seenIds := seenIds ++ [declaration.id]
+      let some scope := scopeMap.find? (·.1 == declaration.id.scope)
+        | throw "helper library declaration uses an unknown scope"
+      let ordinal := if declaration.id.scope == 0 then nextRootOrdinal else declaration.id.ordinal
+      if declaration.id.scope == 0 then nextRootOrdinal := nextRootOrdinal + 1
+      declarations := declarations ++ [{declaration with id := {scope := scope.2, ordinal}}]
+    witnesses := witnesses ++ library.witnesses
+    composites := {
+      structures := (composites.structures ++ library.composites.structures).eraseDups
+      enumerations := (composites.enumerations ++ library.composites.enumerations).eraseDups}
+    ledger := ledger ++ library.ledger
+    nominalUIntCells := nominalUIntCells ++ library.nominalUIntCells
+    nominalUIntMaps := nominalUIntMaps ++ library.nominalUIntMaps
+  scopes := [{id := 0, values := rootValues.eraseDups}] ++ scopes.drop 1
+  return {
+    scopes, declarations, witnesses, composites, ledger, nominalUIntCells, nominalUIntMaps
+  }
+
 private def fail (span : SourceSpan) (message : String) : Except Diagnostic α :=
   .error {span, message}
 

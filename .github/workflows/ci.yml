@@ -123,6 +123,7 @@ jobs:
           lake env lean tests/ReadableIteration.lean
           lake env lean tests/IterationWitness.lean
           lake env lean tests/Helpers.lean
+          lake env lean tests/ReadableLinkedHelpers.lean
           lake env lean tests/Iteration.lean
           lake env lean tests/EmptyTupleIteration.lean
           lake env lean tests/CompositeValues.lean
@@ -304,6 +305,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
+          .lake/build/bin/noctium compile tests/ReadableLinkedHelpers.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/readable-linked-helpers"
           .lake/build/bin/noctium compile tests/MerklePathRootNoLeafHash.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/merkle-path-types"

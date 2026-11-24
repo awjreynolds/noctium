@@ -997,7 +997,7 @@
       "layer": "language",
       "surface": "Named circuits and circuit calls",
       "noctiumStatus": "subset",
-      "notes": "Parameters, arity, results, helper calls and recursive-call rejection. Readable witness circuits link one Lean helper program and invoke checked named helpers with scalar or aggregate arguments. The paired Compact and native fixture calls one aggregate helper from two entries, preserves argument witness order and rejects a wrong arity during elaboration.",
+      "notes": "Parameters, arity, results, helper calls and recursive-call rejection. Readable witness circuits link independently declared Lean helper programs and invoke checked named helpers with scalar or aggregate arguments. Linking remaps overlapping declaration and nested-scope IDs deterministically, keeps source helper names and witness order, and rejects ambiguous overloads. The paired Compact and native fixture calls one aggregate helper from two entries, preserves argument witness order and rejects a wrong arity during elaboration.",
       "source": [
         "reference"
       ],
@@ -1068,6 +1068,18 @@
           "docs/development/structured-cells.md"
         ],
         "limits": "Current 3.2.1 native checker and local state only. No new keys, proofs, deployment or historical compatibility campaign. Values are Native/Bool/UInt; the native case exercises Native. Nested ledger trees, aggregate values, integrated provider/private-state scheduling and generic preservation remain open.",
+        "fullEquivalence": "unverified"
+      },
+      "multiProgramLinkUpdate": {
+        "checkedOn": "2026-11-24",
+        "scope": "Readable witness circuits accept a comma-separated list of helper programs. Root declarations share a deterministic lexical group, nested scope IDs are remapped, and declaration ordinals are rebased in program order. Helper source names and witness declarations retain their order. Same-signature overloads reject as ambiguous. A focused source fixture with overlapping IDs compiled against the selected 3.2.1 profile and generated keys with the pinned native ZKIR CLI.",
+        "evidence": [
+          "Noctium/Authoring.lean",
+          "Noctium/Helpers.lean",
+          "tests/Helpers.lean",
+          "tests/ReadableLinkedHelpers.lean"
+        ],
+        "limits": "Native key generation and compile-time rejection only. No new proof or deployment. Full equivalence remains unverified.",
         "fullEquivalence": "unverified"
       }
     },
