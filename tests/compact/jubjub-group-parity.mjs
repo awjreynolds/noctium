@@ -30,6 +30,14 @@ try {
   const point = runtime.ecMulGenerator(1n);
   const identity = runtime.constructJubjubPoint(0n, 1n);
   const scalar = 1n;
+  const generatorProjection = pureCircuits.project(point);
+  const identityProjection = pureCircuits.project(identity);
+  assert.deepEqual(generatorProjection, [
+    28336281903124990867587793011069573392383982287722241916350956173377953689573n,
+    39385640392217313770878525135509063452020585410343666726093009378539878503883n,
+  ]);
+  assert.deepEqual(identityProjection, [0n, 1n]);
+
   const generatedPoint = runtime.ecMulGenerator(scalar);
   const multiplied = runtime.ecMul(point, scalar);
   const sum = runtime.ecAdd(point, identity);
@@ -59,6 +67,10 @@ try {
     fixture: 'JubjubGroupParity.groupParity',
     compact: compilerVersion,
     runtime: packageJson.version,
+    projections: {
+      generator: generatorProjection.map(String),
+      identity: identityProjection.map(String),
+    },
     input: { pointX: point.x.toString(), pointY: point.y.toString(), rawScalar: scalar.toString() },
     outputs: Object.fromEntries(Object.entries(result).map(([name, value]) => [name, value.toString()])),
   }));

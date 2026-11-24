@@ -19,6 +19,10 @@ export struct JubjubGroupParityResult {
   scalarResult: Field;
 }
 
+export pure circuit project(point: JubjubPoint): [Field, Field] {
+  return [jubjubPointX(point), jubjubPointY(point)];
+}
+
 export pure circuit groupParity(pointX: Field, pointY: Field, rawScalar: Field): JubjubGroupParityResult {
   const point = constructJubjubPoint(pointX, pointY);
   const identity = constructJubjubPoint(0 as Field, 1 as Field);

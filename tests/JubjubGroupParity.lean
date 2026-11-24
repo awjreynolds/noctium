@@ -35,6 +35,12 @@ noctium_circuit jubjubGroupParityInputs where
   output scalarResult : Native := disclose(jubjubScalarToNative(scalar))
 end
 
+noctium_circuit jubjubPointProjectionInputs where
+  private point : JubjubPoint
+  output x : Native := disclose(jubjubX(point))
+  output y : Native := disclose(jubjubY(point))
+end
+
 noctium_contract JubjubGroupParity where
   entry groupParity uses jubjubGroupParityInputs where
     return resultCheckedX : Native := checkedX
@@ -52,6 +58,10 @@ noctium_contract JubjubGroupParity where
     return resultIdentityNegatedX : Native := identityNegatedX
     return resultIdentityNegatedY : Native := identityNegatedY
     return resultScalar : Native := scalarResult
+  end
+  entry project uses jubjubPointProjectionInputs where
+    return resultX : Native := x
+    return resultY : Native := y
   end
 end
 
