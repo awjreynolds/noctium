@@ -624,6 +624,7 @@ jobs:
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness \
             Noctium.Verification.ScalarValidationTypedBool \
+            Noctium.Verification.ScalarValidationNativeDefinitions \
             Noctium.Verification.NativeTypedBoolRelation \
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.ScalarAllocationOutputFrame \
