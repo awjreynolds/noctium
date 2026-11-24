@@ -1408,15 +1408,18 @@ private def encodeByte (byte : String) : LowerM String := do
   modify fun state => {state with expressions := (key, output) :: state.expressions}
   pure output
 
-private def lowerToBytes32 (value : String) : LowerM (String × String) := do
+private def lowerToBytes32Bytes (value : String) : LowerM String := do
   let bytesKey : ExpressionKey := ("to_bytes", [value], none)
-  let bytes ← match (← get).expressions.lookup bytesKey with
+  match (← get).expressions.lookup bytesKey with
     | some existing => pure existing
     | none => do
       let output ← fresh
       emit "to_bytes" [("input", toJson value), ("output", toJson output)]
       modify fun state => {state with expressions := (bytesKey, output) :: state.expressions}
       pure output
+
+private def lowerToBytes32 (value : String) : LowerM (String × String) := do
+  let bytes ← lowerToBytes32Bytes value
   encodeBytes32 bytes
 
 private def bytes32Chunks (values : List String) : LowerM (String × String) := do
@@ -1774,6 +1777,17 @@ private def lowerFixedConcat (leftLength rightLength : Nat)
       pure output
   encodeFixedBytes (leftLength + rightLength) output
 
+private def lowerByteAtFromBytes (index : Nat) (bytes : String) : LowerM String := do
+  let key : ExpressionKey := ("nth", [bytes], some index)
+  let byte ← match (← get).expressions.lookup key with
+    | some existing => pure existing
+    | none => do
+      let output ← fresh
+      emit "nth" [("bytes", toJson bytes), ("index", toJson index), ("output", toJson output)]
+      modify fun state => {state with expressions := (key, output) :: state.expressions}
+      pure output
+  encodeByte byte
+
 private def lowerFixedByteAt (length index : Nat) (value : ByteOperands) : LowerM String := do
   if index ≥ length then
     rejectLowering "byte index is out of range"
@@ -1784,15 +1798,13 @@ private def lowerFixedByteAt (length index : Nat) (value : ByteOperands) : Lower
       return "0x00"
     return value.values[index]!
   let input ← lowerFixedBytesFromChunks length (← byteChunks length value)
-  let key : ExpressionKey := ("nth", [input], some index)
-  let byte ← match (← get).expressions.lookup key with
-    | some existing => pure existing
-    | none => do
-      let output ← fresh
-      emit "nth" [("bytes", toJson input), ("index", toJson index), ("output", toJson output)]
-      modify fun state => {state with expressions := (key, output) :: state.expressions}
-      pure output
-  encodeByte byte
+  lowerByteAtFromBytes index input
+
+private def lowerRawFixedByteAt (length index : Nat) (bytes : String) : LowerM String := do
+  if index ≥ length then
+    rejectLowering "byte index is out of range"
+    return "0x00"
+  lowerByteAtFromBytes index bytes
 
 /-- Projecting a fixed Bytes32 byte from its reversal maps to the source byte
 at the mirrored index. Evaluate the byte operand before checking the index, as
@@ -2488,6 +2500,13 @@ def lowerExpr : Expr ty → LowerM String
         rejectLowering "byte leaf count mismatch"
         return "0x00"
       packBytes ((value.values.drop ((Noctium.bytesChunkCount length - 1 - index) * 31)).take 31)
+  | .bytesAt (length := 32) (.toBytes32 value) index => do
+    let input ← lowerExpr value
+    if Native.isWidenedByte value then
+      lowerFixedByteAt 32 index {values := input :: List.replicate 31 "0x00"}
+    else do
+      let bytes ← lowerToBytes32Bytes input
+      lowerRawFixedByteAt 32 index bytes
   | .bytesAt (length := 32) (.reverseBytes32 value) index => do
     let bytes ← lowerBytes value
     lowerReversedBytes32ByteAt index bytes
