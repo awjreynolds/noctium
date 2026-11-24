@@ -1,0 +1,97 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export struct Receipt {
+  accepted: Boolean;
+  code: Uint<16>;
+}
+
+export ledger scalars: Map<Bytes<32>, Map<Key, Uint<16>>>;
+export ledger records: Map<Bytes<32>, Map<Key, Receipt>>;
+
+export circuit initializeOwner(owner: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  if (!scalars.member(ownerKey)) { scalars.insertDefault(ownerKey); }
+  if (!records.member(ownerKey)) { records.insertDefault(ownerKey); }
+}
+
+export circuit exercise(
+  owner: Bytes<32>, tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
+  firstScalar: Uint<16>, lateScalar: Uint<16>,
+  firstAccepted: Boolean, firstCode: Uint<16>,
+  lateAccepted: Boolean, lateCode: Uint<16>,
+): [
+  Boolean, Boolean, Boolean, Boolean, Uint<16>, Uint<16>,
+  Boolean, Boolean, Boolean, Boolean, Boolean, Uint<16>,
+  Boolean, Uint<16>, Boolean, Boolean, Boolean, Boolean,
+  Uint<16>, Boolean, Uint<16>
+] {
+  const ownerKey = disclose(owner);
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+
+  const scalarBeforeFirst = scalars.lookup(ownerKey).member(first);
+  const scalarBeforeLate = scalars.lookup(ownerKey).member(late);
+  scalars.lookup(ownerKey).insert(first, disclose(firstScalar));
+  scalars.lookup(ownerKey).insert(late, disclose(lateScalar));
+  const scalarInsertedFirst = scalars.lookup(ownerKey).member(first);
+  const scalarInsertedLate = scalars.lookup(ownerKey).member(late);
+  const scalarValueFirst = scalars.lookup(ownerKey).lookup(first);
+  const scalarValueLate = scalars.lookup(ownerKey).lookup(late);
+
+  const recordBeforeFirst = records.lookup(ownerKey).member(first);
+  const recordBeforeLate = records.lookup(ownerKey).member(late);
+  records.lookup(ownerKey).insert(first, disclose(Receipt {
+    accepted: firstAccepted, code: firstCode,
+  }));
+  records.lookup(ownerKey).insert(late, disclose(Receipt {
+    accepted: lateAccepted, code: lateCode,
+  }));
+  const recordInsertedFirst = records.lookup(ownerKey).member(first);
+  const recordInsertedLate = records.lookup(ownerKey).member(late);
+  const recordValueFirst = records.lookup(ownerKey).lookup(first);
+  const recordValueLate = records.lookup(ownerKey).lookup(late);
+
+  scalars.lookup(ownerKey).remove(first);
+  records.lookup(ownerKey).remove(first);
+  const scalarAfterFirst = scalars.lookup(ownerKey).member(first);
+  const scalarAfterLate = scalars.lookup(ownerKey).member(late);
+  const recordAfterFirst = records.lookup(ownerKey).member(first);
+  const recordAfterLate = records.lookup(ownerKey).member(late);
+  const scalarRetained = scalars.lookup(ownerKey).lookup(late);
+  const recordRetained = records.lookup(ownerKey).lookup(late);
+
+  return [
+    scalarBeforeFirst, scalarBeforeLate, scalarInsertedFirst, scalarInsertedLate,
+    scalarValueFirst, scalarValueLate,
+    recordBeforeFirst, recordBeforeLate, recordInsertedFirst, recordInsertedLate,
+    recordValueFirst.accepted, recordValueFirst.code,
+    recordValueLate.accepted, recordValueLate.code,
+    scalarAfterFirst, scalarAfterLate, recordAfterFirst, recordAfterLate,
+    scalarRetained, recordRetained.accepted, recordRetained.code,
+  ];
+}
+
+export circuit inspect(
+  owner: Bytes<32>, tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
+): [Boolean, Boolean, Uint<16>, Boolean, Boolean, Boolean, Uint<16>] {
+  const ownerKey = disclose(owner);
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  const scalarLate = scalars.lookup(ownerKey).lookup(late);
+  const recordLate = records.lookup(ownerKey).lookup(late);
+  return [
+    scalars.lookup(ownerKey).member(first),
+    scalars.lookup(ownerKey).member(late),
+    scalarLate,
+    records.lookup(ownerKey).member(first),
+    records.lookup(ownerKey).member(late),
+    recordLate.accepted,
+    recordLate.code,
+  ];
+}

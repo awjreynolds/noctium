@@ -3192,11 +3192,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             depth + 2 < 16,
             "record-key Map insertion depth exceeds native insertion depth"
         );
-        if depth == 0 {
-            checked_typed_record_schema(record)?;
-        } else {
-            checked_map_record_schema(record)?;
-        }
+        checked_typed_record_schema(record)?;
         return validate_tree_schema(&parts[1], depth + 1);
     }
     let key_type = ledger_key_type(&parts[0])?;

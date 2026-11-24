@@ -3539,8 +3539,7 @@ private def recordMapFieldsAt (schema : List (String × StateKind))
     | _ => throwErrorAt storage "typed record key operation requires a record-key Map"
   let fieldResult := match valueSchema with
     | .recordMapKey .. | .recordMapComposite .. =>
-      (if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
-       else LedgerValueType.ledgerRecordWriteFields environment type)
+      LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
     | _ => LedgerValueType.ledgerRecordWriteFields environment type
   let fields ← match fieldResult with
     | .ok fields => pure fields
@@ -3612,9 +3611,8 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let (keys, selected) ← lowerTreePath state.env treeSchema parentKeys
   let .recordMapComposite keyEnvironment keyType valueEnvironment valueType := selected
     | throwErrorAt storage "typed record Map value operation requires a composite-valued record-key Map"
-  let keyFieldResult := if parentKeys.isEmpty then
-      LedgerValueType.recordMapKeyFields keyEnvironment keyType
-    else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+  let keyFieldResult := LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType
+    parentKeys.length
   let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
@@ -6200,7 +6198,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             elaborateTypedLedgerRecord contractName keyRecord keyFields state
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
-          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+          match LedgerValueType.recordMapKeyFieldsAtDepth environment compositeType 1 with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
           let nestedSchema := LedgerValueType.recordMapKey environment compositeType valueTy
@@ -6224,7 +6222,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           unless sourceValues.isEmpty do
             recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
-          match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+          match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 1 with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
           match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
