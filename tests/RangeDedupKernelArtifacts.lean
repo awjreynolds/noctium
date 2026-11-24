@@ -180,6 +180,49 @@ private theorem objectHeadStringField (value : String)
   simp [Lean.Json.getObjVal?, Lean.Json.getStr?, lookup]
   rfl
 
+private theorem booleanRangeLessOpcode (destination : String) :
+    Backend.Native.stringField (booleanRangeLess destination) "op" = .ok "less_than" := by
+  change Noctium.Verification.NativeRelationJson.stringField
+    (Lean.Json.mkObj (("op", toJson ("less_than" : String)) ::
+      [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
+        ("bits", toJson (1 : Nat)), ("output", toJson destination)])) "op" = .ok "less_than"
+  exact objectHeadStringField "less_than"
+    [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
+      ("bits", toJson (1 : Nat)), ("output", toJson destination)] (by
+        simp)
+
+private theorem booleanRangeLessMeaning (destination : String)
+    (valid : Noctium.Verification.NativeRelationJson.validIdentifier destination = _root_.Bool.true)
+    (hash : Hash) (candidate : Assignment)
+    (holds : ∀ instruction,
+      Noctium.Verification.NativeRelationJson.decodeInstruction (booleanRangeLess destination) =
+        .ok instruction → Instruction.Holds hash candidate instruction) :
+    Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash candidate
+      (booleanRangeLess destination) := by
+  have operand : Noctium.Verification.NativeRelationJson.decodeOperand
+      (toJson ("%v0" : String)) = .ok (.reference "%v0") :=
+    (Noctium.Verification.ScalarInstructionEncoding.OperandEncoding.reference "%v0"
+      (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 0 (by decide))).decode
+  have immediate : Noctium.Verification.NativeRelationJson.decodeOperand
+      (toJson ("0x01" : String)) = .ok (.immediate (scalar 1)) := by
+    have spelling : Backend.Zkir.fieldImmediate 1 = "0x01" := by decide
+    have decoded := Noctium.Verification.ScalarImmediate.decodeOperand_fieldImmediate_exact
+      1 (by decide)
+    rw [spelling] at decoded
+    exact decoded
+  have decoded : Noctium.Verification.NativeRelationJson.decodeInstruction
+      (booleanRangeLess destination) = .ok
+        (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 destination) := by
+    change Noctium.Verification.NativeRelationJson.decodeInstruction
+      (Backend.Zkir.instruction "less_than" [("a", toJson ("%v0" : String)),
+        ("b", toJson ("0x01" : String)), ("bits", toJson (1 : Nat)),
+        ("output", toJson destination)]) = _
+    exact Noctium.Verification.ScalarInstructionEncoding.decode_lessThan_instruction 1
+      operand immediate valid (by decide) (by decide)
+  exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.lessThan
+    (booleanRangeLessOpcode destination) decoded
+    (holds (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 destination) decoded)
+
 private theorem booleanRangeSupportsMeaning :
     ∀ raw ∈ booleanRangeSource.toList,
       Noctium.Verification.RangeDedupAcceptedArray.SupportsMeaning raw := by
@@ -231,72 +274,14 @@ private theorem booleanRangeSupportsMeaning :
       opcode decoded (holds (.boolean (.reference "%v0")) decoded)
   · subst raw
     intro hash candidate holds
-    have operand : Noctium.Verification.NativeRelationJson.decodeOperand
-        (toJson ("%v0" : String)) = .ok (.reference "%v0") :=
-      (Noctium.Verification.ScalarInstructionEncoding.OperandEncoding.reference "%v0"
-        (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 0 (by decide))).decode
-    have immediate : Noctium.Verification.NativeRelationJson.decodeOperand
-        (toJson ("0x01" : String)) = .ok (.immediate (scalar 1)) := by
-      have spelling : Backend.Zkir.fieldImmediate 1 = "0x01" := by decide
-      have decoded := Noctium.Verification.ScalarImmediate.decodeOperand_fieldImmediate_exact
-        1 (by decide)
-      rw [spelling] at decoded
-      exact decoded
-    have decoded : Noctium.Verification.NativeRelationJson.decodeInstruction
-        (booleanRangeLess "%v1") = .ok
-          (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v1") := by
-      change Noctium.Verification.NativeRelationJson.decodeInstruction
-        (Backend.Zkir.instruction "less_than" [("a", toJson ("%v0" : String)),
-          ("b", toJson ("0x01" : String)), ("bits", toJson (1 : Nat)),
-          ("output", toJson ("%v1" : String))]) = _
-      exact Noctium.Verification.ScalarInstructionEncoding.decode_lessThan_instruction 1
-        operand immediate
-        (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 1 (by decide))
-        (by decide) (by decide)
-    have opcode : Backend.Native.stringField (booleanRangeLess "%v1") "op" = .ok "less_than" := by
-      change Noctium.Verification.NativeRelationJson.stringField
-        (Lean.Json.mkObj (("op", toJson ("less_than" : String)) ::
-          [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-            ("bits", toJson (1 : Nat)), ("output", toJson ("%v1" : String))])) "op" = .ok "less_than"
-      exact objectHeadStringField "less_than"
-        [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-          ("bits", toJson (1 : Nat)), ("output", toJson ("%v1" : String))] (by decide +kernel)
-    exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.lessThan
-      opcode decoded (holds (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v1") decoded)
+    exact booleanRangeLessMeaning "%v1"
+      (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 1 (by decide))
+      hash candidate holds
   · subst raw
     intro hash candidate holds
-    have operand : Noctium.Verification.NativeRelationJson.decodeOperand
-        (toJson ("%v0" : String)) = .ok (.reference "%v0") :=
-      (Noctium.Verification.ScalarInstructionEncoding.OperandEncoding.reference "%v0"
-        (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 0 (by decide))).decode
-    have immediate : Noctium.Verification.NativeRelationJson.decodeOperand
-        (toJson ("0x01" : String)) = .ok (.immediate (scalar 1)) := by
-      have spelling : Backend.Zkir.fieldImmediate 1 = "0x01" := by decide
-      have decoded := Noctium.Verification.ScalarImmediate.decodeOperand_fieldImmediate_exact
-        1 (by decide)
-      rw [spelling] at decoded
-      exact decoded
-    have decoded : Noctium.Verification.NativeRelationJson.decodeInstruction
-        (booleanRangeLess "%v2") = .ok
-          (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v2") := by
-      change Noctium.Verification.NativeRelationJson.decodeInstruction
-        (Backend.Zkir.instruction "less_than" [("a", toJson ("%v0" : String)),
-          ("b", toJson ("0x01" : String)), ("bits", toJson (1 : Nat)),
-          ("output", toJson ("%v2" : String))]) = _
-      exact Noctium.Verification.ScalarInstructionEncoding.decode_lessThan_instruction 1
-        operand immediate
-        (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 2 (by decide))
-        (by decide) (by decide)
-    have opcode : Backend.Native.stringField (booleanRangeLess "%v2") "op" = .ok "less_than" := by
-      change Noctium.Verification.NativeRelationJson.stringField
-        (Lean.Json.mkObj (("op", toJson ("less_than" : String)) ::
-          [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-            ("bits", toJson (1 : Nat)), ("output", toJson ("%v2" : String))])) "op" = .ok "less_than"
-      exact objectHeadStringField "less_than"
-        [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-          ("bits", toJson (1 : Nat)), ("output", toJson ("%v2" : String))] (by decide +kernel)
-    exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.lessThan
-      opcode decoded (holds (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v2") decoded)
+    exact booleanRangeLessMeaning "%v2"
+      (Noctium.Verification.NativeRelationJson.generatedIdentifier_valid 2 (by decide))
+      hash candidate holds
   · subst raw
     intro _ _ _
     exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.output
