@@ -3444,17 +3444,16 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
     for fieldStx in fields do
       match fieldStx with
       | `(noctium_private_field| cell $field:ident : $type:noctium_witness_input_type) => do
-        let (result, codec, resultNominal) ← match type with
+        let (result, codec, resultNominal, resultNominalField) ← match type with
           | `(noctium_witness_input_type| $scalar:nltype) => do
             let sourceType ← readSourceScalarType scalar
-            if sourceType.nominalField.isSome then
-              throwErrorAt scalar "nominal Field private-state callback signatures are unsupported in this scalar slice"
-            pure (ResultType.scalar sourceType.type, none, sourceType.nominalUInt.map (·.name))
+            pure (ResultType.scalar sourceType.type, none,
+              sourceType.nominalUInt.map (·.name), sourceType.nominalField)
           | `(noctium_witness_input_type| Payload $name:ident) => do
             let constant ← liftCoreM <| resolveGlobalConstNoOverload name
             let codec ← evalConstCheck Helpers.Wire.Codec ``Helpers.Wire.Codec constant
             let result := if codec.payload == .unit then .unit else .composite codec.payload
-            pure (result, some constant, none)
+            pure (result, some constant, none, none)
           | _ => throwErrorAt type "unsupported private-state cell type"
         let key := "noctium/" ++ schemaName ++ "/" ++ field.getId.toString
         let capability := "private_state:" ++ schemaName
@@ -3470,6 +3469,7 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
             privateKey := some key,
             result,
             resultNominal,
+            resultNominalField,
             span := fieldSpan }
         fieldValues := fieldValues ++ [PrivateStateField.mk
           field.getId.toString key capability signature codec]
@@ -3799,11 +3799,13 @@ private partial def lowerReadableStatement (programName path : String)
     let resultNominal ← match signature.resultNominal with
       | none => pure none
       | some name => some <$> nominalUIntByName name
+    let resultNominalField := signature.resultNominalField
     let logicalAliases := match signature.result with
       | .scalar ty => body.logicalAliases ++ [{name := valueName, ty, source := .call site}]
       | _ => body.logicalAliases
     pure {body with
-      env := (valueName, signature.result, .ref internalName, (resultNominal, none)) :: body.env
+      env := (valueName, signature.result, .ref internalName,
+        (resultNominal, resultNominalField)) :: body.env
       statements := body.statements ++ [.bind internalName signature.result (.at (← spanValue statement) readTerm)]
       witnesses := uniqueWitnesses (body.witnesses ++ [signature])
       logicalAliases
@@ -3879,7 +3881,10 @@ private partial def lowerReadableStatement (programName path : String)
         let nominalUInt ← match field.signature.resultNominal with
           | none => pure none
           | some name => some <$> nominalUIntByName name
-        coerceSourceType source lowered {type := ty, nominalUInt}
+        coerceSourceType source lowered {
+          type := ty,
+          nominalUInt,
+          nominalField := field.signature.resultNominalField}
       | .composite _ => do
         unless Helpers.subtype lowered.type type do
           throwErrorAt source "private stage value does not match its declared Payload type"

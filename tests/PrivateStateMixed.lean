@@ -4,6 +4,9 @@ open scoped Noctium
 
 namespace PrivateStateMixed
 
+noctium_field_type Amount := Field
+noctium_field_type Count := Field
+
 private def receiptWire : Noctium.Helpers.Wire.Codec := {
   payload := .structure "MeterReceipt"
   frameBytes := 2
@@ -19,16 +22,19 @@ noctium_private_state Wallet where
   cell secret : JubjubScalar
   cell recipient : JubjubPoint
   cell receipt : Payload receiptWire
+  cell amount : Amount
 end
 
 noctium_witness_circuit consume using receiptWire where
   public expected : UInt 8
   private replacement : JubjubScalar
+  private replacementAmount : Amount
   read private Wallet.saved as previous
   read private Wallet.enabled as enabled
   read private Wallet.secret as secret
   read private Wallet.recipient as recipient
   read private Wallet.receipt as receipt
+  read private Wallet.amount as previousAmount
   prove enabled
   prove eq(expected, add(previous, uint(1)))
   prove eq(jubjubMulGenerator(secret), recipient)
@@ -39,11 +45,15 @@ noctium_witness_circuit consume using receiptWire where
   stage Wallet.secret := replacement
   stage Wallet.recipient := jubjubMulGenerator(replacement)
   stage Wallet.receipt := record(Payload receiptWire, {amount := uint(3), okay := false})
+  stage Wallet.amount := add(previousAmount, replacementAmount)
   read private Wallet.receipt as stagedReceipt
+  read private Wallet.amount as stagedAmount
   prove eq(field(stagedReceipt, amount), uint(3))
   prove eq(field(stagedReceipt, okay), false)
+  prove eq(cast(Native, stagedAmount), cast(Native, add(previousAmount, replacementAmount)))
   output approved : Bool := disclose(field(receipt, okay))
   output units : UInt 8 := expected
+  output releasedAmount : Native := cast(Native, disclose(stagedAmount))
 end
 
 noctium_contract Meter where
@@ -51,7 +61,34 @@ noctium_contract Meter where
   entry advance uses consume where
     write count := units
     return accepted : Bool := approved
+    return amountResult : Native := releasedAmount
   end
+end
+
+noctium_witness_circuit acceptsExplicitNativePrivateFieldStage where
+  private raw : Native
+  stage Wallet.amount := cast(Amount, raw)
+end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsImplicitNativePrivateFieldStage where
+  private raw : Native
+  stage Wallet.amount := raw
+end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsDistinctAliasPrivateFieldStage where
+  private count : Count
+  stage Wallet.amount := count
+end
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsUndisclosedPrivateFieldOutput where
+  read private Wallet.amount as amount
+  output leaked : Native := amount
 end
 
 /-- error: private stage value does not match its declared Payload type -/
