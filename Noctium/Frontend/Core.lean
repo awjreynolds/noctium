@@ -5374,6 +5374,8 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     | .bytes length => some (s!"MaybeBytes{length}", .bytes length)
     | .opaqueBytes => some ("MaybeOpaqueBytes", .scalar .opaqueBytes)
     | .opaqueString => some ("MaybeOpaqueString", .scalar .opaqueString)
+    | .jubjubScalar => some ("MaybeJubjubScalar", .scalar .jubjubScalar)
+    | .jubjubPoint => some ("MaybeJubjubPoint", .scalar .jubjubPoint)
     | _ => none
   let typeId ← match typedPayload with
   | some (suffix, _) => do
@@ -5410,7 +5412,9 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
   -- Bytes0 has one typed value and no payload lanes. Keep its output so its
   -- expression assertions survive, while the logical return view maps only
   -- the Bool tag to a physical return field.
-  let canonicalPayload ← if zeroWidthBytes then pure payloadExpression else do
+  let canonicalPayload ← if zeroWidthBytes || payloadType.isJubjub then
+      pure payloadExpression
+    else do
     let payloadDefault ← match payloadType with
       | .native => `(Noctium.Expr.native 0)
       | .bool => `(Noctium.Expr.bool Bool.false)
@@ -5424,6 +5428,13 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     `(Noctium.Expr.select $presentExpression $payloadExpression $payloadDefault)
   let isSomeReturnName := s!"{labelName}_is_some"
   let payloadReturnName := s!"{labelName}_value"
+  let jubjubPointReturnNames := if payloadType == .jubjubPoint then
+      [s!"{payloadReturnName}_x", s!"{payloadReturnName}_y"]
+    else []
+  let curveReturnNames := match payloadType with
+    | .jubjubScalar => [payloadReturnName]
+    | .jubjubPoint => jubjubPointReturnNames
+    | _ => []
   let legacyPhysicalReturnNames := if zeroWidthBytes then [isSomeReturnName]
     else [isSomeReturnName, payloadReturnName]
   let packedByteLength := match payloadType with
@@ -5431,22 +5442,45 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     | _ => none
   let packedByteReturnNames : Option (List String) := packedByteLength.map fun length =>
     (List.range ((length + 30) / 31)).map fun index => s!"{payloadReturnName}_chunk_{index}"
-  let physicalReturnNames := match packedByteReturnNames with
-    | some names => isSomeReturnName :: names
-    | none => legacyPhysicalReturnNames
-  let collisionReturnNames := match packedByteReturnNames with
-    | some names => isSomeReturnName :: names
-    | none => [isSomeReturnName, payloadReturnName]
+  let physicalReturnNames := if !curveReturnNames.isEmpty then
+      isSomeReturnName :: curveReturnNames
+    else match packedByteReturnNames with
+      | some names => isSomeReturnName :: names
+      | none => legacyPhysicalReturnNames
+  let collisionReturnNames := if !curveReturnNames.isEmpty then
+      isSomeReturnName :: curveReturnNames
+    else match packedByteReturnNames with
+      | some names => isSomeReturnName :: names
+      | none => [isSomeReturnName, payloadReturnName]
   for returnName in collisionReturnNames do
     if state.env.any (fun binding => binding.1 == returnName) then
       throwErrorAt label s!"structured return field '{returnName}' collides with an input or read binding"
   let isSomeReturn ← `({ name := $(stringTerm isSomeReturnName), ty := Noctium.Ty.native, value := (Noctium.Expr.cast Noctium.Ty.native $presentExpression), span := $span : Noctium.Output })
   let mut returnTerms := #[isSomeReturn]
-  for (returnName, index) in (packedByteReturnNames.getD []).zipIdx do
-    let chunk ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
-      (Noctium.Expr.bytesField $canonicalPayload $(natTerm index)) $span)
-    returnTerms := returnTerms.push chunk
-  if packedByteReturnNames.isNone then
+  if payloadType == .jubjubScalar then
+    let nativePayload ← `(Noctium.Expr.jubjubScalarToNative $payloadExpression)
+    let zero ← `(Noctium.Expr.native 0)
+    let canonicalNative ← `(Noctium.Expr.select $presentExpression $nativePayload $zero)
+    let payloadReturn ← `(Noctium.Output.mk $(stringTerm payloadReturnName) Noctium.Ty.native $canonicalNative $span)
+    returnTerms := returnTerms.push payloadReturn
+  else if payloadType == .jubjubPoint then
+    let x ← `(Noctium.Expr.jubjubCoordinate $payloadExpression 0)
+    let y ← `(Noctium.Expr.jubjubCoordinate $payloadExpression 1)
+    let xZero ← `(Noctium.Expr.native 0)
+    let yIdentity ← `(Noctium.Expr.native 1)
+    let canonicalX ← `(Noctium.Expr.select $presentExpression $x $xZero)
+    let canonicalY ← `(Noctium.Expr.select $presentExpression $y $yIdentity)
+    let xName := stringTerm (jubjubPointReturnNames[0]!)
+    let yName := stringTerm (jubjubPointReturnNames[1]!)
+    let xReturn ← `(Noctium.Output.mk $xName Noctium.Ty.native $canonicalX $span)
+    let yReturn ← `(Noctium.Output.mk $yName Noctium.Ty.native $canonicalY $span)
+    returnTerms := returnTerms.push xReturn |>.push yReturn
+  else
+    for (returnName, index) in (packedByteReturnNames.getD []).zipIdx do
+      let chunk ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
+        (Noctium.Expr.bytesField $canonicalPayload $(natTerm index)) $span)
+      returnTerms := returnTerms.push chunk
+  if packedByteReturnNames.isNone && curveReturnNames.isEmpty then
     let payloadReturn ← if typedPayload.isSome then
         `({ name := $(stringTerm payloadReturnName), ty := $(← tyTerm payloadType), value := $canonicalPayload, span := $span : Noctium.Output })
       else
