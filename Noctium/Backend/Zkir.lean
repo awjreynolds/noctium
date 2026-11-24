@@ -1794,6 +1794,15 @@ private def lowerFixedByteAt (length index : Nat) (value : ByteOperands) : Lower
       pure output
   encodeByte byte
 
+/-- Projecting a fixed Bytes32 byte from its reversal maps to the source byte
+at the mirrored index. Evaluate the byte operand before checking the index, as
+the ordinary `byteAt` lowering does. -/
+private def lowerReversedBytes32ByteAt (index : Nat) (value : ByteOperands) : LowerM String := do
+  if index ≥ 32 then
+    rejectLowering "byte index is out of range"
+    return "0x00"
+  lowerFixedByteAt 32 (31 - index) value
+
 private def nativeTypeName : Ty → String
   | .native => "Scalar<BLS12-381>"
   | .jubjubScalar => "Scalar<Jubjub>"
@@ -2479,6 +2488,9 @@ def lowerExpr : Expr ty → LowerM String
         rejectLowering "byte leaf count mismatch"
         return "0x00"
       packBytes ((value.values.drop ((Noctium.bytesChunkCount length - 1 - index) * 31)).take 31)
+  | .bytesAt (length := 32) (.reverseBytes32 value) index => do
+    let bytes ← lowerBytes value
+    lowerReversedBytes32ByteAt index bytes
   | .bytesAt (length := length) value index => do
     lowerFixedByteAt length index (← lowerBytes value)
   | .jubjubScalarFromNative value => do

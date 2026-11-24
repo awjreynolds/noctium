@@ -1,4 +1,5 @@
 import Noctium.Frontend
+import Noctium.Backend.NativeMeaning
 import Noctium.Backend.NativeProducer
 import Noctium.Disclosure
 
@@ -37,6 +38,23 @@ noctium_contract NativeByteReverse where
   end
 end
 
+noctium_circuit reverseByteAtProjection where
+  private value : Bytes32
+  output first : UInt 8 := disclose(byteAt(reverseBytes32(value), 0))
+  output last : UInt 8 := disclose(byteAt(reverseBytes32(value), 31))
+end
+
+noctium_circuit mirroredByteAtProjection where
+  private value : Bytes32
+  output first : UInt 8 := disclose(byteAt(value, 31))
+  output last : UInt 8 := disclose(byteAt(value, 0))
+end
+
+#guard match Backend.Zkir.lowerCircuit reverseByteAtProjection,
+    Backend.Zkir.lowerCircuit mirroredByteAtProjection with
+  | .ok reverse, .ok mirrored => reverse == mirrored
+  | _, _ => _root_.Bool.false
+
 private def byteReverseSemanticContext : EvalContext :=
   {modulus := Field.modulus, poseidon2 := fun _ _ _ => pure 0}
 
@@ -53,6 +71,19 @@ private def ascendingBytes32 : Expr (.bytes 32) :=
 example : (Expr.reverseBytes32 (Expr.reverseBytes32 ascendingBytes32)).eval
     byteReverseSemanticContext [] = ascendingBytes32.eval byteReverseSemanticContext [] :=
   Expr.eval_reverseBytes32_twice byteReverseSemanticContext [] ascendingBytes32
+
+#guard match (Expr.bytesAt (Expr.reverseBytes32 ascendingBytes32) 0).eval
+    byteReverseSemanticContext [] with
+  | .ok byte => byte == 32
+  | .error _ => _root_.Bool.false
+#guard match (Expr.bytesAt (Expr.reverseBytes32 ascendingBytes32) 31).eval
+    byteReverseSemanticContext [] with
+  | .ok byte => byte == 1
+  | .error _ => _root_.Bool.false
+#guard match Backend.Native.normalize []
+    (Expr.bytesAt (Expr.reverseBytes32 ascendingBytes32) 32) with
+  | .error _ => _root_.Bool.true
+  | .ok _ => _root_.Bool.false
 
 #guard match Disclosure.circuit {
   name := "undisclosedByteReverse"
