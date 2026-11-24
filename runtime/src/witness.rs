@@ -429,12 +429,11 @@ impl Registry {
                 ScalarType::Native => "native",
                 ScalarType::Bool => "bool",
                 ScalarType::UInt(_) => "uint",
-                ScalarType::Bytes32
-                | ScalarType::Bytes(_)
-                | ScalarType::OpaqueBytes
-                | ScalarType::OpaqueString => {
+                ScalarType::Bytes32 | ScalarType::Bytes(_) => {
                     bail!("byte projections require an aggregate schema")
                 }
+                ScalarType::OpaqueBytes => "opaqueBytes",
+                ScalarType::OpaqueString => "opaqueString",
                 ScalarType::JubjubScalar => "jubjubScalar",
                 ScalarType::JubjubPoint => "jubjubPoint",
                 #[cfg(feature = "zkir-321")]
@@ -466,13 +465,13 @@ impl Registry {
                         .and_then(Json::as_bool)
                         .ok_or_else(|| anyhow!("aggregate projection Boolean value missing"))?,
                 ),
-                ScalarType::Bytes32
-                | ScalarType::Bytes(_)
-                | ScalarType::OpaqueBytes
-                | ScalarType::OpaqueString => {
+                ScalarType::Bytes32 | ScalarType::Bytes(_) => {
                     bail!("byte projections require an aggregate schema")
                 }
-                ScalarType::JubjubScalar | ScalarType::JubjubPoint => projected_value.clone(),
+                ScalarType::OpaqueBytes
+                | ScalarType::OpaqueString
+                | ScalarType::JubjubScalar
+                | ScalarType::JubjubPoint => projected_value.clone(),
                 #[cfg(feature = "zkir-321")]
                 ScalarType::Foreign(_) => projected_value.clone(),
             };

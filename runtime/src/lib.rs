@@ -5670,6 +5670,7 @@ fn validate_return_views_specs<'a>(
             .collect::<BTreeMap<_, _>>();
         let mut logical_index = 0usize;
         let mut physical_index = 0usize;
+        let mut physical_types = BTreeMap::new();
         while logical_index < leaf_types.len() {
             if let Some(field) = packed.get(&logical_index) {
                 ensure!(
@@ -5677,9 +5678,21 @@ fn validate_return_views_specs<'a>(
                         == Some(field.fields.as_slice()),
                     "packed byte return fields do not follow logical schema order"
                 );
+                for name in &field.fields {
+                    physical_types.insert(name.as_str(), "Native");
+                }
                 logical_index += field.byte_length;
                 physical_index += field.fields.len();
             } else {
+                let field = view
+                    .fields
+                    .get(physical_index)
+                    .ok_or_else(|| anyhow!("composite return field is missing"))?;
+                let expected_type = match leaf_types[logical_index].as_str() {
+                    "OpaqueBytes" | "OpaqueString" => leaf_types[logical_index].as_str(),
+                    _ => "Native",
+                };
+                physical_types.insert(field.as_str(), expected_type);
                 logical_index += 1;
                 physical_index += 1;
             }
@@ -5707,8 +5720,9 @@ fn validate_return_views_specs<'a>(
                 .get(field.as_str())
                 .ok_or_else(|| anyhow!("composite return references an unknown field"))?;
             ensure!(
-                *ty == "Native" && grouped.insert(field.clone()),
-                "composite return fields must be unique Native outputs"
+                physical_types.get(field.as_str()).copied() == Some(*ty)
+                    && grouped.insert(field.clone()),
+                "composite return field type differs from its qualified schema"
             );
             ensure!(
                 previous_index.is_none_or(|previous| previous < *index),
@@ -6951,10 +6965,20 @@ fn reconstruct_return_views(
                         .fields
                         .get(physical_index)
                         .ok_or_else(|| anyhow!("composite return field is missing"))?;
-                    let leaf = match values.get(field_name.as_str()).copied() {
-                        Some(Value::Native(value)) => Json::String(field_decimal(*value)),
-                        Some(_) => bail!("composite return field is not Native"),
-                        None => bail!("composite return field is missing"),
+                    let leaf = match (
+                        leaf_types[logical_index].as_str(),
+                        values.get(field_name.as_str()).copied(),
+                    ) {
+                        ("OpaqueBytes", Some(value @ Value::OpaqueBytes(_)))
+                        | ("OpaqueString", Some(value @ Value::OpaqueString(_))) => {
+                            value.public_json()
+                        }
+                        ("OpaqueBytes" | "OpaqueString", Some(_)) => {
+                            bail!("opaque return type differs from its qualified schema")
+                        }
+                        (_, Some(Value::Native(value))) => Json::String(field_decimal(*value)),
+                        (_, Some(_)) => bail!("composite return field is not Native"),
+                        (_, None) => bail!("composite return field is missing"),
                     };
                     leaves.push(leaf);
                     physical_index += 1;
@@ -6963,7 +6987,7 @@ fn reconstruct_return_views(
             }
             ensure!(physical_index == view.fields.len(), "composite return fields were not consumed");
             ensure!(leaves.len() == leaf_types.len(), "composite return expansion count mismatch");
-            let encoded = schema.from_native_leaves_json(&leaves)?;
+            let encoded = schema.from_typed_return_leaves_json(&leaves)?;
             Ok((view.name.clone(), serde_json::from_slice(&encoded)?))
         })
         .collect()
@@ -6997,6 +7021,32 @@ mod packed_return_view_tests {
                 {"leafOffset":1, "byteLength":32, "fields":["result_1", "result_2"], "chunkWidths":[1,31]},
                 {"leafOffset":33, "byteLength":32, "fields":["result_3", "result_4"], "chunkWidths":[1,31]}
             ]
+        }))
+        .unwrap()
+    }
+
+    fn optional_opaque_schema(ty: &str, encoding: &str) -> Json {
+        json!({
+            "typeFingerprint": format!(
+                "NoctiumCompositeTypeV1;t2;[sBs{encoding}]NoctiumCompositeLayoutV1;0;0;"
+            ),
+            "schemaVersion": 1,
+            "layout": {
+                "kind":"tuple",
+                "items":[
+                    {"kind":"scalar", "leaf":{"kind":"bool"}},
+                    {"kind":"opaque", "type":ty}
+                ]
+            },
+            "counts":{"leaves":2,"expandedNodes":3,"layoutNodes":3}
+        })
+    }
+
+    fn optional_opaque_view(ty: &str, encoding: &str) -> ReturnView {
+        serde_json::from_value(json!({
+            "name":"result",
+            "schema":optional_opaque_schema(ty, encoding),
+            "fields":["result_is_some", "result_value"]
         }))
         .unwrap()
     }
@@ -7106,6 +7156,146 @@ mod packed_return_view_tests {
             .map(|name| (name.as_str(), "Native", "public"))
             .collect::<Vec<_>>();
         assert!(validate_return_views_specs(&[view], returns).is_err());
+    }
+
+    #[test]
+    fn optional_opaque_return_views_preserve_raw_typed_payloads_and_compress_binding() {
+        for (ty, encoding, payload, expected_json, value) in [
+            (
+                "OpaqueBytes",
+                "O",
+                json!({"kind":"opaqueBytes", "values":[0, 255, 1]}),
+                json!({"kind":"opaqueBytes", "values":[0, 255, 1]}),
+                Value::OpaqueBytes(vec![0, 255, 1]),
+            ),
+            (
+                "OpaqueString",
+                "S",
+                json!({"kind":"opaqueString", "value":"A\0B"}),
+                json!({"kind":"opaqueString", "value":"A\0B"}),
+                Value::OpaqueString("A\0B".into()),
+            ),
+        ] {
+            let view = optional_opaque_view(ty, encoding);
+            let schema = Schema::from_json(&serde_json::to_vec(&view.schema).unwrap()).unwrap();
+            assert_eq!(schema.leaf_types().unwrap(), ["Bool", ty]);
+            let source_value = schema
+                .from_leaf_json(&[json!(false), payload.clone()])
+                .unwrap();
+            assert_eq!(
+                schema.flatten_leaves_json(&source_value).unwrap(),
+                [json!(false), payload.clone()]
+            );
+            schema.validate_value_json(&source_value).unwrap();
+            let logical_value: Json = serde_json::from_slice(&source_value).unwrap();
+            let mut registry = crate::witness::Registry::default();
+            registry
+                .register_json("Aggregate:t0", &serde_json::to_vec(&view.schema).unwrap())
+                .unwrap();
+            registry.validate("Aggregate:t0", &logical_value).unwrap();
+            assert_eq!(
+                registry
+                    .flatten_leaves("Aggregate:t0", &logical_value)
+                    .unwrap(),
+                [json!(false), payload.clone()]
+            );
+            assert_eq!(
+                registry
+                    .from_source_leaves("Aggregate:t0", &[json!(false), payload.clone()])
+                    .unwrap(),
+                logical_value
+            );
+            validate_return_views_specs(
+                std::slice::from_ref(&view),
+                [
+                    ("result_is_some", "Native", "public"),
+                    ("result_value", ty, "public"),
+                ],
+            )
+            .unwrap();
+
+            for tag in ["0", "1"] {
+                let values = vec![
+                    (
+                        "result_is_some".into(),
+                        Value::Native(canonical_field(tag).unwrap()),
+                    ),
+                    ("result_value".into(), value.clone()),
+                ];
+                let reconstructed = reconstruct_return_views(&[view.clone()], &values).unwrap();
+                assert_eq!(
+                    reconstructed[0].1,
+                    json!({"kind":"tuple", "items":[
+                        {"kind":"bool", "value":tag == "1"}, expected_json.clone()
+                    ]})
+                );
+
+                let call_output = aligned_call_returns(&values).unwrap();
+                let compressed = match &value {
+                    Value::OpaqueBytes(_) => aligned_opaque_bytes(&value).unwrap(),
+                    Value::OpaqueString(_) => aligned_opaque_string(&value).unwrap(),
+                    _ => unreachable!(),
+                };
+                let mut actual_fields = Vec::new();
+                call_output.value_only_field_repr(&mut actual_fields);
+                let mut expected_fields = Vec::new();
+                compressed.value_only_field_repr(&mut expected_fields);
+                assert_eq!(&actual_fields[1..], expected_fields);
+                assert_eq!(actual_fields.len(), 2);
+            }
+
+            assert!(
+                schema
+                    .from_native_leaves_json(&[json!("0"), json!("0")])
+                    .is_err()
+            );
+            assert!(schema
+                .encode_json_value(br#"{"kind":"tuple","items":[{"kind":"bool","value":false},{"kind":"opaqueBytes","values":[1]}]}"#)
+                .is_err());
+            assert!(schema.decode_wire(&[]).is_err());
+        }
+    }
+
+    #[test]
+    fn optional_opaque_return_views_reject_wrong_schema_carriers_and_payloads() {
+        let view = optional_opaque_view("OpaqueBytes", "O");
+        let mut invalid_schema = optional_opaque_schema("OpaqueBytes", "O");
+        invalid_schema["layout"]["items"][1]["type"] = json!("OpaqueSecret");
+        assert!(Schema::from_json(&serde_json::to_vec(&invalid_schema).unwrap()).is_err());
+
+        assert!(
+            validate_return_views_specs(
+                std::slice::from_ref(&view),
+                [
+                    ("result_is_some", "Native", "public"),
+                    ("result_value", "OpaqueString", "public"),
+                ],
+            )
+            .is_err()
+        );
+
+        let values = vec![
+            (
+                "result_is_some".into(),
+                Value::Native(canonical_field("0").unwrap()),
+            ),
+            ("result_value".into(), Value::OpaqueString("wrong".into())),
+        ];
+        assert!(reconstruct_return_views(&[view], &values).is_err());
+
+        let schema = Schema::from_json(
+            &serde_json::to_vec(&optional_opaque_schema("OpaqueBytes", "O")).unwrap(),
+        )
+        .unwrap();
+        let malformed = json!({"kind":"tuple", "items":[
+            {"kind":"bool", "value":false},
+            {"kind":"opaqueBytes", "values":[7, 0]}
+        ]});
+        assert!(
+            schema
+                .validate_value_json(&serde_json::to_vec(&malformed).unwrap())
+                .is_err()
+        );
     }
 }
 

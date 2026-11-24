@@ -5528,14 +5528,17 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
       let span ← spanTerm statement
       let mut fields := #[]
       for name in sourceFields do
-        unless info.outputs.lookup name == some Ty.native do
-          throwErrorAt label "aggregate return requires Native fields"
+        let some outputType := info.outputs.lookup name
+          | throwErrorAt label "aggregate return field has no circuit output"
+        unless outputType == .native || outputType == .opaqueBytes || outputType == .opaqueString do
+          throwErrorAt label "aggregate return requires Native or opaque fields"
+        let outputTypeTerm ← tyTerm outputType
         let (physical, nextLocal) := chooseBranchLocalName state.env state.usedLocalNames state.nextLocal
         let field := stringTerm physical
         let returnTerm ← `({
           name := $field
-          ty := Noctium.Ty.native
-          value := @Noctium.Expr.ref Noctium.Ty.native $(stringTerm name)
+          ty := $outputTypeTerm
+          value := @Noctium.Expr.ref $outputTypeTerm $(stringTerm name)
           span := $span : Noctium.Output })
         state := {
           state with

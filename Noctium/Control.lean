@@ -433,8 +433,8 @@ mutual
     | .native n => pure (node span "constant" [("value", toJson (toString n))])
     | .bool value => pure (node span "bool" [("value", toJson value)])
     | .uint maximum value => pure (node span "uint" [("maximum", toJson (toString maximum)), ("value", toJson (toString value))])
-    | .opaqueBytesEmpty => pure (node span "opaqueDefault" [("type", toJson ("OpaqueBytes" : String))])
-    | .opaqueStringEmpty => pure (node span "opaqueDefault" [("type", toJson ("OpaqueString" : String))])
+    | .opaqueBytesEmpty => pure (node span "opaqueEmpty" [("type", toJson ("OpaqueBytes" : String))])
+    | .opaqueStringEmpty => pure (node span "opaqueEmpty" [("type", toJson ("OpaqueString" : String))])
     | .ref name => do
       emitLift (portableName span name)
       chargeBytes (6 * name.utf8ByteSize)

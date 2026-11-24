@@ -31,8 +31,8 @@ end
 
 noctium_contract ReadableOpaqueDefaults where
   entry defaults uses readableOpaqueDefaults where
-    return textValue : OpaqueString := textValue
-    return bytesValue : OpaqueBytes := bytesValue
+    return textResult : OpaqueString := textValue
+    return bytesResult : OpaqueBytes := bytesValue
   end
 end
 

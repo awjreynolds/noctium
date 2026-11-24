@@ -1238,7 +1238,7 @@ impl Parser<'_> {
                 let x = Value::Native(canonical_field(text(v, "value")?)?);
                 (Type::Scalar(x.scalar_type()), ExprKind::Literal(x))
             }
-            "opaqueDefault" => {
+            "opaqueEmpty" => {
                 shape(v, &["tag", "type"], true)?;
                 let value = match ScalarType::parse(text(v, "type")?)? {
                     ScalarType::OpaqueBytes => Value::OpaqueBytes(Vec::new()),

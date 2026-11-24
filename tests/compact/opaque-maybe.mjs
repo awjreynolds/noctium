@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 
 const [compactc, runtimePath] = process.argv.slice(2);
 assert.ok(compactc && runtimePath,
@@ -34,25 +34,24 @@ try {
 
   const text = 'A\0B';
   const bytes = Uint8Array.of(0, 255, 0, 1);
-  assert.deepEqual(pureCircuits.stringSome(text), { is_some: true, value: text });
-  assert.deepEqual(pureCircuits.stringNone(), { is_some: false, value: '' });
-  assert.deepEqual(pureCircuits.bytesSome(bytes), { is_some: true, value: bytes });
-  assert.deepEqual(pureCircuits.bytesNone(), { is_some: false, value: new Uint8Array() });
+  const stringSome = pureCircuits.stringSome(text);
+  const stringNone = pureCircuits.stringNone();
+  const bytesSome = pureCircuits.bytesSome(bytes);
+  const bytesNone = pureCircuits.bytesNone();
+  assert.deepEqual(stringSome, { is_some: true, value: text });
+  assert.deepEqual(stringNone, { is_some: false, value: '' });
+  assert.deepEqual(bytesSome, { is_some: true, value: bytes });
+  assert.deepEqual(bytesNone, { is_some: false, value: new Uint8Array() });
 
   console.log(JSON.stringify({
     fixture: 'OpaqueMaybe',
     compact: compilerVersion,
     runtime: runtimePackage.version,
-    stringSome: { is_some: true, value: [...new TextEncoder().encode(text)] },
-    stringNone: { is_some: false, value: '' },
-    bytesSome: { is_some: true, value: [...bytes] },
-    bytesNone: { is_some: false, value: [] },
+    stringSome,
+    stringNone,
+    bytesSome: { ...bytesSome, value: [...bytesSome.value] },
+    bytesNone: { ...bytesNone, value: [...bytesNone.value] },
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
-  try {
-    rmdirSync(experiments);
-  } catch (error) {
-    if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') throw error;
-  }
 }

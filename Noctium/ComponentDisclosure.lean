@@ -40,7 +40,7 @@ private def compileType (program : Program) (span : SourceSpan) (type : Types.Co
 private partial def paths (layout : Types.Layout) (pathPrefix : String := "") : List String :=
   match layout with
   | .unit => []
-  | .scalar _ => [pathPrefix]
+  | .scalar _ | .opaque _ => [pathPrefix]
   | .curve type => List.replicate type.nativeCallFieldCount pathPrefix
   | .tuple items => items.zipIdx.flatMap fun (item, index) => paths item (pathPrefix ++ s!".{index}")
   | .structure _ fields => fields.flatMap fun (name, item) => paths item (pathPrefix ++ s!".{name}")

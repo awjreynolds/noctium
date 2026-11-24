@@ -259,6 +259,51 @@ impl JsonTree {
             root,
         })
     }
+    fn value_json(&self, root: usize) -> Result<serde_json::Value> {
+        enum Task {
+            Visit(usize),
+            Text(String),
+        }
+        let mut pending = vec![Task::Visit(root)];
+        let mut output = String::new();
+        while let Some(task) = pending.pop() {
+            match task {
+                Task::Text(text) => output.push_str(&text),
+                Task::Visit(index) => match &self.nodes[index] {
+                    JsonNode::Null => output.push_str("null"),
+                    JsonNode::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+                    JsonNode::Number(value) => output.push_str(value),
+                    JsonNode::String(value) => output.push_str(&serde_json::to_string(value)?),
+                    JsonNode::Array(items) => {
+                        output.push('[');
+                        pending.push(Task::Text("]".into()));
+                        for (at, item) in items.iter().enumerate().rev() {
+                            pending.push(Task::Visit(*item));
+                            if at != 0 {
+                                pending.push(Task::Text(",".into()));
+                            }
+                        }
+                    }
+                    JsonNode::Object(fields) => {
+                        output.push('{');
+                        pending.push(Task::Text("}".into()));
+                        for (at, (name, value)) in fields.iter().enumerate().rev() {
+                            pending.push(Task::Visit(*value));
+                            pending.push(Task::Text(format!("{}:", serde_json::to_string(name)?)));
+                            if at != 0 {
+                                pending.push(Task::Text(",".into()));
+                            }
+                        }
+                    }
+                },
+            }
+            ensure!(
+                output.len() <= MAX_TRANSPORT_BYTES,
+                "aggregate subtree exceeds transport limit"
+            );
+        }
+        Ok(serde_json::from_str(&output)?)
+    }
     fn object(&self, index: usize) -> Result<&[(String, usize)]> {
         match self.nodes.get(index) {
             Some(JsonNode::Object(fields)) => Ok(fields),
@@ -357,6 +402,7 @@ struct SourceLeaf {
 enum LayoutNode {
     Unit,
     Scalar(Leaf),
+    Opaque(crate::ScalarType),
     Curve(crate::ScalarType),
     Tuple(Vec<usize>),
     Struct {
@@ -622,6 +668,10 @@ fn layout_children(tree: &JsonTree, index: usize) -> Result<Vec<usize>> {
             tree.exact(index, &["kind", "leaf"])?;
             vec![]
         }
+        "opaque" => {
+            tree.exact(index, &["kind", "type"])?;
+            vec![]
+        }
         "curve" => {
             tree.exact(index, &["kind", "type"])?;
             vec![]
@@ -703,6 +753,9 @@ fn type_encoding(nodes: &[LayoutNode], root: usize) -> Result<String> {
                 LayoutNode::Scalar(Leaf::UInt(max)) => {
                     output.push_str(&format!("sU{};", max.to_str_radix(10)))
                 }
+                LayoutNode::Opaque(crate::ScalarType::OpaqueBytes) => output.push_str("sO"),
+                LayoutNode::Opaque(crate::ScalarType::OpaqueString) => output.push_str("sS"),
+                LayoutNode::Opaque(_) => bail!("unsupported opaque aggregate leaf"),
                 LayoutNode::Curve(ty) => output.push_str(&curve_type_encoding(ty)?),
                 LayoutNode::Struct { id, .. } => output.push_str(&format!("r{}", encoded_text(id))),
                 LayoutNode::Enum { id, .. } => output.push_str(&format!("e{}", encoded_text(id))),
@@ -885,6 +938,24 @@ impl Schema {
                     };
                     (
                         LayoutNode::Scalar(leaf),
+                        Counts {
+                            leaves: 1,
+                            expanded_nodes: 1,
+                            layout_nodes: 1,
+                        },
+                    )
+                }
+                "opaque" => {
+                    let ty = crate::ScalarType::parse(tree.text(raw, "type")?)?;
+                    ensure!(
+                        matches!(
+                            ty,
+                            crate::ScalarType::OpaqueBytes | crate::ScalarType::OpaqueString
+                        ),
+                        "unsupported qualified opaque aggregate leaf"
+                    );
+                    (
+                        LayoutNode::Opaque(ty),
                         Counts {
                             leaves: 1,
                             expanded_nodes: 1,
@@ -1078,6 +1149,20 @@ impl Schema {
         self.measures[self.root]
     }
 
+    fn has_opaque_leaves(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| matches!(node, LayoutNode::Opaque(_)))
+    }
+
+    fn require_numeric_wire(&self) -> Result<()> {
+        ensure!(
+            !self.has_opaque_leaves(),
+            "opaque aggregate values require typed leaf transport"
+        );
+        Ok(())
+    }
+
     pub(crate) fn uint_leaf_maximum(&self, path: &[String]) -> Result<&BigUint> {
         ensure!(!path.is_empty(), "aggregate UInt field path is empty");
         let mut layout = self.root;
@@ -1198,6 +1283,15 @@ impl Schema {
     }
 
     fn flatten_value(&self, json: &[u8]) -> Result<Vec<BigUint>> {
+        self.require_numeric_wire()?;
+        self.flatten_value_with_opaque(json)
+            .map(|(leaves, _)| leaves)
+    }
+
+    fn flatten_value_with_opaque(
+        &self,
+        json: &[u8],
+    ) -> Result<(Vec<BigUint>, BTreeMap<usize, serde_json::Value>)> {
         let tree = JsonTree::parse(json)?;
         enum Task {
             Visit(usize, usize),
@@ -1205,6 +1299,7 @@ impl Schema {
         }
         let mut pending = vec![Task::Visit(self.root, tree.root)];
         let mut leaves = vec![];
+        let mut opaque = BTreeMap::new();
         while let Some(task) = pending.pop() {
             match task {
                 Task::Pad(count) => leaves.extend((0..count).map(|_| BigUint::from(0u8))),
@@ -1252,6 +1347,29 @@ impl Schema {
                             "aggregate scalar outside declared range"
                         );
                         leaves.push(number);
+                    }
+                    LayoutNode::Opaque(_) => {
+                        let kind = tree.text(raw, "kind")?;
+                        let (ty, token) = match kind {
+                            "opaqueBytes" => {
+                                tree.exact(raw, &["kind", "values"])?;
+                                (crate::ScalarType::OpaqueBytes, "OpaqueBytes")
+                            }
+                            "opaqueString" => {
+                                tree.exact(raw, &["kind", "value"])?;
+                                (crate::ScalarType::OpaqueString, "OpaqueString")
+                            }
+                            _ => bail!("aggregate opaque scalar kind mismatch"),
+                        };
+                        let expected = match &self.nodes[layout] {
+                            LayoutNode::Opaque(expected) => expected,
+                            _ => unreachable!("opaque match arm has opaque layout"),
+                        };
+                        ensure!(*expected == ty, "aggregate opaque scalar type mismatch");
+                        let value = tree.value_json(raw)?;
+                        let value = crate::input_value(token, &value)?;
+                        opaque.insert(leaves.len(), value.public_json());
+                        leaves.push(BigUint::from(0u8));
                     }
                     LayoutNode::Curve(ty) => leaves.extend(curve_from_tree(&tree, raw, ty)?),
                     LayoutNode::Tuple(items) => {
@@ -1357,7 +1475,7 @@ impl Schema {
             leaves.len() == self.counts().leaves,
             "aggregate flattening count mismatch"
         );
-        Ok(leaves)
+        Ok((leaves, opaque))
     }
 
     /// Hash a checked structured value using the ledger's FAB leaf encoding.
@@ -1393,6 +1511,9 @@ impl Schema {
                 LayoutNode::Scalar(Leaf::Bool) => append(1)?,
                 LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                     append(maximum.bits().div_ceil(8).max(1) as usize)?;
+                }
+                LayoutNode::Opaque(_) => {
+                    bail!("opaque values do not have a numeric Merkle leaf encoding")
                 }
                 LayoutNode::Curve(ty) => {
                     let widths = curve_merkle_widths(ty)?;
@@ -1431,7 +1552,7 @@ impl Schema {
     }
 
     pub fn validate_value_json(&self, json: &[u8]) -> Result<()> {
-        self.flatten_value(json).map(|_| ())
+        self.flatten_value_with_opaque(json).map(|_| ())
     }
 
     pub fn native_field_only(&self) -> bool {
@@ -1461,6 +1582,13 @@ impl Schema {
                 LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                     result.push(format!("UIntRange<{}>", maximum + BigUint::from(1u8)))
                 }
+                LayoutNode::Opaque(crate::ScalarType::OpaqueBytes) => {
+                    result.push("OpaqueBytes".to_owned())
+                }
+                LayoutNode::Opaque(crate::ScalarType::OpaqueString) => {
+                    result.push("OpaqueString".to_owned())
+                }
+                LayoutNode::Opaque(_) => bail!("unsupported opaque aggregate leaf"),
                 LayoutNode::Curve(ty) => {
                     result.extend(std::iter::repeat_n("Native".to_owned(), curve_width(ty)?));
                 }
@@ -1610,6 +1738,13 @@ impl Schema {
                     1,
                     None,
                 )?,
+                LayoutNode::Opaque(crate::ScalarType::OpaqueBytes) => {
+                    append("OpaqueBytes".into(), 1, None)?
+                }
+                LayoutNode::Opaque(crate::ScalarType::OpaqueString) => {
+                    append("OpaqueString".into(), 1, None)?
+                }
+                LayoutNode::Opaque(_) => bail!("unsupported opaque aggregate leaf"),
                 LayoutNode::Curve(ty) => {
                     append(curve_source_name(ty)?, curve_width(ty)?, Some(ty.clone()))?;
                 }
@@ -1689,7 +1824,12 @@ impl Schema {
                     spec.physical_width == 1,
                     "non-curve source leaf width mismatch"
                 );
-                expanded.push(leaf.clone());
+                if matches!(spec.type_name.as_str(), "OpaqueBytes" | "OpaqueString") {
+                    let value = crate::input_value(&spec.type_name, leaf)?;
+                    expanded.push(value.public_json());
+                } else {
+                    expanded.push(leaf.clone());
+                }
             }
         }
         ensure!(
@@ -1700,7 +1840,7 @@ impl Schema {
     }
 
     pub fn flatten_leaves_json(&self, json: &[u8]) -> Result<Vec<serde_json::Value>> {
-        let numbers = self.flatten_value(json)?;
+        let (numbers, opaque) = self.flatten_value_with_opaque(json)?;
         let types = self.leaf_types()?;
         ensure!(
             numbers.len() == types.len(),
@@ -1709,21 +1849,32 @@ impl Schema {
         numbers
             .into_iter()
             .zip(types)
-            .map(|(number, ty)| match ty.as_str() {
-                "Native" => Ok(serde_json::Value::String(number.to_str_radix(10))),
-                "Bool" => {
-                    ensure!(
-                        number <= BigUint::from(1u8),
-                        "noncanonical aggregate Boolean"
-                    );
-                    Ok(serde_json::Value::Bool(number == BigUint::from(1u8)))
+            .enumerate()
+            .map(|(index, (number, ty))| {
+                if let Some(value) = opaque.get(&index) {
+                    Ok(value.clone())
+                } else {
+                    match ty.as_str() {
+                        "Native" => Ok(serde_json::Value::String(number.to_str_radix(10))),
+                        "Bool" => {
+                            ensure!(
+                                number <= BigUint::from(1u8),
+                                "noncanonical aggregate Boolean"
+                            );
+                            Ok(serde_json::Value::Bool(number == BigUint::from(1u8)))
+                        }
+                        _ => Ok(serde_json::Value::String(number.to_str_radix(10))),
+                    }
                 }
-                _ => Ok(serde_json::Value::String(number.to_str_radix(10))),
             })
             .collect()
     }
 
     pub fn from_leaf_json(&self, leaves: &[serde_json::Value]) -> Result<Vec<u8>> {
+        if self.has_opaque_leaves() {
+            return self.from_typed_return_leaves_json(leaves);
+        }
+        self.require_numeric_wire()?;
         let types = self.leaf_types()?;
         ensure!(leaves.len() == types.len(), "aggregate leaf count mismatch");
         let modulus = decimal(crate::MODULUS)?;
@@ -1777,6 +1928,7 @@ impl Schema {
     }
 
     pub fn from_native_leaves_json(&self, native_leaves: &[serde_json::Value]) -> Result<Vec<u8>> {
+        self.require_numeric_wire()?;
         let types = self.leaf_types()?;
         ensure!(
             native_leaves.len() == types.len(),
@@ -1815,6 +1967,62 @@ impl Schema {
         rendered
     }
 
+    /// Reconstruct a logical aggregate result from typed return leaves. Opaque leaves remain
+    /// typed JSON values and never enter the aggregate's numeric wire format.
+    pub(crate) fn from_typed_return_leaves_json(
+        &self,
+        return_leaves: &[serde_json::Value],
+    ) -> Result<Vec<u8>> {
+        if !self.has_opaque_leaves() {
+            return self.from_native_leaves_json(return_leaves);
+        }
+        let types = self.leaf_types()?;
+        ensure!(
+            return_leaves.len() == types.len(),
+            "aggregate typed return leaf count mismatch"
+        );
+        let mut numeric = Vec::with_capacity(types.len());
+        let mut opaque = BTreeMap::new();
+        for (index, (value, ty)) in return_leaves.iter().zip(types).enumerate() {
+            let parsed = crate::ScalarType::parse(&ty)?;
+            match parsed {
+                crate::ScalarType::OpaqueBytes | crate::ScalarType::OpaqueString => {
+                    let typed = crate::input_value(&ty, value)?;
+                    opaque.insert(index, typed.public_json());
+                    numeric.push(BigUint::from(0u8));
+                }
+                crate::ScalarType::Bool => {
+                    let number = match value {
+                        serde_json::Value::Bool(value) => BigUint::from(u8::from(*value)),
+                        _ => {
+                            let text = value
+                                .as_str()
+                                .ok_or_else(|| anyhow!("expected Boolean return leaf"))?;
+                            decimal(text)?
+                        }
+                    };
+                    ensure!(number <= BigUint::from(1u8), "noncanonical Boolean return");
+                    numeric.push(number);
+                }
+                crate::ScalarType::Native => {
+                    let text = value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("expected Native return decimal"))?;
+                    let field = crate::canonical_field(text)?;
+                    numeric.push(BigUint::from_bytes_le(&field.as_le_bytes()));
+                }
+                crate::ScalarType::UInt(maximum) => {
+                    let text = value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("expected Native UInt return decimal"))?;
+                    numeric.push(crate::canonical_unsigned(text, &maximum)?);
+                }
+                _ => bail!("unsupported typed aggregate return leaf"),
+            }
+        }
+        self.render_value_with_opaque(&numeric, &opaque)
+    }
+
     fn node_type_key(&self, root: usize) -> Result<String> {
         enum Task {
             Node(usize),
@@ -1840,6 +2048,9 @@ impl Schema {
                     LayoutNode::Scalar(Leaf::UInt(maximum)) => {
                         output.push_str(&format!("sU{};", maximum.to_str_radix(10)));
                     }
+                    LayoutNode::Opaque(crate::ScalarType::OpaqueBytes) => output.push_str("opaqueBytes"),
+                    LayoutNode::Opaque(crate::ScalarType::OpaqueString) => output.push_str("opaqueString"),
+                    LayoutNode::Opaque(_) => bail!("unsupported opaque aggregate leaf"),
                     LayoutNode::Curve(ty) => output.push_str(&curve_type_key(ty)?),
                     LayoutNode::Tuple(items) => {
                         output.push_str(&format!("T{}[", items.len()));
@@ -2130,7 +2341,7 @@ impl Schema {
         json: &[u8],
         projection: &Projection,
     ) -> Result<ProjectedValue> {
-        let leaves = self.flatten_value(json)?;
+        let (leaves, _) = self.flatten_value_with_opaque(json)?;
         let (child, start, type_key) = self.projection_node(projection)?;
         let leaf_count = child.map_or(1, |index| self.measures[index].leaves);
         ensure!(
@@ -2234,6 +2445,7 @@ impl Schema {
         Ok(output)
     }
     pub fn decode_wire(&self, wire: &[u8]) -> Result<Vec<u8>> {
+        self.require_numeric_wire()?;
         ensure!(
             wire.len() <= MAX_TRANSPORT_BYTES && wire.starts_with(MAGIC),
             "invalid aggregate wire header"
@@ -2267,6 +2479,13 @@ impl Schema {
         self.render_value(&leaves)
     }
     fn render_value(&self, leaves: &[BigUint]) -> Result<Vec<u8>> {
+        self.render_value_with_opaque(leaves, &BTreeMap::new())
+    }
+    fn render_value_with_opaque(
+        &self,
+        leaves: &[BigUint],
+        opaque_values: &BTreeMap<usize, serde_json::Value>,
+    ) -> Result<Vec<u8>> {
         enum Task {
             Visit(usize),
             Text(String),
@@ -2290,6 +2509,13 @@ impl Schema {
                 }
                 Task::Visit(layout) => match &self.nodes[layout] {
                     LayoutNode::Unit => output.extend_from_slice(b"{\"kind\":\"unit\"}"),
+                    LayoutNode::Opaque(_) => {
+                        let value = opaque_values
+                            .get(&cursor)
+                            .ok_or_else(|| anyhow!("missing typed opaque return leaf"))?;
+                        output.extend_from_slice(&serde_json::to_vec(value)?);
+                        cursor += 1;
+                    }
                     LayoutNode::Scalar(leaf) => {
                         let number = leaves
                             .get(cursor)

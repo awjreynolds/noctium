@@ -147,3 +147,28 @@ The localnet driver retains the `OpaqueBytes` branch and selects the value
 type from the verified entrypoint plans. This string run covers one value and
 one Map entry only. It does not establish
 general string equivalence, privacy guarantees or public-network deployment.
+
+### Opaque Maybe values
+
+Readable witness circuits accept `some(value)` and `none(OpaqueString)` or
+`none(OpaqueBytes)`. The native session preserves each typed payload,
+including embedded NULs. The call result binds each Bool tag and one
+Compress field per payload. The pinned Compact fixture returns the same
+four tag and payload pairs. The native checker rejects a modified payload
+under the original relation. Source checking rejects publishing a private
+payload through `some` without an explicit disclosure.
+[Lean fixture](../../tests/OpaqueMaybe.lean) · [Compact oracle](../../tests/compact/opaque-maybe.mjs) · [Native checker](../../runtime/tests/opaque_maybe.rs)
+
+```sh
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/opaque-maybe.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+node tests/compact/opaque-maybe.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake exe noctium compile tests/OpaqueMaybe.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --output "$scratch/native"
+NOCTIUM_OPAQUE_MAYBE_DIR="$scratch/native" \
+NOCTIUM_OPAQUE_MAYBE_COMPACT="$scratch/compact.json" \
+  cargo test --locked --manifest-path runtime/Cargo.toml --no-default-features \
+  --features zkir-321 --test opaque_maybe -- --ignored
+```
