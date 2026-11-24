@@ -605,6 +605,7 @@ jobs:
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
+            Noctium.Verification.GuardedEffectEvaluation \
             Noctium.Verification.GenericStateAdmissionBridge
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
