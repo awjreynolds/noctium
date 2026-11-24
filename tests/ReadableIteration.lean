@@ -5,6 +5,7 @@ open scoped Noctium
 noctium_witness iterationSeed() : Native
 noctium_witness iterationBytes() : Bytes 2
 noctium_witness iterationVisit(item : UInt 8) : Native
+noctium_witness iterationEmptyMapVisit() : Bool
 
 private def emptyTupleIterationWire : Noctium.Helpers.Wire.Codec := {
   payload := .tuple []
@@ -77,6 +78,33 @@ end
   compiled.toOption.map (fun source => source.calls.map (·.name)) ==
     some ["iterationEmptyTuple", "iterationEmptyTuple", "acceptEmptyNativeVector"]
 
+noctium_witness_circuit emptyMapTupleEquality using emptyTupleIterationWire where
+  public chooseItem : Bool
+  let mapped := map([witness iterationEmptyTuple()], fun item => do
+    prove witness iterationEmptyMapVisit()
+    return if chooseItem then item else item
+  end)
+  output result : Bool := disclose(eq(mapped, tuple()))
+end
+
+#guard
+  let compiled := Noctium.Witness.compile emptyMapTupleEquality.__program
+    "noctium.witness-circuit.emptyMapTupleEquality.v1"
+  compiled.toOption.map (fun source => source.calls.map (·.name)) ==
+    some ["iterationEmptyTuple"]
+
+/- error: empty map has no element type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsEmptyTupleShapeEscape using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  public chooseItem : Bool
+  let mapped := map([witness iterationEmptyTuple()], fun item =>
+    if chooseItem then item else item)
+  prove eq(mapped, tuple())
+  let forwarded := slice(mapped, 0, 0)
+  output result : Native := disclose(witness acceptEmptyNativeVector(forwarded))
+end
+
 noctium_witness_circuit infersEmptyMapFromElse where
   output mapped := map([tuple()], fun item => if true then item else 0)
 end
@@ -138,6 +166,9 @@ noctium_contract ReadableIteration where
   end
   entry emptyIdentity uses emptyNativeMap where
     return mapped : Native := result
+  end
+  entry emptyTupleEquality uses emptyMapTupleEquality where
+    return empty : Bool := result
   end
 end
 
