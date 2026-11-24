@@ -29,6 +29,17 @@ fn host_context(control: &Json, attempt_id: &str) -> Context {
         .as_str()
         .expect("callback result type")
         .to_owned();
+    let argument_schema = witness["parameters"]
+        .as_array()
+        .expect("callback parameters")
+        .iter()
+        .map(|parameter| {
+            (
+                parameter["name"].as_str().unwrap().to_owned(),
+                parameter["type"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
     Context {
         protocol_version: 1,
         namespace: "noctium".into(),
@@ -50,7 +61,7 @@ fn host_context(control: &Json, attempt_id: &str) -> Context {
         ],
         operations: vec![Operation {
             operation: operation.clone(),
-            argument_schema: BTreeMap::new(),
+            argument_schema,
             result_schema,
         }],
         providers: vec![Provider {
@@ -79,7 +90,7 @@ fn typed_reply(request: &Json, attempt_id: &str, value: Json) -> Result<TypedRes
 
 #[test]
 #[ignore = "requires fresh ReadableNominalFieldWitness outputs in NOCTIUM_NOMINAL_FIELD_WITNESS_DIR"]
-fn typed_nominal_field_witness_result_runs_on_native_relation() -> Result<()> {
+fn typed_nominal_field_witness_runs_on_native_relation() -> Result<()> {
     let directory = PathBuf::from(
         env::var_os("NOCTIUM_NOMINAL_FIELD_WITNESS_DIR")
             .expect("NOCTIUM_NOMINAL_FIELD_WITNESS_DIR must point at fresh compiler outputs"),
@@ -90,6 +101,10 @@ fn typed_nominal_field_witness_result_runs_on_native_relation() -> Result<()> {
     )?)?;
     let binding: Json = serde_json::from_str(control["binding"].as_str().expect("binding"))?;
     assert_eq!(control["witnesses"][0]["resultType"], "Native");
+    assert_eq!(
+        control["witnesses"][0]["parameters"],
+        json!([{"name":"amount","type":"Native"}])
+    );
     assert_eq!(control["inputs"][0]["name"], "prior");
     assert_eq!(control["inputs"][0]["type"], "Native");
 
@@ -111,6 +126,14 @@ fn typed_nominal_field_witness_result_runs_on_native_relation() -> Result<()> {
     assert_eq!(pending["status"], "need_host");
     let request = pending["request"].clone();
     assert_eq!(request["schema"], "Native");
+    assert_eq!(
+        request["arguments"],
+        json!([{"name":"amount","type":"Native"}])
+    );
+    assert_eq!(
+        session.private_request()?["arguments"],
+        json!({"amount":"19"})
+    );
     session.resume_typed(typed_reply(&request, &attempt_id, json!("23"))?)?;
     assert_eq!(session.advance()?["status"], "completed");
 
