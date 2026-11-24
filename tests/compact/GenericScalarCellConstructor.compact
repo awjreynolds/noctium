@@ -1,0 +1,35 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+module GenericCell<T> {
+  export ledger value: T;
+
+  export circuit read(): T {
+    return value;
+  }
+}
+
+import GenericCell<Field> prefix fieldCell_;
+import GenericCell<Boolean> prefix flagCell_;
+import GenericCell<Uint<16>> prefix countCell_;
+
+export {fieldCell_value, flagCell_value, countCell_value,
+        fieldCell_read, flagCell_read, countCell_read};
+
+constructor(initialField: Field, initialFlag: Boolean, initialCount: Uint<16>) {
+  fieldCell_value = disclose(initialField);
+  flagCell_value = disclose(initialFlag);
+  countCell_value = disclose(initialCount);
+}
+
+export circuit readField(): Field {
+  return fieldCell_read();
+}
+
+export circuit readFlag(): Boolean {
+  return flagCell_read();
+}
+
+export circuit readCount(): Uint<16> {
+  return countCell_read();
+}

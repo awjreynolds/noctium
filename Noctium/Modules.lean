@@ -1314,14 +1314,9 @@ private def validateConstructorParameter (span : SourceSpan) (name : String) :
 private def resolveScalarConstructorInput (span : SourceSpan) (fieldName parameterName : String)
     (ty : Ty) : Except Diagnostic (ConstructorParameter × ConstructorInitializer) := do
   validateConstructorParameter span parameterName
-  let parameterType ← match ty with
-    | .opaqueString => pure .opaqueString
-    | .opaqueBytes => pure (.scalar .opaqueBytes)
-    | _ => fail span "module scalar constructor inputs only support OpaqueBytes or OpaqueString root Cells"
-  let initializerValue ← match ty with
-    | .opaqueString => pure (.opaqueStringParameter parameterName)
-    | .opaqueBytes => pure (.scalar (.ref parameterName : Expr .opaqueBytes))
-    | _ => fail span "module scalar constructor inputs only support OpaqueBytes or OpaqueString root Cells"
+  let (parameterType, initializerValue) : ConstructorType × ConstructorValue := match ty with
+    | .opaqueString => (.opaqueString, .opaqueStringParameter parameterName)
+    | _ => (.scalar ty, .scalar (.ref parameterName : Expr ty))
   pure (
     {name := parameterName, type := parameterType},
     {state := fieldName, type := parameterType, value := initializerValue})
@@ -1367,7 +1362,7 @@ private def resolveConstructorInputs (expansion : Expansion) (root : ModuleInsta
         let values := ordered.map fun (ty, name) => LedgerFieldExpr.mk ty (.ref name)
         actions := actions ++ [.initializeRecordCell fieldName values]
         pure params
-      | _ => fail binding.span "module constructor inputs require an opaque or record root Cell"
+      | _ => fail binding.span "module constructor inputs require a scalar or record root Cell"
     for parameter in newParameters do
       if let some previous := parameters.find? (·.name == parameter.name) then
         unless previous.type == parameter.type do
