@@ -1,0 +1,42 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export struct Receipt {
+  accepted: Boolean;
+  code: Uint<16>;
+}
+
+export ledger receipts: Map<Key, Receipt>;
+
+export circuit update(tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
+                      firstAccepted: Boolean, firstCode: Uint<16>,
+                      lateAccepted: Boolean, lateCode: Uint<16>):
+                      [Boolean, Boolean, Boolean, Uint<16>, Boolean, Uint<16>,
+                       Boolean, Boolean, Boolean, Uint<16>] {
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  const firstReceipt = Receipt {
+    accepted: disclose(firstAccepted), code: disclose(firstCode),
+  };
+  const lateReceipt = Receipt {
+    accepted: disclose(lateAccepted), code: disclose(lateCode),
+  };
+  receipts.insert(first, disclose(firstReceipt));
+  receipts.insert(late, disclose(lateReceipt));
+  const firstBefore = receipts.member(first);
+  const lateBefore = receipts.member(late);
+  const storedFirst = receipts.lookup(first);
+  const storedLate = receipts.lookup(late);
+  receipts.remove(first);
+  const firstAfter = receipts.member(first);
+  const lateAfter = receipts.member(late);
+  const retained = receipts.lookup(late);
+  return [firstBefore, lateBefore, storedFirst.accepted, storedFirst.code,
+          storedLate.accepted, storedLate.code, firstAfter, lateAfter,
+          retained.accepted, retained.code];
+}

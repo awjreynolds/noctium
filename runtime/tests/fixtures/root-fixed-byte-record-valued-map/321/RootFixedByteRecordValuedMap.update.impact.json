@@ -1,0 +1,992 @@
+{
+  "circuit": {
+    "constraints": [],
+    "inputs": [
+      {
+        "name": "tag",
+        "type": "Bytes<1>",
+        "visibility": "public"
+      },
+      {
+        "name": "firstId",
+        "type": "Bytes<33>",
+        "visibility": "public"
+      },
+      {
+        "name": "lateId",
+        "type": "Bytes<33>",
+        "visibility": "public"
+      },
+      {
+        "name": "firstAccepted",
+        "type": "Bool",
+        "visibility": "public"
+      },
+      {
+        "name": "firstCode",
+        "type": "UIntRange<65536>",
+        "visibility": "public"
+      },
+      {
+        "name": "lateAccepted",
+        "type": "Bool",
+        "visibility": "public"
+      },
+      {
+        "name": "lateCode",
+        "type": "UIntRange<65536>",
+        "visibility": "public"
+      }
+    ],
+    "name": "rootFixedByteRecordValuedMapInputs",
+    "outputs": []
+  },
+  "contractName": "RootFixedByteRecordValuedMap",
+  "entrypoint": "update",
+  "guards": [],
+  "nativeCircuitFile": "RootFixedByteRecordValuedMap.update.zkir",
+  "operations": [
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "tag",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "tag",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "firstId",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "firstId",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "lateId",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "lateId",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "firstAccepted",
+          "tag": "reference"
+        }
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "firstAccepted",
+          "tag": "reference"
+        }
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "firstCode",
+          "tag": "reference"
+        }
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "firstCode",
+          "tag": "reference"
+        }
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "lateAccepted",
+          "tag": "reference"
+        }
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "lateAccepted",
+          "tag": "reference"
+        }
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "lateCode",
+          "tag": "reference"
+        }
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "field",
+      "expression": {
+        "tag": "cast",
+        "type": "Native",
+        "value": {
+          "name": "lateCode",
+          "tag": "reference"
+        }
+      },
+      "op": "popeq"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": true,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "firstId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "expressions": [
+        {
+          "name": "firstAccepted",
+          "tag": "reference"
+        },
+        {
+          "name": "firstCode",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "storage": true
+    },
+    {
+      "n": 2,
+      "op": "insert"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": true,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "lateId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "expressions": [
+        {
+          "name": "lateAccepted",
+          "tag": "reference"
+        },
+        {
+          "name": "lateCode",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "storage": true
+    },
+    {
+      "n": 2,
+      "op": "insert"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "firstId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "firstBefore",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "lateId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "lateBefore",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "firstId",
+          "tag": "reference"
+        }
+      ],
+      "op": "indexRecordPath",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "firstStored_accepted",
+          "tag": "reference"
+        },
+        {
+          "name": "firstStored_code",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      }
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "lateId",
+          "tag": "reference"
+        }
+      ],
+      "op": "indexRecordPath",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "lateStored_accepted",
+          "tag": "reference"
+        },
+        {
+          "name": "lateStored_code",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      }
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "firstId",
+          "tag": "reference"
+        }
+      ],
+      "op": "mapRemoveRecord",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "slot": 0
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "firstId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "firstAfter",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "lateId",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "lateAfter",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "expressions": [
+        {
+          "name": "tag",
+          "tag": "reference"
+        },
+        {
+          "name": "lateId",
+          "tag": "reference"
+        }
+      ],
+      "op": "indexRecordPath",
+      "schema": {
+        "fields": [
+          {
+            "name": "tag",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "id",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Key"
+      },
+      "slot": 0
+    },
+    {
+      "expressions": [
+        {
+          "name": "retained_accepted",
+          "tag": "reference"
+        },
+        {
+          "name": "retained_code",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      }
+    }
+  ],
+  "reads": [
+    {
+      "name": "tag",
+      "type": "Bytes<1>"
+    },
+    {
+      "name": "firstId",
+      "type": "Bytes<33>"
+    },
+    {
+      "name": "lateId",
+      "type": "Bytes<33>"
+    },
+    {
+      "name": "firstAccepted",
+      "type": "Bool"
+    },
+    {
+      "name": "firstCode",
+      "type": "UIntRange<65536>"
+    },
+    {
+      "name": "lateAccepted",
+      "type": "Bool"
+    },
+    {
+      "name": "lateCode",
+      "type": "UIntRange<65536>"
+    },
+    {
+      "name": "firstBefore",
+      "type": "Bool"
+    },
+    {
+      "name": "lateBefore",
+      "type": "Bool"
+    },
+    {
+      "components": [
+        {
+          "name": "firstStored_accepted",
+          "type": "Bool"
+        },
+        {
+          "name": "firstStored_code",
+          "type": "UIntRange<65536>"
+        }
+      ],
+      "name": "firstStored",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "type": "Composite"
+    },
+    {
+      "components": [
+        {
+          "name": "lateStored_accepted",
+          "type": "Bool"
+        },
+        {
+          "name": "lateStored_code",
+          "type": "UIntRange<65536>"
+        }
+      ],
+      "name": "lateStored",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "type": "Composite"
+    },
+    {
+      "name": "firstAfter",
+      "type": "Bool"
+    },
+    {
+      "name": "lateAfter",
+      "type": "Bool"
+    },
+    {
+      "components": [
+        {
+          "name": "retained_accepted",
+          "type": "Bool"
+        },
+        {
+          "name": "retained_code",
+          "type": "UIntRange<65536>"
+        }
+      ],
+      "name": "retained",
+      "schema": {
+        "fields": [
+          {
+            "name": "accepted",
+            "type": "Bool"
+          },
+          {
+            "name": "code",
+            "type": "UIntRange<65536>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "type": "Composite"
+    }
+  ],
+  "returns": [
+    {
+      "expression": {
+        "name": "firstBefore",
+        "tag": "reference"
+      },
+      "name": "first",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateBefore",
+        "tag": "reference"
+      },
+      "name": "late",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstStored_accepted",
+        "tag": "reference"
+      },
+      "name": "firstAcceptedResult",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstStored_code",
+        "tag": "reference"
+      },
+      "name": "firstCodeResult",
+      "type": "UIntRange<65536>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateStored_accepted",
+        "tag": "reference"
+      },
+      "name": "lateAcceptedResult",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateStored_code",
+        "tag": "reference"
+      },
+      "name": "lateCodeResult",
+      "type": "UIntRange<65536>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstAfter",
+        "tag": "reference"
+      },
+      "name": "firstRemaining",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateAfter",
+        "tag": "reference"
+      },
+      "name": "lateRemaining",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "retained_accepted",
+        "tag": "reference"
+      },
+      "name": "retainedAccepted",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "retained_code",
+        "tag": "reference"
+      },
+      "name": "retainedCode",
+      "type": "UIntRange<65536>",
+      "visibility": "public"
+    }
+  ],
+  "schemaVersion": 1,
+  "state": [
+    {
+      "kind": {
+        "tree": {
+          "map": [
+            {
+              "composite": {
+                "fields": [
+                  {
+                    "name": "tag",
+                    "type": "Bytes<1>"
+                  },
+                  {
+                    "name": "id",
+                    "type": "Bytes<33>"
+                  }
+                ],
+                "id": "RootFixedByteRecordValuedMap.Key"
+              }
+            },
+            {
+              "composite": {
+                "fields": [
+                  {
+                    "name": "accepted",
+                    "type": "Bool"
+                  },
+                  {
+                    "name": "code",
+                    "type": "UIntRange<65536>"
+                  }
+                ],
+                "id": "RootFixedByteRecordValuedMap.Receipt"
+              }
+            }
+          ]
+        }
+      },
+      "name": "receipts"
+    }
+  ],
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "targetProfile": {
+    "circuits": "7.3.0",
+    "ledger": "9.1.0.1",
+    "name": "midnight-ledger-9-zkir-3.2.1",
+    "nativeSource": {
+      "declaredCrateVersion": "3.2.0",
+      "reportedCliVersion": "midnight-zkir 3.2.0",
+      "repository": "https://github.com/midnightntwrk/midnight-zkir",
+      "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+      "tag": "zkir-3.2.1"
+    },
+    "onchainRuntime": "4.0.1",
+    "proofServer": "9.0.0",
+    "qualification": "selected-native-subset-qualified",
+    "schemaVersion": 1,
+    "zkStdlib": "2.4.0",
+    "zkir": "3.2.1"
+  }
+}

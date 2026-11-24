@@ -1521,6 +1521,9 @@ private def anyRecordMapKeySchema (state : List StateDecl) (name : String)
     | .recordMapKey .. =>
       if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
       else LedgerValueType.ledgerRecordWriteFields environment type
+    | .recordMapComposite .. =>
+      if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
+      else LedgerValueType.ledgerRecordWriteFields environment type
     | _ => LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
@@ -1544,7 +1547,9 @@ private def recordMapCompositeSchemas (state : List StateDecl) (name : String)
     | if parentKeys.isEmpty then
         throw s!"state '{name}' is not a composite-valued record-key Map"
       else throw s!"path does not select a composite-valued record-key Map in '{name}'"
-  let keyFields ← LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+  let keyFields ← if parentKeys.isEmpty then
+      LedgerValueType.recordMapKeyFields keyEnvironment keyType
+    else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
   unless keyFields.map Prod.snd == keyValues.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType

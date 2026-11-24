@@ -756,9 +756,9 @@ def LedgerValueType.recordSetKeyFields (environment : Types.CompositeEnv)
   | .ok _ => throw "shielded coin records require their specialized write effect"
   | .error _ => flatTypedRecordFields environment type true
 
-/-- Root scalar-valued record-key Maps accept the same flat fixed-byte layouts
-as root record Sets. Keep nested Map keys and Map values on the narrower ledger
-record write policy. -/
+/-- Root record-key Maps accept the same flat fixed-byte layouts as root record
+Sets. Keep nested Map keys and record Map values on the narrower ledger record
+write policy. -/
 def LedgerValueType.recordMapKeyFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   LedgerValueType.recordSetKeyFields environment type
@@ -1723,8 +1723,10 @@ where
         else LedgerValueType.ledgerRecordWriteFields environment type
       for (_, ty) in fields do validateStateScalar caps ty
       validateStateScalar caps valueTy
-    | _, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
-      let keyFields ← LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+    | root, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
+      let keyFields ← if root then
+          LedgerValueType.recordMapKeyFields keyEnvironment keyType
+        else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
       let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
       for (_, ty) in keyFields ++ valueFields do validateStateScalar caps ty
     | _, .shieldedCoinSet environment type => do
@@ -1800,11 +1802,9 @@ private def resolveAnyRecordMapKeyFields (decls : List StateDecl) (state : Strin
     Except String (List (String × Ty)) := do
   let selected ← resolveRecordMapSchema decls state parentKeys
   let fields ← match selected with
-    | .recordMapKey environment type _ =>
+    | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
       if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
       else LedgerValueType.ledgerRecordWriteFields environment type
-    | .recordMapComposite environment type _ _ =>
-      LedgerValueType.ledgerRecordWriteFields environment type
     | _ => throw s!"path does not select a record-key Map in '{state}'"
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
@@ -1816,7 +1816,9 @@ private def resolveRecordMapCompositeKey (decls : List StateDecl) (state : Strin
   let selected ← resolveRecordMapSchema decls state parentKeys
   let .recordMapComposite environment type _ _ := selected
     | throw s!"path does not select a composite-valued record-key Map in '{state}'"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← if parentKeys.isEmpty then
+      LedgerValueType.recordMapKeyFields environment type
+    else LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure (environment, type, fields)
