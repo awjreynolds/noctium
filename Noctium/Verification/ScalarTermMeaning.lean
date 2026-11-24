@@ -143,8 +143,13 @@ private theorem interpret_packByteTermsRec_constants (hash : Hash) (inputs : Ass
             (Term.constant second :: List.map Term.constant rest) ≠ true := by
           intro allZero
           exact suffixZero (by simpa only [List.map_cons] using allZero)
-        simp [Backend.Native.packByteTermsRec, suffixNonzero]
-        simp [interpret?, ih', Backend.Native.littleEndian, scalar_add_mod, scalar_mul_mod]
+        cases first with
+        | zero =>
+          simp [Backend.Native.packByteTermsRec, suffixNonzero]
+          simp [interpret?, ih', Backend.Native.littleEndian, scalar_mul_mod]
+        | succ first =>
+          simp [Backend.Native.packByteTermsRec, suffixNonzero]
+          simp [interpret?, ih', Backend.Native.littleEndian, scalar_add_mod, scalar_mul_mod]
 
 /-- Normalized all-zero chunks pack to zero. Other chunks retain the original
 symbolic recurrence and its scalar meaning. -/
