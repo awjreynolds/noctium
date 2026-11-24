@@ -1,0 +1,224 @@
+{
+  "bundles": {
+    "clear": {
+      "entries": [
+        {
+          "name": "tests/FlatRecordCellReset.lean",
+          "path": "source/tests/FlatRecordCellReset.lean",
+          "role": "source",
+          "sha256": "246f7c37777514a4d39eac4a1dcb6fc17fd4c0310c7e5e273788e9a8e6c75c04",
+          "size": 2923
+        },
+        {
+          "name": "FlatRecordCellReset.clear.zkir",
+          "path": "circuit/entrypoint.zkir",
+          "role": "circuit",
+          "sha256": "f2d1b0f600160393201dd94bfd0a0f6dd17898dffa65575f1584fee5e93192b6",
+          "size": 653
+        },
+        {
+          "name": "FlatRecordCellReset.clear.impact.json",
+          "path": "plan/entrypoint.impact.json",
+          "role": "plan",
+          "sha256": "09215b80731e91b3eafc4d0a792ef40324b9d488fb25b7e8b2039b1fc7c94136",
+          "size": 1989
+        },
+        {
+          "name": "noctium.json",
+          "path": "schema/noctium.json",
+          "role": "metadata",
+          "sha256": "e04b01921fd3f96c62c2834255aa8a761c1730a4f4cb42fb9cfa993f611280d7",
+          "size": 2840
+        },
+        {
+          "name": "noctium_runtime.h",
+          "path": "schema/noctium_runtime.h",
+          "role": "abi",
+          "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+          "size": 5282
+        },
+        {
+          "name": "target.json",
+          "path": "profile/target.json",
+          "role": "profile",
+          "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+          "size": 528
+        },
+        {
+          "name": "ledger.params",
+          "path": "parameters/ledger.params",
+          "role": "ledgerParameters",
+          "sha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+          "size": 791
+        },
+        {
+          "name": "entrypoint.prover",
+          "path": "keys/entrypoint.prover",
+          "role": "proverKey",
+          "sha256": "1cad86e60dc3191e95b65769862aa0409cd50f9a8b27d16d7a3f8d42f1e37097",
+          "size": 58393
+        },
+        {
+          "name": "entrypoint.verifier",
+          "path": "keys/entrypoint.verifier",
+          "role": "verifierKey",
+          "sha256": "98750d877e1ebed0d41487279fba1c2d202246eeb879ce6f4ecd919529ddfe0b",
+          "size": 1353
+        },
+        {
+          "name": "native-zkir.json",
+          "path": "provenance/native-zkir.json",
+          "role": "toolchain",
+          "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+          "size": 529
+        }
+      ],
+      "k": 6,
+      "rows": 37
+    },
+    "guardedClear": {
+      "entries": [
+        {
+          "name": "tests/FlatRecordCellReset.lean",
+          "path": "source/tests/FlatRecordCellReset.lean",
+          "role": "source",
+          "sha256": "246f7c37777514a4d39eac4a1dcb6fc17fd4c0310c7e5e273788e9a8e6c75c04",
+          "size": 2923
+        },
+        {
+          "name": "FlatRecordCellReset.guardedClear.zkir",
+          "path": "circuit/entrypoint.zkir",
+          "role": "circuit",
+          "sha256": "ad167c1206240f3f5787943d60b5d28b873f6e33b5438f0bc4f733fa422650da",
+          "size": 1209
+        },
+        {
+          "name": "FlatRecordCellReset.guardedClear.impact.json",
+          "path": "plan/entrypoint.impact.json",
+          "role": "plan",
+          "sha256": "82e6f7dcc9dec6fa98b9264c06a8037d7190e43f15a64c94ebc5a22b7cca27d8",
+          "size": 2788
+        },
+        {
+          "name": "noctium.json",
+          "path": "schema/noctium.json",
+          "role": "metadata",
+          "sha256": "e04b01921fd3f96c62c2834255aa8a761c1730a4f4cb42fb9cfa993f611280d7",
+          "size": 2840
+        },
+        {
+          "name": "noctium_runtime.h",
+          "path": "schema/noctium_runtime.h",
+          "role": "abi",
+          "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+          "size": 5282
+        },
+        {
+          "name": "target.json",
+          "path": "profile/target.json",
+          "role": "profile",
+          "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+          "size": 528
+        },
+        {
+          "name": "ledger.params",
+          "path": "parameters/ledger.params",
+          "role": "ledgerParameters",
+          "sha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+          "size": 791
+        },
+        {
+          "name": "entrypoint.prover",
+          "path": "keys/entrypoint.prover",
+          "role": "proverKey",
+          "sha256": "75919148e48e6b3559ed640f267813bf28acfce1bcce892bc4087743ae9553c8",
+          "size": 58674
+        },
+        {
+          "name": "entrypoint.verifier",
+          "path": "keys/entrypoint.verifier",
+          "role": "verifierKey",
+          "sha256": "ec011ec3970d0b0c268003f331b768722a2dfb51340da0cb8753ab575faa299d",
+          "size": 1353
+        },
+        {
+          "name": "native-zkir.json",
+          "path": "provenance/native-zkir.json",
+          "role": "toolchain",
+          "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+          "size": 529
+        }
+      ],
+      "k": 6,
+      "rows": 48
+    }
+  },
+  "compactReference": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "oracle": "tests/compact/flat-record-cell-reset.mjs",
+    "runtime": "0.21.0"
+  },
+  "contractAddress": "eeb90f9e0d064c82ff3220fc086a50fea95daef0ef789e6c1c161f128693f5c5",
+  "deployment": {
+    "blockHash": "22a952c261a99b71f28124c9195ce7d004121639212bc2b5b6a6fc56a912c71c",
+    "finalizedHeight": 84802,
+    "height": 84802,
+    "stateBytes": 2954,
+    "stateSha256": "c700f9e02e5a3f85a418bcfdc76098d4b1a4bc275baedb06f9f5ceee5367a06e",
+    "transactionId": "f24a2b8c4b9bf622dee0c7c7a54837605d5cbe2c6c2388d32c2093fe777b514e"
+  },
+  "deploymentStateMatchedMarkerAndCounters": true,
+  "disabledGuardPreservedExactStateBytes": true,
+  "enabledGuardMatchedPreparedTypedZeroDefaults": true,
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "guardedReceipts": [
+    {
+      "blockHash": "74e6529f6aac0e413b6f80dad8810fb27fd72d43505e240468a4b14c7b7558ef",
+      "enabled": false,
+      "finalizedHeight": 84805,
+      "height": 84805,
+      "stateBytes": 2954,
+      "stateSha256": "c700f9e02e5a3f85a418bcfdc76098d4b1a4bc275baedb06f9f5ceee5367a06e",
+      "transactionId": "b57175d9304fc2d8dd2f138c5e649aed9a894c568c983f87073af9da16bfff10"
+    },
+    {
+      "blockHash": "8893892ddb079757c39538bd7615344284a1ab0b9d468c420c628e7f83f11cea",
+      "enabled": true,
+      "finalizedHeight": 84808,
+      "height": 84808,
+      "stateBytes": 2952,
+      "stateSha256": "77cd161ddc86ffa69232506ae9632fe3ed1263ebb3d8d9292fdb1e29316731d6",
+      "transactionId": "f0df12643c8e6ad63336b5ef1a34039443f4527ed0c8158e09b489a09e722906"
+    }
+  ],
+  "k": {
+    "clear": 6,
+    "guardedClear": 6
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "model": {
+    "active": {
+      "ledger": {
+        "issued": 0,
+        "spent": 0
+      },
+      "marker": 37
+    },
+    "initial": {
+      "ledger": {
+        "issued": 5,
+        "spent": 42
+      },
+      "marker": 37
+    }
+  },
+  "operationManifestSha256": {
+    "clear": "96b03a1bf1776dc178df75262546e4967cedd757f63d95d397f474f9bf64e722",
+    "guardedClear": "49bc7942be9ea53f9826dcf479f7dda6e14cdff3cc16d26329c350e1c14f2c36"
+  },
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "scope": "A funded development deployment seeds exact flat Native record and marker values through the runtime state configuration. Both guardedClear calls finalize and match the native checker and Compact outcomes. The clear entrypoint is installed. The calls exercise guardedClear for both guard values.",
+  "sourceCompilerRevision": "b69a6147b759e1e9de77e2e0a3a11fca1a855a6b",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

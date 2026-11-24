@@ -7162,6 +7162,227 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "submits funded FlatRecordCellReset updates to the authorized isolated localnet"]
+    fn flat_record_cell_reset_finalizes_guarded_record_defaults() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "FlatRecordCellReset requires the authorized loopback node on port 19944"
+            );
+
+            let entries = [
+                (
+                    "clear",
+                    "NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_CLEAR_BUNDLE",
+                    "NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_CLEAR_SHA256",
+                ),
+                (
+                    "guardedClear",
+                    "NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_GUARDED_CLEAR_BUNDLE",
+                    "NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_GUARDED_CLEAR_SHA256",
+                ),
+            ];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            let mut pins = BTreeMap::new();
+            for (entry, directory_env, digest_env) in entries {
+                let directory = setting(directory_env)?;
+                let digest = setting(digest_env)?;
+                let bundle = artifacts::verify(Path::new(&directory), Some(&digest))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(
+                    plan.entrypoint == entry,
+                    "unexpected FlatRecordCellReset {entry} plan"
+                );
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry.to_owned(), circuit.k());
+                plans.insert(entry.to_owned(), plan);
+                circuits.insert(entry.to_owned(), circuit);
+                pins.insert(entry.to_owned(), digest);
+                bundles.push(bundle);
+            }
+
+            let parameter_cache = setting("NOCTIUM_FLAT_RECORD_CELL_RESET_FUNDED_PARAMETER_CACHE")?;
+            let cache = ProofCache::new(
+                parameter_cache.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let parameters = cache.parameters(degrees["guardedClear"]).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let ledger_value = |issued: &str, spent: &str| {
+                json!({
+                    "kind":"struct",
+                    "id":"FlatRecordCellReset.Ledger",
+                    "fields":[
+                        {"name":"issued", "value":{"kind":"native", "value":issued}},
+                        {"name":"spent", "value":{"kind":"native", "value":spent}},
+                    ],
+                })
+            };
+            let state_values = |issued: &str, spent: &str| {
+                BTreeMap::from([
+                    ("marker".to_owned(), json!("37")),
+                    ("ledger".to_owned(), ledger_value(issued, spent)),
+                ])
+            };
+            let initial_values = state_values("5", "42");
+            let reset_values = state_values("0", "0");
+            let model_plan = &plans["guardedClear"];
+            let initial_model = crate::create_state(model_plan, &initial_values)?;
+            let reset_model = crate::create_state(model_plan, &reset_values)?;
+            let state_config = serde_json::to_vec(&json!({"state": &initial_values}))?;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &state_config,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let guarded_clear = target.operation("guardedClear", &parameters, ttl)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid FlatRecordCellReset address"))?,
+            ));
+            let (state, deployment) = funded.deploy(&target, "guardedClear").await?;
+            let mut current = Some(state);
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.contract_address == target.contract_address()
+                    && deployment.chain.genesis == DEVELOPMENT_GENESIS
+                    && deployed.data.get_ref() == initial_model.get_ref(),
+                "deployed FlatRecordCellReset state differs from marker 37 and counters 5/42"
+            );
+            println!(
+                "{}",
+                json!({
+                    "stage": "deployment",
+                    "contractAddress": target.contract_address(),
+                    "height": deployment.height,
+                    "finalizedHeight": deployment.finalized_height,
+                    "transactionId": deployment.transaction_id,
+                    "stateBytes": deployment.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&deployment.contract_state)),
+                })
+            );
+            let mut last_state_bytes = deployment.contract_state.clone();
+            let mut receipts = Vec::new();
+            for enabled in [false, true] {
+                let inputs = BTreeMap::from([("enabled".into(), json!(enabled))]);
+                let snapshot = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plans["guardedClear"],
+                    &inputs,
+                    &initial_model,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                let expected = if enabled { &reset_model } else { &initial_model };
+                ensure!(
+                    crate::check(&execution, &circuits["guardedClear"])?
+                        == execution.activity_schedule
+                        && execution.after.state.get_ref() == expected.get_ref(),
+                    "prepared guarded FlatRecordCellReset state differs for enabled={enabled}"
+                );
+                let (bound, receipt) = funded
+                    .call_with_bound(&guarded_clear, &mut current, &parameters, inputs)
+                    .await?;
+                bound.check_receipt(&receipt)?;
+                let finalized: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    receipt.chain.genesis == DEVELOPMENT_GENESIS
+                        && receipt.contract_address == target.contract_address()
+                        && receipt.contract_state == bound.expected_state()
+                        && finalized.data == execution.after.state
+                        && finalized.data.get_ref() == expected.get_ref(),
+                    "finalized guarded FlatRecordCellReset state differs for enabled={enabled}"
+                );
+                if enabled {
+                    ensure!(
+                        receipt.contract_state != last_state_bytes,
+                        "enabled FlatRecordCellReset did not change the seeded state bytes"
+                    );
+                    ensure!(
+                        finalized.data.get_ref() == reset_model.get_ref(),
+                        "enabled FlatRecordCellReset did not store zero typed fields"
+                    );
+                } else {
+                    ensure!(
+                        receipt.contract_state == last_state_bytes,
+                        "disabled FlatRecordCellReset changed exact state bytes"
+                    );
+                    ensure!(
+                        finalized.data.get_ref() == initial_model.get_ref(),
+                        "disabled FlatRecordCellReset changed marker or record counters"
+                    );
+                }
+                println!(
+                    "{}",
+                    json!({
+                        "stage": "guardedClear",
+                        "enabled": enabled,
+                        "height": receipt.height,
+                        "finalizedHeight": receipt.finalized_height,
+                        "transactionId": receipt.transaction_id,
+                        "stateBytes": receipt.contract_state.len(),
+                        "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                    })
+                );
+                last_state_bytes = receipt.contract_state.clone();
+                receipts.push(json!({
+                    "enabled": enabled,
+                    "height": receipt.height,
+                    "finalizedHeight": receipt.finalized_height,
+                    "transactionId": receipt.transaction_id,
+                    "stateBytes": receipt.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                }));
+            }
+
+            println!(
+                "{}",
+                json!({
+                    "contractAddress": target.contract_address(),
+                    "genesis": funded.node.policy.genesis,
+                    "operationManifestSha256": pins,
+                    "k": degrees,
+                    "deploymentStateMatchedMarkerAndCounters": true,
+                    "disabledGuardPreservedExactStateBytes": true,
+                    "enabledGuardMatchedPreparedTypedZeroDefaults": true,
+                    "deployment": {
+                        "height": deployment.height,
+                        "finalizedHeight": deployment.finalized_height,
+                        "transactionId": deployment.transaction_id,
+                        "stateBytes": deployment.contract_state.len(),
+                        "stateSha256": hex::encode(sha2::Sha256::digest(&deployment.contract_state)),
+                    },
+                    "guardedReceipts": receipts,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated OpaqueCells bundles and a funded development node"]
     fn opaque_root_cells_finalize_typed_store_and_reads() -> anyhow::Result<()> {
         use crate::{

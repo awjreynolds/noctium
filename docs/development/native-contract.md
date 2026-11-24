@@ -301,12 +301,16 @@ Compact 0.36.1, ZKIR 3.2.1 and source compiler revision
 
 An ordinary checked record Cell with two Native fields resets both fields
 to zero. The native checker and Compact 0.36.1 agree on both guard outcomes
-and preserve the neighboring marker. The native checker rejects a sealed
-Cell and a mismatched declared schema. This fixture covers the flat Native
-layout in the VM. Funded execution and other record layouts remain open.
+and preserve marker 37. The native checker rejects a sealed Cell and a
+mismatched declared schema. A funded Ledger 9.1.0.1 deployment seeded the
+record with counters 5 and 42 through the runtime state configuration. The
+inactive call preserved the deployment state byte for byte. The active call
+stored two zero fields and preserved marker 37. Both calls used the K6
+`guardedClear` relation with 48 rows. Other aggregate layouts remain open.
 [Lean fixture](../../tests/FlatRecordCellReset.lean) ·
 [Compact oracle](../../tests/compact/flat-record-cell-reset.mjs) ·
-[Native checker](../../runtime/tests/flat_record_cell.rs)
+[Native checker](../../runtime/tests/flat_record_cell.rs) ·
+[Finalized receipt](flat-record-cell-reset-localnet-receipt.json)
 
 ## Record standalone token mints
 
