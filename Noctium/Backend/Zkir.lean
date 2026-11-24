@@ -597,17 +597,32 @@ private def lowerBoolGate (opcode left right : String) : LowerM String := do
   modify fun state => {state with expressions := (key, output) :: state.expressions}
   pure output
 
-private def packBytesRec : List String → LowerM String
+private def scalePackedBytes (zeroCount : Nat) (value : String) : LowerM String := do
+  if zeroCount == 0 || value == "0x00" then pure value
+  else
+    -- A byte chunk holds at most 31 bytes. Reduce the constant modulo the
+    -- field so this helper stays canonical even for an accidental wider use.
+    binary "mul" (fieldImmediate (256 ^ zeroCount % nativeModulus)) value
+
+private def packBytesRecAux (zeroCount : Nat) : List String → LowerM String
   | [] => pure "0x00"
-  | [byte] => pure byte
   | byte :: rest => do
-    let suffix ← packBytesRec rest
-    if suffix == "0x00" then pure byte else do
-      let scaled ← binary "mul" "0x0001" suffix
-      if byte == "0x00" then pure scaled else binary "add" byte scaled
+    if byte == "0x00" then
+      packBytesRecAux (zeroCount + 1) rest
+    else
+      let suffix ← packBytesRecAux 0 rest
+      let packed ← if suffix == "0x00" then pure byte else do
+        let scaled ← binary "mul" "0x0001" suffix
+        binary "add" byte scaled
+      scalePackedBytes zeroCount packed
+termination_by bytes => bytes.length
+decreasing_by all_goals simp_wf
+
+private def packBytesRec (bytes : List String) : LowerM String :=
+  packBytesRecAux 0 bytes
 
 /-- Skip symbolic packing when every already-lowered byte is canonical zero.
-The one linear scan runs before the existing recurrence. -/
+The one linear scan runs before the byte recurrence. -/
 private def packBytes (bytes : List String) : LowerM String :=
   if bytes.all (fun byte => byte == "0x00") then pure "0x00" else packBytesRec bytes
 
@@ -711,6 +726,16 @@ theorem ordinaryBinary_preservesOutputCapacityFrame (opcode left right : String)
     simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
       Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
     rfl
+
+private theorem scalePackedBytes_preservesOutputCapacityFrame (zeroCount : Nat)
+    (value : String) : PreservesOutputCapacityFrame (scalePackedBytes zeroCount value) := by
+  by_cases skip : zeroCount == 0 || value == "0x00"
+  · simp [scalePackedBytes, skip]
+    exact pure_preservesOutputCapacityFrame value
+  · simp [scalePackedBytes, skip]
+    exact ordinaryBinary_preservesOutputCapacityFrame "mul"
+      (fieldImmediate (256 ^ zeroCount % nativeModulus)) value
+      ⟨by decide, by decide, by decide⟩
 
 theorem ordinaryUnary_preservesOutputCapacityFrame (opcode operand : String)
     (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
@@ -1455,28 +1480,42 @@ private theorem listMapM_preservesOutputCapacityFrame (items : List α)
     intro outputs
     exact pure_preservesOutputCapacityFrame (output :: outputs)
 
-private theorem packBytesRec_preservesOutputCapacityFrame (bytes : List String) :
-    PreservesOutputCapacityFrame (packBytesRec bytes) := by
-  induction bytes with
-  | nil => exact pure_preservesOutputCapacityFrame _
+private theorem packBytesRecAux_preservesOutputCapacityFrame (zeroCount : Nat)
+    (bytes : List String) :
+    PreservesOutputCapacityFrame (packBytesRecAux zeroCount bytes) := by
+  induction bytes generalizing zeroCount with
+  | nil =>
+    rw [packBytesRecAux.eq_1]
+    exact pure_preservesOutputCapacityFrame "0x00"
   | cons byte rest ih =>
-    cases rest with
-    | nil => exact pure_preservesOutputCapacityFrame _
-    | cons next rest =>
-      simp only [packBytesRec]
-      apply bind_preservesOutputCapacityFrame _ _ ih
+    rw [packBytesRecAux.eq_2]
+    by_cases zeroByte : byte == "0x00"
+    · simp [zeroByte]
+      exact ih (zeroCount + 1)
+    · simp [zeroByte]
+      apply bind_preservesOutputCapacityFrame _ _ (ih 0)
       intro suffix
-      split
-      · exact pure_preservesOutputCapacityFrame _
-      · apply bind_preservesOutputCapacityFrame _ _
+      by_cases zeroSuffix : suffix == "0x00"
+      · have suffixEq : suffix = "0x00" := eq_of_beq zeroSuffix
+        simp [suffixEq]
+        exact scalePackedBytes_preservesOutputCapacityFrame _ byte
+      · have suffixNe : suffix ≠ "0x00" := by
+          intro equal
+          apply zeroSuffix
+          simp [equal]
+        simp [suffixNe]
+        apply bind_preservesOutputCapacityFrame _ _
           (ordinaryBinary_preservesOutputCapacityFrame "mul" "0x0001" suffix
             ⟨by decide, by decide, by decide⟩)
-        intro scaled
-        by_cases zeroByte : byte == "0x00"
-        · simp [zeroByte]
-          exact pure_preservesOutputCapacityFrame scaled
-        · simp [zeroByte]
-          exact binaryAdd_preservesOutputCapacityFrame byte scaled
+        intro shifted
+        apply bind_preservesOutputCapacityFrame _ _
+          (binaryAdd_preservesOutputCapacityFrame byte shifted)
+        intro packed
+        exact scalePackedBytes_preservesOutputCapacityFrame _ packed
+
+private theorem packBytesRec_preservesOutputCapacityFrame (bytes : List String) :
+    PreservesOutputCapacityFrame (packBytesRec bytes) := by
+  simpa [packBytesRec] using packBytesRecAux_preservesOutputCapacityFrame 0 bytes
 
 private theorem packBytes_preservesOutputCapacityFrame (bytes : List String) :
     PreservesOutputCapacityFrame (packBytes bytes) := by
