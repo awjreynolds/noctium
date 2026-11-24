@@ -1,0 +1,45 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+module GenericMap<K, V> {
+  export ledger values: Map<K, V>;
+
+  export circuit insert(key: K, next: V): V {
+    values.insert(disclose(key), disclose(next));
+    return values.lookup(disclose(key));
+  }
+
+  export circuit read(key: K): V {
+    return values.lookup(disclose(key));
+  }
+}
+
+import GenericMap<Secp256k1Point, Secp256r1Base> prefix secpPointToR1Base_;
+import GenericMap<Curve25519Scalar, Curve25519Point> prefix c255ScalarToC255Point_;
+
+export {
+  secpPointToR1Base_values,
+  c255ScalarToC255Point_values,
+};
+
+export circuit insertSecpPointToR1Base(
+  key: Secp256k1Point,
+  next: Secp256r1Base
+): Secp256r1Base {
+  return secpPointToR1Base_insert(disclose(key), disclose(next));
+}
+
+export circuit readSecpPointToR1Base(key: Secp256k1Point): Secp256r1Base {
+  return secpPointToR1Base_read(disclose(key));
+}
+
+export circuit insertC255ScalarToC255Point(
+  key: Curve25519Scalar,
+  next: Curve25519Point
+): Curve25519Point {
+  return c255ScalarToC255Point_insert(disclose(key), disclose(next));
+}
+
+export circuit readC255ScalarToC255Point(key: Curve25519Scalar): Curve25519Point {
+  return c255ScalarToC255Point_read(disclose(key));
+}
