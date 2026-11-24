@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -64,21 +64,36 @@ try {
     runtime.createConstructorContext(null, coinPublicKey),
   );
   const nullifier = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
-  const invoke = async (active) => {
+  const invoke = async (circuitId, ...arguments_) => {
     const context = runtime.createCircuitContext({
-      circuitId: 'logHelperSpend',
+      circuitId,
       contractAddress: runtime.dummyContractAddress(),
       coinPublicKeyOrZswapState: coinPublicKey,
       contractState: currentContractState.data,
       privateState: null,
     });
-    const call = await contract.circuits.logHelperSpend(context, active, nullifier);
+    const call = await contract.circuits[circuitId](context, ...arguments_);
     return call.context.events;
   };
 
-  checkEvents(await invoke(true), reference.receipts.active.events);
-  checkEvents(await invoke(false), reference.receipts.inactive.events);
-  console.log(`Compact ${compilerVersion} matched the finalized helper event versions, tags, order and payload bytes`);
+  checkEvents(await invoke('logHelperSpend', true, nullifier), reference.receipts.active.events);
+  checkEvents(await invoke('logHelperSpend', false, nullifier), reference.receipts.inactive.events);
+  checkEvents(await invoke('logGuardedPause', true), reference.receipts.inactive.events);
+  checkEvents(await invoke('logGuardedPause', false), []);
+  for (const event of ['Paused', 'Unpaused']) {
+    const invalid = join(scratch, `Invalid${event}.compact`);
+    writeFileSync(invalid, `pragma language_version 0.28;
+import CompactStandardLibrary;
+export circuit invalid(): [] { emit(${event} { reason: true }); }
+`);
+    assert.throws(
+      () => execFileSync(compactc, ['--skip-zk', invalid, join(scratch, `invalid-${event}`)], {
+        stdio: 'pipe',
+      }),
+      /reason/,
+    );
+  }
+  console.log(`Compact ${compilerVersion} matched the finalized helper logs and guarded pause events`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

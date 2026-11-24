@@ -12,3 +12,10 @@ export circuit logHelperSpend(active: Boolean, nullifier: Bytes<32>): [] {
   }
   emit(Unpaused {});
 }
+
+export circuit logGuardedPause(active: Boolean): [] {
+  if (disclose(active)) {
+    emit(Paused {});
+    emit(Unpaused {});
+  }
+}

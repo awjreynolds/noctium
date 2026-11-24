@@ -140,6 +140,53 @@ fn standard_event_from_checked_helper_preserves_activity_and_order() -> Result<(
 }
 
 #[test]
+#[ignore = "requires fresh GuardedPauseEvents Lean artifacts"]
+fn guarded_pause_events_bind_empty_ordered_logs() -> Result<()> {
+    let output = PathBuf::from(std::env::var("NOCTIUM_GUARDED_PAUSE_ARTIFACTS")?);
+    let plan: Plan = serde_json::from_slice(&fs::read(
+        output.join("GuardedPauseEvents.logGuardedPause.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(fs::File::open(
+        output.join("GuardedPauseEvents.logGuardedPause.zkir"),
+    )?)?;
+    let state = create_state(&plan, &BTreeMap::new())?;
+    let execute = |active| {
+        prepare(
+            &plan,
+            &BTreeMap::from([("active".into(), json!(active))]),
+            &state,
+            &INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )
+    };
+    let mut active = execute(true)?;
+    let inactive = execute(false)?;
+    check(&active, &circuit)?;
+    check(&inactive, &circuit)?;
+    assert_eq!(
+        active.logs.iter().map(|event| event.event_type).collect::<Vec<_>>(),
+        [LogEventType::Paused, LogEventType::Unpaused],
+    );
+    for event in &active.logs {
+        assert_eq!(event.version, 1);
+        let StateValue::Cell(data) = &event.data else {
+            panic!("expected a zero-width byte cell");
+        };
+        assert_eq!(
+            **data,
+            AlignedValue {
+                value: Value(vec![ValueAtom(Vec::new())]),
+                alignment: Alignment::singleton(AlignmentAtom::Bytes { length: 0 }),
+            }
+        );
+    }
+    assert!(inactive.logs.is_empty());
+    active.preimage.public_transcript_inputs = inactive.preimage.public_transcript_inputs.clone();
+    assert!(check(&active, &circuit).is_err());
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires fresh StandardEvents Lean artifacts"]
 fn standard_event_catalog_matches_pinned_reference_payloads() -> Result<()> {
     use LogEventType::*;
