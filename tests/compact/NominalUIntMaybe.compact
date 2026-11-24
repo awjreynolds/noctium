@@ -1,0 +1,21 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Uint<8>;
+export new type Other = Uint<8>;
+
+export pure circuit amountSome(value: Amount): Maybe<Amount> {
+  return some<Amount>(value);
+}
+
+export pure circuit amountNone(): Maybe<Amount> {
+  return none<Amount>();
+}
+
+export pure circuit otherSome(value: Other): Maybe<Other> {
+  return some<Other>(value);
+}
+
+export pure circuit otherNone(): Maybe<Other> {
+  return none<Other>();
+}

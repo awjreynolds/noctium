@@ -228,13 +228,17 @@ scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_ci
   noctium_witness_statement* "end" : command
 
 private abbrev SurfaceEnv := List
-  (String × ResultType × Noctium.Helpers.Term × (Option NominalUIntType × Option String))
+  (String × ResultType × Noctium.Helpers.Term ×
+    (Option NominalUIntType × Option String) ×
+    List (List String × NominalUIntType))
 
 private structure Lowered where
   type : ResultType
   term : Noctium.Helpers.Term
   nominalUInt : Option NominalUIntType := none
   nominalField : Option String := none
+  /-- Source-only nominal UInt labels attached to aggregate leaf paths. -/
+  nominalUIntFields : List (List String × NominalUIntType) := []
   shapeOnly : _root_.Bool := _root_.Bool.false
   before : List Statement := []
   signatures : List WitnessSignature := []
@@ -247,6 +251,31 @@ private def Lowered.layoutType (value : Lowered) : Types.CompositeType :=
   | .scalar (.bytes length) => .bytes length
   | .scalar ty => .scalar ty
   | .composite type => type
+
+private def prefixNominalUIntFields (segment : String)
+    (fields : List (List String × NominalUIntType)) : List (List String × NominalUIntType) :=
+  fields.map fun (path, nominalUInt) => (segment :: path, nominalUInt)
+
+private def loweredNominalUIntFields (value : Lowered) : List (List String × NominalUIntType) :=
+  match value.type, value.nominalUInt with
+  | .scalar (.uint _), some nominalUInt => [([], nominalUInt)]
+  | _, _ => value.nominalUIntFields
+
+private def selectNominalUIntFields (fields : List (List String × NominalUIntType))
+    (segment : String) (child : ResultType) :
+    Option NominalUIntType × List (List String × NominalUIntType) := Id.run do
+  let selectedFields : List (List String × NominalUIntType) := fields.filterMap fun (path, nominalUInt) =>
+    match path with
+    | head :: rest => if head == segment then some (rest, nominalUInt) else none
+    | [] => none
+  let nominalUInt := match child with
+    | .scalar (.uint _) => (selectedFields.find? fun (path, _) => path.isEmpty).map Prod.snd
+    | _ => none
+  let nestedFields := match child with
+    | .scalar _ => []
+    | _ => selectedFields.filterMap fun (path, nominalUInt) =>
+        if path.isEmpty then none else some (path, nominalUInt)
+  return (nominalUInt, nestedFields)
 
 private structure IterationParameter where
   reference : String
@@ -305,7 +334,7 @@ private def unresolvedIterationParameter (surfaceName : String) : ExprM String :
 private def lowerExpectedIterationRef (env : SurfaceEnv) (expected : ResultType)
     (stx : TSyntax `nlexpr) : ExprM (Option Lowered) := do
   let `(nlexpr| $id:ident) := stx | return none
-  let some (_, _, .ref refName, _) := env.find? (fun value => value.1 == id.getId.toString)
+  let some (_, _, .ref refName, _, _) := env.find? (fun value => value.1 == id.getId.toString)
     | return none
   let state ← get
   let some parameter := state.iterationParameters.find? (·.reference == refName)
@@ -352,7 +381,7 @@ private def prepareCallbackParameters (parameters : List (TSyntax `ident))
 
 private def callbackSurfaceEnv (bindings : List CallbackParameter) : SurfaceEnv :=
   bindings.map fun binding =>
-    (binding.surfaceName, binding.type.getD .unit, .ref binding.reference, (none, none))
+    (binding.surfaceName, binding.type.getD .unit, .ref binding.reference, (none, none), [])
 
 private def stringTerm (value : String) : TSyntax `term := ⟨Syntax.mkStrLit value⟩
 private def natTerm (value : Nat) : TSyntax `term := ⟨Syntax.mkNumLit (toString value)⟩
@@ -698,7 +727,7 @@ private def hasUnresolvedIterationReferenceNames (env : SurfaceEnv)
     (state : AuthoringExprState) (names : List String) : _root_.Bool :=
   names.any fun name =>
     match env.find? (·.1 == name) with
-    | some (_, _, .ref reference, _) =>
+    | some (_, _, .ref reference, _, _) =>
       (state.iterationParameters.find? (·.reference == reference)).any (·.views.isEmpty)
     | _ => _root_.Bool.false
 
@@ -1365,7 +1394,7 @@ private def iterationEnvironment (env : SurfaceEnv)
     (staged : List (String × ResultType))
     (parameters : List IterationParameter) : Helpers.Environment :=
   let unresolved := parameters.map (·.reference)
-  let locals := env.filterMap fun (_, type, term, _) =>
+  let locals := env.filterMap fun (_, type, term, _, _) =>
     match term with
     | .ref name => if unresolved.contains name then none else some (name, type)
     | _ => none
@@ -1502,9 +1531,10 @@ private def compositeMaybeType (programName : String) (site : Syntax)
       }]}}
   pure (.structure typeId)
 
-private def scalarMaybeType (programName : String) (stx : Syntax) (payloadType : Ty) :
+private def scalarMaybeType (programName : String) (stx : Syntax) (payloadType : Ty)
+    (nominalUInt? : Option NominalUIntType := none) :
     ExprM Types.CompositeType := do
-  let typeId ← match Types.Maybe.scalarTypeId programName payloadType with
+  let typeId ← match Types.Maybe.scalarTypeId programName payloadType nominalUInt? with
     | .ok value => pure value
     | .error message => throwErrorAt stx message
   let environment ← match Types.Maybe.scalarEnvironment typeId payloadType with
@@ -1531,20 +1561,36 @@ private def scalarMaybePayload : Ty → Types.CompositeType
   | ty => .scalar ty
 
 private def checkedMaybeType (programName : String) (site : Syntax)
-    (payload : Types.CompositeType) (compiled : Types.CompiledType) : ExprM Types.CompositeType := do
+    (payload : Types.CompositeType) (compiled : Types.CompiledType)
+    (nominalUInt? : Option NominalUIntType := none) : ExprM Types.CompositeType := do
   if let .scalar ty := payload then
     match ty with
-    | .native | .bool | .uint _ => return ← scalarMaybeType programName site ty
+    | .native | .bool | .uint _ => return ← scalarMaybeType programName site ty nominalUInt?
     | _ => pure ()
   compositeMaybeType programName site payload compiled.fingerprint
 
 private def lowerAbsentMaybe (programName : String) (site : Syntax)
-    (payload : Types.CompositeType) : ExprM Lowered := do
+    (payload : Types.CompositeType)
+    (nominalUIntFields : List (List String × NominalUIntType) := []) : ExprM Lowered := do
   let compiled ← checkedPayloadLayout site payload
   let maybeType ← checkedMaybeType programName site payload compiled
   let zeros ← zeroPayloadLeaves site compiled
-  pure (mergeLowered (.composite maybeType)
-    (.composite maybeType (.bool _root_.Bool.false :: zeros)) [])
+  pure {mergeLowered (.composite maybeType)
+    (.composite maybeType (.bool _root_.Bool.false :: zeros)) [] with nominalUIntFields}
+
+private def lowerAbsentScalarMaybe (programName : String) (type : TSyntax `nltype) : ExprM Lowered := do
+  let sourceType ← liftM (readSourceScalarType type)
+  if sourceType.nominalField.isSome then
+    throwErrorAt type "Maybe scalar payloads do not retain nominal Field identity"
+  let payload := scalarMaybePayload sourceType.type
+  let nominalUIntFields ← match Types.Maybe.scalarNominalUIntFields sourceType.type sourceType.nominalUInt with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt type message
+  let compiled ← checkedPayloadLayout type payload
+  let maybeType ← checkedMaybeType programName type payload compiled sourceType.nominalUInt
+  let zeros ← zeroPayloadLeaves type compiled
+  pure {mergeLowered (.composite maybeType)
+    (.composite maybeType (.bool _root_.Bool.false :: zeros)) [] with nominalUIntFields}
 
 private def compositeEitherType (programName : String) (site : Syntax)
     (left right : Types.CompositeType) (fingerprint : String) : ExprM Types.CompositeType := do
@@ -1608,10 +1654,25 @@ private def lowerProjection (stx : Syntax) (value : Lowered)
   | .field _, .scalar (.foreign (.point _)) =>
     modify fun state => {state with requiresOutputViews := _root_.Bool.true}
   | _, _ => pure ()
-  pure {value with type := Helpers.resultTypeOfComposite child, term := .project value.term projection}
+  let segment? : Option String := match projection with
+    | .field name => some name
+    | .tupleIndex index | .vectorIndex index => some (toString index)
+    | .enumField _ name => some name
+    | .byteIndex index => some (toString index)
+    | .enumTag => none
+  let (nominalUInt, nominalUIntFields) := match segment? with
+    | some segment => selectNominalUIntFields value.nominalUIntFields segment
+        (Helpers.resultTypeOfComposite child)
+    | none => (none, [])
+  pure {value with
+    type := Helpers.resultTypeOfComposite child
+    term := .project value.term projection
+    nominalUInt
+    nominalUIntFields}
 
 private def sequenceItems (site : Syntax) (type : ResultType) (source : Helpers.Term)
-    (start : Nat := 0) (stop? : Option Nat := none) : ExprM (List Lowered) :=
+    (start : Nat := 0) (stop? : Option Nat := none)
+    (nominalUIntFields : List (List String × NominalUIntType) := []) : ExprM (List Lowered) :=
   let count (length : Nat) : ExprM Nat := do
     let stop := stop?.getD length
     unless start ≤ stop && stop ≤ length do
@@ -1623,11 +1684,19 @@ private def sequenceItems (site : Syntax) (type : ResultType) (source : Helpers.
     pure []
   | .composite (.tuple types) => do
     let length ← count types.length
-    pure (((types.drop start).take length).zipIdx.map fun (type, index) =>
-      {type := Helpers.resultTypeOfComposite type, term := .project source (.tupleIndex (start + index))})
+    ((types.drop start).take length).zipIdx.mapM fun (type, index) => do
+      let childType := Helpers.resultTypeOfComposite type
+      let (nominalUInt, fields) := selectNominalUIntFields nominalUIntFields
+        (toString (start + index)) childType
+      let term := .project source (.tupleIndex (start + index))
+      pure {type := childType, term, nominalUInt := nominalUInt, nominalUIntFields := fields}
   | .composite (.vector length type) => do
-    pure ((List.range (← count length)).map fun index =>
-      {type := Helpers.resultTypeOfComposite type, term := .project source (.vectorIndex (start + index))})
+    (List.range (← count length)).mapM fun index => do
+      let childType := Helpers.resultTypeOfComposite type
+      let (nominalUInt, fields) := selectNominalUIntFields nominalUIntFields
+        (toString (start + index)) childType
+      let term := .project source (.vectorIndex (start + index))
+      pure {type := childType, term, nominalUInt := nominalUInt, nominalUIntFields := fields}
   | .composite (.bytes length) => do
     pure ((List.range (← count length)).map fun index =>
       {type := .scalar (.uint 255), term := .project source (.byteIndex (start + index))})
@@ -1744,7 +1813,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   match stx with
   | `(nlexpr| $id:ident) =>
     match env.find? (fun value => value.1 == id.getId.toString) with
-    | some (_, type, term, (nominalUInt, nominalField)) =>
+    | some (_, type, term, (nominalUInt, nominalField), nominalUIntFields) =>
       if let .ref refName := term then
         let state ← get
         if state.shapeOnlyRefs.contains refName then
@@ -1757,8 +1826,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           | [(viewName, viewType)] => pure {type := viewType, term := .ref viewName}
           | [] => throwErrorAt id (unresolvedIterationDiagnostic parameter.surfaceName)
           | _ => throwErrorAt id s!"empty tuple item '{parameter.surfaceName}' has multiple inferred types. Use a typed binding"
-        | none => pure {type, term, nominalUInt, nominalField}
-      else pure {type, term, nominalUInt, nominalField}
+        | none => pure {type, term, nominalUInt, nominalField, nominalUIntFields}
+      else pure {type, term, nominalUInt, nominalField, nominalUIntFields}
     | none => throwErrorAt id s!"unknown readable witness value '{id.getId}'"
   | `(nlexpr| $n:num) =>
     if n.getNat ≥ Field.modulus then throwErrorAt n "Native literal is not canonical"
@@ -1847,11 +1916,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt stx "Maybe payloads do not retain nominal Field identity"
     let payload := value.layoutType
     let compiled ← checkedPayloadLayout stx payload
-    let maybeType ← checkedMaybeType programName stx payload compiled
+    let maybeType ← checkedMaybeType programName stx payload compiled value.nominalUInt
+    let nominalUIntFields ← if let .scalar ty := value.type then
+      match Types.Maybe.scalarNominalUIntFields ty value.nominalUInt with
+      | .ok fields => pure fields
+      | .error message => throwErrorAt stx message
+    else pure (prefixNominalUIntFields "value" value.nominalUIntFields)
     if let .scalar ty := value.type then
       unless ty.isBytes do
-        return mergeLowered (.composite maybeType)
-          (.composite maybeType [.bool _root_.Bool.true, value.term]) [value]
+        return {mergeLowered (.composite maybeType)
+          (.composite maybeType [.bool _root_.Bool.true, value.term]) [value] with
+          nominalUIntFields}
     let span ← liftM (spanValue stx)
     let (before, terms, _) ← stageIterationValues callPrefix env span [value]
     let some stagedPayload := terms.head?
@@ -1860,18 +1935,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         compiled.checked.value stagedPayload with
       | .ok leaves => pure leaves
       | .error diagnostic => throwErrorAt stx diagnostic.message
-    pure (mergeLowered (.composite maybeType)
-      (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [{value with before}])
-  | `(nlexpr| none($type:nltype)) => do
-    let sourceType ← liftM (readSourceScalarType type)
-    if sourceType.nominalField.isSome then
-      throwErrorAt type "Maybe scalar payloads do not retain nominal Field identity"
-    if sourceType.nominalUInt.isSome then
-      throwErrorAt type "Maybe scalar payloads do not retain nominal UInt identity"
-    lowerAbsentMaybe programName stx (scalarMaybePayload sourceType.type)
+    pure {mergeLowered (.composite maybeType)
+      (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [{value with before}] with
+      nominalUIntFields}
+  | `(nlexpr| none($type:nltype)) =>
+    lowerAbsentScalarMaybe programName type
   | `(nlexpr| none($type:ident)) => do
-    unless type.getId == `Unit do throwErrorAt type "expected Unit or a checked Maybe payload type"
-    lowerAbsentMaybe programName stx .unit
+    if type.getId == `Unit then
+      lowerAbsentMaybe programName stx .unit
+    else
+      let scalarType ← `(nltype| $type:ident)
+      lowerAbsentScalarMaybe programName scalarType
   | `(nlexpr| none(Payload $name:ident)) => do
     let (codec, _) ← selectedCodec name
     lowerAbsentMaybe programName name codec.payload
@@ -1936,7 +2010,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       let expected := Helpers.resultTypeOfComposite declared.type
       let some (_, source) := initializers.find? (·.1 == key)
         | match base with
-          | some (_, reference) => pure {type := expected, term := .project reference (.field key)}
+          | some (baseValue, reference) =>
+            let projected ← lowerProjection stx baseValue (.field key)
+            pure {projected with term := .project reference (.field key)}
           | none => throwErrorAt stx s!"missing record field '{key}'"
       let value ← match ← lowerExpectedIterationRef env expected source with
         | some value => pure value
@@ -1957,7 +2033,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | .error diagnostic => throwErrorAt stx diagnostic.message
     let result := mergeLowered (.composite codec.payload) (.composite codec.payload leaves)
       (base.toList.map Prod.fst ++ values)
-    pure {result with before := spreadBefore ++ before}
+    let nominalUIntFields := (layoutFields.zip values).flatMap fun ((name, _), value) =>
+      prefixNominalUIntFields name (loweredNominalUIntFields value)
+    pure {result with before := spreadBefore ++ before, nominalUIntFields}
   | `(nlexpr| tuple($items,*)) | `(nlexpr| packBytes($items,*))
   | `(nlexpr| vector($items,*)) | `(nlexpr| vector(Payload $_:ident, [$items,*])) => do
     let pack := stx.raw.getKind == ``readablePackBytes
@@ -1992,8 +2070,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let mut parts : List (List Lowered) := []
     let mut size := 1
     for ((spread, source, value), reference) in arguments.zip references do
-      let fields ← if spread then sequenceItems source value.type reference
-        else pure [{type := value.type, term := reference}]
+      let fields ← if spread then sequenceItems source value.type reference 0 none value.nominalUIntFields
+        else pure [{value with term := reference}]
       size := size + fields.length
       if size > Types.defaultLimits.maxLayoutNodes then
         throwErrorAt source "tuple construction exceeds the layout node limit"
@@ -2007,7 +2085,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         if stx.raw.getKind == ``readableVector then vectorPayload stx none layouts
         else pure (.tuple layouts)
     let term ← checkedSequenceTerm stx payload fields
-    pure {mergeLowered (.composite payload) term values with before}
+    let nominalUIntFields := fields.zipIdx.flatMap fun (field, index) =>
+      prefixNominalUIntFields (toString index) (loweredNominalUIntFields field)
+    pure {mergeLowered (.composite payload) term values with before, nominalUIntFields}
   | `(nlexpr| uint($n:num)) => do
     match ScalarPolicy.validate (.uint n.getNat) with
     | .error message => throwErrorAt stx message
@@ -2177,7 +2257,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       modify fun state => {state with shapeOnlyRefs := internalName :: state.shapeOnlyRefs}
     let body ← lowerExpr programName callPrefix
       ((id.getId.toString, value.type, ref,
-        (value.nominalUInt, value.nominalField)) :: env) body expected allowShapeOnly
+        (value.nominalUInt, value.nominalField), value.nominalUIntFields) :: env)
+      body expected allowShapeOnly
     if value.shapeOnly then
       modify fun state => {state with shapeOnlyRefs := state.shapeOnlyRefs.filter (· != internalName)}
     pure
@@ -2232,7 +2313,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         let value ← lowerExpr programName callPrefix localEnv source sourceExpected
         let name ← freshReadableLet id
         localEnv := (id.getId.toString, value.type, .ref name,
-          (value.nominalUInt, value.nominalField)) :: localEnv
+          (value.nominalUInt, value.nominalField), value.nominalUIntFields) :: localEnv
         loweredSteps := {value with before := value.before ++
           [.bind name value.type (.at span value.term)]} :: loweredSteps
       | none =>
@@ -2645,7 +2726,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let span ← liftM (spanValue stx)
     let (before, references, _) ← stageIterationValues callPrefix env span [value]
     let [reference] := references | throwErrorAt stx "sequence slice staging failed"
-    let fields ← sequenceItems stx value.type reference first (some limit)
+    let fields ← sequenceItems stx value.type reference first (some limit) value.nominalUIntFields
     if let .composite (.bytes _) := value.type then
       let segments ← fields.flatMapM (byteSegments stx _root_.Bool.false)
       let (_, term) := joinByteSegments segments
@@ -3826,7 +3907,8 @@ private def scopePatternBindings (initial : ReadableBody) (bindings : List Patte
   let mut scopedBindings := []
   for (id, type, project) in bindings do
     let (updated, internalName) ← bindReadableName body id
-    body := {updated with env := (id.getId.toString, type, .ref internalName, (none, none)) :: updated.env}
+    body := {updated with env :=
+      (id.getId.toString, type, .ref internalName, (none, none), []) :: updated.env}
     scopedBindings := scopedBindings ++ [{id, internalName, type, project}]
   pure (body, scopedBindings)
 
@@ -3897,7 +3979,7 @@ private partial def lowerReadableStatement (programName path : String)
       | _ => body.logicalAliases
     pure {body with
       env := (valueName, signature.result, .ref internalName,
-        (resultNominal, resultNominalField)) :: body.env
+        (resultNominal, resultNominalField), []) :: body.env
       statements := body.statements ++ [.bind internalName signature.result (.at (← spanValue statement) readTerm)]
       witnesses := uniqueWitnesses (body.witnesses ++ [signature])
       logicalAliases
@@ -3937,7 +4019,7 @@ private partial def lowerReadableStatement (programName path : String)
     let body := body.observe value [source]
     pure {body with
       env := (valueName, value.type, .ref internalName,
-        (value.nominalUInt, value.nominalField)) :: body.env
+        (value.nominalUInt, value.nominalField), value.nominalUIntFields) :: body.env
       statements := body.statements ++ value.before ++ [.bind internalName value.type (.at (← spanValue statement) value.term)]
       shapeOnlyRefs := if value.shapeOnly then internalName :: body.shapeOnlyRefs else body.shapeOnlyRefs
       logicalAliases}
@@ -3961,7 +4043,7 @@ private partial def lowerReadableStatement (programName path : String)
       let name := id.getId.toString
       let internalName := internalBinder.getD name
       pure {body with
-        env := (name, .unit, .ref internalName, (none, none)) :: body.env
+        env := (name, .unit, .ref internalName, (none, none), []) :: body.env
         statements := body.statements ++ [.bind internalName .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
@@ -4039,7 +4121,7 @@ private partial def lowerReadableStatement (programName path : String)
     let indexName := index.getId.toString
     let (loopScope, internalIndex) ← bindReadableName {body with scopeBindings := []} index
     let mut loop := {loopScope with
-      env := (indexName, .scalar .native, .ref internalIndex, (none, none)) :: body.env,
+      env := (indexName, .scalar .native, .ref internalIndex, (none, none), []) :: body.env,
       statements := [],
       logicalAliases := []}
     for (child, ordinal) in nested.toList.zipIdx do
@@ -4099,7 +4181,7 @@ private partial def lowerReadableStatement (programName path : String)
         (unresolvedIterationParameter itemName).run initialLoopState
     let placeholderType := knownElementType.getD .unit
     let mut loop := {childScope with
-      env := (itemName, placeholderType, .ref elementRef, (none, none)) :: sourceBody.env
+      env := (itemName, placeholderType, .ref elementRef, (none, none), []) :: sourceBody.env
       statements := []
       logicalAliases := []
       helperProgram := some program
@@ -4246,7 +4328,7 @@ private partial def lowerReadableStatement (programName path : String)
         let input : ObservationInput := {name := valueName, type := inputLabel, visibility}
         let source := Helpers.Term.ref valueName
         sourceBody := {sourceBody with
-          env := (valueName, inputType, source, (inputNominal, inputField)) :: sourceBody.env
+          env := (valueName, inputType, source, (inputNominal, inputField), []) :: sourceBody.env
           scopeBindings := sourceBody.scopeBindings ++ [valueName]
           observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
         if let some pattern := pattern then
@@ -4487,11 +4569,16 @@ private partial def lowerReadableStatement (programName path : String)
             if (← getEnv).contains fullViewName then throwErrorAt name "aggregate return view already exists"
             let fieldTerms := (fields.map stringTerm).toArray
             let payload ← compositeTypeTerm payload
+            let nominalUIntFieldTerms ← item.value.nominalUIntFields.toArray.mapM fun (path, nominalUInt) => do
+              let pathTerms := path.toArray.map stringTerm
+              let nominalUIntTerm ← nominalUIntTypeTerm nominalUInt
+              `(Noctium.NominalUIntReturnField.mk [$pathTerms,*] $nominalUIntTerm)
             elabCommand (← `(def $(mkIdent localName) : Noctium.ReturnView := {
               name := $(stringTerm item.name)
               environment := $(mkIdent programName).composites
               type := $payload
               fields := [$fieldTerms,*]
+              nominalUIntFields := [$nominalUIntFieldTerms,*]
             }))
             registeredAggregates := registeredAggregates ++ [(item.name, fullViewName, fields)]
           | .scalar ty =>
