@@ -253,6 +253,28 @@ theorem accepted_lessThan_witnessBounds
   · exact Nat.lt_of_le_of_lt leftMeaning.bound (by simpa [widthEq] using leftMaximum)
   · exact Nat.lt_of_le_of_lt rightMeaning.bound (by simpa [widthEq] using rightMaximum)
 
+/-- An accepted guarded public ledger input preserves both the scalar meaning
+invariant and the native-definition typing invariant used by the comparison
+trace proof. This is the guarded-input step needed before widening its loop
+schema beyond unconditional transcript inputs. -/
+theorem accepted_guarded_public_input_preserves
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {state next : Backend.Native.State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (meaning : StateMeaning hash inputs witness state)
+    (definitions : NativeDefinitions state)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (inputAgreement : witness requirement.identifier = inputs requirement.identifier)
+    (opcode : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
+    StateMeaning hash inputs witness next ∧ NativeDefinitions next := by
+  exact ⟨guarded_public_input_step_meaning meaning selected nonforeignInput guarded
+      inputAgreement opcode accepted,
+    guarded_public_input_nativeDefinitions_step definitions selected nonforeignInput guarded
+      opcode accepted⟩
+
 private theorem acceptedMeaningStep_preserves
     {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
     {state next : Backend.Native.State} {raw : Json}

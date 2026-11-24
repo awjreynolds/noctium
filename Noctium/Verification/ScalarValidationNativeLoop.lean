@@ -69,6 +69,42 @@ theorem input_nativeDefinitions_step {expected : Expected} {state next : State}
       change NativeDefinitions {definedState with inputCount := definedState.inputCount + 1}
       exact typedState
 
+/-- A source-bound guarded public read adds the same native input definition as
+an unguarded input after its guard passes the producer's Boolean and identity
+checks. -/
+theorem guarded_public_input_nativeDefinitions_step {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (nativeDefinitions : NativeDefinitions state)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq : opcode = "public_input" := Except.ok.inj (op.symm.trans opcodeParsed)
+  simp only [opcodeEq, selected] at accepted
+  split at accepted
+  · simp_all [Ty.isForeign]
+  · simp only [guarded] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, _, typeChecked, valueType, valueParsed,
+      _, _, guardJson, guardParsed, _, guardChecked, _, _, _, _, output, outputParsed,
+      _, schema, definedState, defined, result⟩
+    cases valueParsed
+    have typedState : NativeDefinitions definedState := by
+      exact define_nativeDefinitions nativeDefinitions rfl defined
+    let nextState : State := { definedState with inputCount := definedState.inputCount + 1 }
+    have nextEq : nextState = next := by
+      change Except.ok nextState = .ok next at result
+      exact Except.ok.inj result
+    subst next
+    change NativeDefinitions {definedState with inputCount := definedState.inputCount + 1}
+    exact typedState
+
 theorem accepted_input_requirement_selected {expected : Expected} {state next : State}
     {raw : Json} {visibility : Visibility}
     (opcodeParsed : Backend.Native.stringField raw "op" = .ok (inputOpcode visibility))
