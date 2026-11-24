@@ -4852,8 +4852,8 @@
       "id": "C-STDLIB-PAUSED",
       "layer": "language-ledger",
       "surface": "Paused",
-      "noctiumStatus": "related-subset",
-      "notes": "The pinned Compact helper fixture emits Paused before the optional spend. Its 0.36.1 runner matches version 1, tag 8 and the empty payload against both finalized guard outcomes. The Noctium checker covers the corresponding logs. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium use version 1, tag 8, and a zero-byte payload for Paused. Both source checkers reject payload fields. The native relation matches pinned Compact for both guard values, binding the exact log sequence and rejecting a substituted inactive transcript. Previously finalized Ledger 9.1.0.1 helper calls record these exact empty-payload logs.",
       "source": [
         "stdlib",
         "events",
@@ -4867,6 +4867,10 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "ABI",
+        "ZK",
+        "LEDGER",
+        "tests/GuardedPauseEvents.lean",
         "tests/compact/StandardHelperEvents.compact",
         "tests/compact/standard-helper-events.mjs",
         "tests/standard-helper-event-localnet-evidence.json",
@@ -4874,14 +4878,14 @@
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNPAUSED",
       "layer": "language-ledger",
       "surface": "Unpaused",
-      "noctiumStatus": "related-subset",
-      "notes": "The pinned Compact helper fixture emits Unpaused after the optional spend. Its 0.36.1 runner matches version 1, tag 9 and the empty payload against both finalized guard outcomes. The Noctium checker covers the corresponding logs. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium use version 1, tag 9, and a zero-byte payload for Unpaused. Both source checkers reject payload fields. The native relation matches pinned Compact for both guard values, binding the exact log sequence and rejecting a substituted inactive transcript. Previously finalized Ledger 9.1.0.1 helper calls record these exact empty-payload logs.",
       "source": [
         "stdlib",
         "events",
@@ -4895,6 +4899,10 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "ABI",
+        "ZK",
+        "LEDGER",
+        "tests/GuardedPauseEvents.lean",
         "tests/compact/StandardHelperEvents.compact",
         "tests/compact/standard-helper-events.mjs",
         "tests/standard-helper-event-localnet-evidence.json",
@@ -4902,7 +4910,7 @@
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-MISC",
