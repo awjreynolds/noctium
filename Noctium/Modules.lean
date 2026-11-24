@@ -994,6 +994,7 @@ private def resolveModuleCellKind (limits : Limits) (span : SourceSpan)
       | .error message => fail span message
     | .scalar .jubjubScalar => pure (.cell .jubjubScalar)
     | .scalar .jubjubPoint => pure (.cell .jubjubPoint)
+    | .scalar (.foreign kind) => pure (.cell (.foreign kind))
     | _ => .cell <$> resolveStateScalar limits span types naturals value
   | _ => .cell <$> resolveStateScalar limits span types naturals value
 
