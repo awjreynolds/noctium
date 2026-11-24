@@ -109,10 +109,12 @@ private structure CallInterface where
   argumentFields : List (String × Ty)
   argumentContractRefs : List (String × Name) := []
   argumentNominalUInts : List (String × NominalUIntType) := []
+  argumentNominalFields : List (String × NominalFieldType) := []
   argumentViews : List (String × List (String × Ty))
   resultFields : List (String × Ty)
   resultContractRefs : List (String × Name) := []
   resultNominalUInts : List (String × NominalUIntType) := []
+  resultNominalFields : List (String × NominalFieldType) := []
   resultViews : List (String × List (String × Ty))
   deriving Inhabited
 
@@ -123,6 +125,8 @@ private structure CallInterfaceSourceRefs where
   resultContractRefs : List (String × Name) := []
   argumentNominalUInts : List (String × NominalUIntType) := []
   resultNominalUInts : List (String × NominalUIntType) := []
+  argumentNominalFields : List (String × NominalFieldType) := []
+  resultNominalFields : List (String × NominalFieldType) := []
   deriving Inhabited
 
 /-- A named Lean declaration whose source metadata defines a checked contract ABI. -/
@@ -167,7 +171,11 @@ private def sameCallInterfaceShape (expected actual : CallInterface) : Bool :=
   expected.argumentFields.map (fun (name, _) => expected.argumentNominalUInts.lookup name) ==
     actual.argumentFields.map (fun (name, _) => actual.argumentNominalUInts.lookup name) &&
   expected.resultFields.map (fun (name, _) => expected.resultNominalUInts.lookup name) ==
-    actual.resultFields.map (fun (name, _) => actual.resultNominalUInts.lookup name)
+    actual.resultFields.map (fun (name, _) => actual.resultNominalUInts.lookup name) &&
+  expected.argumentFields.map (fun (name, _) => expected.argumentNominalFields.lookup name) ==
+    actual.argumentFields.map (fun (name, _) => actual.argumentNominalFields.lookup name) &&
+  expected.resultFields.map (fun (name, _) => expected.resultNominalFields.lookup name) ==
+    actual.resultFields.map (fun (name, _) => actual.resultNominalFields.lookup name)
 
 private def interfaceMethods (name : Name) : CommandElabM (Array CallInterface) := do
   pure ((callInterfaceRegistry.getState (← getEnv)).filter (·.contract == name))
@@ -1010,6 +1018,8 @@ private def commitmentHashWith (env : Bindings)
     (interface : CallInterface) (opening : TSyntax `nlexpr)
     (inputs outputs : Array (TSyntax `nlcallvalue)) (stx : TSyntax `nlexpr) :
     CommandElabM (Ty × TSyntax `term) := do
+  unless interface.argumentNominalFields.isEmpty && interface.resultNominalFields.isEmpty do
+    throwErrorAt stx "nominal Field interface values are unsupported in callCommitment"
   let arguments ← callExpressions "argument" interface.argumentFields interface.argumentViews inputs stx
   let results ← callExpressions "result" interface.resultFields interface.resultViews outputs stx
   let argumentPayload := arguments.map fun (name, value, ty) =>
@@ -2209,10 +2219,14 @@ private partial def checkedContractRef (bindings : List (String × Name))
 
 private def checkedSourceValue (env : Bindings) (nominalEnv : CircuitNominalEnv)
     (contractRefs : List (String × Name)) (value : TSyntax `nlexpr)
-    (target : CircuitSourceType) : CommandElabM (TSyntax `term) := do
+    (target : CircuitSourceType)
+    (nominalFields : List (String × Option NominalFieldType) := []) : CommandElabM (TSyntax `term) := do
   unless (← checkedContractRef contractRefs value) == target.contractRef do
     throwErrorAt value "contract reference must match the declared interface"
-  checkedCircuitSourceExpression env nominalEnv value target
+  if target.nominalField.isSome || hasCircuitNominalFieldReference nominalFields value.raw then
+    checkedCircuitFieldExpression env nominalEnv nominalFields value target
+  else
+    checkedCircuitSourceExpression env nominalEnv value target
 
 private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
     (fields : List (String × Ty)) (fieldTypes : List (String × CircuitSourceType) := [])
@@ -2444,10 +2458,14 @@ private unsafe def checkGeneratedContract (name : Name)
           argumentNominalUInts := (interfaceRefs.map (·.argumentNominalUInts)).getD [] |>.filterMap
             fun (field, nominalUInt) =>
               if entrypoint.callArguments.any (·.name == field) then some (field, nominalUInt) else none
+          argumentNominalFields := (interfaceRefs.map (·.argumentNominalFields)).getD [] |>.filterMap
+            fun (field, nominalField) =>
+              if entrypoint.callArguments.any (·.name == field) then some (field, nominalField) else none
           argumentViews := entrypoint.callInputViews.map fun view => (view.name, view.fields)
           resultFields := entrypoint.returns.map fun result => (result.name, result.ty)
           resultContractRefs := (interfaceRefs.map (·.resultContractRefs)).getD []
           resultNominalUInts := (interfaceRefs.map (·.resultNominalUInts)).getD []
+          resultNominalFields := (interfaceRefs.map (·.resultNominalFields)).getD []
           resultViews
         }
 
@@ -2621,6 +2639,7 @@ private def directNominalUIntMaps (schema : List (String × StateKind))
 private structure EntryEffects where
   env : Bindings
   nominalUIntBindings : CircuitNominalEnv := []
+  nominalFieldBindings : List (String × Option NominalFieldType) := []
   nominalUIntCells : List (String × NominalUIntType) := []
   nominalUIntLists : List (String × NominalUIntType) := []
   nominalUIntCollections : List (String × CollectionNominals) := []
@@ -2637,6 +2656,7 @@ private structure EntryEffects where
   returns : Array (TSyntax `term) := #[]
   returnContractRefs : List (String × Name) := []
   returnNominalUInts : List (String × NominalUIntType) := []
+  returnNominalFields : List (String × NominalFieldType) := []
   returnViews : Array (TSyntax `term) := #[]
   nextLocal : Nat := 0
   usedLocalNames : List String := []
@@ -4729,6 +4749,8 @@ private partial def elaborateStatements (schema : List (String × StateKind))
     CommandElabM EntryEffects := do
   let mut state := initial
   for statement in statements do
+    if hasCircuitNominalFieldReference state.nominalFieldBindings statement.raw then
+      throwErrorAt statement "nominal Field circuit values are only supported in scalar contract returns"
     match statement with
     | `(nlstatement| $effect:nleffect) =>
       state ← elaborateEffect schema parent depth state effect
@@ -5028,12 +5050,15 @@ private def elaborateEitherReturn (contractName : String) (label : TSyntax `iden
     returnViews := state.returnViews.push view}
 
 private def elaborateReturns (contractName : String) (statements : Array (TSyntax `nlreturn))
-    (info : CircuitInfo) (initial : EntryEffects) : CommandElabM EntryEffects := do
+    (info : CircuitInfo) (initial : EntryEffects)
+    (allowNominalField : _root_.Bool := _root_.Bool.false) : CommandElabM EntryEffects := do
   let mut state := initial
   let mut labels : List String := []
   for statement in statements do
     match statement with
     | `(nlreturn| returnMaybe $label:ident as ($present:ident, $payload:ident)) => do
+      if state.nominalFieldBindings.any (·.2.isSome) then
+        throwErrorAt label "nominal Field values are only supported in scalar contract returns"
       let labelName := label.getId.toString
       if labels.contains labelName then
         throwErrorAt label "duplicate entry return label '{labelName}'"
@@ -5042,6 +5067,8 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
       state ← elaborateMaybeReturn contractName label present payload statement state
       labels := labelName :: labels
     | `(nlreturn| returnEither $label:ident as ($isLeft:ident, $left:ident, $right:ident)) => do
+      if state.nominalFieldBindings.any (·.2.isSome) then
+        throwErrorAt label "nominal Field values are only supported in scalar contract returns"
       let labelName := label.getId.toString
       if labels.contains labelName then
         throwErrorAt label "duplicate entry return label '{labelName}'"
@@ -5056,9 +5083,10 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
       if state.env.any (fun binding => binding.1 == labelName) then
         throwErrorAt label "entry return label '{labelName}' collides with an input or read binding"
       labels := labelName :: labels
-      let sourceType ← readCircuitSourceType returnTy
+      let sourceType ← readCircuitSourceType returnTy allowNominalField
       let ty := sourceType.type
-      let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value sourceType
+      let value ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings
+        value sourceType state.nominalFieldBindings
       let span ← spanTerm statement
       state := {state with
         returns := state.returns.push (← `({
@@ -5070,11 +5098,16 @@ private def elaborateReturns (contractName : String) (statements : Array (TSynta
         returnNominalUInts := match sourceType.nominalUInt with
           | some nominalUInt => state.returnNominalUInts ++ [(labelName, nominalUInt)]
           | none => state.returnNominalUInts
+        returnNominalFields := match sourceType.nominalField with
+          | some nominalField => state.returnNominalFields ++ [(labelName, nominalField)]
+          | none => state.returnNominalFields
       }
     | `(nlreturn| return $label:ident) => do
       let labelName := label.getId.toString
       let some (_, schema, sourceFields) := info.aggregateOutputs.find? (·.1 == labelName)
         | throwErrorAt label "unknown aggregate circuit output '{labelName}'"
+      if sourceFields.any fun field => info.nominalFieldOutputs.any (·.1 == field) then
+        throwErrorAt label "aggregate contract returns do not retain nominal Field output identity"
       if labels.contains labelName then
         throwErrorAt label "duplicate entry return label '{labelName}'"
       if state.env.any (fun binding => binding.1 == labelName) then
@@ -6293,8 +6326,6 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
-        unless info.nominalFieldInputs.isEmpty && info.nominalFieldOutputs.isEmpty do
-          throwErrorAt circuit "contract entrypoints do not retain nominal Field circuit ABI identity"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         unless args.getElems.size ≤ 256 && uniqueNames (args.getElems.toList.map (·.getId.toString)) do
@@ -6322,6 +6353,9 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let initial : EntryEffects := {
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
+          nominalFieldBindings :=
+            (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
+            (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
           nominalUIntCells := nominalUIntCells
           nominalUIntLists := nominalUIntLists
           nominalUIntCollections := nominalUIntCollections
@@ -6335,6 +6369,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         }
         let lowered ← elaborateStatements schema none 0 statements initial
         let lowered ← elaborateReturns ((← getCurrNamespace) ++ name.getId).toString returns info lowered
+          _root_.Bool.true
         interfaceSourceRefs := interfaceSourceRefs ++ [{
           contract := (← getCurrNamespace) ++ name.getId
           operation := id.getId.toString
@@ -6342,6 +6377,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           resultContractRefs := lowered.returnContractRefs
           argumentNominalUInts := info.nominalUIntInputs
           resultNominalUInts := lowered.returnNominalUInts
+          argumentNominalFields := info.nominalFieldInputs
+          resultNominalFields := lowered.returnNominalFields
         }]
         let circuitTerm := mkIdent info.declName
         let entryName := stringTerm id.getId.toString
@@ -6356,8 +6393,6 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let fullName := (← getCurrNamespace) ++ circuit.getId
         let some info := registry.find? (fun i => i.declName == fullName || i.declName == circuit.getId)
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
-        unless info.nominalFieldInputs.isEmpty && info.nominalFieldOutputs.isEmpty do
-          throwErrorAt circuit "contract entrypoints do not retain nominal Field circuit ABI identity"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
         let env ← addReferences [] (info.inputs ++ info.outputs)
@@ -6367,6 +6402,9 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         let initial : EntryEffects := {
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
+          nominalFieldBindings :=
+            (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
+            (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
           nominalUIntCells := nominalUIntCells
           nominalUIntLists := nominalUIntLists
           nominalUIntCollections := nominalUIntCollections
@@ -6380,6 +6418,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         }
         let lowered ← elaborateStatements schema none 0 statements initial
         let lowered ← elaborateReturns ((← getCurrNamespace) ++ name.getId).toString returns info lowered
+          _root_.Bool.true
         interfaceSourceRefs := interfaceSourceRefs ++ [{
           contract := (← getCurrNamespace) ++ name.getId
           operation := id.getId.toString
@@ -6387,6 +6426,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           resultContractRefs := lowered.returnContractRefs
           argumentNominalUInts := info.nominalUIntInputs
           resultNominalUInts := lowered.returnNominalUInts
+          argumentNominalFields := info.nominalFieldInputs
+          resultNominalFields := lowered.returnNominalFields
         }]
         let circuitTerm := mkIdent info.declName
         entryTerms := entryTerms.push (← `({ name := $(stringTerm id.getId.toString), circuit := $circuitTerm, effects := [$lowered.terms,*], returns := [$lowered.returns,*], returnViews := [$lowered.returnViews,*], span := $(← spanTerm entryStx), effectSpans := [$lowered.spans,*], effectGuards := [$lowered.guards,*] : Noctium.Entrypoint }))
