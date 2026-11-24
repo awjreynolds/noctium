@@ -7,6 +7,9 @@ open Noctium
 
 namespace WitnessSemanticsTest
 
+#guard !nativeEligibleNodes 1 [.term .opaqueBytesEmpty]
+#guard !nativeEligibleNodes 1 [.term .opaqueStringEmpty]
+
 /-- Covers direct stages, nested branches, ordered witness calls, and a return. -/
 def sourceFixture : List Statement := [
   .stage "private" "claim/first" (.scalar .native) (.witnessCall "first" "lookup" []),

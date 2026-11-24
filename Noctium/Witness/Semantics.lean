@@ -395,7 +395,8 @@ private def eligibilityChildren : EligibilityNode → Option (List EligibilityNo
     | .witnessCall _ _ arguments | .call _ arguments | .composite _ arguments =>
         some (arguments.map EligibilityNode.term)
     | .boolAnd .. | .boolOr .. | .boolXor .. | .curve .. | .bytes ..
-    | .bytes32Literal .. | .foreignConstant .. | .ite .. | .andThen ..
+    | .bytes32Literal .. | .opaqueBytesEmpty | .opaqueStringEmpty
+    | .foreignConstant .. | .ite .. | .andThen ..
     | .orElse .. | .witness .. | .effect .. | .bytesAt .. => none
 
 def nativeEligibleNodes : Nat → List EligibilityNode → Bool
@@ -1429,7 +1430,8 @@ mutual
             let selected ← liftResult ((Types.project compiled typed (.vectorIndex position)).mapError id)
             pure (fromSomeTypedValue selected)
       | .boolAnd .. | .boolOr .. | .boolXor .. | .curve .. | .bytes ..
-      | .bytes32Literal .. | .foreignConstant .. | .witness _ _ | .ite ..
+      | .bytes32Literal .. | .opaqueBytesEmpty | .opaqueStringEmpty
+      | .foreignConstant .. | .witness _ _ | .ite ..
       | .andThen .. | .orElse .. | .effect .. | .bytesAt .. =>
           fail "source term is outside the bounded native replay semantics"
   termination_by fuel _ _ _ _ _ _ _ => fuel
@@ -2194,7 +2196,8 @@ private theorem evaluator_recordSafe (fuel : Nat) :
                       | foreignBase _ _ | foreignScalar _ _ | foreignPoint _ _ | record _ => exact recordSafe_fail _
         | boolAnd _ _ | boolOr _ _ | boolXor _ _ =>
             simp only [evalTerm]; exact recordSafe_fail _
-        | curve _ _ | bytes _ _ | bytes32Literal _ | foreignConstant _ _ | bytesAt _ _ =>
+        | curve _ _ | bytes _ _ | bytes32Literal _ | opaqueBytesEmpty | opaqueStringEmpty
+        | foreignConstant _ _ | bytesAt _ _ =>
             simp only [evalTerm]; exact recordSafe_fail _
         | ite _ _ _ => simp only [evalTerm]; exact recordSafe_fail _
         | andThen _ _ => simp only [evalTerm]; exact recordSafe_fail _
@@ -3801,7 +3804,7 @@ private theorem evalTerm_successSim_step (fuel : Nat) (program : Program)
       exact evalTerm_poseidon_successSim_step fuel program context grants sourceProvider replayProvider scope environment
         domain left right (termsSafe scope environment) (termsSim scope environment)
   | boolAnd _ _ | boolOr _ _ | boolXor _ _ | curve _ _ | bytes _ _ | bytes32Literal _
-  | foreignConstant _ _ | bytesAt _ _ =>
+  | opaqueBytesEmpty | opaqueStringEmpty | foreignConstant _ _ | bytesAt _ _ =>
       simp only [evalTerm]
       exact successSim_fail _
   | call name arguments => exact callSim scope environment name arguments
@@ -5643,7 +5646,7 @@ private theorem evalTerm_failureSim_step (fuel : Nat) (program : Program)
       simp only [evalTerm]
       exact failureSim_fail "source term is outside the bounded native replay semantics"
   | boolAnd _ _ | boolOr _ _ | boolXor _ _ | curve _ _ | bytes _ _ | bytes32Literal _
-  | foreignConstant _ _ | bytesAt _ _ =>
+  | opaqueBytesEmpty | opaqueStringEmpty | foreignConstant _ _ | bytesAt _ _ =>
       simp only [evalTerm]
       exact failureSim_fail "source term is outside the bounded native replay semantics"
 
