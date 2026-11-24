@@ -20,6 +20,26 @@ structure Operation where
     candidate.instructions = before ++ after ∧
     original = {candidate with instructions := before ++ [.bits (.reference proofInput) 128] ++ after}
 
+/-- Keep every instruction except an exact bit check on a certified byte chunk. -/
+def retainRecordInstruction (chunks : List (String × Nat)) : Instruction → Bool
+  | .bits (.reference name) width => !(chunks.contains (name, width))
+  | _ => true
+
+private def omitRecordChecks (call : Verification.NativeRelationJson.ScalarCall)
+    (chunks : List (String × Nat)) : Verification.NativeRelationJson.ScalarCall :=
+  let instructions := call.body.instructions.filter (retainRecordInstruction chunks)
+  {call with body := {call.body with instructions}}
+
+structure RecordOperation where
+  plan : Impact.Plan
+  strict : Json
+  optimized : Json
+  certificate : LedgerReadBound.RecordCertificate
+  exactRemoval : ∃ (original candidate : Verification.NativeRelationJson.ScalarCall),
+    Verification.NativeRelationJson.decodeScalarCall strict = .ok original ∧
+    Verification.NativeRelationJson.decodeScalarCall optimized = .ok candidate ∧
+    candidate = omitRecordChecks original certificate.chunks
+
 /-- Derive both relations and the typed ledger read from the same source. This
 entrypoint never accepts an unchecked or caller-supplied certificate or ZKIR. -/
 def lower (contract : Contract) (entrypoint cell destination : String) : Except String Operation := do
@@ -81,5 +101,50 @@ def lower (contract : Contract) (entrypoint cell destination : String) : Except 
           rw [← originalInstructions]⟩
     }
   else throw "optimized circuit changed more than the certified range constraint"
+
+/-- Remove a unique bit check for each chunk of a source-certified record Map
+result. Match the serialized Popeq group before editing the strict relation. -/
+def lowerRecordMap (contract : Contract) (entrypoint destination : String) :
+    Except String RecordOperation := do
+  let certificate ← LedgerReadBound.checkRecordMap contract entrypoint destination
+  let some entry := contract.entrypoints.find? (·.name == entrypoint)
+    | throw s!"unknown entrypoint '{entrypoint}'"
+  let (plan, strict) ← (Zkir.lowerPrunedEntrypoint contract.state
+    (Passes.pruneEntrypoint entry)).mapError (·.message)
+  let original : {value // Verification.NativeRelationJson.decodeScalarCall strict = .ok value} ←
+    match decoded : Verification.NativeRelationJson.decodeScalarCall strict with
+    | .error reason => throw reason
+    | .ok value => pure ⟨value, decoded⟩
+  unless original.val.body.communicationsCommitment do
+    throw "ledger calls must bind the communications commitment"
+  let groups := original.val.body.instructions.filterMap fun instruction =>
+    match instruction with
+    | .impact guard values => some (guard, values)
+    | _ => none
+  let popeq := ([0x0c, certificate.fieldWidths.length] ++ certificate.fieldWidths).map
+      (fun field => Operand.immediate (scalar field)) ++
+    certificate.chunks.map (fun (name, _) => Operand.reference name)
+  unless groups[certificate.popeqGroup]? == some (.immediate one, popeq) do
+    throw "serialized record Map Popeq does not match its certified byte fields"
+  for (name, width) in certificate.chunks do
+    unless (original.val.body.instructions.filter (· == .input .«public» name)).length == 1 &&
+        (original.val.body.instructions.filter (· == .bits (.reference name) width)).length == 1 do
+      throw "expected a unique public read input and bit check for a record Map byte chunk"
+  let attributes ← strict.getObj?
+  let instructions ← Native.arrayField strict "instructions"
+  let remaining := instructions.filter fun instruction =>
+    match RangeDedup.key? instruction with
+    | some chunk => !(certificate.chunks.contains chunk)
+    | none => true
+  let optimized := Json.obj (attributes.insert "instructions" (.arr remaining))
+  let candidate : {value // Verification.NativeRelationJson.decodeScalarCall optimized = .ok value} ←
+    match decoded : Verification.NativeRelationJson.decodeScalarCall optimized with
+    | .error reason => throw reason
+    | .ok value => pure ⟨value, decoded⟩
+  if agrees : candidate.val = omitRecordChecks original.val certificate.chunks then
+    pure {
+      plan, strict, optimized, certificate
+      exactRemoval := ⟨original.val, candidate.val, original.property, candidate.property, agrees⟩}
+  else throw "optimized record Map circuit changed more than the certified bit checks"
 
 end Noctium.Backend.LedgerReadOptimization

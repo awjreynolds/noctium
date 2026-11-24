@@ -240,9 +240,13 @@ The pinned ledger parser rejects 2^128 for the 16-byte atom.
 The VM rejects a field-aligned cell even when it carries the same number.
 [Lean fixture](../../tests/ByteAlignedUInt128Cell.lean) · [Native fixture](../../runtime/tests/uint128_fab_read.rs)
 
-The opt-in `--ledger-read-bound Contract.entrypoint` build accepts one direct,
-unguarded read from a byte-aligned UInt128 cell on the pinned ZKIR 3.2.1 profile.
-Choose the operation by its fully qualified name and emit ledger artifacts.
+The opt-in `--ledger-read-bound Contract.entrypoint` build accepts an
+unguarded read from a byte-aligned UInt128 cell or a fixed-byte record Map on
+the pinned ZKIR 3.2.1 profile. The two cases derive bounds from the exact
+ledger read. [Fixed-byte record lookups](byte-storage.md#opt-in-bounds-for-fixed-byte-record-lookups)
+
+For a UInt128 cell, choose the operation by its fully qualified name and emit
+ledger artifacts.
 The selected operation must satisfy the checked scalar relation decoder.
 
 ```sh

@@ -19,6 +19,16 @@ structure Certificate where
   popeqFields : List Backend.Impact.Scalar
   deriving Repr
 
+/-- Identifies the fixed byte fields bound by one unconditional record Map
+Popeq. The ledger verifier must authenticate this group before its bounds apply. -/
+structure RecordCertificate where
+  stateName : String
+  destination : String
+  fieldWidths : List Nat
+  chunks : List (String × Nat)
+  popeqGroup : Nat
+  deriving Repr
+
 private def uint128Maximum : Nat := 2 ^ 128 - 1
 
 private def sourceCellSlot (contract : Contract) (cellName : String) : Except String Nat := do
@@ -110,5 +120,77 @@ def check (contract : Contract) (entrypointName cellName destination : String) :
     popeqGroup
     popeqFields
   }
+
+/-- Check the exact source effect, Impact read, and native group supplying a
+fixed-byte record Map result. This does not rewrite the relation. -/
+def checkRecordMap (contract : Contract) (entrypointName destination : String) :
+    Except String RecordCertificate := do
+  match Contract.validate Capabilities.source contract with
+  | .error diagnostic => throw diagnostic.message
+  | .ok _ => pure ()
+  let some entry := contract.entrypoints.find? (·.name == entrypointName)
+    | throw s!"unknown entrypoint '{entrypointName}'"
+  let entry := Passes.pruneEntrypoint entry
+  let matchingReads := entry.effects.zipIdx.filterMap fun (effect, index) =>
+    match effect with
+    | .readRecordMapComposite stateName name _ _ fields parentKeys =>
+      if name == destination then some (index, stateName, fields, parentKeys.length) else none
+    | _ => none
+  let [(effectIndex, stateName, fields, depth)] := matchingReads
+    | throw s!"expected one record Map read as '{destination}'"
+  if (entry.effectGuardAt effectIndex).isSome then
+    throw "guarded record Map reads do not have unconditional byte bounds"
+  let fieldWidths ← fields.mapM fun (_, ty) =>
+    match ty with
+    | .bytes length =>
+      if length > 0 then pure length else throw "record Map read contains an empty byte field"
+    | _ => throw "record Map read contains a field without a fixed byte width"
+  let (plan, boundaries) ← (Impact.lowerWithEffectBoundaries contract.state entry).mapError
+    (·.message)
+  let [read] := plan.reads.filter (·.name == destination)
+    | throw s!"expected one Impact read as '{destination}'"
+  let some schema := read.schema
+    | throw "record Map read lacks an Impact schema"
+  unless read.ty == .native && read.components == fields && read.guard.isNone do
+    throw "record Map read does not match its unguarded Impact fields"
+  let some endIndex := boundaries[effectIndex]?
+    | throw "missing record Map effect boundary"
+  let start ← if effectIndex == 0 then do
+    let inputPlan ← Impact.publicInputPlan entry.circuit.inputs
+    pure inputPlan.operations.length
+  else
+    let some start := boundaries[effectIndex - 1]?
+      | throw "missing prior Impact effect boundary"
+    pure start
+  let guards := plan.activityGuards.drop start |>.take 3
+  unless endIndex == start + 3 &&
+      (plan.activityGuards.isEmpty || (guards.length == 3 && guards.all Option.isNone)) do
+    throw "expected three unguarded record Map read operations"
+  let [.dup, .indexRecordPath slot _ _ parents, .popeqFields resultSchema _] :=
+    plan.operations.drop start |>.take 3
+    | throw "expected a record Map index and Popeq"
+  unless contract.state[slot]?.map (·.name) == some stateName &&
+      parents.length == depth && resultSchema == schema do
+    throw "record Map index and result do not match their source schema"
+  let expected ← (Native.expectedEntrypoint contract.state entry).mapError (·.message)
+  let chunks ← read.bindings.mapM fun (name, ty) => do
+    let .uint maximum := ty | throw "record Map byte chunk must bind an unsigned scalar"
+    let bits := (maximum + 1).log2
+    let identifier := "%input_" ++ name
+    let [input] := expected.inputs.filter (·.identifier == identifier)
+      | throw "record Map byte chunk must bind exactly one public input"
+    unless 0 < bits && bits ≤ 248 && maximum + 1 == 2 ^ bits &&
+        input.ty == ty && input.visibility == .«public» && input.activityGuard.isNone &&
+        !expected.rawInputs.any (·.identifier == identifier) do
+      throw "record Map byte chunk does not match its unconditional source input"
+    pure (identifier, bits)
+  let popeqGroup := (plan.operations.take (start + 2)).foldl
+    (fun count operation => count + operation.fieldGroups.length) 0
+  let group : List Native.Term := [.constant 0x0c, .constant fieldWidths.length] ++
+    fieldWidths.map .constant ++ chunks.map (fun (name, _) => .input name)
+  unless !chunks.isEmpty && expected.groups[popeqGroup]? == some group &&
+      expected.groupGuards[popeqGroup]? == some (.constant 1) do
+    throw "record Map group does not bind the exact fixed-byte fields"
+  pure {stateName, destination, fieldWidths, chunks, popeqGroup}
 
 end Noctium.Backend.LedgerReadBound
