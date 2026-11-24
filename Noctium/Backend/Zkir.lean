@@ -286,6 +286,23 @@ private theorem forIn_preservesOutputCapacityFrame (items : List α) (initial : 
     | done result => exact pure_preservesOutputCapacityFrame _
     | yield result => exact ih result
 
+private theorem forIn_preservesOutputCapacityFrame_of_mem (items : List α) (initial : β)
+    (body : α → β → StateM LowerState (ForInStep β))
+    (preserves : ∀ item ∈ items, ∀ accumulator,
+      PreservesOutputCapacityFrame (body item accumulator)) :
+    PreservesOutputCapacityFrame (forIn items initial body) := by
+  induction items generalizing initial with
+  | nil => exact pure_preservesOutputCapacityFrame _
+  | cons item rest ih =>
+    rw [List.forIn_cons]
+    apply bind_preservesOutputCapacityFrame _ _
+      (preserves item (by simp) initial)
+    intro step
+    cases step with
+    | done result => exact pure_preservesOutputCapacityFrame _
+    | yield result =>
+      exact ih result (fun value member => preserves value (List.mem_cons_of_mem _ member))
+
 theorem OutputCapacityFrame.next_le_outputDefinitions
     {before after : LowerState} (frame : OutputCapacityFrame before after)
     (beforeBound : before.next ≤ before.outputDefinitions) :
@@ -1793,6 +1810,27 @@ private def alignedBytes32Value (source : Expr (.bytes 32))
     else alignedBytes32Fields operands
   | _ => alignedBytes32Fields operands
 
+private theorem alignedBytes32Fields_preservesOutputCapacityFrame (values : List String) :
+    PreservesOutputCapacityFrame (alignedBytes32Fields values) := by
+  unfold alignedBytes32Fields
+  split
+  · apply bind_preservesOutputCapacityFrame _ _ (packBytes_preservesOutputCapacityFrame (values.take 31))
+    intro low31
+    exact pure_preservesOutputCapacityFrame (values[31]!, low31)
+  · exact pure_preservesOutputCapacityFrame (values[1]!, values[0]!)
+  · exact rejectThenPure_preservesOutputCapacityFrame
+      "Bytes32 source has wrong aligned encoding" ("0x00", "0x00")
+
+private theorem alignedBytes32Value_preservesOutputCapacityFrame
+    (source : Expr (.bytes 32)) (values : List String) :
+    PreservesOutputCapacityFrame (alignedBytes32Value source values) := by
+  unfold alignedBytes32Value
+  split
+  · split
+    · exact pure_preservesOutputCapacityFrame _
+    · exact alignedBytes32Fields_preservesOutputCapacityFrame values
+  · exact alignedBytes32Fields_preservesOutputCapacityFrame values
+
 private def lowerInputReads (op : String) (raw : Bool)
     (identifiers : List String) : LowerM Unit := do
   for identifier in identifiers do
@@ -2607,6 +2645,58 @@ theorem lowerBytes_literal_preservesOutputCapacityFrame {length : Nat} (values :
   simp [lowerBytes, StateT.run_pure]
   exact OutputCapacityFrame.refl state
 
+theorem lowerBytes_literal32_preservesOutputCapacityFrame (values : List Nat) :
+    PreservesOutputCapacityFrame (lowerBytes (Expr.bytes32Literal values)) := by
+  intro state
+  simp [lowerBytes, StateT.run_pure]
+  exact OutputCapacityFrame.refl state
+
+theorem lowerBytes_ref_preservesOutputCapacityFrame {length : Nat} (name : String) :
+    PreservesOutputCapacityFrame (lowerBytes (Expr.ref name : Expr (.bytes length))) := by
+  simp only [lowerBytes]
+  have getFrame : PreservesOutputCapacityFrame
+      (get : StateM LowerState LowerState) := OutputCapacityFrame.refl
+  apply bind_preservesOutputCapacityFrame _ _ getFrame
+  intro snapshot
+  cases hit : snapshot.byteAliases.lookup name with
+  | some operands =>
+    simpa only [hit] using pure_preservesOutputCapacityFrame operands
+  | none =>
+    simpa only [hit] using rejectThenPure_preservesOutputCapacityFrame
+      s!"unbound Bytes32 source symbol '{name}'" ({values := []} : ByteOperands)
+
+theorem lowerBytes_persistentHash32_preservesOutputCapacityFrame (value : Expr (.bytes 32))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.persistentHash32 value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  apply bind_preservesOutputCapacityFrame _ _
+    (alignedBytes32Value_preservesOutputCapacityFrame value operands.values)
+  intro chunks
+  obtain ⟨highByte, low31⟩ := chunks
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerPersistentHash_preservesOutputCapacityFrame "bytes32" bytes32Alignment [highByte, low31])
+  intro result
+  exact pure_preservesOutputCapacityFrame _
+
+theorem lowerExpr_bytesField_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length)) (index : Nat)
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.bytesField value index)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operand
+  split
+  · exact rejectThenPure_preservesOutputCapacityFrame "byte field chunk index is out of range" "0x00"
+  · split
+    · split
+      · exact rejectThenPure_preservesOutputCapacityFrame "byte chunk count mismatch" "0x00"
+      · exact pure_preservesOutputCapacityFrame _
+    · split
+      · exact rejectThenPure_preservesOutputCapacityFrame "byte leaf count mismatch" "0x00"
+      · exact packBytes_preservesOutputCapacityFrame _
+
 def bindPublic (values : List String) : LowerM Unit :=
   emit "impact" [("guard", toJson ("0x01" : String)), ("inputs", toJson values)]
 
@@ -2722,23 +2812,100 @@ theorem lowerCircuitInputs_preservesOutputCapacityFrame (inputs : List Input) :
   intro _
   exact pure_preservesOutputCapacityFrame _
 
-def lowerBody (c : Circuit) : LowerM Unit := do
-  lowerCircuitInputs c.inputs
-  for condition in c.constraints do
+private def lowerConstraints (constraints : List (Expr .bool)) : LowerM Unit := do
+  for condition in constraints do
     let value ← lowerExpr condition
     emit "assert" [("cond", toJson value)]
-  let mut outputs := []
-  for output in c.outputs do
-    match output with
-    | {ty := .bytes 0, value, ..} => discard (lowerBytes value)
-    | _ => pure ()
+
+private theorem lowerConstraints_preservesOutputCapacityFrame
+    (constraints : List (Expr .bool))
+    (frames : ∀ condition ∈ constraints, PreservesOutputCapacityFrame (lowerExpr condition)) :
+    PreservesOutputCapacityFrame (lowerConstraints constraints) := by
+  unfold lowerConstraints
+  apply forIn_preservesOutputCapacityFrame_of_mem
+  intro condition member _
+  apply bind_preservesOutputCapacityFrame _ _ (frames condition member)
+  intro result
+  apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+  intro _
+  exact pure_preservesOutputCapacityFrame _
+
+def lowerReturnPreflight (output : Output) : LowerM Unit :=
+  match output with
+  | {ty := .bytes 0, value, ..} => discard (lowerBytes value)
+  | _ => pure ()
+
+private def lowerReturnFields (outputs : List Output) : LowerM (List String) :=
+  forIn outputs [] fun output values => do
+    lowerReturnPreflight output
     match output.nativeReturnFields with
-    | .error message => rejectLowering message
+    | .error message => do
+      rejectLowering message
+      pure (ForInStep.yield values)
     | .ok fields =>
-      for field in fields do
-        outputs := outputs ++ [← lowerExpr field]
+      let values ← forIn fields values fun field accumulator => do
+        let value ← lowerExpr field
+        pure (ForInStep.yield (accumulator ++ [value]))
+      pure (ForInStep.yield values)
+
+private theorem lowerReturnFields_preservesOutputCapacityFrame (outputs : List Output)
+    (preflight : ∀ output ∈ outputs, PreservesOutputCapacityFrame (lowerReturnPreflight output))
+    (fields : ∀ output ∈ outputs, ∀ projections,
+      output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
+        PreservesOutputCapacityFrame (lowerExpr field)) :
+    PreservesOutputCapacityFrame (lowerReturnFields outputs) := by
+  unfold lowerReturnFields
+  apply forIn_preservesOutputCapacityFrame_of_mem
+  intro output member values
+  apply bind_preservesOutputCapacityFrame _ _ (preflight output member)
+  intro _
+  cases projections : output.nativeReturnFields with
+  | error message =>
+    simp only [projections]
+    exact rejectThenPure_preservesOutputCapacityFrame message (ForInStep.yield values)
+  | ok projectionsList =>
+    simp only [projections]
+    apply bind_preservesOutputCapacityFrame
+    · apply forIn_preservesOutputCapacityFrame_of_mem
+      intro field fieldMember accumulator
+      apply bind_preservesOutputCapacityFrame _ _
+        (fields output member projectionsList projections field fieldMember)
+      intro value
+      exact pure_preservesOutputCapacityFrame (ForInStep.yield (accumulator ++ [value]))
+    · intro returned
+      exact pure_preservesOutputCapacityFrame (ForInStep.yield returned)
+
+def lowerBody (c : Circuit) : LowerM Unit := do
+  lowerCircuitInputs c.inputs
+  lowerConstraints c.constraints
+  let outputs ← lowerReturnFields c.outputs
   if !outputs.isEmpty then bindPublic outputs
   emit "output" [("vals", toJson outputs)]
+
+/-- Compose the actual standalone circuit stages. The expression premises
+apply to the circuit's constraints and to its emitted return projections. -/
+theorem lowerBody_preservesOutputCapacityFrame (c : Circuit)
+    (constraints : ∀ condition ∈ c.constraints, PreservesOutputCapacityFrame (lowerExpr condition))
+    (preflight : ∀ output ∈ c.outputs, PreservesOutputCapacityFrame (lowerReturnPreflight output))
+    (fields : ∀ output ∈ c.outputs, ∀ projections,
+      output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
+        PreservesOutputCapacityFrame (lowerExpr field)) :
+    PreservesOutputCapacityFrame (lowerBody c) := by
+  unfold lowerBody
+  apply bind_preservesOutputCapacityFrame _ _ (lowerCircuitInputs_preservesOutputCapacityFrame _)
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _ (lowerConstraints_preservesOutputCapacityFrame _ constraints)
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerReturnFields_preservesOutputCapacityFrame _ preflight fields)
+  intro outputs
+  split
+  · apply bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "impact"
+        [("guard", toJson ("0x01" : String)), ("inputs", toJson outputs)])
+    intro _
+    exact emit_preservesOutputCapacityFrame _ _
+  · exact emit_preservesOutputCapacityFrame _ _
 
 /-- Produce a ZKIR v3.2 relation, not a deployable contract bundle.
 Public values are explicitly bound with Impact. The surrounding contract must
@@ -2821,8 +2988,7 @@ theorem lowerEntrypointInputs_preservesOutputCapacityFrame (entry : Entrypoint) 
 
 def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
   lowerEntrypointInputs entry
-  for condition in entry.circuit.constraints do
-    emit "assert" [("cond", toJson (← lowerExpr condition))]
+  lowerConstraints entry.circuit.constraints
   for output in entry.circuit.outputs do
     match output with
     | {name, ty := .bytes _, value, ..} =>
@@ -2887,10 +3053,8 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
           | some guard => lowerExpr (.select guard (.ref yName : Expr .native) (.native 1))
         let point ← lowerPointFromCoordinates x y
         modify fun state => {state with aliases := (scalarRead.name, point) :: state.aliases}
-    for condition in read.inactiveDefaultConstraints do
-      emit "assert" [("cond", toJson (← lowerExpr condition))]
-  for condition in plan.guards do
-    emit "assert" [("cond", toJson (← lowerExpr condition))]
+    lowerConstraints read.inactiveDefaultConstraints
+  lowerConstraints plan.guards
   -- The ledger consumes one activity/skip entry per VM opcode. Compound
   -- Impact operations split their field vectors at each native opcode.
   for (operation, index) in plan.operations.zipIdx do
@@ -2898,16 +3062,7 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
     for fields in operation.fieldGroups do
       bindPublicGuarded guard (← fields.mapM lowerExpr)
   -- Entrypoint returns are public outputs committed with the call statement.
-  let mut returned := []
-  for output in entry.returns do
-    match output with
-    | {ty := .bytes 0, value, ..} => discard (lowerBytes value)
-    | _ => pure ()
-    match output.nativeReturnFields with
-    | .error message => rejectLowering message
-    | .ok fields =>
-      for field in fields do
-        returned := returned ++ [← lowerExpr field]
+  let returned ← lowerReturnFields entry.returns
   emit "output" [("vals", toJson returned)]
 
 /-- Lower an already-pruned entrypoint and return its plan with the checked

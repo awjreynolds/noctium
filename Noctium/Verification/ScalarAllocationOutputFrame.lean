@@ -41,6 +41,65 @@ private def packedInputHashCircuit : Circuit := {
 private def packedInputHashState : Zkir.LowerState :=
   ((Zkir.lowerBody (Passes.pruneCircuit packedInputHashCircuit)).run {}).2
 
+private theorem bytes32ReturnPreflight_preservesOutputCapacityFrame
+    (name : String) (value : Expr (.bytes 32)) :
+    Zkir.PreservesOutputCapacityFrame
+      (Zkir.lowerReturnPreflight {name, ty := .bytes 32, value}) := by
+  simpa [Zkir.lowerReturnPreflight] using
+    (Zkir.pure_preservesOutputCapacityFrame ())
+
+private theorem bytes32ReturnFields_preservesOutputCapacityFrame
+    (name : String) (value : Expr (.bytes 32))
+    (fieldFrames : ∀ index,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr (.bytesField value index))) :
+    ∀ projections,
+      ({name, ty := .bytes 32, value} : Output).nativeReturnFields = .ok projections →
+      ∀ field ∈ projections, Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr field) := by
+  intro projections fieldsAccepted field member
+  have projectionsEq : [.bytesField value 0, .bytesField value 1] = projections := by
+    have accepted :
+        (Except.ok value.nativeCallFields : Except String (List (Expr .native))) =
+          Except.ok projections := by
+      change Except.ok value.nativeCallFields = Except.ok projections
+      exact fieldsAccepted
+    have projectionsEq := Except.ok.inj accepted
+    simpa [Expr.nativeCallFields, List.range_succ] using projectionsEq
+  subst projections
+  rcases List.mem_cons.mp member with first | second
+  · cases first
+    exact fieldFrames 0
+  · have fieldEq : field = .bytesField value 1 := by simpa using second
+    subst field
+    exact fieldFrames 1
+
+private def bytes32Returns (names : List String) (value : Expr (.bytes 32)) : List Output :=
+  names.map fun name => {name, ty := .bytes 32, value}
+
+private theorem bytes32OutputCircuit_has_output_capacity_frame
+    (circuit : Circuit) (names : List String) (value : Expr (.bytes 32))
+    (constraintsEmpty : circuit.constraints = [])
+    (outputsMatch : circuit.outputs = bytes32Returns names value)
+    (fieldFrames : ∀ index,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr (.bytesField value index))) :
+    Zkir.OutputCapacityFrame {} ((Zkir.lowerBody circuit).run {}).2 := by
+  have bodyFrame := Zkir.lowerBody_preservesOutputCapacityFrame circuit
+    (by
+      intro condition member
+      rw [constraintsEmpty] at member
+      simp at member)
+    (by
+      intro output member
+      rw [outputsMatch] at member
+      obtain ⟨name, _, rfl⟩ := List.mem_map.mp member
+      exact bytes32ReturnPreflight_preservesOutputCapacityFrame name value)
+    (by
+      intro output member projections fieldsAccepted field fieldMember
+      rw [outputsMatch] at member
+      obtain ⟨name, _, rfl⟩ := List.mem_map.mp member
+      exact bytes32ReturnFields_preservesOutputCapacityFrame name value fieldFrames
+        projections fieldsAccepted field fieldMember)
+  exact bodyFrame {}
+
 private def publicSecpPointInput : Input := {
   name := "point"
   ty := .foreign (.point .secp256k1)
@@ -122,11 +181,16 @@ theorem packedInputHash_emits_hash_and_two_output_packing :
 
 theorem packedInputHash_has_actual_output_capacity_frame :
     Zkir.OutputCapacityFrame {} packedInputHashState := by
-  constructor
-  · change 0 ≤ packedInputHashState.next
-    decide +kernel
-  · change 0 + (packedInputHashState.next - 0) ≤ packedInputHashState.outputDefinitions
-    decide +kernel
+  let value : Expr (.bytes 32) := .persistentHash32 (.ref "preimage")
+  have hashFrame := Zkir.lowerBytes_persistentHash32_preservesOutputCapacityFrame
+    (.ref "preimage") (Zkir.lowerBytes_ref_preservesOutputCapacityFrame "preimage")
+  have fieldFrames : ∀ index,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr (.bytesField value index)) :=
+    fun index => Zkir.lowerExpr_bytesField_preservesOutputCapacityFrame value index hashFrame
+  have frame := bytes32OutputCircuit_has_output_capacity_frame
+    (Passes.pruneCircuit packedInputHashCircuit) ["digest"] value (by rfl) (by rfl)
+    fieldFrames
+  simpa [packedInputHashState] using frame
 
 theorem packedInputHash_is_within_instruction_cap :
     packedInputHashState.instructions.size ≤ Native.maxInstructions := by
@@ -143,11 +207,18 @@ theorem coldTwoLimbHash_emits_two_output_packing_instruction :
 
 theorem coldTwoLimbHash_has_actual_output_capacity_frame :
     Zkir.OutputCapacityFrame {} hashState := by
-  constructor
-  · change 0 ≤ hashState.next
-    decide +kernel
-  · change 0 + (hashState.next - 0) ≤ hashState.outputDefinitions
-    decide +kernel
+  let value : Expr (.bytes 32) :=
+    .persistentHash32 (.bytes32Literal (List.replicate 32 0))
+  have hashFrame := Zkir.lowerBytes_persistentHash32_preservesOutputCapacityFrame
+    (.bytes32Literal (List.replicate 32 0))
+    (Zkir.lowerBytes_literal32_preservesOutputCapacityFrame (List.replicate 32 0))
+  have fieldFrames : ∀ index,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr (.bytesField value index)) :=
+    fun index => Zkir.lowerExpr_bytesField_preservesOutputCapacityFrame value index hashFrame
+  have frame := bytes32OutputCircuit_has_output_capacity_frame
+    (Passes.pruneCircuit hashCircuit) ["digest"]
+    value (by rfl) (by rfl) fieldFrames
+  simpa [hashState] using frame
 
 /-- A repeated persistent hash emits both public results but reuses the one
 hash and packing sequence. -/
@@ -163,11 +234,18 @@ theorem cachedTwoLimbHash_counts_and_cache_hit :
 
 theorem cachedTwoLimbHash_has_actual_output_capacity_frame :
     Zkir.OutputCapacityFrame {} cachedHashState := by
-  constructor
-  · change 0 ≤ cachedHashState.next
-    decide +kernel
-  · change 0 + (cachedHashState.next - 0) ≤ cachedHashState.outputDefinitions
-    decide +kernel
+  let value : Expr (.bytes 32) :=
+    .persistentHash32 (.bytes32Literal (List.replicate 32 0))
+  have hashFrame := Zkir.lowerBytes_persistentHash32_preservesOutputCapacityFrame
+    (.bytes32Literal (List.replicate 32 0))
+    (Zkir.lowerBytes_literal32_preservesOutputCapacityFrame (List.replicate 32 0))
+  have fieldFrames : ∀ index,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr (.bytesField value index)) :=
+    fun index => Zkir.lowerExpr_bytesField_preservesOutputCapacityFrame value index hashFrame
+  have frame := bytes32OutputCircuit_has_output_capacity_frame
+    (Passes.pruneCircuit cachedHashCircuit) ["firstDigest", "secondDigest"]
+    value (by rfl) (by rfl) fieldFrames
+  simpa [cachedHashState] using frame
 
 private def accepted {ε α} : Except ε α → Bool
   | .ok _ => true
