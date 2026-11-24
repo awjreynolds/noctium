@@ -8,9 +8,8 @@ use onchain_runtime::state::{ChargedState, StateValue};
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use transient_crypto::fab::AlignedValueExt;
+use transient_crypto::{curve::Fr, fab::AlignedValueExt};
 
-const LABEL: &str = "A\0夜\0B";
 const NAMESPACE: &str = "opaque-witness";
 const COMMIT: &str = "commit";
 
@@ -115,13 +114,21 @@ fn assert_cell(state: &ChargedState<noctium_runtime::Db>, plan: &Plan, expected:
 }
 
 #[test]
-#[ignore = "requires fresh OpaqueWitnessDisclosure Lean artifacts"]
+#[ignore = "requires fresh OpaqueWitnessDisclosure Lean artifacts and the pinned Compact oracle"]
 fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tampering() -> Result<()>
 {
     let directory = artifacts();
+    let oracle: Json = serde_json::from_reader(fs::File::open(std::env::var(
+        "NOCTIUM_OPAQUE_WITNESS_COMPACT",
+    )?)?)?;
+    assert!(oracle["compact"]
+        .as_str()
+        .unwrap()
+        .starts_with("0.36.1 (7fa3a117c"));
+    assert_eq!(oracle["runtime"], "0.21.0");
+    let label = oracle["label"].as_str().expect("Compact native Cell value");
     let control_path = directory.join(format!("{}.witness.control.json", stem()));
-    let control_text = fs::read_to_string(&control_path)?;
-    let control: Json = serde_json::from_str(&control_text)?;
+    let control: Json = serde_json::from_reader(fs::File::open(&control_path)?)?;
     let plan: Plan = serde_json::from_slice(&fs::read(
         directory.join(format!("{}.impact.json", stem())),
     )?)?;
@@ -129,13 +136,15 @@ fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tamp
     let circuit = IrSource::load(circuit_bytes.as_slice())?;
     let original_binding_text = control["binding"].as_str().unwrap();
     let expected_binding_hash = hex::encode(Sha256::digest(original_binding_text.as_bytes()));
+    let native_binding = binding(&control);
+    let invocation_context = context(&control);
     let target = noctium_runtime::control::InvocationTarget {
         contract_address: "00".repeat(32),
         entrypoint: "publish".into(),
     };
 
     let mut altered = control.clone();
-    let mut changed_binding = binding(&control);
+    let mut changed_binding = native_binding.clone();
     changed_binding["calls"][0]["resultType"] = json!("OpaqueBytes");
     altered["binding"] = json!(changed_binding.to_string());
     let altered_session = noctium_runtime::control::Session::from_json_with_invocation_target(
@@ -153,7 +162,7 @@ fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tamp
     let mut session = noctium_runtime::control::Session::from_json_with_invocation_target(
         control,
         BTreeMap::new(),
-        context(&serde_json::from_str(&control_text)?),
+        invocation_context,
         Some(&expected_binding_hash),
         Some(target),
     )?;
@@ -166,29 +175,28 @@ fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tamp
         pending["request"]["schema"] == "OpaqueString",
         "wrong provider schema: {pending}"
     );
-    let wrong_reply = response(
-        &pending["request"],
+    for invalid_value in [
         json!({"kind":"opaqueBytes", "values":[1]}),
-    );
-    assert!(
-        session.resume_typed(wrong_reply).is_err(),
-        "wrong OpaqueString reply type was accepted"
-    );
-    assert_eq!(
-        session.advance()?,
-        pending,
-        "bad reply must leave request pending"
-    );
+        json!({"kind":"opaqueString", "value":"trailing\0"}),
+    ] {
+        assert!(session
+            .resume_typed(response(&pending["request"], invalid_value))
+            .is_err());
+        assert_eq!(
+            session.advance()?,
+            pending,
+            "bad reply must leave request pending"
+        );
+    }
     session.resume_typed(response(
         &pending["request"],
-        json!({"kind":"opaqueString", "value":LABEL}),
+        json!({"kind":"opaqueString", "value":label}),
     ))?;
     ensure!(
         session.advance()?["status"] == "completed",
         "provider did not complete"
     );
 
-    let native_binding = binding(&serde_json::from_str(&control_text)?);
     let completion = session.private_completion(&native_binding["nativeRelation"])?;
     let inputs = serde_json::from_value(completion["inputs"].clone())?;
     let state = create_state(
@@ -196,7 +204,7 @@ fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tamp
         &BTreeMap::from([("label".into(), json!({"kind":"opaqueString", "value":""}))]),
     )?;
     assert_cell(&state, &plan, b"");
-    let execution = prepare(
+    let mut execution = prepare(
         &plan,
         &inputs,
         &state,
@@ -204,19 +212,18 @@ fn opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tamp
         ContractAddress::default(),
     )?;
     check(&execution, &circuit)?;
-    assert_cell(&execution.after.state, &plan, LABEL.as_bytes());
+    assert_cell(&execution.after.state, &plan, label.as_bytes());
     let mut expected_projection = Vec::new();
-    compressed(LABEL.as_bytes()).value_only_field_repr(&mut expected_projection);
+    compressed(label.as_bytes()).value_only_field_repr(&mut expected_projection);
     assert_eq!(expected_projection.len(), 1);
-    assert_eq!(
-        execution
-            .preimage
-            .public_transcript_inputs
-            .iter()
-            .filter(|value| **value == expected_projection[0])
-            .count(),
-        1,
-        "disclosed Cell write did not bind the Compress projection"
-    );
+    assert_eq!(execution.preimage.private_transcript, expected_projection);
+    let released = execution
+        .preimage
+        .public_transcript_inputs
+        .iter_mut()
+        .find(|value| **value == expected_projection[0])
+        .expect("disclosed Cell write binds the Compress projection");
+    *released = *released + Fr::from(1u64);
+    assert!(check(&execution, &circuit).is_err());
     Ok(())
 }

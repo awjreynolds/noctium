@@ -633,7 +633,7 @@
       "layer": "language",
       "surface": "Opaque string and Uint8Array",
       "noctiumStatus": "subset",
-      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field. Same-kind opaque equality matches the pinned Compact return and ledger Bool update for the exercised canonical inputs. ZKIR compares the Compress fields; mixed kinds, implicit disclosure and a changed return reject. A paired root List case stores both opaque types as Compress, returns typed Maybe heads, and rejects changed public payloads.",
+      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field. Same-kind opaque equality matches the pinned Compact return and ledger Bool update for the exercised canonical inputs. ZKIR compares the Compress fields; mixed kinds, implicit disclosure and a changed return reject. A paired root List case stores both opaque types as Compress, returns typed Maybe heads, and rejects changed public payloads. A typed private OpaqueString witness now feeds an explicitly disclosed root Cell write. Pinned Compact and native execution preserve the same UTF-8 bytes with interior NULs and reject a trailing NUL. A changed native public Compress field rejects.",
       "source": [
         "reference"
       ],
@@ -642,6 +642,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/OpaqueWitnessDisclosure.lean",
+        "tests/compact/opaque-witness-disclosure.mjs",
+        "runtime/tests/opaque_witness_disclosure.rs",
         "tests/OpaqueLists.lean",
         "tests/compact/opaque-lists.mjs",
         "runtime/tests/opaque_lists.rs",
@@ -1401,7 +1404,7 @@
       "layer": "private-runtime",
       "surface": "Witness declarations and callbacks",
       "noctiumStatus": "subset",
-      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. A private Secp256k1Point provider feeds Keccak in the emitted witness plan. A wrong-curve reply leaves the request pending, and the native checker binds the same digest as the Compact reference.",
+      "notes": "Typed source calls use the native resumable Rust/C++ runtime. The nested scalar guarded ledger fixture finalized with skipped callbacks and private-state commit after finality through the Rust SDK. Readable witness declarations accept checked Payload parameters. A record and scalar argument reach the Rust session and pinned Compact callbacks in the same order. A private Secp256k1Point provider feeds Keccak in the emitted witness plan. A wrong-curve reply leaves the request pending, and the native checker binds the same digest as the Compact reference. An OpaqueString result follows the same provider path. The paired Compact and native fixture checks the disclosed public Cell value, wrong-type and noncanonical replies, and altered binding rejection.",
       "source": [
         "reference"
       ],
@@ -1411,6 +1414,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/OpaqueWitnessDisclosure.lean",
+        "tests/compact/opaque-witness-disclosure.mjs",
+        "runtime/tests/opaque_witness_disclosure.rs",
         "docs/development/typed-witnesses.md",
         "docs/development/typed-witness-qualification.md",
         "tests/witness62-public/qualification-evidence.json",

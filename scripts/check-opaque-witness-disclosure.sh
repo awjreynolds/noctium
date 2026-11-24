@@ -15,8 +15,9 @@ trap 'rm -rf -- "$scratch"' EXIT
 lake exe noctium compile tests/OpaqueWitnessDisclosure.lean \
   --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
   --output "$scratch/noctium"
-node tests/compact/opaque-witness-disclosure.mjs "$compactc" "$compact_runtime"
+node tests/compact/opaque-witness-disclosure.mjs "$compactc" "$compact_runtime" > "$scratch/compact.json"
 NOCTIUM_OPAQUE_WITNESS_DIR="$scratch/noctium" \
+  NOCTIUM_OPAQUE_WITNESS_COMPACT="$scratch/compact.json" \
   cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml --no-default-features \
     --features zkir-321 --test opaque_witness_disclosure \
     opaque_string_provider_is_disclosed_into_a_root_cell_and_bindings_reject_tampering \

@@ -4,12 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const [compactc, runtimeDirectory] = process.argv.slice(2);
-assert.ok(compactc && runtimeDirectory,
+const [compactc, runtimePath] = process.argv.slice(2);
+assert.ok(compactc && runtimePath,
   'usage: node tests/compact/opaque-witness-disclosure.mjs <compactc-0.36.1> <compact-runtime-0.21.0>');
 
 const version = execFileSync(compactc, ['--version'], { encoding: 'utf8' }).trim();
 assert.match(version, /^0\.36\.1 \(7fa3a117c/, `expected pinned Compact 0.36.1 compiler, got ${version}`);
+const runtimeDirectory = resolve(runtimePath);
 const runtimePackage = JSON.parse(readFileSync(join(runtimeDirectory, 'package.json'), 'utf8'));
 assert.equal(runtimePackage.name, '@midnight-ntwrk/compact-runtime');
 assert.equal(runtimePackage.version, '0.21.0', 'expected pinned Compact runtime 0.21.0');
@@ -77,7 +78,11 @@ try {
     /aligned value is not in normal form \(has trailing zero bytes\)/,
   );
 
-  console.log('Compact 0.36.1 disclosed a private OpaqueString witness into a public root Cell and preserved interior NULs');
+  console.log(JSON.stringify({
+    compact: version,
+    runtime: runtimePackage.version,
+    label: ledger(state).label,
+  }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

@@ -28,6 +28,14 @@ matches Compact for the empty, embedded-NUL string and binary payload cases.
 Altering a bound input or output makes the relation check fail.
 [Lean fixture](../../tests/OpaqueCells.lean) · [Native check](../../runtime/tests/opaque_cells.rs) · [Compact fixture](../../tests/compact/OpaqueCells.compact)
 
+A typed witness may supply an `OpaqueString`. The example explicitly
+discloses the provider result before writing a public root Cell. Pinned
+Compact and native Ledger 9 execution preserve the same UTF-8 bytes,
+including interior NULs. The host rejects a byte-array reply and a
+trailing NUL. The native checker rejects a changed public Compress field.
+[Lean fixture](../../tests/OpaqueWitnessDisclosure.lean) ·
+[Paired check](../../scripts/check-opaque-witness-disclosure.sh)
+
 Ledger 9.1.0.1 deployed both empty Cells at localnet height 51204. The
 store finalized at 51207 with the exact UTF-8 string and bytes. The
 proof-bound reads finalized at 51210 and 51213 and preserved the full
