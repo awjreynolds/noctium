@@ -169,7 +169,7 @@
       "layer": "language",
       "surface": "Field arithmetic",
       "noctiumStatus": "subset",
-      "notes": "Native Field addition, subtraction, multiplication, equality and inequality match the pinned reference at zero, one and modulus boundaries. Compact 0.36.1 and ordinary and readable Noctium circuits match mixed Field and Uint arithmetic in both operand orders, including Uint248 maxima and a zero-only Uint. Compact requires an explicit Uint-to-Field cast for mixed equality and inequality. Noctium also accepts implicit widening for those comparisons. The ordinary mixed relation proves and verifies using the official K8 parameters, and a changed return commitment fails verification. Compact rejects ordered Field comparison, inv(Field) and neg(Field). Nominal Field aliases and foreign-field arithmetic need separate qualification.",
+      "notes": "Native Field addition, subtraction, multiplication, equality and inequality match the pinned reference at zero, one and modulus boundaries. Compact 0.36.1 and ordinary and readable Noctium circuits match mixed Field and Uint arithmetic in both operand orders, including Uint248 maxima and a zero-only Uint. Compact requires an explicit Uint-to-Field cast for mixed equality and inequality. Noctium also accepts implicit widening for those comparisons. The ordinary mixed relation proves and verifies using the official K8 parameters, and a changed return commitment fails verification. Compact rejects ordered Field comparison, inv(Field) and neg(Field). Readable nominal Field aliases have a scoped scalar slice: the frontend carries a distinct alias identity over Native for inputs, lets, same-alias add/sub/mul, equality, conditionals, explicit casts and output type checks, then lowers to Native field operations with canonical modulus behavior. Ordinary `noctium_circuit`, nominal Field callback signatures, aggregate payloads and ledger state do not retain Field identity.",
       "source": [
         "reference"
       ],
@@ -184,12 +184,15 @@
         "tests/FieldArithmetic.lean",
         "tests/compact/FieldArithmetic.compact",
         "tests/compact/field-arithmetic.mjs",
+        "tests/NominalField.lean",
+        "tests/compact/NominalField.compact",
+        "tests/compact/nominal-field.mjs",
         "runtime/tests/native_field_arithmetic.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-24",
-        "scope": "Pinned ordinary and readable mixed Field and bounded Uint checks add both operand orders, maximum canonical values, zero-only rejection and a native K8 proof. Broader nominal and foreign-field semantics remain open.",
+        "scope": "Pinned ordinary and readable mixed Field and bounded Uint checks add both operand orders, maximum canonical values, zero-only rejection and a native K8 proof. The readable nominal Field slice checks identity over Native inputs and lets, same-alias add/sub/mul and canonical boundary results, explicit casts, distinct-alias rejection, conditional inheritance, and direct ZKIR 3.2.1 mock compilation. Ordinary alias support, callback signatures, aggregate payloads and ledger state remain open.",
         "evidence": [
           "Noctium/Semantics.lean",
           "Noctium/ScalarPolicy.lean",
@@ -198,6 +201,10 @@
           "tests/FieldArithmetic.lean",
           "tests/compact/FieldArithmetic.compact",
           "tests/compact/field-arithmetic.mjs",
+          "Noctium/Authoring.lean",
+          "tests/NominalField.lean",
+          "tests/compact/NominalField.compact",
+          "tests/compact/nominal-field.mjs",
           "runtime/tests/native_field_arithmetic.rs"
         ],
         "fullEquivalence": "unverified"
@@ -567,7 +574,7 @@
       "layer": "language",
       "surface": "Structural and nominal type aliases",
       "noctiumStatus": "subset",
-      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. Readable witness circuit inputs and outputs retain their declared identity across typed contract entrypoints, including named scalar fields in grouped outputs. The native representation remains the ordinary bounded UInt. Standalone low-level circuits preserve declared UInt identity through parameters, bindings, arithmetic, equality, selection and explicit casts before lowering. Scalar Cells preserve nominal identity through direct constructors and direct or structured reads, writes and returns. Structured helpers retain parameter, result and ledger callback identities and require an explicit checked cast for widening arithmetic. Scalar Lists retain nominal identity through constructor and entrypoint pushFront, head and returns, including scoped Lists under Map keys. Direct scalar Maps preserve nominal keys and values through root constructors, writes, lookups and membership. Two-key scalar Map paths preserve both key identities and the returned value identity. Sets preserve nominal membership keys at the root and below one or two Map keys. Parent keys keep their own identities during default initialization, membership and removal. Structured helpers retain the key identity on direct scalar Map membership and lookup and check both alias identities on writes. The returned alias passes through a reusable helper. Hosted ledger callback signatures carry the same aliases and the compiler reapplies the owning contract's tags during native artifact generation. Flat records keep each nominal UInt field through writes and reads in root Cells, Bytes32-keyed Maps and root Lists. A record may hold distinct equal-width aliases beside an unbranded Boolean. The native wire layout is unchanged. Constructors initialize named records in root Cells and insert them into root Bytes32-keyed Maps with checked nominal UInt fields and ordered overwrites. The Lean fixture preserves field identities through records and Lists under three ordinary Map keys. An automatic Maybe record view retains nominal UInt identities by logical field path. Compact 0.36.1 and the native checker agree on the absent zero payload and a populated record with two equal-width nominal fields. Named contract interface methods check nominal UInt argument and result identities, including fields in grouped call values.",
+      "notes": "Structural Uint aliases use inclusive-maximum widening. Nominal numeric aliases require matching identities, retain their original type and downcast checked arithmetic results. The max-unsigned guard precedes nominal downcasting. See C-LANG-UINT conformance cases. Readable witness authoring preserves named bounded UInt identities through inputs, local bindings, explicit casts, outputs and a typed witness call. Readable witness circuit inputs and outputs retain their declared identity across typed contract entrypoints, including named scalar fields in grouped outputs. The native representation remains the ordinary bounded UInt. Standalone low-level circuits preserve declared UInt identity through parameters, bindings, arithmetic, equality, selection and explicit casts before lowering. Scalar Cells preserve nominal identity through direct constructors and direct or structured reads, writes and returns. Structured helpers retain parameter, result and ledger callback identities and require an explicit checked cast for widening arithmetic. Scalar Lists retain nominal identity through constructor and entrypoint pushFront, head and returns, including scoped Lists under Map keys. Direct scalar Maps preserve nominal keys and values through root constructors, writes, lookups and membership. Two-key scalar Map paths preserve both key identities and the returned value identity. Sets preserve nominal membership keys at the root and below one or two Map keys. Parent keys keep their own identities during default initialization, membership and removal. Structured helpers retain the key identity on direct scalar Map membership and lookup and check both alias identities on writes. The returned alias passes through a reusable helper. Hosted ledger callback signatures carry the same aliases and the compiler reapplies the owning contract's tags during native artifact generation. Flat records keep each nominal UInt field through writes and reads in root Cells, Bytes32-keyed Maps and root Lists. A record may hold distinct equal-width aliases beside an unbranded Boolean. The native wire layout is unchanged. Constructors initialize named records in root Cells and insert them into root Bytes32-keyed Maps with checked nominal UInt fields and ordered overwrites. The Lean fixture preserves field identities through records and Lists under three ordinary Map keys. An automatic Maybe record view retains nominal UInt identities by logical field path. Compact 0.36.1 and the native checker agree on the absent zero payload and a populated record with two equal-width nominal fields. Named contract interface methods check nominal UInt argument and result identities, including fields in grouped call values. Readable nominal Field aliases now have a separate narrow scalar row: their source identities ride over Native inputs and lets, survive same-alias arithmetic, conditionals, equality and explicit casts, and lower to Native in the generated circuit. Implicit Field-to-Native helper, hashing or byte-conversion escape rejects, while an explicit Native cast passes. Ordinary circuit aliases, callback signatures, aggregate payload identities and ledger state identities remain unsupported.",
       "source": [
         "reference",
         "typeInference"
@@ -576,12 +583,12 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": ["tests/NominalUInt.lean", "tests/compact/NominalUint.compact", "tests/compact/nominal-uint.mjs", "tests/RecordConstructor.lean", "docs/development/record-constructor-localnet-receipt.json", "tests/NominalRecordMaybe.lean", "tests/NominalUIntNestedRecords.lean", "runtime/tests/nominal_record_maybe.rs", "tests/compact/nominal-interface.py", "runtime/tests/nominal_contract_interface.rs", "tests/ReadableNominalUInt.lean", "runtime/tests/readable_nominal_uint.rs"],
+      "observedEvidence": ["tests/NominalUInt.lean", "tests/compact/NominalUint.compact", "tests/compact/nominal-uint.mjs", "tests/RecordConstructor.lean", "docs/development/record-constructor-localnet-receipt.json", "tests/NominalRecordMaybe.lean", "tests/NominalUIntNestedRecords.lean", "runtime/tests/nominal_record_maybe.rs", "tests/compact/nominal-interface.py", "runtime/tests/nominal_contract_interface.rs", "tests/ReadableNominalUInt.lean", "runtime/tests/readable_nominal_uint.rs", "tests/NominalField.lean", "tests/compact/NominalField.compact", "tests/compact/nominal-field.mjs"],
       "equivalence": "unverified",
       "implementationUpdate": {
-        "checkedOn": "2026-11-17",
+        "checkedOn": "2026-11-24",
         "sourceCommit": "396c514de223c9cda7f6f49a4525c9531ccfe1ba",
-        "scope": "Transparent compile-time aliases normalize within bounded generic helper/type specialization. Nominal generic structures preserve distinct identity. Compact nominal numeric alias arithmetic/downcast semantics remain unqualified.",
+        "scope": "Transparent compile-time aliases normalize within bounded generic helper/type specialization. Nominal generic structures preserve distinct identity. Compact nominal numeric alias arithmetic/downcast semantics remain unqualified. Readable nominal Field aliases preserve source identity over Native for scalar inputs, lets, same-alias arithmetic, equality, conditionals and explicit casts. Raw Native helper, hashing and byte-conversion boundaries require an explicit cast. Ordinary circuit aliases, callback signatures, aggregate payloads and ledger state remain unsupported.",
         "fullEquivalence": "unverified",
         "evidence": [
           "Noctium/Helpers/Specialization.lean",
