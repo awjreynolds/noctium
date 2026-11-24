@@ -151,6 +151,7 @@ inductive ModuleEffect where
   | writeCell (state : StateTarget) (ty : Ty) (value : Expr ty)
   | writeCellOutput (state : StateTarget) (outputName : String)
   | writeRecordCell (state : StateTarget) (fields : List (String × LedgerFieldExpr))
+  | writeRecordCellInput (state : StateTarget) (inputName : String) (disclosed : Bool)
   | writeMap (state : StateTarget) (keyTy valueTy : Ty)
       (key : Expr keyTy) (value : Expr valueTy)
   | requireAbsent (state : StateTarget) (keyTy : Ty) (key : Expr keyTy)
@@ -289,6 +290,12 @@ structure Expansion where
   instances : List ModuleInstance := []
   deriving Repr, Inhabited
 
+structure RecordCellInputCheck where
+  view : CallInputView
+  layout : String
+  span : SourceSpan
+  deriving Repr
+
 structure ResolvedEntrypoint where
   name : String
   identity : MemberIdentity
@@ -298,6 +305,8 @@ structure ResolvedEntrypoint where
   returns : List Output := []
   returnViews : List ReturnView := []
   callInputs : List String := []
+  callInputViews : List CallInputView := []
+  recordInputChecks : List RecordCellInputCheck := []
   stateIdentities : List MemberIdentity
   span : SourceSpan
   effectSpans : List SourceSpan
@@ -644,6 +653,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       match effect.effect with
       | .writeCellOutput _ outputName => validText effect.span outputName
       | .readRecordCell _ destination => validText effect.span destination
+      | .writeRecordCellInput _ inputName _ => validText effect.span inputName
       | .writeRecordCell _ fields =>
         if fields.length > Noctium.maxEntrypointReturnFields then
           resource effect.span "record Cell fields"
@@ -1032,7 +1042,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
       let stateTarget? := match effectSpec.effect with
         | .readCell target _ _ | .readMap target _ _ _ _
         | .writeCell target _ _ | .writeCellOutput target _ | .writeMap target _ _ _ _
-        | .readRecordCell target _ | .writeRecordCell target _
+        | .readRecordCell target _ | .writeRecordCell target _ | .writeRecordCellInput target _ _
         | .requireAbsent target _ _ => some target
         | .require _ => none
       if let some stateTarget := stateTarget? then
@@ -1047,6 +1057,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
             fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
         | .writeCellOutput .., some (.cell _) => pure ()
         | .readRecordCell .., some (.tree (.composite ..))
+        | .writeRecordCellInput .., some (.tree (.composite ..))
         | .writeRecordCell .., some (.tree (.composite ..)) => pure ()
         | .readMap _ _ keyTy valueTy _, some (.map actualKeyTy actualValueTy)
         | .writeMap _ keyTy valueTy _ _, some (.map actualKeyTy actualValueTy) =>
@@ -1058,7 +1069,7 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | _, none => fail effectSpec.span s!"state member '{stateMember.name}' has no declared type"
         | .require _ , _ => pure ()
         | .readCell .., _ | .writeCell .., _ | .writeCellOutput .., _ |
-            .readRecordCell .., _ | .writeRecordCell .., _ |
+            .readRecordCell .., _ | .writeRecordCell .., _ | .writeRecordCellInput .., _ |
             .readMap .., _ | .writeMap .., _ |
             .requireAbsent .., _ =>
           fail effectSpec.span s!"module effect type does not match state member '{stateMember.name}'"
@@ -1390,30 +1401,65 @@ private def recordCellDestinations (destination : String) (fields : List (String
     List (String × Ty) :=
   fields.map fun (name, ty) => (s!"{destination}_{name}", ty)
 
+private def decodeRecordInputField : (ty : Ty) → List (Expr .native) → Except String (Expr ty)
+  | .native, [value] => pure value
+  | .bool, [value] => pure (.cast .bool value)
+  | .uint maximum, [value] => pure (.cast (.uint maximum) value)
+  | .bytes length, octets => Helpers.fixedBytesFromOctets length octets
+  | .jubjubPoint, [x, y] => pure (.jubjubFromCoordinates x y)
+  | _, _ => throw "module record Cell input field has an unsupported layout"
+
+private def lowerRecordCellInput (span : SourceSpan) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (name : String) (disclosed : Bool) :
+    Except Diagnostic (List LedgerFieldExpr × RecordCellInputCheck) := do
+  let fields ← (LedgerValueType.cellWriteRecordFields environment type).mapError fun message =>
+    {span, message}
+  let checked ← (Types.checkedLayout Types.defaultLimits environment type span).mapError
+    fun diagnostic => {span, message := diagnostic.message}
+  let .structure _ members := checked.value
+    | fail span "module record Cell input requires a named structure"
+  let names := Helpers.sourceLeafPaths checked.value name
+  let leafTypes := Helpers.callViewLeafTypes checked.value
+  let release (ty : Ty) (value : Expr ty) : LedgerFieldExpr :=
+    .mk ty (if disclosed then .disclose span value else value)
+  let values ← if fields.all (·.2 == .native) then do
+    unless fields.length == names.length do fail span "module Native record input leaf count mismatch"
+    pure (names.map fun leaf => release .native (.ref leaf))
+  else do
+    unless members.map Prod.fst == fields.map Prod.fst do
+      fail span "module typed record layout does not match its ledger fields"
+    (fields.zip members).mapM fun ((field, ty), (_, memberLayout)) => do
+      let leaves := (Helpers.sourceLeafPaths memberLayout s!"{name}.{field}").map Expr.ref
+      let value ← (decodeRecordInputField ty leaves).mapError fun message => {span, message}
+      pure (release ty value)
+  let view : CallInputView := {name, fields := names.zip leafTypes}
+  pure (values, {view, layout := Types.CompositeType.fingerprint environment type, span})
+
 private def resolveContractEffect (expansion : Expansion) (moduleInstance : ModuleInstance)
-    (effectSpec : ModuleEffectSpec) : Except Diagnostic (Effect × List MemberIdentity) := do
+    (effectSpec : ModuleEffectSpec) :
+    Except Diagnostic (Effect × List MemberIdentity × Option RecordCellInputCheck) := do
   let resolveState := resolveContractState expansion moduleInstance effectSpec.span
   match effectSpec.effect with
   | .readCell target destination ty => do
     let (identity, fieldName, _) ← resolveState target
-    pure (.readCell fieldName destination ty, [identity])
+    pure (.readCell fieldName destination ty, [identity], none)
   | .readRecordCell target destination => do
     let (identity, fieldName, kind) ← resolveState target
     let (environment, type) ← recordCellType effectSpec.span kind
     let fields ← recordCellReadFields effectSpec.span environment type
     pure (.readCompositePath fieldName destination [] type (recordCellDestinations destination fields),
-      [identity])
+      [identity], none)
   | .readMap target destination keyTy valueTy key => do
     let (identity, fieldName, _) ← resolveState target
-    pure (.readMap fieldName destination keyTy valueTy key, [identity])
-  | .require condition => pure (.require condition, [])
+    pure (.readMap fieldName destination keyTy valueTy key, [identity], none)
+  | .require condition => pure (.require condition, [], none)
   | .writeCell target ty value => do
     let (identity, fieldName, _) ← resolveState target
-    pure (.writeCell fieldName ty value, [identity])
+    pure (.writeCell fieldName ty value, [identity], none)
   | .writeCellOutput target outputName => do
     let (identity, fieldName, kind) ← resolveState target
     match kind with
-    | .cell ty => pure (.writeCell fieldName ty (.ref outputName), [identity])
+    | .cell ty => pure (.writeCell fieldName ty (.ref outputName), [identity], none)
     | .opaqueString => fail effectSpec.span "module output write does not support opaque string state"
     | _ => fail effectSpec.span "module output write requires a cell state"
   | .writeRecordCell target values => do
@@ -1425,13 +1471,18 @@ private def resolveContractEffect (expansion : Expansion) (moduleInstance : Modu
     let ordered ← orderRecordFields effectSpec.span fields values
     for (ty, value) in ordered do
       unless ty == value.ty do fail effectSpec.span "module record Cell write field type mismatch"
-    pure (.writeCompositePath fieldName [] type (ordered.map Prod.snd), [identity])
+    pure (.writeCompositePath fieldName [] type (ordered.map Prod.snd), [identity], none)
+  | .writeRecordCellInput target name disclosed => do
+    let (identity, fieldName, kind) ← resolveState target
+    let (environment, type) ← recordCellType effectSpec.span kind
+    let (values, layout) ← lowerRecordCellInput effectSpec.span environment type name disclosed
+    pure (.writeCompositePath fieldName [] type values, [identity], some layout)
   | .writeMap target keyTy valueTy key value => do
     let (identity, fieldName, _) ← resolveState target
-    pure (.writeMap fieldName keyTy valueTy key value, [identity])
+    pure (.writeMap fieldName keyTy valueTy key value, [identity], none)
   | .requireAbsent target keyTy key => do
     let (identity, fieldName, _) ← resolveState target
-    pure (.requireAbsent fieldName keyTy key, [identity])
+    pure (.requireAbsent fieldName keyTy key, [identity], none)
 
 private def resolveOpaqueCellHashReturn (expansion : Expansion)
     (moduleInstance : ModuleInstance) (returned : OpaqueCellHashReturn) :
@@ -1499,6 +1550,10 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
   unless circuit.kind == .circuit || circuit.kind == .witness do
     fail entrypoint.span "module entrypoint must use a circuit or witness member"
   let resolvedEffects ← entrypoint.effects.mapM (resolveContractEffect expansion origin)
+  let recordInputChecks := resolvedEffects.filterMap (·.2.2)
+  let callInputViews := recordInputChecks.foldl (fun views checked =>
+    if views.any (·.name == checked.view.name) then views else views ++ [checked.view])
+    ([] : List CallInputView)
   let resolvedReturns ← entrypoint.opaqueCellHashReturns.mapM
     (resolveOpaqueCellHashReturn expansion origin)
   let recordReturns ← entrypoint.recordCellReturns.mapM
@@ -1509,15 +1564,17 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
     name := exportName
     identity := exported.identity
     circuit
-    effects := resolvedEffects.map Prod.fst ++ resolvedReturns.map (·.2.1) ++
+    effects := resolvedEffects.map (·.1) ++ resolvedReturns.map (·.2.1) ++
       recordReturns.map (·.2.2.1)
     effectGuards := if guards.any Option.isSome then
       guards ++ List.replicate (resolvedReturns.length + recordReturns.length) none
       else []
     returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ recordReturns.flatMap (·.1)
     returnViews := recordReturns.map (·.2.1)
-    callInputs := entrypoint.callInputs
-    stateIdentities := (resolvedEffects.flatMap Prod.snd ++ returnStateIdentities).eraseDups
+    callInputs := entrypoint.callInputs ++ callInputViews.flatMap (·.fields.map Prod.fst)
+    callInputViews
+    recordInputChecks
+    stateIdentities := (resolvedEffects.flatMap (·.2.1) ++ returnStateIdentities).eraseDups
     span := entrypoint.span
     effectSpans := entrypoint.effects.map (·.span) ++
       entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.recordCellReturns.map (·.span)}
@@ -1631,6 +1688,27 @@ def ModuleContractPlan.specializationGroups (plan : ModuleContractPlan) :
       decide (left.outputName < right.outputName)}
   pure (orderedGroups.mergeSort fun left right => Name.lt left.sourceProgram right.sourceProgram)
 
+private def ModuleContractPlan.checkRecordInputs (plan : ModuleContractPlan)
+    (batches : List (Name × BatchResult)) : Except Diagnostic ModuleContractPlan := do
+  let entrypoints ← plan.entrypoints.mapM fun operation => do
+    if operation.recordInputChecks.isEmpty then return operation
+    let some source := plan.circuits.find? (·.identity == operation.circuit)
+      | fail operation.span "module record Cell input circuit source is missing"
+    let some batch := batches.lookup source.source.program
+      | fail operation.span "module record Cell input specialization is missing"
+    let some signature := batch.program.exports.find? (·.name == source.outputName)
+      | fail operation.span "module record Cell input export is missing"
+    for checked in operation.recordInputChecks do
+      let name := checked.view.name
+      let some input := signature.compositeInputs.find? (·.name == name)
+        | fail checked.span s!"module record Cell input '{name}' must be a checked aggregate argument"
+      unless input.visibility == .private do
+        fail checked.span s!"module record Cell input '{name}' must be a private circuit input"
+      unless Types.CompositeType.fingerprint batch.program.composites input.type == checked.layout do
+        fail checked.span s!"module record Cell input '{name}' does not match the checked Cell layout"
+    pure {operation with recordInputChecks := []}
+  pure {plan with entrypoints}
+
 /-- Specialize the exact grouped source requests from an already expanded
 contract plan. Each source group shares the issue46 helper and type caches. -/
 def ModuleContractPlan.specializeWithSources (plan : ModuleContractPlan)
@@ -1650,7 +1728,7 @@ def ModuleContractPlan.specializeWithSources (plan : ModuleContractPlan)
     let batch ← Noctium.Helpers.Specialization.specializeRequestsWithLimits
       specializationLimits source group.requests
     batches := batches ++ [(group.sourceProgram, batch)]
-  pure {plan, batches}
+  pure {plan := ← plan.checkRecordInputs batches, batches}
 
 /-- Expand a root, collect its visible circuits, and specialize each exact
 source program in one issue46 batch session. The caller supplies source values
@@ -1674,6 +1752,8 @@ def ModuleContractPlan.assembleContract (plan : ModuleContractPlan) (name : Stri
     fail {} "duplicate compiled circuit name in module contract"
   let mut entrypoints : List Entrypoint := []
   for template in plan.entrypoints do
+    unless template.recordInputChecks.isEmpty do
+      fail template.span "module record Cell inputs must be checked against the specialized source"
     let some source := plan.circuits.find? (·.identity == template.circuit)
       | fail template.span "module contract circuit source is missing"
     let some circuit := circuits.find? (·.name == source.outputName)
@@ -1686,6 +1766,7 @@ def ModuleContractPlan.assembleContract (plan : ModuleContractPlan) (name : Stri
       returns := template.returns
       returnViews := template.returnViews
       callInputs := template.callInputs
+      callInputViews := template.callInputViews
       span := template.span
       effectSpans := template.effectSpans}]
   pure {name, state := plan.state, constructor := plan.constructor?, entrypoints}

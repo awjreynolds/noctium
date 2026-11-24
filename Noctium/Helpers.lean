@@ -791,6 +791,21 @@ partial def sourceLeafPaths : Types.Layout → String → List String
   | .enumeration _ _ _ payloadLeaves _ _, path =>
       (path ++ ".$tag") :: ((List.range payloadLeaves).map fun index => path ++ s!".$payload{index}")
 
+/-- Logical field types corresponding to the Native slots of a checked call
+view. Bytes expand to UInt8 values, while curve values expand to Native limbs. -/
+partial def callViewLeafTypes : Types.Layout → List Ty
+  | .unit => []
+  | .scalar .nativeField => [.native]
+  | .scalar .booleanField => [.bool]
+  | .scalar (.boundedUnsignedField maximum) | .scalar (.enumTagField maximum) => [.uint maximum]
+  | .scalar .byteField => [.uint 255]
+  | .curve type => List.replicate type.nativeCallFieldCount .native
+  | .tuple items => items.flatMap callViewLeafTypes
+  | .structure _ fields => fields.flatMap (callViewLeafTypes ∘ Prod.snd)
+  | .vector length element => (List.replicate length (callViewLeafTypes element)).flatten
+  | .bytes length _ => List.replicate length (.uint 255)
+  | .enumeration _ _ maximum payloadLeaves _ _ => .uint maximum :: List.replicate payloadLeaves .native
+
 private def aggregateInputName (root component : String) : String :=
   if component.isEmpty then root else root ++ component
 
@@ -2196,23 +2211,30 @@ decreasing_by
   all_goals simp_wf
   omega
 
+/-- Build a fixed Bytes expression from exactly its checked Native octets.
+Octets use the source's little-endian order and are packed in chunks that stay
+below the field modulus. -/
+def fixedBytesFromOctets (length : Nat) (octets : List (Expr .native)) :
+    Except String (Expr (.bytes length)) := do
+  unless octets.length == length do throw "helper byte projection width mismatch"
+  if h : length = 0 then
+    pure (h.symm ▸ Expr.bytesLiteral 0 [])
+  else if length > 32 then
+    pure (fabDigestPackedBytes length octets)
+  else if h : length = 32 then
+    let low := Expr.toBytes32 (packFabOctets (octets.take 31))
+    let high := Expr.toBytes32 (octets.getD 31 (.native 0))
+    pure (h.symm ▸ Expr.concatBytes (.sliceBytes low 0 31) (.sliceBytes high 0 1))
+  else
+    let packed := Expr.toBytes32 (packFabOctets octets)
+    pure (by simpa using Expr.sliceBytes packed 0 length)
+
 private def typedExprWithByteProjection (span : SourceSpan) :
     (type : Ty) → Lowered → Except Diagnostic (Expr type)
   | .bytes length, value => do
     if value.ty == .composite (.bytes length) then
       let octets ← (components value).mapM (nativeOfScalar span)
-      unless octets.length == length do fail span "helper byte projection width mismatch"
-      if h : length = 0 then
-        pure (h.symm ▸ Expr.bytesLiteral 0 [])
-      else if length > 32 then
-        pure (fabDigestPackedBytes length octets)
-      else if h : length = 32 then
-        let low := Expr.toBytes32 (packFabOctets (octets.take 31))
-        let high := Expr.toBytes32 (octets.getD 31 (.native 0))
-        pure (h.symm ▸ Expr.concatBytes (.sliceBytes low 0 31) (.sliceBytes high 0 1))
-      else
-        let packed := Expr.toBytes32 (packFabOctets octets)
-        pure (by simpa using Expr.sliceBytes packed 0 length)
+      liftError span (fixedBytesFromOctets length octets)
     else typedExpr span (.bytes length) value
   | type, value => typedExpr span type value
 

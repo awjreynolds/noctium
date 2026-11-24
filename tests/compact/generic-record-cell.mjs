@@ -70,14 +70,14 @@ try {
   assert.deepEqual(inspected, expected(5, 42, initialTag));
 
   let [disabledResult, afterDisabled] = await run(
-    'update', state, false, 11n, 13n, Uint8Array.from(disabledTag),
+    'update', state, false, expected(11, 13, disabledTag),
   );
   assert.deepEqual(disabledResult, expected(5, 42, initialTag));
   assert.deepEqual(readCell(afterDisabled), expected(5, 42, initialTag));
   state = afterDisabled;
 
   let [updatedResult, afterUpdate] = await run(
-    'update', state, true, 8n, 99n, Uint8Array.from(enabledTag),
+    'update', state, true, expected(8, 99, enabledTag),
   );
   assert.deepEqual(updatedResult, expected(8, 99, enabledTag));
   assert.deepEqual(readCell(afterUpdate), expected(8, 99, enabledTag));
@@ -93,7 +93,7 @@ try {
     runtime: runtimePackage.version,
     initial: { issued: '5', spent: '42', tag: initialTag },
     disabledWrite: {
-      inputs: { enabled: false, nextIssued: '11', nextSpent: '13', nextTag: disabledTag },
+      inputs: { enabled: false, next: { issued: '11', spent: '13', tag: disabledTag } },
       result: { issued: '5', spent: '42', tag: initialTag },
     },
     enabledWrite: { result: { issued: '8', spent: '99', tag: enabledTag } },
