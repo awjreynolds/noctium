@@ -2676,7 +2676,7 @@ private def directNominalUIntMaps (schema : List (String × StateKind))
     let .map .. := kind | none
     let some metadata := nominals.lookup name | none
     let [key] := metadata.pathKeys | none
-    if metadata.isEmpty then none
+    if key.isNone && metadata.scalarValue.isNone then none
     else some (name, {key := key, value := metadata.scalarValue})
 
 private structure EntryEffects where
@@ -2759,12 +2759,15 @@ private def lowerMapEntryPath (state : EntryEffects) (storage : TSyntax `ident) 
 private def checkedRootMapKey (state : EntryEffects) (storage : TSyntax `ident)
     (key : TSyntax `nlexpr) (ty : Ty) : CommandElabM (TSyntax `term) :=
   checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings key
-    {type := ty, nominalUInt := (state.collectionNominals storage).pathKeys.head?.join}
+    {type := ty, nominalUInt := (state.collectionNominals storage).pathKeys.head?.join,
+      nominalField := (state.collectionNominals storage).pathFieldKeys.head?.join}
+    state.nominalFieldBindings
 
 private def checkedMapValue (state : EntryEffects) (storage : TSyntax `ident)
     (value : TSyntax `nlexpr) (ty : Ty) : CommandElabM (TSyntax `term) :=
   checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
     {type := ty, nominalUInt := (state.collectionNominals storage).scalarValue}
+    state.nominalFieldBindings
 
 private partial def nominalBytes32OfExpression (state : EntryEffects)
     (expression : TSyntax `nlexpr) : Option NominalBytes32 :=
@@ -4861,6 +4864,20 @@ private def hasNominalFieldRootScalarSetPath (schema : List (String × StateKind
     hasNominalFieldRootScalarSetKey schema state storage key
   | _ => _root_.Bool.false
 
+private def isRootScalarMap (schema : List (String × StateKind))
+    (storage : TSyntax `ident) : _root_.Bool :=
+  match schema.lookup storage.getId.toString with
+  | some (.map ..) => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+private def hasNominalFieldRootScalarMapPath (schema : List (String × StateKind))
+    (state : EntryEffects) (path : TSyntax `nlpath) : _root_.Bool :=
+  match path with
+  | `(nlpath| $storage:ident [ $key:nlexpr ]) =>
+    isRootScalarMap schema storage &&
+      hasCircuitNominalFieldReference state.nominalFieldBindings key.raw
+  | _ => _root_.Bool.false
+
 private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKind))
     (state : EntryEffects) (effect : TSyntax `nleffect) : _root_.Bool := Id.run do
   let fieldBindings := state.nominalFieldBindings
@@ -4871,6 +4888,7 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
   let typedNestedRecordSetKey storage owner keyFields :=
     hasNominalFieldRecordSetKey schema state storage (some owner) keyFields
   let typedScalarSetPath := hasNominalFieldRootScalarSetPath schema state
+  let typedScalarMapPath := hasNominalFieldRootScalarMapPath schema state
   match effect with
   | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
   | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
@@ -4898,6 +4916,11 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
           !hasCircuitNominalFieldReference fieldBindings keyFields.raw) &&
         (hasCircuitNominalFieldReference fieldBindings payload.raw ||
           hasCircuitNominalFieldReference fieldBindings keyFields.raw)
+  | `(nleffect| insert $storage:ident [ $_key:nlexpr ] := $_value:nlexpr) =>
+      isRootScalarMap schema storage
+  | `(nleffect| when $condition:nlexpr insert $storage:ident [ $_key:nlexpr ] := $_value:nlexpr) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        isRootScalarMap schema storage
   | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
       typedKey storage keyFields
   | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
@@ -4922,14 +4945,28 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
   | `(nleffect| when $condition:nlexpr remove $storage:ident [ $keyFields:nlleaves ]) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         typedRecordSetKey storage keyFields
-  | `(nleffect| insert $path:nlpath)
-  | `(nleffect| remove $path:nlpath)
+  | `(nleffect| insert $path:nlpath) => typedScalarSetPath path
+  | `(nleffect| remove $path:nlpath) =>
+      typedScalarSetPath path || typedScalarMapPath path
   | `(nleffect| member $path:nlpath as $_:ident) =>
-      typedScalarSetPath path
-  | `(nleffect| when $condition:nlexpr insert $path:nlpath)
-  | `(nleffect| when $condition:nlexpr remove $path:nlpath)
-  | `(nleffect| when $condition:nlexpr member $path:nlpath as $_:ident) =>
+      typedScalarSetPath path || typedScalarMapPath path
+  | `(nleffect| read $path:nlpath as $_:ident) =>
+      typedScalarMapPath path
+  | `(nleffect| when $condition:nlexpr insert $path:nlpath) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarSetPath path
+  | `(nleffect| when $condition:nlexpr remove $path:nlpath) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        (typedScalarSetPath path || typedScalarMapPath path)
+  | `(nleffect| when $condition:nlexpr member $path:nlpath as $_:ident) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        (typedScalarSetPath path || typedScalarMapPath path)
+  | `(nleffect| when $condition:nlexpr read $path:nlpath as $_:ident) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarMapPath path
+  | `(nleffect| insertDefault $path:nlpath) => typedScalarMapPath path
+  | `(nleffect| when $condition:nlexpr insertDefault $path:nlpath) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw && typedScalarMapPath path
+  | `(nleffect| absent $storage:ident [ $key:nlexpr ]) =>
+      isRootScalarMap schema storage && hasCircuitNominalFieldReference fieldBindings key.raw
   | `(nleffect| read $storage:ident [ $keyFields:nlleaves ] as $_:ident)
   | `(nleffect| member $storage:ident [ $keyFields:nlleaves ] as $_:ident) =>
       typedKey storage keyFields || typedRecordSetKey storage keyFields
@@ -5596,9 +5633,20 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         hasCircuitNominalFieldReference nominalFieldBindings condition.raw ||
           (hasCircuitNominalFieldReference nominalFieldBindings key.raw &&
             !isNominalFieldScalarSet storage)
+      | `(nlconstructorinit| insert $storage:ident [ $key:nlexpr ] := $value:nlexpr) =>
+        !isRootScalarMap schema storage &&
+          hasCircuitNominalFieldReference nominalFieldBindings initializer.raw
+      | `(nlconstructorinit| when $condition:nlexpr insert $storage:ident [ $key:nlexpr ] := $value:nlexpr) =>
+        hasCircuitNominalFieldReference nominalFieldBindings condition.raw ||
+          (!isRootScalarMap schema storage &&
+            hasCircuitNominalFieldReference nominalFieldBindings initializer.raw)
+      | `(nlconstructorinit| initializeMember $_:ident from $storage:ident [ $key:nlexpr ]) =>
+        !isRootScalarMap schema storage &&
+          hasCircuitNominalFieldReference nominalFieldBindings key.raw
       | _ => hasCircuitNominalFieldReference nominalFieldBindings initializer.raw
     if hasUncheckedNominalField then
-      throwErrorAt initializer "nominal Field constructor values require a direct scalar Cell initializer or typed Set key"
+      throwErrorAt initializer
+        "nominal Field constructor values require a direct scalar Cell initializer or checked collection value"
     match initializer with
     | `(nlconstructorinit| initialize $stateName:ident := $payload:nlleaves) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
@@ -5728,9 +5776,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           nominalUIntBindings condition {type := .bool}
         let nominal := (nominalCollections.lookup destination).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join,
+            nominalField := nominal.pathFieldKeys.head?.join} nominalFieldBindings
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.scalarValue}
+          {type := valueTy, nominalUInt := nominal.scalarValue} nominalFieldBindings
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         let orderedInsert ← `(Noctium.ConstructorOrderedMapInsert.mk $(stringTerm destination)
@@ -5750,7 +5799,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some (_, .cell .bool), some (_, .map keyTy _) => do
         let nominal := (nominalCollections.lookup mapName).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join,
+            nominalField := nominal.pathFieldKeys.head?.join} nominalFieldBindings
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let mapMemberInitializer ← `(Noctium.ConstructorMapMemberInitializer.mk
           $(stringTerm destination) $(stringTerm mapName) $key)
@@ -5848,9 +5898,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       | some (_, .map keyTy valueTy) => do
         let nominal := (nominalCollections.lookup destination).getD {}
         let keyExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs key
-          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join}
+          {type := keyTy, nominalUInt := nominal.pathKeys.head?.join,
+            nominalField := nominal.pathFieldKeys.head?.join} nominalFieldBindings
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.scalarValue}
+          {type := valueTy, nominalUInt := nominal.scalarValue} nominalFieldBindings
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         mapInsertTerms := mapInsertTerms.push
@@ -6342,10 +6393,12 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype)
         | `(nlstate| map $id:ident : $key:nltype => $value:nltype) => do
-          let key ← readCollectionScalarSourceType key
+          let key ← readCollectionScalarSourceType key _root_.Bool.true
           let value ← readCollectionScalarSourceType value
           let nominal : CollectionNominals := {
-            pathKeys := [key.nominalUInt], scalarValue := value.nominalUInt}
+            pathKeys := [key.nominalUInt]
+            pathFieldKeys := [key.nominalField]
+            scalarValue := value.nominalUInt}
           unless nominal.isEmpty do
             nominalCollections := (id.getId.toString, nominal) :: nominalCollections
           pure (id, StateKind.map key.type value.type,
@@ -6868,6 +6921,10 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
         let entryNominalUIntMaps := directNominalUIntMaps schema nominalCollections
         let entryNominalFieldCells := nominalFieldCells.map fun (storage, field) => (storage, field.name)
+        let hasNominalFieldMapKey (storage : String) : _root_.Bool :=
+          match schema.lookup storage, nominalCollections.lookup storage with
+          | some (.map ..), some metadata => metadata.pathFieldKeys.head?.join.isSome
+          | _, _ => _root_.Bool.false
         let program := Helpers.Program.withNominalFieldState
           (program.withNominalUIntState nominalUIntCells entryNominalUIntMaps)
           entryNominalFieldCells
@@ -6879,9 +6936,15 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           | .readCell storage _ _ | .writeCell storage _ _ =>
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
+          | .readMap storage .. | .readMember storage .. | .writeMap storage .. |
+              .requireAbsent storage .. =>
+            if hasNominalFieldMapKey storage then
+              throwErrorAt entryStx "structured helpers do not support nominal Field Map keys"
           | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
               .mapSize storage .. | .insertPath storage .. | .writePath storage .. |
               .emptyMapPath storage .. | .setInsert storage .. | .removePath storage .. =>
+            if hasNominalFieldMapKey storage then
+              throwErrorAt entryStx "structured helpers do not support nominal Field Map keys"
             if (nominalCollections.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support nominal UInt collection paths"
           | _ => pure ()
