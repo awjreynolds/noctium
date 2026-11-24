@@ -1,0 +1,24 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export struct Key {
+  amount: Amount;
+}
+
+export struct Memo {
+  amount: Amount;
+}
+
+export ledger records: Map<Key, Memo>;
+
+export circuit roundTrip(keyAmount: Amount, memoAmount: Amount): [Boolean, Amount] {
+  const key = Key { amount: disclose(keyAmount) };
+  const memo = Memo { amount: disclose(memoAmount) };
+  records.insert(key, disclose(memo));
+  const present = records.member(key);
+  const stored = records.lookup(key);
+  return [present, stored.amount];
+}

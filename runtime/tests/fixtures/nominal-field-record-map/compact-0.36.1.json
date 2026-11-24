@@ -1,0 +1,16 @@
+{
+  "fixture": "NominalFieldRecordMap",
+  "compact": "0.36.1 (7fa3a117c 2026-11-11)",
+  "runtime": "0.21.0",
+  "outputs": {
+    "found": true,
+    "amount": "42"
+  },
+  "remainingEntries": "1",
+  "matching": {
+    "member": true,
+    "storedAmount": "42"
+  },
+  "wrongKeyAliasRejected": true,
+  "wrongRecordValueAliasRejected": true
+}
