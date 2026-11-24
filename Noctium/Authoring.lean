@@ -618,6 +618,45 @@ private partial def resultReferenceNamesIn (aliases : List (String × List Strin
 private def resultReferenceNames (stx : TSyntax `nlexpr) : List String :=
   (resultReferenceNamesIn [] stx).eraseDups
 
+private def unresolvedIterationDiagnostic (surfaceName : String) : String :=
+  s!"cannot infer the type of empty tuple item '{surfaceName}'. Use a typed binding or loop annotation"
+
+private def hasUnresolvedIterationReferenceNames (env : SurfaceEnv)
+    (state : AuthoringExprState) (names : List String) : _root_.Bool :=
+  names.any fun name =>
+    match env.find? (·.1 == name) with
+    | some (_, _, .ref reference, _) =>
+      (state.iterationParameters.find? (·.reference == reference)).any (·.views.isEmpty)
+    | _ => _root_.Bool.false
+
+private def hasUnresolvedIterationResultReference (env : SurfaceEnv)
+    (state : AuthoringExprState) (stx : TSyntax `nlexpr) : _root_.Bool :=
+  hasUnresolvedIterationReferenceNames env state (resultReferenceNames stx)
+
+private def isUnresolvedIterationDiagnostic (state : AuthoringExprState)
+    (error : Exception) : CommandElabM _root_.Bool := do
+  let message ← liftIO error.toMessageData.toString
+  pure <| state.iterationParameters.any fun parameter =>
+    message == unresolvedIterationDiagnostic parameter.surfaceName
+
+private def probeIterationResultType (action : ExprM Lowered)
+    (authoringState : AuthoringExprState) : ExprM (Option ResultType) := do
+  let probe : Except Exception (Lowered × AuthoringExprState) ← liftM do
+    let commandState : Command.State ← get
+    let result : Except Exception (Lowered × AuthoringExprState) ←
+      try
+        pure (.ok (← action.run authoringState))
+      catch error =>
+        pure (.error error)
+    modifyThe Command.State fun _ => commandState
+    pure result
+  match probe with
+  | .ok (value, _) => pure (some value.type)
+  | .error error =>
+    if ← liftM (isUnresolvedIterationDiagnostic authoringState error) then
+      pure none
+    else throw error
+
 private def aliasAfterBinding (aliases : List String) (binder : String)
     (source : TSyntax `nlexpr) : List String :=
   let sourceAliases := (resultReferenceNames source).any aliases.contains
@@ -635,6 +674,20 @@ private def callbackExpectedSourceIndices
       selected := index :: selected
       pending := ((pending.filter (· != name)) ++ resultReferenceNames source).eraseDups
   return selected.eraseDups
+
+private def callbackResultReferenceNames
+    (steps : Array (TSyntax `noctium_callback_step)) (source : TSyntax `nlexpr) : List String := Id.run do
+  let mut pending := resultReferenceNames source
+  for step in steps.toList.reverse do
+    let some (some binder, value) := callbackStep step | continue
+    let name := binder.getId.toString
+    if pending.contains name then
+      pending := ((pending.filter (· != name)) ++ resultReferenceNames value).eraseDups
+  return pending
+
+private partial def containsIdentifierName (names : List String) (stx : Syntax) : _root_.Bool :=
+  (stx.isIdent && names.contains stx.getId.toString) ||
+    stx.getArgs.any (containsIdentifierName names)
 
 private def expressionReturnsAlias (aliases : List String)
     (stx : TSyntax `nlexpr) : _root_.Bool :=
@@ -1555,7 +1608,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         | some parameter =>
           match parameter.views with
           | [(viewName, viewType)] => pure {type := viewType, term := .ref viewName}
-          | [] => throwErrorAt id s!"cannot infer the type of empty tuple item '{parameter.surfaceName}'. Use a typed binding or loop annotation"
+          | [] => throwErrorAt id (unresolvedIterationDiagnostic parameter.surfaceName)
           | _ => throwErrorAt id s!"empty tuple item '{parameter.surfaceName}' has multiple inferred types. Use a typed binding"
         | none => pure {type, term, nominalUInt}
       else pure {type, term, nominalUInt}
@@ -1916,6 +1969,35 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let expectedBinderIndices := if expected.isSome then
       callbackExpectedSourceIndices steps result
       else []
+    let stateBeforeSteps ← get
+    let mut siblingSourceTypes : List (Nat × ResultType) := []
+    if expected.isNone && !stateBeforeSteps.iterationParameters.isEmpty then
+      let callbackLocalNames := steps.toList.filterMap fun step =>
+        (callbackStep step).bind fun
+          | (some binder, _) => some binder.getId.toString
+          | _ => none
+      let armPairs := match result with
+        | `(nlexpr| ite($_condition, $yes, $no))
+        | `(nlexpr| if $_condition then $yes else $no) => [(yes, no)]
+        | _ => []
+      for (yesArm, noArm) in armPairs do
+        let unresolvedYes := hasUnresolvedIterationReferenceNames env stateBeforeSteps
+          (callbackResultReferenceNames steps yesArm)
+        let unresolvedNo := hasUnresolvedIterationReferenceNames env stateBeforeSteps
+          (callbackResultReferenceNames steps noArm)
+        let sibling? :=
+          if unresolvedYes && !unresolvedNo then some (yesArm, noArm)
+          else if unresolvedNo && !unresolvedYes then some (noArm, yesArm)
+          else none
+        if let some (unresolvedArm, sibling) := sibling? then
+          let siblingNamesInScope :=
+            !containsIdentifierName callbackLocalNames sibling.raw &&
+              (resultReferenceNames sibling).all fun name => env.any (·.1 == name)
+          if siblingNamesInScope then
+            if let some type ← probeIterationResultType
+                (lowerExpr programName callPrefix env sibling) stateBeforeSteps then
+              for index in callbackExpectedSourceIndices steps unresolvedArm do
+                siblingSourceTypes := siblingSourceTypes ++ [(index, type)]
     let mut localEnv := env
     let mut loweredSteps := []
     for (step, index) in steps.toList.zipIdx do
@@ -1924,7 +2006,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       let span ← liftM (spanValue step)
       match binder with
       | some id =>
-        let sourceExpected := if expectedBinderIndices.contains index then expected else none
+        let sourceExpected := if expectedBinderIndices.contains index then expected else
+          (siblingSourceTypes.find? (·.1 == index)).map Prod.snd
         let value ← lowerExpr programName callPrefix localEnv source sourceExpected
         let name ← freshReadableLet id
         localEnv := (id.getId.toString, value.type, .ref name, value.nominalUInt) :: localEnv
@@ -2080,8 +2163,20 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| if $condition then $yes else $no) => do
     let predicate ← lowerExpr programName callPrefix env condition
     let predicate ← coerce condition predicate .bool
-    let yesValue ← lowerExpr programName callPrefix env yes expected
-    let noValue ← lowerExpr programName callPrefix env no expected
+    let stateBeforeArms ← get
+    let (unresolvedYes, unresolvedNo) :=
+      if expected.isNone && !stateBeforeArms.iterationParameters.isEmpty then
+        (hasUnresolvedIterationResultReference env stateBeforeArms yes,
+          hasUnresolvedIterationResultReference env stateBeforeArms no)
+      else (_root_.Bool.false, _root_.Bool.false)
+    let siblingHint ←
+      if unresolvedYes && !unresolvedNo &&
+          (resultReferenceNames no).all (fun name => env.any (·.1 == name)) then
+        probeIterationResultType (lowerExpr programName callPrefix env no) stateBeforeArms
+      else pure none
+    let yesValue ← lowerExpr programName callPrefix env yes (expected.or siblingHint)
+    let noExpected := expected.or (if unresolvedNo then some yesValue.type else none)
+    let noValue ← lowerExpr programName callPrefix env no noExpected
     unless yesValue.nominalUInt == noValue.nominalUInt do
       throwErrorAt stx "conditional branches require the same nominal UInt type"
     let some type := Helpers.commonType yesValue.type noValue.type

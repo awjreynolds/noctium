@@ -35,13 +35,13 @@ end
 
 noctium_witness_circuit emptyNativeMap using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
+  let mapped := map([witness iterationEmptyTuple()], fun item => do
+    let alias := item
+    let aliasAgain := alias
+    return if true then aliasAgain else 0
+  end)
   output result : Native := disclose(
-    let mapped := map([witness iterationEmptyTuple()], fun item => do
-      let alias := item
-      let aliasAgain := alias
-      return if true then aliasAgain else aliasAgain
-    end) in
-    witness acceptEmptyNativeVector(let forwarded := mapped in forwarded))
+    witness acceptEmptyNativeVector(slice(mapped, 0, 0)))
 end
 
 #guard
@@ -52,6 +52,12 @@ end
 
 noctium_control emptyNativeMapHost from emptyNativeMap.__program
   entry "noctium.witness-circuit.emptyNativeMap.v1"
+
+/- error: conditional branches require a common type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsIncompatibleSiblingArms where
+  output mapped := map([tuple()], fun item => if true then 0 else true)
+end
 
 noctium_witness_circuit emptyNativeMapStatement using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
@@ -70,6 +76,20 @@ end
     "noctium.witness-circuit.emptyNativeMapStatement.v1"
   compiled.toOption.map (fun source => source.calls.map (·.name)) ==
     some ["iterationEmptyTuple", "iterationEmptyTuple", "acceptEmptyNativeVector"]
+
+noctium_witness_circuit infersEmptyMapFromElse where
+  output mapped := map([tuple()], fun item => if true then item else 0)
+end
+
+#guard (Noctium.Witness.compile infersEmptyMapFromElse.__program
+  "noctium.witness-circuit.infersEmptyMapFromElse.v1").isOk
+
+noctium_witness_circuit infersEmptyMapFromThen where
+  output mapped := map([tuple()], fun item => if true then 0 else item)
+end
+
+#guard (Noctium.Witness.compile infersEmptyMapFromThen.__program
+  "noctium.witness-circuit.infersEmptyMapFromThen.v1").isOk
 
 noctium_witness_circuit emptyNativeMapBranch using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where

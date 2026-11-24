@@ -1,6 +1,70 @@
 import assert from 'node:assert/strict';
-import { createCircuitContext, createConstructorContext, dummyContractAddress } from '@midnight-ntwrk/compact-runtime';
-import { Contract, ledger } from './compact/contract/index.js';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
+
+const [compactc, runtimeDirectory] = process.argv.slice(2);
+assert.ok(compactc && runtimeDirectory,
+  'usage: node tests/compact/readable-iteration.mjs <compactc-0.36.1> <compact-runtime-0.21.0>');
+
+const compilerVersion = execFileSync(compactc, ['--version'], { encoding: 'utf8' }).trim();
+assert.match(compilerVersion, /^0\.36\.1 \(7fa3a117c/,
+  `expected pinned Compact 0.36.1 compiler, got ${compilerVersion}`);
+const runtimePackage = JSON.parse(readFileSync(join(runtimeDirectory, 'package.json'), 'utf8'));
+assert.equal(runtimePackage.name, '@midnight-ntwrk/compact-runtime');
+assert.equal(runtimePackage.version, '0.21.0', 'expected pinned Compact runtime 0.21.0');
+
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const source = join(projectRoot, 'tests/compact/ReadableIteration.compact');
+const experiments = join(projectRoot, 'build/experiments');
+mkdirSync(experiments, { recursive: true });
+const scratch = mkdtempSync(join(experiments, 'readable-iteration-'));
+
+
+process.on('exit', () => {
+  rmSync(scratch, { recursive: true, force: true });
+  try {
+    rmdirSync(experiments);
+  } catch (error) {
+    if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') throw error;
+  }
+});
+const generated = join(scratch, 'compact');
+const compile = spawnSync(compactc, ['--skip-zk', source, generated], {
+  cwd: projectRoot,
+  encoding: 'utf8',
+});
+assert.equal(compile.status, 0, `Compact compilation failed:\n${compile.stderr || compile.stdout}`);
+
+const compileProbe = (name, circuit) => {
+  const probeSource = join(scratch, `${name}.compact`);
+  const probeOutput = join(scratch, name);
+  writeFileSync(probeSource, `${readFileSync(source, 'utf8')}\n${circuit}\n`);
+  return spawnSync(compactc, ['--skip-zk', probeSource, probeOutput], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  });
+};
+const incompatibleBranches = compileProbe('incompatible-map-branches', `
+  export circuit incompatibleMapBranches(): Boolean {
+    const mapped = map((item) => true ? (0 as Field) : true, emptyTupleItems());
+    return mapped == [];
+  }
+`);
+assert.notEqual(incompatibleBranches.status, 0,
+  'Compact should reject incompatible Field and Boolean map branches');
+assert.match(`${incompatibleBranches.stderr}\n${incompatibleBranches.stdout}`,
+  /mismatch between type Field and type Boolean of condition branches/);
+
+const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
+mkdirSync(dirname(runtimeLink), { recursive: true });
+symlinkSync(runtimeDirectory, runtimeLink, 'dir');
+
+const runtime = await import(pathToFileURL(join(runtimeDirectory, 'dist/index.js')).href);
+const { Contract, ledger } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
+const { createCircuitContext, createConstructorContext, dummyContractAddress } = runtime;
+assert.equal(runtime.versionString, '0.21.0');
 
 const blockCalls = [];
 let blockOffset = 10n;
@@ -29,6 +93,13 @@ const contract = new Contract({
 });
 const wallet = '00'.repeat(32);
 const { currentContractState } = await contract.initialState(createConstructorContext([], wallet));
+const circuitContext = (circuitId) => createCircuitContext({
+  circuitId,
+  contractAddress: dummyContractAddress(),
+  coinPublicKeyOrZswapState: wallet,
+  contractState: currentContractState.data,
+  privateState: [],
+});
 const { result, context } = await contract.circuits.update(createCircuitContext({
   circuitId: 'update', contractAddress: dummyContractAddress(), coinPublicKeyOrZswapState: wallet,
   contractState: currentContractState.data, privateState: [],
@@ -53,6 +124,38 @@ const emptyNativeMap = await contract.circuits.emptyNativeMap(createCircuitConte
 assert.equal(emptyNativeMap.result, 41n);
 assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems', 'acceptEmptyNativeVector']);
 console.log(JSON.stringify({ result: emptyNativeMap.result.toString(), order: emptyNativeMapCalls }));
+
+emptyNativeMapCalls.length = 0;
+const siblingElse = await contract.circuits.emptyNativeMapSiblingElse(
+  circuitContext('emptyNativeMapSiblingElse'), true,
+);
+assert.equal(siblingElse.result, true);
+assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
+emptyNativeMapCalls.length = 0;
+const siblingThen = await contract.circuits.emptyNativeMapSiblingThen(
+  circuitContext('emptyNativeMapSiblingThen'), false,
+);
+assert.equal(siblingThen.result, true);
+assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
+emptyNativeMapCalls.length = 0;
+const unresolvedBranches = await contract.circuits.emptyNativeMapUnresolvedBranches(
+  circuitContext('emptyNativeMapUnresolvedBranches'), true,
+);
+assert.equal(unresolvedBranches.result, true);
+assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
+emptyNativeMapCalls.length = 0;
+const declaredContext = await contract.circuits.emptyNativeMapDeclaredContext(
+  circuitContext('emptyNativeMapDeclaredContext'),
+);
+assert.deepEqual(declaredContext.result, []);
+assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
+console.log(JSON.stringify({
+  siblingInference: { thenItem: siblingElse.result, elseItem: siblingThen.result },
+  bothUnresolved: unresolvedBranches.result,
+  declaredContext: declaredContext.result,
+  incompatibleBranches: 'rejected',
+  calls: ['emptyTupleItems'],
+}));
 
 blockOffset = 40n;
 await assert.rejects(async () => runBlock(), /fold assertion/);
