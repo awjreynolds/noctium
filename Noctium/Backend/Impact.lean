@@ -1381,7 +1381,7 @@ def cellRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeT
 /-- Produce the checked key schema used by a root record-key Map. -/
 def ledgerRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
     Except String Lean.Json := do
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordMapKeyFields environment type
   recordSchemaForFields environment type fields
 
 /-- Produce the checked record schema used by a typed record Set key. -/
@@ -1500,7 +1500,9 @@ private def recordMapKeySchema (state : List StateDecl) (name : String)
   let slot ← stateSlot state name
   let .recordMapKey environment type valueTy ← resolveTreeState state name parentKeys
     | throw s!"path does not select a scalar-valued record-key Map in '{name}'"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← if parentKeys.isEmpty then
+      LedgerValueType.recordMapKeyFields environment type
+    else LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   let schema ← recordSchemaForFields environment type fields
@@ -1515,7 +1517,11 @@ private def anyRecordMapKeySchema (state : List StateDecl) (name : String)
     | .recordMapKey environment type _ => pure (environment, type)
     | .recordMapComposite environment type _ _ => pure (environment, type)
     | _ => throw s!"state '{name}' is not a record-key Map"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← match selected with
+    | .recordMapKey .. =>
+      if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
+      else LedgerValueType.ledgerRecordWriteFields environment type
+    | _ => LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   let schema ← recordSchemaForFields environment type fields
