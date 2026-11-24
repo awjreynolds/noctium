@@ -5371,6 +5371,7 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
   let zeroWidthBytes := payloadType == .bytes 0
   let typedPayload : Option (String × Types.CompositeType) := match payloadType with
     | .bytes 0 => some ("MaybeBytes0", .bytes 0)
+    | .bytes length => some (s!"MaybeBytes{length}", .bytes length)
     | .opaqueBytes => some ("MaybeOpaqueBytes", .scalar .opaqueBytes)
     | .opaqueString => some ("MaybeOpaqueString", .scalar .opaqueString)
     | _ => none
@@ -5414,27 +5415,57 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
       | .native => `(Noctium.Expr.native 0)
       | .bool => `(Noctium.Expr.bool Bool.false)
       | .uint maximum => `(Noctium.Expr.uint $(natTerm maximum) 0)
+      | .bytes length => do
+        let zeros ← natListTerm (List.replicate length 0)
+        `(Noctium.Expr.bytesLiteral $(natTerm length) $zeros)
       | .opaqueBytes => `(Noctium.Expr.opaqueBytesEmpty)
       | .opaqueString => `(Noctium.Expr.opaqueStringEmpty)
       | _ => throwErrorAt statement "returnMaybe payload must be a scalar"
     `(Noctium.Expr.select $presentExpression $payloadExpression $payloadDefault)
   let isSomeReturnName := s!"{labelName}_is_some"
   let payloadReturnName := s!"{labelName}_value"
-  let physicalReturnNames := if zeroWidthBytes then [isSomeReturnName]
+  let legacyPhysicalReturnNames := if zeroWidthBytes then [isSomeReturnName]
     else [isSomeReturnName, payloadReturnName]
-  for returnName in [isSomeReturnName, payloadReturnName] do
+  let packedByteLength := match payloadType with
+    | .bytes length => if length > 0 then some length else none
+    | _ => none
+  let packedByteReturnNames : Option (List String) := packedByteLength.map fun length =>
+    (List.range ((length + 30) / 31)).map fun index => s!"{payloadReturnName}_chunk_{index}"
+  let physicalReturnNames := match packedByteReturnNames with
+    | some names => isSomeReturnName :: names
+    | none => legacyPhysicalReturnNames
+  let collisionReturnNames := match packedByteReturnNames with
+    | some names => isSomeReturnName :: names
+    | none => [isSomeReturnName, payloadReturnName]
+  for returnName in collisionReturnNames do
     if state.env.any (fun binding => binding.1 == returnName) then
       throwErrorAt label s!"structured return field '{returnName}' collides with an input or read binding"
   let isSomeReturn ← `({ name := $(stringTerm isSomeReturnName), ty := Noctium.Ty.native, value := (Noctium.Expr.cast Noctium.Ty.native $presentExpression), span := $span : Noctium.Output })
-  let payloadReturn ← if typedPayload.isSome then
-      `({ name := $(stringTerm payloadReturnName), ty := $(← tyTerm payloadType), value := $canonicalPayload, span := $span : Noctium.Output })
-    else
-      `({ name := $(stringTerm payloadReturnName), ty := Noctium.Ty.native, value := (Noctium.Expr.cast Noctium.Ty.native $canonicalPayload), span := $span : Noctium.Output })
+  let mut returnTerms := #[isSomeReturn]
+  for (returnName, index) in (packedByteReturnNames.getD []).zipIdx do
+    let chunk ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
+      (Noctium.Expr.bytesField $canonicalPayload $(natTerm index)) $span)
+    returnTerms := returnTerms.push chunk
+  if packedByteReturnNames.isNone then
+    let payloadReturn ← if typedPayload.isSome then
+        `({ name := $(stringTerm payloadReturnName), ty := $(← tyTerm payloadType), value := $canonicalPayload, span := $span : Noctium.Output })
+      else
+        `({ name := $(stringTerm payloadReturnName), ty := Noctium.Ty.native, value := (Noctium.Expr.cast Noctium.Ty.native $canonicalPayload), span := $span : Noctium.Output })
+    returnTerms := returnTerms.push payloadReturn
   let compositeType ← `(Noctium.Types.CompositeType.structure $typeIdTerm)
   let physicalReturnNameTerms := physicalReturnNames.toArray.map stringTerm
-  let view ← `({ name := $(stringTerm labelName), environment := $environmentTerm, type := $compositeType, fields := [$physicalReturnNameTerms,*] : Noctium.ReturnView })
+  let packedByteFieldListTerm ← match packedByteLength, packedByteReturnNames with
+    | some length, some names => do
+      let fieldNameTerms := names.map stringTerm
+      let fieldNames ← stringListTerm fieldNameTerms
+      let chunkWidths ← natListTerm ((List.range ((length + 30) / 31)).reverse.map
+        fun index => Noctium.bytesChunkWidth length index)
+      let packedField ← `(Noctium.PackedBytesReturnField.mk 1 $(natTerm length) $fieldNames $chunkWidths)
+      `([$packedField])
+    | _, _ => `(([] : List Noctium.PackedBytesReturnField))
+  let view ← `({ name := $(stringTerm labelName), environment := $environmentTerm, type := $compositeType, fields := [$physicalReturnNameTerms,*], packedBytesFields := $packedByteFieldListTerm : Noctium.ReturnView })
   pure {state with
-    returns := state.returns.push isSomeReturn |>.push payloadReturn
+    returns := state.returns ++ returnTerms.toList
     returnViews := state.returnViews.push view}
 
 private def scalarDefault (payloadType : Ty) : CommandElabM (TSyntax `term) := do

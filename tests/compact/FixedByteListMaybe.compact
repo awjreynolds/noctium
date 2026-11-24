@@ -1,0 +1,28 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger bytes1: List<Bytes<1>>;
+export ledger bytes32: List<Bytes<32>>;
+export ledger bytes128: List<Bytes<128>>;
+
+export circuit push(byte1: Bytes<1>, byte32: Bytes<32>, byte128: Bytes<128>): [] {
+  bytes1.pushFront(disclose(byte1));
+  bytes32.pushFront(disclose(byte32));
+  bytes128.pushFront(disclose(byte128));
+}
+
+export circuit inspect(): [Maybe<Bytes<1>>, Maybe<Bytes<32>>, Maybe<Bytes<128>>] {
+  return [bytes1.head(), bytes32.head(), bytes128.head()];
+}
+
+export circuit inspect1(): Maybe<Bytes<1>> {
+  return bytes1.head();
+}
+
+export circuit inspect32(): Maybe<Bytes<32>> {
+  return bytes32.head();
+}
+
+export circuit inspect128(): Maybe<Bytes<128>> {
+  return bytes128.head();
+}
