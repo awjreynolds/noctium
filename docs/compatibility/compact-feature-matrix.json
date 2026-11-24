@@ -1073,7 +1073,7 @@
       "layer": "language",
       "surface": "Type and natural-number generic parameters",
       "noctiumStatus": "subset",
-      "notes": "Specialization and invalid or recursive instantiation cases. Typed witness registration specializes a selected generic export and records the concrete signature. The paired Compact and native case specializes one provider-calling helper at UInt8 and UInt16, preserving argument order and distinct call sites. A selected Lean module specializes an identity circuit at JubjubScalar and JubjubPoint. The pinned Compact module and emitted native relations preserve the scalar and point values. A generic module circuit specializes with distinct OpaqueString and OpaqueBytes signatures. The Compact and native echo fixtures preserve both raw scalar values through typed returns. A generic module also accepts a checked record specialization, preserves its reachable layout, and stores and returns one typed ledger Cell. Compact 0.36.1 and native replay agree on initialization, disabled and enabled writes, and returned records. A generic Cell update now accepts one checked record input of the specialized type. A different nominal type with an identical leaf layout rejects.",
+      "notes": "Specialization and invalid or recursive instantiation cases. Typed witness registration specializes a selected generic export and records the concrete signature. The paired Compact and native case specializes one provider-calling helper at UInt8 and UInt16, preserving argument order and distinct call sites. A selected Lean module specializes an identity circuit at JubjubScalar and JubjubPoint. The pinned Compact module and emitted native relations preserve the scalar and point values. A generic module circuit specializes with distinct OpaqueString and OpaqueBytes signatures. The Compact and native echo fixtures preserve both raw scalar values through typed returns. A generic module also accepts a checked record specialization, preserves its reachable layout, and stores and returns one typed ledger Cell. Compact 0.36.1 and native replay agree on initialization, disabled and enabled writes, and returned records. A generic Cell update now accepts one checked record input of the specialized type. A different nominal type with an identical leaf layout rejects. One generic Cell getter infers Field, Bool, or UInt16 return types from its three import specializations. The same getter surface preserves the checked record ReturnView.",
       "source": [
         "reference"
       ],
@@ -1082,6 +1082,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/modules/GenericScalarCellConstructor.lean",
+        "tests/compact/generic-scalar-cell-constructor.mjs",
+        "runtime/tests/generic_scalar_cell_constructor.rs",
         "tests/modules/GenericRecordCell.lean",
         "tests/compact/generic-record-cell.mjs",
         "runtime/tests/generic_record_cell.rs",
@@ -2301,7 +2304,7 @@
       "layer": "language-ledger",
       "surface": "Cell.read",
       "noctiumStatus": "subset",
-      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order. The native checker reads the exact four-byte payload and UInt16 field from a root record Cell. The native C ABI reads typed root Cells from pinned snapshots, with scalar and checked record encodings. A generic module specialized with a declared record returns the checked record from one Cell. Compact 0.36.1 and native replay agree before and after an update. The paired generic module fixture preserves all four octets of a fixed Bytes4 field in the logical returned record.",
+      "notes": "The checked root Cell reads both opaque types in addition to scoped scalar cases. Compact and the native checker match empty and nonempty payloads. The native return binds one Compress field. Both proof-bound reads finalized on Ledger 9.1.0.1 at heights 51210 and 51213, returned the exact values, and preserved state bytes. The explicit byte-aligned UInt128 type reads one 16-byte FAB atom. Native checking covers the maximum and a zero result under an inactive guard. A flat Bool/UInt16 record reads the canonical constructor defaults and the stored fields in declaration order. The native checker reads the exact four-byte payload and UInt16 field from a root record Cell. The native C ABI reads typed root Cells from pinned snapshots, with scalar and checked record encodings. A generic module specialized with a declared record returns the checked record from one Cell. Compact 0.36.1 and native replay agree before and after an update. The paired generic module fixture preserves all four octets of a fixed Bytes4 field in the logical returned record. A single generic getter exports typed Field, Bool, and UInt16 reads. The pinned Compact and native fixtures agree on constructor values and readback.",
       "source": [
         "adt"
       ],
@@ -2311,6 +2314,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/modules/GenericScalarCellConstructor.lean",
+        "tests/compact/generic-scalar-cell-constructor.mjs",
+        "runtime/tests/generic_scalar_cell_constructor.rs",
         "tests/modules/GenericRecordCell.lean",
         "tests/compact/generic-record-cell.mjs",
         "runtime/tests/generic_record_cell.rs",

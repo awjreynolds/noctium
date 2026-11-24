@@ -18,14 +18,30 @@ def genericScalarCellReadProgram : Program := {
 
 def genericScalarCellModule : Definition := {
   parameters := [⟨"T", .type⟩]
-  members := [{
-    id := 0
-    name := "cell"
-    kind := .state
-    visibility := .«public»
-    stateSchema? := some (.cell (.parameter "T"))
+  members := [
+    {
+      id := 0
+      name := "cell"
+      kind := .state
+      visibility := .«public»
+      stateSchema? := some (.cell (.parameter "T"))
+    },
+    {id := 1, name := "readCircuit", kind := .circuit, sourceExport? := some {
+      program := `genericScalarCellReadProgram
+      exportName := "read"
+    }},
+    {id := 2, name := "read", kind := .entrypoint, visibility := .«public»}
+  ]
+  entrypoints := [{
+    «member» := 2
+    name := "read"
+    circuit := .localMember 1
+    cellReturns := [{name := "result", state := .localMember 0}]
   }]
-  exports := [{name := "cell", target := .localMember 0}]
+  exports := [
+    {name := "cell", target := .localMember 0},
+    {name := "read", target := .localMember 2}
+  ]
 }
 
 noctium_module from genericScalarCellModule
@@ -36,60 +52,37 @@ def genericScalarCellRoot : Definition := {
       viewName := "field"
       target := `genericScalarCellModule
       arguments := [.typeValue (.scalar .native)]
-      selections := [{sourceName := "cell", localName := "cell"}]
+      selections := [
+        {sourceName := "cell", localName := "cell"},
+        {sourceName := "read", localName := "read"}
+      ]
     },
     {
       viewName := "flag"
       target := `genericScalarCellModule
       arguments := [.typeValue (.scalar .bool)]
-      selections := [{sourceName := "cell", localName := "cell"}]
+      selections := [
+        {sourceName := "cell", localName := "cell"},
+        {sourceName := "read", localName := "read"}
+      ]
     },
     {
       viewName := "count"
       target := `genericScalarCellModule
       arguments := [.typeValue (.scalar (.uint 65535))]
-      selections := [{sourceName := "cell", localName := "cell"}]
-    }
-  ]
-  members := [
-    {id := 0, name := "readCircuit", kind := .circuit, sourceExport? := some {
-      program := `genericScalarCellReadProgram
-      exportName := "read"
-    }},
-    {id := 1, name := "readField", kind := .entrypoint, visibility := .«public»},
-    {id := 2, name := "readFlag", kind := .entrypoint, visibility := .«public»},
-    {id := 3, name := "readCount", kind := .entrypoint, visibility := .«public»}
-  ]
-  entrypoints := [
-    {
-      «member» := 1
-      name := "readField"
-      circuit := .localMember 0
-      effects := [{effect := .readCell (.importedMember "field" "cell") "fieldValue" .native}]
-      returns := [{name := "result", ty := .native, value := .ref "fieldValue"}]
-    },
-    {
-      «member» := 2
-      name := "readFlag"
-      circuit := .localMember 0
-      effects := [{effect := .readCell (.importedMember "flag" "cell") "flagValue" .bool}]
-      returns := [{name := "result", ty := .bool, value := .ref "flagValue"}]
-    },
-    {
-      «member» := 3
-      name := "readCount"
-      circuit := .localMember 0
-      effects := [{effect := .readCell (.importedMember "count" "cell") "countValue" (.uint 65535)}]
-      returns := [{name := "result", ty := .uint 65535, value := .ref "countValue"}]
+      selections := [
+        {sourceName := "cell", localName := "cell"},
+        {sourceName := "read", localName := "read"}
+      ]
     }
   ]
   exports := [
     {name := "fieldCell", target := .importedMember "field" "cell"},
     {name := "flagCell", target := .importedMember "flag" "cell"},
     {name := "countCell", target := .importedMember "count" "cell"},
-    {name := "readField", target := .localMember 1},
-    {name := "readFlag", target := .localMember 2},
-    {name := "readCount", target := .localMember 3}
+    {name := "readField", target := .importedMember "field" "read"},
+    {name := "readFlag", target := .importedMember "flag" "read"},
+    {name := "readCount", target := .importedMember "count" "read"}
   ]
 }
 
@@ -120,6 +113,18 @@ noctium_module_contract GenericScalarCellConstructor from genericScalarCellReque
       .scalar (.uint 65535)
     ]
   | none => Bool.false
+
+private def genericScalarCellReturnType (entryName : String) (ty : Ty) : _root_.Bool :=
+  match GenericScalarCellConstructor.entrypoints.find? (·.name == entryName) with
+  | some operation =>
+    match operation.returns with
+    | [returned] => returned.name == "result" && returned.ty == ty
+    | _ => Bool.false
+  | none => Bool.false
+
+#guard genericScalarCellReturnType "readField" .native &&
+  genericScalarCellReturnType "readFlag" .bool &&
+  genericScalarCellReturnType "readCount" (.uint 65535)
 
 private def genericScalarCellRegistry : Registry := {
   modules := [

@@ -88,16 +88,16 @@ ledger state type substitution is a separate scope.
 Pass a declared record as `.checkedTypeValue value environment` when selecting
 a generic module with `stateSchema? := some (.cell (.parameter "T"))`. Its
 reachable type declarations determine the checked ledger layout. Bind
-constructor inputs by field name with `recordFields`. The module stores one
-record Cell and returns it as a typed record. A guarded write requires
-disclosure for private values used as payload or guard.
+constructor inputs by field name with `recordFields`. Use `cellReturns` to
+infer the getter's scalar or record return type from the selected Cell. A
+guarded write requires disclosure for private values used as payload or guard.
 
 For a whole-record write, declare the helper input as `next : T` and use
 `.writeRecordCellInput target "next" (disclosed := Bool.true)`. The module
 checks the specialized argument against the Cell's exact layout, then adds
 the grouped header fields in layout order. List separate scalar arguments
 such as an update guard in `callInputs`.
-[Lean fixture](../../tests/modules/GenericRecordCell.lean) · [Compact comparison](../../tests/compact/generic-record-cell.mjs)
+[Scalar Cell fixture](../../tests/modules/GenericScalarCellConstructor.lean) · [Record Cell fixture](../../tests/modules/GenericRecordCell.lean) · [Compact comparison](../../tests/compact/generic-record-cell.mjs)
 
 ## Import exported types
 

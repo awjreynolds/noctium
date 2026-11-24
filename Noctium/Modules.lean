@@ -136,7 +136,7 @@ structure OpaqueCellHashReturn where
   span : SourceSpan := {}
   deriving Repr, Inhabited
 
-structure RecordCellReturn where
+structure CellValueReturn where
   name : String
   state : StateTarget
   span : SourceSpan := {}
@@ -200,7 +200,7 @@ structure ModuleEntrypoint where
   span : SourceSpan := {}
   opaqueCellHashReturns : List OpaqueCellHashReturn := []
   returns : List Output := []
-  recordCellReturns : List RecordCellReturn := []
+  cellReturns : List CellValueReturn := []
   callInputs : List String := []
   deriving Repr
 
@@ -624,10 +624,10 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     if entrypoint.effects.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint effects"
     if entrypoint.opaqueCellHashReturns.length + entrypoint.returns.length +
-        entrypoint.recordCellReturns.length > limits.maxSourceNodes then
+        entrypoint.cellReturns.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint returns"
     unless uniqueStrings (entrypoint.opaqueCellHashReturns.map (·.name) ++
-        entrypoint.recordCellReturns.map (·.name) ++ entrypoint.returns.map (·.name)) do
+        entrypoint.cellReturns.map (·.name) ++ entrypoint.returns.map (·.name)) do
       fail entrypoint.span "duplicate module entrypoint return name"
     if entrypoint.callInputs.length > limits.maxSourceNodes then
       resource entrypoint.span "module entrypoint call arguments"
@@ -644,7 +644,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
       match returned.ty.validate Capabilities.crypto with
       | .ok _ => pure ()
       | .error message => fail returned.span message
-    for returned in entrypoint.recordCellReturns do
+    for returned in entrypoint.cellReturns do
       validText returned.span returned.name
       unless Types.validFieldName returned.name do
         fail returned.span s!"invalid module return name '{returned.name}'"
@@ -701,7 +701,7 @@ private def validateDefinition (limits : Limits) (definition : Definition) :
     definition.imports.length + definition.exports.length + definition.entrypoints.length + recordEffectFields +
     definition.entrypoints.foldl (fun count entry =>
       count + entry.effects.length + entry.returns.length + entry.opaqueCellHashReturns.length +
-        entry.recordCellReturns.length + entry.callInputs.length) 0 +
+        entry.cellReturns.length + entry.callInputs.length) 0 +
     definition.imports.foldl (fun count item => count + item.arguments.length + item.selections.length) 0 +
     definition.members.foldl (fun count member => count + match member.stateSchema? with
       | none => 0
@@ -1509,27 +1509,38 @@ private def resolveOpaqueCellHashReturn (expansion : Expansion)
     span := returned.span}
   pure (output, .readCell fieldName destination ty, identity)
 
-private def resolveRecordCellReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
-    (returned : RecordCellReturn) :
-    Except Diagnostic (List Output × ReturnView × Effect × MemberIdentity) := do
+private def resolveCellValueReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
+    (returned : CellValueReturn) :
+    Except Diagnostic (List Output × Option ReturnView × Effect × MemberIdentity) := do
   let (identity, fieldName, kind) ←
     resolveContractState expansion moduleInstance returned.span returned.state
-  let (environment, type) ← recordCellType returned.span kind
-  let fields ← recordCellReadFields returned.span environment type
-  let destination := s!"moduleRecordValue_{returned.name}"
-  let destinations := recordCellDestinations destination fields
-  let read := Effect.readCompositePath fieldName destination [] type destinations
-  let values := destinations.flatMap fun (name, ty) =>
-    match ty with
-    | .bytes length =>
-      (List.range length).map fun index =>
-        Expr.cast .native (Expr.bytesAt (Expr.ref name : Expr (.bytes length)) index)
-    | _ => (Expr.ref name : Expr ty).nativeCallFields
-  let outputs : List Output := values.zipIdx.map fun (value, index) =>
-    {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
-      value, span := returned.span}
-  pure (outputs, {name := returned.name, environment, type, fields := outputs.map (·.name)},
-    read, identity)
+  match kind with
+  | .cell ty => do
+    let destination := s!"moduleCellValue_{returned.name}"
+    let read := Effect.readCell fieldName destination ty
+    let output : Output := {
+      name := returned.name
+      ty
+      value := .ref destination
+      span := returned.span}
+    pure ([output], none, read, identity)
+  | .tree (.composite environment type) => do
+    let fields ← recordCellReadFields returned.span environment type
+    let destination := s!"moduleRecordValue_{returned.name}"
+    let destinations := recordCellDestinations destination fields
+    let read := Effect.readCompositePath fieldName destination [] type destinations
+    let values := destinations.flatMap fun (name, ty) =>
+      match ty with
+      | .bytes length =>
+        (List.range length).map fun index =>
+          Expr.cast .native (Expr.bytesAt (Expr.ref name : Expr (.bytes length)) index)
+      | _ => (Expr.ref name : Expr ty).nativeCallFields
+    let outputs : List Output := values.zipIdx.map fun (value, index) =>
+      {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
+        value, span := returned.span}
+    pure (outputs, some {name := returned.name, environment, type, fields := outputs.map (·.name)},
+      read, identity)
+  | _ => fail returned.span "module return requires a root Cell"
 
 /-- Resolve a root-exported module entrypoint. Aliases affect only its visible
 name. Circuit and state references retain their original member identities. -/
@@ -1556,28 +1567,28 @@ def Expansion.resolveEntrypoint (expansion : Expansion) (root : ModuleKey)
     ([] : List CallInputView)
   let resolvedReturns ← entrypoint.opaqueCellHashReturns.mapM
     (resolveOpaqueCellHashReturn expansion origin)
-  let recordReturns ← entrypoint.recordCellReturns.mapM
-    (resolveRecordCellReturn expansion origin)
-  let returnStateIdentities := resolvedReturns.map (·.2.2) ++ recordReturns.map (·.2.2.2)
+  let cellReturns ← entrypoint.cellReturns.mapM
+    (resolveCellValueReturn expansion origin)
+  let returnStateIdentities := resolvedReturns.map (·.2.2) ++ cellReturns.map (·.2.2.2)
   let guards := entrypoint.effects.map (·.guard)
   pure {
     name := exportName
     identity := exported.identity
     circuit
     effects := resolvedEffects.map (·.1) ++ resolvedReturns.map (·.2.1) ++
-      recordReturns.map (·.2.2.1)
+      cellReturns.map (·.2.2.1)
     effectGuards := if guards.any Option.isSome then
-      guards ++ List.replicate (resolvedReturns.length + recordReturns.length) none
+      guards ++ List.replicate (resolvedReturns.length + cellReturns.length) none
       else []
-    returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ recordReturns.flatMap (·.1)
-    returnViews := recordReturns.map (·.2.1)
+    returns := entrypoint.returns ++ resolvedReturns.map (·.1) ++ cellReturns.flatMap (·.1)
+    returnViews := cellReturns.filterMap (·.2.1)
     callInputs := entrypoint.callInputs ++ callInputViews.flatMap (·.fields.map Prod.fst)
     callInputViews
     recordInputChecks
     stateIdentities := (resolvedEffects.flatMap (·.2.1) ++ returnStateIdentities).eraseDups
     span := entrypoint.span
     effectSpans := entrypoint.effects.map (·.span) ++
-      entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.recordCellReturns.map (·.span)}
+      entrypoint.opaqueCellHashReturns.map (·.span) ++ entrypoint.cellReturns.map (·.span)}
 
 /-- Build canonical state declarations and entrypoint templates for one module
 root. The frontend attaches checked monomorphic circuit values before creating
