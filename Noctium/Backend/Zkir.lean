@@ -604,7 +604,7 @@ private def packBytesRec : List String → LowerM String
     let suffix ← packBytesRec rest
     if suffix == "0x00" then pure byte else do
       let scaled ← binary "mul" "0x0001" suffix
-      binary "add" byte scaled
+      if byte == "0x00" then pure scaled else binary "add" byte scaled
 
 /-- Skip symbolic packing when every already-lowered byte is canonical zero.
 The one linear scan runs before the existing recurrence. -/
@@ -1472,7 +1472,11 @@ private theorem packBytesRec_preservesOutputCapacityFrame (bytes : List String) 
           (ordinaryBinary_preservesOutputCapacityFrame "mul" "0x0001" suffix
             ⟨by decide, by decide, by decide⟩)
         intro scaled
-        exact binaryAdd_preservesOutputCapacityFrame byte scaled
+        by_cases zeroByte : byte == "0x00"
+        · simp [zeroByte]
+          exact pure_preservesOutputCapacityFrame scaled
+        · simp [zeroByte]
+          exact binaryAdd_preservesOutputCapacityFrame byte scaled
 
 private theorem packBytes_preservesOutputCapacityFrame (bytes : List String) :
     PreservesOutputCapacityFrame (packBytes bytes) := by

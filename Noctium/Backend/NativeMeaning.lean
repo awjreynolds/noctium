@@ -131,15 +131,17 @@ def allLiteralZeroTerms : List Term → Bool
   | .constant 0 :: rest => allLiteralZeroTerms rest
   | _ => false
 
-/-- Fold exact zero suffixes from mixed chunks while keeping the source byte order. -/
+/-- Fold zero suffixes and omit the low-order addition of a literal zero byte. -/
 def packByteTermsRec : List Term → Term
   | [] => .constant 0
   | [byte] => byte
   | byte :: rest =>
     if allLiteralZeroTerms rest then byte
-    else .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRec rest))
+    else match byte with
+      | .constant 0 => .binary "mul" (.constant 256) (packByteTermsRec rest)
+      | _ => .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRec rest))
 
-/-- Pack a normalized byte chunk, folding exact literal-zero suffixes. -/
+/-- Pack a normalized byte chunk, folding zero suffixes and low-order zero bytes. -/
 def packByteTerms (values : List Term) : Term :=
   if allLiteralZeroTerms values then .constant 0 else packByteTermsRec values
 

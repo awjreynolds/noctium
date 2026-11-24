@@ -65,6 +65,15 @@ private def mixedByteZeroSuffixCircuit : Noctium.Circuit := {
         (.bytesLiteral 31 (List.replicate 31 0))))}]
 }
 
+private def mixedByteZeroPrefixCircuit : Noctium.Circuit := {
+  name := "mixed_byte_zero_prefix"
+  inputs := [{name := "value", ty := .bytes 1, visibility := .«private»}]
+  outputs := [{name := "decoded", ty := .native, value := .disclose {} (
+    .fromBytes (target := .native)
+      (.concatBytes (.bytesLiteral 30 (List.replicate 30 0) : Noctium.Expr (.bytes 30))
+        (.ref "value" : Noctium.Expr (.bytes 1))))}]
+}
+
 private def narrowPackedByte (maximum value : Nat) : Noctium.Expr (.bytes 1) :=
   .sliceBytes (.toBytes32 (.cast .native (.uint maximum value))) 0 1
 
@@ -144,6 +153,13 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
   | .ok relation =>
       nativeBytePackingCount relation "add" == 0 &&
         nativeBytePackingCount relation "mul" == 0 &&
+        nativeBytePackingCount relation "constrain_bits" == 1
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit mixedByteZeroPrefixCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "add" == 0 &&
+        nativeBytePackingCount relation "mul" == 30 &&
         nativeBytePackingCount relation "constrain_bits" == 1
   | .error _ => _root_.Bool.false
 
