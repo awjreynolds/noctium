@@ -3,7 +3,7 @@ import Noctium.Verification.RangeDedupComparisonMeaning
 import Noctium.Verification.RangeDedupAssertMeaning
 import Noctium.Verification.RangeDedupWholeTrace
 import Noctium.Verification.RangeDedupKernel
-import Noctium.Verification.ScalarValidationNativeLoop
+import Noctium.Verification.ScalarValidationNativeDefinitions
 import Noctium.Verification.ScalarValidationOutputMeaning
 
 namespace Noctium.Verification.RangeDedupAcceptedArray
@@ -15,98 +15,9 @@ open Noctium.Verification.RangeDedupProducer
 open Noctium.Verification.ScalarValidationMeaning
 open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeLoop
+open Noctium.Verification.ScalarValidationNativeDefinitions
 open Noctium.Verification.ScalarValidationOutputMeaning
 open Noctium.Verification.ScalarNormalization
-
-private theorem refine_nativeDefinitions {state next : Backend.Native.State}
-    {text : String} {maximum : Nat}
-    (definitions : NativeDefinitions state)
-    (accepted : Backend.Native.refine state text maximum = .ok next) :
-    NativeDefinitions next := by
-  unfold Backend.Native.refine at accepted
-  simp only [ScalarValidationMeaning.bind_ok] at accepted
-  rcases accepted with ⟨fact, _, accepted⟩
-  cases reference : text.startsWith "%" with
-  | true =>
-    simp only [reference, ↓reduceIte, Pure.pure, Except.pure] at accepted
-    rcases accepted with ⟨_, _, result⟩
-    cases result
-    intro name found member
-    simp only [List.mem_map] at member
-    rcases member with ⟨⟨oldName, oldFact⟩, oldMember, equal⟩
-    have sameName : oldName = name := by simpa using congrArg Prod.fst equal
-    have sameFact :
-        (if oldName == text then {oldFact with maximum := min oldFact.maximum maximum}
-          else oldFact) = found := by simpa using congrArg Prod.snd equal
-    subst name
-    subst found
-    have valueTypeUnchanged :
-        (if oldName == text then {oldFact with maximum := min oldFact.maximum maximum}
-          else oldFact).valueType = oldFact.valueType := by
-      split <;> rfl
-    rw [valueTypeUnchanged]
-    exact definitions _ _ oldMember
-  | false =>
-    simp only [reference, Bool.false_eq_true, ↓reduceIte] at accepted
-    simp [Backend.Native.ensure] at accepted
-    rcases accepted with ⟨_, result⟩
-    by_cases bounded : fact.maximum ≤ maximum
-    · simp [bounded] at result
-      cases result
-      exact definitions
-    · simp [bounded, Except.map, Functor.map] at result
-
-private theorem accepted_assert_nativeDefinitions
-    {expected : Backend.Native.Expected} {state next : Backend.Native.State}
-    {raw : Json}
-    (definitions : NativeDefinitions state)
-    (opcode : Backend.Native.stringField raw "op" = .ok "assert")
-    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
-    NativeDefinitions next := by
-  unfold Backend.Native.validateInstruction at accepted
-  simp only [ScalarValidationMeaning.bind_ok] at accepted
-  rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
-    registry, fieldsParsed, accepted⟩
-  have opcodeEq : opcodeName = "assert" := Except.ok.inj (opcodeParsed.symm.trans opcode)
-  subst opcodeName
-  simp at accepted
-  simp only [ScalarValidationMeaning.bind_ok] at accepted
-  rcases accepted with ⟨value, valueParsed, _, booleanAccepted, accepted⟩
-  let assertionCounted := if expected.assertions[state.assertionCount]? == some value.term then
-    {state with assertionCount := state.assertionCount + 1} else state
-  let assertionState : Backend.Native.State :=
-    {assertionCounted with
-      establishedAssertions := (value.term :: assertionCounted.establishedAssertions).eraseDups}
-  have assertionDefinitions : NativeDefinitions assertionState := by
-    intro name fact member
-    cases matched : (expected.assertions[state.assertionCount]? == some value.term)
-    · exact definitions name fact (by
-        simpa [assertionState, assertionCounted, matched] using member)
-    · exact definitions name fact (by
-        simpa [assertionState, assertionCounted, matched] using member)
-  split at accepted
-  · simp only [ScalarValidationMeaning.bind_ok] at accepted
-    rcases accepted with ⟨_, _, refined⟩
-    exact refine_nativeDefinitions assertionDefinitions refined
-  · cases accepted
-    exact assertionDefinitions
-
-private theorem accepted_lessThan_nativeDefinitions
-    {expected : Backend.Native.Expected} {state next : Backend.Native.State}
-    {raw : Json}
-    (definitions : NativeDefinitions state)
-    (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
-    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
-    NativeDefinitions next := by
-  obtain ⟨leftText, _, right, _, fact, _, _, _, _, _, _, combined, defined⟩ :=
-    RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
-  have factNative : fact.valueType = NativeValueType.native := combine_native combined
-  have definedFactNative :
-      ({fact with assertedLessThan := match right.term with
-        | .constant bound => if ['%'] <+: leftText.toList then some (leftText, bound) else none
-        | _ => none}).valueType = NativeValueType.native := by
-    simpa using factNative
-  exact defineResult_nativeDefinitions definitions definedFactNative defined
 
 /-- The bounded producer trace class used below permits arbitrary ordering of
 native input/arithmetic steps, comparisons, assertions, and a checked output.
