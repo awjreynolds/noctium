@@ -184,4 +184,30 @@ theorem appendDecodedReads_existing (reads : List Backend.Impact.Read)
     rw [decodedShape]
     simpa [readTypes, List.append_assoc] using later
 
+/-- A successful checked read decode supplies the exact candidate binding and
+canonicality needed by one scalar source read. This only decodes the witness
+candidate. The later native read step still authenticates it against state. -/
+theorem read_candidate_from_decoded_reads (base : EvalEnv)
+    (reads : List Backend.Impact.Read) (witness : Assignment)
+    (decodedValues : EvalEnv)
+    (decoded : decodeReads reads witness = .ok decodedValues)
+    (distinct : reads.Pairwise (fun left right => left.name ≠ right.name))
+    (read : Backend.Impact.Read) (member : read ∈ reads)
+    (fresh : base.lookup read.name = none)
+    (typed : read.ty.validate
+      {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ())
+    (bounded : (witness ("%input_" ++ read.name)).val ≤
+      Backend.Native.sourceMaximum read.ty) :
+    ∃ candidate : read.ty.Denote,
+      (base ++ decodedValues).lookup read.name =
+        some (Value.pack read.ty candidate) ∧ Canonical read.ty candidate ∧
+      sourceScalar? read.ty candidate = some (witness ("%input_" ++ read.name)) := by
+  obtain ⟨supported, decodedLookup⟩ :=
+    decodeReads_lookup reads witness decodedValues decoded distinct read member
+  obtain ⟨canonical, scalarMeaning⟩ := sourceValue_canonical supported
+    (witness ("%input_" ++ read.name)) typed bounded
+  refine ⟨sourceValue supported (witness ("%input_" ++ read.name)), ?_, canonical, scalarMeaning⟩
+  rw [List.lookup_append, fresh]
+  exact decodedLookup
+
 end Noctium.Verification.GenericStateReadEnvironment
