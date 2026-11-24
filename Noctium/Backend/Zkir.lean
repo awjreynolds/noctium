@@ -1976,6 +1976,15 @@ termination_by value => sizeOf value
 decreasing_by
   all_goals simp_wf <;> omega
 end
+
+/-- Lowering a fixed-byte literal allocates no SSA names, including the
+zero-width literal consumed by the circuit output preflight. -/
+theorem lowerBytes_literal_preservesOutputCapacityFrame {length : Nat} (values : List Nat) :
+    PreservesOutputCapacityFrame (lowerBytes (Expr.bytesLiteral length values)) := by
+  intro state
+  simp [lowerBytes, StateT.run_pure]
+  exact OutputCapacityFrame.refl state
+
 def bindPublic (values : List String) : LowerM Unit :=
   emit "impact" [("guard", toJson ("0x01" : String)), ("inputs", toJson values)]
 
