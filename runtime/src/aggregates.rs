@@ -1510,6 +1510,68 @@ impl Schema {
         Ok(result)
     }
 
+    pub(crate) fn byte_leaf_ranges(&self) -> Result<Vec<(usize, usize)>> {
+        let mut pending = vec![(self.root, 0usize)];
+        let mut ranges = Vec::new();
+        let mut visits = 0usize;
+        while let Some((index, offset)) = pending.pop() {
+            visits = visits
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("aggregate byte path count overflow"))?;
+            ensure!(visits <= MAX_NODES * 4, "aggregate byte path traversal limit exceeded");
+            match &self.nodes[index] {
+                LayoutNode::Bytes { length } => {
+                    if *length != 0 {
+                        ranges.push((offset, *length));
+                    }
+                }
+                LayoutNode::Tuple(items) => {
+                    let mut child_offsets = Vec::with_capacity(items.len());
+                    let mut current = offset;
+                    for item in items {
+                        child_offsets.push((
+                            *item,
+                            current,
+                        ));
+                        current = current
+                            .checked_add(self.measures[*item].leaves)
+                            .ok_or_else(|| anyhow!("aggregate byte offset overflow"))?;
+                    }
+                    pending.extend(child_offsets.into_iter().rev());
+                }
+                LayoutNode::Struct { fields, .. } => {
+                    let mut child_offsets = Vec::with_capacity(fields.len());
+                    let mut current = offset;
+                    for field in fields {
+                        child_offsets.push((field.layout, current));
+                        current = current
+                            .checked_add(self.measures[field.layout].leaves)
+                            .ok_or_else(|| anyhow!("aggregate byte offset overflow"))?;
+                    }
+                    pending.extend(child_offsets.into_iter().rev());
+                }
+                LayoutNode::Vector { length, element } => {
+                    ensure!(*length <= MAX_LEAVES, "aggregate byte vector path limit exceeded");
+                    let width = self.measures[*element].leaves;
+                    for item in (0..*length).rev() {
+                        let relative = item
+                            .checked_mul(width)
+                            .ok_or_else(|| anyhow!("aggregate byte vector offset overflow"))?;
+                        pending.push((
+                            *element,
+                            offset
+                                .checked_add(relative)
+                                .ok_or_else(|| anyhow!("aggregate byte vector offset overflow"))?,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.sort_unstable_by_key(|range| range.0);
+        Ok(ranges)
+    }
+
     fn source_leaf_specs(&self) -> Result<Vec<SourceLeaf>> {
         let mut pending = vec![self.root];
         let mut result = Vec::new();

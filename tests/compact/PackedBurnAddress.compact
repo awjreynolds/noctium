@@ -1,0 +1,10 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit wallet(bytes: Bytes<32>): Either<ZswapCoinPublicKey, ContractAddress> {
+  return left<ZswapCoinPublicKey, ContractAddress>(ZswapCoinPublicKey{bytes: bytes});
+}
+
+export circuit contractRecipient(bytes: Bytes<32>): Either<ZswapCoinPublicKey, ContractAddress> {
+  return right<ZswapCoinPublicKey, ContractAddress>(ContractAddress{bytes: bytes});
+}

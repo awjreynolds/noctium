@@ -1535,8 +1535,18 @@ pub struct ReturnView {
     pub name: String,
     pub schema: Json,
     pub fields: Vec<String>,
+    #[serde(default, rename = "packedBytesFields")]
+    pub packed_bytes_fields: Vec<PackedBytesReturnField>,
     #[serde(default, rename = "nominalUIntFields")]
     pub nominal_uint_fields: Vec<NominalUIntReturnField>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackedBytesReturnField {
+    pub leaf_offset: usize,
+    pub byte_length: usize,
+    pub fields: Vec<String>,
+    pub chunk_widths: Vec<usize>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -5594,9 +5604,95 @@ fn validate_return_views_specs<'a>(
         );
         let schema_bytes = serde_json::to_vec(&view.schema)?;
         let schema = Schema::from_json(&schema_bytes)?;
+        let leaf_types = schema.leaf_types()?;
+        let byte_ranges = schema.byte_leaf_ranges()?;
+        let mut reduction = 0usize;
+        let mut previous_end = None;
+        let mut packed_names = BTreeSet::new();
+        for packed in &view.packed_bytes_fields {
+            ensure!(
+                packed.byte_length > 0,
+                "packed byte return range is outside its schema"
+            );
+            ensure!(
+                packed.byte_length <= leaf_types.len()
+                    && packed.leaf_offset <= leaf_types.len(),
+                "packed byte return range is outside its schema"
+            );
+            let packed_end = packed
+                .leaf_offset
+                .checked_add(packed.byte_length)
+                .ok_or_else(|| anyhow!("packed byte return range overflows its schema"))?;
+            ensure!(
+                packed_end <= leaf_types.len(),
+                "packed byte return range is outside its schema"
+            );
+            let chunks = packed.byte_length.div_ceil(31);
+            let high_width = packed.byte_length - 31 * (chunks - 1);
+            let expected_widths = std::iter::once(high_width)
+                .chain(std::iter::repeat_n(31, chunks - 1))
+                .collect::<Vec<_>>();
+            ensure!(
+                packed.chunk_widths == expected_widths
+                    && packed.fields.len() == expected_widths.len(),
+                "packed byte return has invalid FAB chunk widths"
+            );
+            ensure!(
+                byte_ranges.contains(&(packed.leaf_offset, packed.byte_length)),
+                "packed byte return range does not select byte leaves"
+            );
+            ensure!(
+                previous_end.is_none_or(|end| end <= packed.leaf_offset),
+                "packed byte returns overlap or are out of logical order"
+            );
+            previous_end = Some(packed_end);
+            ensure!(
+                packed.fields.iter().all(|field| packed_names.insert(field.as_str())),
+                "packed byte return field is repeated"
+            );
+            let position = view
+                .fields
+                .iter()
+                .position(|field| field == &packed.fields[0])
+                .ok_or_else(|| anyhow!("packed byte return references a missing field"))?;
+            ensure!(
+                view.fields.get(position..position + packed.fields.len())
+                    == Some(packed.fields.as_slice()),
+                "packed byte return chunks must be contiguous"
+            );
+            reduction = reduction
+                .checked_add(packed.byte_length - packed.fields.len())
+                .ok_or_else(|| anyhow!("packed byte return reduction overflow"))?;
+        }
         ensure!(
-            schema.counts().leaves == view.fields.len(),
+            reduction <= schema.counts().leaves
+                && schema.counts().leaves - reduction == view.fields.len(),
             "composite return field count differs from its schema"
+        );
+        let packed = view
+            .packed_bytes_fields
+            .iter()
+            .map(|field| (field.leaf_offset, field))
+            .collect::<BTreeMap<_, _>>();
+        let mut logical_index = 0usize;
+        let mut physical_index = 0usize;
+        while logical_index < leaf_types.len() {
+            if let Some(field) = packed.get(&logical_index) {
+                ensure!(
+                    view.fields.get(physical_index..physical_index + field.fields.len())
+                        == Some(field.fields.as_slice()),
+                    "packed byte return fields do not follow logical schema order"
+                );
+                logical_index += field.byte_length;
+                physical_index += field.fields.len();
+            } else {
+                logical_index += 1;
+                physical_index += 1;
+            }
+        }
+        ensure!(
+            physical_index == view.fields.len(),
+            "composite return mapping did not consume all physical fields"
         );
         let mut nominal_paths = BTreeSet::new();
         for nominal_field in &view.nominal_uint_fields {
@@ -6813,19 +6909,210 @@ fn reconstruct_return_views(
         .map(|view| {
             let schema_bytes = serde_json::to_vec(&view.schema)?;
             let schema = Schema::from_json(&schema_bytes)?;
-            let leaves = view
-                .fields
+            let leaf_types = schema.leaf_types()?;
+            let byte_ranges = schema.byte_leaf_ranges()?;
+            let packed = view
+                .packed_bytes_fields
                 .iter()
-                .map(|field| match values.get(field.as_str()).copied() {
-                    Some(Value::Native(value)) => Ok(Json::String(field_decimal(*value))),
-                    Some(_) => bail!("composite return field is not Native"),
-                    None => bail!("composite return field is missing"),
-                })
-                .collect::<Result<Vec<_>>>()?;
+                .map(|field| (field.leaf_offset, field))
+                .collect::<BTreeMap<_, _>>();
+            let mut physical_index = 0usize;
+            let mut logical_index = 0usize;
+            let mut leaves = Vec::with_capacity(leaf_types.len());
+            while logical_index < leaf_types.len() {
+                if let Some(packed) = packed.get(&logical_index) {
+                    ensure!(
+                        byte_ranges.contains(&(packed.leaf_offset, packed.byte_length)),
+                        "packed return range does not select a checked Bytes field"
+                    );
+                    ensure!(
+                        view.fields.get(physical_index..physical_index + packed.fields.len())
+                            == Some(packed.fields.as_slice()),
+                        "packed return fields do not follow logical schema order"
+                    );
+                    let mut high_first_chunks = Vec::with_capacity(packed.fields.len());
+                    for (field_name, width) in packed.fields.iter().zip(&packed.chunk_widths) {
+                        let value = match values.get(field_name.as_str()).copied() {
+                            Some(Value::Native(value)) => BigUint::parse_bytes(
+                                field_decimal(*value).as_bytes(), 10,
+                            )
+                            .ok_or_else(|| anyhow!("invalid packed Native return"))?,
+                            Some(_) => bail!("packed composite return field is not Native"),
+                            None => bail!("packed composite return field is missing"),
+                        };
+                        let exclusive = BigUint::from(1u8) << (width * 8);
+                        ensure!(value < exclusive, "packed byte return chunk exceeds its declared width");
+                        let mut bytes = value.to_bytes_le();
+                        ensure!(bytes.len() <= *width, "packed byte return chunk is too wide");
+                        bytes.resize(*width, 0);
+                        high_first_chunks.push(bytes);
+                    }
+                    for byte in high_first_chunks.into_iter().rev().flatten() {
+                        leaves.push(Json::String(byte.to_string()));
+                    }
+                    physical_index += packed.fields.len();
+                    logical_index += packed.byte_length;
+                } else {
+                    let field_name = view
+                        .fields
+                        .get(physical_index)
+                        .ok_or_else(|| anyhow!("composite return field is missing"))?;
+                    let leaf = match values.get(field_name.as_str()).copied() {
+                        Some(Value::Native(value)) => Json::String(field_decimal(*value)),
+                        Some(_) => bail!("composite return field is not Native"),
+                        None => bail!("composite return field is missing"),
+                    };
+                    leaves.push(leaf);
+                    physical_index += 1;
+                    logical_index += 1;
+                }
+            }
+            ensure!(physical_index == view.fields.len(), "composite return fields were not consumed");
+            ensure!(leaves.len() == leaf_types.len(), "composite return expansion count mismatch");
             let encoded = schema.from_native_leaves_json(&leaves)?;
             Ok((view.name.clone(), serde_json::from_slice(&encoded)?))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod packed_return_view_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn schema() -> Json {
+        json!({
+            "typeFingerprint": "NoctiumCompositeTypeV1;r42:Noctium.Midnight.ShieldedBurnAddressResultNoctiumCompositeLayoutV1;3;R32:Noctium.Midnight.ContractAddress1;f5:bytesb32;R42:Noctium.Midnight.ShieldedBurnAddressResult3;f7:is_leftsBf4:leftr35:Noctium.Midnight.ZswapCoinPublicKeyf5:rightr32:Noctium.Midnight.ContractAddressR35:Noctium.Midnight.ZswapCoinPublicKey1;f5:bytesb32;0;",
+            "schemaVersion": 1,
+            "layout": {"kind":"struct", "id":"Noctium.Midnight.ShieldedBurnAddressResult", "fields":[
+                {"name":"is_left", "layout":{"kind":"scalar", "leaf":{"kind":"bool"}}},
+                {"name":"left", "layout":{"kind":"struct", "id":"Noctium.Midnight.ZswapCoinPublicKey", "fields":[
+                    {"name":"bytes", "layout":{"kind":"bytes", "length":32}}]}},
+                {"name":"right", "layout":{"kind":"struct", "id":"Noctium.Midnight.ContractAddress", "fields":[
+                    {"name":"bytes", "layout":{"kind":"bytes", "length":32}}]}}
+            ]},
+            "counts":{"leaves":65, "expandedNodes":70, "layoutNodes":6}
+        })
+    }
+
+    fn return_view() -> ReturnView {
+        serde_json::from_value(json!({
+            "name":"result", "schema":schema(),
+            "fields":["result_0", "result_1", "result_2", "result_3", "result_4"],
+            "packedBytesFields":[
+                {"leafOffset":1, "byteLength":32, "fields":["result_1", "result_2"], "chunkWidths":[1,31]},
+                {"leafOffset":33, "byteLength":32, "fields":["result_3", "result_4"], "chunkWidths":[1,31]}
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn pack(bytes: &[u8]) -> BigUint {
+        bytes.iter().enumerate().fold(BigUint::from(0u8), |value, (index, byte)| {
+            value + (BigUint::from(*byte) << (index * 8))
+        })
+    }
+
+    fn native(value: BigUint) -> Value {
+        Value::Native(canonical_field(&value.to_str_radix(10)).unwrap())
+    }
+
+    #[test]
+    fn packed_returns_expand_across_the_31_32_byte_boundary() {
+        let view = return_view();
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        validate_return_views_specs(std::slice::from_ref(&view), returns).unwrap();
+
+        let left = (0..32).map(|index| (index as u8).wrapping_mul(7)).collect::<Vec<_>>();
+        let right = (0..32).map(|index| (index as u8).wrapping_mul(11)).collect::<Vec<_>>();
+        let values = vec![
+            ("result_0".into(), Value::Native(canonical_field("1").unwrap())),
+            ("result_1".into(), native(BigUint::from(left[31]))),
+            ("result_2".into(), native(pack(&left[..31]))),
+            ("result_3".into(), native(BigUint::from(right[31]))),
+            ("result_4".into(), native(pack(&right[..31]))),
+        ];
+        let reconstructed = reconstruct_return_views(&[view], &values).unwrap();
+        let expected_bytes = |bytes: &[u8]| {
+            json!({"kind":"bytes", "values":bytes.iter().copied().map(u64::from).collect::<Vec<_>>()})
+        };
+        assert_eq!(reconstructed[0].1["fields"][0]["value"], json!({"kind":"bool", "value":true}));
+        assert_eq!(reconstructed[0].1["fields"][1]["value"]["fields"][0]["value"], expected_bytes(&left));
+        assert_eq!(reconstructed[0].1["fields"][2]["value"]["fields"][0]["value"], expected_bytes(&right));
+
+        let mut too_wide = values;
+        too_wide[1].1 = native(BigUint::from(256u16));
+        assert!(reconstruct_return_views(&[return_view()], &too_wide)
+            .unwrap_err()
+            .to_string()
+            .contains("declared width"));
+    }
+
+    #[test]
+    fn packed_return_validation_rejects_non_byte_schema_ranges() {
+        let mut view = return_view();
+        view.packed_bytes_fields[0].leaf_offset = 0;
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        assert!(validate_return_views_specs(&[view], returns).is_err());
+    }
+
+    #[test]
+    fn packed_return_validation_rejects_zero_length_ranges() {
+        let mut view = return_view();
+        view.packed_bytes_fields[0].byte_length = 0;
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        assert!(validate_return_views_specs(&[view], returns).is_err());
+    }
+
+    #[test]
+    fn packed_return_validation_rejects_out_of_schema_ranges_before_width_allocation() {
+        let mut view = return_view();
+        view.packed_bytes_fields[0].leaf_offset = usize::MAX;
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        assert!(validate_return_views_specs(&[view], returns).is_err());
+
+        let mut view = return_view();
+        view.packed_bytes_fields[0].byte_length = usize::MAX;
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        assert!(validate_return_views_specs(&[view], returns).is_err());
+    }
+
+    #[test]
+    fn packed_return_validation_rejects_adjacent_native_vector_leaves() {
+        let mut view = return_view();
+        view.schema["layout"]["fields"][1]["layout"]["fields"][0]["layout"] = json!({
+            "kind":"vector",
+            "length":32,
+            "element":{"kind":"scalar", "leaf":{"kind":"native"}}
+        });
+        view.schema["counts"]["layoutNodes"] = json!(7);
+        let names = (0..5).map(|index| format!("result_{index}")).collect::<Vec<_>>();
+        let returns = names
+            .iter()
+            .map(|name| (name.as_str(), "Native", "public"))
+            .collect::<Vec<_>>();
+        assert!(validate_return_views_specs(&[view], returns).is_err());
+    }
 }
 
 pub struct Execution {

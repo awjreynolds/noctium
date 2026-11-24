@@ -57,7 +57,7 @@ private def shieldedBurnReturnEntry : Entrypoint :=
     {name := "missing", circuit := {name := "missing"}}
 
 private def shieldedBurnPhysicalFields : List String :=
-  (List.range 65).map fun index => s!"result_{index}"
+  (List.range 5).map fun index => s!"result_{index}"
 
 private def shieldedBurnLogicalLayout : _root_.Bool :=
   match Types.compileType ShieldedBurnAddress.composites ShieldedBurnAddress.logicalType with
@@ -78,9 +78,26 @@ private def shieldedBurnLogicalLayout : _root_.Bool :=
       view.name == "result" && view.type == ShieldedBurnAddress.logicalType &&
       view.environment == ShieldedBurnAddress.composites &&
       view.fields == shieldedBurnPhysicalFields &&
+      view.packedBytesFields == [
+        {leafOffset := 1, byteLength := 32, fields := ["result_1", "result_2"], chunkWidths := [1, 31]},
+        {leafOffset := 33, byteLength := 32, fields := ["result_3", "result_4"], chunkWidths := [1, 31]}] &&
       fields.map (·.name) == shieldedBurnPhysicalFields &&
       fields.all (·.ty == .native)
   | _, _ => _root_.Bool.false
+
+private def packedShieldedBurnPlan : Except String Lean.Json := do
+  let plan ← (Backend.Impact.lower [] shieldedBurnReturnEntry).mapError (·.message)
+  pure (Compiler.nativePlanJson TargetProfile.selected321 `ShieldedBurnAddress
+    [] none shieldedBurnReturnEntry plan)
+
+#guard match packedShieldedBurnPlan with
+  | .ok plan =>
+    let returns := (plan.getObjValD "returns").getArr?.toOption.getD #[]
+    let views := (plan.getObjValD "returnViews").getArr?.toOption.getD #[]
+    returns.size == 5 && views.size == 1 &&
+      ((views[0]!.getObjValD "fields").getArr?.toOption.getD #[]).size == 5 &&
+      ((views[0]!.getObjValD "packedBytesFields").getArr?.toOption.getD #[]).size == 2
+  | .error _ => _root_.Bool.false
 
 private def shieldedBurnReturnContext : EvalContext := {
   modulus := Field.modulus
@@ -89,10 +106,76 @@ private def shieldedBurnReturnContext : EvalContext := {
 
 #guard match shieldedBurnReturnEntry.run shieldedBurnReturnContext [] {trees := []} with
   | .ok (outputs, _) =>
-      (List.range 65).all fun index =>
+      (List.range 5).all fun index =>
         outputs.lookup s!"result_{index}" ==
           some (.native (if index == 0 then 1 else 0))
   | .error _ => _root_.Bool.false
+
+private def packedReturnPatternBytes (bias : Nat) : List Nat :=
+  (List.range 32).map fun index => if index == 30 then 165 else if index == 31 then bias else (index * 7) % 256
+
+private def packedReturnPatternProgram (wallet : _root_.Bool)
+    (badByte : _root_.Bool := _root_.Bool.false) : Helpers.Program := Id.run do
+  let active := packedReturnPatternBytes (if wallet then 90 else 165)
+  let active := if badByte then active.set 30 256 else active
+  let inactive := List.replicate 32 0
+  let left := if wallet then active else inactive
+  let right := if wallet then inactive else active
+  let leaves := [.bool wallet] ++
+    left.map (fun byte => Helpers.Term.native byte) ++
+    right.map (fun byte => Helpers.Term.native byte)
+  return {
+    composites := ShieldedBurnAddress.composites
+    declarations := [{
+      id := ⟨0, 0⟩
+      name := "packedPattern"
+      result := .composite ShieldedBurnAddress.logicalType
+      body := [.return (some (.composite ShieldedBurnAddress.logicalType leaves))]
+    }]
+    exports := [{
+      name := "packedPattern"
+      target := ⟨0, 0⟩
+      packedByteReturnPaths := [["left", "bytes"], ["right", "bytes"]]
+    }]
+  }
+
+private def packedPatternEntry (wallet : _root_.Bool)
+    (badByte : _root_.Bool := _root_.Bool.false) : Except String Entrypoint := do
+  (Helpers.compileEntrypoint (packedReturnPatternProgram wallet badByte) "packedPattern").mapError (·.message)
+
+private def packedReturnPatternChunk (bytes : List Nat) : Nat :=
+  bytes.zipIdx.foldl (fun total (byte, index) => total + byte * 256 ^ index) 0
+
+private def packedReturnPatternPasses (wallet : _root_.Bool) : _root_.Bool := Id.run do
+  return match packedPatternEntry wallet with
+  | .error _ => _root_.Bool.false
+  | .ok compiledEntry =>
+    let active := packedReturnPatternBytes (if wallet then 90 else 165)
+    let zero := List.replicate 32 0
+    let left := if wallet then active else zero
+    let right := if wallet then zero else active
+    let expected := [
+      if wallet then 1 else 0,
+      left[31]!, packedReturnPatternChunk (left.take 31),
+      right[31]!, packedReturnPatternChunk (right.take 31)]
+    match compiledEntry.run shieldedBurnReturnContext [] {trees := []} with
+    | .ok (outputs, _) =>
+      (List.range 5).all fun index =>
+        outputs.lookup s!"result_{index}" == some (.native expected[index]!)
+    | .error _ => _root_.Bool.false
+
+#guard (packedReturnPatternPasses _root_.Bool.true)
+#guard (packedReturnPatternPasses _root_.Bool.false)
+
+private def packedReturnOverwidthByteRejected : _root_.Bool := Id.run do
+  match packedPatternEntry _root_.Bool.true _root_.Bool.true with
+  | .error _ => return _root_.Bool.false
+  | .ok compiledEntry =>
+    match compiledEntry.run shieldedBurnReturnContext [] {trees := []} with
+    | .error _ => return _root_.Bool.true
+    | .ok _ => return _root_.Bool.false
+
+#guard packedReturnOverwidthByteRejected
 
 noctium_circuit shieldedBurnInputs where
   private nonce : Bytes32

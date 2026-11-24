@@ -38,8 +38,9 @@ def composites : Types.CompositeEnv := {
   ]
 }
 
-/-- A pure helper program exposing the complete logical return value. The
-composite helper ABI flattens each nested Bytes32 into 32 checked byte leaves. -/
+/-- A pure helper program exposing the complete logical return value. Its typed
+composite schema retains the Boolean and both nominal Bytes32 fields. The
+physical helper return packs each Bytes32 through canonical FAB chunks. -/
 def program : Helpers.Program := {
   composites := ShieldedBurnAddress.composites
   declarations := [{
@@ -49,7 +50,10 @@ def program : Helpers.Program := {
     body := [.return (some (.composite logicalType
       ([.bool (walletBranch .wallet)] ++ List.replicate 64 (.native 0))))]
   }]
-  exports := [{name := "shieldedBurnAddress", target := ⟨0, 0⟩}]
+  exports := [{
+    name := "shieldedBurnAddress"
+    target := ⟨0, 0⟩
+    packedByteReturnPaths := [["left", "bytes"], ["right", "bytes"]]}]
 }
 
 end ShieldedBurnAddress

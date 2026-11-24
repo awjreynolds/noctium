@@ -1205,7 +1205,7 @@ def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
     let compiled ← (Types.compileType view.environment view.type).mapError (·.message)
     unless compiled.checked.expandedLeaves ≤ maxEntrypointReturnFields do
       throw "entrypoint return field limit exceeded"
-    unless view.fields.length == compiled.checked.expandedLeaves do
+    unless view.fields.length == view.physicalFieldCount compiled.checked.expandedLeaves do
       throw s!"logical return '{view.name}' field count does not match its type"
     discard (Types.schemaJson compiled)
   let publicCount := publicInputReadCount entry.circuit.inputs
