@@ -1,0 +1,31 @@
+name: Foundation source evidence replay
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundation-source-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-evidence:
+    name: Replay source-only Foundation profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: false
+          use-github-cache: false
+      - name: Replay the elected source profile
+        run: bash scripts/proofs/replay-foundation-source-profile.sh
