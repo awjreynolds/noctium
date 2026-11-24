@@ -2,13 +2,31 @@ import Noctium.Frontend
 
 open scoped Noctium
 
+private def readablePlanBody (plan : Lean.Json) : String := Id.run do
+  let .ok functions := plan.getObjValAs? (Array Lean.Json) "functions" | return ""
+  let bodies := functions.toList.flatMap fun function =>
+    match function.getObjValAs? (Array Lean.Json) "body" with
+    | .ok body => body.toList
+    | .error _ => []
+  return String.intercalate "" (bodies.map Lean.Json.compress)
+
+private def readableFragmentsInOrder (source : String) : List String → _root_.Bool
+  | [] => _root_.Bool.true
+  | fragment :: rest =>
+    match source.splitOn fragment with
+    | _ :: first :: following =>
+      readableFragmentsInOrder (String.intercalate fragment (first :: following)) rest
+    | _ => _root_.Bool.false
+
 noctium_private_state ContainerWallet where
   cell last : Native
 end
 
 noctium_witness containerBytes() : Bytes 2
+noctium_witness containerBytesFromOuter(seed : Native) : Bytes 2
 noctium_witness emptyContainer() : Bytes 0
 noctium_witness containerStep(item : UInt 8, previous : Native) : Native
+noctium_witness containerObserve(item : Native) : Unit
 
 noctium_witness_circuit readableContainerLoop where
   public expected : Native
@@ -25,6 +43,44 @@ noctium_witness_circuit readableContainerLoop where
   read private ContainerWallet.last as finalValue
   prove eq(finalValue, expected)
   output result : Native := expected
+end
+
+noctium_witness_circuit readableContainerItemShadow where
+  let item : Native := 7
+  let previous : Native := 11
+  for item in witness containerBytesFromOuter(item) do
+    let visited : Native := witness containerStep(item, previous)
+  end
+  prove eq(item, 7)
+  witness containerObserve(item)
+end
+
+#guard
+  let compiled := Noctium.Witness.compile readableContainerItemShadow.__program
+    "noctium.witness-circuit.readableContainerItemShadow.v1"
+  compiled.toOption.map (fun source =>
+    let body := readablePlanBody source.plan
+    source.calls.map (·.name) == ["containerBytesFromOuter", "containerStep", "containerStep", "containerObserve"] &&
+      body.contains "\"name\":\"containerBytesFromOuter\"" &&
+      body.contains "\"value\":\"7\"" &&
+      body.contains "\"arguments\":[{\"name\":\"item\"" &&
+      body.contains "\"arguments\":[{\"name\":\"__noctium:branch-shadow:1\"" &&
+      body.contains "\"name\":\"previous\"" &&
+      readableFragmentsInOrder body [
+        "\"arguments\":[{\"name\":\"__noctium:branch-shadow:1\"",
+        "\"name\":\"previous\""] &&
+      body.contains "\"name\":\"containerObserve\"" &&
+      body.contains "\"arguments\":[{\"name\":\"item\"") == some _root_.Bool.true
+
+
+
+/- error: duplicate readable witness value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit duplicateContainerItemShadow where
+  let item : Native := 7
+  for item in witness containerBytes() do
+    let item : Native := 1
+  end
 end
 
 #guard

@@ -126,6 +126,14 @@ const contract = new Contract({
     blockCalls.push(`offset:${seed}`);
     return [privateState, blockOffset];
   },
+  shadowItems: ({ privateState }, seed) => {
+    blockCalls.push(`shadowItems:${seed}`);
+    return [privateState, [4n, 5n]];
+  },
+  shadowVisit: ({ privateState }, item, outer) => {
+    blockCalls.push(`shadowVisit:${item}:${outer}`);
+    return [privateState, item + outer];
+  },
 });
 const wallet = '00'.repeat(32);
 const { currentContractState } = await contract.initialState(createConstructorContext([], wallet));
@@ -160,6 +168,15 @@ const runBlock = () => contract.circuits.runBlock(createCircuitContext({
 }), 7n);
 assert.deepEqual((await runBlock()).result, [12n, 13n, 25n]);
 assert.deepEqual(blockCalls.splice(0), ['items:7', 'offset:8']);
+const shadow = await contract.circuits.runShadow(createCircuitContext({
+  circuitId: 'runShadow', contractAddress: dummyContractAddress(), coinPublicKeyOrZswapState: wallet,
+  contractState: currentContractState.data, privateState: [],
+}), 0n);
+assert.equal(shadow.result, 7n);
+assert.deepEqual(blockCalls.splice(0), [
+  'shadowItems:7', 'shadowVisit:4:7', 'shadowVisit:5:7',
+  'shadowVisit:1:7', 'shadowVisit:2:7',
+]);
 
 const emptyNativeMap = await contract.circuits.emptyNativeMap(createCircuitContext({
   circuitId: 'emptyNativeMap', contractAddress: dummyContractAddress(), coinPublicKeyOrZswapState: wallet,

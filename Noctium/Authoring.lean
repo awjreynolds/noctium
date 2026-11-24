@@ -3763,20 +3763,19 @@ private partial def lowerReadableStatement (programName path : String)
     let start ← readRangeBound start
     let stop ← readRangeBound stop
     let indexName := index.getId.toString
-    if body.env.any (·.1 == indexName) then
-      throwErrorAt index s!"finite loop index '{indexName}' conflicts with an enclosing readable witness value"
-    let mut loop := {body with
-      env := (indexName, .scalar .native, .ref indexName, none) :: body.env
+    let (loopScope, internalIndex) ← bindReadableName {body with scopeBindings := []} index
+    let mut loop := {loopScope with
+      env := (indexName, .scalar .native, .ref internalIndex, none) :: body.env
       statements := []
-      scopeBindings := body.scopeBindings ++ [indexName]
       logicalAliases := []}
     for (child, ordinal) in nested.toList.zipIdx do
       loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
         exprState codecTerms loop child (fun _ => nested.toList.drop (ordinal + 1))
     pure {body with
-      statements := body.statements ++ [.forRange indexName start stop loop.statements]
+      statements := body.statements ++ [.forRange internalIndex start stop loop.statements]
       witnesses := loop.witnesses
       observation := loop.observation
+      composites := loop.composites
       nextLet := loop.nextLet
       helperProgram := loop.helperProgram
       requiresOutputViews := loop.requiresOutputViews
@@ -3784,8 +3783,6 @@ private partial def lowerReadableStatement (programName path : String)
   | `(noctium_witness_statement| for $item:ident $[: $annotation:nltype]? in $sequence:nlexpr do
       $nested:noctium_witness_statement* end) => do
     let itemName := item.getId.toString
-    if body.env.any (·.1 == itemName) then
-      throwErrorAt item s!"sequence loop variable '{itemName}' conflicts with an enclosing readable witness value"
     let (sequenceValue, sourceBody) ← body.lower programName path exprState sequence
     let sourceBody := sourceBody.observe sequenceValue [sequence]
     let sequenceSpan ← spanValue statement
@@ -3811,22 +3808,25 @@ private partial def lowerReadableStatement (programName path : String)
     let knownElementType ← match annotation with
       | some type => some <$> (ResultType.scalar <$> readScalarTy type)
       | none => pure inferred
+    let childScope := {sourceBody with
+      scopeBindings := []
+      nextLet := loopExprState.nextLet}
+    let (childScope, internalItem) ← bindReadableName childScope item
     let initialLoopState : AuthoringExprState := {
       exprState with
       iterationProgram := some program
       iterationWitnesses := sourceBody.witnesses
       requiresOutputViews := sourceBody.requiresOutputViews
-      nextLet := loopExprState.nextLet
-      iterationParameters := sourceBody.iterationParameters}
+      nextLet := childScope.nextLet
+      iterationParameters := loopExprState.iterationParameters}
     let (elementRef, loopExprState) ← match knownElementType with
-      | some _ => pure (itemName, initialLoopState)
+      | some _ => pure (internalItem, initialLoopState)
       | none =>
         (unresolvedIterationParameter itemName).run initialLoopState
     let placeholderType := knownElementType.getD .unit
-    let mut loop := {sourceBody with
+    let mut loop := {childScope with
       env := (itemName, placeholderType, .ref elementRef, none) :: sourceBody.env
       statements := []
-      scopeBindings := sourceBody.scopeBindings ++ [itemName]
       logicalAliases := []
       helperProgram := some program
       nextLet := loopExprState.nextLet
@@ -3858,6 +3858,7 @@ private partial def lowerReadableStatement (programName path : String)
       statements := body.statements ++ before ++ [.evaluate term]
       witnesses := loop.witnesses
       observation := loop.observation
+      composites := loop.composites
       nextLet := loop.nextLet
       helperProgram := some compiledProgram
       requiresOutputViews := loop.requiresOutputViews

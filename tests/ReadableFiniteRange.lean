@@ -8,6 +8,7 @@ end
 
 noctium_witness rangeStep(index : Native, previous : Native) : Native
 noctium_witness rangeObserve(index : Native) : Unit
+noctium_witness rangeShadowObserve(index : Native, previous : Native) : Unit
 
 syntax "rangeFixture" ident "using" ident "from" "(" term ")" "..<" "(" term ")" : command
 
@@ -27,8 +28,46 @@ private def fragmentsInOrder (source : String) : List String → _root_.Bool
     | _ :: first :: following => fragmentsInOrder (String.intercalate fragment (first :: following)) rest
     | _ => _root_.Bool.false
 
+private def planBody (plan : Lean.Json) : String := Id.run do
+  let .ok functions := plan.getObjValAs? (Array Lean.Json) "functions" | return ""
+  let .ok body := functions[0]!.getObjValAs? (Array Lean.Json) "body" | return ""
+  return String.intercalate "" (body.toList.map Lean.Json.compress)
+
 rangeFixture closedRangeFromTerms using rangeObserve from (Nat.succ 0) ..< (Nat.succ (Nat.succ 1))
 rangeFixture emptyRangeFromTerms using rangeObserve from (Nat.succ (Nat.succ 0)) ..< (Nat.succ (Nat.succ 0))
+
+noctium_witness_circuit readableRangeShadow where
+  let index : Native := 1
+  let previous : Native := 7
+  for index in (1) ..< (3) do
+    witness rangeShadowObserve(index, previous)
+  end
+  prove eq(index, 1)
+  witness rangeShadowObserve(index, previous)
+end
+
+#guard
+  let compiled := Noctium.Witness.compile readableRangeShadow.__program
+    "noctium.witness-circuit.readableRangeShadow.v1"
+  compiled.toOption.map (fun source =>
+    source.calls.map (·.name) == ["rangeShadowObserve", "rangeShadowObserve", "rangeShadowObserve"] &&
+      (let plan := planBody source.plan
+      plan.contains "\"value\":\"1\"" && plan.contains "\"value\":\"2\"" &&
+        plan.contains "\"name\":\"__noctium:branch-shadow:0\"" &&
+        plan.contains "\"name\":\"previous\"" &&
+        fragmentsInOrder plan [
+          "\"arguments\":[{\"name\":\"__noctium:branch-shadow:0\"",
+          "\"name\":\"previous\""] &&
+        plan.contains "\"arguments\":[{\"name\":\"index\"")) ==
+    some _root_.Bool.true
+
+/- error: duplicate readable witness value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit duplicateRangeShadow where
+  for index in 0 ..< 2 do
+    let index : Native := 1
+  end
+end
 
 #guard
   let compiled := Noctium.Witness.compile closedRangeFromTerms.__program
