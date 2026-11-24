@@ -3193,7 +3193,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             if depth == 0 {
                 checked_cell_record_schema(value_record)?;
             } else {
-                checked_map_record_schema(value_record)?;
+                checked_cell_record_schema(value_record)?;
             }
         } else {
             bail!("record-key Maps require a scalar or record value")
@@ -3655,15 +3655,6 @@ fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
 
 fn checked_typed_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Typed)
-}
-
-fn checked_map_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
-    let schema = checked_typed_record_schema(json)?;
-    ensure!(
-        schema.fields.iter().all(|field| !matches!(field.ty, ScalarType::Bytes(_))),
-        "fixed Bytes fields are unsupported in nested Map values"
-    );
-    Ok(schema)
 }
 
 fn checked_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {

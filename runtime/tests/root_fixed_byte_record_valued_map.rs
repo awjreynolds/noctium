@@ -91,7 +91,7 @@ fn root_fixed_byte_record_values_match_compact_for_scalar_and_record_keys() -> a
         ]}]
     });
     let nested_record_key_plan: Plan = serde_json::from_value(nested_record_key_json)?;
-    assert!(create_state(&nested_record_key_plan, &empty_state).is_err());
+    assert!(create_state(&nested_record_key_plan, &empty_state).is_ok());
 
     let tag = [7u8];
     let first_id = [3u8; 33];
