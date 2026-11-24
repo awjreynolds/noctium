@@ -1,0 +1,36 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+module GenericValue<T> {
+  export ledger value: T;
+
+  export circuit read(): T {
+    return value;
+  }
+
+  export circuit update(next: T): [] {
+    value = disclose(next);
+    return [];
+  }
+}
+
+import GenericValue<JubjubScalar> prefix explicit_;
+
+export {
+  explicit_value,
+  explicit_read,
+  explicit_update,
+};
+
+constructor(initial: JubjubScalar) {
+  explicit_value = disclose(initial);
+}
+
+export circuit readExplicit(): JubjubScalar {
+  return explicit_read();
+}
+
+export circuit updateExplicit(next: JubjubScalar): JubjubScalar {
+  explicit_update(disclose(next));
+  return explicit_read();
+}
