@@ -1387,6 +1387,7 @@ fn typed_private_cells_bind_distinct_read_types() {
         BTreeMap::from([
             ("expected".into(), json!("2")),
             ("replacement".into(), scalar("11")),
+            ("replacementAmount".into(), json!("23")),
         ]),
         context,
         Some(&pin),
@@ -1415,6 +1416,7 @@ fn typed_private_cells_bind_distinct_read_types() {
             ]}),
             json!({"kind":"struct", "id":"MeterReceipt", "fields":[]}),
         ),
+        ("amount", "Native", json!("19"), json!("019")),
     ] {
         let pending = session.advance().unwrap();
         let request = &pending["request"];
@@ -1457,6 +1459,17 @@ fn typed_private_cells_bind_distinct_read_types() {
     session
         .resume_typed(reply(request, &attempt, "value", Some(staged_receipt.clone())))
         .unwrap();
+    let amount_key = "noctium/PrivateStateMixed.Wallet/amount";
+    let pending = session.advance().unwrap();
+    let request = &pending["request"];
+    assert_eq!(request["operation"], host::READ);
+    assert_eq!(request["schema"], "Native");
+    let private = session.private_request().unwrap();
+    assert_eq!(private["arguments"]["key"], amount_key);
+    assert_eq!(private["invocationWrites"][amount_key]["value"], "42");
+    session
+        .resume_typed(reply(request, &attempt, "value", Some(json!("42"))))
+        .unwrap();
     let public = session.advance().unwrap();
     assert_eq!(public["status"], "completed");
     assert!(public.get("hostWrites").is_none());
@@ -1480,6 +1493,7 @@ fn typed_private_cells_bind_distinct_read_types() {
         completed["hostWrites"]["noctium/PrivateStateMixed.Wallet/recipient"]["value"],
         point(generator * EmbeddedFr::from(11u64))
     );
+    assert_eq!(completed["hostWrites"][amount_key]["value"], "42");
     let plan: Plan =
         serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json"))).unwrap())
             .unwrap();
@@ -1496,10 +1510,12 @@ fn typed_private_cells_bind_distinct_read_types() {
     .unwrap();
     check(&execution, &circuit).unwrap();
     assert_eq!(execution.returns_json()["accepted"], true);
+    assert_eq!(execution.returns_json()["amountResult"], "42");
     assert_eq!(
         execution.preimage.private_transcript,
         [
             Fr::from(11u64),
+            Fr::from(23u64),
             Fr::from(1u64),
             Fr::from(1u64),
             Fr::from(7u64),
@@ -1507,8 +1523,10 @@ fn typed_private_cells_bind_distinct_read_types() {
             recipient.y().unwrap(),
             Fr::from(2u64),
             Fr::from(1u64),
+            Fr::from(19u64),
             Fr::from(3u64),
             Fr::from(0u64),
+            Fr::from(42u64),
         ]
     );
     execution.preimage.private_transcript[2] = Fr::from(0u64);
