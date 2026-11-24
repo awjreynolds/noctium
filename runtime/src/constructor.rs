@@ -1143,10 +1143,11 @@ pub fn construct_state(
         config.insert(initializer.state.clone(), value);
     }
     validate_ordered_action_targets(plan, &constructor.actions, &mut initialized)?;
-    for declaration in &plan.state {
+    for (slot, declaration) in plan.state.iter().enumerate() {
         if declaration.sealed && declaration.kind.get("map").is_none() {
             let collection_default = constructor_counter(declaration)
                 || flat_scalar_list_type(declaration)?.is_some()
+                || crate::ordinary_record_set_schema(plan, u32::try_from(slot)?).is_some()
                 || root_scalar_set_type(declaration)?.is_some();
             if collection_default {
                 continue;

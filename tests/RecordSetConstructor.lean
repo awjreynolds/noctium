@@ -9,7 +9,7 @@ noctium_circuit inspectRecordSetInputs where
 end
 
 noctium_contract RecordSetConstructor where
-  set members : struct Key {
+  sealed set members : struct Key {
     tag : Bytes 1
     id : Bytes 33
   }
@@ -27,5 +27,18 @@ noctium_contract RecordSetConstructor where
     return first : Bool := firstPresent
     return late : Bool := latePresent
     return count : UInt 64 := memberCount
+  end
+end
+
+/- error: sealed state 'members' cannot be written by an entrypoint -/
+#guard_msgs (substring := true) in
+noctium_contract RejectSealedRecordSetWrite where
+  sealed set members : struct Key {
+    tag : Bytes 1
+    id : Bytes 33
+  }
+
+  entry update uses inspectRecordSetInputs where
+    insert members[fields(tag, firstId)]
   end
 end
