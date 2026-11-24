@@ -84,8 +84,8 @@ private def qualifiedCoinMapRecordEnvironment : Types.CompositeEnv := {
   | [{kind := .tree (.map _ (.composite environment type)), ..}] =>
       match LedgerValueType.validate Capabilities.source
           (.map (.bytes 4) (.composite environment type)) with
-      | .error _ => _root_.Bool.true
-      | .ok _ => _root_.Bool.false
+      | .error _ => _root_.Bool.false
+      | .ok _ => _root_.Bool.true
   | _ => _root_.Bool.false
 
 #guard match Backend.Impact.lower TypedRecordMap.state (typedRecordMapEntry "storeMemo") with
