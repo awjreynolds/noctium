@@ -33,6 +33,9 @@ def typedBoolResult (opcode : String) (left right : Bool) : Bool :=
 
 def asTypedBoolFact (fact : Fact) : Fact := {fact with valueType := .bool}
 
+def typedBoolConstantFact (value : Nat) : Fact :=
+  {term := typedBoolConstantTerm value, maximum := value, valueType := .bool}
+
 theorem interpretTypedBoolGate2Constants (opcode : String) (left right : Bool)
     (opcodeValid : opcode = "and" ∨ opcode = "or" ∨ opcode = "xor") :
     interpretTypedBoolTerm?
@@ -131,6 +134,103 @@ theorem accepted_bool_constant_scoped_meaning {expected : Expected} {state next 
   rcases valueCases with zero | one
   · simp [zero, interpretTypedBoolTerm?, typedBoolConstantTerm]
   · simp [one, interpretTypedBoolTerm?, typedBoolConstantTerm]
+
+private theorem defineResult_appends_fact {state next : State} {instruction : Json}
+    {fact : Fact} {output : String}
+    (outputField : stringField instruction "output" = .ok output)
+    (accepted : defineResult state instruction fact = .ok next) :
+    next.definitions = state.definitions ++ [(output, fact)] ∧
+    state.definitions.lookup output = none := by
+  unfold defineResult at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨foundOutput, outputParsed, defined⟩
+  have sameOutput : foundOutput = output := Except.ok.inj (outputParsed.symm.trans outputField)
+  subst foundOutput
+  unfold define at defined
+  simp only [bind_ok] at defined
+  rcases defined with ⟨_, _valid, _, result⟩
+  rcases result with ⟨absent, result⟩
+  have absent := ensure_ok.mp absent
+  have lookupAbsent : state.definitions.lookup output = none := by
+    cases lookup : state.definitions.lookup output <;> simp [lookup] at absent ⊢
+  cases result
+  exact ⟨rfl, lookupAbsent⟩
+
+/-- Two accepted canonical Bool constants survive their actual ordered
+`defineResult` insertions and resolve through the producer's input parser. -/
+theorem accepted_bool_constant_pair_arguments {expected : Expected}
+    {initial afterLeft afterRight : State}
+    {leftInstruction rightInstruction gateInstruction : Json}
+    {leftValue rightValue : Nat}
+    (leftOpcode : stringField leftInstruction "op" = .ok "load_constant")
+    (leftType : stringField leftInstruction "type" = .ok "Bool")
+    (leftAccepted : validateInstruction expected initial leftInstruction = .ok afterLeft)
+    (leftOutput : stringField leftInstruction "output" = .ok "%bool_left")
+    (rightOpcode : stringField rightInstruction "op" = .ok "load_constant")
+    (rightType : stringField rightInstruction "type" = .ok "Bool")
+    (rightAccepted : validateInstruction expected afterLeft rightInstruction = .ok afterRight)
+    (rightOutput : stringField rightInstruction "output" = .ok "%bool_right")
+    (gateInputs : arrayField gateInstruction "inputs" =
+      .ok #[Json.str "%bool_left", Json.str "%bool_right"])
+    (leftExact : ∀ value, value ≤ 1 →
+      defineResult initial leftInstruction (typedBoolConstantFact value) = .ok afterLeft →
+      value = leftValue)
+    (rightExact : ∀ value, value ≤ 1 →
+      defineResult afterLeft rightInstruction (typedBoolConstantFact value) = .ok afterRight →
+      value = rightValue) :
+    arguments afterRight gateInstruction "inputs" =
+      .ok [typedBoolConstantFact leftValue, typedBoolConstantFact rightValue] := by
+  obtain ⟨actualLeft, leftBound, leftDefined⟩ :=
+    accepted_bool_constant_components leftOpcode leftType leftAccepted
+  have leftValueEq := leftExact actualLeft leftBound leftDefined
+  subst actualLeft
+  obtain ⟨actualRight, rightBound, rightDefined⟩ :=
+    accepted_bool_constant_components rightOpcode rightType rightAccepted
+  have rightValueEq := rightExact actualRight rightBound rightDefined
+  subst actualRight
+  obtain ⟨afterLeftDefs, leftFresh⟩ := defineResult_appends_fact leftOutput leftDefined
+  obtain ⟨afterRightDefs, rightFresh⟩ := defineResult_appends_fact rightOutput rightDefined
+  unfold defineResult at leftDefined rightDefined
+  rw [leftOutput] at leftDefined
+  rw [rightOutput] at rightDefined
+  simp only [bind_ok] at leftDefined rightDefined
+  rcases leftDefined with ⟨foundLeft, parsedLeft, leftDefine⟩
+  have foundLeftEq : foundLeft = "%bool_left" := (Except.ok.inj parsedLeft).symm
+  subst foundLeft
+  rcases rightDefined with ⟨foundRight, parsedRight, rightDefine⟩
+  have foundRightEq : foundRight = "%bool_right" := (Except.ok.inj parsedRight).symm
+  subst foundRight
+  unfold define at leftDefine rightDefine
+  simp only [bind_ok] at leftDefine rightDefine
+  rcases leftDefine with ⟨_, leftValid, _, _⟩
+  rcases rightDefine with ⟨_, rightValid, _, _⟩
+  have leftValidBool := ensure_ok.mp leftValid
+  have rightValidBool := ensure_ok.mp rightValid
+  have leftLookup : afterRight.definitions.lookup "%bool_left" =
+      some (typedBoolConstantFact leftValue) := by
+    rw [afterRightDefs, afterLeftDefs]
+    simp [List.lookup_append, leftFresh, typedBoolConstantFact]
+  have rightLookup : afterRight.definitions.lookup "%bool_right" =
+      some (typedBoolConstantFact rightValue) := by
+    rw [afterRightDefs]
+    simp [List.lookup_append, rightFresh, typedBoolConstantFact]
+  have leftOperand : operand afterRight "%bool_left" =
+      .ok (typedBoolConstantFact leftValue) := by
+    simp [Backend.Native.operand, leftLookup, leftValidBool,
+      Backend.Native.ensure, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  have rightOperand : operand afterRight "%bool_right" =
+      .ok (typedBoolConstantFact rightValue) := by
+    simp [Backend.Native.operand, rightLookup, rightValidBool,
+      Backend.Native.ensure, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  have leftText : (Json.str "%bool_left").getStr? = .ok "%bool_left" := rfl
+  have rightText : (Json.str "%bool_right").getStr? = .ok "%bool_right" := rfl
+  unfold arguments
+  rw [gateInputs]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, List.mapM_cons,
+    List.mapM_nil, Backend.Native.ensure, leftText, rightText,
+    leftOperand, rightOperand, typedBoolConstantFact,
+    Backend.Native.maxVectorLength, Noctium.fabHashNativeOperandLimit] <;>
+    (simp [Backend.Native.ensure, Except.map] <;> rfl)
 
 /-- One accepted two-input `and` gate exposes the reducer fact and its Bool
 output definition. NativeProducer's checked branch also validates each input
@@ -332,5 +432,61 @@ theorem accepted_bool_and_encode_output_boundary {expected : Expected}
   have decodedValue : NativeRelation.Operand.read witness (.reference outputName) =
       NativeRelation.bit (leftValue && rightValue) := outputSatisfied
   exact ⟨nativeFact, outputAccepted, decodedOutput, encodedMeaning, by simp [decodedValue]⟩
+
+/-- Exact accepted slice from two canonical Bool `load_constant` operations
+through the actual gate argument parser, Bool encode, and strict output decode.
+The witness equality remains an explicit decoded satisfaction assumption. -/
+theorem accepted_bool_constants_gate_encode_output {expected : Expected}
+    {witness : NativeRelation.Assignment}
+    {initial afterLeft afterConstants gateState encodedState outputState : State}
+    {leftInstruction rightInstruction gateInstruction encodeInstruction outputInstruction : Json}
+    {outputName : String} (leftValue rightValue : Bool)
+    (leftOpcode : stringField leftInstruction "op" = .ok "load_constant")
+    (leftType : stringField leftInstruction "type" = .ok "Bool")
+    (leftAccepted : validateInstruction expected initial leftInstruction = .ok afterLeft)
+    (leftOutput : stringField leftInstruction "output" = .ok "%bool_left")
+    (rightOpcode : stringField rightInstruction "op" = .ok "load_constant")
+    (rightType : stringField rightInstruction "type" = .ok "Bool")
+    (rightAccepted : validateInstruction expected afterLeft rightInstruction = .ok afterConstants)
+    (rightOutput : stringField rightInstruction "output" = .ok "%bool_right")
+    (gateInputsJson : arrayField gateInstruction "inputs" =
+      .ok #[Json.str "%bool_left", Json.str "%bool_right"])
+    (leftValueExact : ∀ value, value ≤ 1 →
+      defineResult initial leftInstruction (typedBoolConstantFact value) = .ok afterLeft →
+      value = if leftValue then 1 else 0)
+    (rightValueExact : ∀ value, value ≤ 1 →
+      defineResult afterLeft rightInstruction (typedBoolConstantFact value) = .ok afterConstants →
+      value = if rightValue then 1 else 0)
+    (gateOpcode : stringField gateInstruction "op" = .ok "and")
+    (gateAccepted : validateInstruction expected afterConstants gateInstruction = .ok gateState)
+    (encodeOpcode : stringField encodeInstruction "op" = .ok "encode")
+    (encodeInput : ∀ fact,
+      defineResult afterConstants gateInstruction (asTypedBoolFact fact) = .ok gateState →
+      argument gateState encodeInstruction "input" = .ok (asTypedBoolFact fact))
+    (encodeAccepted : validateInstruction expected gateState encodeInstruction = .ok encodedState)
+    (encodedOutput : arrayField encodeInstruction "outputs" = .ok #[Json.str outputName])
+    (outputAccepted : validateInstruction expected encodedState outputInstruction = .ok outputState)
+    (decodedOutput : NativeRelationJson.decodeInstruction outputInstruction =
+      .ok (.output [.reference outputName]))
+    (outputSatisfied : witness outputName = NativeRelation.bit (leftValue && rightValue)) :
+    ∃ nativeFact : Fact,
+      validateInstruction expected encodedState outputInstruction = .ok outputState ∧
+      NativeRelationJson.decodeInstruction outputInstruction = .ok (.output [.reference outputName]) ∧
+      interpretTypedBoolNative? nativeFact.term =
+        some (NativeRelation.bit (leftValue && rightValue)) ∧
+      [NativeRelation.Operand.read witness (.reference outputName)] =
+        [NativeRelation.bit (leftValue && rightValue)] := by
+  have inputsAccepted := accepted_bool_constant_pair_arguments
+    leftOpcode leftType leftAccepted leftOutput rightOpcode rightType rightAccepted rightOutput
+    gateInputsJson leftValueExact rightValueExact
+  exact accepted_bool_and_encode_output_boundary
+    (expected := expected) (witness := witness) (state := afterConstants)
+    (gateState := gateState) (encodedState := encodedState) (outputState := outputState)
+    (gateInstruction := gateInstruction) (encodeInstruction := encodeInstruction)
+    (outputInstruction := outputInstruction) (outputName := outputName)
+    (left := typedBoolConstantFact (if leftValue then 1 else 0))
+    (right := typedBoolConstantFact (if rightValue then 1 else 0))
+    leftValue rightValue gateOpcode gateAccepted inputsAccepted rfl rfl encodeOpcode
+    encodeInput encodeAccepted encodedOutput outputAccepted decodedOutput outputSatisfied
 
 end Noctium.Verification.ScalarValidationTypedBool
