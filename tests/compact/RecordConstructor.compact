@@ -1,0 +1,23 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Position {
+  amount: Uint<8>;
+  count: Uint<8>;
+  active: Boolean;
+}
+
+export sealed ledger positions: Map<Bytes<32>, Position>;
+
+constructor(owner: Bytes<32>, amount: Uint<8>, count: Uint<8>, active: Boolean, enabled: Boolean) {
+  positions.insert(disclose(owner), disclose(Position {
+    amount: 0 as Uint<8>, count: count, active: false,
+  }));
+  if (disclose(enabled)) {
+    positions.insert(disclose(owner), disclose(Position {amount, count, active}));
+  }
+}
+
+export circuit inspect(owner: Bytes<32>): Position {
+  return positions.lookup(disclose(owner));
+}

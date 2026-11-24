@@ -555,7 +555,7 @@ jobs:
               --test generic_scalar_cell_constructor -- --ignored
           NOCTIUM_RECORD_CONSTRUCTOR_DIR="$artifacts/record-constructor" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
-              --no-default-features --features zkir-321 --test flat_record_cell \
+              --no-default-features --features zkir-321 --test flat_record_cell --test record_constructor \
               record_constructor_initializes_cell_and_map -- --ignored
       - name: Check source proof registration
         run: |

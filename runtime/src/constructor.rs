@@ -94,6 +94,8 @@ pub enum ConstructorAction {
         state: String,
         key: Expr,
         fields: Vec<Expr>,
+        #[serde(default)]
+        guard: Option<Expr>,
     },
 }
 
@@ -638,18 +640,12 @@ fn apply_ordered_actions(
                 value,
                 guard,
             } => {
-                if let Some(guard) = guard {
-                    let guard = evaluate(guard, environment)?;
-                    ensure!(
-                        guard.scalar_type() == ScalarType::Bool,
-                        "constructor Map insert guard must be Bool"
-                    );
-                    let Value::Bool(guard) = guard else {
-                        bail!("constructor Map insert guard must be Bool")
-                    };
-                    if !guard {
-                        continue;
-                    }
+                if !constructor_guard_enabled(
+                    guard.as_ref(),
+                    environment,
+                    "constructor Map insert",
+                )? {
+                    continue;
                 }
                 let (slot, key, value) =
                     evaluate_map_insert(plan, map_name, key, value, environment)?;
@@ -730,7 +726,15 @@ fn apply_ordered_actions(
                 state: map_name,
                 key,
                 fields,
+                guard,
             } => {
+                if !constructor_guard_enabled(
+                    guard.as_ref(),
+                    environment,
+                    "constructor record Map insert",
+                )? {
+                    continue;
+                }
                 let (slot, schema) = record_map_slot(plan, map_name)?;
                 let key_value = evaluate(key, environment)?;
                 ensure!(
@@ -800,12 +804,20 @@ fn constructor_list_push_enabled(
     guard: Option<&Expr>,
     environment: &BTreeMap<String, Value>,
 ) -> Result<bool> {
+    constructor_guard_enabled(guard, environment, "constructor List push")
+}
+
+fn constructor_guard_enabled(
+    guard: Option<&Expr>,
+    environment: &BTreeMap<String, Value>,
+    action: &str,
+) -> Result<bool> {
     let Some(guard) = guard else {
         return Ok(true);
     };
     let guard = evaluate(guard, environment)?;
     let Value::Bool(enabled) = guard else {
-        bail!("constructor List push guard must be Bool")
+        bail!("{action} guard must be Bool")
     };
     Ok(enabled)
 }

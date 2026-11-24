@@ -923,6 +923,7 @@ inductive ConstructorAction where
   | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
   | initializeRecordCell (state : String) (fields : List LedgerFieldExpr)
   | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
+      (guard : Option (Expr .bool))
   | pushRecordList (state : String) (fields : List LedgerFieldExpr) (guard : Option (Expr .bool))
   | counterIncrement (action : ConstructorCounterIncrement)
   | initializeCellFromCounter (state counter : String)
@@ -2000,7 +2001,7 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       if initializerNames.contains stateName || orderedInitializerNames.contains stateName then
         throw {span, message := s!"duplicate constructor state initializer for '{stateName}'"}
       orderedInitializerNames := stateName :: orderedInitializerNames
-    | .insertRecordMap stateName key fields => do
+    | .insertRecordMap stateName key fields guard => do
       unless Types.validFieldName stateName do
         throw {span, message := s!"invalid constructor Map state name '{stateName}'"}
       let some destination := states.find? (·.name == stateName)
@@ -2024,6 +2025,10 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
       | .error message => throw {span := destination.span, message}
       | .ok _ => pure ()
+      if let some guard := guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
     | .pushRecordList stateName fields guard => do
       unless Types.validFieldName stateName do
         throw {span, message := s!"invalid constructor List state name '{stateName}'"}
