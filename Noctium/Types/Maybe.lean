@@ -5,7 +5,8 @@ namespace Noctium.Types.Maybe
 open Noctium
 
 /-- A stable scalar `Maybe<T>` specialization name for logical output schemas. -/
-def scalarTypeId (contractName : String) (payloadType : Ty) : Except String DeclId := do
+def scalarTypeId (contractName : String) (payloadType : Ty)
+    (nominalUInt? : Option NominalUIntType := none) : Except String DeclId := do
   let suffix ← match payloadType with
     | .native => pure "Native"
     | .bool => pure "Bool"
@@ -17,9 +18,27 @@ def scalarTypeId (contractName : String) (payloadType : Ty) : Except String Decl
       else
         pure s!"UIntRange{maximum + 1}"
     | _ => throw "Maybe payload must be a Native, Bool, or UInt scalar"
+  let suffix := match nominalUInt? with
+    | none => suffix
+    | some nominalUInt => s!"{suffix}Of{nominalUInt.name}"
+  if let some nominalUInt := nominalUInt? then
+    unless payloadType == .uint nominalUInt.maximum do
+      throw "nominal UInt Maybe payload bound does not match its declaration"
   let id := s!"{contractName}.Maybe{suffix}"
   unless validDeclId id do throw "invalid scalar Maybe type id"
   pure id
+
+/-- Source-only nominal UInt identities carried by the scalar `Maybe` payload.
+The wire schema still stores the ordinary bounded UInt field. -/
+def scalarNominalUIntFields (payloadType : Ty)
+    (nominalUInt? : Option NominalUIntType) : Except String (List (List String × NominalUIntType)) := do
+  match nominalUInt? with
+  | none => pure []
+  | some nominalUInt => do
+    unless payloadType == .uint nominalUInt.maximum do
+      throw "nominal UInt Maybe payload bound does not match its declaration"
+    ScalarPolicy.validate payloadType.scalarKind
+    pure [(["value"], nominalUInt)]
 
 /-- The one ordered field source shared by scalar Maybe schemas and frontend
 return views. -/
