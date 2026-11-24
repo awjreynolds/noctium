@@ -38,6 +38,19 @@ try {
   ]);
   assert.deepEqual(identityProjection, [0n, 1n]);
 
+  const fieldModulus = 52435875175126190479447740508185965837690552500527637822603658699938581184513n;
+  const constructionCases = [
+    ['generator', point],
+    ['identity', identity],
+    ['offCurve', { x: 0n, y: 0n }],
+    ['lowOrder', { x: 0n, y: fieldModulus - 1n }],
+  ];
+  const construction = Object.fromEntries(constructionCases.map(([name, input]) => {
+    const output = pureCircuits.construct(input.x, input.y);
+    assert.deepEqual(output, input, name);
+    return [name, { x: output.x.toString(), y: output.y.toString() }];
+  }));
+
   const generatedPoint = runtime.ecMulGenerator(scalar);
   const multiplied = runtime.ecMul(point, scalar);
   const sum = runtime.ecAdd(point, identity);
@@ -71,6 +84,7 @@ try {
       generator: generatorProjection.map(String),
       identity: identityProjection.map(String),
     },
+    construction,
     input: { pointX: point.x.toString(), pointY: point.y.toString(), rawScalar: scalar.toString() },
     outputs: Object.fromEntries(Object.entries(result).map(([name, value]) => [name, value.toString()])),
   }));

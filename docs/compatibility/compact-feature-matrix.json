@@ -5279,7 +5279,7 @@
       "layer": "standard-library",
       "surface": "constructJubjubPoint",
       "noctiumStatus": "subset",
-      "notes": "Native coordinate inputs pass through checked Jubjub point construction and bind the resulting x/y coordinates. The paired fixture checks the valid generator and identity only, so invalid-coordinate rejection is not compared.",
+      "notes": "The typed Noctium constructor and pinned Compact 0.36.1 pure runtime agree on the generator and identity. Noctium rejects off-curve and low-order coordinates during preparation. The pinned Compact pure runtime returns both coordinate pairs unchanged. The native K6 relation proves the generator case and rejects an altered return commitment. The invalid-input difference keeps equivalence unverified.",
       "source": [
         "stdlib",
         "stdlibSource",

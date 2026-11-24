@@ -41,6 +41,11 @@ noctium_circuit jubjubPointProjectionInputs where
   output y : Native := disclose(jubjubY(point))
 end
 
+noctium_circuit jubjubPointConstructInputs where
+  private x : Native
+  private y : Native
+end
+
 noctium_contract JubjubGroupParity where
   entry groupParity uses jubjubGroupParityInputs where
     return resultCheckedX : Native := checkedX
@@ -62,6 +67,9 @@ noctium_contract JubjubGroupParity where
   entry project uses jubjubPointProjectionInputs where
     return resultX : Native := x
     return resultY : Native := y
+  end
+  entry construct uses jubjubPointConstructInputs where
+    return result : JubjubPoint := disclose(jubjubFromCoordinates(x, y))
   end
 end
 
