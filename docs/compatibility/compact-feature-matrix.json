@@ -4528,7 +4528,7 @@
       "layer": "standard-library",
       "surface": "ContractAddress",
       "noctiumStatus": "subset",
-      "notes": "The canonical Bytes32 codec carries ContractAddress through readable output bindings and self-address reads. The shielded relay checks the nominal recipient and emits the existing Bytes32 plan slot. Broader nominal argument and return types remain open.",
+      "notes": "The shared Bytes32 record codec carries ContractAddress through readable output bindings, self-address reads and typed circuit arguments. The shielded relay checks the nominal recipient and emits the existing Bytes32 plan slot. The paired PublicAddress fixture returns the distinct ContractAddress arm with exact input bytes.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4544,7 +4544,9 @@
       "observedEvidence": [
         "tests/NominalShieldedRecipients.lean",
         "tests/compact/ShieldedCoinMap.compact",
-        "tests/compact/shielded-coin-map.mjs"
+        "tests/compact/shielded-coin-map.mjs",
+        "Noctium/Midnight/PublicAddress.lean",
+        "tests/PublicAddressValue.lean"
       ],
       "equivalence": "unverified"
     },
@@ -4658,7 +4660,7 @@
       "layer": "standard-library",
       "surface": "UserAddress",
       "noctiumStatus": "subset",
-      "notes": "A named UserAddress wire codec supplies a nominal Bytes32 binding to the unshielded spend effect. Lean rejects a shielded key or contract address in the user branch.",
+      "notes": "The shared UserAddress Bytes32 record codec supplies a nominal binding to the unshielded spend effect and supports typed circuit arguments. Lean rejects a shielded key or contract address in the user branch. The paired PublicAddress fixture returns the distinct UserAddress arm with exact input bytes.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4674,7 +4676,9 @@
       "observedEvidence": [
         "tests/TypedPublicAddress.lean",
         "tests/NativeUnshieldedSend.lean",
-        "tests/compact/unshielded-send.mjs"
+        "tests/compact/unshielded-send.mjs",
+        "Noctium/Midnight/PublicAddress.lean",
+        "tests/PublicAddressValue.lean"
       ],
       "equivalence": "unverified"
     },
@@ -4683,7 +4687,7 @@
       "layer": "standard-library",
       "surface": "PublicAddress",
       "noctiumStatus": "subset",
-      "notes": "Typed user and contract constructors bind a fixed recipient tag before lowering. The two authored effects emit the same operations as the existing native-checked raw tag cases. This scope covers unshielded spend arguments, with aggregate transport and other operations still open.",
+      "notes": "Typed user and contract constructors bind a fixed recipient tag before lowering. The two authored effects emit the same operations as the existing native-checked raw tag cases. The shared checked Either codec preserves both supplied arms and the tag through a typed circuit input and logical return. New branch construction zeros the inactive arm. The focused cases match Compact 0.36.1 and emit Ledger 9 ZKIR 3.2.1 relations. Broader ledger effect qualification remains open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4699,7 +4703,10 @@
       "observedEvidence": [
         "tests/TypedPublicAddress.lean",
         "tests/NativeUnshieldedSend.lean",
-        "tests/compact/unshielded-send.mjs"
+        "tests/compact/unshielded-send.mjs",
+        "Noctium/Midnight/PublicAddress.lean",
+        "tests/PublicAddressValue.lean",
+        "tests/compact/public-address-value.mjs"
       ],
       "equivalence": "unverified"
     },

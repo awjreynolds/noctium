@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit echo(address: PublicAddress): PublicAddress {
+  return address;
+}
+
+export pure circuit asContract(address: Bytes<32>): PublicAddress {
+  return left<ContractAddress, UserAddress>(ContractAddress{bytes: address});
+}
+
+export pure circuit asUser(address: Bytes<32>): PublicAddress {
+  return right<ContractAddress, UserAddress>(UserAddress{bytes: address});
+}

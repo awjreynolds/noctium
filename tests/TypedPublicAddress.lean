@@ -6,28 +6,15 @@ import Noctium.Backend.Zkir
 import Noctium.Compiler
 import Noctium.Disclosure
 import Noctium.Frontend
+import Noctium.Midnight.PublicAddress
 
 open Lean
 open scoped Noctium
 open Noctium
 
-private def contractAddressWire : Helpers.Wire.Codec := {
-  payload := .structure "Noctium.Midnight.ContractAddress"
-  frameBytes := 32
-  composites := {structures := [{
-    id := "Noctium.Midnight.ContractAddress"
-    fields := [{name := "bytes", type := .bytes 32}]
-  }]}
-}
+private def contractAddressWire := Midnight.ContractAddress.codec
 
-private def userAddressWire : Helpers.Wire.Codec := {
-  payload := .structure "Noctium.Midnight.UserAddress"
-  frameBytes := 32
-  composites := {structures := [{
-    id := "Noctium.Midnight.UserAddress"
-    fields := [{name := "bytes", type := .bytes 32}]
-  }]}
-}
+private def userAddressWire := Midnight.UserAddress.codec
 
 private def zswapCoinPublicKeyWire : Helpers.Wire.Codec := {
   payload := .structure "Noctium.Midnight.ZswapCoinPublicKey"
