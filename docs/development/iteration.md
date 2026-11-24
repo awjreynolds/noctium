@@ -145,7 +145,9 @@ gets the element type when a declared vector witness argument specifies it.
 The map result may pass through direct aliases in a `let ... in ...`
 expression or statements in the same block. A shadowed binding has its own
 scope. The callback may pass its item through local aliases and conditional
-result arms. Conditions and arithmetic operands still require their own types.
+result arms. A compatible typed arm also supplies the type of an unresolved
+sibling arm when the context has no declared result type. Conditions and
+arithmetic operands still require their own types.
 In a readable fold, the seed determines the omitted accumulator type.
 
 The [empty-tuple fixture](../../tests/EmptyTupleIteration.lean) folds over the result

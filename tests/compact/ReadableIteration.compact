@@ -44,3 +44,24 @@ export circuit emptyNativeMap(): Field {
   const forwarded = mapped;
   return disclose(acceptEmptyNativeVector(forwarded));
 }
+
+// No consumer supplies the result type. Keep a typed Field sibling in each
+// branch position to match the Lean inference cases.
+export circuit emptyNativeMapSiblingElse(chooseItem: Boolean): Boolean {
+  const mapped = map((item) => chooseItem ? item : (0 as Field), emptyTupleItems());
+  return mapped == [];
+}
+
+export circuit emptyNativeMapSiblingThen(chooseItem: Boolean): Boolean {
+  const mapped = map((item) => chooseItem ? (0 as Field) : item, emptyTupleItems());
+  return mapped == [];
+}
+
+export circuit emptyNativeMapUnresolvedBranches(chooseItem: Boolean): Boolean {
+  const mapped = map((item) => chooseItem ? item : item, emptyTupleItems());
+  return mapped == [];
+}
+
+export circuit emptyNativeMapDeclaredContext(): Vector<0, Field> {
+  return map((item) => true ? item : item, emptyTupleItems());
+}
