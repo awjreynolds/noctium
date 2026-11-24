@@ -748,13 +748,16 @@ def LedgerValueType.ledgerRecordWriteFields (environment : Types.CompositeEnv)
     | .ok _ => .error "shielded coin records require their specialized write effect"
     | .error _ => LedgerValueType.ledgerRecordFields environment type
 
-/-- Record Set keys accept the fixed-byte fields supported by the ordinary
-typed record layout. Keep the broader Map and List value policies separate. -/
+/-- Record Set keys retain checked Native vector layouts. Flat typed keys also
+accept fixed Bytes widths. Root record Maps reuse this key policy, while nested
+Map keys and values keep their narrower policy. -/
 def LedgerValueType.recordSetKeyFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) := do
   match LedgerValueType.shieldedCoinRecordFields environment type with
   | .ok _ => throw "shielded coin records require their specialized write effect"
-  | .error _ => flatTypedRecordFields environment type true
+  | .error _ => match type with
+    | .vector _ (.scalar .native) => LedgerValueType.recordFields environment type
+    | _ => flatTypedRecordFields environment type true
 
 /-- Root record-key Maps accept the same flat fixed-byte layouts as root record
 Sets. Keep nested Map keys and record Map values on the narrower ledger record
