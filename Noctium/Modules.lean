@@ -971,30 +971,39 @@ private def resolveModuleCellKind (limits : Limits) (span : SourceSpan)
     | _ => .cell <$> resolveStateScalar limits span types naturals value
   | _ => .cell <$> resolveStateScalar limits span types naturals value
 
+private def moduleRecordType? (types : TypeEnvironment) : ModuleScalarType → Option ModuleTypeValue
+  | .parameter name => do
+    let type ← types.lookup name
+    match type.value with
+    | .structure _ => some type
+    | _ => none
+  | _ => none
+
 private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
     (types : TypeEnvironment) (naturals : NaturalEnvironment) :
     ModuleStateKind → Except Diagnostic StateKind
   | .cell value => resolveModuleCellKind limits span types naturals value
   | .map key value => do
-    if let .parameter name := key then
-      if let some moduleType := types.lookup name then
-        if let .structure _ := moduleType.value then
-          let _ ← (LedgerValueType.ledgerRecordWriteFields
-            moduleType.environment moduleType.value).mapError fun message =>
-              {span, message}
-          let valueTy ← resolveStateScalar limits span types naturals value
-          if valueTy.isOpaqueBytes || valueTy.isOpaqueString then
-            fail span "opaque types are not supported by module Map state specialization"
-          return .tree (.recordMapKey moduleType.environment moduleType.value valueTy)
+    let recordValue := moduleRecordType? types value
+    if let some recordKey := moduleRecordType? types key then
+      discard <| (LedgerValueType.ledgerRecordWriteFields
+        recordKey.environment recordKey.value).mapError fun message => {span, message}
+      if let some recordValue := recordValue then
+        discard <| (LedgerValueType.ledgerRecordWriteFields
+          recordValue.environment recordValue.value).mapError fun message => {span, message}
+        return .tree (.recordMapComposite recordKey.environment recordKey.value
+          recordValue.environment recordValue.value)
+      let valueTy ← resolveStateScalar limits span types naturals value
+      if valueTy.isOpaqueBytes || valueTy.isOpaqueString then
+        fail span "opaque types are not supported by module Map state specialization"
+      return .tree (.recordMapKey recordKey.environment recordKey.value valueTy)
     let keyTy ← resolveModuleMapKeyType limits span types naturals key
     if keyTy.isOpaqueBytes || keyTy.isOpaqueString then
       fail span "opaque types are not supported by module Map state specialization"
-    if let .parameter name := value then
-      if let some moduleType := types.lookup name then
-        if let .structure _ := moduleType.value then
-          match LedgerValueType.ledgerRecordWriteFields moduleType.environment moduleType.value with
-          | .ok _ => return .tree (.map keyTy (.composite moduleType.environment moduleType.value))
-          | .error message => fail span message
+    if let some recordValue := recordValue then
+      discard <| (LedgerValueType.ledgerRecordWriteFields
+        recordValue.environment recordValue.value).mapError fun message => {span, message}
+      return .tree (.map keyTy (.composite recordValue.environment recordValue.value))
     let valueTy ← resolveStateScalar limits span types naturals value
     if valueTy.isOpaqueBytes || valueTy.isOpaqueString then
       fail span "opaque types are not supported by module Map state specialization"
@@ -1126,7 +1135,8 @@ private def validateModuleEntrypoints (state : ExpansionState)
         | .writeRecordCell .., some (.tree (.composite ..))
         | .writeMapInput .., some (.map ..)
         | .writeMapInput .., some (.tree (.map _ (.composite ..)))
-        | .writeMapInput .., some (.tree (.recordMapKey ..)) => pure ()
+        | .writeMapInput .., some (.tree (.recordMapKey ..))
+        | .writeMapInput .., some (.tree (.recordMapComposite ..)) => pure ()
         | .readMap _ _ keyTy valueTy _, some (.map actualKeyTy actualValueTy)
         | .writeMap _ keyTy valueTy _ _, some (.map actualKeyTy actualValueTy) =>
           unless keyTy == actualKeyTy && valueTy == actualValueTy do
@@ -1621,6 +1631,15 @@ private def resolveContractEffect (expansion : Expansion) (moduleInstance : Modu
       let value := if disclosed then Expr.disclose effectSpec.span source else source
       pure (.writeRecordMap fieldName keyValues valueTy value [], [identity],
         keyChecks ++ [.scalar name valueTy effectSpec.span "Map"])
+    | .tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType) => do
+      let (keyValues, keyChecks) ← resolveModuleRecordMapKey effectSpec.span
+        keyEnvironment keyType key "Map key"
+      let fields ← (LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType).mapError
+        fun message => {span := effectSpec.span, message}
+      let (valueValues, valueCheck) ← lowerRecordInput effectSpec.span valueEnvironment
+        valueType fields "Map" name disclosed
+      pure (.writeRecordMapComposite fieldName valueType keyValues valueValues [], [identity],
+        keyChecks ++ [valueCheck])
     | _ => fail effectSpec.span "module input write requires a root Map"
   | .writeMap target keyTy valueTy key value => do
     let (identity, fieldName, _) ← resolveState target
@@ -1662,12 +1681,12 @@ private def scalarValueReturn (returned : StateValueReturn) (ty : Ty) (stateKind
   ([output], none, read destination, identity)
 
 private def recordValueReturn (returned : StateValueReturn) (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) (fields : List (String × Ty)) (fieldName : String)
-    (keys : List PathKey) (identity : MemberIdentity) :
+    (type : Types.CompositeType) (fields : List (String × Ty))
+    (readEffect : String → List (String × Ty) → Effect) (identity : MemberIdentity) :
     List Output × Option ReturnView × Effect × MemberIdentity := Id.run do
   let destination := s!"moduleRecordValue_{returned.name}"
   let destinations := recordCellDestinations destination fields
-  let read := Effect.readCompositePath fieldName destination keys type destinations
+  let read := readEffect destination destinations
   let values := destinations.flatMap fun (name, ty) =>
     match ty with
     | .bytes length =>
@@ -1692,7 +1711,9 @@ private def resolveCellValueReturn (expansion : Expansion) (moduleInstance : Mod
     pure (scalarValueReturn returned ty "Cell" (fun destination => .readCell fieldName destination ty) identity)
   | .tree (.composite environment type) => do
     let fields ← recordCellReadFields returned.span environment type
-    pure (recordValueReturn returned environment type fields fieldName [] identity)
+    pure (recordValueReturn returned environment type fields
+      (fun destination destinations =>
+        .readCompositePath fieldName destination [] type destinations) identity)
   | _ => fail returned.span "module return requires a root Cell"
 
 private def resolveMapValueReturn (expansion : Expansion) (moduleInstance : ModuleInstance)
@@ -1713,13 +1734,24 @@ private def resolveMapValueReturn (expansion : Expansion) (moduleInstance : Modu
     let fields ← (LedgerValueType.ledgerRecordFields environment type).mapError fun message =>
       {span := returned.span, message}
     let (outputs, view, read, state) := recordValueReturn returned.toStateValueReturn
-      environment type fields fieldName [pathKey] identity
+      environment type fields (fun destination destinations =>
+        .readCompositePath fieldName destination [pathKey] type destinations) identity
     pure (outputs, view, read, state, keyChecks)
   | .tree (.recordMapKey keyEnvironment keyType valueTy) => do
     let (keyValues, keyChecks) ← resolveModuleRecordMapKey returned.span
       keyEnvironment keyType returned.key "Map key"
     let (outputs, view, read, state) := scalarValueReturn returned.toStateValueReturn valueTy "Map"
       (fun destination => .readRecordMap fieldName destination valueTy keyValues []) identity
+    pure (outputs, view, read, state, keyChecks)
+  | .tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType) => do
+    let (keyValues, keyChecks) ← resolveModuleRecordMapKey returned.span
+      keyEnvironment keyType returned.key "Map key"
+    let fields ← (LedgerValueType.ledgerRecordFields valueEnvironment valueType).mapError
+      fun message => {span := returned.span, message}
+    let (outputs, view, read, state) := recordValueReturn
+      returned.toStateValueReturn valueEnvironment valueType fields
+      (fun destination destinations =>
+        .readRecordMapComposite fieldName destination valueType keyValues destinations []) identity
     pure (outputs, view, read, state, keyChecks)
   | _ => fail returned.span "module lookup return requires a root Map"
 
