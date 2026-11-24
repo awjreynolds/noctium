@@ -5428,8 +5428,8 @@
       "id": "C-STDLIB-SECP256K1POINTX",
       "layer": "standard-library",
       "surface": "secp256k1PointX",
-      "noctiumStatus": "subset",
-      "notes": "Lean curveX projects the typed Secp256k1 generator to the exact pinned Compact x-coordinate. The return keeps the curve Base type.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean curveX projects the typed Secp256k1 generator to the exact pinned Compact x-coordinate. The return keeps the curve Base type. Compact 0.36.1 and native ZKIR 3.2.1 match the typed generator output. Each curve rejects affine projection of its identity. The emitted K12 relation proves and verifies the four generator coordinates with official parameters. Verification rejects a changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5447,16 +5447,17 @@
         "runtime/tests/secp_projections.rs",
         "tests/compact/secp-projections.mjs",
         "tests/ForeignOperations.lean",
-        "runtime/tests/foreign_operations.rs"
+        "runtime/tests/foreign_operations.rs",
+        "tests/compact/SecpProjections.compact"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SECP256K1POINTY",
       "layer": "standard-library",
       "surface": "secp256k1PointY",
-      "noctiumStatus": "subset",
-      "notes": "Lean curveY projects the typed Secp256k1 generator to the exact pinned Compact y-coordinate. The return keeps the curve Base type.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean curveY projects the typed Secp256k1 generator to the exact pinned Compact y-coordinate. The return keeps the curve Base type. Compact 0.36.1 and native ZKIR 3.2.1 match the typed generator output. Each curve rejects affine projection of its identity. The emitted K12 relation proves and verifies the four generator coordinates with official parameters. Verification rejects a changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5474,9 +5475,10 @@
         "runtime/tests/secp_projections.rs",
         "tests/compact/secp-projections.mjs",
         "tests/ForeignOperations.lean",
-        "runtime/tests/foreign_operations.rs"
+        "runtime/tests/foreign_operations.rs",
+        "tests/compact/SecpProjections.compact"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SECP256R1POINT",
@@ -5563,8 +5565,8 @@
       "id": "C-STDLIB-SECP256R1POINTX",
       "layer": "standard-library",
       "surface": "secp256r1PointX",
-      "noctiumStatus": "subset",
-      "notes": "Lean curveX projects the typed Secp256r1 generator to the exact pinned Compact x-coordinate. The return keeps the curve Base type.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean curveX projects the typed Secp256r1 generator to the exact pinned Compact x-coordinate. The return keeps the curve Base type. Compact 0.36.1 and native ZKIR 3.2.1 match the typed generator output. Each curve rejects affine projection of its identity. The emitted K12 relation proves and verifies the four generator coordinates with official parameters. Verification rejects a changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5582,16 +5584,17 @@
         "runtime/tests/secp_projections.rs",
         "tests/compact/secp-projections.mjs",
         "tests/ForeignOperations.lean",
-        "runtime/tests/foreign_operations.rs"
+        "runtime/tests/foreign_operations.rs",
+        "tests/compact/SecpProjections.compact"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SECP256R1POINTY",
       "layer": "standard-library",
       "surface": "secp256r1PointY",
-      "noctiumStatus": "subset",
-      "notes": "Lean curveY projects the typed Secp256r1 generator to the exact pinned Compact y-coordinate. The return keeps the curve Base type.",
+      "noctiumStatus": "equivalent",
+      "notes": "Lean curveY projects the typed Secp256r1 generator to the exact pinned Compact y-coordinate. The return keeps the curve Base type. Compact 0.36.1 and native ZKIR 3.2.1 match the typed generator output. Each curve rejects affine projection of its identity. The emitted K12 relation proves and verifies the four generator coordinates with official parameters. Verification rejects a changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5609,9 +5612,10 @@
         "runtime/tests/secp_projections.rs",
         "tests/compact/secp-projections.mjs",
         "tests/ForeignOperations.lean",
-        "runtime/tests/foreign_operations.rs"
+        "runtime/tests/foreign_operations.rs",
+        "tests/compact/SecpProjections.compact"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-CURVE25519POINT",

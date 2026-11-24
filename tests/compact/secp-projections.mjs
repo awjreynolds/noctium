@@ -37,6 +37,26 @@ try {
   const rPoint = runtime.secp256r1MulGenerator(1n);
   const kScalar = 5n;
   const rScalar = 7n;
+  const kIdentity = runtime.secp256k1MulGenerator(0n);
+  const rIdentity = runtime.secp256r1MulGenerator(0n);
+  assert.throws(
+    () => pureCircuits.inspect(kIdentity, kScalar, rPoint, rScalar),
+    { name: 'CompactError', message: 'cannot extract the x-coordinate of the secp256k1 identity point' },
+  );
+  assert.throws(
+    () => pureCircuits.inspect(kPoint, kScalar, rIdentity, rScalar),
+    { name: 'CompactError', message: 'cannot extract the x-coordinate of the secp256r1 identity point' },
+  );
+  for (const [family, point] of [['secp256k1', kIdentity], ['secp256r1', rIdentity]]) {
+    assert.throws(
+      () => runtime[`${family}PointX`](point),
+      { name: 'CompactError', message: `cannot extract the x-coordinate of the ${family} identity point` },
+    );
+    assert.throws(
+      () => runtime[`${family}PointY`](point),
+      { name: 'CompactError', message: `cannot extract the y-coordinate of the ${family} identity point` },
+    );
+  }
   const values = pureCircuits.inspect(kPoint, kScalar, rPoint, rScalar);
   assert.deepEqual(values, [kPoint, kScalar, kPoint.x, kPoint.y, rPoint, rScalar, rPoint.x, rPoint.y]);
 
