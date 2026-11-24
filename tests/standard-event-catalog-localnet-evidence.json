@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-24",
+  "scope": "One fresh deployment and one logCatalog call on the isolated development Ledger 9 chain. The receipt checks the exact ordered version, tag, aligned payload width, and full-width payload SHA-256 for all eleven finalized logs. The tested choice values are hasCiphertext=true, hasContractAddress=false, hasAmount=true, UnshieldedSpend isUser=true, UnshieldedReceive isUser=false, and UnshieldedBurn isUser=true. Other optional and address flag combinations remain unqualified.",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "network": {
+    "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "networkId": "undeployed",
+    "profile": "midnight-ledger-9-zkir-3.2.1",
+    "specVersion": 2001100,
+    "transactionVersion": 4
+  },
+  "compiler": {
+    "implementation": "Lean4",
+    "sourceRevision": "cdca6d72d55391869d46920a09617a2c0a1708b1",
+    "toolchain": "leanprover/lean4:v4.35.0",
+    "source": "examples/StandardEvents.lean",
+    "sourceSha256": "1c49d8de7bffb1d439c0996f666ba4bcaafa56c60674655cf640f2b5c2705447"
+  },
+  "compactReference": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "runtime": "0.21.0",
+    "source": "tests/compact/StandardEventCatalog.compact",
+    "sourceSha256": "bb47d1b508457da9ba836fff4f9bbc8b50c040b4224a48f3b6d6666c821edf21",
+    "runner": "tests/compact/standard-event-catalog.mjs",
+    "runnerSha256": "accdcaa5833b557535fae22dd9c421fec1d50e127c61caa69eb60ca9f037c65b",
+    "payloadReferenceSha256": "8820099a33404eb0ab73e62c267620f967a394686177d83a4f3d292d2a4b7e42"
+  },
+  "nativeToolchain": {
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "release": "3.2.1",
+    "binarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "cargoLockSha256": "f6044eb43d4d8e6f2ed3dab33cb8f70fe1a59784fcc987e18aef4dab46a16c6b"
+  },
+  "artifacts": {
+    "entrypoint": "logCatalog",
+    "bundleManifestSha256ByOperation": {
+      "logSpend": "e0cb56e553834e625709c24ade7908021488a7da7e3d4bc5578f8d033f29d90b",
+      "logCatalog": "d94b9173c36cdbe34b2f97d868888b1cbe5f5c152956f6366906c246239bf161",
+      "logHelperSpend": "2c7c596c38f7ef9990ce03b424886cdb982f948853731166a86015497a9fc035"
+    },
+    "circuitSha256": "a18241e6ba1a7ee217dab473649880436759f1c317ab5c058fad33a85cf02a9f",
+    "impactPlanSha256": "0e549cae36853afd40228c818b277d12b7e69c44a709a9072c96c4e8672b2353",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "ledgerParametersSha256": "b83717ae6b9cbffa2585f0db97d42796331d395b5e089772565f46290a23719a",
+    "proverKeySha256": "27dc14083a7c144a5cb3605d91542d0121a331ac97d4be5c89b46d40a664754c",
+    "verifierKeySha256": "3f5778cbad4a073fad9ccb626a896ad7861dfed4ed08b90e2e8b1e5a8c23b365",
+    "toolchainManifestSha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+    "k": 13
+  },
+  "contractAddress": "78a6c661a2e102254f4213d92a7b5ed19aec1eed6e1f66ee650c8d04fd9211ce",
+  "deployment": {
+    "blockHash": "4fbd0009a3c8f1598a82fceaf7d02991476d9e088064dd7a7f6ea7ad82ad74e7",
+    "extrinsicHash": "22477e49a616e46f4fba8852b1c940dea25065e8cdab673ec788129ebf809d14",
+    "extrinsicIndex": 4,
+    "finalizedHash": "4fbd0009a3c8f1598a82fceaf7d02991476d9e088064dd7a7f6ea7ad82ad74e7",
+    "finalizedHeight": 83708,
+    "height": 83708,
+    "transactionId": "2677b2a5a4ea89b812e99e51a3f4e5fca1e3772547eb72c400f52f68e400926f"
+  },
+  "call": {
+    "blockHash": "7fe569b30f4230c750e8a2a1e9a4461b6ba8d6369a4bf24a6358a8837b39511a",
+    "extrinsicHash": "460d40a8ef1c15a215d996b0a3ded80064221887a881c54f26fed589a45569ee",
+    "extrinsicIndex": 4,
+    "finalizedHash": "7fe569b30f4230c750e8a2a1e9a4461b6ba8d6369a4bf24a6358a8837b39511a",
+    "finalizedHeight": 83711,
+    "height": 83711,
+    "transactionId": "e1087a1ce8350c6844c8a4d0be33a76bee4c4b2d52514dd4c23b6770f03c573e"
+  },
+  "logs": [
+    {"version": 1, "tag": 0, "payloadLength": 32, "payloadSha256": "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9"},
+    {"version": 1, "tag": 1, "payloadLength": 578, "payloadSha256": "1f894f5631ee86b966eb75cb30000fb875358b76941b3bd74240ef6ab8ede75f"},
+    {"version": 1, "tag": 2, "payloadLength": 81, "payloadSha256": "b329b5b9d69bf9cc6ab38fd41b423a9affad55818d6b6b3986480d8cba3cb70c"},
+    {"version": 1, "tag": 3, "payloadLength": 49, "payloadSha256": "613499b3079da64d91e1a334445d217519649cda4ed3884dfa6342b3d57011ac"},
+    {"version": 1, "tag": 4, "payloadLength": 145, "payloadSha256": "a8d750bd5550bc06d48b3b48ede2c4288fe6936c14134b069c736cd0af16360c"},
+    {"version": 1, "tag": 5, "payloadLength": 145, "payloadSha256": "e78bc48c9e71b2f201d3cac5a096ee7893bec1416f0650a347c0304b37d976cd"},
+    {"version": 1, "tag": 6, "payloadLength": 80, "payloadSha256": "e347b43bac53302784c05ab04d42504d02b4f73db937e9d7c084472474c77d08"},
+    {"version": 1, "tag": 7, "payloadLength": 113, "payloadSha256": "aeb91a0abf52d4a369ae937e8b9776c4d0dcb29cc58e6b7833fa6b231a77508b"},
+    {"version": 1, "tag": 8, "payloadLength": 0, "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    {"version": 1, "tag": 9, "payloadLength": 0, "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    {"version": 1, "tag": 10, "payloadLength": 288, "payloadSha256": "3cb9fe229efe9f4eb74a3865ded415c6d9e549235a1a96b68f93f8d5a3cf08a8"}
+  ],
+  "stateUnchanged": true,
+  "checks": {
+    "exactFinalizedEventBytesChecked": true,
+    "allElevenFinalizedLogsMatchPinnedCompact": true,
+    "catalogCallLeavesContractStateUnchanged": true
+  }
+}

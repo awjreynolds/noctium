@@ -4826,6 +4826,192 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "spends the published development wallet on the pinned isolated localnet"]
+    fn standard_event_catalog_finalizes_all_logs() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::{Alignment, AlignmentAtom};
+        use futures::executor::block_on;
+        use onchain_runtime::state::StateValue;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_STANDARD_EVENTS_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_STANDARD_EVENTS_MANIFESTS")?)?;
+            let mut bundles = Vec::new();
+            let mut catalog_k = None;
+            let mut catalog_compiler = None;
+            let mut catalog_artifacts = None;
+            for entry in ["logSpend", "logCatalog", "logHelperSpend"] {
+                let pin = pins.get(entry).with_context(|| format!("missing {entry} manifest pin"))?;
+                let bundle = artifacts::verify(&Path::new(&directory).join(entry), Some(pin))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(plan.entrypoint == entry, "bundle directory does not match operation");
+                if entry == "logCatalog" {
+                    let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                    catalog_k = Some(circuit.k());
+                    catalog_compiler = Some(bundle.manifest().compiler.clone());
+                    catalog_artifacts = Some(bundle.manifest().entries.clone());
+                }
+                bundles.push(bundle);
+            }
+            let catalog_k = catalog_k.context("missing logCatalog circuit")?;
+            let catalog_compiler = catalog_compiler.context("missing logCatalog compiler identity")?;
+            let catalog_artifacts = catalog_artifacts.context("missing logCatalog artifacts")?;
+            let manifest_pin = pins.get("logCatalog").context("missing logCatalog manifest pin")?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_STANDARD_EVENTS_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let parameters = cache.parameters(catalog_k).await?;
+            let funded = FundedLedgerTest::connect(
+                &setting("NOCTIUM_STANDARD_EVENTS_NODE")?,
+                &cache,
+            )
+            .await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation("logCatalog", &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, "logCatalog").await?;
+            let mut current = Some(deployed);
+            let bytes = |length: usize, start: usize| {
+                let values: Vec<_> = (0..length)
+                    .map(|index| ((start + index) % 256) as u8)
+                    .collect();
+                json!({"kind":"bytes","values":values})
+            };
+            let inputs = BTreeMap::from([
+                ("commitment".into(), bytes(32, 1)),
+                ("domain".into(), bytes(32, 225)),
+                ("ciphertext".into(), bytes(512, 1)),
+                ("memo".into(), bytes(256, 2)),
+                ("value".into(), json!(((1u128 << 127) + 0x10203).to_string())),
+            ]);
+            let (bound, call_receipt) = funded
+                .call_with_bound(&operation, &mut current, &parameters, inputs)
+                .await?;
+            ensure!(
+                deployment.contract_state == call_receipt.contract_state,
+                "catalog call changed contract state"
+            );
+            let logs = finalized_contract_logs(&funded.node, &bound, &call_receipt)?;
+            let reference_bytes = include_bytes!("../../tests/standard-event-catalog-compact.json");
+            let compact_source = include_bytes!("../../tests/compact/StandardEventCatalog.compact");
+            let compact_runner = include_bytes!("../../tests/compact/standard-event-catalog.mjs");
+            let reference: serde_json::Value = serde_json::from_slice(reference_bytes)?;
+            let expected = reference["events"].as_array().context("missing Compact event list")?;
+            ensure!(expected.len() == 11 && logs.len() == expected.len(), "catalog log count differs");
+            let contract_address = bound.contract_address().to_owned();
+            let entrypoint = onchain_runtime::state::EntryPointBuf(b"logCatalog".to_vec());
+            let mut observed = Vec::with_capacity(logs.len());
+            for (log, expected) in logs.iter().zip(expected) {
+                ensure!(
+                    hex::encode(log.address.0.0) == contract_address,
+                    "event belongs to another contract"
+                );
+                ensure!(log.entry_point == entrypoint, "event belongs to another entrypoint");
+                let version = expected["version"].as_u64().context("missing event version")? as u32;
+                let tag = expected["tag"].as_u64().context("missing event tag")? as u8;
+                let payload_length = expected["payloadLength"]
+                    .as_u64()
+                    .context("missing payload length")? as u32;
+                let digest = expected["payloadSha256"]
+                    .as_str()
+                    .context("missing Compact payload digest")?;
+                ensure!(log.item.version == version, "finalized event version differs from Compact");
+                ensure!(log.item.event_type as u8 == tag, "finalized event tag differs from Compact");
+                let StateValue::Cell(data) = &log.item.data else {
+                    anyhow::bail!("finalized event payload is not a byte cell")
+                };
+                ensure!(
+                    data.alignment == Alignment::singleton(AlignmentAtom::Bytes { length: payload_length }),
+                    "finalized event payload width differs from Compact"
+                );
+                let [atom] = data.value.0.as_slice() else {
+                    anyhow::bail!("expected one finalized event byte atom")
+                };
+                ensure!(atom.0.len() <= payload_length as usize, "event payload exceeds declared width");
+                let mut payload = atom.0.clone();
+                payload.resize(payload_length as usize, 0);
+                let payload_sha256 = hex::encode(Sha256::digest(&payload));
+                ensure!(payload_sha256 == digest, "finalized event payload digest differs from Compact");
+                observed.push(json!({
+                    "version": version,
+                    "tag": tag,
+                    "payloadLength": payload_length,
+                    "payloadSha256": payload_sha256,
+                }));
+            }
+            let entry_hash = |role: Role, name: Option<&str>| -> anyhow::Result<String> {
+                catalog_artifacts
+                    .iter()
+                    .find(|entry| entry.role == role && name.is_none_or(|name| entry.name == name))
+                    .map(|entry| entry.sha256.clone())
+                    .context("missing bundle manifest entry")
+            };
+            let receipt_fields = |value: &FinalizedReceipt| json!({
+                "blockHash": value.block_hash,
+                "height": value.height,
+                "finalizedHash": value.finalized_hash,
+                "finalizedHeight": value.finalized_height,
+                "extrinsicHash": value.extrinsic_hash,
+                "extrinsicIndex": value.extrinsic_index,
+                "transactionId": value.transaction_id,
+            });
+            println!("{}", json!({
+                "schemaVersion": 1,
+                "profile": crate::profile::NAME,
+                "network": call_receipt.chain,
+                "compiler": catalog_compiler,
+                "sourceSha256": entry_hash(Role::Source, Some("examples/StandardEvents.lean"))?,
+                "compactReference": {
+                    "compiler": reference["compiler"],
+                    "runtime": reference["runtime"],
+                    "sourceSha256": hex::encode(Sha256::digest(compact_source)),
+                    "runnerSha256": hex::encode(Sha256::digest(compact_runner)),
+                    "payloadReferenceSha256": hex::encode(Sha256::digest(reference_bytes)),
+                },
+                "artifacts": {
+                    "bundleManifestSha256": manifest_pin,
+                    "circuitSha256": entry_hash(Role::Circuit, None)?,
+                    "impactPlanSha256": entry_hash(Role::Plan, None)?,
+                    "profileSha256": entry_hash(Role::Profile, None)?,
+                    "ledgerParametersSha256": entry_hash(Role::LedgerParameters, None)?,
+                    "proverKeySha256": entry_hash(Role::ProverKey, None)?,
+                    "verifierKeySha256": entry_hash(Role::VerifierKey, None)?,
+                    "toolchainSha256": entry_hash(Role::Toolchain, None)?,
+                    "k": catalog_k,
+                },
+                "contractAddress": contract_address,
+                "deployment": receipt_fields(&deployment),
+                "call": receipt_fields(&call_receipt),
+                "logs": observed,
+                "stateUnchanged": true,
+                "allElevenFinalizedLogsMatchPinnedCompact": true,
+                "scope": "One fresh deployment and one logCatalog call. The call uses hasCiphertext=true, hasContractAddress=false, hasAmount=true, and the user/contract branches shown by the input fixture. Alternate option and address branch combinations remain unqualified.",
+            }));
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the pinned NativeUnshieldedMintRecipient bundle and funded development node"]
     fn funded_recipient_mint_distinguishes_contract_and_user_with_same_address_bytes()
     -> anyhow::Result<()> {
