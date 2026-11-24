@@ -83,6 +83,19 @@ def main() -> int:
         accepted = audit(model, proofs, pin, privacy=True)
         missing_privacy = audit(model, proofs, pin)
         assert missing_privacy["status"] == "source-functional-only"
+        paired_roles = accepted["roleRecords"]
+        assert [record["role"] for record in paired_roles] == ["functional", "privacy"]
+        for record, obligation in zip(paired_roles, ("FunctionalObligation", "PrivacyObligation"), strict=True):
+            declaration = f"Noctium.Verification.{obligation}"
+            assert record["schemaVersion"] == 1
+            assert record["obligationDeclaration"] == declaration
+            assert record["policyDeclaration"] == "VerificationFixture.policy"
+            assert record["proofDeclaration"] == f"VerificationFixture.{record['role']}"
+            assert record["proposition"] == f"{declaration} VerificationFixture.policy"
+            assert record["axioms"] == ["propext", "Classical.choice", "Quot.sound"]
+        assert missing_privacy["roleRecords"] == paired_roles[:1]
+        assert missing_privacy["axioms"] == paired_roles[0]["axioms"]
+        assert set(accepted["axioms"]) == {axiom for record in paired_roles for axiom in record["axioms"]}
         audit(model, proofs, pin, policy_name="wrongContractPolicy", expected_error="wrong_obligation")
         audit(model, proofs, pin, policy_name="wrongSpecPolicy", expected_error="wrong_obligation")
         release_only = audit(model, proofs, pin, name="releasingFunctional", policy_name="releasingPolicy")

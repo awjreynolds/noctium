@@ -69,6 +69,7 @@ def wrongSpecPolicy : AuditPolicy :=
   {policy with subject := {subject with specification := {specification with postcondition := fun _ _ _ _ _ => True}}}
 
 theorem irrelevant : True := True.intro
+theorem oneApprovedAxiom : True = True := propext Iff.rfl
 axiom untrustedFalse : False
 theorem fromUserAxiom : FunctionalObligation policy := False.elim untrustedFalse
 theorem admitted : FunctionalObligation policy := by sorry
@@ -79,6 +80,11 @@ theorem fromNativeComputation : FunctionalObligation policy :=
 
 run_cmd do
   let env ← Lean.getEnv
+  match Audit.axiomsIn env `VerificationFixture.oneApprovedAxiom with
+  | .ok axioms =>
+    unless axioms == #[`propext] do
+      throwError "actual axiom closure must exclude unused approved axioms"
+  | .error message => throwError "axiom closure inspection failed: {message}"
   for proof in [`VerificationFixture.functional, `VerificationFixture.privacy] do
     let role := if proof == `VerificationFixture.functional then Audit.Role.functional else .privacy
     unless (Audit.check env `VerificationFixture.policy proof role).isOk do
