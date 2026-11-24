@@ -600,6 +600,7 @@ jobs:
             Noctium.Verification.ScalarValidationTypedBool \
             Noctium.Verification.NativeTypedBoolRelation \
             Noctium.Verification.ScalarValidationTypedBoolCircuit \
+            Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.GenericStateAdmissionBridge
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/GuardedScalarCellAdmission.lean

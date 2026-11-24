@@ -2233,11 +2233,13 @@ def lowerEntrypoint (state : List StateDecl) (entry : Entrypoint)
   let result ← lowerPrunedEntrypoint state (Passes.pruneEntrypoint entry) rewrites
   pure result.2
 
-/-- Accepted ledger-call JSON retains the exact instruction vector emitted by
-the production body over the actual accepted pruned plan. -/
-theorem lowerEntrypoint_instructions (state : List StateDecl) (entry : Entrypoint)
+/-- Accepted ledger-call JSON passes producer validation for the pruned
+entrypoint and retains the emitted instructions for the exact accepted plan. -/
+theorem lowerEntrypoint_validation_and_instructions (state : List StateDecl) (entry : Entrypoint)
     (program : Json) (accepted : lowerEntrypoint state entry = .ok program) :
-    ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+    ∃ plan expected, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      Native.validate expected program = .ok () ∧
       Native.arrayField program "instructions" =
         .ok ((lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.instructions := by
   simp only [lowerEntrypoint, bind, bind_ok] at accepted
@@ -2249,11 +2251,24 @@ theorem lowerEntrypoint_instructions (state : List StateDecl) (entry : Entrypoin
   | mk value result =>
     simp only [produced] at gate
     simp only [bind_ok] at gate
-    rcases gate with ⟨expected, _, _, producerAccepted, output⟩
+    rcases gate with ⟨expected, expectedAccepted, _, producerAccepted, output⟩
     cases output
-    obtain ⟨equal, _⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
-    refine ⟨_, planAccepted, ?_⟩
-    rw [equal, produced]
-    rfl
+    obtain ⟨equal, checked⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
+    refine ⟨_, expected, planAccepted, expectedAccepted, ?_, ?_⟩
+    · rw [equal]
+      exact checked
+    · rw [equal, produced]
+      rfl
+
+/-- Accepted ledger-call JSON retains the exact instruction vector emitted by
+the production body over the actual accepted pruned plan. -/
+theorem lowerEntrypoint_instructions (state : List StateDecl) (entry : Entrypoint)
+    (program : Json) (accepted : lowerEntrypoint state entry = .ok program) :
+    ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      Native.arrayField program "instructions" =
+        .ok ((lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.instructions := by
+  obtain ⟨plan, _, planAccepted, _, _, instructions⟩ :=
+    lowerEntrypoint_validation_and_instructions state entry program accepted
+  exact ⟨plan, planAccepted, instructions⟩
 
 end Noctium.Backend.Zkir
