@@ -166,4 +166,49 @@ theorem accepted_impact_meaning
     simpa only [List.map_map, Function.comp_def] using valuesMeaning
   next => contradiction
 
+/-- The accepted producer selects the next Impact payload group and advances
+its cursor once. The payload can be decoded independently of the strict
+instruction decoder, which intentionally rejects dynamic guard operands. -/
+theorem accepted_impact_payload_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {values : List Operand}
+    (invariant : StateMeaning hash inputs witness state)
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decoded : (do NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")) =
+      .ok values) :
+    ∃ group, expected.groups[state.groupCount]? = some group ∧
+      next = {state with groupCount := state.groupCount + 1} ∧
+      group.map (interpret hash inputs) = (values.map (·.read witness)).map some := by
+  classical
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have same := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, _, _, facts, factsParsed, accepted⟩
+  have argumentsAccepted := arguments_of_checked_native_arguments factsParsed
+  split at accepted
+  next group groupParsed =>
+    simp only [Pure.pure, Except.pure] at accepted
+    have checked :
+        (facts.map (·.term) == group) = true ∧
+          next = {state with groupCount := state.groupCount + 1} := by
+      cases empty : expected.groupGuards.isEmpty
+      · cases sourceGuard : expected.groupGuards[state.groupCount]?
+        · simp [empty, sourceGuard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+        · simp [empty, sourceGuard, bind_ok] at accepted
+          obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
+          exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
+      · simp [empty, bind_ok] at accepted
+        obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
+        exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
+    have matched : facts.map (·.term) = group := eq_of_beq checked.1
+    have valuesMeaning := arguments_decoded_meaning invariant argumentsAccepted decoded
+    refine ⟨group, groupParsed, checked.2, ?_⟩
+    rw [← matched]
+    simpa only [List.map_map, Function.comp_def] using valuesMeaning
+  next => contradiction
+
 end Noctium.Verification.ScalarValidationOutputMeaning
