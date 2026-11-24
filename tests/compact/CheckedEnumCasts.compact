@@ -19,6 +19,10 @@ export pure circuit fromUint(value: Uint<2>): Status {
   return value as Status;
 }
 
+export pure circuit identity(value: Status): Status {
+  return value as Status;
+}
+
 export pure circuit toField(value: Status): Field {
   return value as Field;
 }

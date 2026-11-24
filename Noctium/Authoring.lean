@@ -1750,6 +1750,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let (codec, _) ← selectedCodec target
     let _ ← checkedFieldlessEnumMembers target codec.payload
     let source ← lowerExpr programName callPrefix env source
+    if source.type == .composite codec.payload then return source
     let tag ← match source.type with
       | .scalar .native => pure source.term
       | .scalar (.uint _) => pure (.cast .native source.term)

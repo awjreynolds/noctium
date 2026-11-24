@@ -33,6 +33,19 @@ private def otherRecipientWire : Helpers.Wire.Codec := {
   }]}
 }
 
+private def sameNameRecipientWire : Helpers.Wire.Codec := {
+  payload := .enumeration "OtherModule.RecipientKind"
+  frameBytes := 1
+  composites := {enumerations := [{
+    id := "OtherModule.RecipientKind"
+    variants := [
+      {name := "ShieldedUser"},
+      {name := "UnshieldedUser"},
+      {name := "Contract"}
+    ]
+  }]}
+}
+
 private def payloadRecipientWire : Helpers.Wire.Codec := {
   payload := .enumeration "NamedEnumMembers.PayloadRecipientKind"
   frameBytes := 33
@@ -50,7 +63,7 @@ private def payloadRecipientWire : Helpers.Wire.Codec := {
 
 noctium_witness_circuit describe using recipientWire where
   public choice : Payload recipientWire
-  output isContractValue : Bool := eq(choice, enumMember(recipientWire, Contract))
+  output isContractValue : Bool := eq(cast(Payload recipientWire, choice), enumMember(recipientWire, Contract))
   output selectedTagValue : Native := enumTag(enumMember(recipientWire, Contract))
 end
 
@@ -82,6 +95,21 @@ end
 noctium_witness_circuit rejectsOtherNominalType using recipientWire, otherRecipientWire where
   public choice : Payload recipientWire
   output isContractValue : Bool := eq(choice, enumMember(otherRecipientWire, Contract))
+end
+
+/- error: eq enum operands must have the same nominal type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsSameNameAcrossModules using recipientWire, sameNameRecipientWire where
+  public choice : Payload recipientWire
+  public selected : Payload sameNameRecipientWire
+  output equal : Bool := eq(choice, selected)
+end
+
+/- error: enum casts require a Native or UInt value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsOtherEnumCast using recipientWire, otherRecipientWire where
+  public choice : Payload recipientWire
+  output changed := cast(Payload otherRecipientWire, choice)
 end
 
 /- error: expected a checked fieldless enum -/

@@ -10,3 +10,18 @@ export enum RecipientKind {
 export pure circuit describe(choice: RecipientKind): [Boolean, RecipientKind] {
   return [choice == RecipientKind.Contract, RecipientKind.Contract];
 }
+
+module LeftKinds {
+  export enum Status { Pending, Done }
+}
+
+module RightKinds {
+  export enum Status { Pending, Done }
+}
+
+import {Status as LeftStatus} from LeftKinds;
+import {Status as RightStatus} from RightKinds;
+
+export pure circuit compareSameNamedEnums(left: LeftStatus, right: RightStatus): Boolean {
+  return left == right;
+}
