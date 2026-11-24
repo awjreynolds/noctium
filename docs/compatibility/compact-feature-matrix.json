@@ -1201,7 +1201,7 @@
       "layer": "language",
       "surface": "Bindings, patterns and lexical scope",
       "noctiumStatus": "subset",
-      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements and circuit inputs destructure records by name and tuples, fixed vectors and bytes by position. Nested patterns evaluate the source once and preserve private origins. The native nested cases match Compact 0.36.1. A parameter pattern binds aliases to one named ABI input and supports several returned values. Each readable conditional arm supports branch-local lets and destructuring that shadow outer names. Initializers resolve the previous binding. Same-block duplicates reject and the continuation sees the original value. Pinned Compact and native cases agree on the selected provider, checked arm values and shared continuation. The Compact fixture saves the outer value under an alias before declaring the inner name. Finite and fixed-sequence loop binders may also shadow an enclosing value. The sequence source resolves first, same-block duplicates reject, and exit restores the parent binding. Emitted control plans and pinned Compact loop cases check order and the restored values. Constructor parameters and broader scope parity remain open.",
+      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements and circuit inputs destructure records by name and tuples, fixed vectors and bytes by position. Nested patterns evaluate the source once and preserve private origins. The native nested cases match Compact 0.36.1. A parameter pattern binds aliases to one named ABI input and supports several returned values. Each readable conditional arm supports branch-local lets and destructuring that shadow outer names. Initializers resolve the previous binding. Same-block duplicates reject and the continuation sees the original value. Pinned Compact and native cases agree on the selected provider, checked arm values and shared continuation. The Compact fixture saves the outer value under an alias before declaring the inner name. Finite and fixed-sequence loop binders may also shadow an enclosing value. The sequence source resolves first, same-block duplicates reject, and exit restores the parent binding. Emitted control plans and pinned Compact loop cases check order and the restored values. A named fixed-byte constructor argument can bind positional aliases while retaining one native argument. The matched Compact constructor indexes the same bytes. Both initialize 17 and 99 from [17, 42, 99]. Bad arity, duplicate bindings and non-byte patterns reject in Noctium. Tuple and record constructor patterns remain open.",
       "source": [
         "reference"
       ],
@@ -1210,6 +1210,8 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/ConstructorBytePattern.lean",
+        "tests/compact/ConstructorBytePattern.compact",
         "tests/ReadableUnitBindings.lean",
         "tests/compact/readable-unit-bindings.mjs",
         "runtime/tests/readable_unit_bindings.rs",

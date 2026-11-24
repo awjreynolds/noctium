@@ -400,6 +400,7 @@ scoped syntax "sealed" "map" ident ":" nltype "=>" nltype : nlstate
 scoped syntax "sealed" "set" ident ":" nltype : nlstate
 declare_syntax_cat nlconstructorparam
 scoped syntax ident ":" nltype : nlconstructorparam
+scoped syntax ident ":" nltype "as" "[" (ident <|> "_"),* "]" : nlconstructorparam
 declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
@@ -5103,7 +5104,23 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut opaqueParameters : List String := []
   let mut parameterNames : List String := []
   for parameter in parameters.getElems.toList do
-    let (name, parameterType, typeTerm) ← match parameter with
+    let (name, parameterType, typeTerm, bytePattern) ← match parameter with
+      | `(nlconstructorparam| $id:ident : $sourceTy:nltype as [$patterns,*]) => do
+        let name := id.getId.toString
+        let sourceType ← readCircuitSourceType sourceTy
+        let ty := sourceType.type
+        nominalUIntBindings := bindCircuitNominal nominalUIntBindings name sourceType.nominalUInt
+        contractRefs := bindContractRef contractRefs name sourceType.contractRef
+        if ty == .opaqueString then
+          throwErrorAt parameter "byte constructor patterns require a fixed Bytes parameter"
+        let .bytes length := ty
+          | throwErrorAt parameter "byte constructor patterns require a fixed Bytes parameter"
+        let pattern := patterns.getElems.toList.map fun item =>
+          if item.raw.isIdent then some item.raw.getId.toString else none
+        unless pattern.length == length do
+          throwErrorAt parameter s!"byte constructor pattern requires exactly {length} items"
+        pure (name, ConstructorType.scalar ty,
+          ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)), some (length, pattern))
       | `(nlconstructorparam| $id:ident : $sourceTy:nltype) => do
         let name := id.getId.toString
         let sourceType ← readCircuitSourceType sourceTy
@@ -5111,10 +5128,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         nominalUIntBindings := bindCircuitNominal nominalUIntBindings name sourceType.nominalUInt
         contractRefs := bindContractRef contractRefs name sourceType.contractRef
         if ty == .opaqueString then
-          pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString))
+          pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString), none)
         else
           pure (name, ConstructorType.scalar ty,
-            ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)))
+            ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)), none)
       | _ => throwErrorAt parameter "unsupported constructor parameter"
     if parameterNames.contains name then throwErrorAt parameter s!"duplicate constructor parameter '{name}'"
     parameterNames := name :: parameterNames
@@ -5124,6 +5141,16 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       let .scalar ty := parameterType | throwErrorAt parameter "invalid scalar constructor parameter"
       let reference ← `(@Noctium.Expr.ref $(← tyTerm ty) $(stringTerm name))
       scalarBindings := (name, ty, reference) :: scalarBindings
+      if let some (_, pattern) := bytePattern then
+        for (binding?, index) in pattern.zipIdx do
+          match binding? with
+          | none => pure ()
+          | some binding =>
+            if parameterNames.contains binding then
+              throwErrorAt parameter s!"duplicate constructor parameter or byte binding '{binding}'"
+            parameterNames := binding :: parameterNames
+            let byteReference ← `(Noctium.Expr.bytesAt $(reference) $(natTerm index))
+            scalarBindings := (binding, .uint 255, byteReference) :: scalarBindings
     parameterTerms := parameterTerms.push (← `(Noctium.ConstructorParameter.mk $(stringTerm name) $typeTerm))
   let mut initializerTerms : Array (TSyntax `term) := #[]
   let mut mapInsertTerms : Array (TSyntax `term) := #[]
