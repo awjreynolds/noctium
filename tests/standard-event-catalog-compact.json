@@ -1,0 +1,72 @@
+{
+  "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+  "runtime": "0.21.0",
+  "events": [
+    {
+      "version": 1,
+      "tag": 0,
+      "payloadLength": 32,
+      "payloadSha256": "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9"
+    },
+    {
+      "version": 1,
+      "tag": 1,
+      "payloadLength": 578,
+      "payloadSha256": "1f894f5631ee86b966eb75cb30000fb875358b76941b3bd74240ef6ab8ede75f"
+    },
+    {
+      "version": 1,
+      "tag": 2,
+      "payloadLength": 81,
+      "payloadSha256": "b329b5b9d69bf9cc6ab38fd41b423a9affad55818d6b6b3986480d8cba3cb70c"
+    },
+    {
+      "version": 1,
+      "tag": 3,
+      "payloadLength": 49,
+      "payloadSha256": "613499b3079da64d91e1a334445d217519649cda4ed3884dfa6342b3d57011ac"
+    },
+    {
+      "version": 1,
+      "tag": 4,
+      "payloadLength": 145,
+      "payloadSha256": "a8d750bd5550bc06d48b3b48ede2c4288fe6936c14134b069c736cd0af16360c"
+    },
+    {
+      "version": 1,
+      "tag": 5,
+      "payloadLength": 145,
+      "payloadSha256": "e78bc48c9e71b2f201d3cac5a096ee7893bec1416f0650a347c0304b37d976cd"
+    },
+    {
+      "version": 1,
+      "tag": 6,
+      "payloadLength": 80,
+      "payloadSha256": "e347b43bac53302784c05ab04d42504d02b4f73db937e9d7c084472474c77d08"
+    },
+    {
+      "version": 1,
+      "tag": 7,
+      "payloadLength": 113,
+      "payloadSha256": "aeb91a0abf52d4a369ae937e8b9776c4d0dcb29cc58e6b7833fa6b231a77508b"
+    },
+    {
+      "version": 1,
+      "tag": 8,
+      "payloadLength": 0,
+      "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "version": 1,
+      "tag": 9,
+      "payloadLength": 0,
+      "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "version": 1,
+      "tag": 10,
+      "payloadLength": 288,
+      "payloadSha256": "3cb9fe229efe9f4eb74a3865ded415c6d9e549235a1a96b68f93f8d5a3cf08a8"
+    }
+  ]
+}

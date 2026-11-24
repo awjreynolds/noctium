@@ -30,7 +30,13 @@ Lean emits two Impact groups per event. The first pushes the version, tag and en
 
 ## Focused qualification
 
-On Ledger 9.1.0.1 and ZKIR 3.2.1, native key generation reported K13 and 4,937 rows for the eleven-event call. The pinned Compact 0.36.1 toolchain and its 0.21.0 runtime produced the reference values. Noctium's native checker matched all eleven versions, tags, declared widths and SHA-256 digests of the full-width payloads. The fixtures exercise a 128-bit amount with the high bit set, both address branches, and a wide payload with a trailing zero. Lean rejected an undisclosed private event flag, missing or duplicate fields, and a non-Boolean flag. The helper event test checks active and inactive branches, event ordering around the helper call, its disclosed payload, and rejection of a private guard, an undisclosed payload, or a substituted public tape.
+On Ledger 9.1.0.1 and ZKIR 3.2.1, native key generation reported K13 and 4,937 rows for the eleven-event call. The pinned Compact 0.36.1 toolchain and its 0.21.0 runtime produced the reference values. Noctium's native checker matches all eleven versions, tags, declared widths and SHA-256 digests of the full-width payloads. The fixtures exercise a 128-bit amount with the high bit set, both address branches, and a wide payload with a trailing zero. Lean rejects an undisclosed private event flag, missing or duplicate fields, and a non-Boolean flag. The helper event test checks active and inactive branches, event ordering around the helper call, its disclosed payload, and rejection of a private guard, an undisclosed payload, or a substituted public tape.
+
+The Compact runner executes the same catalog inputs and checks the retained reference consumed by the Rust test. Pass the compiler binary and the Compact Runtime package directory. [Compact source](../../tests/compact/StandardEventCatalog.compact) · [Reference payloads](../../tests/standard-event-catalog-compact.json)
+
+```sh
+node tests/compact/standard-event-catalog.mjs "$COMPACTC" "$COMPACT_RUNTIME"
+```
 
 The first catalog used a bytewise public prologue for the 256-byte memo. Its 19,217-byte call was rejected with pool error 111, `TransactionTooLarge`. A committed memo argument qualified at 9,918 bytes and 5,000 rows. The current compiler packs an ordinary public memo into nine fields and one push/readback pair.
 

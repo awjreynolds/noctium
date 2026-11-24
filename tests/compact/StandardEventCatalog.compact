@@ -1,0 +1,35 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit logCatalog(commitment: Bytes<32>, domain: Bytes<32>,
+                          ciphertext: Bytes<512>, memo: Bytes<256>, value: Uint<128>): [] {
+  const coin = disclose(commitment);
+  const domainSep = disclose(domain);
+  const quantity = disclose(value);
+  const userKey = ZswapCoinPublicKey { bytes: coin };
+  const contractAddress = ContractAddress { bytes: domainSep };
+  emit(ShieldedSpend { nullifier: coin });
+  emit(ShieldedReceive {
+    commitment: coin,
+    ciphertext: some<Bytes<512>>(disclose(ciphertext)),
+    contractAddress: Maybe<Bytes<32>> { is_some: false, value: domainSep }
+  });
+  emit(ShieldedMint { commitment: coin, domainSep: domainSep, amount: some<Uint<128>>(quantity) });
+  emit(ShieldedBurn { nullifier: domainSep, amount: some<Uint<128>>(quantity) });
+  emit(UnshieldedSpend {
+    sender: Either<ZswapCoinPublicKey, ContractAddress> { is_left: true, left: userKey, right: contractAddress },
+    domainSep: domainSep, tokenType: coin, amount: quantity
+  });
+  emit(UnshieldedReceive {
+    recipient: Either<ZswapCoinPublicKey, ContractAddress> { is_left: false, left: userKey, right: contractAddress },
+    domainSep: domainSep, tokenType: coin, amount: quantity
+  });
+  emit(UnshieldedMint { domainSep: domainSep, tokenType: coin, amount: quantity });
+  emit(UnshieldedBurn {
+    sender: Either<ZswapCoinPublicKey, ContractAddress> { is_left: true, left: userKey, right: contractAddress },
+    tokenType: coin, amount: quantity
+  });
+  emit(Paused {});
+  emit(Unpaused {});
+  emit(Misc { payload: disclose(memo), name: domainSep });
+}
