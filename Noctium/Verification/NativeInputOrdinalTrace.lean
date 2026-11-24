@@ -143,11 +143,80 @@ theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
 
 /-- An actually lowered entrypoint whose JSON also passes the strict relation
 decoder and checked scalar opcode profile exposes exactly the producer's
-ordered input descriptors. The strict decoder enforces an empty root input
-header. The producer's validated raw-input count therefore proves that the
-raw seed is empty. Source input types remain restricted to the nonforeign
-fragment; this theorem establishes names and visibility, not assignment
-value equality. -/
+ordered input descriptors for any accepted rewrite mode. The strict decoder
+enforces an empty root input header. The producer's validated raw-input count
+therefore proves that the raw seed is empty. Source input types remain
+restricted to the nonforeign fragment; this theorem establishes names and
+visibility, not assignment value equality. -/
+theorem lowerEntrypoint_inputDescriptors_with_rewrites_of_checkedScalarProfile
+    (rewrites : Backend.Zkir.Rewrites)
+    (state : List StateDecl) (entry : Entrypoint)
+    (json : Lean.Json) (program : NativeRelation.Program)
+    (lowered : Backend.Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : NativeRelationJson.decode json = .ok program)
+    (inputSchema : ∀ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
+        .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (checkedProfile : ∃ instructions : Array Lean.Json,
+      Backend.Native.arrayField json "instructions" = .ok instructions ∧
+      checkedScalarOpcodeProfile (instructions.toList.zipIdx) program.instructions = true) :
+    ∃ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) =
+        .ok expected ∧
+      expected.rawInputs = [] ∧
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor := by
+  obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
+    Backend.Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites
+      state entry rewrites json lowered
+  obtain ⟨headerInstructions, rawInputsHeader, headerInstructionsParsed,
+    decodedRows⟩ := NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  obtain ⟨profileInstructions, profileParsed, profile⟩ := checkedProfile
+  let validatedExpected := Backend.Zkir.optimizedExpected rewrites expected
+  obtain ⟨validatedRawInputsEmpty, driverInstructions, final, driver⟩ :=
+    validate_driver_result_empty_header (expected := validatedExpected) validated rawInputsHeader
+  have driverMatchesHeader : driverInstructions = headerInstructions :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans headerInstructionsParsed)
+  have profileMatchesHeader : profileInstructions = headerInstructions :=
+    Except.ok.inj (profileParsed.symm.trans headerInstructionsParsed)
+  let items := headerInstructions.toList.zipIdx
+  have decodedItems : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction =
+      .ok program.instructions := by
+    simpa [items, List.zipIdx_map_fst] using decodedRows
+  have checkedTrace : NativeDefinitionTrace items program.instructions := by
+    apply NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems
+    simpa [items, profileMatchesHeader] using profile
+  have driverTrace : validateInstructionLoop validatedExpected items {} = .ok final := by
+    simpa [items, driverMatchesHeader] using driver.instructionTrace
+  have validatedInputsUnchanged : validatedExpected.inputs = expected.inputs := by
+    cases rewrites <;> rfl
+  have validatedInputSchema : ∀ requirement ∈ validatedExpected.inputs,
+      requirement.ty.isForeign = false := by
+    intro requirement member
+    rw [validatedInputsUnchanged] at member
+    exact inputSchema expected expectedAccepted requirement member
+  have inputDescriptors := validateInstructionLoop_input_descriptors_of_trace
+    validatedInputSchema empty_nativeDefinitions checkedTrace driverTrace
+  have validatedDescriptors :
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        validatedExpected.inputs.map expectedInputDescriptor := by
+    rw [driver.inputCount, driver.seedInputCount] at inputDescriptors
+    simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
+      using inputDescriptors.symm
+  have rawInputsUnchanged : validatedExpected.rawInputs = expected.rawInputs := by
+    cases rewrites <;> rfl
+  have expectedRawInputsEmpty : expected.rawInputs = [] := by
+    rw [← rawInputsUnchanged]
+    exact validatedRawInputsEmpty
+  have exactDescriptors :
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor := by
+    rw [← validatedInputsUnchanged]
+    exact validatedDescriptors
+  exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
+
+/-- Default-rewrite specialization of the compiler-facing descriptor theorem. -/
 theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
     (state : List StateDecl) (entry : Entrypoint)
     (json : Lean.Json) (program : NativeRelation.Program)
@@ -166,34 +235,7 @@ theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
       expected.rawInputs = [] ∧
       program.instructions.flatMap strictInstructionInputDescriptors =
         expected.inputs.map expectedInputDescriptor := by
-  obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
-    Backend.Zkir.lowerEntrypoint_validation_and_instructions state entry json lowered
-  obtain ⟨headerInstructions, rawInputsHeader, headerInstructionsParsed,
-    decodedRows⟩ := NativeRelationInstructionProjection.decode_headerAndInstructions decoded
-  obtain ⟨profileInstructions, profileParsed, profile⟩ := checkedProfile
-  obtain ⟨expectedRawInputsEmpty, driverInstructions, final, driver⟩ :=
-    validate_driver_result_empty_header validated rawInputsHeader
-  have driverMatchesHeader : driverInstructions = headerInstructions :=
-    Except.ok.inj (driver.instructionsParsed.symm.trans headerInstructionsParsed)
-  have profileMatchesHeader : profileInstructions = headerInstructions :=
-    Except.ok.inj (profileParsed.symm.trans headerInstructionsParsed)
-  let items := headerInstructions.toList.zipIdx
-  have decodedItems : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction =
-      .ok program.instructions := by
-    simpa [items, List.zipIdx_map_fst] using decodedRows
-  have checkedTrace : NativeDefinitionTrace items program.instructions := by
-    apply NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems
-    simpa [items, profileMatchesHeader] using profile
-  have driverTrace : validateInstructionLoop expected items {} = .ok final := by
-    simpa [items, driverMatchesHeader] using driver.instructionTrace
-  have inputDescriptors := validateInstructionLoop_input_descriptors_of_trace
-    (inputSchema expected expectedAccepted) empty_nativeDefinitions checkedTrace driverTrace
-  have exactDescriptors :
-      program.instructions.flatMap strictInstructionInputDescriptors =
-        expected.inputs.map expectedInputDescriptor := by
-    rw [driver.inputCount, driver.seedInputCount] at inputDescriptors
-    simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
-      using inputDescriptors.symm
-  exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
+  exact lowerEntrypoint_inputDescriptors_with_rewrites_of_checkedScalarProfile
+    .disabled state entry json program lowered decoded inputSchema checkedProfile
 
 end Noctium.Verification.NativeInputOrdinalTrace
