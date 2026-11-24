@@ -1676,7 +1676,7 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     body.validate caps env
   | .copyValue value | .disclose _ value => value.validate caps env
   | .eq (ty := operandTy) a b => do
-    if operandTy.isBytes || operandTy.isOpaqueBytes || operandTy.isOpaqueString then
+    if operandTy.isBytes then
       throw "byte string equality is not supported by this source surface"
     if !caps.equality then throw "target lacks equality"
     a.validate caps env
