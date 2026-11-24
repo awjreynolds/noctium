@@ -121,6 +121,8 @@ theorem lower_guarded_cell_plan_groups :
       Backend.Impact.publicInputPlan updateEntry.circuit.inputs {} = .ok inputPlan ∧
       Backend.Impact.appendEffectsGuardedWithBoundaries sourceState updateEntry.effects
         updateEntry.effectGuards inputPlan = .ok (plan, boundaries) ∧
+      Backend.Impact.GuardedEffectTrace sourceState updateEntry.effectGuards
+        updateEntry.effects.zipIdx inputPlan plan boundaries ∧
       (∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation) ∧
       plan.operations.mapM (fun operation =>
         GenericStateOps.evalFields context environment operation.fields) =
@@ -131,7 +133,9 @@ theorem lower_guarded_cell_plan_groups :
     sourceState updateEntry plan context environment operations lowered (by rfl)
     field_admitted exact_evalPlan_success
   obtain ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend⟩ := production
+  have trace := Backend.Impact.appendEffectsGuardedWithBoundaries_trace sourceState
+    updateEntry.effects updateEntry.effectGuards inputPlan plan boundaries guardedAppend
   exact ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend,
-    field_admitted, fields, scalarSupport⟩
+    trace, field_admitted, fields, scalarSupport⟩
 
 end GuardedScalarCellAdmissionProof

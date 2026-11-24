@@ -72,6 +72,21 @@ theorem lower_input_prefix (state : List StateDecl) (entry : Entrypoint)
       obtain ⟨inputPlan, inputAccepted, effectsAccepted⟩ := prefixResult
       exact ⟨boundaries, inputPlan, rfl, inputAccepted, effectsAccepted⟩
 
+/-- The checked ledger lowerer yields the actual guarded effect trace after
+the accepted public-input prefix. Intermediate plans reflect the source guard. -/
+theorem lower_guarded_effect_trace (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (lowered : Impact.lower state entry = .ok plan) :
+    ∃ boundaries inputPlan,
+      Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries) ∧
+      Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
+      Impact.GuardedEffectTrace state entry.effectGuards entry.effects.zipIdx
+        inputPlan plan boundaries := by
+  obtain ⟨boundaries, inputPlan, accepted, inputAccepted, effects⟩ :=
+    lower_input_prefix state entry plan lowered
+  exact ⟨boundaries, inputPlan, accepted, inputAccepted,
+    Impact.appendEffectsGuardedWithBoundaries_trace state entry.effects
+      entry.effectGuards inputPlan plan boundaries effects⟩
+
 private theorem eval_public_pair (ctx : EvalContext) (env : EvalEnv)
     (value : Impact.Aligned) (ops : List NativeState.Op)
     (accepted : [Impact.Op.push value, .popeq value].mapM
