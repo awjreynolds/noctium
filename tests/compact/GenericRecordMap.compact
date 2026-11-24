@@ -29,10 +29,12 @@ module GenericMap<K, V> {
 import GenericMap<Field, Receipt> prefix fieldReceiptMap_;
 import GenericMap<Bytes<32>, Receipt> prefix byteReceiptMap_;
 import GenericMap<Key, Uint<16>> prefix recordKeyMap_;
+import GenericMap<Key, Receipt> prefix recordKeyReceiptMap_;
 export {
   fieldReceiptMap_values, fieldReceiptMap_put, fieldReceiptMap_lookup,
   byteReceiptMap_values, byteReceiptMap_put, byteReceiptMap_lookup,
   recordKeyMap_values, recordKeyMap_put, recordKeyMap_lookup,
+  recordKeyReceiptMap_values, recordKeyReceiptMap_put, recordKeyReceiptMap_lookup,
 };
 
 export circuit put(enabled: Boolean, key: Field, next: Receipt): [] {
@@ -57,4 +59,12 @@ export circuit putRecordKey(enabled: Boolean, key: Key, next: Uint<16>): [] {
 
 export circuit lookupRecordKey(key: Key): Uint<16> {
   return recordKeyMap_lookup(disclose(key));
+}
+
+export circuit putRecordKeyReceipt(enabled: Boolean, key: Key, next: Receipt): [] {
+  return recordKeyReceiptMap_put(disclose(enabled), disclose(key), disclose(next));
+}
+
+export circuit lookupRecordKeyReceipt(key: Key): Receipt {
+  return recordKeyReceiptMap_lookup(disclose(key));
 }

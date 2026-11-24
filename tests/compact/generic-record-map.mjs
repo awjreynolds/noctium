@@ -52,11 +52,13 @@ try {
   };
   const readFieldMap = state => ledger(state).fieldReceiptMap_values;
   const readByteMap = state => ledger(state).byteReceiptMap_values;
+  const readRecordKeyReceiptMap = state => ledger(state).recordKeyReceiptMap_values;
   const initial = currentContractState.data;
   assert.equal(readFieldMap(initial).size(), 0n);
   assert.equal(readByteMap(initial).size(), 0n);
   const readRecordKeyMap = state => ledger(state).recordKeyMap_values;
   assert.equal(readRecordKeyMap(initial).size(), 0n);
+  assert.equal(readRecordKeyReceiptMap(initial).size(), 0n);
   const keyBytes = last => Uint8Array.from({length: 32}, (_, index) =>
     index < 31 ? index + 1 : last);
   const byteKeyA = keyBytes(11);
@@ -67,6 +69,9 @@ try {
   const recordKeyA = recordKey(true, 513);
   const recordKeyB = recordKey(false, 513);
   const missingRecordKey = recordKey(true, 514);
+  const receiptKeyA = recordKey(true, 513);
+  const receiptKeyB = recordKey(false, 513);
+  const missingReceiptKey = recordKey(true, 514);
 
   let [, state] = await run('put', initial, true, 11n, receipt(101, true));
   [, state] = await run('put', state, true, 12n, receipt(303, true));
@@ -99,6 +104,19 @@ try {
   assert.deepEqual((await run('lookupRecordKey', state, recordKeyA))[0], 101n);
   assert.deepEqual((await run('lookupRecordKey', state, recordKeyB))[0], 303n);
 
+  [, state] = await run('putRecordKeyReceipt', state, true, receiptKeyA, receipt(101, true));
+  [, state] = await run('putRecordKeyReceipt', state, true, receiptKeyB, receipt(303, true));
+  let recordKeyReceiptEntries = readRecordKeyReceiptMap(state);
+  assert.equal(recordKeyReceiptEntries.size(), 2n);
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyA), receipt(101, true));
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyB), receipt(303, true));
+  assert.deepEqual(
+    (await run('lookupRecordKeyReceipt', state, receiptKeyA))[0], receipt(101, true),
+  );
+  assert.deepEqual(
+    (await run('lookupRecordKeyReceipt', state, receiptKeyB))[0], receipt(303, true),
+  );
+
   const [, afterDisabled] = await run('put', state, false, 11n, receipt(999, false));
   entries = readFieldMap(afterDisabled);
   assert.equal(entries.size(), 2n);
@@ -118,6 +136,14 @@ try {
   assert.equal(recordKeyEntries.size(), 2n);
   assert.equal(recordKeyEntries.lookup(recordKeyA), 101n);
   assert.equal(recordKeyEntries.lookup(recordKeyB), 303n);
+
+  const [, afterRecordKeyReceiptDisabled] = await run(
+    'putRecordKeyReceipt', afterRecordKeyDisabled, false, receiptKeyA, receipt(999, false),
+  );
+  recordKeyReceiptEntries = readRecordKeyReceiptMap(afterRecordKeyReceiptDisabled);
+  assert.equal(recordKeyReceiptEntries.size(), 2n);
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyA), receipt(101, true));
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyB), receipt(303, true));
 
   const [, afterOverwrite] = await run('put', afterByteDisabled, true, 11n, receipt(202, false));
   entries = readFieldMap(afterOverwrite);
@@ -147,10 +173,29 @@ try {
   assert.equal((await run('lookupRecordKey', afterRecordKeyOverwrite, recordKeyA))[0], 202n);
   assert.equal((await run('lookupRecordKey', afterRecordKeyOverwrite, recordKeyB))[0], 303n);
 
+  const [, afterRecordKeyReceiptOverwrite] = await run(
+    'putRecordKeyReceipt', afterRecordKeyReceiptDisabled, true, receiptKeyA, receipt(202, false),
+  );
+  recordKeyReceiptEntries = readRecordKeyReceiptMap(afterRecordKeyReceiptOverwrite);
+  assert.equal(recordKeyReceiptEntries.size(), 2n);
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyA), receipt(202, false));
+  assert.deepEqual(recordKeyReceiptEntries.lookup(receiptKeyB), receipt(303, true));
+  assert.deepEqual(
+    (await run('lookupRecordKeyReceipt', afterRecordKeyReceiptOverwrite, receiptKeyA))[0],
+    receipt(202, false),
+  );
+  assert.deepEqual(
+    (await run('lookupRecordKeyReceipt', afterRecordKeyReceiptOverwrite, receiptKeyB))[0],
+    receipt(303, true),
+  );
+
   await assert.rejects(() => run('lookup', afterOverwrite, 13n));
   await assert.rejects(() => run('lookupBytes', afterByteOverwrite, missingByteKey));
 
   await assert.rejects(() => run('lookupRecordKey', afterRecordKeyOverwrite, missingRecordKey));
+  await assert.rejects(() => run(
+    'lookupRecordKeyReceipt', afterRecordKeyReceiptOverwrite, missingReceiptKey,
+  ));
 
   const wrongNominalSource = join(scratch, 'WrongNominalMapKey.compact');
   writeFileSync(wrongNominalSource, `pragma language_version 0.28;
@@ -169,7 +214,25 @@ export circuit insertWrongKey(key: OtherKey): [] {
   assert.notEqual(wrongNominalCompile.status, 0,
     'Compact must reject a same-layout record with the wrong nominal Map key');
 
-  console.log(`Compact ${compilerVersion} matched guarded generic Maps for Field, Bytes<32>, and checked record keys, and rejected a wrong nominal record key`);
+  const wrongValueSource = join(scratch, 'WrongNominalMapValue.compact');
+  writeFileSync(wrongValueSource, `pragma language_version 0.28;
+import CompactStandardLibrary;
+struct Key { active: Boolean; epoch: Uint<16>; }
+struct Receipt { amount: Field; active: Boolean; }
+struct OtherReceipt { amount: Field; active: Boolean; }
+export ledger values: Map<Key, Receipt>;
+export circuit insertWrongValue(key: Key, next: OtherReceipt): [] {
+  values.insert(disclose(key), disclose(next));
+  return [];
+}
+`);
+  const wrongValueCompile = spawnSync(compactc, [
+    '--skip-zk', wrongValueSource, join(scratch, 'wrong-value-compact'),
+  ], {cwd: projectRoot, encoding: 'utf8'});
+  assert.notEqual(wrongValueCompile.status, 0,
+    'Compact must reject a same-layout record with the wrong nominal Map value');
+
+  console.log(`Compact ${compilerVersion} matched guarded generic Maps for Field, Bytes<32>, checked record keys, and checked record keys with record values, and rejected wrong nominal record keys and values`);
 } finally {
   rmSync(scratch, {recursive: true, force: true});
   try {
