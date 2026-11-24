@@ -3148,6 +3148,32 @@ theorem lowerCircuit_comparison_pipeline
       (lowerCircuit_instructions_with_rewrites circuit .includingComparisons comparisonProgram
         comparisonAccepted)
 
+set_option maxHeartbeats 600000 in
+/-- The comparison-enabled accepted vector is the exact comparison rewrite of
+the accepted range-and-assertion vector for the same source circuit. -/
+theorem lowerCircuit_comparison_instructions_reuse_range_instructions
+    (circuit : Circuit) (rangeProgram comparisonProgram : Json)
+    (rangeAccepted : lowerCircuit circuit .rangeAndAssertions = .ok rangeProgram)
+    (comparisonAccepted : lowerCircuit circuit .includingComparisons = .ok comparisonProgram) :
+    ∃ rangeInstructions,
+      Native.arrayField rangeProgram "instructions" = .ok rangeInstructions ∧
+      Native.arrayField comparisonProgram "instructions" =
+        .ok (RangeDedup.reuseComparisons rangeInstructions) := by
+  obtain ⟨rangeInstructions, comparisonInstructions⟩ :=
+    lowerCircuit_comparison_pipeline circuit rangeProgram comparisonProgram
+      rangeAccepted comparisonAccepted
+  refine ⟨RangeDedup.removeDuplicateAssertions
+    (RangeDedup.run ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions),
+    rangeInstructions, ?_⟩
+  rw [comparisonInstructions]
+  change Except.ok (RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons
+    (RangeDedup.run ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions))) =
+      Except.ok (RangeDedup.reuseComparisons (RangeDedup.removeDuplicateAssertions
+        (RangeDedup.run ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions)))
+  congr 1
+  exact (RangeDedup.reuseComparisons_removeDuplicateAssertions
+    (RangeDedup.run ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions)).symm
+
 def lowerEntrypointInputs (entry : Entrypoint) : LowerM Unit := do
   for input in entry.circuit.inputs do
     lowerByteInput input (entry.callInputs.contains input.name)
