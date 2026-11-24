@@ -40,7 +40,7 @@ private def compileType (program : Program) (span : SourceSpan) (type : Types.Co
 private partial def paths (layout : Types.Layout) (pathPrefix : String := "") : List String :=
   match layout with
   | .unit => []
-  | .scalar _ => [pathPrefix]
+  | .scalar _ | .opaque _ => [pathPrefix]
   | .curve type => List.replicate type.nativeCallFieldCount pathPrefix
   | .tuple items => items.zipIdx.flatMap fun (item, index) => paths item (pathPrefix ++ s!".{index}")
   | .structure _ fields => fields.flatMap fun (name, item) => paths item (pathPrefix ++ s!".{name}")
@@ -176,7 +176,8 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
   let info ← scalarInfo prepared scope typeEnv span term
   match term with
   | .unit => pure (zeroValue .unit)
-  | .native _ | .bool _ | .uint _ _ | .bytes32Literal _ | .foreignConstant .. =>
+  | .native _ | .bool _ | .uint _ _ | .bytes32Literal _ | .foreignConstant ..
+  | .opaqueBytesEmpty | .opaqueStringEmpty =>
     pure (scalarValue info.ty)
   | .ref name =>
     match env.lookup name with

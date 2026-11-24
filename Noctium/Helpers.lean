@@ -307,6 +307,8 @@ inductive Term where
   | native (number : Nat)
   | bool (value : Bool)
   | uint (maximum number : Nat)
+  | opaqueBytesEmpty
+  | opaqueStringEmpty
   | ref (name : String)
   | binary (op : ScalarPolicy.Binary) (left right : Term)
   | boolAnd (left right : Term)
@@ -859,7 +861,7 @@ partial def sourceLeafTypes : Types.Layout → List Ty
   | .scalar (.boundedUnsignedField maximum) => [.uint maximum]
   | .scalar (.enumTagField _) => [.native]
   | .scalar .byteField => [.native]
-  | .curve type => [type]
+  | .curve type | .opaque type => [type]
   | .tuple items => items.flatMap sourceLeafTypes
   | .structure _ fields => fields.flatMap (sourceLeafTypes ∘ Prod.snd)
   | .vector length element => (List.range length).flatMap fun _ => sourceLeafTypes element
@@ -875,7 +877,7 @@ def checkedAggregateEquality (program : Program) (span : SourceSpan)
 
 partial def sourceLeafPaths : Types.Layout → String → List String
   | .unit, _ => []
-  | .scalar _, path => [path]
+  | .scalar _, path | .opaque _, path => [path]
   | .curve type, path => (List.range type.nativeCallFieldCount).map fun index =>
       path ++ s!".$curve{index}"
   | .tuple items, path => items.zipIdx.flatMap fun (item, index) =>
@@ -897,6 +899,7 @@ partial def callViewLeafTypes : Types.Layout → List Ty
   | .scalar (.boundedUnsignedField maximum) | .scalar (.enumTagField maximum) => [.uint maximum]
   | .scalar .byteField => [.uint 255]
   | .curve type => List.replicate type.nativeCallFieldCount .native
+  | .opaque type => [type]
   | .tuple items => items.flatMap callViewLeafTypes
   | .structure _ fields => fields.flatMap (callViewLeafTypes ∘ Prod.snd)
   | .vector length element => (List.replicate length (callViewLeafTypes element)).flatten
@@ -1611,6 +1614,8 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       unless number < Field.modulus do fail span "noncanonical helper native constant"
       pure {ty := some (.scalar .native)}
     | .bool _ => pure {ty := some (.scalar .bool)}
+    | .opaqueBytesEmpty => pure {ty := some (.scalar .opaqueBytes)}
+    | .opaqueStringEmpty => pure {ty := some (.scalar .opaqueString)}
     | .uint maximum number =>
       liftError span (ScalarPolicy.validate (.uint maximum))
       unless number ≤ maximum do fail span "helper unsigned constant exceeds declared bound"
@@ -2388,6 +2393,21 @@ private def nativeOfScalar (span : SourceSpan) (value : Scalar) : Except Diagnos
     fail span "Jubjub values require a qualified curve operation"
   | ⟨.foreign _, _⟩ => fail span "foreign values require a qualified curve operation"
 
+private def nativeAggregateField (span : SourceSpan) (value : Scalar) :
+    Except Diagnostic (Expr .native) :=
+  match value with
+  | ⟨.opaqueBytes, expression⟩ => pure (.opaqueBytesProjection expression)
+  | ⟨.opaqueString, expression⟩ => pure (.opaqueStringProjection expression)
+  | value => nativeOfScalar span value
+
+private def normalizeAggregateField (span : SourceSpan) (value : Scalar) :
+    Except Diagnostic Scalar :=
+  match value with
+  | ⟨.opaqueBytes, _⟩ | ⟨.opaqueString, _⟩ => pure value
+  | value => do
+    let expression ← nativeOfScalar span value
+    pure ⟨.native, expression⟩
+
 private def fabReturnChunkWidths (length : Nat) : List Nat := Id.run do
   if length == 0 then return []
   let count := (length + 30) / 31
@@ -2446,7 +2466,11 @@ private def restoreLayoutScalar (span : SourceSpan) (type : Ty)
   else
     unless fields.length == 1 do fail span "aggregate scalar projection field count mismatch"
     let some field := fields.head? | fail span "aggregate scalar projection has no field"
-    pure (.cast type (← nativeOfScalar span field))
+    if type == .opaqueBytes || type == .opaqueString then
+      if h : field.ty = type then pure (h ▸ field.value)
+      else fail span "aggregate opaque leaf requires a logical typed value"
+    else
+      pure (.cast type (← nativeOfScalar span field))
 
 private def coerce (span : SourceSpan) (value : Lowered) (target : ResultType) : Except Diagnostic Lowered := do
   unless subtype value.ty target do fail span "helper lowering type mismatch"
@@ -2456,8 +2480,7 @@ private def coerce (span : SourceSpan) (value : Lowered) (target : ResultType) :
     if h : value.scalar.ty = ty then pure {value with ty := target, scalar := ⟨ty, h ▸ value.scalar.value⟩}
     else pure {value with ty := target, scalar := ⟨ty, .cast ty value.scalar.value⟩}
   | .composite type => do
-    let leaves ← (components value).mapM (nativeOfScalar span)
-    let normalized := leaves.map fun leaf => ⟨.native, leaf⟩
+    let normalized ← (components value).mapM (normalizeAggregateField span)
     pure {value with
       ty := .composite type
       scalar := normalized.headD value.scalar
@@ -2893,6 +2916,8 @@ mutual
     | .native n => pure (scalarValue (.native n))
     | .bool b => pure (scalarValue (.bool b))
     | .uint m n => pure (scalarValue (.uint m n))
+    | .opaqueBytesEmpty => pure (scalarValue .opaqueBytesEmpty)
+    | .opaqueStringEmpty => pure (scalarValue .opaqueStringEmpty)
     | .ref name =>
       let some value := env.lookup name | liftD (fail span s!"unbound helper value '{name}'")
       pure value
@@ -3280,23 +3305,28 @@ mutual
       let compiled ← liftD (checkedComposite program span type)
       let expected := sourceLeafTypes compiled.checked.value
       unless leaves.length == expected.length do liftD (fail span "aggregate source leaf count mismatch")
-      let mut nativeLeaves := []
+      let mut components := []
       let mut sourceConstraints := []
       for (expectedType, leaf) in expected.zip leaves do
         if let some (projectedFields, constraints) ←
             lowerCurveProjectionFields program scope env span expectedType leaf then
-          nativeLeaves := nativeLeaves ++ projectedFields
+          components := components ++ projectedFields.map (fun field => ⟨.native, field⟩)
           sourceConstraints := sourceConstraints ++ constraints
         else
           let value ← lowerTerm program scope env span leaf
-          let fields ← liftD (lowerSourceLeaves span [expectedType] [value.scalar])
-          nativeLeaves := nativeLeaves ++ fields
+          if expectedType == .opaqueBytes || expectedType == .opaqueString then
+            unless value.scalar.ty == expectedType do
+              liftD (fail span "aggregate opaque leaf type mismatch")
+            components := components ++ [value.scalar]
+          else
+            let fields ← liftD (lowerSourceLeaves span [expectedType] [value.scalar])
+            components := components ++ fields.map (fun field => ⟨.native, field⟩)
           sourceConstraints := sourceConstraints ++ value.constraints
       let state ← get
+      let nativeLeaves ← liftD (components.mapM (nativeAggregateField span))
       let checked ← liftD ((Types.checkNativeExpression compiled state.types nativeLeaves).mapError
         fun message => {span, message})
-      pure (aggregateValue type (nativeLeaves.map fun leaf => ⟨.native, leaf⟩)
-        (sourceConstraints ++ checked.constraints))
+      pure (aggregateValue type components (sourceConstraints ++ checked.constraints))
     | .project value projection => do
       let projected ← lowerProjectionData program scope env span value projection
       let constraints := projected.parentConstraints ++ projected.projectionConstraints
@@ -3675,7 +3705,7 @@ private def compileHostedMode (limits : Limits) (program : Program) (entryName :
     let compiled ← checkedComposite program entry.span type
     unless body.components.length == compiled.checked.expandedLeaves do
       fail entry.span "aggregate helper result leaf count mismatch"
-    let leaves ← body.components.mapM (nativeOfScalar entry.span)
+    let leaves ← body.components.mapM (nativeAggregateField entry.span)
     let checked ← liftError entry.span ((Types.checkNativeExpression compiled lowering.types leaves).mapError id)
     outputConstraints := checked.constraints
   let circuit : Circuit := {
@@ -3840,8 +3870,8 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
           let some component := returnComponents[logicalOffset]?
             | fail exported.span "composite return leaf is missing"
           let name := s!"{outputName}_{outputs.length}"
-          let value ← nativeOfScalar exported.span component
-          outputs := outputs ++ [{name, ty := .native, value, span := exported.span}]
+          let value ← normalizeAggregateField exported.span component
+          outputs := outputs ++ [{name, ty := value.ty, value := value.value, span := exported.span}]
           fields := fields ++ [name]
           logicalOffset := logicalOffset + 1
       let view : ReturnView := {
@@ -3950,6 +3980,8 @@ mutual
     | .native n => pure (some ⟨.native, n⟩)
     | .bool b => pure (some ⟨.bool, if b then 1 else 0⟩)
     | .uint m n => pure (some ⟨.uint m, n⟩)
+    | .opaqueBytesEmpty | .opaqueStringEmpty =>
+      liftM (fail span "opaque helper evaluation requires the native control runtime")
     | .foreignConstant .. => liftM (fail span "foreign helper evaluation requires the native control runtime")
     | .ref name =>
       let some value := env.lookup name | liftM (fail span "unbound helper trace value")

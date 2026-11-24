@@ -15,8 +15,8 @@ def ScalarExpression.native (value : ScalarExpression) : Except String (Expr .na
   | ⟨.bool, value⟩ => pure (.cast .native value)
   | ⟨.uint _, value⟩ => pure (.cast .native value)
   | ⟨.bytes _, _⟩ => throw "byte strings require an aggregate bytes expression"
-  | ⟨.opaqueBytes, _⟩ => throw "OpaqueBytes require a qualified ledger scalar expression"
-  | ⟨.opaqueString, _⟩ => throw "OpaqueString requires a qualified ledger scalar expression"
+  | ⟨.opaqueBytes, value⟩ => pure (.opaqueBytesProjection value)
+  | ⟨.opaqueString, value⟩ => pure (.opaqueStringProjection value)
   | ⟨.jubjubScalar, _⟩ | ⟨.jubjubPoint, _⟩ =>
     throw "Jubjub values require a qualified curve expression"
   | ⟨.foreign _, _⟩ => throw "foreign values require a qualified curve expression"
@@ -89,6 +89,13 @@ private def expressionAux (environment : TypeEnv) : Nat → Layout → Aggregate
       unless value.type == expected do throw "aggregate expression scalar type mismatch"
       value.value.validate Capabilities.crypto environment
       pure [value]
+    | .opaque type, .scalar value => do
+      unless (type == .opaqueBytes || type == .opaqueString) && value.type == type do
+        throw "aggregate expression opaque type mismatch"
+      value.value.validate Capabilities.crypto environment
+      unless value.value.nativeCallFields.length == 1 do
+        throw "opaque Compress ABI projection must have one field"
+      pure [value]
     | .curve type, .scalar value => do
       unless value.type == type do throw "aggregate expression curve type mismatch"
       value.value.validate Capabilities.crypto environment
@@ -154,8 +161,8 @@ private def evalAux (context : EvalContext) (environment : EvalEnv) : Nat → Ag
           | ⟨.bool, value⟩ => pure (if ← value.eval context environment then 1 else 0)
           | ⟨.uint maximum, expression⟩ => @Noctium.Expr.eval (.uint maximum) context environment expression
           | ⟨.bytes _, _⟩ => throw "byte strings require an aggregate bytes expression"
-          | ⟨.opaqueBytes, _⟩ => throw "OpaqueBytes require a qualified ledger scalar expression"
-          | ⟨.opaqueString, _⟩ => throw "OpaqueString requires a qualified ledger scalar expression"
+          | ⟨.opaqueBytes, _⟩ => throw "OpaqueBytes cannot be reconstructed from a Compress field"
+          | ⟨.opaqueString, _⟩ => throw "OpaqueString cannot be reconstructed from a Compress field"
           | ⟨.jubjubScalar, expression⟩ => Noctium.Expr.eval (ty := .jubjubScalar) context environment expression
           | ⟨.jubjubPoint, _⟩ | ⟨.foreign (.point _), _⟩ => throw "unreachable aggregate point expression"
           | ⟨.foreign (.base curve), expression⟩ =>
@@ -226,6 +233,13 @@ private def constrainLayout (environment : TypeEnv) : Nat → Layout → Expr .b
       let canonical ← Wire.curveFieldsCanonical type safeValues
       canonical.validate Capabilities.crypto environment
       pure ([canonical], rest)
+    | .opaque type => do
+      unless type == .opaqueBytes || type == .opaqueString do
+        throw "invalid opaque aggregate layout type"
+      let _value :: rest := leaves | throw "short aggregate native opaque input"
+      -- This is already the one-way Compress ABI field. It carries no raw
+      -- payload from which the logical opaque value could be reconstructed.
+      pure ([], rest)
     | .tuple items =>
       let mut rest := leaves
       let mut constraints := []

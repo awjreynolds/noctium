@@ -456,6 +456,14 @@ private partial def layoutByteRanges (layout : Types.Layout) (offset : Nat := 0)
       return ranges
   | _ => []
 
+private partial def layoutReturnFieldTypes (layout : Types.Layout) : List Ty :=
+  match layout with
+  | .opaque type => [type]
+  | .tuple items => items.flatMap layoutReturnFieldTypes
+  | .structure _ fields => fields.flatMap (layoutReturnFieldTypes ∘ Prod.snd)
+  | .vector length element => (List.replicate length (layoutReturnFieldTypes element)).flatten
+  | _ => List.replicate layout.leafCount .native
+
 /-- A nominal UInt identity attached to one checked leaf of a composite return view. -/
 structure NominalUIntReturnField where
   path : List String
@@ -3103,26 +3111,33 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
     for fieldName in view.fields do
       if groupedFields.contains fieldName then
         throw {span := e.span, message := s!"physical return field '{fieldName}' belongs to multiple logical returns"}
-      let some output := e.returns.find? (·.name == fieldName)
-        | throw {span := e.span, message := s!"logical return '{view.name}' references missing physical field '{fieldName}'"}
-      unless output.ty == .native do
-        throw {span := output.span, message := s!"logical return field '{fieldName}' must use Native"}
       groupedFields := groupedFields ++ [fieldName]
     unless packedNames.all view.fields.contains do
       throw {span := e.span, message := s!"packed return '{view.name}' references a field outside its view"}
     let mut logicalIndex := 0
     let mut physicalIndex := 0
+    let logicalTypes := layoutReturnFieldTypes checked.value
+    let mut physicalTypes : List Ty := []
     while logicalIndex < checked.expandedLeaves do
       if let some packed := view.packedBytesFields.find? (·.leafOffset == logicalIndex) then
         unless (view.fields.drop physicalIndex).take packed.fields.length == packed.fields do
           throw {span := e.span, message := s!"packed return '{view.name}' fields do not follow schema order"}
         logicalIndex := logicalIndex + packed.byteLength
         physicalIndex := physicalIndex + packed.fields.length
+        physicalTypes := physicalTypes ++ List.replicate packed.fields.length .native
       else
+        let some type := logicalTypes[logicalIndex]?
+          | throw {span := e.span, message := s!"logical return '{view.name}' is missing a field type"}
         logicalIndex := logicalIndex + 1
         physicalIndex := physicalIndex + 1
+        physicalTypes := physicalTypes ++ [type]
     unless physicalIndex == view.fields.length do
       throw {span := e.span, message := s!"logical return '{view.name}' mapping leaves physical fields unused"}
+    for (fieldName, type) in view.fields.zip physicalTypes do
+      let some output := e.returns.find? (·.name == fieldName)
+        | throw {span := e.span, message := s!"logical return '{view.name}' references missing physical field '{fieldName}'"}
+      unless output.ty == type do
+        throw {span := output.span, message := s!"logical return field '{fieldName}' does not match its physical type"}
 
 def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic Unit := do
   if !uniqueNames (c.state.map (·.name)) then
