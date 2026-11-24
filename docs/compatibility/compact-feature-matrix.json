@@ -5815,8 +5815,8 @@
       "id": "C-STDLIB-ECADD",
       "layer": "standard-library",
       "surface": "ecAdd",
-      "noctiumStatus": "subset",
-      "notes": "The Jubjub overload matches addition with identity and addition of a point to its negation. Other curve/field overloads and broader inputs remain unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "All four pinned overloads match across 18 canonical vectors per curve, 72 total. Cases cover identity, generator and double-generator points, identity, doubling, cancellation and scalar boundaries. The native checker returns Compact's exact typed point encodings. Four fresh ZKIR 3.2.1 proofs verify against official curve-specific SRS files and reject changed return commitments. The typed host rejects a scalar equal to the group order.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5830,19 +5830,23 @@
         "ABI"
       ],
       "observedEvidence": [
-        "tests/JubjubGroupParity.lean",
-        "tests/compact/JubjubGroupParity.compact",
-        "tests/compact/jubjub-group-parity.mjs",
-        "runtime/tests/jubjub_group_parity.rs"
+        "SEM",
+        "ZK",
+        "ABI",
+        "tests/CurveGroupParity.lean",
+        "tests/compact/CurveGroupParity.compact",
+        "tests/compact/curve-group-parity.mjs",
+        "runtime/tests/curve_group_parity.rs",
+        "docs/development/curve-group-parity.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-ECNEG",
       "layer": "standard-library",
       "surface": "ecNeg",
-      "noctiumStatus": "subset",
-      "notes": "The Jubjub overload matches point negation and identity negation. Other curve overloads and broader point vectors remain unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "The only pinned Compact 0.36.1 ecNeg overload, Jubjub, matches across 18 canonical vectors. Cases include identity, generator and double-generator negation. A fresh native proof verifies and rejects a changed return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5856,19 +5860,23 @@
         "ABI"
       ],
       "observedEvidence": [
-        "tests/JubjubGroupParity.lean",
-        "tests/compact/JubjubGroupParity.compact",
-        "tests/compact/jubjub-group-parity.mjs",
-        "runtime/tests/jubjub_group_parity.rs"
+        "SEM",
+        "ZK",
+        "ABI",
+        "tests/CurveGroupParity.lean",
+        "tests/compact/CurveGroupParity.compact",
+        "tests/compact/curve-group-parity.mjs",
+        "runtime/tests/curve_group_parity.rs",
+        "docs/development/curve-group-parity.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-ECMUL",
       "layer": "standard-library",
       "surface": "ecMul",
-      "noctiumStatus": "subset",
-      "notes": "The Jubjub overload matches multiplication of a checked point by scalar one. Other curve/field overloads and broader scalar/point vectors remain unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "All four pinned overloads match across 18 canonical vectors per curve, 72 total. Point inputs include identity, generator and double-generator. Scalars include zero, one, two and order minus one. Four fresh native proofs verify with official curve-specific SRS files and reject changed return commitments. The typed host rejects a scalar equal to the group order.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5882,19 +5890,23 @@
         "ABI"
       ],
       "observedEvidence": [
-        "tests/JubjubGroupParity.lean",
-        "tests/compact/JubjubGroupParity.compact",
-        "tests/compact/jubjub-group-parity.mjs",
-        "runtime/tests/jubjub_group_parity.rs"
+        "SEM",
+        "ZK",
+        "ABI",
+        "tests/CurveGroupParity.lean",
+        "tests/compact/CurveGroupParity.compact",
+        "tests/compact/curve-group-parity.mjs",
+        "runtime/tests/curve_group_parity.rs",
+        "docs/development/curve-group-parity.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-ECMULGENERATOR",
       "layer": "standard-library",
       "surface": "ecMulGenerator",
-      "noctiumStatus": "subset",
-      "notes": "The Jubjub overload matches generator multiplication by scalar one. Other curve/field overloads and broader scalar vectors remain unqualified.",
+      "noctiumStatus": "equivalent",
+      "notes": "All four pinned overloads match across 18 canonical vectors per curve, 72 total. Generator multiples cover scalar zero, one, two and order minus one. Four fresh native proofs verify with official curve-specific SRS files and reject changed return commitments. The typed host rejects a scalar equal to the group order.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5908,12 +5920,16 @@
         "ABI"
       ],
       "observedEvidence": [
-        "tests/JubjubGroupParity.lean",
-        "tests/compact/JubjubGroupParity.compact",
-        "tests/compact/jubjub-group-parity.mjs",
-        "runtime/tests/jubjub_group_parity.rs"
+        "SEM",
+        "ZK",
+        "ABI",
+        "tests/CurveGroupParity.lean",
+        "tests/compact/CurveGroupParity.compact",
+        "tests/compact/curve-group-parity.mjs",
+        "runtime/tests/curve_group_parity.rs",
+        "docs/development/curve-group-parity.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-NEG",
