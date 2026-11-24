@@ -1,0 +1,12 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger values: List<Secp256k1Scalar>;
+
+export circuit push(value: Secp256k1Scalar): [] {
+  values.pushFront(disclose(value));
+}
+
+export circuit head(): Maybe<Secp256k1Scalar> {
+  return values.head();
+}
