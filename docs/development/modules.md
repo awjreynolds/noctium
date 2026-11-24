@@ -100,6 +100,14 @@ argument to the header. Record writes add the grouped fields in layout order.
 List separate arguments such as an update guard in `callInputs`.
 [Scalar Cell fixture](../../tests/modules/GenericScalarCellConstructor.lean) · [Record Cell fixture](../../tests/modules/GenericRecordCell.lean) · [Compact comparison](../../tests/compact/generic-record-cell.mjs)
 
+## Generic record Maps
+
+A generic `Map<K, V>` accepts an admitted scalar key and a checked record
+value. Use `writeMapInput` with a typed key and a named value input to insert
+or replace one entry. Use `mapReturns` to look up its typed value. A lookup
+requires a present key. Disclose private data used as a key, write value,
+or write guard. [Lean fixture](../../tests/modules/GenericRecordMap.lean) · [Compact comparison](../../tests/compact/generic-record-map.mjs)
+
 ## Import exported types
 
 Select the source member in your module definition, then bind the selected
