@@ -18,6 +18,30 @@ The public map is [issue #1](https://github.com/awjreynolds/noctium/issues/1). L
 3. Keep broad work as a parent and link the deliverable slices as sub-issues. Use native GitHub dependencies for issues that must land first. Add `ready` once the slice has clear checks, its prerequisites are available, and no open issue blocks it. Remove `ready` if those conditions change.
 4. Pick an issue from the [ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked). Assign yourself in the issue sidebar before starting and refresh to confirm you are the sole assignee. If you use an agent, have it check the assignee and respect existing claims. Keep the assignment through review, link the PR to the issue, and unassign yourself if you hand the work back.
 
+## Parallel worktree handoff
+
+Record the issue, worktree path, branch, base revision and owned files before
+dispatch. Keep the exact pending check and its expected result alongside
+completed results. Put local process handles and scratch paths in an ignored
+handoff note under the main checkout's `.lake/` directory. Link the note when
+delegating. Keep scope and durable evidence on the issue and PR.
+
+On recovery, read the handoff and verify the current diff and live process
+before resuming. Reuse a passing check while its tested inputs remain unchanged.
+
+Use the [shared Lean cache](../../CONTRIBUTING.md#reuse-lean-builds-across-worktrees)
+and one local environment for pinned toolchain paths. Compile runtime tests in
+the shared Cargo target. For a long proof or localnet run, build with
+`cargo test --no-run --message-format=json` and launch the reported test
+executable for that manifest and profile. Use a temporary target for a concrete
+artifact mismatch and remove it after verification.
+
+Run compilation and affected positive and rejection cases for a POC change.
+Add proof, funded acceptance or an assurance audit when the ticket changes
+that boundary or calls for new evidence. Acquire live parameters and prepare
+key provenance while the build runs. Keep the exact finalized identifiers
+with the sanitized receipt.
+
 ## Pull requests
 
 Pull requests are not a request surface for triage.
