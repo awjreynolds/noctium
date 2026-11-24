@@ -59,6 +59,19 @@ immediate and non-assert instructions pass through unchanged. -/
 def removeDuplicateAssertions (instructions : Array Json) : Array Json :=
   (instructions.foldl assertionStep {}).retained
 
+private theorem removeDuplicateAssertions_push_unrecognized (instructions : Array Json)
+    (item : Json) (unrecognized : assertionOperand? item = none) :
+    removeDuplicateAssertions (instructions.push item) =
+      (removeDuplicateAssertions instructions).push item := by
+  simp [removeDuplicateAssertions, assertionStep, unrecognized]
+
+private theorem removeDuplicateAssertions_push_duplicate (instructions : Array Json)
+    (item : Json) (operand : String)
+    (recognized : assertionOperand? item = some operand)
+    (seen : ((instructions.foldl assertionStep {}).seen[operand]?).isSome = true) :
+    removeDuplicateAssertions (instructions.push item) = removeDuplicateAssertions instructions := by
+  simp [removeDuplicateAssertions, assertionStep, recognized, seen]
+
 private theorem assertionStep_retained (state : AssertionState) (item : Json) :
     (assertionStep state item).retained = state.retained ∨
       (assertionStep state item).retained = state.retained.push item := by
@@ -254,6 +267,106 @@ private def comparisonStep (state : ComparisonState) (item : Json) : ComparisonS
       seen := state.seen.insert key output
       retained := state.retained.push item
     }
+
+private theorem comparison_none_of_assertion {item : Json} {operand : String}
+    (recognized : assertionOperand? item = some operand) : comparison? item = none := by
+  unfold assertionOperand? at recognized
+  rcases Option.bind_eq_some_iff.mp recognized with ⟨object, objectParsed, objectRest⟩
+  rcases Option.bind_eq_some_iff.mp objectRest with ⟨_, objectSize, opcodeRest⟩
+  have objectSize' : object.size = 2 := by
+    simp [guard] at objectSize
+    assumption
+  rcases Option.bind_eq_some_iff.mp opcodeRest with ⟨opcode, opcodeParsed, opcodeGuardRest⟩
+  rcases Option.bind_eq_some_iff.mp opcodeGuardRest with ⟨_, opcodeEq, _⟩
+  have opcodeEq' : opcode = "assert" := by
+    simp [guard] at opcodeEq
+    assumption
+  unfold comparison?
+  rw [objectParsed, opcodeParsed]
+  simp [guard, objectSize', opcodeEq']
+
+private theorem assertionOpcode {item : Json} {operand : String}
+    (recognized : assertionOperand? item = some operand) :
+    (item.getObjVal? "op" >>= Json.getStr?).toOption = some "assert" := by
+  unfold assertionOperand? at recognized
+  rcases Option.bind_eq_some_iff.mp recognized with ⟨object, _, objectRest⟩
+  rcases Option.bind_eq_some_iff.mp objectRest with ⟨_, _, opcodeRest⟩
+  rcases Option.bind_eq_some_iff.mp opcodeRest with ⟨opcode, opcodeParsed, opcodeGuardRest⟩
+  rcases Option.bind_eq_some_iff.mp opcodeGuardRest with ⟨_, opcodeEq, _⟩
+  have opcodeEq' : opcode = "assert" := by
+    simp [guard] at opcodeEq
+    assumption
+  simpa [opcodeEq'] using opcodeParsed
+
+private theorem comparisonCopyJson_opcode (first output : String) :
+    ((comparisonCopyJson first output).getObjVal? "op" >>= Json.getStr?).toOption = some "copy" := by
+  let fields := [("op", toJson ("copy" : String)), ("val", toJson first),
+    ("output", toJson output)]
+  have distinct : fields.Pairwise (fun a b => ¬ compare a.1 b.1 = .eq) := by
+    simp [fields, List.pairwise_cons]
+  have lookup : (Std.TreeMap.Raw.ofList fields compare)["op"]? =
+      some (toJson ("copy" : String)) := by
+    exact Std.TreeMap.Raw.getElem?_ofList_of_mem (l := fields) (k := "op") (k' := "op")
+      (v := toJson ("copy" : String)) (by simp [fields]) distinct (by simp [fields])
+  have lookup' : (Std.TreeMap.Raw.ofList [
+      ("op", toJson ("copy" : String)), ("val", toJson first),
+      ("output", toJson output)] compare)["op"]? = some (toJson ("copy" : String)) := by
+    simpa [fields] using lookup
+  simp only [Lean.ToJson.toJson] at lookup'
+  simp [comparisonCopyJson, Json.mkObj, Json.getObjVal?, lookup', Json.getStr?,
+    Lean.ToJson.toJson, Std.TreeMap.Raw.get?_eq_getElem?]
+  rfl
+
+private theorem comparisonCopyJson_not_assertion (first output : String) :
+    assertionOperand? (comparisonCopyJson first output) = none := by
+  cases parsed : assertionOperand? (comparisonCopyJson first output) with
+  | none => rfl
+  | some operand =>
+    have opcode := assertionOpcode parsed
+    rw [comparisonCopyJson_opcode] at opcode
+    simp at opcode
+
+private theorem comparisonStep_seen_congruent (left right : ComparisonState)
+    (same : left.seen = right.seen) (item : Json) :
+    (comparisonStep left item).seen = (comparisonStep right item).seen := by
+  cases parsed : comparison? item with
+  | none => simpa [comparisonStep, parsed] using same
+  | some pair =>
+    obtain ⟨key, output⟩ := pair
+    cases seen : left.seen[key]? with
+    | none =>
+      have rightSeen : right.seen[key]? = none := by simpa [same] using seen
+      simp [comparisonStep, parsed, seen, rightSeen]
+      rw [same]
+    | some first =>
+      have rightSeen : right.seen[key]? = some first := by simpa [same] using seen
+      simp [comparisonStep, parsed, seen, rightSeen]
+      exact same
+
+private theorem comparisonStep_assertion_projection (state : ComparisonState) (item : Json) :
+    ∃ emitted, (comparisonStep state item).retained = state.retained.push emitted ∧
+      assertionOperand? emitted = assertionOperand? item := by
+  cases parsed : comparison? item with
+  | none => exact ⟨item, by simp [comparisonStep, parsed], rfl⟩
+  | some pair =>
+    obtain ⟨key, output⟩ := pair
+    have itemNotAssertion : assertionOperand? item = none := by
+      cases recognized : assertionOperand? item with
+      | none => rfl
+      | some operand =>
+        have comparisonNone := comparison_none_of_assertion recognized
+        rw [comparisonNone] at parsed
+        contradiction
+    cases seen : state.seen[key]? with
+    | none => exact ⟨item, by simp [comparisonStep, parsed, seen], rfl⟩
+    | some first =>
+      refine ⟨comparisonCopyJson first output, by simp [comparisonStep, parsed, seen], ?_⟩
+      rw [comparisonCopyJson_not_assertion, itemNotAssertion]
+
+private theorem comparisonStep_assertion (state : ComparisonState) (item : Json)
+    {operand : String} (recognized : assertionOperand? item = some operand) :
+    comparisonStep state item = {state with retained := state.retained.push item} := by
+  simp [comparisonStep, comparison_none_of_assertion recognized]
 
 /-- Reuse the result of an identical, earlier comparison over immutable SSA
 operands. Keep output identifiers, check ordering and per-use assertions. -/
