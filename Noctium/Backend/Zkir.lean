@@ -3072,6 +3072,45 @@ theorem lowerCircuit_instructions (circuit : Circuit) (program : Json)
     rw [equal]
     rfl
 
+/-- Link rewritten standalone-circuit JSON to the exact instruction vector
+produced by the selected rewrite mode over the pruned source's LowerM output. -/
+theorem lowerCircuit_instructions_with_rewrites (circuit : Circuit) (rewrites : Rewrites)
+    (program : Json) (accepted : lowerCircuit circuit rewrites = .ok program) :
+    Native.arrayField program "instructions" = .ok
+      (optimizedInstructions rewrites
+        ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions) := by
+  cases rewrites <;> simp only [lowerCircuit, bind, bind_ok] at accepted
+  all_goals
+    rcases accepted with ⟨_, disclosure, _, validation, _, constants, _, outputConstants, gate⟩
+    cases produced : (lowerBody (Passes.pruneCircuit circuit)).run {} with
+    | mk value state =>
+      simp only [produced] at gate
+      rw [bind_ok] at gate
+      rcases gate with ⟨expected, expectedAccepted, producerAccepted⟩
+      obtain ⟨equal, checked⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
+      rw [equal]
+      rfl
+
+/-- Both accepted rewrite modes consume the same pruned lowerBody vector. The
+comparison-enabled result adds comparison reuse after range deduplication. -/
+theorem lowerCircuit_rangeAndAssertions_instructions_and_includingComparisons_instructions
+    (circuit : Circuit) (rangeProgram comparisonProgram : Json)
+    (rangeAccepted : lowerCircuit circuit .rangeAndAssertions = .ok rangeProgram)
+    (comparisonAccepted : lowerCircuit circuit .includingComparisons = .ok comparisonProgram) :
+    let raw := ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions
+    Native.arrayField rangeProgram "instructions" =
+        .ok (RangeDedup.removeDuplicateAssertions (RangeDedup.run raw)) ∧
+      Native.arrayField comparisonProgram "instructions" =
+        .ok (RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons
+          (RangeDedup.run raw))) := by
+  constructor
+  · simpa [optimizedInstructions] using
+      (lowerCircuit_instructions_with_rewrites circuit .rangeAndAssertions rangeProgram
+        rangeAccepted)
+  · simpa [optimizedInstructions] using
+      (lowerCircuit_instructions_with_rewrites circuit .includingComparisons comparisonProgram
+        comparisonAccepted)
+
 def lowerEntrypointInputs (entry : Entrypoint) : LowerM Unit := do
   for input in entry.circuit.inputs do
     lowerByteInput input (entry.callInputs.contains input.name)
