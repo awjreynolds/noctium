@@ -191,10 +191,16 @@ def main() -> int:
         for subdir in ["examples", "proofs"]:
             (imports / subdir).mkdir(parents=True)
         environment = os.environ.copy()
-        environment["LEAN_PATH"] = str(imports)
+        environment.pop("LEAN_PATH", None)
+        lake_import_path = run(["lake", "env", "printenv", "LEAN_PATH"], environment).strip()
+        # Lake puts its own cache before inherited LEAN_PATH. Apply the fresh
+        # audit path after entering Lake's environment so it takes precedence.
+        audit_import_path = os.pathsep.join((str(imports), lake_import_path))
+        audit_tool = ["lake", "env", "env", f"LEAN_PATH={audit_import_path}"]
 
         def build(path: str, source: str | None = None) -> str:
-            command = ["lake", "env", "lean", "-D", "Elab.async=false", "-o", str(imports / Path(path).with_suffix(".olean"))]
+            command = [*audit_tool, "lean", "-D", "Elab.async=false", "-o",
+                       str(imports / Path(path).with_suffix(".olean"))]
             if source is not None and not (ROOT / path).exists():
                 candidate = scratch / "source" / path
                 candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +211,7 @@ def main() -> int:
             return run(command, environment, source)
 
         def export(filename: str, roots: list[str], module: str = MODULE) -> Path:
-            contents = run(["lake", "env", "leanexport", module, "--", *roots], environment)
+            contents = run([*audit_tool, "leanexport", module, "--", *roots], environment)
             destination = output / filename
             destination.write_text(contents)
             return destination
@@ -330,7 +336,7 @@ end PrivateClaimAuditNegative
             accepted["operationArtifacts"] = association
             print(json.dumps(accepted, indent=2, sort_keys=True))
             return 0
-        run(["lake", "env", "leanchecker", "--from-export", str(proof)])
+        run([*audit_tool, "leanchecker", "--from-export", str(proof)], environment)
         if not args.trusted_model_export:
             wrong_policy = audit(proof, "wrong_obligation", "PrivateClaimAuditNegative.wrongPolicy")
             (output / "wrong-policy-rejection.json").write_text(json.dumps(wrong_policy, indent=2) + "\n")
