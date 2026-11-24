@@ -39,7 +39,7 @@ private def optimizedInstructions (rewrites : Rewrites) (instructions : Array Js
   | .includingComparisons =>
     RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons (RangeDedup.run instructions))
 
-private def optimizedExpected (rewrites : Rewrites) (expected : Native.Expected) : Native.Expected :=
+def optimizedExpected (rewrites : Rewrites) (expected : Native.Expected) : Native.Expected :=
   if rewrites == .disabled then expected
   else {expected with assertions := expected.assertions.eraseDups}
 
@@ -3507,7 +3507,7 @@ def lowerEntrypoint (state : List StateDecl) (entry : Entrypoint)
   let result ← lowerPrunedEntrypoint state (Passes.pruneEntrypoint entry) rewrites
   pure result.2
 
-private theorem lowerEntrypoint_validation_and_instructions_with_rewrites
+theorem lowerEntrypoint_validation_and_instructions_with_rewrites
     (state : List StateDecl) (entry : Entrypoint) (rewrites : Rewrites)
     (program : Json) (accepted : lowerEntrypoint state entry rewrites = .ok program) :
     ∃ plan expected, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
