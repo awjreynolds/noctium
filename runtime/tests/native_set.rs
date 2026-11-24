@@ -107,6 +107,66 @@ fn typed_record_set_keeps_both_fields_in_one_key() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_NOMINAL_FIELD_RECORD_SET_DIR"]
+fn nominal_field_record_set_keeps_exact_native_key() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_NOMINAL_FIELD_RECORD_SET_DIR")
+            .expect("nominal Field record Set artifacts"),
+    );
+    let plan = load_plan(
+        &directory,
+        "NominalFieldRecordSet.RecordSet.update.impact.json",
+    );
+    let circuit = load_circuit(&directory, "NominalFieldRecordSet.RecordSet.update.zkir");
+    let mut state = create_state(&plan, &BTreeMap::from([("members".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let inputs = |adding, removing| {
+        BTreeMap::from([
+            ("amount".into(), json!("17")),
+            ("adding".into(), json!(adding)),
+            ("removing".into(), json!(removing)),
+        ])
+    };
+    let key = field_value(Fr::from(17u8));
+
+    let inserted = prepare(&plan, &inputs(true, false), &state, parameters, address)?;
+    check(&inserted, &circuit)?;
+    let returns = inserted.returns_json();
+    assert_eq!(returns["before"], json!(false));
+    assert_eq!(returns["afterInsert"], json!(true));
+    assert_eq!(returns["afterRemove"], json!(true));
+    state = inserted.after.state;
+    let StateValue::Array(slots) = state.get_ref() else {
+        anyhow::bail!("expected state slots");
+    };
+    let Some(StateValue::Map(members)) = slots.get(0) else {
+        anyhow::bail!("expected root record Set");
+    };
+    assert_eq!(members.size(), 1);
+    let value = members
+        .get(&key)
+        .expect("exact Native field record key exists");
+    assert!(matches!(&*value, StateValue::Null));
+
+    let removed = prepare(&plan, &inputs(false, true), &state, parameters, address)?;
+    check(&removed, &circuit)?;
+    let returns = removed.returns_json();
+    assert_eq!(returns["before"], json!(true));
+    assert_eq!(returns["afterInsert"], json!(true));
+    assert_eq!(returns["afterRemove"], json!(false));
+    let StateValue::Array(slots) = removed.after.state.get_ref() else {
+        anyhow::bail!("expected state slots after removal");
+    };
+    let Some(StateValue::Map(members)) = slots.get(0) else {
+        anyhow::bail!("expected root record Set after removal");
+    };
+    assert_eq!(members.size(), 0);
+    assert!(members.get(&key).is_none());
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires fresh artifacts in NOCTIUM_RECORD_SET_COLLECTIONS_DIR"]
 fn typed_record_set_reports_size_and_resets() -> anyhow::Result<()> {
     let directory = std::path::PathBuf::from(std::env::var("NOCTIUM_RECORD_SET_COLLECTIONS_DIR")?);
