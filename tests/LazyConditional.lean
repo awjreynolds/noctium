@@ -12,12 +12,15 @@ noctium_circuit lazyConditionalInputs where
     eq(cast(UInt 1, amount), uint(1)), true))
   output elseValue : Bool := disclose(ite(elseCondition,
     true, eq(cast(UInt 1, amount), uint(1))))
+  output boundedValue : UInt 8 := disclose(ite(thenCondition,
+    cast(UInt 1, amount), amount))
 end
 
 noctium_contract LazyConditional where
   entry branches uses lazyConditionalInputs where
     return thenResult : Bool := disclose(thenValue)
     return elseResult : Bool := disclose(elseValue)
+    return boundedResult : UInt 8 := disclose(boundedValue)
   end
 end
 
@@ -32,16 +35,17 @@ private def lazyConditionalEnv (thenCondition elseCondition : _root_.Bool) : Eva
   ("amount", .uint 255 2)]
 
 private def evalLazyConditionalOutputs (env : EvalEnv) :
-    Except String (_root_.Bool × _root_.Bool) := do
+    Except String (_root_.Bool × _root_.Bool × Nat) := do
   match lazyConditionalInputs.outputs with
-  | [⟨_, .bool, thenExpr, _⟩, ⟨_, .bool, elseExpr, _⟩] => do
+  | [⟨_, .bool, thenExpr, _⟩, ⟨_, .bool, elseExpr, _⟩, ⟨_, .uint 255, boundedExpr, _⟩] => do
     let thenValue ← thenExpr.eval lazyConditionalEvalContext env
     let elseValue ← elseExpr.eval lazyConditionalEvalContext env
-    pure (thenValue, elseValue)
+    let boundedValue ← boundedExpr.eval lazyConditionalEvalContext env
+    pure (thenValue, elseValue, boundedValue)
   | _ => throw "lazy conditional fixture output shape changed"
 
 #guard match evalLazyConditionalOutputs (lazyConditionalEnv Bool.false Bool.true) with
-  | .ok (Bool.true, Bool.true) => _root_.Bool.true
+  | .ok (Bool.true, Bool.true, 2) => _root_.Bool.true
   | _ => _root_.Bool.false
 
 #guard match evalLazyConditionalOutputs (lazyConditionalEnv Bool.true Bool.true) with

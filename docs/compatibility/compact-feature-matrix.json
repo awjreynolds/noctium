@@ -747,7 +747,7 @@
       "layer": "language",
       "surface": "Conditional expressions and branches",
       "noctiumStatus": "subset",
-      "notes": "Eager select evaluates both arms. Structured nested branches skip inactive effects and typed callbacks. Readable if and ite expressions select a common checked scalar or aggregate type. One scalar guarded workload matches the pinned Compact oracle and finalized on Ledger 9.",
+      "notes": "Eager select evaluates both arms. Structured nested branches skip inactive effects and typed callbacks. Compact 0.36.1 and Noctium match same-type Boolean ternaries, a Uint<1>/Uint<8> conditional join, skipped inactive narrowing, and selection between same-layout Payload values with only the selected witness provider called. Both reject incompatible scalar branch types. Noctium's ordinary ite joins bounded scalars; its readable if selects an aggregate payload and runs one provider while retaining its guarded assertion. One ordinary UInt join relation has a fresh K7 proof, verified against official parameters and rejected after changing the communications commitment. Other aggregate shape joins, broader conditional typing and full control-flow equivalence remain open. One scalar guarded workload has finalized on Ledger 9.",
       "source": [
         "reference"
       ],
@@ -760,7 +760,11 @@
         "scripts/zkir/native-runtime.mjs",
         "docs/development/guarded-ledger-localnet-receipts.json",
         "tests/ReadableLazyConditional.lean",
+        "tests/LazyConditional.lean",
+        "tests/compact/LazyConditional.compact",
+        "tests/compact/lazy-conditional.mjs",
         "runtime/tests/readable_lazy_conditional.rs",
+        "runtime/tests/native_boolean_gates.rs",
         "docs/development/structured-control.md"
       ],
       "equivalence": "unverified",

@@ -48,9 +48,17 @@ export circuit branchShadowing(choice: Boolean, expected: Field): [Field, Boolea
   return [x, choice];
 }
 
-export circuit branches(thenCondition: Boolean, elseCondition: Boolean, amount: Uint<8>): [Boolean, Boolean] {
+export circuit branches(thenCondition: Boolean, elseCondition: Boolean, amount: Uint<8>): [Boolean, Boolean, Uint<8>] {
   return [
     thenCondition ? ((amount as Uint<1>) == 1) : true,
-    elseCondition ? true : ((amount as Uint<1>) == 1)
+    elseCondition ? true : ((amount as Uint<1>) == 1),
+    thenCondition ? (amount as Uint<1>) : amount
   ];
+}
+
+export circuit valueChoice(choice: Boolean, expected: Field): [Field, Boolean] {
+  const selected = choice ? loadLeft() : loadRight();
+  assert(selected.amount == expected, "selected amount must match expected");
+  assert(selected.extra.enabled == choice, "selected flag must match the branch");
+  return [disclose(selected.amount), disclose(selected.extra.enabled)];
 }
