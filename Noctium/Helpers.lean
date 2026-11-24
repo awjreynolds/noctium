@@ -394,6 +394,9 @@ structure Export where
   target : DeclarationId
   inputs : List Input := []
   compositeInputs : List AggregateInput := []
+  /-- Opt-in named fixed-byte fields emitted in canonical packed Native chunks
+  instead of one Native return per logical byte. Paths traverse struct fields. -/
+  packedByteReturnPaths : List (List String) := []
   span : SourceSpan := {}
   deriving Repr
 
@@ -2165,6 +2168,27 @@ private def nativeOfScalar (span : SourceSpan) (value : Scalar) : Except Diagnos
     fail span "Jubjub values require a qualified curve operation"
   | ⟨.foreign _, _⟩ => fail span "foreign values require a qualified curve operation"
 
+private def fabReturnChunkWidths (length : Nat) : List Nat := Id.run do
+  if length == 0 then return []
+  let count := (length + 30) / 31
+  (length - 31 * (count - 1)) :: List.replicate (count - 1) 31
+
+private def packReturnByteChunk (bytes : List Scalar) : Expr .native := Id.run do
+  let terms := bytes.zipIdx.map fun (byte, index) =>
+    Expr.mul (.cast .native byte.value) (.native (256 ^ index))
+  return terms.foldl Expr.add (.native 0)
+
+private def packedReturnByteChunks (bytes : List Scalar) (widths : List Nat) :
+    Except String (List (Expr .native)) := do
+  unless widths.sum == bytes.length do throw "packed return chunk widths do not cover their bytes"
+  let mut remaining := bytes
+  let mut lowFirst := []
+  for width in widths.reverse do
+    lowFirst := lowFirst ++ [packReturnByteChunk (remaining.take width)]
+    remaining := remaining.drop width
+  unless remaining.isEmpty do throw "packed return chunks left unencoded bytes"
+  pure lowFirst.reverse
+
 private def lowerSourceLeaves (span : SourceSpan) (expected : List Ty)
     (values : List Scalar) : Except Diagnostic (List (Expr .native)) := do
   unless expected.length == values.length do fail span "aggregate source leaf count mismatch"
@@ -3531,11 +3555,26 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
         fail exported.span "entrypoint return field limit exceeded"
       discard (Types.schemaJson compiled |>.mapError fun message =>
         {span := exported.span, message})
-      pure (some (type, compiled.checked.expandedLeaves))
-    | _ => pure none
+      unless uniqueNames (exported.packedByteReturnPaths.map (String.intercalate ".")) do
+        fail exported.span "duplicate packed byte return path"
+      let packed ← exported.packedByteReturnPaths.mapM fun path => do
+        let some (offset, length) := compiled.checked.value.byteRangeAtFieldPath path
+          | fail exported.span s!"packed return path '{String.intercalate "." path}' is not a fixed-byte field"
+        if length == 0 then fail exported.span "empty byte return fields do not need packing"
+        pure (offset, length, fabReturnChunkWidths length)
+      pure (some (type, compiled, packed))
+    | _ => do
+      unless exported.packedByteReturnPaths.isEmpty do
+        fail exported.span "packed byte return paths require a composite result"
+      pure none
+  let physicalReturnCount := match compositeReturnInfo with
+    | some (_, compiled, packed) =>
+      compiled.checked.expandedLeaves - packed.foldl
+        (fun reduction (_, length, widths) => reduction + length - widths.length) 0
+    | none => 1
   let reservedOutputNames := (inputs ++ lowering.witnessInputs).map (·.name) ++ readNames
   let physicalNames (base : String) := match compositeReturnInfo with
-    | some (_, count) => (List.range count).map fun index => s!"{base}_{index}"
+    | some _ => (List.range physicalReturnCount).map fun index => s!"{base}_{index}"
     | none => [base]
   let outputName := ((List.range (reservedOutputNames.length + 1)).map fun index =>
     if index == 0 then "result" else s!"result{index}").find?
@@ -3548,23 +3587,45 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
       pure ([{name := outputName, ty := ty, value := value, span := exported.span}],
         ([] : List ReturnView))
     | .composite type => do
-      let some (_, expectedCount) := compositeReturnInfo
+      let some (_, compiled, packed) := compositeReturnInfo
         | fail exported.span "composite return layout was not checked"
+      let expectedCount := compiled.checked.expandedLeaves
       let returnComponents := components body
       unless returnComponents.length == expectedCount do
         fail exported.span "composite return leaf count mismatch"
       let mut outputs : List Output := []
       let mut fields : List String := []
-      for (component, index) in returnComponents.zipIdx do
-        let name := s!"{outputName}_{index}"
-        let value ← nativeOfScalar exported.span component
-        outputs := outputs ++ [{name, ty := .native, value, span := exported.span}]
-        fields := fields ++ [name]
+      let mut packedFields : List PackedBytesReturnField := []
+      let mut logicalOffset := 0
+      while logicalOffset < returnComponents.length do
+        if let some (_, length, widths) := packed.find? (fun (offset, _, _) => offset == logicalOffset) then
+          let chunks ← (packedReturnByteChunks (returnComponents.drop logicalOffset |>.take length) widths)
+            |>.mapError fun message => {span := exported.span, message}
+          let chunkFields := (List.range chunks.length).map fun index =>
+            s!"{outputName}_{outputs.length + index}"
+          for (value, name) in chunks.zip chunkFields do
+            outputs := outputs ++ [{name, ty := .native, value, span := exported.span}]
+            fields := fields ++ [name]
+          packedFields := packedFields ++ [{
+            leafOffset := logicalOffset
+            byteLength := length
+            fields := chunkFields
+            chunkWidths := widths}]
+          logicalOffset := logicalOffset + length
+        else
+          let some component := returnComponents[logicalOffset]?
+            | fail exported.span "composite return leaf is missing"
+          let name := s!"{outputName}_{outputs.length}"
+          let value ← nativeOfScalar exported.span component
+          outputs := outputs ++ [{name, ty := .native, value, span := exported.span}]
+          fields := fields ++ [name]
+          logicalOffset := logicalOffset + 1
       let view : ReturnView := {
         name := outputName
         environment := program.composites
         type := type
-        fields := fields}
+        fields := fields
+        packedBytesFields := packedFields}
       pure (outputs, [view])
   let returns := returnData.1
   let returnViews := returnData.2

@@ -228,6 +228,21 @@ mutual
     | variant :: rest => 1 + LayoutFields.nodeCount variant.2.1 + LayoutVariants.nodeCount rest
 end
 
+/-- Find a fixed-byte field below a chain of named structure fields and return
+its expanded logical leaf offset and byte length. -/
+partial def Layout.byteRangeAtFieldPath (layout : Layout) (path : List String)
+    (offset : Nat := 0) : Option (Nat × Nat) :=
+  match layout, path with
+  | .bytes length .byteField, [] => some (offset, length)
+  | .structure _ fields, name :: rest => do
+    let index := fields.findIdx? (·.1 == name)
+    let index ← index
+    let field := fields[index]?.map Prod.snd
+    let field ← field
+    let preceding := (fields.take index).foldl (fun total item => total + item.2.leafCount) 0
+    field.byteRangeAtFieldPath rest (offset + preceding)
+  | _, _ => none
+
 mutual
   def Layout.expandedNodeCount : Layout → Nat
     | .unit | .scalar _ => 1

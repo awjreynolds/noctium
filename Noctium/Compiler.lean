@@ -1272,10 +1272,17 @@ private def returnViewsJson (views : List ReturnView) : Json :=
       ("maximum", toJson (toString field.nominalUInt.maximum))]
     let nominalFields := if nominalUIntFields.isEmpty then [] else [
       ("nominalUIntFields", toJson nominalUIntFields)]
+    let packedBytesFields := view.packedBytesFields.map fun field => Json.mkObj [
+      ("leafOffset", toJson field.leafOffset),
+      ("byteLength", toJson field.byteLength),
+      ("fields", toJson field.fields),
+      ("chunkWidths", toJson field.chunkWidths)]
+    let packedFields := if packedBytesFields.isEmpty then [] else [
+      ("packedBytesFields", toJson packedBytesFields)]
     Json.mkObj ([
       ("name", toJson view.name),
       ("schema", schema.toOption.getD Json.null),
-      ("fields", toJson view.fields)] ++ nominalFields))
+      ("fields", toJson view.fields)] ++ nominalFields ++ packedFields))
 
 /-- The exact symbolic plan tree written by the compiler. This pure function
 also gives proof modules a kernel-visible artifact boundary. -/

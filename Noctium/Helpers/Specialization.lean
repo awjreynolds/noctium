@@ -133,6 +133,7 @@ structure Export where
   target : DeclarationId
   arguments : List Argument := []
   inputs : List ExportInput := []
+  packedByteReturnPaths : List (List String) := []
   span : SourceSpan := {}
   deriving Repr, Inhabited
 
@@ -1072,7 +1073,8 @@ def specializeRequestsWithLimits (limits : Limits) (source : Program)
             span := input.span}
           compositeInputs := compositeInputs ++ [concreteInput]
       generatedExports := generatedExports ++ [
-        ⟨entry.name, targetInstance.target, scalarInputs, compositeInputs, entry.span⟩]
+        ⟨entry.name, targetInstance.target, scalarInputs, compositeInputs,
+          entry.packedByteReturnPaths, entry.span⟩]
     pure generatedExports
   let (generatedExports, state) ← action.run initial
   let concreteComposites : Types.CompositeEnv :=

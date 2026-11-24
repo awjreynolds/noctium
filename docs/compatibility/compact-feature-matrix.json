@@ -6332,8 +6332,8 @@
       "id": "C-STDLIB-SHIELDEDBURNADDRESS",
       "layer": "standard-library",
       "surface": "shieldedBurnAddress",
-      "noctiumStatus": "subset",
-      "notes": "Lean and the native runtime expose the wallet branch and both nominal zero Bytes32 arms. Compact 0.36.1 returns the same logical value. The grouped Noctium ABI uses 65 Native fields for this helper, so packed FAB interoperability remains open. The address helper has no ledger effects. Shielded settlement is tracked separately.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and the native Noctium helper return the same wallet branch and both nominal zero Bytes32 arms. Noctium commits five packed Native return fields, and the checked Rust ABI reconstructs the full logical result. The nonzero boundary vector checks both chunk positions and canonical widths. A fresh K8 ZKIR 3.2.1 proof verifies and rejects a changed return commitment. State remains unchanged. Shielded settlement is tracked separately.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6347,11 +6347,17 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
         "tests/ShieldedBurnAddress.lean",
         "tests/compact/indexed-shielded-nonce.mjs",
+        "tests/compact/PackedBurnAddress.compact",
+        "tests/compact/packed-burn-address.mjs",
+        "docs/development/packed-composite-returns.md",
         "runtime/tests/shielded_burn_address.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-RECEIVESHIELDED",

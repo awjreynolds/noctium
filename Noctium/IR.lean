@@ -423,10 +423,53 @@ def Output.nativeReturnFieldCount (output : Output) : Nat := output.ty.nativeCal
 
 def maxEntrypointReturnFields : Nat := 256
 
+private def fabChunkWidths (length : Nat) : List Nat := Id.run do
+  if length == 0 then return []
+  let count := (length + 30) / 31
+  let highWidth := length - 31 * (count - 1)
+  return highWidth :: List.replicate (count - 1) 31
+
+private partial def layoutByteRanges (layout : Types.Layout) (offset : Nat := 0) :
+    List (Nat × Nat) :=
+  match layout with
+  | .bytes length .byteField => if length == 0 then [] else [(offset, length)]
+  | .tuple items => Id.run do
+      let mut current := offset
+      let mut ranges := []
+      for item in items do
+        ranges := ranges ++ layoutByteRanges item current
+        current := current + item.leafCount
+      return ranges
+  | .structure _ fields => Id.run do
+      let mut current := offset
+      let mut ranges := []
+      for (_, field) in fields do
+        ranges := ranges ++ layoutByteRanges field current
+        current := current + field.leafCount
+      return ranges
+  | .vector length element => Id.run do
+      let mut current := offset
+      let mut ranges := []
+      for _ in [0:length] do
+        ranges := ranges ++ layoutByteRanges element current
+        current := current + element.leafCount
+      return ranges
+  | _ => []
+
 /-- A nominal UInt identity attached to one checked leaf of a composite return view. -/
 structure NominalUIntReturnField where
   path : List String
   nominalUInt : NominalUIntType
+  deriving Repr, BEq, DecidableEq
+
+/-- One logical fixed-byte field represented by checked FAB Native chunks in a
+composite return. Chunk widths are ordered high chunk first, matching the
+public Native return field order. -/
+structure PackedBytesReturnField where
+  leafOffset : Nat
+  byteLength : Nat
+  fields : List String
+  chunkWidths : List Nat
   deriving Repr, BEq, DecidableEq
 
 structure ReturnView where
@@ -437,7 +480,14 @@ structure ReturnView where
   /-- Source-only nominal UInt identities keyed by logical composite field path.
   The aggregate schema and Native return leaves keep their existing wire types. -/
   nominalUIntFields : List NominalUIntReturnField := []
+  /-- Opt-in packed FAB byte fields. Unlisted logical leaves use one Native
+  field each, preserving the original return-view encoding. -/
+  packedBytesFields : List PackedBytesReturnField := []
   deriving Repr
+
+def ReturnView.physicalFieldCount (view : ReturnView) (logicalLeaves : Nat) : Nat :=
+  logicalLeaves - view.packedBytesFields.foldl
+    (fun reduction field => reduction + field.byteLength - field.fields.length) 0
 
 structure CallInputView where
   name : String
@@ -2898,7 +2948,34 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
       | .error diagnostic => throw {span := e.span, message := diagnostic.message}
     unless checked.expandedLeaves ≤ maxEntrypointReturnFields do
       throw {span := e.span, message := "entrypoint return field limit exceeded"}
-    unless view.fields.length == checked.expandedLeaves do
+    let byteRanges := layoutByteRanges checked.value
+    unless uniqueNames (view.packedBytesFields.map (fun field => toString field.leafOffset)) do
+      throw {span := e.span, message := s!"duplicate packed byte return leaf offset in '{view.name}'"}
+    let mut packedReduction := 0
+    let mut packedNames : List String := []
+    let mut previousEnd := 0
+    let mut firstPacked := true
+    for packed in view.packedBytesFields do
+      unless packed.byteLength > 0 && byteRanges.contains (packed.leafOffset, packed.byteLength) do
+        throw {span := e.span, message := s!"packed return '{view.name}' does not select a Bytes field"}
+      unless packed.chunkWidths == fabChunkWidths packed.byteLength &&
+          packed.fields.length == packed.chunkWidths.length do
+        throw {span := e.span, message := s!"packed return '{view.name}' has invalid FAB chunk widths"}
+      unless firstPacked || previousEnd ≤ packed.leafOffset do
+        throw {span := e.span, message := s!"packed return '{view.name}' fields overlap or are out of logical order"}
+      firstPacked := false
+      previousEnd := packed.leafOffset + packed.byteLength
+      unless uniqueNames packed.fields do
+        throw {span := e.span, message := s!"duplicate packed return field in '{view.name}'"}
+      unless uniqueNames (packedNames ++ packed.fields) do
+        throw {span := e.span, message := s!"packed return field is used more than once in '{view.name}'"}
+      packedNames := packedNames ++ packed.fields
+      let contiguous := (view.fields.dropWhile (· != packed.fields.headD "")).take packed.fields.length
+      unless contiguous == packed.fields do
+        throw {span := e.span, message := s!"packed return '{view.name}' chunks must be contiguous"}
+      packedReduction := packedReduction + packed.byteLength - packed.fields.length
+    unless packedReduction ≤ checked.expandedLeaves &&
+        view.fields.length == view.physicalFieldCount checked.expandedLeaves do
       throw {span := e.span, message := s!"logical return '{view.name}' field count does not match its type"}
     let fieldsInEntryOrder := e.returns.filterMap fun output =>
       if view.fields.contains output.name then some output.name else none
@@ -2912,6 +2989,21 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
       unless output.ty == .native do
         throw {span := output.span, message := s!"logical return field '{fieldName}' must use Native"}
       groupedFields := groupedFields ++ [fieldName]
+    unless packedNames.all view.fields.contains do
+      throw {span := e.span, message := s!"packed return '{view.name}' references a field outside its view"}
+    let mut logicalIndex := 0
+    let mut physicalIndex := 0
+    while logicalIndex < checked.expandedLeaves do
+      if let some packed := view.packedBytesFields.find? (·.leafOffset == logicalIndex) then
+        unless (view.fields.drop physicalIndex).take packed.fields.length == packed.fields do
+          throw {span := e.span, message := s!"packed return '{view.name}' fields do not follow schema order"}
+        logicalIndex := logicalIndex + packed.byteLength
+        physicalIndex := physicalIndex + packed.fields.length
+      else
+        logicalIndex := logicalIndex + 1
+        physicalIndex := physicalIndex + 1
+    unless physicalIndex == view.fields.length do
+      throw {span := e.span, message := s!"logical return '{view.name}' mapping leaves physical fields unused"}
 
 def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic Unit := do
   if !uniqueNames (c.state.map (·.name)) then
