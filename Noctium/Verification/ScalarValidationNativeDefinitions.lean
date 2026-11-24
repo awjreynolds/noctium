@@ -168,12 +168,12 @@ theorem accepted_constrainEq_nativeDefinitions {expected : Expected} {state next
   change (name, fact) ∈ nextState.definitions at member
   exact nextStateNative name fact member
 
-private theorem accepted_impact_nativeDefinitions
+/-- A checked Impact group advances the transcript without changing any definitions. -/
+theorem accepted_impact_state
     {expected : Expected} {state next : State} {raw : Json}
-    (definitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "impact")
     (accepted : validateInstruction expected state raw = .ok next) :
-    NativeDefinitions next := by
+    next = {state with groupCount := state.groupCount + 1} := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
@@ -188,10 +188,10 @@ private theorem accepted_impact_nativeDefinitions
       · simp [empty, guard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
       · simp [empty, guard, bind_ok] at accepted
         rcases accepted with ⟨_, _, _, _, rfl⟩
-        exact definitions
+        rfl
     · simp [empty, bind_ok] at accepted
       rcases accepted with ⟨_, _, _, _, rfl⟩
-      exact definitions
+      rfl
   · contradiction
 
 private theorem accepted_output_nativeDefinitions
@@ -352,7 +352,9 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
   | assertion _ opcode => exact accepted_assert_nativeDefinitions nativeDefinitions opcode accepted
   | testEq _ _ _ opcode => exact accepted_testEq_nativeDefinitions nativeDefinitions opcode accepted
   | copy _ _ opcode => exact accepted_copy_nativeDefinitions nativeDefinitions opcode accepted
-  | impact _ _ opcode => exact accepted_impact_nativeDefinitions nativeDefinitions opcode accepted
+  | impact _ _ opcode =>
+      rw [accepted_impact_state opcode accepted]
+      exact nativeDefinitions
   | output _ opcode => exact accepted_output_nativeDefinitions nativeDefinitions opcode accepted
   | constrainEq _ _ opcode =>
       exact accepted_constrainEq_nativeDefinitions nativeDefinitions opcode accepted

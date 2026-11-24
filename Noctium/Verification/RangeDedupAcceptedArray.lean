@@ -20,7 +20,7 @@ open Noctium.Verification.ScalarValidationOutputMeaning
 open Noctium.Verification.ScalarNormalization
 
 /-- The bounded producer trace class used below permits arbitrary ordering of
-native input/arithmetic steps, comparisons, assertions, and a checked output.
+native input/arithmetic steps, comparisons, assertions, Impact groups, and a checked output.
 Other producer opcodes need their own state-meaning step before they enter this
 induction. -/
 inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) : Prop where
@@ -73,6 +73,10 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
         .ok (.equal (.reference source) (.reference destination)))
       (holds : Instruction.Holds hash witness
         (.equal (.reference source) (.reference destination))) :
+      AcceptedMeaningStep hash witness raw
+  | impact {guard : Operand} {values : List Operand}
+      (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
       AcceptedMeaningStep hash witness raw
   | output {values : List Operand}
       (opcode : Backend.Native.stringField raw "op" = .ok "output")
@@ -602,6 +606,9 @@ private theorem acceptedMeaningStep_preserves
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
     exact ⟨meaningNext, definitionsNext⟩
+  | impact opcode _ =>
+    rw [accepted_impact_state opcode accepted]
+    exact ⟨meaning, definitions⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
@@ -757,6 +764,12 @@ def SupportsMeaning (raw : Json) : Prop :=
     (∀ instruction, decodeInstruction raw = .ok instruction →
       Instruction.Holds hash witness instruction) →
     AcceptedMeaningStep hash witness raw
+
+theorem supportsMeaning_impact {raw : Json} {guard : Operand} {values : List Operand}
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
+    SupportsMeaning raw :=
+  fun _ _ _ => .impact opcode decoded
 
 /-- Bounds for one accepted comparison follow from satisfaction of its
 original prefix. No condition on the comparison result or suffix is needed. -/
