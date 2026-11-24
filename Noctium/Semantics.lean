@@ -993,6 +993,111 @@ decreasing_by
     | omega
 end
 
+private theorem fabHashFieldPreimage_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (layout : Types.Layout) (item : Sigma Expr)
+    (same : item.2.eval ctx left = item.2.eval ctx right) :
+    fabHashFieldPreimage ctx left layout item = fabHashFieldPreimage ctx right layout item := by
+  unfold fabHashFieldPreimage
+  repeat' first | split
+  all_goals first | rfl | rw [same]
+
+private theorem fabHashFieldsPreimage_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (layouts : List Types.Layout) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    fabHashFieldsPreimage ctx left layouts values = fabHashFieldsPreimage ctx right layouts values := by
+  induction layouts generalizing values with
+  | nil => cases values <;> simp [fabHashFieldsPreimage]
+  | cons layout layouts ih =>
+    cases values with
+    | nil => simp [fabHashFieldsPreimage]
+    | cons item values =>
+      simp only [fabHashFieldsPreimage]
+      rw [fabHashFieldPreimage_env_congr ctx left right layout item (same item (by simp))]
+      have tailSame : ∀ value ∈ values, value.2.eval ctx left = value.2.eval ctx right := by
+        intro value member
+        exact same value (by simp [member])
+      rw [ih values tailSame]
+
+private theorem fabAlignedFieldValues_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (layout : Types.Layout) (item : Sigma Expr)
+    (same : item.2.eval ctx left = item.2.eval ctx right) :
+    fabAlignedFieldValues ctx left layout item = fabAlignedFieldValues ctx right layout item := by
+  unfold fabAlignedFieldValues
+  repeat' first | split
+  all_goals first | rfl | rw [same]
+
+private theorem fabAlignedFieldSequence_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (layouts : List Types.Layout) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    fabAlignedFieldSequence ctx left layouts values = fabAlignedFieldSequence ctx right layouts values := by
+  induction layouts generalizing values with
+  | nil => cases values <;> simp [fabAlignedFieldSequence]
+  | cons layout layouts ih =>
+    cases values with
+    | nil => simp [fabAlignedFieldSequence]
+    | cons item values =>
+      simp only [fabAlignedFieldSequence]
+      rw [fabAlignedFieldValues_env_congr ctx left right layout item (same item (by simp))]
+      have tailSame : ∀ value ∈ values, value.2.eval ctx left = value.2.eval ctx right := by
+        intro value member
+        exact same value (by simp [member])
+      rw [ih values tailSame]
+
+theorem Expr.eval_hashToCurveFab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.hashToCurveFab environment type values) =
+      Expr.eval ctx right (.hashToCurveFab environment type values) := by
+  simp [Expr.eval, fabAlignedFieldSequence_env_congr ctx left right _ values same]
+
+theorem Expr.eval_transientHashFab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.transientHashFab environment type values) =
+      Expr.eval ctx right (.transientHashFab environment type values) := by
+  simp [Expr.eval, fabAlignedFieldSequence_env_congr ctx left right _ values same]
+
+theorem Expr.eval_persistentHashFab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.persistentHashFab environment type values) =
+      Expr.eval ctx right (.persistentHashFab environment type values) := by
+  simp [Expr.eval, fabHashFieldsPreimage_env_congr ctx left right _ values same]
+
+theorem Expr.eval_sha512Fab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.sha512Fab environment type values) =
+      Expr.eval ctx right (.sha512Fab environment type values) := by
+  simp [Expr.eval, fabHashFieldsPreimage_env_congr ctx left right _ values same]
+
+theorem Expr.eval_keccak256Fab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (values : List (Sigma Expr))
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.keccak256Fab environment type values) =
+      Expr.eval ctx right (.keccak256Fab environment type values) := by
+  simp [Expr.eval, fabHashFieldsPreimage_env_congr ctx left right _ values same]
+
+theorem Expr.eval_persistentCommitFab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (opening : Expr (.bytes 32)) (values : List (Sigma Expr))
+    (openingSame : opening.eval ctx left = opening.eval ctx right)
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.persistentCommitFab environment type opening values) =
+      Expr.eval ctx right (.persistentCommitFab environment type opening values) := by
+  simp [Expr.eval, openingSame,
+    fabHashFieldsPreimage_env_congr ctx left right _ values same]
+
+theorem Expr.eval_transientCommitFab_env_congr (ctx : EvalContext) (left right : EvalEnv)
+    (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (opening : Expr Ty.native) (values : List (Sigma Expr))
+    (openingSame : opening.eval ctx left = opening.eval ctx right)
+    (same : ∀ item ∈ values, item.2.eval ctx left = item.2.eval ctx right) :
+    Expr.eval ctx left (.transientCommitFab environment type opening values) =
+      Expr.eval ctx right (.transientCommitFab environment type opening values) := by
+  simp [Expr.eval, openingSame,
+    fabAlignedFieldSequence_env_congr ctx left right _ values same]
+
 theorem Expr.eval_reverseBytes32_twice (ctx : EvalContext) (env : EvalEnv)
     (value : Expr (.bytes 32)) :
     (Expr.reverseBytes32 (Expr.reverseBytes32 value)).eval ctx env = value.eval ctx env := by

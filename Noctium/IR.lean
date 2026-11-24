@@ -1716,6 +1716,27 @@ decreasing_by
   all_goals first | exact sizeOfSigmaExprHeadLt _ _ | omega
 end
 
+/-- A successful mixed FAB value check preserves validation for every item. -/
+theorem validateFabHashValues_members (caps : Capabilities) (env : TypeEnv)
+    (values : List (Sigma Expr))
+    (success : validateFabHashValues caps env values = .ok ()) :
+    ∀ item ∈ values, item.2.validate caps env = .ok () := by
+  induction values with
+  | nil => simp
+  | cons head tail ih =>
+    unfold validateFabHashValues at success
+    simp only [Bind.bind, Except.bind] at success
+    cases headValid : head.2.validate caps env with
+    | error message => simp [headValid, Bind.bind, Except.bind] at success
+    | ok checked =>
+      have tailValid : validateFabHashValues caps env tail = .ok () := by
+        simpa [headValid, Bind.bind, Except.bind] using success
+      intro item member
+      rcases List.mem_cons.mp member with equal | member
+      · cases equal
+        exact headValid
+      · exact ih tailValid item member
+
 def PathKey.validate (caps : Capabilities) (env : TypeEnv) : PathKey → Except String Unit
   | .mk _ value => value.validate caps env
 
