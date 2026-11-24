@@ -1,4 +1,5 @@
 import Lean
+import Lake.Util.Version
 
 register_option noctium.requiredTarget : String := {
   defValue := ""
@@ -8,6 +9,60 @@ register_option noctium.requiredTarget : String := {
 namespace Noctium
 
 open Lean Elab Command
+
+/-- Noctium's public Lean source API version. This is independent of native targets. -/
+def sourceApiVersion : Lake.StdVer := { major := 0, minor := 1, patch := 0 }
+
+private def normalizeSourceVersion (version : String) : Except String String := do
+  let parts := (version.trimAscii.toString.splitOn ".").toArray
+  unless parts.size == 2 || parts.size == 3 do
+    throw s!"expected a two- or three-component version, got '{version}'"
+  let numbers ← parts.mapM fun part =>
+    match part.toNat? with
+    | some number => pure number
+    | none => throw s!"invalid source API version '{version}'"
+  return s!"{numbers[0]!}.{numbers[1]!}.{numbers[2]?.getD 0}"
+
+/-- Parse exact versions and Lake SemVer ranges for Noctium's source API. -/
+def parseSourceApiRequirement (source : String) : Except String Lake.VerRange := do
+  let text := source.trimAscii.toString
+  if text.isEmpty then throw "source API version requirement is empty"
+  let parts := text.splitOn "."
+  if (parts.length == 2 || parts.length == 3) && parts.all (·.toNat?.isSome) then
+    Lake.VerRange.parse ("=" ++ (← normalizeSourceVersion text))
+  else
+    Lake.VerRange.parse text
+
+structure SourceApiRequirement where
+  moduleName : Name
+  expression : String
+
+private initialize moduleSourceApiRequirements : SimplePersistentEnvExtension
+    SourceApiRequirement (Array SourceApiRequirement) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
+def sourceApiRequirements (env : Environment) : Array SourceApiRequirement :=
+  moduleSourceApiRequirements.getState env
+
+elab "noctium_require_source_api" requirement:str : command => do
+  let expression := requirement.getString
+  match parseSourceApiRequirement expression with
+  | .error error => throwErrorAt requirement "invalid Noctium source API requirement: {error}"
+  | .ok _ => pure ()
+  let moduleName ← getMainModule
+  modifyEnv fun env => moduleSourceApiRequirements.addEntry env {moduleName, expression}
+
+def checkSourceApiRequirements (env : Environment) : CommandElabM Unit := do
+  for requirement in sourceApiRequirements env do
+    let expression := requirement.expression
+    let range ← match parseSourceApiRequirement expression with
+      | .ok range => pure range
+      | .error error => throwError "invalid Noctium source API requirement '{expression}': {error}"
+    unless range.test sourceApiVersion do
+      throwError "Noctium module '{requirement.moduleName}' requires source API '{expression}', current version is {sourceApiVersion}"
 
 /-- The upstream source identity used by the selected native toolchain profile. -/
 structure NativeSourcePin where

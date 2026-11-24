@@ -1246,20 +1246,24 @@
       "id": "C-LANG-PRAGMA",
       "layer": "language",
       "surface": "Version pragmas and compatibility declarations",
-      "noctiumStatus": "subset",
-      "notes": "A file-level Lean option declares an exact Midnight target profile. Normal check and compile accept the matching target and reject a mismatch or an unknown name before publishing artifacts. A module-level exact target requirement persists through compiled Lean imports. Check and compile enforce requirements from the transitive import closure and reject incompatible dependencies before artifact publication. Version ranges remain open.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium check exact versions, compound ranges and requirements from imported modules against their respective source API versions. Malformed and incompatible requirements reject before artifact publication. Noctium's normal check and compile enforce requirements carried through compiled Lean imports and enforce the selected native target independently. The pinned Noctium target emits byte-identical ZKIR with an exact version, a compatible range and no requirement.",
       "source": [
         "reference"
       ],
       "requiredEvidence": [
-        "SEM",
-        "ZK"
+        "SEM"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
         "tests/source-target-requirement.sh",
+        "tests/source-api-requirement.sh",
+        "tests/compact/language-version.sh",
+        "docs/development/source-api-versions.md",
         "docs/development/native-contract.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-LANG-ASSERT",
