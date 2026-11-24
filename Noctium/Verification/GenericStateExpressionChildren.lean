@@ -4,6 +4,52 @@ namespace Noctium.Verification.GenericStateExpressionChildren
 
 open Noctium
 
+private theorem forIn_extract {α ε : Type}
+    (body : α → PUnit → Except ε (ForInStep PUnit))
+    (property : α → Prop) (values : List α)
+    (actions : ∀ value step, body value .unit = .ok step →
+      step = .yield .unit ∧ property value)
+    (success : forIn values PUnit.unit body = .ok .unit) :
+    ∀ value ∈ values, property value := by
+  induction values with
+  | nil => simp
+  | cons value rest ih =>
+    rw [List.forIn_cons] at success
+    cases checked : body value .unit with
+    | error message => simp [checked, bind, Except.bind] at success
+    | ok step =>
+      obtain ⟨equal, holds⟩ := actions value step checked
+      subst step
+      simp only [checked, bind, Except.bind] at success
+      intro found member
+      rcases List.mem_cons.mp member with equal | member
+      · simpa [equal] using holds
+      · exact ih success found member
+
+/-- Successful validation loops retain the exact checked result for every
+homogeneous child expression. -/
+theorem validateList_members {ty : Ty} (caps : Capabilities) (env : TypeEnv)
+    (values : List (Expr ty))
+    (success : forIn values PUnit.unit (fun (value : Expr ty) (_ : PUnit) => do
+      value.validate caps env
+      pure (.yield .unit)) = .ok .unit) :
+    ∀ value ∈ values, value.validate caps env = .ok () := by
+  refine forIn_extract
+    (fun (value : Expr ty) _ => do
+      value.validate caps env
+      pure (.yield .unit))
+    (fun value => value.validate caps env = .ok ()) values ?_ ?_
+  · intro value step checked
+    cases valid : value.validate caps env with
+    | error message =>
+      simp [valid, Functor.map, Except.map] at checked
+    | ok result =>
+      cases result
+      simp [valid, Functor.map, Except.map] at checked
+      cases checked
+      exact ⟨rfl, by simpa using valid⟩
+  · exact success
+
 /-- Evaluate homogeneous child expressions in order. This isolates the list
 recursion used by vector and hash expressions from the outer expression proof. -/
 def evalList {ty : Ty} (ctx : EvalContext) (env : EvalEnv)
@@ -50,5 +96,29 @@ theorem evalSigmaList_congr (ctx : EvalContext) (left right : EvalEnv)
       exact same item (by simp [member]))
     dsimp only [evalSigmaList] at tailAgreement
     rw [tailAgreement]
+
+/-- Successful validation of a dependent FAB expression loop retains each
+typed child validation in declaration order. -/
+theorem validateSigmaList_members (caps : Capabilities) (env : TypeEnv)
+    (values : List (Sigma Expr))
+    (success : forIn values PUnit.unit (fun (item : Sigma Expr) (_ : PUnit) => do
+      item.2.validate caps env
+      pure (.yield .unit)) = .ok .unit) :
+    ∀ item ∈ values, item.2.validate caps env = .ok () := by
+  refine forIn_extract
+    (fun (item : Sigma Expr) _ => do
+      item.2.validate caps env
+      pure (.yield .unit))
+    (fun item => item.2.validate caps env = .ok ()) values ?_ ?_
+  · intro item step checked
+    cases valid : item.2.validate caps env with
+    | error message =>
+      simp [valid, Functor.map, Except.map] at checked
+    | ok result =>
+      cases result
+      simp [valid, Functor.map, Except.map] at checked
+      cases checked
+      exact ⟨rfl, by simpa using valid⟩
+  · exact success
 
 end Noctium.Verification.GenericStateExpressionChildren
