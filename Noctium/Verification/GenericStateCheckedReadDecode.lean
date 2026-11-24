@@ -7,6 +7,23 @@ open NativeRelation ScalarNormalization
 open GenericStateCheckedReadTrace
 open GenericStateInputValues
 
+private theorem read_suffix_metadata (state : List StateDecl) (entry : Entrypoint)
+    (plan inputPlan : Impact.Plan) (boundaries : List Nat)
+    (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
+    (unguarded : entry.effectGuards = [])
+    (scope : ScalarReadEffects entry.effects)
+    (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan) :
+    (plan.reads.drop inputPlan.reads.length).map readMetadata =
+      (readChunks entry.effects inputPlan.reads.length).flatten := by
+  obtain ⟨actualPrefix, prefixLowered, metadata⟩ :=
+    lowerWithEffectBoundaries_read_metadata state entry plan boundaries accepted unguarded scope
+  have prefixEq := Except.ok.inj (prefixLowered.symm.trans prefixAccepted)
+  subst actualPrefix
+  rw [List.map_drop]
+  change (planReadMetadata plan).drop inputPlan.reads.length = _
+  rw [metadata]
+  simp [planReadMetadata]
+
 /-- A successful checked decode keeps each production read's name and type in
 its ordered candidate environment. The metadata suffix still comes from the
 accepted production lowering trace. -/
@@ -38,25 +55,43 @@ theorem lowerWithEffectBoundaries_decodeReads (state : List StateDecl)
           sourceScalar? read.ty (sourceValue decoder
             (witness ("%input_" ++ read.name))) =
               some (witness ("%input_" ++ read.name))) := by
-  obtain ⟨acceptedPrefix, prefixSame, metadata⟩ :=
-    lowerWithEffectBoundaries_read_metadata state entry plan boundaries accepted
-      unguarded scope
-  have samePrefix : acceptedPrefix = inputPlan :=
-    Except.ok.inj (prefixSame.symm.trans prefixAccepted)
-  subst acceptedPrefix
-  have suffixMetadata :
-      (plan.reads.drop inputPlan.reads.length).map readMetadata =
-        (readChunks entry.effects inputPlan.reads.length).flatten := by
-    have full : plan.reads.map readMetadata =
-        inputPlan.reads.map readMetadata ++
-          (readChunks entry.effects inputPlan.reads.length).flatten := by
-      simpa [planReadMetadata] using metadata
-    rw [List.map_drop, full]
-    simp [List.length_map]
   obtain ⟨decodedValues, decoded, meaning⟩ :=
     GenericStateCandidateDecode.decodeReads_candidate_meaning
       (plan.reads.drop inputPlan.reads.length) witness supported distinct typed bounded
-  exact ⟨decodedValues, decoded, suffixMetadata, meaning⟩
+  exact ⟨decodedValues, decoded,
+    read_suffix_metadata state entry plan inputPlan boundaries accepted unguarded scope
+      prefixAccepted, meaning⟩
+
+/-- The same value looked up for a source read has the canonical encoding of
+its candidate witness lane. The read must occur in the accepted production
+suffix. A later native step still authenticates the candidate against state. -/
+theorem lowerWithEffectBoundaries_read_candidate (state : List StateDecl)
+    (entry : Entrypoint) (plan inputPlan : Impact.Plan) (boundaries : List Nat)
+    (witness : Assignment) (base decodedValues : EvalEnv) (name : String) (ty : Ty)
+    (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
+    (unguarded : entry.effectGuards = [])
+    (scope : ScalarReadEffects entry.effects)
+    (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan)
+    (sourceRead : (name, ty) ∈ (readChunks entry.effects inputPlan.reads.length).flatten)
+    (decoded : decodeReads (plan.reads.drop inputPlan.reads.length) witness = .ok decodedValues)
+    (distinct : (plan.reads.drop inputPlan.reads.length).Pairwise
+      (fun left right => left.name ≠ right.name))
+    (fresh : base.lookup name = none)
+    (typed : ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ())
+    (bounded : (witness ("%input_" ++ name)).val ≤ Native.sourceMaximum ty) :
+    ∃ candidate : ty.Denote,
+      (base ++ decodedValues).lookup name = some (Value.pack ty candidate) ∧
+      Canonical ty candidate ∧ sourceScalar? ty candidate = some (witness ("%input_" ++ name)) := by
+  rw [← read_suffix_metadata state entry plan inputPlan boundaries accepted unguarded scope
+    prefixAccepted] at sourceRead
+  obtain ⟨read, member, same⟩ := List.mem_map.mp sourceRead
+  have nameEq : read.name = name := congrArg Prod.fst same
+  have typeEq : read.ty = ty := congrArg Prod.snd same
+  subst name
+  subst ty
+  exact GenericStateReadEnvironment.read_candidate_from_decoded_reads base
+    (plan.reads.drop inputPlan.reads.length) witness decodedValues decoded distinct
+    read member fresh typed bounded
 
 /-- The checked candidate decoder rejects an unsupported first read instead
 of supplying a default value. -/
