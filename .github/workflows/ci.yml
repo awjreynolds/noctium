@@ -77,7 +77,8 @@ jobs:
       - name: Check source contract examples
         run: |
           lake env lean examples/PrivateClaim.lean
-          lake env lean examples/BoundedScalars.lean
+          mkdir -p .lake/build/lib/lean/examples
+          lake env lean -o .lake/build/lib/lean/examples/BoundedScalars.olean examples/BoundedScalars.lean
           lake env lean examples/Disclosure.lean
           lake env lean tests/Disclosure.lean
           lake env lean examples/NoctiumPrivateClaim.lean
@@ -620,5 +621,6 @@ jobs:
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
           lake env lean tests/Verification.lean
+          lake env lean proofs/BoundedScalarsVerification.lean
           lake env lean tests/SourceProofCoverage.lean
           bash tests/private-claim-source-coverage.sh
