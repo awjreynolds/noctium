@@ -457,9 +457,162 @@ theorem accepted_guarded_public_input_rejected_by_strict_decoder
   unfold Json.getStr? at stringParsed
   cases stringParsed
 
+private theorem visibility_eq_of_beq_true (left right : Visibility)
+    (matched : (left == right) = true) : left = right := by
+  cases left with
+  | «public» =>
+    cases right with
+    | «public» => rfl
+    | «private» =>
+      have different : (Visibility.public == Visibility.private) = false := by decide
+      rw [different] at matched
+      cases matched
+  | «private» =>
+    cases right with
+    | «public» =>
+      have different : (Visibility.private == Visibility.public) = false := by decide
+      rw [different] at matched
+      cases matched
+    | «private» => rfl
+
+private theorem option_visibility_eq_of_beq_true {left right : Option Visibility}
+    (matched : (left == right) = true) : left = right := by
+  cases left with
+  | none =>
+    cases right with
+    | none => rfl
+    | some right =>
+      have different : ((none : Option Visibility) == some right) = false := by
+        cases right <;> decide
+      rw [different] at matched
+      cases matched
+  | some left =>
+    cases right with
+    | none =>
+      have different : (some left == (none : Option Visibility)) = false := by
+        cases left <;> decide
+      rw [different] at matched
+      cases matched
+    | some right =>
+      change (left == right) = true at matched
+      exact congrArg some (visibility_eq_of_beq_true left right matched)
+
+private theorem accepted_input_row_visibility_matches {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (unguarded : requirement.activityGuard = none)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    requirement.visibility = visibility := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, descriptorParsed, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
+  cases visibility with
+  | «public» =>
+    have opcodeEq : opcode = "public_input" := by simpa [inputOpcode] using opcodeEq
+    subst opcode
+    have descriptorVisibility : descriptor.privacy.inputVisibility = some .«public» := by
+      have registered :
+          (Backend.Native.requireInstruction "public_input").map
+            (fun item => item.privacy.inputVisibility) = .ok (some .«public») := by
+        rfl
+      have parsed := congrArg (fun result : Except String Backend.Native.Descriptor =>
+        result.map (fun item => item.privacy.inputVisibility)) descriptorParsed
+      have mappedDescriptor :
+          (Except.ok descriptor : Except String Backend.Native.Descriptor).map
+            (fun item => item.privacy.inputVisibility) =
+          .ok descriptor.privacy.inputVisibility := rfl
+      have mappedVisibility := mappedDescriptor.symm.trans parsed.symm
+      have checked := mappedVisibility.trans registered
+      exact Except.ok.inj checked
+    simp only [opcodeEq, selected, unguarded] at accepted
+    cases ty : requirement.ty <;>
+      try simp [Ty.isForeign, ty] at nonforeignInput
+    all_goals
+      simp only [ty] at accepted
+      simp only [bind_ok] at accepted
+      rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+        valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
+        output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
+      have schema := Bool.and_eq_true_iff.mp (ensure_ok.mp schemaChecked)
+      have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
+        option_visibility_eq_of_beq_true schema.2
+      rw [descriptorVisibility] at checkedVisibility
+      exact (Option.some.inj checkedVisibility).symm
+  | «private» =>
+    have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
+    subst opcode
+    have descriptorVisibility : descriptor.privacy.inputVisibility = some .«private» := by
+      have registered :
+          (Backend.Native.requireInstruction "private_input").map
+            (fun item => item.privacy.inputVisibility) = .ok (some .«private») := by
+        rfl
+      have parsed := congrArg (fun result : Except String Backend.Native.Descriptor =>
+        result.map (fun item => item.privacy.inputVisibility)) descriptorParsed
+      have mappedDescriptor :
+          (Except.ok descriptor : Except String Backend.Native.Descriptor).map
+            (fun item => item.privacy.inputVisibility) =
+          .ok descriptor.privacy.inputVisibility := rfl
+      have mappedVisibility := mappedDescriptor.symm.trans parsed.symm
+      have checked := mappedVisibility.trans registered
+      exact Except.ok.inj checked
+    simp only [opcodeEq, selected, unguarded] at accepted
+    cases ty : requirement.ty <;>
+      try simp [Ty.isForeign, ty] at nonforeignInput
+    all_goals
+      simp only [ty] at accepted
+      simp only [bind_ok] at accepted
+      rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+        valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
+        output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
+      have schema := Bool.and_eq_true_iff.mp (ensure_ok.mp schemaChecked)
+      have checkedVisibility : descriptor.privacy.inputVisibility = some requirement.visibility :=
+        option_visibility_eq_of_beq_true schema.2
+      rw [descriptorVisibility] at checkedVisibility
+      exact (Option.some.inj checkedVisibility).symm
+
 /-- When a producer input row also passes the strict decoder's input shape,
-both boundaries name the same expected input. Guarded producer rows remain
-outside this bridge because the strict decoder requires a null guard. -/
+both boundaries expose the same ordered visibility and name. Guarded producer
+rows remain outside this bridge because the strict decoder requires a null guard. -/
+theorem accepted_input_row_descriptor_agrees {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement} {decodedOutput : String}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next)
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility decodedOutput)) :
+    Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
+      (visibility, decodedOutput) = (requirement.visibility, requirement.identifier) := by
+  have producerName := accepted_input_output_identifier selected
+    nonforeignInput opcodeParsed accepted
+  have decoderName := strict_decoded_input_output_identifier opcodeParsed decoded
+  have outputEq := Except.ok.inj (decoderName.symm.trans producerName)
+  have unguarded : requirement.activityGuard = none := by
+    cases visibility with
+    | «public» =>
+      cases guard : requirement.activityGuard with
+      | none => rfl
+      | some guardTerm =>
+        have rejected := accepted_guarded_public_input_rejected_by_strict_decoder
+          selected nonforeignInput guard
+          (by simpa [inputOpcode] using opcodeParsed) accepted
+        exact False.elim (rejected ⟨decodedOutput, decoded⟩)
+    | «private» =>
+      exact accepted_private_input_unguarded selected
+        (by simpa [inputOpcode] using opcodeParsed) accepted
+  have requirementVisibility := accepted_input_row_visibility_matches selected
+    nonforeignInput unguarded opcodeParsed accepted
+  exact ⟨producerName, Prod.ext requirementVisibility.symm outputEq⟩
+
+/-- The ordered input descriptor includes the visibility and name checked by
+the producer and exposed by the strict decoder. -/
 theorem accepted_input_row_names_agree {expected : Expected}
     {state next : State} {raw : Json} {visibility : Visibility}
     {requirement : InputRequirement} {decodedOutput : String}
@@ -472,11 +625,9 @@ theorem accepted_input_row_names_agree {expected : Expected}
       .ok (.input visibility decodedOutput)) :
     Backend.Native.stringField raw "output" = .ok requirement.identifier ∧
       decodedOutput = requirement.identifier := by
-  have producerName := accepted_input_output_identifier selected
-    nonforeignInput opcodeParsed accepted
-  have decoderName := strict_decoded_input_output_identifier opcodeParsed decoded
-  have outputEq := Except.ok.inj (decoderName.symm.trans producerName)
-  exact ⟨producerName, outputEq⟩
+  obtain ⟨producerName, descriptor⟩ := accepted_input_row_descriptor_agrees
+    selected nonforeignInput opcodeParsed accepted decoded
+  exact ⟨producerName, congrArg Prod.snd descriptor⟩
 
 /-- The ordered production read row, producer output field and strict decoded
 input name agree in one step, with the producer cursor advanced once. -/
