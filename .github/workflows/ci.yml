@@ -284,6 +284,7 @@ jobs:
           lake env lean tests/OpaqueCells.lean
           lake env lean tests/OpaqueCellReset.lean
           lake env lean tests/OpaqueDefaults.lean
+          lake env lean tests/OpaqueMaybe.lean
           lake env lean tests/FixedBytesDefaults.lean
           lake env lean tests/CompositeDefaults.lean
           lake env lean tests/ReadableDefaults.lean
@@ -361,6 +362,9 @@ jobs:
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
+          .lake/build/bin/noctium compile tests/OpaqueMaybe.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/opaque-maybe"
           .lake/build/bin/noctium compile tests/MaybeBytesCurves.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/maybe-bytes-curves"
@@ -530,6 +534,7 @@ jobs:
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
+            NOCTIUM_OPAQUE_MAYBE_DIR="$artifacts/opaque-maybe" \
             NOCTIUM_MAYBE_BYTES_CURVES_DIR="$artifacts/maybe-bytes-curves" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
             NOCTIUM_MIXED_FAB_COMMITMENTS_DIR="$artifacts/mixed-fab-commitments" \
@@ -580,6 +585,7 @@ jobs:
               --test readable_record_construction \
               --test scalar_transient_hash \
               --test composite_maybe_input --test composite_either_input \
+              --test opaque_maybe \
               --test maybe_bytes_curves \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \
               --test curve_defaults \

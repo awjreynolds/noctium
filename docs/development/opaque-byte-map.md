@@ -157,7 +157,14 @@ Compress field per payload. The pinned Compact fixture returns the same
 four tag and payload pairs. The native checker rejects a modified payload
 under the original relation. Source checking rejects publishing a private
 payload through `some` without an explicit disclosure.
-[Lean fixture](../../tests/OpaqueMaybe.lean) · [Compact oracle](../../tests/compact/opaque-maybe.mjs) · [Native checker](../../runtime/tests/opaque_maybe.rs)
+The POC workflow lowers fresh artifacts and replays the retained Compact
+vectors. The live oracle reproduces those vectors separately.
+
+The emitted relation sizes at K8 with 155 rows under ZKIR 3.2.1. A focused
+run with the official K8 parameters generated fresh keys, proved and
+verified the native statement, and rejected the original proof against the
+commitment derived from a changed string return.
+[Lean fixture](../../tests/OpaqueMaybe.lean) · [Compact oracle](../../tests/compact/opaque-maybe.mjs) · [Retained vectors](../../tests/compact/OpaqueMaybe.expected.json) · [Native test](../../runtime/tests/opaque_maybe.rs)
 
 ```sh
 mkdir -p build/experiments
@@ -169,6 +176,7 @@ lake exe noctium compile tests/OpaqueMaybe.lean \
   --emit ledger --emit witness --output "$scratch/native"
 NOCTIUM_OPAQUE_MAYBE_DIR="$scratch/native" \
 NOCTIUM_OPAQUE_MAYBE_COMPACT="$scratch/compact.json" \
+NOCTIUM_OPAQUE_MAYBE_PROOF_SRS="$PARAMS/bls_midnight_2p8" \
   cargo test --locked --manifest-path runtime/Cargo.toml --no-default-features \
   --features zkir-321 --test opaque_maybe -- --ignored
 ```

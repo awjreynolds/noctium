@@ -1,0 +1,9 @@
+{
+  "fixture": "OpaqueMaybe",
+  "compact": "0.36.1 (7fa3a117c 2026-11-11)",
+  "runtime": "0.21.0",
+  "stringSome": { "is_some": true, "value": "A\u0000B" },
+  "stringNone": { "is_some": false, "value": "" },
+  "bytesSome": { "is_some": true, "value": [0, 255, 0, 1] },
+  "bytesNone": { "is_some": false, "value": [] }
+}
