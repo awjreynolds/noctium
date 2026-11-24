@@ -6,6 +6,22 @@ open Backend.Native
 abbrev OutputFrame := AliasEnvironment × List (Term × Nat) × List Term
 abbrev ReturnFrame := List Normalized × List Normalized
 
+/-- One source condition per native field group, in the accepted plan's
+operation order. Unconditional groups have no source condition. -/
+def activityGuardSources (plan : Backend.Impact.Plan) : List (Option (Expr .bool)) :=
+  if plan.activityGuards.isEmpty then
+    plan.operations.flatMap fun operation => List.replicate operation.fieldGroups.length none
+  else
+    plan.operations.zip plan.activityGuards |>.flatMap fun (operation, guard) =>
+      List.replicate operation.fieldGroups.length guard
+
+def normalizeActivityGuard (entry : Entrypoint) (aliases : AliasEnvironment) :
+    Option (Expr .bool) → Except Diagnostic Normalized := fun source =>
+  match source with
+  | none => pure {term := .constant 1}
+  | some guard => (normalize aliases guard).mapError
+      (fun message => {span := entry.span, message})
+
 def inputRequirements (entry : Entrypoint) (plan : Backend.Impact.Plan) : List InputRequirement :=
   entry.circuit.inputs.map (fun input =>
     {identifier := "%input_" ++ input.name, visibility := input.visibility, ty := input.ty}) ++
@@ -172,16 +188,7 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
               (fun message => ({span := output.span, message} : Diagnostic))
             pure (ForInStep.yield (returnResults ++ [value]))
           pure (ForInStep.yield (returnResults, state.2))) = .ok returns ∧
-      (List.mapM (fun (guard : Option (Expr .bool)) => match guard with
-        | none => pure ({term := .constant 1} : Normalized)
-        | some guard => (normalize aliases guard).mapError
-            (fun message => ({span := entry.span, message} : Diagnostic)))
-        (if plan.activityGuards.isEmpty then
-          plan.operations.flatMap fun operation =>
-            List.replicate operation.fieldGroups.length none
-        else
-          plan.operations.zip plan.activityGuards |>.flatMap fun (operation, guard) =>
-            List.replicate operation.fieldGroups.length guard)) = .ok activity ∧
+      (activityGuardSources plan).mapM (normalizeActivityGuard entry aliases) = .ok activity ∧
       expected.inputs = inputState.1 ∧
       expected.groups = operationFrame.1 ∧
       expected.returns = returns.1.map (·.term) ∧
@@ -222,8 +229,12 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
     simpa only [convert_eq_mapError] using inputStateAccepted
   have returnsExact := by
     simpa only [convert_eq_mapError] using returnsAccepted
-  have activityExact := by
-    simpa only [convert_eq_mapError] using activityAccepted
+  have activityExact :
+      (activityGuardSources plan).mapM (normalizeActivityGuard entry aliases) = .ok activity := by
+    simp only [convert_eq_mapError] at activityAccepted
+    rw [← activityAccepted]
+    unfold activityGuardSources
+    congr 1
   have constraintValues := (convert_ok _ _ _).mp conditionsAccepted
   have guardValues := (convert_ok _ _ _).mp guardsAccepted
   have constraintCollectionExact :
@@ -275,5 +286,36 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
   · simp [produced]
   · simp [produced]
   · simp [produced]
+
+private theorem mapM_indexed {α β ε : Type} {f : α → Except ε β}
+    {sources : List α} {results : List β}
+    (accepted : sources.mapM f = .ok results) (index : Nat) :
+    sources[index]?.mapM f = .ok results[index]? := by
+  induction sources generalizing results index with
+  | nil =>
+    cases accepted
+    rfl
+  | cons source rest ih =>
+    simp only [List.mapM_cons, bind_ok] at accepted
+    obtain ⟨head, headAccepted, tail, tailAccepted, result⟩ := accepted
+    cases result
+    cases index with
+    | zero => simp [Option.mapM, headAccepted, Functor.map, Except.map]
+    | succ n => exact ih tailAccepted n
+
+/-- The expected Impact guard at every ordinal comes from normalization of
+the source condition at that same field-group ordinal in the actual plan. -/
+theorem expectedEntrypoint_activityGuard_at (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (accepted : expectedEntrypoint state entry = .ok expected) :
+    ∃ plan aliases, Backend.Impact.lower state entry = .ok plan ∧
+      ∀ index : Nat,
+        ((activityGuardSources plan)[index]?.mapM (normalizeActivityGuard entry aliases)).map
+          (Option.map (·.term)) = .ok expected.groupGuards[index]? := by
+  obtain ⟨plan, _, aliases, _, _, _, _, _, _, _, activity, lowered, _, _, _, _, _, _, _,
+    _, _, normalized, _, _, _, _, _, expectedTerms, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  refine ⟨plan, aliases, lowered, fun index => ?_⟩
+  rw [mapM_indexed normalized index, expectedTerms, List.getElem?_map]
+  rfl
 
 end Noctium.Verification.GenericStateCircuitParts
