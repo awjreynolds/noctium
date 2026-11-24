@@ -60,6 +60,12 @@ end
 #guard_msgs (substring := true) in
 noctium_implements FieldContractAlias implements NativeFieldEcho
 
+/- error: nominal Field interface values are unsupported in callCommitment -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsNominalFieldCommitment where
+  output commitment : Native := callCommitment(FieldContractAlias, "echo", 1, [], [1])
+end
+
 noctium_circuit castField where
   private raw : Native
   let amount : Amount := cast(Amount, raw)

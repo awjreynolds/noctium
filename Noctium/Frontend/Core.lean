@@ -1018,6 +1018,8 @@ private def commitmentHashWith (env : Bindings)
     (interface : CallInterface) (opening : TSyntax `nlexpr)
     (inputs outputs : Array (TSyntax `nlcallvalue)) (stx : TSyntax `nlexpr) :
     CommandElabM (Ty × TSyntax `term) := do
+  unless interface.argumentNominalFields.isEmpty && interface.resultNominalFields.isEmpty do
+    throwErrorAt stx "nominal Field interface values are unsupported in callCommitment"
   let arguments ← callExpressions "argument" interface.argumentFields interface.argumentViews inputs stx
   let results ← callExpressions "result" interface.resultFields interface.resultViews outputs stx
   let argumentPayload := arguments.map fun (name, value, ty) =>
