@@ -1,0 +1,15 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export ledger balances: Map<Amount, Count>;
+
+export circuit roundTrip(key: Amount, value: Count): [Boolean, Count] {
+  const exposedKey = disclose(key);
+  balances.insert(exposedKey, disclose(value));
+  const present = balances.member(exposedKey);
+  const stored = balances.lookup(exposedKey);
+  return [present, stored];
+}
