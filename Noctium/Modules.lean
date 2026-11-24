@@ -977,6 +977,7 @@ private def resolveModuleMapKeyType (limits : Limits) (span : SourceSpan)
       | fail span s!"unbound Noctium module type parameter '{name}'"
     match moduleType.value with
     | .bytes length => pure (.bytes length)
+    | .scalar (.foreign kind) => pure (.foreign kind)
     | _ => resolveStateScalar limits span types naturals value
   | _ => resolveStateScalar limits span types naturals value
 
@@ -1014,6 +1015,7 @@ private def resolveModuleMapValueType (limits : Limits) (span : SourceSpan)
       match moduleType.value with
       | .scalar .jubjubScalar => return .jubjubScalar
       | .scalar .jubjubPoint => return .jubjubPoint
+      | .scalar (.foreign kind) => return .foreign kind
       | _ => pure ()
   resolveStateScalar limits span types naturals value
 
