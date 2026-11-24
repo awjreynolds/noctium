@@ -5292,8 +5292,8 @@
       "id": "C-STDLIB-JUBJUBPOINTX",
       "layer": "standard-library",
       "surface": "jubjubPointX",
-      "noctiumStatus": "subset",
-      "notes": "Returns the x coordinate from checked typed Jubjub points. The paired fixture compares generator, identity, multiplication, addition and negation results.",
+      "noctiumStatus": "equivalent",
+      "notes": "Projects a checked JubjubPoint into its Native coordinate. Compact 0.36.1 and native ZKIR 3.2.1 agree on exact generator and identity results. The native ABI rejects an off-curve input. The two-coordinate relation proves and verifies with official K6 parameters, and verification rejects a modified return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5312,14 +5312,14 @@
         "tests/compact/jubjub-group-parity.mjs",
         "runtime/tests/jubjub_group_parity.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-JUBJUBPOINTY",
       "layer": "standard-library",
       "surface": "jubjubPointY",
-      "noctiumStatus": "subset",
-      "notes": "Returns the y coordinate from checked typed Jubjub points. The paired fixture compares generator, identity, multiplication, addition and negation results.",
+      "noctiumStatus": "equivalent",
+      "notes": "Projects a checked JubjubPoint into its Native coordinate. Compact 0.36.1 and native ZKIR 3.2.1 agree on exact generator and identity results. The native ABI rejects an off-curve input. The two-coordinate relation proves and verifies with official K6 parameters, and verification rejects a modified return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5338,7 +5338,7 @@
         "tests/compact/jubjub-group-parity.mjs",
         "runtime/tests/jubjub_group_parity.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SECP256K1POINT",
