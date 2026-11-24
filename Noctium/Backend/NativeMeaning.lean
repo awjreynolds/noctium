@@ -131,17 +131,21 @@ def allLiteralZeroTerms : List Term → Bool
   | .constant 0 :: rest => allLiteralZeroTerms rest
   | _ => false
 
-/-- Fold zero suffixes and omit the low-order addition of a literal zero byte. -/
-def packByteTermsRec : List Term → Term
+/-- Fold low-order literal zero runs into one field coefficient and omit zero suffixes. -/
+def packByteTermsRecAux (zeroCount : Nat) : List Term → Term
   | [] => .constant 0
-  | [byte] => byte
   | byte :: rest =>
-    if allLiteralZeroTerms rest then byte
-    else match byte with
-      | .constant 0 => .binary "mul" (.constant 256) (packByteTermsRec rest)
-      | _ => .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRec rest))
+    if byte == .constant 0 then packByteTermsRecAux (zeroCount + 1) rest
+    else
+      let suffix := packByteTermsRecAux 0 rest
+      let packed := if suffix == .constant 0 then byte
+        else .binary "add" byte (.binary "mul" (.constant 256) suffix)
+      if zeroCount == 0 then packed
+      else .binary "mul" (.constant (256 ^ zeroCount % Field.modulus)) packed
 
-/-- Pack a normalized byte chunk, folding zero suffixes and low-order zero bytes. -/
+def packByteTermsRec : List Term → Term := packByteTermsRecAux 0
+
+/-- Pack a normalized byte chunk, folding low-order zero runs and zero suffixes. -/
 def packByteTerms (values : List Term) : Term :=
   if allLiteralZeroTerms values then .constant 0 else packByteTermsRec values
 

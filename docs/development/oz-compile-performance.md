@@ -214,6 +214,17 @@ matching witness files. The PrivateClaim relation matched its baseline
 SHA-256. [Packing ticket](https://github.com/awjreynolds/noctium/issues/775) ·
 [Focused packing checks](../../tests/NativeBytePacking.lean)
 
+## Fold consecutive zero bytes in a mixed chunk
+
+The packer combines consecutive low-order literal zero bytes into one
+multiplication by the corresponding power of 256. The native producer
+derives the same expression. Lean checks the little-endian value and
+preservation of the output allocation bound.
+
+For the focused 31-byte fixture with 30 literal zero bytes and one private
+byte, ZKIR 3.2.1 sizing measured 52 rows before and 23 after, both at K9.
+The relation uses one multiplication in place of 30. [Focused packing checks](../../tests/NativeBytePacking.lean)
+
 ## Reuse existing byte leaves
 
 Static slices select byte leaves directly when the inputs already use that

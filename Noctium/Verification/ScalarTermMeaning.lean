@@ -79,29 +79,6 @@ private theorem littleEndian_eq_zero_of_all_zero (values : List Nat)
       exact allZero value (List.Mem.tail first member)
     simp [Backend.Native.littleEndian, firstZero, ih restZero]
 
-/-- The raw recursive source packing term denotes the producer's little-endian
-integer modulo the native field. -/
-private theorem interpret_packByteTermsRaw_constants (hash : Hash) (inputs : Assignment)
-    (values : List Nat) :
-    interpret? hash inputs (Backend.Native.packByteTermsRaw (values.map Term.constant)) =
-      some (scalar (Backend.Native.littleEndian values)) := by
-  induction values with
-  | nil => simp [Backend.Native.packByteTermsRaw, Backend.Native.littleEndian]
-  | cons first rest ih =>
-    cases rest with
-    | nil => simp [Backend.Native.packByteTermsRaw, Backend.Native.littleEndian]
-    | cons second rest =>
-      change interpret? hash inputs
-          (.binary "add" (.constant first)
-            (.binary "mul" (.constant 256)
-              (Backend.Native.packByteTermsRaw (List.map Term.constant (second :: rest))))) =
-        some (scalar (first + 256 * Backend.Native.littleEndian (second :: rest)))
-      have ih' : interpret? hash inputs
-          (Backend.Native.packByteTermsRaw (Term.constant second :: List.map Term.constant rest)) =
-          some (scalar (Backend.Native.littleEndian (second :: rest))) := by
-        simpa only [List.map_cons] using ih
-      simp [interpret?, ih', scalar_add_mod, scalar_mul_mod]
-
 private theorem allLiteralZeroTerms_constants_iff (values : List Nat) :
     Backend.Native.allLiteralZeroTerms (values.map Term.constant) = true ↔
       ∀ value ∈ values, value = 0 := by
@@ -110,49 +87,107 @@ private theorem allLiteralZeroTerms_constants_iff (values : List Nat) :
   | cons value rest ih =>
     cases value <;> simp [Backend.Native.allLiteralZeroTerms, ih]
 
-private theorem interpret_packByteTermsRec_constants (hash : Hash) (inputs : Assignment)
-    (values : List Nat) :
-    interpret? hash inputs (Backend.Native.packByteTermsRec (values.map Term.constant)) =
-      some (scalar (Backend.Native.littleEndian values)) := by
-  induction values with
-  | nil => simp [Backend.Native.packByteTermsRec, Backend.Native.littleEndian]
-  | cons first rest ih =>
-    cases rest with
-    | nil => simp [Backend.Native.packByteTermsRec, Backend.Native.littleEndian]
-    | cons second rest =>
-      have ih' : interpret? hash inputs
-          (Backend.Native.packByteTermsRec (Term.constant second :: List.map Term.constant rest)) =
-          some (scalar (Backend.Native.littleEndian (second :: rest))) := by
-        simpa only [List.map_cons] using ih
-      by_cases suffixZero : Backend.Native.allLiteralZeroTerms
-          (List.map Term.constant (second :: rest)) = true
-      · have zeroSuffix := (allLiteralZeroTerms_constants_iff (second :: rest)).mp suffixZero
-        have suffixEndianZero := littleEndian_eq_zero_of_all_zero (second :: rest) zeroSuffix
-        have secondZero := zeroSuffix second (by simp)
-        have restZero : ∀ value ∈ rest, value = 0 := by
-          intro value member
-          exact zeroSuffix value (List.Mem.tail second member)
-        have restEndianZero := littleEndian_eq_zero_of_all_zero rest restZero
-        have restAllZero := (allLiteralZeroTerms_constants_iff rest).2 restZero
-        have prefixedRestZero : Backend.Native.allLiteralZeroTerms
-            (Term.constant 0 :: List.map Term.constant rest) = true := by
-          simp [Backend.Native.allLiteralZeroTerms, restAllZero]
-        simp [Backend.Native.packByteTermsRec, prefixedRestZero,
-          Backend.Native.littleEndian, secondZero, restEndianZero]
-      · have suffixNonzero : Backend.Native.allLiteralZeroTerms
-            (Term.constant second :: List.map Term.constant rest) ≠ true := by
-          intro allZero
-          exact suffixZero (by simpa only [List.map_cons] using allZero)
-        cases first with
-        | zero =>
-          simp [Backend.Native.packByteTermsRec, suffixNonzero]
-          simp [interpret?, ih', Backend.Native.littleEndian, scalar_mul_mod]
-        | succ first =>
-          simp [Backend.Native.packByteTermsRec, suffixNonzero]
-          simp [interpret?, ih', Backend.Native.littleEndian, scalar_add_mod, scalar_mul_mod]
+private theorem scalar_mul_left_mod (left right : Nat) :
+    scalar (left % Field.modulus * right) = scalar (left * right) := by
+  apply Fin.ext
+  simp [scalar, Nat.mul_mod]
 
-/-- Normalized all-zero chunks pack to zero. Other chunks retain the original
-symbolic recurrence and its scalar meaning. -/
+private theorem scalar_add_value (left right : Nat) :
+    scalar left + scalar right = scalar (left + right) := by
+  apply Fin.ext
+  change ((left % Field.modulus + right % Field.modulus) % Field.modulus) =
+    ((left + right) % Field.modulus)
+  exact (Nat.add_mod left right Field.modulus).symm
+
+private theorem scalar_mul_value (left right : Nat) :
+    scalar left * scalar right = scalar (left * right) := by
+  apply Fin.ext
+  change (((left % Field.modulus) * (right % Field.modulus)) % Field.modulus) =
+    ((left * right) % Field.modulus)
+  exact (Nat.mul_mod left right Field.modulus).symm
+
+private theorem interpret_packByteScale (hash : Hash) (inputs : Assignment)
+    (zeroCount : Nat) (term : Term) (value : Nat)
+    (meaning : interpret? hash inputs term = some (scalar value)) :
+    interpret? hash inputs
+      (if zeroCount == 0 then term else
+        .binary "mul" (.constant (256 ^ zeroCount % Field.modulus)) term) =
+      some (scalar (256 ^ zeroCount * value)) := by
+  by_cases zero : zeroCount = 0
+  · subst zeroCount
+    simp [meaning]
+  · have nonzero : (zeroCount == 0) = false := by simp [zero]
+    simp [interpret?, nonzero, meaning, scalar_mul_mod, scalar_mul_left_mod]
+
+private theorem scalar_littleEndian_cons (first : Nat) (rest : List Nat) :
+    scalar (Backend.Native.littleEndian (first :: rest)) =
+      scalar first + scalar 256 * scalar (Backend.Native.littleEndian rest) := by
+  simp only [Backend.Native.littleEndian]
+  calc
+    scalar (first + 256 * Backend.Native.littleEndian rest) =
+        scalar first + scalar (256 * Backend.Native.littleEndian rest) :=
+      (scalar_add_value _ _).symm
+    _ = scalar first + scalar 256 * scalar (Backend.Native.littleEndian rest) := by
+      rw [scalar_mul_value]
+
+private theorem scalar_littleEndian_cons_of_zero (first : Nat) (rest : List Nat)
+    (restZero : scalar (Backend.Native.littleEndian rest) = zero) :
+    scalar (Backend.Native.littleEndian (first :: rest)) = scalar first := by
+  rw [scalar_littleEndian_cons, restZero]
+  apply Fin.ext
+  change ((first % Field.modulus + (256 % Field.modulus * 0) % Field.modulus) %
+      Field.modulus) = first % Field.modulus
+  simp
+
+private theorem interpret_packByteTermsRecAux_constants (hash : Hash) (inputs : Assignment)
+    (zeroCount : Nat) (values : List Nat) :
+    interpret? hash inputs
+        (Backend.Native.packByteTermsRecAux zeroCount (values.map Term.constant)) =
+      some (scalar (256 ^ zeroCount * Backend.Native.littleEndian values)) := by
+  induction values generalizing zeroCount with
+  | nil => simp [Backend.Native.packByteTermsRecAux, Backend.Native.littleEndian]
+  | cons first rest ih =>
+    cases first with
+    | zero =>
+      simpa [Backend.Native.packByteTermsRecAux, Term.equal,
+        Backend.Native.littleEndian, Nat.pow_succ, Nat.mul_assoc] using ih (zeroCount + 1)
+    | succ first =>
+      let suffix := Backend.Native.packByteTermsRecAux 0 (rest.map Term.constant)
+      have suffixMeaning : interpret? hash inputs suffix =
+          some (scalar (Backend.Native.littleEndian rest)) := by
+        simpa [suffix] using ih 0
+      by_cases suffixZero : suffix == .constant 0
+      · have suffixEq : suffix = .constant 0 := eq_of_beq suffixZero
+        have restZero : scalar (Backend.Native.littleEndian rest) = zero := by
+          have meaningZero : some (scalar 0) = some (scalar (Backend.Native.littleEndian rest)) := by
+            simpa [suffixEq, interpret?] using suffixMeaning
+          have scalarZero : scalar (Backend.Native.littleEndian rest) = scalar 0 :=
+            (Option.some.inj meaningZero).symm
+          simpa [zero, scalar] using scalarZero
+        have packedMeaning : interpret? hash inputs (.constant (first + 1)) =
+            some (scalar (Backend.Native.littleEndian ((first + 1) :: rest))) := by
+          rw [scalar_littleEndian_cons_of_zero _ rest restZero]
+          simp
+        simpa [Backend.Native.packByteTermsRecAux, Term.equal, List.map_cons,
+          suffix, suffixZero, Nat.pow_succ, Nat.mul_assoc] using
+            (interpret_packByteScale hash inputs zeroCount (.constant (first + 1))
+              (Backend.Native.littleEndian ((first + 1) :: rest)) packedMeaning)
+      · have packedMeaning :
+            interpret? hash inputs
+                (.binary "add" (.constant (first + 1))
+                  (.binary "mul" (.constant 256) suffix)) =
+              some (scalar (Backend.Native.littleEndian ((first + 1) :: rest))) := by
+          simp [interpret?, suffixMeaning, scalar_add_mod, scalar_mul_mod,
+            Backend.Native.littleEndian]
+        simpa [Backend.Native.packByteTermsRecAux, Term.equal, List.map_cons,
+          suffix, suffixZero, Nat.pow_succ, Nat.mul_assoc] using
+            (interpret_packByteScale hash inputs zeroCount
+              (.binary "add" (.constant (first + 1))
+                (.binary "mul" (.constant 256) suffix))
+              (Backend.Native.littleEndian ((first + 1) :: rest)) packedMeaning)
+
+/-- Normalized all-zero chunks pack to zero. Folding low-order zero runs keeps
+the packed field's little-endian scalar meaning. -/
 theorem interpret_packByteTerms_constants (hash : Hash) (inputs : Assignment)
     (values : List Nat) :
     interpret? hash inputs (Backend.Native.packByteTerms (values.map Term.constant)) =
@@ -167,7 +202,8 @@ theorem interpret_packByteTerms_constants (hash : Hash) (inputs : Assignment)
       | false => rfl
       | true => exact False.elim (allZero result)
     simp only [Backend.Native.packByteTerms, nonzero, Bool.false_eq_true, ↓reduceIte]
-    exact interpret_packByteTermsRec_constants hash inputs values
+    simpa [Backend.Native.packByteTermsRec] using
+      interpret_packByteTermsRecAux_constants hash inputs 0 values
 
 theorem interpret_packedByteConstant_eq_terms (hash : Hash) (inputs : Assignment)
     (values : List Nat) :

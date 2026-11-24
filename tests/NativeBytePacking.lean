@@ -118,6 +118,12 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
   (nativeBytePackingInstructions relation).filter
     (fun instruction => nativeBytePackingOpcode instruction == some opcode) |>.length
 
+private def nativeBytePackingFieldValues (relation : Lean.Json) (opcode field : String) : List String :=
+  (nativeBytePackingInstructions relation).filterMap fun instruction =>
+    if nativeBytePackingOpcode instruction == some opcode then
+      (instruction.getObjVal? field).toOption.bind fun value => value.getStr?.toOption
+    else none
+
 #guard match Noctium.Backend.Zkir.lowerCircuit nativeBytePackingLiteralCircuit with
   | .ok relation =>
       nativeBytePackingCount relation "add" == 0 && nativeBytePackingCount relation "mul" == 0
@@ -159,7 +165,10 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
 #guard match Noctium.Backend.Zkir.lowerCircuit mixedByteZeroPrefixCircuit with
   | .ok relation =>
       nativeBytePackingCount relation "add" == 0 &&
-        nativeBytePackingCount relation "mul" == 30 &&
+        nativeBytePackingCount relation "mul" == 1 &&
+        nativeBytePackingFieldValues relation "mul" "a" ==
+          [Noctium.Backend.Zkir.fieldImmediate
+            (256 ^ 30 % Noctium.Backend.Zkir.nativeModulus)] &&
         nativeBytePackingCount relation "constrain_bits" == 1
   | .error _ => _root_.Bool.false
 
@@ -182,6 +191,17 @@ private def narrowPackingContext : Noctium.EvalContext := {
 #guard match narrowRuntimePackingCircuit.run narrowPackingContext [
     ("octet", .uint 7 8)] with
   | .error _ => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+#guard match mixedByteZeroPrefixCircuit.run narrowPackingContext [
+    ("value", .bytes 1 [1])] with
+  | .ok [("decoded", .native value)] =>
+      value == 256 ^ 30 % Noctium.Field.modulus
+  | _ => _root_.Bool.false
+
+#guard match mixedByteZeroPrefixCircuit.run narrowPackingContext [
+    ("value", .bytes 1 [0])] with
+  | .ok [("decoded", .native 0)] => _root_.Bool.true
   | _ => _root_.Bool.false
 
 #guard match Noctium.Backend.Zkir.lowerCircuit narrowRuntimePackingCircuit with
