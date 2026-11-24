@@ -63,6 +63,20 @@ theorem arguments_decoded_meaning
 theorem nativeJson_stringField_eq (value : Json) (name : String) :
     NativeRelationJson.stringField value name = Backend.Native.stringField value name := rfl
 
+private theorem arguments_of_checked_native_arguments
+    {state : State} {raw : Json} {name : String} {facts : List Fact}
+    (accepted : (do
+      let values ← arguments state raw name
+      values.forM (fun fact => Backend.Native.ensure
+        (fact.valueType == NativeValueType.native)
+        "native instruction operand must have Native type")
+      pure values) = .ok facts) :
+    arguments state raw name = .ok facts := by
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, parsed, ⟨_, _, result⟩⟩
+  cases result
+  exact parsed
+
 /-- An accepted Native scalar output returns the validated state unchanged.
 Its exact source return terms have checked scalar interpretations equal to the
 decoded witness values in order. The opcode premise pins producer dispatch to the
@@ -87,16 +101,7 @@ theorem accepted_output_meaning
   let checkedExistence := factsSpec.2.1
   have equalityCheck := Classical.choose_spec checkedExistence
   have stateEq := factsSpec.2.2
-  have argumentsAccepted : arguments state raw "vals" = .ok facts := by
-    change (do
-      let values ← arguments state raw "vals"
-      values.forM (fun fact => Backend.Native.ensure (fact.valueType == NativeValueType.native)
-        "native instruction operand must have Native type")
-      pure values) = .ok facts at factsAccepted
-    simp only [bind_ok] at factsAccepted
-    rcases factsAccepted with ⟨_, parsed, ⟨_, _, result⟩⟩
-    cases result
-    exact parsed
+  have argumentsAccepted := arguments_of_checked_native_arguments factsAccepted
   have matched : facts.map (·.term) = expected.returns :=
     eq_of_beq (ensure_ok.mp equalityCheck)
   simp [NativeRelationJson.decodeInstruction, opcode, bind_ok, map_ok,
@@ -109,5 +114,56 @@ theorem accepted_output_meaning
   · exact stateEq.symm
   · rw [← matched]
     simpa only [List.map_map, Function.comp_def] using valuesMeaning
+
+/-- The strict decoder and accepted producer read the same ordered Impact
+payload. Each term in the producer's selected source group has a scalar
+interpretation equal to its corresponding decoded operand under the witness.
+The strict decoder currently accepts literal-one Impact guards. -/
+theorem accepted_impact_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
+    (invariant : StateMeaning hash inputs witness state)
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
+    ∃ group, expected.groups[state.groupCount]? = some group ∧
+      next = {state with groupCount := state.groupCount + 1} ∧
+      group.map (interpret hash inputs) = (values.map (·.read witness)).map some := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have same := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, _, _, facts, factsParsed, accepted⟩
+  have argumentsAccepted := arguments_of_checked_native_arguments factsParsed
+  split at accepted
+  next group groupParsed =>
+    simp only [Pure.pure, Except.pure] at accepted
+    have checked :
+        (facts.map (·.term) == group) = true ∧
+          next = {state with groupCount := state.groupCount + 1} := by
+      cases empty : expected.groupGuards.isEmpty
+      · cases sourceGuard : expected.groupGuards[state.groupCount]?
+        · simp [empty, sourceGuard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+        · simp [empty, sourceGuard, bind_ok] at accepted
+          obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
+          exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
+      · simp [empty, bind_ok] at accepted
+        obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
+        exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
+    have matched : facts.map (·.term) = group := eq_of_beq checked.1
+    simp [NativeRelationJson.decodeInstruction, opcode, bind_ok,
+      nativeJson_stringField_eq] at decoded
+    rcases decoded with ⟨_, decodedGuard, _, decoded⟩
+    cases decodedGuard <;> simp [bind_ok, map_ok] at decoded
+    rcases decoded with ⟨_, json, jsonParsed, valuesDecoded, _⟩
+    have valuesMeaning := arguments_decoded_meaning invariant argumentsAccepted (by
+      simp only [jsonParsed]
+      exact valuesDecoded)
+    refine ⟨group, groupParsed, checked.2, ?_⟩
+    rw [← matched]
+    simpa only [List.map_map, Function.comp_def] using valuesMeaning
+  next => contradiction
 
 end Noctium.Verification.ScalarValidationOutputMeaning
