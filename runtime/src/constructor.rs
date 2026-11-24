@@ -643,7 +643,7 @@ fn evaluate_map_insert(
     value.validate()?;
     Ok((
         slot,
-        crate::aligned(&key_value, crate::key_alignment(&key_type))?,
+        crate::aligned(&key_value, crate::key_alignment(&key_type).as_ref())?,
         crate::aligned_storage_cell(&value)?,
     ))
 }
@@ -972,7 +972,7 @@ fn apply_ordered_actions(
                     "constructor Map key type mismatch"
                 );
                 crate::validate_ledger_key_value(&key_type, &key_value)?;
-                let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
+                let key = crate::aligned(&key_value, crate::key_alignment(&key_type).as_ref())?;
                 let Some(StateValue::Map(entries)) = slots.get(map_slot) else {
                     bail!("constructor Map state requires map storage")
                 };
@@ -1105,7 +1105,7 @@ fn apply_set_inserts(
             "constructor Set key type mismatch"
         );
         crate::validate_ledger_key_value(&key_type, &key_value)?;
-        let key = crate::aligned(&key_value, crate::key_alignment(&key_type))?;
+        let key = crate::aligned(&key_value, crate::key_alignment(&key_type).as_ref())?;
         let set = sets.entry(slot).or_insert_with(HashMap::new);
         *set = set.insert(key, StateValue::Null);
     }

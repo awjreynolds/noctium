@@ -2106,7 +2106,7 @@ fn path_field_count(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<usize> 
     let mut fields = 4;
     for (part, ty) in keys.iter().zip(types) {
         ensure!(
-            part.alignment == key_alignment(&ty),
+            part.alignment == key_alignment(&ty).as_ref(),
             "map path key alignment mismatch"
         );
         fields += ledger_key_aligned_field_count(&ty);
@@ -2212,8 +2212,7 @@ pub(crate) fn ledger_key_type(value: &Json) -> Result<ScalarType> {
     )?;
     reject_jubjub_map_key(&ty)?;
     ensure!(
-        !matches!(&ty, ScalarType::Bytes(_) | ScalarType::OpaqueBytes)
-            && ty != ScalarType::OpaqueString,
+        !matches!(&ty, ScalarType::OpaqueBytes) && ty != ScalarType::OpaqueString,
         "only fixed-width byte map keys are supported"
     );
     Ok(ty)
@@ -2222,6 +2221,7 @@ pub(crate) fn ledger_key_type(value: &Json) -> Result<ScalarType> {
 fn ledger_key_aligned_field_count(ty: &ScalarType) -> usize {
     match ty {
         ScalarType::Bytes32 => 4,
+        ScalarType::Bytes(length) => 2 + length.div_ceil(31),
         #[cfg(feature = "zkir-321")]
         ScalarType::Foreign(ty) => 1 + 2 * ty.native_type().encoded_len(),
         _ => 3,
@@ -2230,11 +2230,13 @@ fn ledger_key_aligned_field_count(ty: &ScalarType) -> usize {
 
 fn validate_ledger_key_value(ty: &ScalarType, value: &Value) -> Result<()> {
     value.validate()?;
+    if matches!(ty, ScalarType::Bytes(_)) {
+        ensure!(value.scalar_type() == *ty, "map key type mismatch");
+    }
     #[cfg(feature = "zkir-321")]
     if matches!(ty, ScalarType::Foreign(_)) || matches!(value, Value::Foreign(_)) {
         ensure!(value.scalar_type() == *ty, "map key type mismatch");
     }
-    let _ = ty;
     Ok(())
 }
 
@@ -5164,11 +5166,11 @@ fn bind_list_scalar_read(
     Ok(read_event(read, active, env, produced))
 }
 
-fn key_alignment(ty: &ScalarType) -> &'static str {
-    if *ty == ScalarType::Bytes32 {
-        "bytes32"
-    } else {
-        "field"
+pub(crate) fn key_alignment(ty: &ScalarType) -> Cow<'static, str> {
+    match ty {
+        ScalarType::Bytes32 => Cow::Borrowed("bytes32"),
+        ScalarType::Bytes(length) => Cow::Owned(format!("bytes:{length}")),
+        _ => Cow::Borrowed("field"),
     }
 }
 fn inactive_read_value(ty: &str) -> Result<Value> {
@@ -6525,7 +6527,7 @@ fn native_index(
     let mut values = Vec::with_capacity(keys.len());
     for (part, ty) in keys.iter().zip(types) {
         ensure!(
-            part.alignment == key_alignment(&ty),
+            part.alignment == key_alignment(&ty).as_ref(),
             "map path key alignment mismatch"
         );
         let key = evaluate(&part.expression, env)?;
@@ -8846,7 +8848,7 @@ impl PreparationCursor {
                         let key_type = map_key_type(plan, *slot)?;
                         let value = evaluate(key, &env)?;
                         validate_ledger_key_value(&key_type, &value)?;
-                        aligned(&value, key_alignment(&key_type))
+                        aligned(&value, key_alignment(&key_type).as_ref())
                     })
                     .transpose()?;
                 let mut path = vec![Key::Value(

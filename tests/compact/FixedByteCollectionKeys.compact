@@ -1,0 +1,66 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+module GenericMap<K, V> {
+  export ledger values: Map<K, V>;
+
+  export circuit insert(key: K, next: V): V {
+    values.insert(disclose(key), disclose(next));
+    return values.lookup(disclose(key));
+  }
+
+  export circuit read(key: K): V {
+    return values.lookup(disclose(key));
+  }
+}
+
+import GenericMap<Bytes<0>, Uint<8>> prefix bytes0_;
+import GenericMap<Bytes<1>, Uint<8>> prefix bytes1_;
+import GenericMap<Bytes<33>, Field> prefix bytes33_;
+
+export {
+  bytes0_values,
+  bytes0_insert,
+  bytes0_read,
+  bytes1_values,
+  bytes1_insert,
+  bytes1_read,
+  bytes33_values,
+  bytes33_insert,
+  bytes33_read,
+};
+
+export ledger oneByteKeys: Set<Bytes<1>>;
+
+export circuit insertBytes0(key: Bytes<0>, next: Uint<8>): Uint<8> {
+  return bytes0_insert(disclose(key), disclose(next));
+}
+
+export circuit readBytes0(key: Bytes<0>): Uint<8> {
+  return bytes0_read(disclose(key));
+}
+
+export circuit insertBytes1(key: Bytes<1>, next: Uint<8>): Uint<8> {
+  return bytes1_insert(disclose(key), disclose(next));
+}
+
+export circuit readBytes1(key: Bytes<1>): Uint<8> {
+  return bytes1_read(disclose(key));
+}
+
+export circuit insertBytes33(key: Bytes<33>, next: Field): Field {
+  return bytes33_insert(disclose(key), disclose(next));
+}
+
+export circuit readBytes33(key: Bytes<33>): Field {
+  return bytes33_read(disclose(key));
+}
+
+export circuit insertOneByteSet(key: Bytes<1>): Boolean {
+  oneByteKeys.insert(disclose(key));
+  return oneByteKeys.member(disclose(key));
+}
+
+export circuit containsOneByteSet(key: Bytes<1>): Boolean {
+  return oneByteKeys.member(disclose(key));
+}

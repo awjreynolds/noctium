@@ -303,7 +303,7 @@ fn typed_schema_path<'a>(
         aligned_keys.push(if key_type.bytes_length().is_some() {
             crate::aligned_bytes(key)?
         } else {
-            crate::aligned(key, crate::key_alignment(&key_type))?
+            crate::aligned(key, crate::key_alignment(&key_type).as_ref())?
         });
         schema = &parts[1];
     }
