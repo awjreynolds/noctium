@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {"field": "requestId", "location": "envelope", "replacement": 4},
+    {"field": "operation", "location": "envelope", "replacement": "private_state.stage.v1"},
+    {"field": "capability", "location": "envelope", "replacement": "other"},
+    {"field": "schema", "location": "envelope", "replacement": "Bool"},
+    {"field": "attemptId", "location": "value", "replacement": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"field": "transactionId", "location": "value", "replacement": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"field": "journalDigest", "location": "value", "replacement": "0000000000000000000000000000000000000000000000000000000000000000"},
+    {"field": "baseRevision", "location": "value", "replacement": "stale"}
+  ]
+}

@@ -54,7 +54,7 @@ jobs:
           }, sort_keys=True))
           PY
       - name: Build the POC compiler
-        run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup
+        run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup Noctium.Witness.HostCasCorrelation
       - name: Check readable private state source and disclosure
         run: |
           bash tests/private-authoring-cli.sh
@@ -135,6 +135,7 @@ jobs:
           lake env lean tests/GenericSpecialization.lean
           lake env lean tests/Control.lean
           lake env lean --run tests/NativeProducer.lean
+          lake env lean --run tests/HostCasCorrelation.lean
           lake env lean tests/ByteHashes.lean
           lake env lean tests/TypedPointKeccak.lean
           lake env lean tests/FieldKeccak.lean
