@@ -842,6 +842,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"let {id.getId} := {renderExpr value} in {renderExpr body}"
   | `(nlexpr| assertThen($condition, $body)) =>
     s!"assertThen({renderExpr condition}, {renderExpr body})"
+  | `(nlexpr| assertUnit($condition)) => s!"assertUnit({renderExpr condition})"
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     let lines := (steps.toList.filterMap callbackStep).map fun
       | (some id, value) => s!"let {id.getId} := {renderExpr value}"
@@ -1019,6 +1020,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
     (items.getElems.toList.filterMap tupleItem).flatMap (disclosedValues ∘ Prod.snd)
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
+  | `(nlexpr| assertUnit($condition)) => disclosedValues condition
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     (steps.toList.filterMap callbackStep).flatMap (disclosedValues ∘ Prod.snd) ++
       disclosedValues result
@@ -1115,6 +1117,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
     (items.getElems.toList.filterMap tupleItem).flatMap (inlineAssertions ∘ Prod.snd)
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
+  | `(nlexpr| assertUnit($condition)) => renderExpr condition :: inlineAssertions condition
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     ((steps.toList.filterMap callbackStep).flatMap fun
       | (some _, value) => inlineAssertions value
@@ -2109,6 +2112,16 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         signatures := uniqueWitnesses (condition.signatures ++ body.signatures),
         witnessNames := (condition.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (condition.generatedValidity ++ body.generatedValidity).eraseDups }
+  | `(nlexpr| assertUnit($condition)) => do
+    let condition ← lowerExpr programName callPrefix env condition
+    let condition ← coerce stx condition .bool
+    pure
+      { type := .unit
+        term := .unit
+        before := condition.before ++ [.assert condition.term]
+        signatures := condition.signatures
+        witnessNames := condition.witnessNames
+        generatedValidity := condition.generatedValidity }
   | `(nlexpr| cast(Payload $target:ident, $source:nlexpr)) => do
     let (codec, _) ← selectedCodec target
     let _ ← checkedFieldlessEnumMembers target codec.payload

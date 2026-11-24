@@ -36,20 +36,28 @@ try {
   const contract = new Contract({});
   const walletKey = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(createConstructorContext(null, walletKey));
-  const context = () => createCircuitContext({
-    circuitId: 'checkGate',
+  const context = (circuitId) => createCircuitContext({
+    circuitId,
     contractAddress: dummyContractAddress(),
     coinPublicKeyOrZswapState: walletKey,
     contractState: currentContractState.data,
     privateState: null,
   });
 
-  const success = await contract.circuits.checkGate(context(), true);
+  const success = await contract.circuits.checkGate(context('checkGate'), true);
   assert.deepEqual(success.result, []);
   let failureMessage;
-  await assert.rejects(async () => contract.circuits.checkGate(context(), false), (error) => {
+  await assert.rejects(async () => contract.circuits.checkGate(context('checkGate'), false), (error) => {
     failureMessage = error.message;
     assert.match(failureMessage, /gate denied/);
+    return true;
+  });
+  const nestedGate = (enabled, allowed) =>
+    contract.circuits.checkNestedGate(context('checkNestedGate'), enabled, allowed);
+  assert.equal((await nestedGate(false, false)).result, 9n);
+  assert.equal((await nestedGate(true, true)).result, 7n);
+  await assert.rejects(async () => nestedGate(true, false), (error) => {
+    assert.match(error.message, /nested gate denied/);
     return true;
   });
   console.log(JSON.stringify({ success: success.result, failure: failureMessage }));
