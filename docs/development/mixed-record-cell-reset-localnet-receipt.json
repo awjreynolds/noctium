@@ -1,0 +1,174 @@
+{
+  "artifactEntries": [
+    {
+      "name": "tests/MixedRecordCellReset.lean",
+      "path": "source/tests/MixedRecordCellReset.lean",
+      "role": "source",
+      "sha256": "65290965ab09a00ac5812665b818c40ea074e707f9bff077217ea4c4534a2927",
+      "size": 3797
+    },
+    {
+      "name": "MixedRecordCellReset.clearMemos.zkir",
+      "path": "circuit/entrypoint.zkir",
+      "role": "circuit",
+      "sha256": "1a701ad183028354a6f1121c9aca11e0e5eaceff90256c574402484a9f901d60",
+      "size": 4529
+    },
+    {
+      "name": "MixedRecordCellReset.clearMemos.impact.json",
+      "path": "plan/entrypoint.impact.json",
+      "role": "plan",
+      "sha256": "bb2df4745bcb95bf1423f6754b205cd8cd14fdcf774ea363a64b9a600ad147d2",
+      "size": 6014
+    },
+    {
+      "name": "noctium.json",
+      "path": "schema/noctium.json",
+      "role": "metadata",
+      "sha256": "d8fd4875ad2173b7441323a986b2eaece1aaf312ed8d0515053a062083e655c8",
+      "size": 4392
+    },
+    {
+      "name": "noctium_runtime.h",
+      "path": "schema/noctium_runtime.h",
+      "role": "abi",
+      "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+      "size": 5282
+    },
+    {
+      "name": "target.json",
+      "path": "profile/target.json",
+      "role": "profile",
+      "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+      "size": 528
+    },
+    {
+      "name": "ledger.params",
+      "path": "parameters/ledger.params",
+      "role": "ledgerParameters",
+      "sha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+      "size": 791
+    },
+    {
+      "name": "entrypoint.prover",
+      "path": "keys/entrypoint.prover",
+      "role": "proverKey",
+      "sha256": "233a4c3a8dbb98c73954a924147cbb048281e01310b9474d9d55f40fef59c8e5",
+      "size": 226235
+    },
+    {
+      "name": "entrypoint.verifier",
+      "path": "keys/entrypoint.verifier",
+      "role": "verifierKey",
+      "sha256": "1aaa838209c06467c6e27a4358d02a3576951094582d67e705b850dca16dd00f",
+      "size": 1353
+    },
+    {
+      "name": "native-zkir.json",
+      "path": "provenance/native-zkir.json",
+      "role": "toolchain",
+      "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+      "size": 529
+    }
+  ],
+  "bundleManifestSha256": "888a20f298d0f0f8c2ce59c8c056d0075df7239bb12ff0330159709b789cecf0",
+  "compactReference": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "disabledPreserved": true,
+    "enabledResetBothToDefaults": true,
+    "fixture": "MixedRecordCellReset",
+    "runtime": "0.21.0",
+    "seeded": {
+      "fixedBytesMemo": {
+        "active": true,
+        "amount": "1027",
+        "payload": [
+          115,
+          101,
+          101,
+          100
+        ]
+      },
+      "typedMemo": {
+        "active": true,
+        "amount": "513"
+      }
+    },
+    "typedReturnsChecked": true
+  },
+  "contractAddress": "15a816b01cf789a6c17c2c2457defa3970883d2a1c067017fc180a18e8156ac3",
+  "deployment": {
+    "blockHash": "5478bc89fd3770a69c5143f3a7c5943ebd657a8edc80afd9b6e19781c71bb11e",
+    "finalizedHash": "5478bc89fd3770a69c5143f3a7c5943ebd657a8edc80afd9b6e19781c71bb11e",
+    "finalizedHeight": 85079,
+    "height": 85079,
+    "stateBytes": 1567,
+    "stateSha256": "f5df9574ace597ef33f83b3ce90b1300ffef77e8163ff8fc4ac9511b9c88efc9",
+    "transactionId": "5ac8b050d3b51a99032640cdf5156de6ea03a6da113166290966f280a8dc042a"
+  },
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "guardedCalls": [
+    {
+      "enabled": false,
+      "receipt": {
+        "blockHash": "a235e6fbd8a8fccc58eda0f3669956f46fd51ea64d0731de672402ddc37f7c15",
+        "finalizedHash": "a235e6fbd8a8fccc58eda0f3669956f46fd51ea64d0731de672402ddc37f7c15",
+        "finalizedHeight": 85082,
+        "height": 85082,
+        "stateBytes": 1567,
+        "stateSha256": "f5df9574ace597ef33f83b3ce90b1300ffef77e8163ff8fc4ac9511b9c88efc9",
+        "transactionId": "7064ee5b881ab911615c3b7832871c7c9061d9a7c5535337fac8af28fffbf81d"
+      },
+      "typedReturns": {
+        "fixedBytesActiveAfterReset": true,
+        "fixedBytesAmountAfterReset": "1027",
+        "fixedBytesPayloadAfterReset": {
+          "kind": "bytes",
+          "values": [
+            115,
+            101,
+            101,
+            100
+          ]
+        },
+        "typedActiveAfterReset": true,
+        "typedAmountAfterReset": "513"
+      }
+    },
+    {
+      "enabled": true,
+      "receipt": {
+        "blockHash": "5583cb72f5d09d5cfc214694db60cb1282ff0c37e016d44f6807dab446c5f5f4",
+        "finalizedHash": "5583cb72f5d09d5cfc214694db60cb1282ff0c37e016d44f6807dab446c5f5f4",
+        "finalizedHeight": 85085,
+        "height": 85085,
+        "stateBytes": 1551,
+        "stateSha256": "4a2a8b23e97e580543db7d9ceefa7d585a7c7314ee03589892295cadca919996",
+        "transactionId": "0d488987d6e76184de95f176afb775a02360d78976f64024a393898d0bfca26c"
+      },
+      "typedReturns": {
+        "fixedBytesActiveAfterReset": false,
+        "fixedBytesAmountAfterReset": "0",
+        "fixedBytesPayloadAfterReset": {
+          "kind": "bytes",
+          "values": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "typedActiveAfterReset": false,
+        "typedAmountAfterReset": "0"
+      }
+    }
+  ],
+  "k": 8,
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "rows": 158,
+  "scope": "One funded development deployment with matching Lean and Compact constructors. Both guarded calls bind typed returns and finalized state for the Bool/UInt16 and Bool/Bytes4/UInt16 record Cells.",
+  "sourceCompilerRevision": "01cfa9268c7fc0bcaa8aea7b98299e1e892a36da",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

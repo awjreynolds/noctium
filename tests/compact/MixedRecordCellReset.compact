@@ -1,0 +1,37 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct TypedMemo {
+  active: Boolean;
+  amount: Uint<16>;
+}
+
+struct FixedBytesMemo {
+  active: Boolean;
+  payload: Bytes<4>;
+  amount: Uint<16>;
+}
+
+export ledger typedMemo: TypedMemo;
+export ledger fixedBytesMemo: FixedBytesMemo;
+
+constructor() {
+  typedMemo = disclose(TypedMemo {
+    active: true,
+    amount: 513 as Uint<16>,
+  });
+  fixedBytesMemo = disclose(FixedBytesMemo {
+    active: true,
+    payload: pad(4, "seed"),
+    amount: 1027 as Uint<16>,
+  });
+}
+
+export circuit clearMemos(enabled: Boolean): [Boolean, Uint<16>, Boolean, Bytes<4>, Uint<16>] {
+  if (disclose(enabled)) {
+    typedMemo.resetToDefault();
+    fixedBytesMemo.resetToDefault();
+  }
+  return [typedMemo.active, typedMemo.amount, fixedBytesMemo.active,
+          fixedBytesMemo.payload, fixedBytesMemo.amount];
+}

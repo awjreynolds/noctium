@@ -312,6 +312,15 @@ stored two zero fields and preserved marker 37. Both calls used the K6
 [Native checker](../../runtime/tests/flat_record_cell.rs) ·
 [Finalized receipt](flat-record-cell-reset-localnet-receipt.json)
 
+A combined contract seeds a Bool/UInt16 Cell and a Bool/Bytes4/UInt16 Cell
+through matching Lean and Compact constructors. Its K8 guarded reset uses
+158 rows. Both funded calls bound five typed returns. The inactive call
+preserved the exact seeded state. The active call stored the default Boolean,
+integer, and byte values in both Cells.
+[Lean fixture](../../tests/MixedRecordCellReset.lean) ·
+[Compact oracle](../../tests/compact/mixed-record-cell-reset.mjs) ·
+[Finalized receipt](mixed-record-cell-reset-localnet-receipt.json)
+
 ## Record standalone token mints
 
 ```lean
