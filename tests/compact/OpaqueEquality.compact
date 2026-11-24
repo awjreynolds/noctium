@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger last: Boolean;
+
+export pure circuit sameString(a: Opaque<"string">, b: Opaque<"string">): Boolean {
+  return a == b;
+}
+
+export pure circuit sameBytes(a: Opaque<"Uint8Array">, b: Opaque<"Uint8Array">): Boolean {
+  return a == b;
+}
+
+export circuit recordString(a: Opaque<"string">, b: Opaque<"string">): Boolean {
+  last = disclose(a == b);
+  return a == b;
+}
+
+export circuit recordBytes(a: Opaque<"Uint8Array">, b: Opaque<"Uint8Array">): Boolean {
+  last = disclose(a == b);
+  return a == b;
+}
