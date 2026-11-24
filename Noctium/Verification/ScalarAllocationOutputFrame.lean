@@ -1,8 +1,186 @@
 import Noctium.Backend.Zkir
+import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.ScalarCircuit
+import Noctium.Verification.NativeRelationJson
 
 namespace Noctium.Verification.ScalarAllocationOutputFrame
 
 open Backend
+
+theorem lowerExpr_admitted_preservesOutputCapacityFrame (value : Expr ty)
+    (admitted : ScalarNormalization.ScalarExpression value) :
+    Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr value) := by
+  induction admitted with
+  | native number =>
+    simp only [Zkir.lowerExpr]
+    exact Zkir.pure_preservesOutputCapacityFrame _
+  | bool boolean =>
+    simp only [Zkir.lowerExpr]
+    exact Zkir.pure_preservesOutputCapacityFrame _
+  | uint maximum number =>
+    simp only [Zkir.lowerExpr]
+    exact Zkir.pure_preservesOutputCapacityFrame _
+  | ref name scalarType =>
+    cases scalarType
+    all_goals
+      simp only [Zkir.lowerExpr]
+      have getFrame : Zkir.PreservesOutputCapacityFrame
+          (get : StateM Zkir.LowerState Zkir.LowerState) := by
+        intro state
+        exact Zkir.OutputCapacityFrame.refl state
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ getFrame
+      intro state
+      exact Zkir.pure_preservesOutputCapacityFrame _
+  | add left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact Zkir.nativeAdd_preservesOutputCapacityFrame
+      (Native.isLiteralNativeZero left) (Native.isLiteralNativeZero right)
+      leftValue rightValue
+  | mul left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact Zkir.ordinaryBinary_preservesOutputCapacityFrame "mul" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+  | sub left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.ordinaryUnary_preservesOutputCapacityFrame "neg" rightValue
+        ⟨by decide, by decide, by decide⟩)
+    intro negated
+    exact Zkir.ordinaryBinary_preservesOutputCapacityFrame "add" leftValue negated
+      ⟨by decide, by decide, by decide⟩
+  | uadd left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact Zkir.nativeUIntAdd_preservesOutputCapacityFrame _
+      (Native.isLiteralUIntZero left) (Native.isLiteralUIntZero right)
+      leftValue rightValue
+  | usub left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.ordinaryUnary_preservesOutputCapacityFrame "neg" rightValue
+        ⟨by decide, by decide, by decide⟩)
+    intro negated
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.ordinaryBinary_preservesOutputCapacityFrame "add" leftValue negated
+        ⟨by decide, by decide, by decide⟩)
+    intro output
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.constrainUnsigned_preservesOutputCapacityFrame _ output)
+    intro ignored
+    exact Zkir.pure_preservesOutputCapacityFrame output
+  | umul left right leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.ordinaryBinary_preservesOutputCapacityFrame "mul" leftValue rightValue
+        ⟨by decide, by decide, by decide⟩)
+    intro output
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.constrainUnsigned_preservesOutputCapacityFrame _ output)
+    intro ignored
+    exact Zkir.pure_preservesOutputCapacityFrame output
+  | @cast source target value sourceType targetType valueSupported valueFrame =>
+    cases targetType with
+    | native =>
+      simp only [Zkir.lowerExpr]
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ valueFrame
+      intro output
+      exact Zkir.pure_preservesOutputCapacityFrame output
+    | bool =>
+      simp only [Zkir.lowerExpr]
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ valueFrame
+      intro output
+      apply Zkir.bind_preservesOutputCapacityFrame _ _
+        (Zkir.ordinaryBinary_preservesOutputCapacityFrame "test_eq" output "0x00"
+          ⟨by decide, by decide, by decide⟩)
+      intro zero
+      exact Zkir.ordinaryUnary_preservesOutputCapacityFrame "not" zero
+        ⟨by decide, by decide, by decide⟩
+    | uint maximum =>
+      simp only [Zkir.lowerExpr]
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ valueFrame
+      intro output
+      apply Zkir.bind_preservesOutputCapacityFrame _ _
+        (Zkir.constrainUnsigned_preservesOutputCapacityFrame maximum output)
+      intro ignored
+      exact Zkir.pure_preservesOutputCapacityFrame output
+  | @letE source target name value body sourceScalar valueSupported bodySupported valueFrame bodyFrame =>
+    cases sourceScalar
+    all_goals
+      simp only [Zkir.lowerExpr]
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ valueFrame
+      intro valueText
+      have readStateFrame : Zkir.PreservesOutputCapacityFrame
+          (get : StateM Zkir.LowerState Zkir.LowerState) := by
+        intro state
+        exact Zkir.OutputCapacityFrame.refl state
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ readStateFrame
+      intro previousState
+      apply Zkir.bind_preservesOutputCapacityFrame _ _
+        (Zkir.modify_preservesOutputCapacityFrame
+          (fun state => {state with aliases := (name, valueText) :: previousState.aliases})
+          (by intro state; rfl) (by intro state; rfl))
+      intro ignored
+      apply Zkir.bind_preservesOutputCapacityFrame _ _ bodyFrame
+      intro result
+      apply Zkir.bind_preservesOutputCapacityFrame _ _
+        (Zkir.modify_preservesOutputCapacityFrame
+          (fun state => {state with aliases := previousState.aliases})
+          (by intro state; rfl) (by intro state; rfl))
+      intro ignored
+      exact Zkir.pure_preservesOutputCapacityFrame result
+  | assertE condition body conditionSupported bodySupported conditionFrame bodyFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ conditionFrame
+    intro value
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.emit_preservesOutputCapacityFrame "assert" [("cond", Lean.toJson value)])
+    intro ignored
+    exact bodyFrame
+  | copyValue value supported valueFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ valueFrame
+    intro operand
+    exact Zkir.copyVal_preservesOutputCapacityFrame operand
+  | disclose span value supported valueFrame =>
+    simpa only [Zkir.lowerExpr] using valueFrame
+  | eq left right scalarType leftSupported rightSupported leftFrame rightFrame =>
+    simp only [Zkir.lowerExpr]
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact Zkir.ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+  | select condition yes no scalarType conditionSupported yesSupported noSupported
+      conditionFrame yesFrame noFrame =>
+    exact Zkir.lowerExpr_select_preservesOutputCapacityFrame condition yes no
+      conditionFrame yesFrame noFrame
+  | poseidon2 domain left right leftSupported rightSupported leftFrame rightFrame =>
+    exact Zkir.lowerExpr_poseidon2_preservesOutputCapacityFrame domain left right
+      leftFrame rightFrame
 
 private def hashCircuit : Circuit := {
   name := "allocationOutputFrame"
@@ -341,5 +519,78 @@ theorem lowerEntrypoint_outputDefinitions_budget (state : List StateDecl)
   have instructionsEqual := Except.ok.inj (parsed.symm.trans actualInstructions)
   refine ⟨plan, planAccepted, ?_⟩
   simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
+
+private theorem scalarReturnPreflight_preservesOutputCapacityFrame
+    (circuit : Circuit)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit)
+    (output : Output) (member : output ∈ circuit.outputs) :
+    Zkir.PreservesOutputCapacityFrame (Zkir.lowerReturnPreflight output) := by
+  cases output with
+  | mk name ty value span =>
+    obtain ⟨scalarType, _⟩ := admitted.outputs ⟨name, ty, value, span⟩ member
+    cases scalarType with
+    | native =>
+      simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
+    | bool =>
+      simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
+    | uint maximum =>
+      simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
+
+private theorem scalarReturnFields_preservesOutputCapacityFrame
+    (circuit : Circuit)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit)
+    (output : Output) (member : output ∈ circuit.outputs) :
+    ∀ projections, output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr field) := by
+  obtain ⟨nativeField, fieldsAccepted, expressionAdmission⟩ :=
+    ScalarNormalization.ScalarCircuitAdmission.nativeReturnFields
+      circuit admitted output member
+  intro projections acceptedProjections field fieldMember
+  have projectionsEq : [nativeField] = projections :=
+    Except.ok.inj (fieldsAccepted.symm.trans acceptedProjections)
+  subst projections
+  have fieldEq : field = nativeField := by simpa using fieldMember
+  subst field
+  exact lowerExpr_admitted_preservesOutputCapacityFrame nativeField expressionAdmission
+
+/-- Scalar admission supplies every expression frame needed to prove the
+default, pruned circuit body preserves its output allocation capacity. -/
+theorem lowerBody_scalarAdmission_has_output_capacity_frame (circuit : Circuit)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit) :
+    Zkir.OutputCapacityFrame {} ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2 := by
+  let pruned := Passes.pruneCircuit circuit
+  have prunedAdmission :=
+    ScalarNormalization.ScalarCircuitAdmission.pruneCircuit circuit admitted
+  have bodyFrame := Zkir.lowerBody_preservesOutputCapacityFrame pruned
+    (fun condition member =>
+      lowerExpr_admitted_preservesOutputCapacityFrame condition
+        (prunedAdmission.constraints condition member))
+    (fun output member =>
+      scalarReturnPreflight_preservesOutputCapacityFrame pruned prunedAdmission output member)
+    (fun output member =>
+      scalarReturnFields_preservesOutputCapacityFrame pruned prunedAdmission output member)
+  exact bodyFrame {}
+
+/-- An accepted producer circuit assigns numeric names within the producer's
+output budget whenever its source circuit has scalar admission. -/
+theorem lowerCircuit_scalarAdmission_names_fit_producerCapacity (circuit : Circuit)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit) {program : Lean.Json}
+    (produced : Zkir.lowerCircuit circuit = .ok program) :
+    ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next ≤
+      Native.maxInstructions * Native.maxVectorLength :=
+  lowerCircuit_output_budget_of_frame circuit produced
+    (lowerBody_scalarAdmission_has_output_capacity_frame circuit admitted)
+
+/-- Every default-lowering name covered by the accepted producer result fits
+the native relation JSON decoder's identifier limit. -/
+theorem lowerCircuit_scalarAdmission_generatedIdentifier (circuit : Circuit)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit) {program : Lean.Json}
+    (produced : Zkir.lowerCircuit circuit = .ok program) :
+    ∀ index, index < ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next →
+      NativeRelationJson.validIdentifier s!"%v{index}" = true := by
+  intro index bounded
+  apply NativeRelationJson.generatedIdentifier_fits_output_capacity
+  exact Nat.lt_of_lt_of_le bounded
+    (lowerCircuit_scalarAdmission_names_fit_producerCapacity circuit admitted produced)
 
 end Noctium.Verification.ScalarAllocationOutputFrame
