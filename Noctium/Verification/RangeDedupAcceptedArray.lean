@@ -6,6 +6,7 @@ import Noctium.Verification.RangeDedupKernel
 import Noctium.Verification.ScalarValidationNativeDefinitions
 import Noctium.Verification.ScalarValidationOutputMeaning
 import Noctium.Verification.ScalarValidationProjectionComparison
+import Noctium.Verification.ScalarValidationOpcodeProfile
 
 namespace Noctium.Verification.RangeDedupAcceptedArray
 
@@ -874,6 +875,79 @@ theorem acceptedPublicInputSupportsMeaning
   have nonforeign := inputSchema requirement inputMember
   exact ⟨state, next, requirement, checked, selected, nonforeign,
     fun _hash _witness _holds => .native (.publicInput opcode)⟩
+
+/-- The existing strict scalar decoder trace directly supplies meaning-step
+support for its admitted opcode fragment. This covers inputs, native arithmetic,
+bit and comparison checks, assertions, equality variants, Impact, and Output. -/
+theorem nativeDefinitionStep_supportsMeaning {raw : Json} {instruction : Instruction}
+    (step : NativeDefinitionStep raw instruction) : SupportsMeaning raw := by
+  intro hash witness holds
+  cases step with
+  | mk supported decoded =>
+    cases supported with
+    | publicInput _ opcode => exact .native (.publicInput opcode)
+    | privateInput _ opcode => exact .native (.privateInput opcode)
+    | add a b output opcode =>
+      exact .native (.arithmetic (.add a b output opcode decoded (holds _ decoded)))
+    | mul a b output opcode =>
+      exact .native (.arithmetic (.mul a b output opcode decoded (holds _ decoded)))
+    | neg a output opcode =>
+      exact .native (.arithmetic (.neg a output opcode decoded (holds _ decoded)))
+    | bits value width opcode => exact .bits opcode decoded (holds _ decoded)
+    | lessThan a b width output opcode =>
+      exact .lessThan opcode decoded (holds _ decoded)
+    | assertion condition opcode => exact .assertion opcode decoded (holds _ decoded)
+    | testEq a b output opcode => exact .testEq opcode decoded (holds _ decoded)
+    | copy source destination opcode => exact .copy opcode decoded (holds _ decoded)
+    | impact guard inputs opcode => exact .impact opcode decoded
+    | output values opcode => exact .output opcode decoded
+    | constrainEq a b opcode => exact .constrainEq opcode decoded (holds _ decoded)
+
+/-- Lift the row result across the existing strict decoded producer trace. -/
+theorem nativeDefinitionTrace_supportsMeaning {items : List (Json × Nat)}
+    {instructions : List Instruction} (trace : NativeDefinitionTrace items instructions) :
+    ∀ item ∈ items, SupportsMeaning item.1 := by
+  induction trace with
+  | nil => simp
+  | @cons raw index instruction rest restInstructions step tail ih =>
+    intro item member
+    rcases List.mem_cons.mp member with same | member
+    · cases same
+      exact nativeDefinitionStep_supportsMeaning step
+    · exact ih item member
+
+/-- Convert the indexed trace premise into the unindexed per-row premise used
+by accepted-array comparison bounds. -/
+theorem nativeDefinitionTrace_arraySupportsMeaning (source : Array Json)
+    {instructions : List Instruction}
+    (trace : NativeDefinitionTrace (source.toList.zipIdx) instructions) :
+    ∀ raw ∈ source.toList, SupportsMeaning raw := by
+  intro raw member
+  have mapped : raw ∈ (source.toList.zipIdx).map Prod.fst := by
+    rw [List.zipIdx_map_fst]
+    exact member
+  obtain ⟨pair, pairMember, pairEq⟩ := List.mem_map.mp mapped
+  cases pair with
+  | mk row index =>
+    have rowEq : row = raw := by simpa using pairEq
+    subst row
+    simpa using nativeDefinitionTrace_supportsMeaning trace (raw, index) pairMember
+
+/-- An exact decoded vector passing the current strict scalar opcode gate has
+the per-row support premise needed by the accepted-array comparison proof. -/
+theorem supportsMeaning_of_checkedScalarOpcodeProfile (source : Array Json)
+    {instructions : List Instruction}
+    (decoded : source.toList.mapM decodeInstruction = .ok instructions)
+    (profile : ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile
+      (source.toList.zipIdx) instructions = true) :
+    ∀ raw ∈ source.toList, SupportsMeaning raw := by
+  have indexedDecoded :
+      ((source.toList.zipIdx).map Prod.fst).mapM decodeInstruction = .ok instructions := by
+    rw [List.zipIdx_map_fst]
+    exact decoded
+  exact nativeDefinitionTrace_arraySupportsMeaning source
+    (ScalarValidationOpcodeProfile.NativeDefinitionTrace.ofDecodedCheckedProfile
+      indexedDecoded profile)
 
 theorem supportsMeaning_impact {raw : Json} {guard : Operand} {values : List Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "impact")
