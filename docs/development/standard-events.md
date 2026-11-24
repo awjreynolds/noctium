@@ -38,6 +38,8 @@ The Compact runner executes the same catalog inputs and checks the retained refe
 node tests/compact/standard-event-catalog.mjs "$COMPACTC" "$COMPACT_RUNTIME"
 ```
 
+The catalog checks reject a 255-byte `Misc` memo and an amount of `2^128` on both runtimes. Native checking accepts separately prepared alternate payloads and rejects each altered event tape against its original call. The historical runner and source recorded in the finalized receipt remain pinned to their original files. [Finalized catalog receipt](../../tests/standard-event-catalog-localnet-evidence.json)
+
 The first catalog used a bytewise public prologue for the 256-byte memo. Its 19,217-byte call was rejected with pool error 111, `TransactionTooLarge`. A committed memo argument qualified at 9,918 bytes and 5,000 rows. The current compiler packs an ordinary public memo into nine fields and one push/readback pair.
 
 | Memo layout | VM operations for the whole call | Circuit rows | K | Signed transaction bytes |

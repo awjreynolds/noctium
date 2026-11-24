@@ -4875,8 +4875,8 @@
       "id": "C-STDLIB-UNSHIELDEDMINT",
       "layer": "language-ledger",
       "surface": "UnshieldedMint",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium agree on the version 1 UnshieldedMint event, tag 6, and its 80-byte aligned payload in domain, token type and amount order. Both runtimes reject 2^128. Native checking accepts zero and a value above 2^127 and rejects the changed amount tape paired with the original call. The authenticated Ledger 9.1.0.1 catalog receipt records the exact finalized UnshieldedMint log.",
       "source": [
         "stdlib",
         "events",
@@ -4898,7 +4898,7 @@
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDBURN",
@@ -5005,8 +5005,8 @@
       "id": "C-STDLIB-MISC",
       "layer": "language-ledger",
       "surface": "Misc",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values. One catalog call on the isolated Ledger 9 development chain finalized all eleven ordered logs and matched their versions, tags, aligned widths and full-width payload SHA-256 digests. That call used hasCiphertext=true, hasContractAddress=false, hasAmount=true, and the user/contract branches recorded in the receipt. Other optional and address flag combinations remain unqualified. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium agree on the version 1 Misc event, tag 10, and the 288-byte aligned payload in name then payload order. Both runtimes reject a 255-byte memo. Native checking accepts an independently prepared changed memo and rejects the changed event tape paired with the original call. The authenticated Ledger 9.1.0.1 catalog receipt records the exact finalized Misc log.",
       "source": [
         "stdlib",
         "events",
@@ -5028,7 +5028,7 @@
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SOME",
