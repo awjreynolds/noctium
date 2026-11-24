@@ -2,6 +2,8 @@ import Noctium.Frontend
 import Noctium.Verification.GenericStateAdmissionBridge
 import Noctium.Verification.GenericStateAdmissionPrefix
 import Noctium.Verification.GenericStateOps
+import Noctium.Verification.GuardedEffectEvaluation
+import Noctium.Verification.GuardedEffectPrefix
 
 open scoped Noctium
 open Noctium
@@ -137,5 +139,46 @@ theorem lower_guarded_cell_plan_groups :
     updateEntry.effects updateEntry.effectGuards inputPlan plan boundaries guardedAppend
   exact ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend,
     trace, field_admitted, fields, scalarSupport⟩
+
+/-- The single guarded Cell write uses the checked concrete operation suffix
+to split successful whole-plan evaluation at the source effect boundary. -/
+theorem lower_guarded_cell_evaluation_groups :
+    ∃ boundaries inputPlan chunks publicNative groups,
+      Backend.Impact.lowerWithEffectBoundaries sourceState updateEntry =
+        .ok (plan, boundaries) ∧
+      Backend.Impact.publicInputPlan updateEntry.circuit.inputs {} = .ok inputPlan ∧
+      Backend.Impact.GuardedEffectTrace sourceState updateEntry.effectGuards
+        updateEntry.effects.zipIdx inputPlan plan boundaries ∧
+      GuardedEffectEvaluation.GuardedEffectOperationChunks sourceState
+        updateEntry.effectGuards updateEntry.effects.zipIdx inputPlan plan
+        boundaries chunks ∧
+      inputPlan.operations.mapM (GenericStateOps.evalOp context environment) =
+        .ok publicNative ∧
+      chunks.mapM (fun chunk => chunk.mapM
+        (GenericStateOps.evalOp context environment)) = .ok groups ∧
+      operations = publicNative ++ groups.flatten := by
+  obtain ⟨condition, effectsExact, guardsExact⟩ := guard_witness
+  have stepPrefix : ∀ {item : Effect × Nat} {before next},
+      item ∈ updateEntry.effects.zipIdx →
+      Backend.Impact.appendEffectWithActivity sourceState item.1
+        (updateEntry.effectGuards[item.2]?.getD none) before = .ok next →
+      ∃ operationChunk, next.operations = before.operations ++ operationChunk := by
+    intro item before next membership step
+    have itemShape : item = (.writeCell "current" .native (.native 21), 0) := by
+      simpa [effectsExact] using membership
+    subst item
+    have concreteStep : Backend.Impact.appendEffectWithActivity sourceState
+        (.writeCell "current" .native (.native 21)) (some condition) before = .ok next := by
+      simpa [guardsExact] using step
+    obtain ⟨slot, stored, operationShape⟩ :=
+      GuardedEffectPrefix.appendEffectWithActivity_writeCell_operation_suffix
+        sourceState "current" .native (.native 21) condition before next concreteStep
+    exact ⟨[.push (.field (.native slot)), stored, .insert 1], operationShape⟩
+  obtain ⟨boundaries, inputPlan, chunks, publicNative, groups,
+      lowerAccepted, inputAccepted, trace, chunksShape, publicEval, groupsEval,
+      sequence⟩ := GuardedEffectEvaluation.lower_guarded_evaluation
+        context environment operations lowered exact_evalPlan_success stepPrefix
+  exact ⟨boundaries, inputPlan, chunks, publicNative, groups, lowerAccepted,
+    inputAccepted, trace, chunksShape, publicEval, groupsEval, sequence⟩
 
 end GuardedScalarCellAdmissionProof
