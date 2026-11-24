@@ -5421,7 +5421,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     (nominalUIntLists : List (String × NominalUIntType))
     (nominalUIntCollections : List (String × CollectionNominals))
     (contractRefState : List (String × Name))
-    (recordFieldTypes : List (String × List (String × CircuitSourceType))) :
+    (recordFieldTypes recordKeyFieldTypes : List (String × List (String × CircuitSourceType))) :
     CommandElabM (TSyntax `term) := do
   let `(nlstate| constructor($parameters:nlconstructorparam,*) where $initializers:nlconstructorinit* end) := source
     | throwErrorAt source "invalid Noctium constructor declaration"
@@ -5496,15 +5496,18 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut setInsertTerms : Array (TSyntax `term) := #[]
   let mut initializedNames : List String := []
   let bindings : EntryEffects := {
-    env := scalarBindings, nominalUIntBindings, contractRefBindings := contractRefs,
-    recordFieldTypes := recordFieldTypes
+    env := scalarBindings, nominalUIntBindings, nominalFieldBindings,
+    contractRefBindings := contractRefs, recordFieldTypes, recordKeyFieldTypes
   }
   for initializer in initializers do
-    match initializer with
-    | `(nlconstructorinit| initialize $_:ident := $_:nlexpr) => pure ()
-    | _ =>
-      if hasCircuitNominalFieldReference nominalFieldBindings initializer.raw then
-        throwErrorAt initializer "nominal Field constructor values require a direct scalar Cell initializer"
+    let hasUncheckedNominalField := match initializer with
+      | `(nlconstructorinit| initialize $_:ident := $_:nlexpr)
+      | `(nlconstructorinit| insert $_:ident[$_:nlleaves]) => _root_.Bool.false
+      | `(nlconstructorinit| when $condition:nlexpr insert $_:ident[$_:nlleaves]) =>
+        hasCircuitNominalFieldReference nominalFieldBindings condition.raw
+      | _ => hasCircuitNominalFieldReference nominalFieldBindings initializer.raw
+    if hasUncheckedNominalField then
+      throwErrorAt initializer "nominal Field constructor values require a direct scalar Cell initializer or record Set key"
     match initializer with
     | `(nlconstructorinit| initialize $stateName:ident := $payload:nlleaves) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
@@ -5711,6 +5714,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
         | .ok fields => pure fields
         | .error message => throwErrorAt stateName message
       let values ← elaborateLedgerFieldValues bindings payload fields
+        ((bindings.recordKeyFieldTypes.lookup destination).getD [])
       let guard ← match initializer with
         | `(nlconstructorinit| when $condition:nlexpr insert $_:ident[$_:nlleaves]) => do
           let conditionExpression ← checkedCircuitSourceExpression scalarBindings
@@ -6592,7 +6596,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
       | none => `(none)
       | some ctor =>
         elaborateConstructor ctor schema nominalUIntCells nominalFieldCells nominalUIntLists nominalUIntCollections
-          contractRefState recordFieldTypes
+          contractRefState recordFieldTypes recordKeyFieldTypes
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
     let mut interfaceSourceRefs : List CallInterfaceSourceRefs := []
