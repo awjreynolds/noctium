@@ -4,30 +4,41 @@ import Noctium.Verification.GenericStateAdmissionPrefix
 namespace Noctium.Verification.GenericStateCellAdmission
 open Backend
 
-/-- Native and Bool Cells lower directly to operations in the scalar VM. -/
+/-- Native, Bool and bounded UInt Cells lower to scalar VM operations. -/
 inductive ScalarCellType : Ty → Type where
   | native : ScalarCellType .native
   | bool : ScalarCellType .bool
+  | uint (maximum : Nat) (valid : maximum ≤ ScalarPolicy.maxUint) :
+      ScalarCellType (.uint maximum)
+
+/-- The state entry selected by `appendEffect` must be the exact unaligned Cell
+declaration named by the source effect. -/
+abbrev ScalarCellDeclaration := Impact.UnalignedCellDeclaration
 
 theorem bytes32_cell_excluded : ScalarCellType (.bytes 32) → False := by
   intro cellType
   cases cellType
 
-inductive ScalarCellEffect : Effect → Prop where
+inductive ScalarCellEffect (state : List StateDecl) : Effect → Prop where
   | readCell (name destination : String) (ty : Ty) :
-      ScalarCellType ty → ScalarCellEffect (.readCell name destination ty)
+      ScalarCellType ty → ScalarCellDeclaration state name ty →
+      ScalarCellEffect state (.readCell name destination ty)
   | writeCell (name : String) (ty : Ty) (value : Expr ty) :
-      ScalarCellType ty → ScalarCellEffect (.writeCell name ty value)
+      ScalarCellType ty → ScalarCellDeclaration state name ty →
+      ScalarCellEffect state (.writeCell name ty value)
 
 private def scalarCellReadExpression : {ty : Ty} → ScalarCellType ty →
     String → Expr .native
   | _, .native, destination => .ref destination
   | _, .bool, destination => .cast .native (.ref destination : Expr .bool)
+  | _, .uint maximum _, destination =>
+      .cast .native (.ref destination : Expr (.uint maximum))
 
 private def scalarCellWriteExpression : {ty : Ty} → ScalarCellType ty →
     Expr ty → Expr .native
   | _, .native, value => value
   | _, .bool, value => .select value (.native 1) (.native 0)
+  | _, .uint _ _, value => .cast .native value
 
 private theorem bind_ok {α β : Type} {first : Except ε α}
     {next : α → Except ε β} {result : β} :
@@ -56,6 +67,7 @@ theorem append_read_cell_scalar_supported
     (state : List StateDecl) (plan next : Impact.Plan)
     (name destination : String) (ty : Ty)
     (scalar : ScalarCellType ty)
+    (declaration : ScalarCellDeclaration state name ty)
     (accepted : Impact.appendEffect state (.readCell name destination ty) plan = .ok next)
     (previous : ∀ operation ∈ plan.operations,
       GenericStateOps.ScalarOperation operation) :
@@ -63,46 +75,67 @@ theorem append_read_cell_scalar_supported
       [.dup, .index slot, Impact.Op.popeq (.field
         (scalarCellReadExpression scalar destination))] ∧
       (∀ operation ∈ next.operations, GenericStateOps.ScalarOperation operation) := by
-  simp only [Impact.appendEffect, bind_ok] at accepted
-  rcases accepted with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
-  have valueShape : value = .popeq (.field
-      (scalarCellReadExpression scalar destination)) := by
-    cases scalar with
-    | native =>
-      have shaped : (Except.ok (.popeq (.field (.ref destination))) :
-          Except String Impact.Op) = .ok value := by
+  cases scalar with
+  | native =>
+      simp only [Impact.appendEffect, bind_ok] at accepted
+      rcases accepted with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
+      have valueShape : value = .popeq (.field (.ref destination)) := by
         change (Except.ok (.popeq (.field (.ref destination))) :
           Except String Impact.Op) = .ok value at valueAccepted
-        exact valueAccepted
-      simpa [scalarCellReadExpression] using (Except.ok.inj shaped).symm
-    | bool =>
-      have shaped : (Except.ok (.popeq
-          (.field (.cast .native (.ref destination : Expr .bool))) : Impact.Op) :
-          Except String Impact.Op) = .ok value := by
+        exact (Except.ok.inj valueAccepted).symm
+      have operationsShape : next.operations = plan.operations ++
+          [.dup, .index slot, .popeq (.field (.ref destination))] := by
+        simpa [valueShape] using
+          (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellReadExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations .dup (.index slot)
+          (.popeq (.field (.ref destination))) previous
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+  | bool =>
+      simp only [Impact.appendEffect, bind_ok] at accepted
+      rcases accepted with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
+      have valueShape : value = .popeq
+          (.field (.cast .native (.ref destination : Expr .bool))) := by
         change (Except.ok (.popeq
           (.field (.cast .native (.ref destination : Expr .bool))) : Impact.Op) :
           Except String Impact.Op) = .ok value at valueAccepted
-        exact valueAccepted
-      simpa [scalarCellReadExpression] using (Except.ok.inj shaped).symm
-  have operationsShape : next.operations = plan.operations ++
-      [.dup, .index slot, .popeq (.field
-        (scalarCellReadExpression scalar destination))] := by
-    simpa [valueShape] using
-      (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
-  refine ⟨slot, ?_, ?_⟩
-  · simpa using operationsShape
-  · rw [operationsShape]
-    exact append_three_supported plan.operations .dup (.index slot)
-      (.popeq (.field (scalarCellReadExpression scalar destination))) previous
-      (by simp [GenericStateOps.ScalarOperation])
-      (by simp [GenericStateOps.ScalarOperation])
-      (by cases scalar <;> simp [GenericStateOps.ScalarOperation,
-        GenericStateOps.ScalarAligned])
+        exact (Except.ok.inj valueAccepted).symm
+      have operationsShape : next.operations = plan.operations ++
+          [.dup, .index slot, .popeq
+            (.field (.cast .native (.ref destination : Expr .bool)))] := by
+        simpa [valueShape] using
+          (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellReadExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations .dup (.index slot)
+          (.popeq (.field (.cast .native (.ref destination : Expr .bool)))) previous
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+  | uint maximum valid =>
+      obtain ⟨slot, operationsShape⟩ :=
+        Impact.appendEffect_unalignedUIntCell_read_shape state name destination maximum
+          declaration plan next accepted
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellReadExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations .dup (.index slot)
+          (.popeq (.field
+            (.cast .native (.ref destination : Expr (.uint maximum))))) previous
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
 
 theorem append_write_cell_scalar_supported
     (state : List StateDecl) (plan next : Impact.Plan)
     (name : String) (ty : Ty) (value : Expr ty)
     (scalar : ScalarCellType ty)
+    (declaration : ScalarCellDeclaration state name ty)
     (accepted : Impact.appendEffect state (.writeCell name ty value) plan = .ok next)
     (previous : ∀ operation ∈ plan.operations,
       GenericStateOps.ScalarOperation operation) :
@@ -111,74 +144,97 @@ theorem append_write_cell_scalar_supported
         .push (.field (scalarCellWriteExpression scalar value)) true,
         .insert 1] ∧
       (∀ operation ∈ next.operations, GenericStateOps.ScalarOperation operation) := by
-  simp only [Impact.appendEffect, bind_ok] at accepted
-  rcases accepted with ⟨slot, slotAccepted, stored, storedAccepted, resultAccepted⟩
-  have storedShape : stored =
-      .push (.field (scalarCellWriteExpression scalar value)) true := by
-    cases scalar with
-    | native =>
-      have shaped : (Except.ok (.push (.field value) true) :
-          Except String Impact.Op) = .ok stored := by
+  cases scalar with
+  | native =>
+      simp only [Impact.appendEffect, bind_ok] at accepted
+      rcases accepted with ⟨slot, slotAccepted, stored, storedAccepted, resultAccepted⟩
+      have storedShape : stored = .push (.field value) true := by
         change (Except.ok (.push (.field value) true) :
           Except String Impact.Op) = .ok stored at storedAccepted
-        exact storedAccepted
-      simpa [scalarCellWriteExpression] using (Except.ok.inj shaped).symm
-    | bool =>
-      have shaped : (Except.ok
-          (.push (.field (.select value (.native 1) (.native 0))) true) :
-          Except String Impact.Op) = .ok stored := by
+        exact (Except.ok.inj storedAccepted).symm
+      have operationsShape : next.operations = plan.operations ++
+          [.push (.field (.native slot)), .push (.field value) true, .insert 1] := by
+        simpa [storedShape] using
+          (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellWriteExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations
+          (.push (.field (.native slot))) (.push (.field value) true) (.insert 1)
+          previous
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation])
+  | bool =>
+      simp only [Impact.appendEffect, bind_ok] at accepted
+      rcases accepted with ⟨slot, slotAccepted, stored, storedAccepted, resultAccepted⟩
+      have storedShape : stored =
+          .push (.field (.select value (.native 1) (.native 0))) true := by
         change (Except.ok
           (.push (.field (.select value (.native 1) (.native 0))) true) :
           Except String Impact.Op) = .ok stored at storedAccepted
-        exact storedAccepted
-      simpa [scalarCellWriteExpression] using (Except.ok.inj shaped).symm
-  have operationsShape : next.operations = plan.operations ++
-      [.push (.field (.native slot)),
-        .push (.field (scalarCellWriteExpression scalar value)) true, .insert 1] := by
-    simpa [storedShape] using
-      (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
-  refine ⟨slot, ?_, ?_⟩
-  · simpa using operationsShape
-  · rw [operationsShape]
-    exact append_three_supported plan.operations
-      (.push (.field (.native slot)))
-      (.push (.field (scalarCellWriteExpression scalar value)) true)
-      (.insert 1) previous
-      (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
-      (by cases scalar <;> simp [GenericStateOps.ScalarOperation,
-        GenericStateOps.ScalarAligned])
-      (by simp [GenericStateOps.ScalarOperation])
+        exact (Except.ok.inj storedAccepted).symm
+      have operationsShape : next.operations = plan.operations ++
+          [.push (.field (.native slot)),
+            .push (.field (.select value (.native 1) (.native 0))) true,
+            .insert 1] := by
+        simpa [storedShape] using
+          (congrArg Impact.Plan.operations (Except.ok.inj resultAccepted)).symm
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellWriteExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations
+          (.push (.field (.native slot)))
+          (.push (.field (.select value (.native 1) (.native 0))) true)
+          (.insert 1) previous
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation])
+  | uint maximum valid =>
+      obtain ⟨slot, operationsShape⟩ :=
+        Impact.appendEffect_unalignedUIntCell_write_shape state name maximum value
+          declaration plan next accepted
+      refine ⟨slot, ?_, ?_⟩
+      · simpa [scalarCellWriteExpression] using operationsShape
+      · rw [operationsShape]
+        exact append_three_supported plan.operations
+          (.push (.field (.native slot)))
+          (.push (.field (.cast .native value)) true)
+          (.insert 1) previous
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned])
+          (by simp [GenericStateOps.ScalarOperation])
 
 /-- Admits one typed source Cell read or write from its accepted lowering.
 The specialized theorems retain the exact operation suffix for each source
 effect. No interpreter evaluation is needed for this admission step. -/
 theorem append_cell_effect_scalar_supported
     (state : List StateDecl) (plan next : Impact.Plan)
-    (effect : Effect) (source : ScalarCellEffect effect)
+    (effect : Effect) (source : ScalarCellEffect state effect)
     (accepted : Impact.appendEffect state effect plan = .ok next)
     (previous : ∀ operation ∈ plan.operations,
       GenericStateOps.ScalarOperation operation) :
     ∀ operation ∈ next.operations, GenericStateOps.ScalarOperation operation := by
   cases source with
-  | readCell name destination ty scalar =>
+  | readCell name destination ty scalar declaration =>
     obtain ⟨_, _, supported⟩ := append_read_cell_scalar_supported state plan next
-      name destination ty scalar accepted previous
+      name destination ty scalar declaration accepted previous
     exact supported
-  | writeCell name ty value scalar =>
+  | writeCell name ty value scalar declaration =>
     obtain ⟨_, _, supported⟩ := append_write_cell_scalar_supported state plan next
-      name ty value scalar accepted previous
+      name ty value scalar declaration accepted previous
     exact supported
 
 theorem append_cell_effect_with_activity_scalar_supported
     (state : List StateDecl) (plan next : Impact.Plan)
     (effect : Effect) (guard : Option (Expr .bool))
-    (source : ScalarCellEffect effect)
+    (source : ScalarCellEffect state effect)
     (accepted : Impact.appendEffectWithActivity state effect guard plan = .ok next)
     (previous : ∀ operation ∈ plan.operations,
       GenericStateOps.ScalarOperation operation) :
     ∀ operation ∈ next.operations, GenericStateOps.ScalarOperation operation := by
   cases source with
-  | readCell name destination ty scalar =>
+  | readCell name destination ty scalar declaration =>
     cases guard with
     | none =>
       unfold Impact.appendEffectWithActivity at accepted
@@ -190,7 +246,7 @@ theorem append_cell_effect_with_activity_scalar_supported
       subst lowered
       obtain ⟨_, _, supported⟩ :=
         append_read_cell_scalar_supported state plan result name destination ty
-          scalar appended previous
+          scalar declaration appended previous
       have wrappedOperations : next.operations = result.operations := by
         have projected := congrArg (Except.map Impact.Plan.operations) wrapped
         simp only [Pure.pure, Except.pure, Except.map] at projected
@@ -211,7 +267,7 @@ theorem append_cell_effect_with_activity_scalar_supported
       subst lowered
       obtain ⟨_, _, supported⟩ :=
         append_read_cell_scalar_supported state plan result name destination ty
-          scalar appended previous
+          scalar declaration appended previous
       have wrappedOperations : next.operations = result.operations := by
         cases readFound : result.reads[plan.reads.length]? with
         | none => simp [readFound] at wrapped
@@ -221,7 +277,7 @@ theorem append_cell_effect_with_activity_scalar_supported
           exact (Except.ok.inj projected).symm
       rw [wrappedOperations]
       exact supported
-  | writeCell name ty value scalar =>
+  | writeCell name ty value scalar declaration =>
     cases guard with
     | none =>
       unfold Impact.appendEffectWithActivity at accepted
@@ -233,7 +289,7 @@ theorem append_cell_effect_with_activity_scalar_supported
       obtain ⟨storedValue, rfl⟩ := loweredShape
       obtain ⟨_, _, supported⟩ :=
         append_write_cell_scalar_supported state plan result name ty storedValue
-          scalar appended previous
+          scalar declaration appended previous
       have wrappedOperations : next.operations = result.operations := by
         have projected := congrArg (Except.map Impact.Plan.operations) wrapped
         simp only [Pure.pure, Except.pure, Except.map] at projected
@@ -254,7 +310,7 @@ theorem append_cell_effect_with_activity_scalar_supported
       obtain ⟨storedValue, rfl⟩ := loweredShape
       obtain ⟨_, _, supported⟩ :=
         append_write_cell_scalar_supported state plan result name ty storedValue
-          scalar appended previous
+          scalar declaration appended previous
       have wrappedOperations : next.operations = result.operations := by
         have projected := congrArg (Except.map Impact.Plan.operations) wrapped
         simp only [Pure.pure, Except.pure, Except.map] at projected
@@ -266,7 +322,7 @@ private theorem guarded_cell_trace_supported {state : List StateDecl}
     {guards : List (Option (Expr .bool))}
     {items : List (Effect × Nat)} {initial result : Impact.Plan} {offsets : List Nat}
     (trace : Impact.GuardedEffectTrace state guards items initial result offsets)
-    (source : ∀ item ∈ items, ScalarCellEffect item.1)
+    (source : ∀ item ∈ items, ScalarCellEffect state item.1)
     (initialSupported : ∀ operation ∈ initial.operations,
       GenericStateOps.ScalarOperation operation) :
     ∀ operation ∈ result.operations, GenericStateOps.ScalarOperation operation := by
@@ -286,7 +342,7 @@ theorem lower_scalar_cell_operations_supported (state : List StateDecl)
     (entry : Entrypoint) (plan : Impact.Plan)
     (lowered : Impact.lower state entry = .ok plan)
     (compatible : ∀ input ∈ entry.circuit.inputs, Impact.publicInputScalarCompatible input)
-    (effects : ∀ effect ∈ entry.effects, ScalarCellEffect effect) :
+    (effects : ∀ effect ∈ entry.effects, ScalarCellEffect state effect) :
     ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation := by
   obtain ⟨_, inputPlan, _, inputAccepted, trace⟩ :=
     GenericStateAdmissionPrefix.lower_guarded_effect_trace state entry plan lowered

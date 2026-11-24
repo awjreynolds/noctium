@@ -18,8 +18,12 @@ end
 
 noctium_contract GuardedScalarCellAdmission where
   cell current : Native
+  cell quantity : UInt 8
   entry update uses guardedScalarCellInputs where
     when enabled write current := 21
+  end
+  entry updateQuantity uses guardedScalarCellInputs where
+    when enabled write quantity := 21
   end
 end
 
@@ -50,6 +54,51 @@ private theorem lowered : Backend.Impact.lower sourceState updateEntry = .ok pla
       have succeeded := lower_succeeded
       simp [lowerSucceeded, result] at succeeded
   | ok loweredPlan => simp [plan, result]
+
+private def quantityEntry : Entrypoint :=
+  (GuardedScalarCellAdmission.entrypoints.find? (·.name == "updateQuantity")).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+private def quantityPlan : Backend.Impact.Plan :=
+  match Backend.Impact.lower sourceState quantityEntry with
+  | .ok plan => plan
+  | .error _ => {}
+
+private def quantityLowerSucceeded : _root_.Bool :=
+  match Backend.Impact.lower sourceState quantityEntry with
+  | .ok _ => _root_.Bool.true
+  | .error _ => _root_.Bool.false
+
+private theorem quantity_lower_succeeded : quantityLowerSucceeded = _root_.Bool.true := by
+  decide +kernel
+
+private theorem quantity_lowered :
+    Backend.Impact.lower sourceState quantityEntry = .ok quantityPlan := by
+  cases result : Backend.Impact.lower sourceState quantityEntry with
+  | error message =>
+      have succeeded := quantity_lower_succeeded
+      simp [quantityLowerSucceeded, result] at succeeded
+  | ok loweredPlan => simp [quantityPlan, result]
+
+private theorem quantity_effects :
+    quantityEntry.effects = [.writeCell "quantity" (.uint 255) (.uint 255 21)] := by
+  rfl
+
+theorem bounded_uint_cell_lowering_accepted :
+    ∀ operation ∈ quantityPlan.operations, GenericStateOps.ScalarOperation operation := by
+  apply GenericStateCellAdmission.lower_scalar_cell_operations_supported
+    sourceState quantityEntry quantityPlan quantity_lowered
+  · intro parameter parameterIn
+    change parameter ∈ [guardedScalarCellInputs.inputs[0]'(by decide)] at parameterIn
+    rw [List.mem_singleton.mp parameterIn]
+    exact Or.inr (Or.inr (Or.inl rfl))
+  · intro sourceEffect effectIn
+    rw [quantity_effects] at effectIn
+    rw [List.mem_singleton.mp effectIn]
+    exact .writeCell _ _ _ (.uint 255 (by decide)) (by
+      simp [GenericStateCellAdmission.ScalarCellDeclaration,
+        Backend.Impact.UnalignedCellDeclaration, sourceState,
+        GuardedScalarCellAdmission])
 
 theorem guard_witness :
     ∃ condition : Expr .bool,
@@ -115,7 +164,10 @@ theorem lower_guarded_cell_plan_groups :
       obtain ⟨_, exactEffects, _⟩ := guard_witness
       rw [exactEffects] at effectIn
       rw [List.mem_singleton.mp effectIn]
-      exact .writeCell _ _ _ .native
+      exact .writeCell _ _ _ .native (by
+        simp [GenericStateCellAdmission.ScalarCellDeclaration,
+          Backend.Impact.UnalignedCellDeclaration, sourceState,
+          GuardedScalarCellAdmission])
   obtain ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend⟩ :=
     GenericStateAdmissionPrefix.lower_input_prefix sourceState updateEntry plan lowered
   have trace := Backend.Impact.appendEffectsGuardedWithBoundaries_trace sourceState
