@@ -44,6 +44,9 @@ requirement in the import closure must match the selected profile. Use
 module and fails before artifact publication. Unknown names fail at the
 declaration. [Target requirement CLI checks](../../tests/source-target-requirement.sh)
 
+Use `noctium_require_source_api` to declare a compatible Noctium Lean source API
+version. [Source API versions](source-api-versions.md) · [CLI checks](../../tests/source-api-requirement.sh)
+
 ```sh
 .lake/build/bin/noctium compile examples/PrivateClaim.lean --output build/native-claim/source
 /private/tmp/noctium-native-zkir/bin/zkir compile build/native-claim/source/PrivateClaim.claim.zkir build/native-claim/claim.prover build/native-claim/claim.verifier

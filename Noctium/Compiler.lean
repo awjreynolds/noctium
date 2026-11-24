@@ -1341,6 +1341,7 @@ elab "#noctium_check" : command => do
   logInfo m!"checked {circuits.size} circuit(s), {contracts.size} contract(s); target integration unqualified"
 
 private def checkRequiredTarget (profile : TargetProfile) : CommandElabM Unit := do
+  checkSourceApiRequirements (← getEnv)
   let required := noctium.requiredTarget.get (← getOptions)
   unless required.isEmpty do
     unless TargetProfile.supportsName required do
