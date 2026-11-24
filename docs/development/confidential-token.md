@@ -235,6 +235,34 @@ lake env lean -o .lake/build/lib/lean/examples/openzeppelin/ConfidentialToken.ol
 lake env lean proofs/ConfidentialTokenTotalSupply.lean
 ```
 
+### Native `totalSupply` read and return proof
+
+The native proof checks the field-aligned Ledger 9.1.0.1 and ZKIR 3.2.1
+getter. An accepted read of slot 6 preserves the modeled native state vector
+and records the exact field in the read trace. The range instruction bounds
+any satisfying assignment to UInt128, and the output returns the same field.
+The proof assumes the processor encodes the current source supply in slot 6.
+
+After building the example as above, replay the source and native proof
+against freshly emitted artifacts:
+
+```sh
+mkdir -p .lake/build/lib/lean/proofs
+lake env lean -o .lake/build/lib/lean/proofs/ConfidentialTokenTotalSupply.olean \
+  proofs/ConfidentialTokenTotalSupply.lean
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+lake env lean --run NoctiumMain.lean compile examples/openzeppelin/ConfidentialToken.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --output build/experiments/total-supply-proof
+NOCTIUM_TOTAL_SUPPLY_FIXTURE_DIR="$PWD/build/experiments/total-supply-proof" \
+  lake env lean proofs/ConfidentialTokenTotalSupplyNative.lean
+```
+
+The fresh ZKIR matches the retained relation byte for byte. The retained
+Impact metadata gives the circuit file name, which fresh embedded circuit
+metadata omits. The proof checks the exact operation sequence, read type,
+return binding, and target identity in both forms.
+
 All sixteen reference circuit entrypoints and the constructor metadata path
 are present. Nominal result layouts and composition remain open. The completed
 localnet scenario now exercises every entrypoint with native proofs and receipts. Constructor execution is off chain,
