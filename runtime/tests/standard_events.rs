@@ -131,6 +131,9 @@ fn standard_event_from_checked_helper_preserves_activity_and_order() -> Result<(
             alignment: Alignment::singleton(AlignmentAtom::Bytes { length: 32 }),
         }
     );
+    for width in [31, 33] {
+        assert!(execute(true, &vec![1; width]).is_err());
+    }
     active.preimage.public_transcript_inputs = execute(true, &[42; 32])?
         .preimage
         .public_transcript_inputs

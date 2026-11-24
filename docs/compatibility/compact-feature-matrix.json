@@ -4710,8 +4710,8 @@
       "id": "C-STDLIB-SHIELDEDSPEND",
       "layer": "language-ledger",
       "surface": "ShieldedSpend",
-      "noctiumStatus": "related-subset",
-      "notes": "The pinned Compact helper fixture emits ShieldedSpend only for the active guard. Its 0.36.1 runner matches version 1, tag 0 and the 32-byte nullifier against the finalized active receipt. The Noctium checker binds the payload and rejects a substituted event tape. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Compact 0.36.1 and Noctium match the guarded version 1 ShieldedSpend event, tag 0, ordered position and exact 32-byte nullifier. Both runtimes reject 31- and 33-byte values. The direct and checked helper relations bind the active payload and reject a substituted event tape. The active and inactive finalized helper receipts record both guard outcomes, and fresh compiler output matches both archived circuit and Impact plan SHA-256 pins.",
       "source": [
         "stdlib",
         "events",
@@ -4736,7 +4736,7 @@
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SHIELDEDRECEIVE",
