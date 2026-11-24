@@ -1,0 +1,20 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export ledger balance: Amount;
+export sealed ledger cap: Amount;
+
+constructor(seed: Amount, rawCap: Field) {
+  balance = disclose(seed);
+  cap = disclose(rawCap as Amount);
+}
+
+export circuit update(enabled: Boolean, next: Amount, raw: Field, other: Count): [Amount, Field] {
+  if (disclose(enabled)) {
+    balance = disclose(next + (raw as Amount));
+  }
+  return [balance, cap as Field];
+}
