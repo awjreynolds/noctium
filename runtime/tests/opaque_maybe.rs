@@ -2,25 +2,33 @@
 
 use anyhow::{Context as _, Result};
 use coin_structure::contract::ContractAddress;
+use futures::executor::block_on;
 use noctium_runtime::{
     Expr, Plan, check,
     control::{InvocationTarget, Session},
     create_state,
     host::{self, Capability, Context, Limits},
     prepare,
+    proof::TrustedParameters,
     zkir::IrSource,
 };
+use rand::rngs::OsRng;
 use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
+use transient_crypto::proofs::{ParamsVerifier, Zkir};
 
 #[test]
-#[ignore = "requires fresh OpaqueMaybe ledger/witness artifacts and the pinned Compact output"]
+#[ignore = "requires fresh OpaqueMaybe ledger/witness artifacts"]
 fn opaque_maybe_preserves_payloads_and_binds_their_compressed_fields() -> Result<()> {
     let directory = PathBuf::from(std::env::var("NOCTIUM_OPAQUE_MAYBE_DIR")?);
-    let compact: Json = serde_json::from_reader(fs::File::open(std::env::var(
-        "NOCTIUM_OPAQUE_MAYBE_COMPACT",
-    )?)?)?;
+    let compact: Json = serde_json::from_str(include_str!(
+        "../../tests/compact/OpaqueMaybe.expected.json"
+    ))?;
+    if let Some(path) = std::env::var_os("NOCTIUM_OPAQUE_MAYBE_COMPACT") {
+        let live: Json = serde_json::from_reader(fs::File::open(path)?)?;
+        assert_eq!(compact, live, "retained Compact vectors");
+    }
     let mut plan: Plan = serde_json::from_reader(fs::File::open(
         directory.join("OpaqueMaybe.inspect.impact.json"),
     )?)?;
@@ -115,7 +123,9 @@ fn opaque_maybe_preserves_payloads_and_binds_their_compressed_fields() -> Result
         .iter_mut()
         .find(|output| output.name == *payload_name)
         .context("missing physical stringSome return")?
-        .expression = Expr::OpaqueEmpty { ty: "OpaqueString".into() };
+        .expression = Expr::OpaqueEmpty {
+        ty: "OpaqueString".into(),
+    };
     let changed = prepare(
         &plan,
         &inputs,
@@ -128,5 +138,39 @@ fn opaque_maybe_preserves_payloads_and_binds_their_compressed_fields() -> Result
         changed.preimage.communications_commitment,
     );
     assert!(check(&changed, &circuit).is_err());
+
+    if let Some(srs_path) = std::env::var_os("NOCTIUM_OPAQUE_MAYBE_PROOF_SRS") {
+        let k = 8;
+        assert_eq!(circuit.k(), k);
+        let bytes = fs::read(srs_path)?;
+        let parameters = TrustedParameters::from_bytes(
+            &bytes,
+            k,
+            "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+        )?;
+        let verifier_parameters = ParamsVerifier::read(bytes.as_slice())?;
+        let (prover_key, verifier_key) = block_on(circuit.keygen(&parameters))?;
+        let (proof, mut statement, activity) =
+            block_on(circuit.prove(OsRng, &parameters, prover_key, &execution.preimage))?;
+        assert_eq!(activity, execution.activity_schedule);
+        let (commitment, _) = execution
+            .preimage
+            .communications_commitment
+            .context("missing commitment")?;
+        assert_eq!(statement.get(1), Some(&commitment));
+        verifier_key.verify(&verifier_parameters, &proof, statement.iter().copied())?;
+
+        let (changed_commitment, _) = changed
+            .preimage
+            .communications_commitment
+            .context("missing changed commitment")?;
+        statement[1] = changed_commitment;
+        assert!(
+            verifier_key
+                .verify(&verifier_parameters, &proof, statement.iter().copied())
+                .is_err(),
+            "the proof must reject the changed opaque return"
+        );
+    }
     Ok(())
 }
