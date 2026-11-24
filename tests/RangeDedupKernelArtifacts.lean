@@ -159,6 +159,8 @@ private def booleanRangeRelation (instructions : Array Json) : Json := Json.mkOb
 
 #guard (Native.validate booleanRangeExpected (booleanRangeRelation booleanRangeSource)).isOk
 #guard (Native.validate booleanRangeExpected (booleanRangeRelation booleanRangeOptimized)).isOk
+#guard (Native.validateInstructionLoop booleanRangeExpected
+  (booleanRangeSource.toList.zipIdx) {}).isOk
 
 private def booleanRangeOptimizedProgram : Program :=
   {booleanRangeOriginalProgram with instructions := booleanRangeOptimizedInstructions}
@@ -230,7 +232,7 @@ private theorem booleanRangeSupportsMeaning :
             ("output", toJson ("%v0" : String))])) "op" = .ok "private_input"
       exact objectHeadStringField "private_input"
         [("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),
-          ("output", toJson ("%v0" : String))] (by native_decide)
+          ("output", toJson ("%v0" : String))] (by decide +kernel)
     exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.native
       (Noctium.Verification.ScalarValidationNativeLoop.NativeStepHolds.privateInput
         opcode)
@@ -250,7 +252,7 @@ private theorem booleanRangeSupportsMeaning :
         (Lean.Json.mkObj (("op", toJson ("constrain_to_boolean" : String)) ::
           [("val", toJson ("%v0" : String))])) "op" = .ok "constrain_to_boolean"
       exact objectHeadStringField "constrain_to_boolean"
-        [("val", toJson ("%v0" : String))] (by native_decide)
+        [("val", toJson ("%v0" : String))] (by decide +kernel)
     exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.boolean
       opcode decoded (holds (.boolean (.reference "%v0")) decoded)
   · subst raw
@@ -284,7 +286,7 @@ private theorem booleanRangeSupportsMeaning :
             ("bits", toJson (1 : Nat)), ("output", toJson ("%v1" : String))])) "op" = .ok "less_than"
       exact objectHeadStringField "less_than"
         [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-          ("bits", toJson (1 : Nat)), ("output", toJson ("%v1" : String))] (by native_decide)
+          ("bits", toJson (1 : Nat)), ("output", toJson ("%v1" : String))] (by decide +kernel)
     exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.lessThan
       opcode decoded (holds (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v1") decoded)
   · subst raw
@@ -318,7 +320,7 @@ private theorem booleanRangeSupportsMeaning :
             ("bits", toJson (1 : Nat)), ("output", toJson ("%v2" : String))])) "op" = .ok "less_than"
       exact objectHeadStringField "less_than"
         [("a", toJson ("%v0" : String)), ("b", toJson ("0x01" : String)),
-          ("bits", toJson (1 : Nat)), ("output", toJson ("%v2" : String))] (by native_decide)
+          ("bits", toJson (1 : Nat)), ("output", toJson ("%v2" : String))] (by decide +kernel)
     exact Noctium.Verification.RangeDedupAcceptedArray.AcceptedMeaningStep.lessThan
       opcode decoded (holds (.lessThan (.reference "%v0") (.immediate (scalar 1)) 1 "%v2") decoded)
   · subst raw
@@ -329,18 +331,23 @@ private theorem booleanRangeSupportsMeaning :
           (Lean.Json.mkObj (("op", toJson ("output" : String)) ::
             [("vals", toJson ([] : List String))])) "op" = .ok "output"
         exact objectHeadStringField "output" [("vals", toJson ([] : List String))]
-          (by native_decide))
+          (by decide +kernel))
       (Noctium.Verification.ScalarInstructionEncoding.decode_output_instruction
         (texts := []) (values := []) (by
           exact Noctium.Verification.ScalarInstructionEncoding.OperandsEncoding.decode
             (by trivial)))
 
 theorem booleanRangeAcceptedArrayReuseKernelPreservation
+    (final : Native.State)
+    (accepted : Native.validateInstructionLoop booleanRangeExpected
+      (booleanRangeSource.toList.zipIdx) {} = .ok final)
+    (runDecoded : (Noctium.Backend.RangeDedup.reuseComparisons booleanRangeSource).toList.mapM
+      Noctium.Verification.NativeRelationJson.decodeInstruction =
+        .ok booleanRangeOptimizedInstructions)
     (hash : Hash) (streams : InputStreams) (assignment : Assignment)
     (groups : List (List Scalar)) (returns : List Scalar) :
     Satisfies hash booleanRangeOriginalProgram streams assignment groups returns ↔
       Satisfies hash booleanRangeOptimizedProgram streams assignment groups returns := by
-  obtain ⟨final, accepted⟩ := booleanRangeAcceptedLoop
   exact Noctium.Verification.RangeDedupAcceptedArray.acceptedArrayReusePreservesKernel
     (initialMeaning := by
       intro hash candidate identifier fact hmem
@@ -355,11 +362,7 @@ theorem booleanRangeAcceptedArrayReuseKernelPreservation
       rfl)
     (steps := booleanRangeSupportsMeaning)
     (sourceDecoded := booleanRangeSourceDecoded)
-    (runDecoded := by
-      change booleanRangeOptimized.toList.mapM
-        Noctium.Verification.NativeRelationJson.decodeInstruction =
-          .ok booleanRangeOptimizedInstructions
-      exact booleanRangeOptimizedDecoded)
+    (runDecoded := runDecoded)
     (accepted := accepted)
     hash streams assignment groups returns
 
