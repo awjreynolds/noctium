@@ -156,6 +156,37 @@ private theorem defineResult_appends_fact {state next : State} {instruction : Js
   cases result
   exact ⟨rfl, lookupAbsent⟩
 
+/-- An input operand naming the fresh output of an accepted definition resolves
+to the exact fact inserted by that transition. -/
+private theorem argument_after_defineResult {state next : State}
+    {definition consumer : Json} {fact : Fact} {name : String}
+    (outputField : stringField definition "output" = .ok name)
+    (inputField : stringField consumer "input" = .ok name)
+    (nameIsReference : name.startsWith "0x" = false)
+    (defined : defineResult state definition fact = .ok next) :
+    argument next consumer "input" = .ok fact := by
+  obtain ⟨nextDefinitions, priorAbsent⟩ :=
+    defineResult_appends_fact outputField defined
+  unfold defineResult at defined
+  rw [outputField] at defined
+  simp only [bind_ok] at defined
+  rcases defined with ⟨foundName, parsedName, defined⟩
+  have sameName : foundName = name := (Except.ok.inj parsedName).symm
+  subst foundName
+  unfold define at defined
+  simp only [bind_ok] at defined
+  rcases defined with ⟨_, identifierValid, _, _⟩
+  have identifierValid := ensure_ok.mp identifierValid
+  have factLookup : next.definitions.lookup name = some fact := by
+    rw [nextDefinitions]
+    simp [List.lookup_append, priorAbsent]
+  have operandAccepted : operand next name = .ok fact := by
+    simp [Backend.Native.operand, nameIsReference, factLookup, identifierValid,
+      Backend.Native.ensure, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  unfold argument
+  rw [inputField]
+  simpa [Bind.bind, Except.bind, Pure.pure, Except.pure] using operandAccepted
+
 /-- Two accepted canonical Bool constants survive their actual ordered
 `defineResult` insertions and resolve through the producer's input parser. -/
 theorem accepted_bool_constant_pair_arguments {expected : Expected}
@@ -344,6 +375,7 @@ The result is the exact one-output Native producer fact, and its scoped Bool
 meaning is the canonical field bit for the gate result. -/
 theorem accepted_bool_and_encode_meaning {expected : Expected}
     {state gateState encodedState : State} {gateInstruction encodeInstruction : Json}
+    {gateOutputName : String}
     {left right : Fact} (leftValue rightValue : Bool)
     (gateOpcode : stringField gateInstruction "op" = .ok "and")
     (gateAccepted : validateInstruction expected state gateInstruction = .ok gateState)
@@ -351,9 +383,9 @@ theorem accepted_bool_and_encode_meaning {expected : Expected}
     (leftTerm : left.term = typedBoolConstantTerm (if leftValue then 1 else 0))
     (rightTerm : right.term = typedBoolConstantTerm (if rightValue then 1 else 0))
     (encodeOpcode : stringField encodeInstruction "op" = .ok "encode")
-    (encodeInput : ∀ fact,
-      defineResult state gateInstruction (asTypedBoolFact fact) = .ok gateState →
-      argument gateState encodeInstruction "input" = .ok (asTypedBoolFact fact))
+    (gateOutput : stringField gateInstruction "output" = .ok gateOutputName)
+    (encodeInputField : stringField encodeInstruction "input" = .ok gateOutputName)
+    (gateOutputIsReference : gateOutputName.startsWith "0x" = false)
     (encodeAccepted : validateInstruction expected gateState encodeInstruction =
       .ok encodedState) :
     ∃ outputs output nativeFact,
@@ -365,7 +397,8 @@ theorem accepted_bool_and_encode_meaning {expected : Expected}
   obtain ⟨gateFact, gateDefined, gateMaximum, _gateMeaning, gateEncodedMeaning⟩ :=
     accepted_bool_and_term_meaning leftValue rightValue gateOpcode gateAccepted
       gateInputs leftTerm rightTerm
-  have encodedInput := encodeInput gateFact gateDefined
+  have encodedInput := argument_after_defineResult gateOutput encodeInputField
+    gateOutputIsReference gateDefined
   obtain ⟨outputs, output, nativeFact, outputsAccepted, outputsSize,
       outputName, inputBound, combined, defined⟩ :=
     accepted_bool_encode_components encodeOpcode encodedInput (by rfl) encodeAccepted
@@ -390,7 +423,8 @@ witness value. This theorem scopes Bool meaning to the exact accepted slice. -/
 theorem accepted_bool_and_encode_output_boundary {expected : Expected}
     {witness : NativeRelation.Assignment}
     {state gateState encodedState outputState : State}
-    {gateInstruction encodeInstruction outputInstruction : Json} {outputName : String}
+    {gateInstruction encodeInstruction outputInstruction : Json}
+    {gateOutputName outputName : String}
     {left right : Fact} (leftValue rightValue : Bool)
     (gateOpcode : stringField gateInstruction "op" = .ok "and")
     (gateAccepted : validateInstruction expected state gateInstruction = .ok gateState)
@@ -398,9 +432,9 @@ theorem accepted_bool_and_encode_output_boundary {expected : Expected}
     (leftTerm : left.term = typedBoolConstantTerm (if leftValue then 1 else 0))
     (rightTerm : right.term = typedBoolConstantTerm (if rightValue then 1 else 0))
     (encodeOpcode : stringField encodeInstruction "op" = .ok "encode")
-    (encodeInput : ∀ fact,
-      defineResult state gateInstruction (asTypedBoolFact fact) = .ok gateState →
-      argument gateState encodeInstruction "input" = .ok (asTypedBoolFact fact))
+    (gateOutput : stringField gateInstruction "output" = .ok gateOutputName)
+    (encodeInputField : stringField encodeInstruction "input" = .ok gateOutputName)
+    (gateOutputIsReference : gateOutputName.startsWith "0x" = false)
     (encodeAccepted : validateInstruction expected gateState encodeInstruction =
       .ok encodedState)
     (encodedOutput : arrayField encodeInstruction "outputs" =
@@ -422,7 +456,8 @@ theorem accepted_bool_and_encode_output_boundary {expected : Expected}
   obtain ⟨outputs, encodedName, (nativeFact : Fact), outputsAccepted, outputsSize,
     outputParsed, defined, encodedMeaning⟩ :=
     accepted_bool_and_encode_meaning leftValue rightValue gateOpcode gateAccepted
-      gateInputs leftTerm rightTerm encodeOpcode encodeInput encodeAccepted
+      gateInputs leftTerm rightTerm encodeOpcode gateOutput encodeInputField
+      gateOutputIsReference encodeAccepted
   have outputsEq : outputs = #[Json.str outputName] :=
     Except.ok.inj (outputsAccepted.symm.trans encodedOutput)
   have sameOutput : encodedName = outputName := by
@@ -440,7 +475,7 @@ theorem accepted_bool_constants_gate_encode_output {expected : Expected}
     {witness : NativeRelation.Assignment}
     {initial afterLeft afterConstants gateState encodedState outputState : State}
     {leftInstruction rightInstruction gateInstruction encodeInstruction outputInstruction : Json}
-    {outputName : String} (leftValue rightValue : Bool)
+    {gateOutputName outputName : String} (leftValue rightValue : Bool)
     (leftOpcode : stringField leftInstruction "op" = .ok "load_constant")
     (leftType : stringField leftInstruction "type" = .ok "Bool")
     (leftAccepted : validateInstruction expected initial leftInstruction = .ok afterLeft)
@@ -460,9 +495,9 @@ theorem accepted_bool_constants_gate_encode_output {expected : Expected}
     (gateOpcode : stringField gateInstruction "op" = .ok "and")
     (gateAccepted : validateInstruction expected afterConstants gateInstruction = .ok gateState)
     (encodeOpcode : stringField encodeInstruction "op" = .ok "encode")
-    (encodeInput : ∀ fact,
-      defineResult afterConstants gateInstruction (asTypedBoolFact fact) = .ok gateState →
-      argument gateState encodeInstruction "input" = .ok (asTypedBoolFact fact))
+    (gateOutput : stringField gateInstruction "output" = .ok gateOutputName)
+    (encodeInputField : stringField encodeInstruction "input" = .ok gateOutputName)
+    (gateOutputIsReference : gateOutputName.startsWith "0x" = false)
     (encodeAccepted : validateInstruction expected gateState encodeInstruction = .ok encodedState)
     (encodedOutput : arrayField encodeInstruction "outputs" = .ok #[Json.str outputName])
     (outputAccepted : validateInstruction expected encodedState outputInstruction = .ok outputState)
@@ -483,10 +518,12 @@ theorem accepted_bool_constants_gate_encode_output {expected : Expected}
     (expected := expected) (witness := witness) (state := afterConstants)
     (gateState := gateState) (encodedState := encodedState) (outputState := outputState)
     (gateInstruction := gateInstruction) (encodeInstruction := encodeInstruction)
-    (outputInstruction := outputInstruction) (outputName := outputName)
+    (outputInstruction := outputInstruction) (gateOutputName := gateOutputName)
+    (outputName := outputName)
     (left := typedBoolConstantFact (if leftValue then 1 else 0))
     (right := typedBoolConstantFact (if rightValue then 1 else 0))
     leftValue rightValue gateOpcode gateAccepted inputsAccepted rfl rfl encodeOpcode
-    encodeInput encodeAccepted encodedOutput outputAccepted decodedOutput outputSatisfied
+    gateOutput encodeInputField gateOutputIsReference encodeAccepted encodedOutput
+    outputAccepted decodedOutput outputSatisfied
 
 end Noctium.Verification.ScalarValidationTypedBool
