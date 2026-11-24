@@ -56,6 +56,15 @@ private def zeroPackedReturnCircuit : Noctium.Circuit := {
   outputs := [{name := "zeros", ty := .bytes 32, value := .bytes32Literal (List.replicate 32 0)}]
 }
 
+private def mixedByteZeroSuffixCircuit : Noctium.Circuit := {
+  name := "mixed_byte_zero_suffix"
+  inputs := [{name := "value", ty := .bytes 1, visibility := .«private»}]
+  outputs := [{name := "decoded", ty := .native, value := .disclose {} (
+    .fromBytes (target := .native)
+      (.concatBytes (.ref "value" : Noctium.Expr (.bytes 1))
+        (.bytesLiteral 31 (List.replicate 31 0))))}]
+}
+
 private def narrowPackedByte (maximum value : Nat) : Noctium.Expr (.bytes 1) :=
   .sliceBytes (.toBytes32 (.cast .native (.uint maximum value))) 0 1
 
@@ -129,6 +138,13 @@ private def nativeBytePackingCount (relation : Lean.Json) (opcode : String) : Na
   | .ok relation =>
       (nativeBytePackingInstructions relation).map nativeBytePackingOpcode ==
         [some "impact", some "output"]
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit mixedByteZeroSuffixCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "add" == 0 &&
+        nativeBytePackingCount relation "mul" == 0 &&
+        nativeBytePackingCount relation "constrain_bits" == 1
   | .error _ => _root_.Bool.false
 
 #guard match Noctium.Backend.Zkir.lowerCircuit narrowLiteralPackingCircuit with
