@@ -23,16 +23,32 @@ end
 #guard OpaqueEither.entrypoints.all fun operation =>
   (Backend.Zkir.lowerEntrypoint OpaqueEither.state operation).isOk
 
-#guard OpaqueEither.state.composites.structures.any fun declaration =>
-  declaration.id.startsWith "OpaqueEither.opaqueEitherChoices.EitherComposite" &&
+#guard opaqueEitherChoices.__program.composites.structures.any fun declaration =>
+  declaration.id.startsWith "opaqueEitherChoices.EitherComposite" &&
   declaration.fields.map (fun field => (field.name, field.type)) == [
     ("is_left", .scalar .bool),
     ("left", .scalar .opaqueString),
     ("right", .scalar .bool)]
 
-#guard OpaqueEither.state.composites.structures.any fun declaration =>
-  declaration.id.startsWith "OpaqueEither.opaqueEitherChoices.EitherComposite" &&
+#guard opaqueEitherChoices.__program.composites.structures.any fun declaration =>
+  declaration.id.startsWith "opaqueEitherChoices.EitherComposite" &&
   declaration.fields.map (fun field => (field.name, field.type)) == [
     ("is_left", .scalar .bool),
     ("left", .scalar .bool),
     ("right", .scalar .opaqueBytes)]
+
+/-- undisclosed private control from parameter 'isLeft' -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit hiddenOpaqueEitherTag where
+  private isLeft : Bool
+  public textValue : OpaqueString
+  output stringChoice := either(isLeft, textValue, true)
+end
+
+/-- undisclosed private parameter 'bytesValue' -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit hiddenOpaqueEitherPayload where
+  public isLeft : Bool
+  private bytesValue : OpaqueBytes
+  output bytesChoice := either(isLeft, true, bytesValue)
+end
