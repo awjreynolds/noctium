@@ -169,7 +169,7 @@ private theorem booleanRangeSupportsMeaning :
     ∀ raw ∈ booleanRangeSource.toList,
       Noctium.Verification.RangeDedupAcceptedArray.SupportsMeaning raw :=
   Noctium.Verification.RangeDedupAcceptedArray.supportsMeaning_of_checkedScalarOpcodeProfile
-    booleanRangeSource booleanRangeSourceDecoded (by native_decide)
+    booleanRangeSource booleanRangeSourceDecoded (by decide +kernel)
 
 theorem booleanRangeAcceptedArrayReuseKernelPreservation
     (final : Native.State)
