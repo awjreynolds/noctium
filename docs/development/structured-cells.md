@@ -139,7 +139,11 @@ end
 ```
 
 The [readable example](../../tests/ReadableFiniteRange.lean) uses nested ranges and passes the
-result to a ledger entrypoint. Loop-local values are scoped to the body.
+result to a ledger entrypoint. Each range or sequence loop has its own scope.
+Its binder and body locals may shadow a parent value. A sequence expression
+resolves in the parent scope before the element binds. Duplicate names in one
+loop body reject, and the parent values return on exit.
+[Range fixture](../../tests/ReadableFiniteRange.lean) · [Sequence fixture](../../tests/ReadableContainerLoop.lean)
 A reusable Lean command macro may supply the two bound terms to the same
 readable loop body. The compiler resolves them during elaboration. Circuit
 inputs are outside the Lean bound scope. Structured programs use the same

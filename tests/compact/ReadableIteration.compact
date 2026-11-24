@@ -12,6 +12,8 @@ witness emptyTupleItems(): [];
 witness emptyMapVisit(item: Field): Field;
 witness acceptEmptyNativeVector(values: Vector<0, Field>): Field;
 witness blockItems(seed: Field): Vector<2, Uint<8>>;
+witness shadowItems(seed: Field): Vector<2, Field>;
+witness shadowVisit(item: Field, outer: Field): Field;
 witness blockOffset(seed: Field): Field;
 
 export circuit update(offset: Field): Field {
@@ -42,6 +44,22 @@ export circuit runBlock(seed: Field): [Field, Field, Field] {
     return next;
   }, 0 as Field, mapped);
   return [disclose(mapped[0]), disclose(mapped[1]), disclose(sum)];
+}
+
+export circuit runShadow(seed: Field): Field {
+  const item = 7 as Field;
+  const outer = item;
+  for (const item of shadowItems(item)) {
+    const observed = shadowVisit(item as Field, outer);
+    assert(observed != (0 as Field), "sequence shadow value");
+  }
+  assert(item == outer, "outer value after sequence");
+  for (const item of 1..3) {
+    const observed = shadowVisit(item as Field, outer);
+    assert(observed != (0 as Field), "range shadow value");
+  }
+  assert(item == outer, "outer value after range");
+  return disclose(item);
 }
 
 export circuit emptyNativeMap(): Field {
