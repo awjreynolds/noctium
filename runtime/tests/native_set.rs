@@ -692,6 +692,7 @@ fn record_set_constructor_checks_guard_key_encoding_and_duplicates() -> anyhow::
             .expect("record Set constructor artifacts"),
     );
     let plan = load_plan(&directory, "RecordSetConstructor.inspect.impact.json");
+    assert!(plan.state[0].sealed);
     let circuit = load_circuit(&directory, "RecordSetConstructor.inspect.zkir");
     let tag = [7];
     let first_id = [3; 33];

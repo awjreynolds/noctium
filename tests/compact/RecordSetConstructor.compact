@@ -6,7 +6,7 @@ export struct Key {
   id: Bytes<33>;
 }
 
-export ledger members: Set<Key>;
+export sealed ledger members: Set<Key>;
 
 constructor(enabled: Boolean, tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>) {
   const first = Key { tag: disclose(tag), id: disclose(firstId) };
