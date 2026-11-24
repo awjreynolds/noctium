@@ -40,6 +40,11 @@ structure WitnessParameterCodec where
 private structure SourceScalarType where
   type : Ty
   nominalUInt : Option NominalUIntType := none
+  nominalField : Option String := none
+  deriving Repr, BEq, DecidableEq
+
+structure NominalFieldType where
+  name : String
   deriving Repr, BEq, DecidableEq
 
 structure ObservationInput where
@@ -125,6 +130,13 @@ initialize noctiumWitnessParameterCodecRegistry : SimplePersistentEnvExtension
     addEntryFn := Array.push
   }
 
+initialize noctiumNominalFieldTypeRegistry : SimplePersistentEnvExtension
+    (String × NominalFieldType) (Array (String × NominalFieldType)) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
 end Noctium.Authoring
 
 namespace Noctium
@@ -138,6 +150,7 @@ open scoped Noctium
 declare_syntax_cat noctium_witness_input_type
 scoped syntax nltype : noctium_witness_input_type
 scoped syntax "Payload" ident : noctium_witness_input_type
+scoped syntax (name := noctiumFieldTypeCommand) "noctium_field_type" ident ":=" "Field" : command
 
 declare_syntax_cat noctium_private_field
 scoped syntax "cell" ident ":" noctium_witness_input_type : noctium_private_field
@@ -223,12 +236,13 @@ scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_ci
   noctium_witness_statement* "end" : command
 
 private abbrev SurfaceEnv := List
-  (String × ResultType × Noctium.Helpers.Term × Option NominalUIntType)
+  (String × ResultType × Noctium.Helpers.Term × (Option NominalUIntType × Option String))
 
 private structure Lowered where
   type : ResultType
   term : Noctium.Helpers.Term
   nominalUInt : Option NominalUIntType := none
+  nominalField : Option String := none
   shapeOnly : _root_.Bool := _root_.Bool.false
   before : List Statement := []
   signatures : List WitnessSignature := []
@@ -346,7 +360,7 @@ private def prepareCallbackParameters (parameters : List (TSyntax `ident))
 
 private def callbackSurfaceEnv (bindings : List CallbackParameter) : SurfaceEnv :=
   bindings.map fun binding =>
-    (binding.surfaceName, binding.type.getD .unit, .ref binding.reference, none)
+    (binding.surfaceName, binding.type.getD .unit, .ref binding.reference, (none, none))
 
 private def stringTerm (value : String) : TSyntax `term := ⟨Syntax.mkStrLit value⟩
 private def natTerm (value : Nat) : TSyntax `term := ⟨Syntax.mkNumLit (toString value)⟩
@@ -395,6 +409,12 @@ private def nominalUIntTypeIdentifier (stx : TSyntax `nltype) : Option Syntax :=
   if name.getKind != `ident then none
   pure name
 
+private def nominalFieldTypeIdentifier (stx : TSyntax `nltype) : Option Syntax := do
+  if stx.raw.getNumArgs != 1 then none
+  let name := stx.raw[0]
+  if name.getKind != `ident then none
+  pure name
+
 private def readScalarTy (stx : TSyntax `nltype) : CommandElabM Ty := do
   match stx with
   | `(nltype| Native) => pure .native
@@ -429,7 +449,17 @@ private def readScalarTy (stx : TSyntax `nltype) : CommandElabM Ty := do
   | _ => throwErrorAt stx "unsupported readable witness scalar type"
 
 private def readSourceScalarType (stx : TSyntax `nltype) : CommandElabM SourceScalarType := do
-  if let some name := nominalUIntTypeIdentifier stx then
+  if let some name := nominalFieldTypeIdentifier stx then
+    let registry := noctiumNominalFieldTypeRegistry.getState (← getEnv)
+    let current := ((← getCurrNamespace) ++ name.getId).toString
+    if let some (_, declaration) := registry.find? (·.1 == current) <|>
+        registry.find? (·.1 == name.getId.toString) then
+      return {type := .native, nominalField := some declaration.name}
+    if let some uintName := nominalUIntTypeIdentifier stx then
+      let declaration ← resolveNominalUIntType uintName.getId uintName
+      return {type := .uint declaration.maximum, nominalUInt := some declaration}
+    pure {type := ← readScalarTy stx}
+  else if let some name := nominalUIntTypeIdentifier stx then
     let declaration ← resolveNominalUIntType name.getId name
     pure {type := .uint declaration.maximum, nominalUInt := some declaration}
   else pure {type := ← readScalarTy stx}
@@ -443,7 +473,7 @@ private def nominalUIntByName (name : String) : CommandElabM NominalUIntType := 
 private def sourceScalarTypeName (source : SourceScalarType) : String :=
   match source.nominalUInt with
   | some declaration => declaration.name
-  | none => typeName source.type
+  | none => source.nominalField.getD (typeName source.type)
 
 private def tyTerm : Ty → CommandElabM (TSyntax `term)
   | .native => `(Noctium.Ty.native)
@@ -523,6 +553,21 @@ private def lowerSchemaName (id : TSyntax `ident) : CommandElabM String := do
   let name := ((← getCurrNamespace) ++ id.getId).toString
   validIdentity id name
   pure name
+
+@[command_elab noctiumFieldTypeCommand] def elabNoctiumFieldType : CommandElab := fun stx => do
+  match stx with
+  | `(noctium_field_type $name:ident := Field) => do
+    let fullName := ((← getCurrNamespace) ++ name.getId).toString
+    unless Helpers.validWitnessIdentifier fullName do
+      throwErrorAt name s!"nominal Field identity is invalid or too long: {fullName}"
+    let registry := noctiumNominalFieldTypeRegistry.getState (← getEnv)
+    if registry.any (·.1 == fullName) then
+      throwErrorAt name s!"duplicate nominal Field type '{name.getId}'"
+    let declaration : NominalFieldType := {name := fullName}
+    elabCommand (← `(def $(mkIdent (name.getId ++ `nominalType)) : Noctium.Authoring.NominalFieldType :=
+      {name := $(stringTerm fullName)}))
+    modifyEnv fun env => noctiumNominalFieldTypeRegistry.addEntry env (fullName, declaration)
+  | _ => throwUnsupportedSyntax
 
 private def quoteSignature (signature : WitnessSignature) : CommandElabM (TSyntax `term) := do
   let params ← signature.parameters.mapM fun parameter => do
@@ -1245,6 +1290,8 @@ private def commonType (stx : Syntax) (left right : Ty) : CommandElabM Ty := do
   | _, _ => throwErrorAt stx "readable witness expression type mismatch"
 
 private def coerce (stx : Syntax) (value : Lowered) (target : Ty) : CommandElabM Lowered := do
+  if value.nominalField.isSome then
+    throwErrorAt stx "nominal Field values require an explicit cast before raw scalar conversion"
   if value.nominalUInt.isSome then
     throwErrorAt stx "nominal UInt values require an explicit cast before raw scalar conversion"
   let .scalar found := value.type | throwErrorAt stx "Unit cannot be used as a scalar expression"
@@ -1258,10 +1305,17 @@ private def coerce (stx : Syntax) (value : Lowered) (target : Ty) : CommandElabM
 
 private def coerceSourceType (stx : Syntax) (value : Lowered)
     (target : SourceScalarType) : CommandElabM Lowered := do
+  unless value.nominalField == target.nominalField do
+    throwErrorAt stx "nominal Field values require an explicit cast and must match the target type"
   unless value.nominalUInt == target.nominalUInt do
     throwErrorAt stx "nominal UInt values require an explicit cast and must match the target type"
-  let coerced ← coerce stx {value with nominalUInt := none} target.type
-  pure {coerced with nominalUInt := target.nominalUInt}
+  let coerced ← coerce stx {value with nominalUInt := none, nominalField := none} target.type
+  pure {coerced with nominalUInt := target.nominalUInt, nominalField := target.nominalField}
+
+private def rejectNominalFieldErasure (stx : Syntax) (boundary : String) (value : Lowered) :
+    CommandElabM Unit := do
+  if value.nominalField.isSome then
+    throwErrorAt stx s!"nominal Field values require an explicit cast to Native before {boundary}"
 
 private def uniqueWitnesses (signatures : List WitnessSignature) : List WitnessSignature :=
   signatures.foldl (fun acc item => if acc.any (·.name == item.name) then acc else acc ++ [item]) []
@@ -1678,7 +1732,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   match stx with
   | `(nlexpr| $id:ident) =>
     match env.find? (fun value => value.1 == id.getId.toString) with
-    | some (_, type, term, nominalUInt) =>
+    | some (_, type, term, (nominalUInt, nominalField)) =>
       if let .ref refName := term then
         let state ← get
         if state.shapeOnlyRefs.contains refName then
@@ -1691,8 +1745,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           | [(viewName, viewType)] => pure {type := viewType, term := .ref viewName}
           | [] => throwErrorAt id (unresolvedIterationDiagnostic parameter.surfaceName)
           | _ => throwErrorAt id s!"empty tuple item '{parameter.surfaceName}' has multiple inferred types. Use a typed binding"
-        | none => pure {type, term, nominalUInt}
-      else pure {type, term, nominalUInt}
+        | none => pure {type, term, nominalUInt, nominalField}
+      else pure {type, term, nominalUInt, nominalField}
     | none => throwErrorAt id s!"unknown readable witness value '{id.getId}'"
   | `(nlexpr| $n:num) =>
     if n.getNat ≥ Field.modulus then throwErrorAt n "Native literal is not canonical"
@@ -1705,6 +1759,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt tagSource "Either tag requires Bool"
     let left ← lowerExpr programName callPrefix env leftSource
     let right ← lowerExpr programName callPrefix env rightSource
+    if left.nominalField.isSome || right.nominalField.isSome then
+      throwErrorAt stx "Either payloads do not retain nominal Field identity"
     let leftLayout := left.layoutType
     let rightLayout := right.layoutType
     let leftCompiled ← checkedPayloadLayout stx leftLayout
@@ -1738,6 +1794,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {result with before}
   | `(nlexpr| some($source)) => do
     let value ← lowerExpr programName callPrefix env source
+    if value.nominalField.isSome then
+      throwErrorAt stx "Maybe payloads do not retain nominal Field identity"
     let payload := value.layoutType
     let compiled ← checkedPayloadLayout stx payload
     let maybeType ← checkedMaybeType programName stx payload compiled
@@ -1757,6 +1815,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       (.composite maybeType (.bool _root_.Bool.true :: payloadLeaves)) [{value with before}])
   | `(nlexpr| none($type:nltype)) => do
     let sourceType ← liftM (readSourceScalarType type)
+    if sourceType.nominalField.isSome then
+      throwErrorAt type "Maybe scalar payloads do not retain nominal Field identity"
     if sourceType.nominalUInt.isSome then
       throwErrorAt type "Maybe scalar payloads do not retain nominal UInt identity"
     lowerAbsentMaybe programName stx (scalarMaybePayload sourceType.type)
@@ -1776,7 +1836,12 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| default($target:nltype)) => do
     let sourceType ← liftM (readSourceScalarType target)
     let term ← zeroScalarTerm target sourceType.type
-    pure {type := .scalar sourceType.type, term, nominalUInt := sourceType.nominalUInt}
+    pure {
+      type := .scalar sourceType.type
+      term := term
+      nominalUInt := sourceType.nominalUInt
+      nominalField := sourceType.nominalField
+    }
   | `(nlexpr| record(Payload $name:ident, { $fields,* })) => do
     let (codec, _) ← selectedCodec name
     let .structure id := codec.payload
@@ -1859,6 +1924,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         | _ => lowerExpr programName callPrefix env source
       pure (spread, source, value)
     let values := arguments.map fun (_, _, value) => value
+    if values.any (·.nominalField.isSome) then
+      throwErrorAt stx "aggregate values do not retain nominal Field identity"
     let span ← liftM (spanValue stx)
     let (before, references, _) ← stageIterationValues callPrefix env span values
     modify fun state => {state with requiresOutputViews := _root_.Bool.true}
@@ -2060,7 +2127,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     if value.shapeOnly then
       modify fun state => {state with shapeOnlyRefs := internalName :: state.shapeOnlyRefs}
     let body ← lowerExpr programName callPrefix
-      ((id.getId.toString, value.type, ref, value.nominalUInt) :: env) body expected allowShapeOnly
+      ((id.getId.toString, value.type, ref,
+        (value.nominalUInt, value.nominalField)) :: env) body expected allowShapeOnly
     if value.shapeOnly then
       modify fun state => {state with shapeOnlyRefs := state.shapeOnlyRefs.filter (· != internalName)}
     pure
@@ -2114,7 +2182,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           (siblingSourceTypes.find? (·.1 == index)).map Prod.snd
         let value ← lowerExpr programName callPrefix localEnv source sourceExpected
         let name ← freshReadableLet id
-        localEnv := (id.getId.toString, value.type, .ref name, value.nominalUInt) :: localEnv
+        localEnv := (id.getId.toString, value.type, .ref name,
+          (value.nominalUInt, value.nominalField)) :: localEnv
         loweredSteps := {value with before := value.before ++
           [.bind name value.type (.at span value.term)]} :: loweredSteps
       | none =>
@@ -2186,6 +2255,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         (.cast target (.project value.term .enumTag)) [value]
       pure {result with
         nominalUInt := targetSource.nominalUInt,
+        nominalField := targetSource.nominalField,
         generatedValidity := (s!"checked cast {renderExpr stx}") :: result.generatedValidity}
     | .scalar source => do
       if source.isJubjub || target.isJubjub then
@@ -2196,6 +2266,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         type := .scalar target,
         term := .cast target value.term,
         nominalUInt := targetSource.nominalUInt,
+        nominalField := targetSource.nominalField,
         generatedValidity := (s!"checked cast {renderExpr stx}") :: value.generatedValidity
       }
     | _ => throwErrorAt stx "cannot cast Unit"
@@ -2239,6 +2310,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     | _, _ => do
       let .scalar leftTy := left.type | throwErrorAt stx "eq does not accept Unit"
       let .scalar rightTy := right.type | throwErrorAt stx "eq does not accept Unit"
+      unless left.nominalField == right.nominalField do
+        throwErrorAt stx "eq nominal Field operands must have the same nominal type"
       unless left.nominalUInt == right.nominalUInt do
         throwErrorAt stx "eq nominal UInt operands must have the same nominal type"
       if left.nominalUInt.isSome then
@@ -2303,6 +2376,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let yesValue ← lowerExpr programName callPrefix env yes (expected.or siblingHint)
     let noExpected := expected.or (if unresolvedNo then some yesValue.type else none)
     let noValue ← lowerExpr programName callPrefix env no noExpected
+    unless yesValue.nominalField == noValue.nominalField do
+      throwErrorAt stx "conditional branches require the same nominal Field type"
     unless yesValue.nominalUInt == noValue.nominalUInt do
       throwErrorAt stx "conditional branches require the same nominal UInt type"
     let some type := Helpers.commonType yesValue.type noValue.type
@@ -2311,7 +2386,10 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let noTerm ← lowerConditionalArm no programName env noValue
     modify fun state => {state with requiresOutputViews := _root_.Bool.true}
     let result := mergeLowered type (.ite predicate.term yesTerm noTerm) [predicate, yesValue, noValue]
-    pure {result with before := predicate.before, nominalUInt := yesValue.nominalUInt}
+    pure {result with
+      before := predicate.before,
+      nominalUInt := yesValue.nominalUInt,
+      nominalField := yesValue.nominalField}
   | `(nlexpr| select($condition, $yes, $no)) => do
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool
@@ -2319,14 +2397,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let no ← lowerExpr programName callPrefix env no
     let .scalar yesTy := yes.type | throwErrorAt stx "select does not accept Unit"
     let .scalar noTy := no.type | throwErrorAt stx "select does not accept Unit"
+    unless yes.nominalField == no.nominalField do
+      throwErrorAt stx "select branches require the same nominal Field type"
     unless yes.nominalUInt == no.nominalUInt do
       throwErrorAt stx "select branches require the same nominal UInt type"
     let nominalUInt := yes.nominalUInt
+    let nominalField := yes.nominalField
     let ty ← commonType stx yesTy noTy
-    let yes ← coerce stx {yes with nominalUInt := none} ty
-    let no ← coerce stx {no with nominalUInt := none} ty
+    let yes ← coerce stx {yes with nominalUInt := none, nominalField := none} ty
+    let no ← coerce stx {no with nominalUInt := none, nominalField := none} ty
     pure {mergeLowered (.scalar ty) (.select condition.term yes.term no.term) [condition, yes, no] with
-      nominalUInt}
+      nominalUInt, nominalField}
   | `(nlexpr| poseidon2($domain:num, $left, $right)) => do
     let left ← lowerExpr programName callPrefix env left
     let right ← lowerExpr programName callPrefix env right
@@ -2410,6 +2491,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         modify fun state => {state with requiresOutputViews := _root_.Bool.true}
         pure (value.before ++ [.evaluate value.term], [])
       | .scalar ty => do
+        if ty == .native then
+          liftM (rejectNominalFieldErasure source "transientHashValue" value)
         unless (ScalarPolicy.validate ty.scalarKind).isOk do
           throwErrorAt source "transientHashValue requires Native, Bool or UInt"
         let operand := if ty == .native then value.term else .cast .native value.term
@@ -2469,6 +2552,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       | .scalar (.foreign (.point _)) =>
         throwErrorAt stx "keccak256 point overload supports Secp256k1Point"
       | _ => throwErrorAt stx "keccak256 requires fixed bytes, Native, a checked FAB payload, or Secp256k1Point"
+    if value.type == .scalar .native then
+      liftM (rejectNominalFieldErasure stx "keccak256" value)
     let (_, result) ← match operation.signature 1 with
       | .error message => throwErrorAt stx message
       | .ok signature => pure signature
@@ -2529,6 +2614,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     lowerBytesOperation programName callPrefix env stx .degradeToNative [value]
   | `(nlexpr| upgradeFromNative($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    liftM (rejectNominalFieldErasure stx "upgradeFromNative" value)
     unless value.type == .scalar .native do throwErrorAt stx "upgradeFromNative requires Native"
     let bytes := Noctium.Helpers.Term.bytes (.toBytes32 .native) [value.term]
     let low := Noctium.Helpers.Term.bytes (.sliceBytes 32 0 31) [bytes]
@@ -2536,6 +2622,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar (.bytes 32)) (.bytes (.concatBytes 31 1) [low, high]) [value])
   | `(nlexpr| toBytes32($value)) => do
     let value ← lowerExpr programName callPrefix env value
+    if value.type == .scalar .native then
+      liftM (rejectNominalFieldErasure stx "toBytes32" value)
     let .scalar source := value.type | throwErrorAt stx "toBytes32 does not accept Unit"
     let operation := Noctium.Helpers.BytesOp.toBytes32 source
     match operation.signature 1 with
@@ -2544,6 +2632,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar (.bytes 32)) (.bytes operation [value.term]) [value])
   | `(nlexpr| serialize($value, $length:num)) => do
     let value ← lowerExpr programName callPrefix env value
+    if value.type == .scalar .native then
+      liftM (rejectNominalFieldErasure stx "serialize" value)
     let .scalar source := value.type | throwErrorAt stx "serialize requires a scalar or fixed bytes"
     let operation := Noctium.Helpers.BytesOp.serialize source length.getNat
     let (_, result) ← match operation.signature 1 with
@@ -2552,6 +2642,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
   | `(nlexpr| toBytes($sourceValue, $length:num)) => do
     let value ← lowerExpr programName callPrefix env sourceValue
+    if value.type == .scalar .native then
+      liftM (rejectNominalFieldErasure sourceValue "toBytes" value)
     let .scalar source := value.type
       | throwErrorAt stx "toBytes requires Native or UInt"
     let target ← match Noctium.Wire.numericBytesTarget source length.getNat with
@@ -2735,6 +2827,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         if let .point _ := kind then ["canonical foreign point decoding"] else []).eraseDups}
   | `(nlexpr| invoke($function:ident, [$args:nlexpr,*])) => do
     let values ← args.getElems.toList.mapM (lowerExpr programName callPrefix env)
+    if values.any (·.nominalField.isSome) then
+      throwErrorAt stx "invoke helper arguments do not retain nominal Field identity; explicitly cast to Native"
     let span ← liftM (spanValue stx)
     let (before, arguments, staged) ← stageIterationValues callPrefix env span values
     let program ← iterationProgram stx programName (values.flatMap (·.signatures))
@@ -2806,6 +2900,8 @@ where
       | .error message => throwErrorAt stx message
     let values ← arguments.mapM (lowerExpr programName callPrefix env)
     for (value, expectedType) in values.zip expected do
+      if expectedType == .native then
+        liftM (rejectNominalFieldErasure stx operation.operationName value)
       let .scalar actualType := value.type | throwErrorAt stx "byte operation argument cannot be Unit"
       unless actualType == expectedType do
         throwErrorAt stx s!"{operation.operationName} argument type mismatch"
@@ -2824,6 +2920,8 @@ where
       throwErrorAt stx s!"{operation.operationName} argument count mismatch"
     let values ← arguments.mapM (lowerExpr programName callPrefix env)
     for (value, expectedType) in values.zip expected do
+      if expectedType == .native then
+        liftM (rejectNominalFieldErasure stx operation.operationName value)
       let .scalar actualType := value.type | throwErrorAt stx "curve operation argument cannot be Unit"
       unless actualType == expectedType do
         throwErrorAt stx s!"{operation.operationName} argument type mismatch"
@@ -2836,6 +2934,8 @@ where
       (curve : Foreign.Curve) (digest r s key : TSyntax `nlexpr) : ExprM Lowered := do
     let operand (source : TSyntax `nlexpr) (expected : Ty) : ExprM (Lowered × String) := do
       let value ← lowerExpr programName callPrefix env source
+      if expected == .native then
+        liftM (rejectNominalFieldErasure source "Jubjub Schnorr verification" value)
       unless value.type == .scalar expected do
         throwErrorAt source "ECDSA requires a Bytes32 digest and matching curve scalars and key"
       let name ← freshIterationRef "ecdsa-argument"
@@ -3004,6 +3104,22 @@ where
       | .ok (.uint maximum) => pure (.uint maximum)
       | .ok _ => throwErrorAt stx "unsupported scalar arithmetic result"
       | .error message => throwErrorAt stx message
+    if left.nominalField.isSome || right.nominalField.isSome then
+      unless left.nominalField == right.nominalField do
+        throwErrorAt stx "nominal Field arithmetic requires matching nominal operands"
+      let some nominalField := left.nominalField
+        | throwErrorAt stx "nominal Field arithmetic requires matching nominal operands"
+      unless leftTy == .native && rightTy == .native do
+        throwErrorAt stx "nominal Field arithmetic operands do not match their field representation"
+      return {
+        type := .scalar .native
+        term := .binary op left.term right.term
+        nominalField := some nominalField
+        before := left.before ++ right.before
+        signatures := uniqueWitnesses (left.signatures ++ right.signatures)
+        witnessNames := (left.witnessNames ++ right.witnessNames).eraseDups
+        generatedValidity := (left.generatedValidity ++ right.generatedValidity).eraseDups
+      }
     if left.nominalUInt.isSome || right.nominalUInt.isSome then
       unless left.nominalUInt == right.nominalUInt do
         throwErrorAt stx "nominal UInt arithmetic requires matching nominal operands"
@@ -3328,6 +3444,8 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
         let (result, codec, resultNominal) ← match type with
           | `(noctium_witness_input_type| $scalar:nltype) => do
             let sourceType ← readSourceScalarType scalar
+            if sourceType.nominalField.isSome then
+              throwErrorAt scalar "nominal Field private-state callback signatures are unsupported in this scalar slice"
             pure (ResultType.scalar sourceType.type, none, sourceType.nominalUInt.map (·.name))
           | `(noctium_witness_input_type| Payload $name:ident) => do
             let constant ← liftCoreM <| resolveGlobalConstNoOverload name
@@ -3384,6 +3502,8 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
       match parameterStx with
       | `(noctium_witness_parameter| $parameter:ident : $type:nltype) => do
         let sourceType ← readSourceScalarType type
+        if sourceType.nominalField.isSome then
+          throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
         parameters := parameters ++ [{
           name := parameter.getId.toString,
           type := .scalar sourceType.type,
@@ -3417,10 +3537,14 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
           if name.getId == `Unit then pure .unit
           else do
             let sourceType ← readSourceScalarType type
+            if sourceType.nominalField.isSome then
+              throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
             resultNominal := sourceType.nominalUInt.map (·.name)
             pure (.scalar sourceType.type)
         else do
           let sourceType ← readSourceScalarType type
+          if sourceType.nominalField.isSome then
+            throwErrorAt type "nominal Field witness callback signatures are unsupported in this scalar slice"
           resultNominal := sourceType.nominalUInt.map (·.name)
           pure (.scalar sourceType.type)
       | `(noctium_witness_result| Payload $codecName:ident) => do
@@ -3608,7 +3732,7 @@ private def scopePatternBindings (initial : ReadableBody) (bindings : List Patte
   let mut scopedBindings := []
   for (id, type, project) in bindings do
     let (updated, internalName) ← bindReadableName body id
-    body := {updated with env := (id.getId.toString, type, .ref internalName, none) :: updated.env}
+    body := {updated with env := (id.getId.toString, type, .ref internalName, (none, none)) :: updated.env}
     scopedBindings := scopedBindings ++ [{id, internalName, type, project}]
   pure (body, scopedBindings)
 
@@ -3677,7 +3801,7 @@ private partial def lowerReadableStatement (programName path : String)
       | .scalar ty => body.logicalAliases ++ [{name := valueName, ty, source := .call site}]
       | _ => body.logicalAliases
     pure {body with
-      env := (valueName, signature.result, .ref internalName, resultNominal) :: body.env
+      env := (valueName, signature.result, .ref internalName, (resultNominal, none)) :: body.env
       statements := body.statements ++ [.bind internalName signature.result (.at (← spanValue statement) readTerm)]
       witnesses := uniqueWitnesses (body.witnesses ++ [signature])
       logicalAliases
@@ -3716,7 +3840,8 @@ private partial def lowerReadableStatement (programName path : String)
       | _ => body.logicalAliases
     let body := body.observe value [source]
     pure {body with
-      env := (valueName, value.type, .ref internalName, value.nominalUInt) :: body.env
+      env := (valueName, value.type, .ref internalName,
+        (value.nominalUInt, value.nominalField)) :: body.env
       statements := body.statements ++ value.before ++ [.bind internalName value.type (.at (← spanValue statement) value.term)]
       shapeOnlyRefs := if value.shapeOnly then internalName :: body.shapeOnlyRefs else body.shapeOnlyRefs
       logicalAliases}
@@ -3740,7 +3865,7 @@ private partial def lowerReadableStatement (programName path : String)
       let name := id.getId.toString
       let internalName := internalBinder.getD name
       pure {body with
-        env := (name, .unit, .ref internalName, none) :: body.env
+        env := (name, .unit, .ref internalName, (none, none)) :: body.env
         statements := body.statements ++ [.bind internalName .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
@@ -3811,8 +3936,8 @@ private partial def lowerReadableStatement (programName path : String)
     let indexName := index.getId.toString
     let (loopScope, internalIndex) ← bindReadableName {body with scopeBindings := []} index
     let mut loop := {loopScope with
-      env := (indexName, .scalar .native, .ref internalIndex, none) :: body.env
-      statements := []
+      env := (indexName, .scalar .native, .ref internalIndex, (none, none)) :: body.env,
+      statements := [],
       logicalAliases := []}
     for (child, ordinal) in nested.toList.zipIdx do
       loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
@@ -3871,7 +3996,7 @@ private partial def lowerReadableStatement (programName path : String)
         (unresolvedIterationParameter itemName).run initialLoopState
     let placeholderType := knownElementType.getD .unit
     let mut loop := {childScope with
-      env := (itemName, placeholderType, .ref elementRef, none) :: sourceBody.env
+      env := (itemName, placeholderType, .ref elementRef, (none, none)) :: sourceBody.env
       statements := []
       logicalAliases := []
       helperProgram := some program
@@ -3986,25 +4111,27 @@ private partial def lowerReadableStatement (programName path : String)
           throwErrorAt id s!"duplicate readable witness value '{valueName}'"
         let visibility := if statement.raw[0].getAtomVal == "public" then Noctium.Visibility.public else Noctium.Visibility.private
         let span ← spanValue statement
-        let (inputType, inputLabel, inputNominal) : ResultType × String × Option NominalUIntType ← match type with
+        let (inputType, inputLabel, inputNominal, inputField) :
+            ResultType × String × Option NominalUIntType × Option String ← match type with
           | `(noctium_witness_input_type| $scalar:nltype) => do
             let sourceType ← readSourceScalarType scalar
             parameters := parameters ++ [{name := valueName, ty := sourceType.type}]
             inputs := inputs ++ [{name := valueName, ty := sourceType.type, visibility, span}]
             if let some nominalUInt := sourceType.nominalUInt then
               nominalUIntInputs := nominalUIntInputs ++ [(valueName, nominalUInt)]
-            pure (.scalar sourceType.type, sourceScalarTypeName sourceType, sourceType.nominalUInt)
+            pure (.scalar sourceType.type, sourceScalarTypeName sourceType,
+              sourceType.nominalUInt, sourceType.nominalField)
           | `(noctium_witness_input_type| Payload $codecName:ident) => do
             let (codec, _) ← (selectedCodec codecName).run' exprState
             let result := if codec.payload == .unit then .unit else .composite codec.payload
             parameters := parameters ++ [{name := valueName, ty := .native}]
             aggregateInputs := aggregateInputs ++ [{name := valueName, type := codec.payload, visibility, span}]
-            pure (result, s!"Payload {codecName.getId}", none)
+            pure (result, s!"Payload {codecName.getId}", none, none)
           | _ => throwErrorAt type "unsupported readable witness input type"
         let input : ObservationInput := {name := valueName, type := inputLabel, visibility}
         let source := Helpers.Term.ref valueName
         sourceBody := {sourceBody with
-          env := (valueName, inputType, source, inputNominal) :: sourceBody.env
+          env := (valueName, inputType, source, (inputNominal, inputField)) :: sourceBody.env
           scopeBindings := sourceBody.scopeBindings ++ [valueName]
           observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
         if let some pattern := pattern then
@@ -4349,7 +4476,7 @@ private partial def lowerReadableStatement (programName path : String)
     let exportSpanTerm ← quoteSpan entryExport.span
     let exportId ← `(Noctium.Helpers.DeclarationId.mk 0 $(natTerm ordinal))
     let exportTerm ← `(Noctium.Helpers.Export.mk $(stringTerm entryExport.name) $exportId
-      [$inputTerms,*] [$aggregateInputTerms,*] $exportSpanTerm)
+      [$inputTerms,*] [$aggregateInputTerms,*] [] $exportSpanTerm)
     let localDeclarations ← `([$declarationTerms,*])
     let nominalUIntCellTerms ← program.nominalUIntCells.mapM fun (name, target) => do
       `(($(stringTerm name), $(← nominalUIntTypeTerm target)))

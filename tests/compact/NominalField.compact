@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export pure circuit addAmount(x: Amount, y: Amount): Amount { return x + y; }
+export pure circuit subAmount(x: Amount, y: Amount): Amount { return x - y; }
+export pure circuit mulAmount(x: Amount, y: Amount): Amount { return x * y; }
+export pure circuit asField(x: Amount): Field { return x as Field; }
+export pure circuit asAmount(x: Field): Amount { return x as Amount; }
