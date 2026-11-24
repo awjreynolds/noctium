@@ -199,6 +199,150 @@ fn commit(session: u64, value: Json) -> Result<Json, i32> {
 fn commit_payload(session: u64, payload: Json) -> Result<Json, i32> {
     call(session, payload, noctium_session_resume)
 }
+fn host_cas_cases() -> (Json, Vec<Json>) {
+    let fixture: Json =
+        serde_json::from_str(include_str!("fixtures/host-cas/cases.json")).unwrap();
+    assert_eq!(fixture["version"], 1);
+    (
+        fixture["pending"].clone(),
+        fixture["cases"].as_array().unwrap().clone(),
+    )
+}
+fn commit_corpus_case(
+    session: u64,
+    journal: &Json,
+    pending: &Json,
+    case: &Json,
+) -> Result<Json, i32> {
+    let mut payload = json!({
+        "abiVersion":1,
+        "requestId":pending["requestId"],
+        "operation":pending["operation"],
+        "capability":pending["capability"],
+        "schema":pending["schema"],
+        "value":{
+            "attemptId":journal["attemptId"],
+            "transactionId":journal["transactionId"],
+            "journalDigest":journal["journalDigest"],
+            "baseRevision":journal["baseRevision"],
+            "outcome":"committed",
+            "revision":"r1"
+        }
+    });
+    for (field, value) in case["overrides"].as_object().unwrap() {
+        match field.as_str() {
+            "requestId" | "operation" | "capability" | "schema" => {
+                payload[field.as_str()] = value.clone();
+            }
+            "attemptId" | "transactionId" | "journalDigest" | "baseRevision" | "outcome"
+            | "revision" => payload["value"][field.as_str()] = value.clone(),
+            _ => panic!("unknown host CAS case override: {field}"),
+        }
+    }
+    commit_payload(session, payload)
+}
+
+#[test]
+fn host_cas_acceptance_matches_shared_redacted_cases() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let (pending_metadata, cases) = host_cas_cases();
+    let session = begin(envelope('a'));
+    prepare(session);
+    let request = accepted(session, 'a', 'b');
+    assert_eq!(pending_metadata["journalDigest"], "<redacted-journal-digest>");
+    for (request_field, fixture_field) in [
+        ("id", "requestId"),
+        ("operation", "operation"),
+        ("capability", "capability"),
+        ("schema", "schema"),
+    ] {
+        assert_eq!(request["request"][request_field], pending_metadata[fixture_field]);
+    }
+    let journal = private(session, PRIVATE_REQUEST).unwrap()["journal"].clone();
+    assert_eq!(journal["attemptId"], pending_metadata["attemptId"]);
+    assert_eq!(journal["transactionId"], pending_metadata["transactionId"]);
+    assert_eq!(journal["baseRevision"], pending_metadata["baseRevision"]);
+    assert_ne!(journal["journalDigest"], pending_metadata["journalDigest"]);
+
+    let mut store = Store::default();
+    let mut conflict_session: Option<(u64, Json)> = None;
+    for case in &cases {
+        let name = case["name"].as_str().unwrap();
+        match case["expected"].as_str().unwrap() {
+            "pending" => {
+                assert_eq!(
+                    commit_corpus_case(session, &journal, &pending_metadata, case),
+                    Err(INVALID_RESPONSE),
+                    "{name} must reject without consuming the pending request"
+                );
+                assert_eq!(
+                    private(session, PRIVATE_REQUEST).unwrap()["journal"],
+                    journal,
+                    "{name} must preserve the pending journal"
+                );
+                assert_eq!(advance(session), request, "{name} must preserve the request");
+            }
+            "committed" => {
+                let reply = store.cas(&journal);
+                assert_eq!(reply["outcome"], case["overrides"]["outcome"], "{name}");
+                assert_eq!(reply["revision"], case["overrides"]["revision"], "{name}");
+                let status = commit_corpus_case(session, &journal, &pending_metadata, case).unwrap();
+                assert_eq!(status["phase"], "committed", "{name}");
+                assert_eq!(status["hostCasAcknowledged"], true, "{name}");
+                assert_eq!(store.applies, 1, "{name}");
+            }
+            "rejected" => {
+                let (consumed, consumed_journal) = match case["after"].as_str().unwrap() {
+                    "committed" => (session, &journal),
+                    "conflict" => {
+                        let (conflict_session, conflict_journal) =
+                            conflict_session.as_ref().unwrap();
+                        (*conflict_session, conflict_journal)
+                    }
+                    state => panic!("unknown consumed host CAS state: {state}"),
+                };
+                assert_eq!(
+                    commit_corpus_case(
+                        consumed,
+                        consumed_journal,
+                        &pending_metadata,
+                        case
+                    ),
+                    Err(INVALID_STATE),
+                    "{name} must reject after consumption"
+                );
+            }
+            "conflict" => {
+                assert_eq!(case["after"], "");
+                let conflict = begin(envelope('a'));
+                prepare(conflict);
+                accepted(conflict, 'a', 'b');
+                let conflict_journal = private(conflict, PRIVATE_REQUEST).unwrap()["journal"].clone();
+                let mut stale_store = Store { revision: 2, ..Store::default() };
+                let reply = stale_store.cas(&conflict_journal);
+                assert_eq!(reply["outcome"], case["overrides"]["outcome"], "{name}");
+                assert_eq!(reply["revision"], case["overrides"]["revision"], "{name}");
+                let status = commit_corpus_case(
+                    conflict,
+                    &conflict_journal,
+                    &pending_metadata,
+                    case
+                ).unwrap();
+                assert_eq!(status["phase"], "conflicted", "{name}");
+                assert_eq!(status["hostCasAcknowledged"], false, "{name}");
+                assert_eq!(stale_store.applies, 0, "{name}");
+                assert_eq!(private(conflict, PRIVATE_REQUEST), Err(INVALID_STATE));
+                conflict_session = Some((conflict, conflict_journal));
+            }
+            expected => panic!("unknown host CAS expectation: {expected}"),
+        }
+    }
+    let (conflict, _) = conflict_session.expect("fixture includes a conflict");
+    assert_eq!(private(session, PRIVATE_JOURNAL), Err(INVALID_STATE));
+    assert_eq!(noctium_session_free(conflict), OK);
+    assert_eq!(noctium_session_free(session), OK);
+}
+
 #[test]
 fn provider_capabilities_and_journals_follow_host_cas_lifecycle() {
     let _lock = TEST_LOCK.lock().unwrap();
@@ -244,60 +388,21 @@ fn provider_capabilities_and_journals_follow_host_cas_lifecycle() {
     assert_eq!(journal["writes"]["claims/used"]["value"], "8675309");
     let reply = store.cas(&journal);
     assert_eq!(commit(concurrent, reply.clone()), Err(INVALID_RESPONSE));
-    // Each mismatch targets one correlation field. The same pending request
-    // remains available until the corrected response arrives.
-    let applies_before_mismatches = store.applies;
-    let correlation_fixture: Json = serde_json::from_str(include_str!(
-        "fixtures/host-cas-correlation.json"
-    ))
-    .unwrap();
-    let correlation_mismatches = correlation_fixture["cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|case| {
-            (
-                case["field"].as_str().unwrap(),
-                case["location"].as_str().unwrap(),
-                case["replacement"].clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    for (field, location, replacement) in correlation_mismatches {
-        let mut payload = json!({
-            "abiVersion":1,
-            "requestId":3,
-            "operation":"private_state.compare_exchange.v1",
-            "capability":"store",
-            "schema":"PrivateStateCasResult/v1",
-            "value":reply
-        });
-        if location == "envelope" {
-            payload[field] = replacement;
-        } else {
-            payload["value"][field] = replacement;
-        }
+    for (base, revision) in [("wrong", "r1"), ("r0", "r0")] {
         assert_eq!(
-            commit_payload(session, payload),
-            Err(INVALID_RESPONSE),
-            "{field}"
+            commit(
+                session,
+                json!({"outcome":"committed","baseRevision":base,"revision":revision,"attemptId":journal["attemptId"],"transactionId":journal["transactionId"],"journalDigest":journal["journalDigest"]})
+            ),
+            Err(INVALID_RESPONSE)
         );
-        assert_eq!(
-            notice(session, 'a', 'b', "accepted").unwrap(),
-            pending,
-            "{field}"
-        );
-        assert_eq!(
-            private(session, PRIVATE_JOURNAL).unwrap()["journalDigest"],
-            journal["journalDigest"],
-            "{field}"
-        );
-        assert_eq!(store.applies, applies_before_mismatches, "{field}");
     }
-    let mut same_base = reply.clone();
-    same_base["baseRevision"] = json!("r0");
-    same_base["revision"] = json!("r0");
-    assert_eq!(commit(session, same_base), Err(INVALID_RESPONSE));
+    let mut wrong_digest = reply.clone();
+    wrong_digest["journalDigest"] = json!("0".repeat(64));
+    assert_eq!(commit(session, wrong_digest), Err(INVALID_RESPONSE));
+    let mut wrong_tx = reply.clone();
+    wrong_tx["transactionId"] = json!("c".repeat(64));
+    assert_eq!(commit(session, wrong_tx), Err(INVALID_RESPONSE));
     assert_eq!(notice(session, 'a', 'b', "accepted").unwrap(), pending);
     let result = commit(session, reply).unwrap();
     assert_eq!(result["phase"], "committed");

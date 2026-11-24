@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "pending": {
+    "requestId": 3,
+    "operation": "private_state.compare_exchange.v1",
+    "capability": "store",
+    "schema": "PrivateStateCasResult/v1",
+    "attemptId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "transactionId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "journalDigest": "<redacted-journal-digest>",
+    "baseRevision": "r0"
+  },
+  "cases": [
+    {"name": "request-id-mismatch", "overrides": {"requestId": 9}, "after": "", "expected": "pending"},
+    {"name": "operation-mismatch", "overrides": {"operation": "wrong.v1"}, "after": "", "expected": "pending"},
+    {"name": "capability-mismatch", "overrides": {"capability": "other"}, "after": "", "expected": "pending"},
+    {"name": "schema-mismatch", "overrides": {"schema": "Bool"}, "after": "", "expected": "pending"},
+    {"name": "attempt-id-mismatch", "overrides": {"attemptId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "after": "", "expected": "pending"},
+    {"name": "transaction-id-mismatch", "overrides": {"transactionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "after": "", "expected": "pending"},
+    {"name": "journal-digest-mismatch", "overrides": {"journalDigest": "different-redacted-digest"}, "after": "", "expected": "pending"},
+    {"name": "base-revision-mismatch", "overrides": {"baseRevision": "r9"}, "after": "", "expected": "pending"},
+    {"name": "unsupported-outcome", "overrides": {"outcome": "unknown"}, "after": "", "expected": "pending"},
+    {"name": "same-revision", "overrides": {"revision": "r0"}, "after": "", "expected": "pending"},
+    {"name": "invalid-revision", "overrides": {"revision": "bad revision"}, "after": "", "expected": "pending"},
+    {"name": "valid-commit", "overrides": {"outcome": "committed", "revision": "r1"}, "after": "", "expected": "committed"},
+    {"name": "duplicate-after-commit", "overrides": {"outcome": "committed", "revision": "r1"}, "after": "committed", "expected": "rejected"},
+    {"name": "valid-conflict", "overrides": {"outcome": "conflict", "revision": "r2"}, "after": "", "expected": "conflict"},
+    {"name": "duplicate-after-conflict", "overrides": {"outcome": "conflict", "revision": "r2"}, "after": "conflict", "expected": "rejected"}
+  ]
+}

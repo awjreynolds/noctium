@@ -1,4 +1,5 @@
 #include "smoke_helpers.hpp"
+#include <iostream>
 #include <map>
 #include <tuple>
 
@@ -73,6 +74,92 @@ static std::string read_file(const char *path) {
   std::ifstream file(path);
   return std::string((std::istreambuf_iterator<char>(file)), {});
 }
+static std::vector<std::string> split_tabs(const std::string &line) {
+  std::vector<std::string> fields;
+  size_t start = 0;
+  while (true) {
+    const auto end = line.find('\t', start);
+    fields.push_back(line.substr(start, end - start));
+    if (end == std::string::npos) return fields;
+    start = end + 1;
+  }
+}
+struct HostCasCase {
+  std::string name, after, expected;
+  std::map<std::string, std::string> overrides;
+};
+struct HostCasCorpus {
+  std::string version;
+  std::map<std::string, std::string> pending;
+  std::vector<HostCasCase> cases;
+};
+static HostCasCorpus read_host_cas_corpus(std::istream &input) {
+  HostCasCorpus corpus;
+  std::string line;
+  assert(std::getline(input, line));
+  const auto header = split_tabs(line);
+  assert(header.size() == 2 && header[0] == "VERSION");
+  corpus.version = header[1];
+  assert(std::getline(input, line));
+  const auto pending = split_tabs(line);
+  const std::vector<std::string> pending_keys = {
+      "requestId", "operation", "capability", "schema", "attemptId",
+      "transactionId", "journalDigest", "baseRevision"};
+  assert(pending.size() == pending_keys.size() + 1 && pending[0] == "PENDING");
+  for (size_t i = 0; i < pending_keys.size(); ++i)
+    corpus.pending.emplace(pending_keys[i], pending[i + 1]);
+  while (std::getline(input, line)) {
+    if (line.empty()) continue;
+    const auto row = split_tabs(line);
+    assert(row.size() >= 4 && row[0] == "CASE" && (row.size() - 4) % 2 == 0);
+    HostCasCase item{row[1], row[2], row[3], {}};
+    for (size_t i = 4; i < row.size(); i += 2)
+      assert(item.overrides.emplace(row[i], row[i + 1]).second);
+    corpus.cases.push_back(std::move(item));
+  }
+  return corpus;
+}
+static std::string json_string(const std::string &value) {
+  std::string encoded = "\"";
+  for (const char ch : value) {
+    if (ch == '"' || ch == '\\') encoded += '\\';
+    if (ch == '\n') encoded += "\\n";
+    else if (ch == '\r') encoded += "\\r";
+    else if (ch == '\t') encoded += "\\t";
+    else encoded += ch;
+  }
+  encoded += '"';
+  return encoded;
+}
+static std::string case_value(const HostCasCase &test_case,
+                              const std::string &key,
+                              const std::string &fallback) {
+  const auto found = test_case.overrides.find(key);
+  return found == test_case.overrides.end() ? fallback : found->second;
+}
+static std::string cas_case_payload(uint64_t session,
+                                    const std::map<std::string, std::string> &pending,
+                                    const HostCasCase &test_case) {
+  const auto journal = private_data(session, NOCTIUM_PRIVATE_JOURNAL);
+  return "{\"abiVersion\":1,\"requestId\":" +
+      case_value(test_case, "requestId", pending.at("requestId")) +
+      ",\"operation\":" +
+      case_value(test_case, "operation", json_string(pending.at("operation"))) +
+      ",\"capability\":" +
+      case_value(test_case, "capability", json_string(pending.at("capability"))) +
+      ",\"schema\":" +
+      case_value(test_case, "schema", json_string(pending.at("schema"))) +
+      ",\"value\":{\"attemptId\":" +
+      case_value(test_case, "attemptId", json_string(field(journal, "attemptId"))) +
+      ",\"transactionId\":" +
+      case_value(test_case, "transactionId", json_string(field(journal, "transactionId"))) +
+      ",\"journalDigest\":" +
+      case_value(test_case, "journalDigest", json_string(field(journal, "journalDigest"))) +
+      ",\"baseRevision\":" +
+      case_value(test_case, "baseRevision", json_string(field(journal, "baseRevision"))) +
+      ",\"outcome\":" + case_value(test_case, "outcome", json_string("committed")) +
+      ",\"revision\":" + case_value(test_case, "revision", json_string("r1")) + "}}";
+}
 static std::string configured(std::string envelope, std::string context, char attempt) {
   const auto marker = context.find(std::string(64, 'a')); assert(marker != std::string::npos);
   context.replace(marker, 64, std::string(64, attempt));
@@ -94,6 +181,93 @@ static uint64_t prepared(const std::string &envelope) {
   private_data(session,NOCTIUM_PRIVATE_JOURNAL,NOCTIUM_INVALID_STATE);
   stage(session,"claims/used",NOCTIUM_INVALID_STATE);
   return session;
+}
+static std::string accepted(uint64_t session, char attempt, char transaction);
+static void host_cas_corpus(const std::string &envelope,
+                            const std::string &context,
+                            std::istream &fixture_input) {
+  const auto corpus = read_host_cas_corpus(fixture_input);
+  const auto &pending = corpus.pending;
+  const auto &cases = corpus.cases;
+  assert(corpus.version == "1");
+  assert(cases.size() == 15);
+  assert(pending.at("requestId") == "3");
+  assert(pending.at("operation") == "private_state.compare_exchange.v1");
+  assert(pending.at("capability") == "store");
+  assert(pending.at("schema") == "PrivateStateCasResult/v1");
+  assert(pending.at("journalDigest") == "<redacted-journal-digest>");
+
+  const auto with = [&](char attempt) {
+    return configured(envelope, context, attempt);
+  };
+  const auto session = prepared(with('a'));
+  const auto pending_request = accepted(session, 'a', 'b');
+  const auto journal = private_data(session, NOCTIUM_PRIVATE_JOURNAL);
+  const auto private_request = private_data(session, NOCTIUM_PRIVATE_REQUEST);
+  assert(contains(pending_request, "\"id\":" + pending.at("requestId")));
+  assert(contains(pending_request, "\"operation\":\"" + pending.at("operation") + "\""));
+  assert(contains(pending_request, "\"capability\":\"" + pending.at("capability") + "\""));
+  assert(contains(pending_request, "\"schema\":\"" + pending.at("schema") + "\""));
+  assert(field(journal, "attemptId") == pending.at("attemptId"));
+  assert(field(journal, "transactionId") == pending.at("transactionId"));
+  assert(field(journal, "baseRevision") == pending.at("baseRevision"));
+  assert(field(journal, "journalDigest") != pending.at("journalDigest"));
+
+  std::string committed_payload, conflict_payload;
+  uint64_t conflict_session = 0;
+  unsigned pending_rejections = 0, commits = 0, conflicts = 0, duplicates = 0;
+  for (const auto &test_case : cases) {
+    const auto &name = test_case.name;
+    const auto &after = test_case.after;
+    const auto &expected = test_case.expected;
+    const auto &overrides = test_case.overrides;
+    if (expected == "pending") {
+      assert(after.empty());
+      host_call(session, cas_case_payload(session, pending, test_case),
+                noctium_session_resume, NOCTIUM_INVALID_RESPONSE);
+      assert(private_data(session, NOCTIUM_PRIVATE_REQUEST) == private_request);
+      assert(private_data(session, NOCTIUM_PRIVATE_JOURNAL) == journal);
+      assert(notice(session, 'a', 'b', "accepted") == pending_request);
+      ++pending_rejections;
+    } else if (expected == "committed") {
+      assert(name == "valid-commit" && after.empty());
+      committed_payload = cas_case_payload(session, pending, test_case);
+      assert(field(committed_payload, "journalDigest") ==
+             field(journal, "journalDigest"));
+      const auto result = host_call(session, committed_payload,
+                                    noctium_session_resume);
+      assert(contains(result, "\"phase\":\"committed\""));
+      assert(contains(result, "\"hostCasAcknowledged\":true"));
+      ++commits;
+    } else if (expected == "rejected") {
+      assert(after == "committed" || after == "conflict");
+      const auto &prior = after == "committed" ? committed_payload : conflict_payload;
+      assert(!prior.empty());
+      assert(overrides.size() == 2);
+      const auto outcome = after == "committed" ? "\"committed\"" : "\"conflict\"";
+      const auto revision = after == "committed" ? "\"r1\"" : "\"r2\"";
+      assert(overrides.at("outcome") == outcome && overrides.at("revision") == revision);
+      host_call(after == "committed" ? session : conflict_session, prior,
+                noctium_session_resume, NOCTIUM_INVALID_STATE);
+      ++duplicates;
+    } else if (expected == "conflict") {
+      assert(name == "valid-conflict" && after.empty());
+      conflict_session = prepared(with('c'));
+      accepted(conflict_session, 'c', 'd');
+      conflict_payload = cas_case_payload(conflict_session, pending, test_case);
+      const auto result = host_call(conflict_session, conflict_payload,
+                                    noctium_session_resume);
+      assert(contains(result, "\"phase\":\"conflicted\""));
+      assert(contains(result, "\"hostCasAcknowledged\":false"));
+      ++conflicts;
+    } else {
+      assert(false && "unknown shared host CAS expectation");
+    }
+  }
+  assert(pending_rejections == 11 && commits == 1 && conflicts == 1 &&
+         duplicates == 2);
+  assert(noctium_session_free(session) == NOCTIUM_OK);
+  assert(noctium_session_free(conflict_session) == NOCTIUM_OK);
 }
 static std::string accepted(uint64_t session, char attempt, char transaction) {
   notice(session, attempt, transaction, "bind");
@@ -221,5 +395,6 @@ int main(int argc, char **argv) {
     if(code==NOCTIUM_LIMIT){assert(out==0);limited_bytes=true;break;}assert(code==NOCTIUM_OK);checked_take(out);
   }
   assert(limited_bytes);assert(noctium_session_cancel(small_session,&result)==NOCTIUM_OK);checked_take(result);assert(noctium_session_free(small_session)==NOCTIUM_OK);
+  host_cas_corpus(envelope, context, std::cin);
   return 0;
 }

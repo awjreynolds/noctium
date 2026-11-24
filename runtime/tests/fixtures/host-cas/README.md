@@ -1,0 +1,3 @@
+# Host CAS cases
+
+`cases.json` is the shared synthetic input for the Lean host-CAS model, the Rust public-ABI acceptance test, and the linked C++ host smoke. It covers eleven pending-preserving rejection cases, commit and conflict completion, and duplicates after each terminal result. Its attempt and transaction IDs are dummy values. The journal digest is a redacted marker because the runtime tests bind each response to the digest returned by the live private journal. These checks establish reply correlation and lifecycle behavior. They do not establish digest authenticity, storage durability, or receipt truth.

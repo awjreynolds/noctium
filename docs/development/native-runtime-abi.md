@@ -108,13 +108,15 @@ env -i PATH=/usr/bin:/bin /tmp/noctium-cpp-smoke /tmp/noctium-abi-public.json
 
 The C harness checks symbol linkage, version, null inputs and invalid tokens. The C++ harness checks real claim execution, the expected public nullifier, a rejected wrong secret, request ordering, repeat advance, wrong IDs, Native/Bool validation, duplicate or unsolicited resume, cancellation, short copy buffers, explicit release and stale-token rejection. The existing native CLI remains the state-byte, five-negative-case and replay qualification check.
 
-The host-protocol C++ harness uses the unsigned source fixture and shares the descriptor fixture with Rust tests:
+The host-protocol C++ harness uses the unsigned source fixture and shares the descriptor fixture with Rust tests. Its host-CAS check also consumes the shared 15-case corpus. Eleven malformed or mismatched replies must leave the pending request and private journal unchanged. The remaining cases check a committed reply, a conflict reply, and duplicate replies after either terminal state.
 
 ```sh
+cargo +1.100.0 build --locked --manifest-path runtime/Cargo.toml --no-default-features --features zkir-321
 python3 runtime/tests/prepare_abi_fixture.py "$QUALIFIED_ARTIFACTS" /tmp/noctium-abi-unsigned.json --unsigned-fixture
 clang++ -std=c++17 -Wall -Wextra -Werror -I runtime/include runtime/tests/cpp_host_smoke.cpp \
   -L "$RUNTIME_LIB" -lnoctium_runtime -Wl,-rpath,"$RUNTIME_LIB" -o /tmp/noctium-cpp-host-smoke
-env -i PATH=/usr/bin:/bin /tmp/noctium-cpp-host-smoke /tmp/noctium-abi-unsigned.json runtime/tests/fixtures/private-state/context.json
+python3 runtime/tests/render_host_cas_cases.py runtime/tests/fixtures/host-cas/cases.json | \
+  env -i PATH=/usr/bin:/bin /tmp/noctium-cpp-host-smoke /tmp/noctium-abi-unsigned.json runtime/tests/fixtures/private-state/context.json
 ```
 
 This harness and `host_protocol.rs` test scoped storage reads, staged journals, persistence ordering, crossed replies, host-CAS concurrency, deduplicated and changed-payload retries, uncertainty, rejection, cancellation, execution failure, private buffers and quotas. The original linked claim harness remains the compatibility check for sessions without `hostContext`.
