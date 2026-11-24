@@ -89,7 +89,7 @@ def genericRecordCellModule : Definition := {
       «member» := 3
       name := "inspect"
       circuit := .localMember 1
-      recordCellReturns := [{name := "result", state := .localMember 0}]
+      cellReturns := [{name := "result", state := .localMember 0}]
     },
     {
       «member» := 4
@@ -100,7 +100,7 @@ def genericRecordCellModule : Definition := {
         effect := .writeRecordCellInput (.localMember 0) "next" (disclosed := Bool.true)
         guard := some (.disclose {} (.ref "enabled" : Expr .bool))
       }]
-      recordCellReturns := [{name := "result", state := .localMember 0}]
+      cellReturns := [{name := "result", state := .localMember 0}]
     }
   ]
   exports := [
