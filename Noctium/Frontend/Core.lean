@@ -265,6 +265,7 @@ scoped syntax "false" : nlexpr
 scoped syntax "let" ident ":=" nlexpr "in" nlexpr : nlexpr
 scoped syntax "assertThen(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "assertUnit(" nlexpr ")" : nlexpr
+scoped syntax "assertUnit(" nlexpr "," str ")" : nlexpr
 scoped syntax "add(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "mul(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "sub(" nlexpr "," nlexpr ")" : nlexpr

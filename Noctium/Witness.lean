@@ -133,9 +133,10 @@ private def bindHosted (program : Program) (entry : Export) (entryName : String)
 from executed calls to actual fresh private inputs. Host-only control is separate. -/
 def compileWithLimits (limits : Helpers.Limits) (program : Program) (entryName : String)
     (circuitName : String := "") (outputName : String := "")
-    (rewrites : Backend.Zkir.Rewrites := .disabled) : Except Diagnostic Compiled := do
+    (rewrites : Backend.Zkir.Rewrites := .disabled)
+    (assertionDiagnostics : List (SourceSpan × String) := []) : Except Diagnostic Compiled := do
   let program ← Helpers.prepareProgramWithLimits limits program
-  let plan ← Control.compileTypedWithLimits limits program entryName
+  let plan ← Control.compileTypedWithLimits limits program entryName 1048576 assertionDiagnostics
   let some entry := program.exports.find? (·.name == entryName) | fail {} "unknown witness entrypoint"
   let lowered ← Helpers.compileHostedWitnessWithLimits limits (eraseProgram program) entryName
   let mut circuit := if circuitName.isEmpty then lowered.circuit else {lowered.circuit with name := circuitName}
@@ -152,8 +153,9 @@ def compileWithLimits (limits : Helpers.Limits) (program : Program) (entryName :
   bindHosted program entry entryName plan circuit lowered.calls native circuit.outputs
 
 def compile (program : Program) (entryName : String) (circuitName : String := "")
-    (outputName : String := "") (rewrites : Backend.Zkir.Rewrites := .disabled) : Except Diagnostic Compiled :=
-  compileWithLimits {} program entryName circuitName outputName rewrites
+    (outputName : String := "") (rewrites : Backend.Zkir.Rewrites := .disabled)
+    (assertionDiagnostics : List (SourceSpan × String) := []) : Except Diagnostic Compiled :=
+  compileWithLimits {} program entryName circuitName outputName rewrites assertionDiagnostics
 
 /-- Bind the same source invocation to the actual ledger call relation, rather
 than substituting the standalone relation's public-return convention. -/

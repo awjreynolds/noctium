@@ -5,10 +5,12 @@ export circuit checkGate(allowed: Boolean): [] {
   return assert(allowed, "gate denied");
 }
 
-export circuit checkNestedGate(enabled: Boolean, allowed: Boolean): Field {
+export circuit checkNestedGate(enabled: Boolean, allowed: Boolean, secondAllowed: Boolean): Field {
   if (enabled) {
-    const checked = assert(allowed, "nested gate denied");
+    const checked = assert(allowed, "first gate denied");
     const unitAlias = checked;
+    const secondChecked = assert(secondAllowed, "second gate denied");
+    const secondAlias = secondChecked;
   }
   return (enabled ? 7 : 9) as Field;
 }

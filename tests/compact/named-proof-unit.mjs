@@ -52,12 +52,16 @@ try {
     assert.match(failureMessage, /gate denied/);
     return true;
   });
-  const nestedGate = (enabled, allowed) =>
-    contract.circuits.checkNestedGate(context('checkNestedGate'), enabled, allowed);
-  assert.equal((await nestedGate(false, false)).result, 9n);
-  assert.equal((await nestedGate(true, true)).result, 7n);
-  await assert.rejects(async () => nestedGate(true, false), (error) => {
-    assert.match(error.message, /nested gate denied/);
+  const nestedGate = (enabled, allowed, secondAllowed) =>
+    contract.circuits.checkNestedGate(context('checkNestedGate'), enabled, allowed, secondAllowed);
+  assert.equal((await nestedGate(false, false, false)).result, 9n);
+  assert.equal((await nestedGate(true, true, true)).result, 7n);
+  await assert.rejects(async () => nestedGate(true, false, true), (error) => {
+    assert.match(error.message, /first gate denied/);
+    return true;
+  });
+  await assert.rejects(async () => nestedGate(true, true, false), (error) => {
+    assert.match(error.message, /second gate denied/);
     return true;
   });
   console.log(JSON.stringify({ success: success.result, failure: failureMessage }));

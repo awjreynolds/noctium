@@ -356,6 +356,7 @@ private structure EmitState where
   bytes : Nat := 1048576
   typed : Bool := false
   types : List (String × Types.CompiledType) := []
+  assertionDiagnostics : List (SourceSpan × String) := []
   deriving Inhabited
 private abbrev EmitM := StateT EmitState (Except Diagnostic)
 
@@ -573,7 +574,16 @@ mutual
           env := (name, ty) :: env
           pure (node target.span "bind" [("name", toJson name), ("type", toJson (← emitType checked target.span ty)), ("value", value)])
         | .evaluate value => pure (node target.span "evaluate" [("value", ← emitExpression checked target.id.scope env target.span value)])
-        | .assert condition => pure (node target.span "assert" [("condition", ← emitExpression checked target.id.scope env target.span condition)])
+        | .assert condition => do
+          let conditionSpan := match condition with
+            | .at span _ => span
+            | _ => target.span
+          let message := (← get).assertionDiagnostics.find? (·.1 == conditionSpan)
+          let fields := [("condition", ← emitExpression checked target.id.scope env target.span condition)]
+          let fields := match message with
+            | none => fields
+            | some (_, value) => fields ++ [("message", toJson value)]
+          pure (node target.span "assert" fields)
         | .return value => pure (node target.span "return" [("value", ← match value with
           | none => pure Json.null
           | some value => emitCoercedExpression checked target.id.scope env target.span target.result value)])
@@ -647,7 +657,8 @@ private def compileScalarWithLimits (limits : Helpers.Limits) (program : Program
 /-- Typed private execution shares helper checking and component disclosure.
 Native circuit binding is supplied only by Witness.compile after actual lowering. -/
 def compileTypedWithLimits (limits : Helpers.Limits) (program : Program) (entryName : String)
-    (maxPlanBytes : Nat := 1048576) : Except Diagnostic Json := do
+    (maxPlanBytes : Nat := 1048576)
+    (assertionDiagnostics : List (SourceSpan × String) := []) : Except Diagnostic Json := do
   if maxPlanBytes > 1048576 then fail {} "control byte limit exceeds hard policy"
   let program ← Helpers.prepareProgramWithLimits limits program
   let checked ← Helpers.prepareWithLimits limits program
@@ -710,7 +721,8 @@ def compileTypedWithLimits (limits : Helpers.Limits) (program : Program) (entryN
         ("parameters", toJson parameters), ("resultType", toJson resultType), ("body", toJson body)]]
     pure (inputValues, signatures, values)
   let ((inputs, signatures, functions), state) ← emit.run
-    {remaining := limits.maxExecutionSteps, bytes := maxPlanBytes, typed := true}
+    {remaining := limits.maxExecutionSteps, bytes := maxPlanBytes, typed := true,
+      assertionDiagnostics}
   let types ← state.types.mapM fun (id, compiled) => do
     pure (Json.mkObj [("id", toJson id), ("schema", ← liftError entry.span (Types.schemaJson compiled))])
   let plan := Json.mkObj [("schemaVersion", toJson (2 : Nat)), ("kind", toJson ("host-control" : String)),

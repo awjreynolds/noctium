@@ -48,6 +48,11 @@ structure ObservationInput where
   visibility : Noctium.Visibility
   deriving Repr, Inhabited
 
+structure AuthoredAssertionDiagnostic where
+  span : SourceSpan
+  message : String
+  deriving Repr, Inhabited
+
 /-- Source policy observations emitted with a readable witness program.
 This describes declared flows and claims, not every possible failure channel. -/
 structure ObservationMetadata where
@@ -59,6 +64,7 @@ structure ObservationMetadata where
   authoredProves : List String := []
   explicitReleases : List String := []
   generatedValidity : List String := []
+  assertionDiagnostics : List AuthoredAssertionDiagnostic := []
   deriving Repr, Inhabited
 
 private def typeName : Ty → String
@@ -77,13 +83,19 @@ private def inputJson (input : ObservationInput) : Json := Json.mkObj [
   ("name", Lean.toJson input.name), ("type", Lean.toJson input.type),
   ("visibility", Lean.toJson (if input.visibility == .public then "public" else "private"))]
 
+private def assertionDiagnosticJson (diagnostic : AuthoredAssertionDiagnostic) : Json := Json.mkObj [
+  ("span", Json.mkObj [("file", Lean.toJson diagnostic.span.file),
+    ("line", Lean.toJson diagnostic.span.line), ("column", Lean.toJson diagnostic.span.column)]),
+  ("message", Lean.toJson diagnostic.message)]
+
 def ObservationMetadata.toJson (metadata : ObservationMetadata) : Json := Json.mkObj [
   ("schemaVersion", Lean.toJson (1 : Nat)), ("kind", Lean.toJson ("noctium-authoring-observations" : String)),
   ("entryName", Lean.toJson metadata.entryName), ("inputs", Lean.toJson (metadata.inputs.map inputJson)),
   ("privateReads", Lean.toJson metadata.privateReads), ("privateStages", Lean.toJson metadata.privateStages),
   ("witnessNames", Lean.toJson metadata.witnessNames), ("authoredProves", Lean.toJson metadata.authoredProves),
   ("explicitReleases", Lean.toJson metadata.explicitReleases),
-  ("generatedValidity", Lean.toJson metadata.generatedValidity)]
+  ("generatedValidity", Lean.toJson metadata.generatedValidity),
+  ("assertionDiagnostics", Lean.toJson (metadata.assertionDiagnostics.map assertionDiagnosticJson))]
 
 initialize noctiumPrivateStateRegistry : SimplePersistentEnvExtension
     Noctium.Authoring.PrivateStateSchema (Array Noctium.Authoring.PrivateStateSchema) ←
@@ -359,6 +371,17 @@ private def spanValue (stx : Syntax) : CommandElabM SourceSpan := do
   let fileMap ← getFileMap
   let pos := fileMap.toPosition (stx.getPos?.getD 0)
   pure {file := (← getFileName), line := pos.line, column := pos.column + 1}
+
+private partial def authoredAssertionDiagnostics (stx : Syntax) : CommandElabM (List AuthoredAssertionDiagnostic) := do
+  if let `(nlexpr| assertUnit($_:nlexpr, $message:str)) := stx then
+    let span ← spanValue stx
+    let nested ← stx.getArgs.toList.filterMapM fun child =>
+      if child.isAtom then pure none else some <$> authoredAssertionDiagnostics child
+    pure ({span, message := message.getString} :: nested.flatten)
+  else
+    match stx with
+    | .node _ _ children => children.toList.flatMapM authoredAssertionDiagnostics
+    | _ => pure []
 
 private def quoteSpan (span : SourceSpan) : CommandElabM (TSyntax `term) := do
   `( ({
@@ -843,6 +866,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| assertThen($condition, $body)) =>
     s!"assertThen({renderExpr condition}, {renderExpr body})"
   | `(nlexpr| assertUnit($condition)) => s!"assertUnit({renderExpr condition})"
+  | `(nlexpr| assertUnit($condition, $message:str)) =>
+    s!"assertUnit({renderExpr condition}, {message.getString})"
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     let lines := (steps.toList.filterMap callbackStep).map fun
       | (some id, value) => s!"let {id.getId} := {renderExpr value}"
@@ -1021,6 +1046,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| let $_:ident := $value:nlexpr in $body:nlexpr) => disclosedValues value ++ disclosedValues body
   | `(nlexpr| assertThen($condition, $body)) => disclosedValues condition ++ disclosedValues body
   | `(nlexpr| assertUnit($condition)) => disclosedValues condition
+  | `(nlexpr| assertUnit($condition, $_:str)) => disclosedValues condition
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     (steps.toList.filterMap callbackStep).flatMap (disclosedValues ∘ Prod.snd) ++
       disclosedValues result
@@ -1118,6 +1144,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| assertThen($condition, $body)) =>
     renderExpr condition :: (inlineAssertions condition ++ inlineAssertions body)
   | `(nlexpr| assertUnit($condition)) => renderExpr condition :: inlineAssertions condition
+  | `(nlexpr| assertUnit($condition, $_:str)) => renderExpr condition :: inlineAssertions condition
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
     ((steps.toList.filterMap callbackStep).flatMap fun
       | (some _, value) => inlineAssertions value
@@ -2112,13 +2139,15 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         signatures := uniqueWitnesses (condition.signatures ++ body.signatures),
         witnessNames := (condition.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (condition.generatedValidity ++ body.generatedValidity).eraseDups }
-  | `(nlexpr| assertUnit($condition)) => do
+  | `(nlexpr| assertUnit($condition))
+  | `(nlexpr| assertUnit($condition, $_:str)) => do
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool
+    let span ← spanValue stx
     pure
       { type := .unit
         term := .unit
-        before := condition.before ++ [.assert condition.term]
+        before := condition.before ++ [.assert (.at span condition.term)]
         signatures := condition.signatures
         witnessNames := condition.witnessNames
         generatedValidity := condition.generatedValidity }
@@ -3281,8 +3310,12 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
   let proves := list metadata.authoredProves
   let releases := list metadata.explicitReleases
   let validity := list metadata.generatedValidity
+  let assertionDiagnostics ← metadata.assertionDiagnostics.mapM fun diagnostic => do
+    let span ← quoteSpan diagnostic.span
+    `(Noctium.Authoring.AuthoredAssertionDiagnostic.mk $span $(stringTerm diagnostic.message))
+  let assertionDiagnostics := assertionDiagnostics.toArray
   `(Noctium.Authoring.ObservationMetadata.mk $entryText [$inputs,*] [$reads,*] [$stages,*]
-    [$witnesses,*] [$proves,*] [$releases,*] [$validity,*])
+    [$witnesses,*] [$proves,*] [$releases,*] [$validity,*] [$assertionDiagnostics,*])
 
 @[command_elab noctiumPrivateStateCommand] unsafe def elabPrivateState : CommandElab := fun stx => do
   match stx with
@@ -4356,6 +4389,8 @@ private partial def lowerReadableStatement (programName path : String)
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with
         | .ok program => program
         | .error _ => {})
+    let assertionDiagnostics ← sourceStatements.flatMapM (authoredAssertionDiagnostics ∘ (·.raw))
+    let observation := {observation with assertionDiagnostics}
     let metadataTerm ← observationTerm observation
     let envBefore ← getEnv
     try

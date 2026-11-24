@@ -16,6 +16,25 @@ private def sourceCapabilities : Capabilities := Capabilities.source
 private abbrev typeName : Ty → String := _root_.Noctium.NativeExpression.typeName
 private abbrev foreignConstantJson := _root_.Noctium.NativeExpression.foreignConstantJson
 
+private def authoredAssertionDiagnostics (artifact? : Option String) : CommandElabM (List (SourceSpan × String)) := do
+  let some artifact := artifact? | return []
+  let json ← match Json.parse artifact with
+    | .ok value => pure value
+    | .error _ => throwError "invalid source observation artifact"
+  let rows := ((json.getObjVal? "assertionDiagnostics").bind Json.getArr?).toOption.getD #[]
+  rows.toList.mapM fun row => do
+    let .ok message := row.getObjValAs? String "message"
+      | throwError "invalid authored assertion diagnostic message"
+    let .ok span := row.getObjVal? "span"
+      | throwError "invalid authored assertion diagnostic span"
+    let .ok file := span.getObjValAs? String "file"
+      | throwError "invalid authored assertion diagnostic file"
+    let .ok line := span.getObjValAs? Nat "line"
+      | throwError "invalid authored assertion diagnostic line"
+    let .ok column := span.getObjValAs? Nat "column"
+      | throwError "invalid authored assertion diagnostic column"
+    pure (({file, line, column} : SourceSpan), message)
+
 private def expressionJson : Expr ty → Json
   | .native n => Json.mkObj [("native", toJson (toString n))]
   | .bool b => Json.mkObj [("bool", toJson b)]
@@ -1420,9 +1439,10 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
   for info in witnesses do
     let witnessPrefix := artifactName info.circuitName
     if emit .witness && (emit .standalone || entryCircuits.contains info.circuitName.toString) then
+      let assertionDiagnostics ← authoredAssertionDiagnostics info.observationArtifact?
       let moduleProgram := moduleWitnessProgramFor moduleOutputs info
       -- Ledger-only bindings replace the standalone relation with the checked ledger relation.
-      let cached := if moduleProgram.isNone && !(rewrites != .disabled && emit .standalone) then
+      let cached := if assertionDiagnostics.isEmpty && moduleProgram.isNone && !(rewrites != .disabled && emit .standalone) then
         (checkedWitnesses.getState sourceEnv).find? info.circuitName
         else none
       let compiled ← match cached with
@@ -1431,7 +1451,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           let program ← match moduleProgram with
             | some fresh => pure fresh
             | none => unsafe evalConstCheck Helpers.Program ``Helpers.Program info.sourceName
-          match Witness.compile program info.exportName info.circuitName.toString info.outputName rewrites with
+          match Witness.compile program info.exportName info.circuitName.toString info.outputName rewrites
+              assertionDiagnostics with
           | .ok value => pure value
           | .error diagnostic => failDiagnostic diagnostic
       standaloneWitnesses := standaloneWitnesses.push (info.circuitName.toString, compiled)
