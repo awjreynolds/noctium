@@ -1,0 +1,19 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger texts: List<Opaque<"string">>;
+export ledger blobs: List<Opaque<"Uint8Array">>;
+
+export circuit push(text: Opaque<"string">, blob: Opaque<"Uint8Array">): [] {
+  texts.pushFront(disclose(text));
+  blobs.pushFront(disclose(blob));
+}
+
+export circuit inspect(): [Maybe<Opaque<"string">>, Maybe<Opaque<"Uint8Array">>] {
+  return [texts.head(), blobs.head()];
+}
+
+export circuit pop(): [] {
+  texts.popFront();
+  blobs.popFront();
+}
