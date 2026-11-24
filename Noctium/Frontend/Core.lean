@@ -2240,7 +2240,8 @@ private def checkedSourceValue (env : Bindings) (nominalEnv : CircuitNominalEnv)
 
 private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleaves)
     (fields : List (String × Ty)) (fieldTypes : List (String × CircuitSourceType) := [])
-    (nominals : CircuitNominalEnv := []) (contractRefs : List (String × Name) := []) :
+    (nominals : CircuitNominalEnv := []) (contractRefs : List (String × Name) := [])
+    (nominalFields : List (String × Option NominalFieldType) := []) :
     CommandElabM (List (Ty × TSyntax `term)) := do
   let `(nlleaves| fields($items:nlexpr,*)) := payload
     | throwErrorAt payload "ledger record payload expects fields(...)"
@@ -2249,7 +2250,7 @@ private def checkedLedgerFieldValues (env : Bindings) (payload : TSyntax `nlleav
     throwErrorAt payload "ledger record field count does not match its checked layout"
   (items.zip fields).mapM fun (item, field, ty) => do
     let sourceType := (fieldTypes.lookup field).getD {type := ty}
-    let value ← checkedSourceValue env nominals contractRefs item sourceType
+    let value ← checkedSourceValue env nominals contractRefs item sourceType nominalFields
     pure (ty, value)
 
 private partial def lowerTreePath (env : Bindings) (schema : LedgerValueType)
@@ -2676,7 +2677,7 @@ private def elaborateLedgerFieldValues (state : EntryEffects) (payload : TSyntax
     (fields : List (String × Ty)) (fieldTypes : List (String × CircuitSourceType) := []) :
     CommandElabM (TSyntax `term) := do
   let checked ← checkedLedgerFieldValues state.env payload fields fieldTypes
-    state.nominalUIntBindings state.contractRefBindings
+    state.nominalUIntBindings state.contractRefBindings state.nominalFieldBindings
   let values ← checked.mapM fun (ty, value) => do
     `(Noctium.LedgerFieldExpr.mk $(← tyTerm ty) $value)
   let values := values.toArray
@@ -2997,7 +2998,9 @@ private def bindLedgerRecordFields (state : EntryEffects) (destination : TSyntax
       (sourceType.bind (·.contractRef))
     let nominalUIntBindings := bindCircuitNominal updated.nominalUIntBindings sourceName
       (sourceType.bind (·.nominalUInt))
-    updated := {updated with contractRefBindings, nominalUIntBindings}
+    let nominalFieldBindings := (sourceName, sourceType.bind (·.nominalField)) ::
+      updated.nominalFieldBindings.filter (·.1 != sourceName)
+    updated := {updated with contractRefBindings, nominalUIntBindings, nominalFieldBindings}
     destinations := destinations.push (← `(($(stringTerm internalName), $(← tyTerm ty))))
   pure (updated, ← `(([$destinations,*] : List (String × Noctium.Ty))))
 
@@ -4776,6 +4779,50 @@ private def elaborateEffect (schema : List (String × StateKind))
   | _ => throwErrorAt effect "unsupported Noctium state effect"
   pure state
 
+private def hasOnlyNominalFieldRecordPayload (fieldBindings : List (String × Option NominalFieldType))
+    (effect : TSyntax `nleffect) : _root_.Bool :=
+  match effect with
+  | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
+  | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        hasCircuitNominalFieldReference fieldBindings value.raw
+  | `(nleffect| write $_:ident := $payload:nlleaves) =>
+      hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| write $_:ident [ $key:nlexpr ] := $payload:nlleaves)
+  | `(nleffect| insert $_:ident [ $key:nlexpr ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings key.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| write $_:ident [ $first:nlexpr ] [ $second:nlexpr ] := $payload:nlleaves)
+  | `(nleffect| insert $_:ident [ $first:nlexpr ] [ $second:nlexpr ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings first.raw &&
+        !hasCircuitNominalFieldReference fieldBindings second.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| insert $_:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| when $condition:nlexpr insert $_:ident [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| insert $_:ident [ $outerKey:nlexpr ] [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
+        !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| when $condition:nlexpr insert $_:ident [ $outerKey:nlexpr ]
+      [ $keyFields:nlleaves ] := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
+        !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| pushFront $path:nlpath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings path.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| when $condition:nlexpr pushFront $path:nlpath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        !hasCircuitNominalFieldReference fieldBindings path.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | _ => _root_.Bool.false
+
 private partial def elaborateStatements (schema : List (String × StateKind))
     (parent : Option (TSyntax `term)) (depth : Nat)
     (statements : Array (TSyntax `nlstatement)) (initial : EntryEffects) :
@@ -4784,12 +4831,9 @@ private partial def elaborateStatements (schema : List (String × StateKind))
   for statement in statements do
     match statement with
     | `(nlstatement| $effect:nleffect) =>
-      match effect with
-      | `(nleffect| write $_:ident := $_:nlexpr)
-      | `(nleffect| when $_:nlexpr write $_:ident := $_:nlexpr) => pure ()
-      | _ =>
-        if hasCircuitNominalFieldReference state.nominalFieldBindings effect.raw then
-          throwErrorAt effect "nominal Field effects require a direct scalar Cell write"
+      if hasCircuitNominalFieldReference state.nominalFieldBindings effect.raw &&
+          !hasOnlyNominalFieldRecordPayload state.nominalFieldBindings effect then
+        throwErrorAt effect "nominal Field effects require a direct scalar Cell write"
       state ← elaborateEffect schema parent depth state effect
     | `(nlstatement| if $condition:nlexpr then { $thenStatements:nlstatement* }
         else { $elseStatements:nlstatement* }) => do
@@ -5224,7 +5268,8 @@ private partial def readMerkleCompositeField (rootId path : String)
   | _ => throwErrorAt field "expected a scalar or nested struct MerkleTree field"
 
 private partial def elaborateTypedLedgerFields (parentId pathPrefix : String)
-    (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax) :
+    (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax)
+    (allowNominalField : _root_.Bool := _root_.Bool.false) :
     CommandElabM (Array (TSyntax `term) × List Types.Field × Array (TSyntax `term) ×
       List Types.StructDecl × List (String × CircuitSourceType)) := do
   let mut fieldTerms : Array (TSyntax `term) := #[]
@@ -5236,10 +5281,11 @@ private partial def elaborateTypedLedgerFields (parentId pathPrefix : String)
     match field with
     | `(nlcompositefield| $fieldName:ident : $fieldType:nltype) => do
       let name := fieldName.getId.toString
-      let sourceType ← readCircuitSourceType fieldType
+      let sourceType ← readCircuitSourceType fieldType (allowNominalField && pathPrefix.isEmpty)
       let fieldTy := sourceType.type
       let physicalName := if pathPrefix.isEmpty then name else s!"{pathPrefix}_{name}"
-      if sourceType.contractRef.isSome || sourceType.nominalUInt.isSome then
+      if sourceType.contractRef.isSome || sourceType.nominalUInt.isSome ||
+          sourceType.nominalField.isSome then
         fieldTypes := fieldTypes ++ [(physicalName, sourceType)]
       fieldValues := fieldValues ++ [{name, type := .scalar fieldTy}]
       let fieldTypeTerm ← `(Noctium.Types.CompositeType.scalar $(← tyTerm fieldTy))
@@ -5250,7 +5296,7 @@ private partial def elaborateTypedLedgerFields (parentId pathPrefix : String)
       let path := if pathPrefix.isEmpty then name else s!"{pathPrefix}_{name}"
       let nestedId := s!"{parentId}.{path}.{record.getId}"
       let (childTerms, childFields, descendantTerms, descendants, childTypes) ←
-        elaborateTypedLedgerFields nestedId path children owner
+        elaborateTypedLedgerFields nestedId path children owner allowNominalField
       let structSpan ← spanTerm field
       let nestedTerm ← `({ id := $(stringTerm nestedId), fields := [$childTerms,*], span := $structSpan : Noctium.Types.StructDecl })
       let structureFieldType ← `(Noctium.Types.CompositeType.structure $(stringTerm nestedId))
@@ -5266,7 +5312,8 @@ private partial def elaborateTypedLedgerFields (parentId pathPrefix : String)
 
 private def elaborateTypedLedgerRecord (contractName : Name) (record : TSyntax `ident)
     (recordFields : Array (TSyntax `nlcompositefield)) (owner : Syntax)
-    (allowNested : _root_.Bool := _root_.Bool.false) :
+    (allowNested : _root_.Bool := _root_.Bool.false)
+    (allowNominalField : _root_.Bool := _root_.Bool.false) :
     CommandElabM ((Types.CompositeEnv × Types.CompositeType × TSyntax `term × TSyntax `term) ×
       List (String × CircuitSourceType)) := do
   let containsNested := recordFields.any fun field =>
@@ -5277,7 +5324,7 @@ private def elaborateTypedLedgerRecord (contractName : Name) (record : TSyntax `
     throwErrorAt owner "nested named records are supported only by root Lists"
   let typeId := contractName.toString ++ "." ++ record.getId.toString
   let (fieldTerms, fieldValues, nestedTerms, nestedValues, fieldTypes) ←
-    elaborateTypedLedgerFields typeId "" recordFields owner
+    elaborateTypedLedgerFields typeId "" recordFields owner allowNominalField
   let structSpan ← spanTerm owner
   let structureTerm ← `({ id := $(stringTerm typeId), fields := [$fieldTerms,*], span := $structSpan : Noctium.Types.StructDecl })
   let allTerms := #[structureTerm] ++ nestedTerms
@@ -5295,6 +5342,8 @@ private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
   let (layout, fieldTypes) ← elaborateTypedLedgerRecord contractName record recordFields owner
   if fieldTypes.any (fun (_, field) => field.contractRef.isSome) then
     throwErrorAt owner "typed contract reference fields are unsupported for this ledger layout"
+  if fieldTypes.any (fun (_, field) => field.nominalField.isSome) then
+    throwErrorAt owner "nominal Field record fields are unsupported for this ledger layout"
   unless fieldTypes.isEmpty do
     throwErrorAt owner "nominal UInt record fields are unsupported for this ledger layout"
   pure layout
@@ -5997,6 +6046,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             elaborateTypedLedgerRecord contractName keyRecord keyFields state
           let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
             elaborateTypedLedgerRecord contractName valueRecord valueFields state
+              _root_.Bool.false _root_.Bool.true
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           unless sourceValues.isEmpty do
@@ -6016,6 +6066,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           match LedgerValueType.cellRecordFields environment compositeType with
@@ -6066,6 +6117,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm),
               sourceValues) ← elaborateTypedLedgerRecord contractName record recordFields state
+                _root_.Bool.false _root_.Bool.true
           unless sourceValues.isEmpty do
             recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
           match LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType with
@@ -6189,6 +6241,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           let valueSchema := LedgerValueType.map keyTy (.composite environment compositeType)
@@ -6210,6 +6263,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           let valueSchema := LedgerValueType.map outerTy
@@ -6251,6 +6305,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           if fieldTypes.any (fun (_, field) => field.contractRef.isSome) then
             throwErrorAt state "typed contract reference fields are unsupported for this ledger layout"
           if !fieldTypes.isEmpty then
@@ -6302,6 +6357,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             elaborateTypedLedgerRecord contractName keyRecord keyFields state
           let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
             elaborateTypedLedgerRecord contractName valueRecord valueFields state
+              _root_.Bool.false _root_.Bool.true
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           unless sourceValues.isEmpty do
@@ -6332,7 +6388,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             throwErrorAt listKind "unsupported recursive List state declaration"
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
-            elaborateTypedLedgerRecord contractName record recordFields state _root_.Bool.true
+            elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.true _root_.Bool.true
           match LedgerValueType.listElementFields environment compositeType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
@@ -6347,6 +6404,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           if listKind.getId.toString == "List" then
             let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
               elaborateTypedLedgerRecord contractName record recordFields state
+                _root_.Bool.false _root_.Bool.true
             match LedgerValueType.listElementFields environment compositeType with
             | .ok _ => pure ()
             | .error message => throwErrorAt state message
@@ -6372,6 +6430,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
           match LedgerValueType.listElementFields environment compositeType with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
