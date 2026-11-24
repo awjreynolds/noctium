@@ -3524,7 +3524,7 @@ private def recordSetKeyValuesAt (schema : List (String × StateKind))
     (payload : TSyntax `nlleaves) (state : EntryEffects) :
     CommandElabM (TSyntax `term × List (String × Ty) × TSyntax `term) := do
   let treeSchema ← treeStateSchema schema storage
-  let (keys, valueSchema) ← lowerTreePath state.env treeSchema parentKeys
+  let (keys, valueSchema) ← lowerMapPath state storage treeSchema parentKeys
   let .recordSet environment type := valueSchema
     | throwErrorAt storage "typed record key operation requires a record Set"
   let fields ← match LedgerValueType.recordSetKeyFields environment type with
@@ -6381,19 +6381,30 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           pure (id, kind, term)
         | `(nlstate| tree $id:ident : $key:nltype => Set $memberType:nltype) => do
           let mapKey ← readCollectionScalarSourceType key
-          let memberSource ← readCollectionScalarSourceType memberType
-          let nominal : CollectionNominals := {
-            pathKeys := [mapKey.nominalUInt, memberSource.nominalUInt]}
-          unless nominal.isEmpty do
-            nominalCollections := (id.getId.toString, nominal) :: nominalCollections
           let mapKeyTy := mapKey.type
-          let memberTy := memberSource.type
           let mapKeyTerm ← tyTerm mapKeyTy
-          let memberTerm ← tyTerm memberTy
-          let valueSchema := LedgerValueType.map mapKeyTy (.set memberTy)
-          let valueTerm ← `(Noctium.LedgerValueType.map $mapKeyTerm
-            (Noctium.LedgerValueType.set $memberTerm))
-          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+          if let some (memberSchema, memberTerm, fieldTypes) ←
+              importedRecordSetSchema? memberType then
+            unless fieldTypes.isEmpty do
+              recordKeyFieldTypes := (id.getId.toString, fieldTypes) :: recordKeyFieldTypes
+            let nominal : CollectionNominals := {pathKeys := [mapKey.nominalUInt]}
+            unless nominal.isEmpty do
+              nominalCollections := (id.getId.toString, nominal) :: nominalCollections
+            let valueSchema := LedgerValueType.map mapKeyTy memberSchema
+            let valueTerm ← `(Noctium.LedgerValueType.map $mapKeyTerm $memberTerm)
+            pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
+          else
+            let memberSource ← readCollectionScalarSourceType memberType
+            let nominal : CollectionNominals := {
+              pathKeys := [mapKey.nominalUInt, memberSource.nominalUInt]}
+            unless nominal.isEmpty do
+              nominalCollections := (id.getId.toString, nominal) :: nominalCollections
+            let memberTy := memberSource.type
+            let memberTerm ← tyTerm memberTy
+            let valueSchema := LedgerValueType.map mapKeyTy (.set memberTy)
+            let valueTerm ← `(Noctium.LedgerValueType.map $mapKeyTerm
+              (Noctium.LedgerValueType.set $memberTerm))
+            pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $outer:nltype => $inner:nltype => Set $memberType:nltype) => do
           let outer ← readCollectionScalarSourceType outer
           let inner ← readCollectionScalarSourceType inner
