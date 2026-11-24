@@ -1266,7 +1266,7 @@
       "layer": "language",
       "surface": "Assertions",
       "noctiumStatus": "subset",
-      "notes": "An explicit readable prove statement can bind its successful Unit result. The native checker and Compact 0.36.1 agree on zero-field success and false rejection for the matched assertion case. The Unit binding and alias add no private inputs or returned fields. General expression placement and failure diagnostics remain unverified.",
+      "notes": "Readable assertUnit(condition) is a Unit-valued expression and works in let initializers inside guarded branches. Native execution and Compact 0.36.1 agree that a false assertion in an inactive branch succeeds, while the same selected false assertion rejects; successful Unit aliases add no private inputs or returned fields. Compact reports the caller-authored failure message. Noctium reports its generic assertion error. Broader expression-placement coverage remains open.",
       "source": [
         "reference",
         "release0360"
