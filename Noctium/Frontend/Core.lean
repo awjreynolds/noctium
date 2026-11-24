@@ -528,6 +528,12 @@ declare_syntax_cat nlpath
 scoped syntax ident : nlpath
 scoped syntax nlpath "[" nlexpr "]" : nlpath
 
+declare_syntax_cat nlrecordmapkeysteps
+scoped syntax "[" nlleaves "]" : nlrecordmapkeysteps
+scoped syntax "[" nlexpr "]" nlrecordmapkeysteps : nlrecordmapkeysteps
+declare_syntax_cat nlrecordmapkeypath
+scoped syntax ident "[" nlexpr "]" "[" nlexpr "]" nlrecordmapkeysteps : nlrecordmapkeypath
+
 declare_syntax_cat nlupdate
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr "," nlexpr ")" : nlupdate
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr ")" : nlupdate
@@ -671,6 +677,19 @@ scoped syntax "when" nlexpr "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleff
 scoped syntax "when" nlexpr "insert" nlpath : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
+
+scoped syntax "read" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "when" nlexpr "read" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "member" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "when" nlexpr "member" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "insert" nlrecordmapkeypath ":=" nlexpr : nleffect
+scoped syntax "when" nlexpr "insert" nlrecordmapkeypath ":=" nlexpr : nleffect
+scoped syntax "insert" nlrecordmapkeypath ":=" nlleaves : nleffect
+scoped syntax "when" nlexpr "insert" nlrecordmapkeypath ":=" nlleaves : nleffect
+scoped syntax "remove" nlrecordmapkeypath : nleffect
+scoped syntax "when" nlexpr "remove" nlrecordmapkeypath : nleffect
+scoped syntax "insertDefault" nlrecordmapkeypath : nleffect
+scoped syntax "when" nlexpr "insertDefault" nlrecordmapkeypath : nleffect
 
 declare_syntax_cat nlstatement
 scoped syntax nleffect : nlstatement
@@ -2361,6 +2380,23 @@ private partial def sourcePathParts (path : TSyntax `nlpath) :
     pure (storage, keys ++ [key])
   | _ => throwErrorAt path "invalid recursive state path"
 
+private partial def recordMapKeySteps (steps : TSyntax `nlrecordmapkeysteps) :
+    CommandElabM (List (TSyntax `nlexpr) × TSyntax `nlleaves) := do
+  match steps with
+  | `(nlrecordmapkeysteps| [$key:nlleaves]) => pure ([], key)
+  | `(nlrecordmapkeysteps| [$parent:nlexpr] $rest:nlrecordmapkeysteps) => do
+    let (parents, key) ← recordMapKeySteps rest
+    pure (parent :: parents, key)
+  | _ => throwErrorAt steps "invalid record-key Map path"
+
+private def recordMapPathParts (path : TSyntax `nlrecordmapkeypath) :
+    CommandElabM (TSyntax `ident × List (TSyntax `nlexpr) × TSyntax `nlleaves) := do
+  match path with
+  | `(nlrecordmapkeypath| $storage:ident [$first:nlexpr] [$second:nlexpr] $steps:nlrecordmapkeysteps) =>
+    let (parents, key) ← recordMapKeySteps steps
+    pure (storage, first :: second :: parents, key)
+  | _ => throwErrorAt path "invalid record-key Map path"
+
 private def lowerMerkleTreePath (schema : List (String × StateKind)) (env : Bindings)
     (path : TSyntax `nlpath) :
     CommandElabM (TSyntax `ident × TSyntax `term × Nat × _root_.Bool × _root_.Bool) := do
@@ -2867,6 +2903,12 @@ private def addNominalBytes32Binding (state : EntryEffects) (name : String)
 
 private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `nlexpr) :=
   match effect with
+  | `(nleffect| when $condition:nlexpr read $_:nlrecordmapkeypath as $_:ident)
+  | `(nleffect| when $condition:nlexpr member $_:nlrecordmapkeypath as $_:ident)
+  | `(nleffect| when $condition:nlexpr insert $_:nlrecordmapkeypath := $_:nlexpr)
+  | `(nleffect| when $condition:nlexpr insert $_:nlrecordmapkeypath := $_:nlleaves)
+  | `(nleffect| when $condition:nlexpr remove $_:nlrecordmapkeypath)
+  | `(nleffect| when $condition:nlexpr insertDefault $_:nlrecordmapkeypath) => some condition
   | `(nleffect| when $condition:nlexpr $update:nlupdate) => some condition
   | `(nleffect| when $condition:nlexpr write $_state:ident := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_key:nlexpr ] := $_value:nlexpr) => some condition
@@ -3490,7 +3532,8 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
   let parentKeys ← pathKeysTerm parentKeys
   let term ← match valueSchema with
     | .recordMapKey keyEnvironment keyType valueTy => do
-      let keyFields ← match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
+      let keyFields ← match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType
+          parentPath.length with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
@@ -3503,9 +3546,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
-      let valueFields ← match (if parentPath.length ≤ 1 then
-          LedgerValueType.mapRecordWriteFields valueEnvironment valueType
-        else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
+      let valueFields ← match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let values ← zeroLedgerFieldValues valueFields
@@ -3712,9 +3753,7 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let valueFields ← match (if parentKeys.length ≤ 1 then
-      LedgerValueType.mapRecordWriteFields valueEnvironment valueType
-    else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
+  let valueFields ← match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   pure (← pathKeysTerm keys, keyType, keyFields, valueType, valueFields)
@@ -4611,6 +4650,33 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident)
   | `(nleffect| when $_:nlexpr counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident) =>
     state ← elaborateCounterLessThan schema path threshold destination depth state
+  | `(nleffect| read $path:nlrecordmapkeypath as $destination:ident)
+  | `(nleffect| when $_:nlexpr read $path:nlrecordmapkeypath as $destination:ident) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    if ← nestedRecordMapCompositeAt schema storage parents state then
+      state := ← elaborateRecordMapCompositeRead schema storage parents payload destination depth state
+    else
+      state := ← elaborateRecordMapRead schema storage parents payload destination depth state
+  | `(nleffect| member $path:nlrecordmapkeypath as $destination:ident)
+  | `(nleffect| when $_:nlexpr member $path:nlrecordmapkeypath as $destination:ident) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapMember schema storage parents payload destination depth state
+  | `(nleffect| insert $path:nlrecordmapkeypath := $values:nlleaves)
+  | `(nleffect| when $_:nlexpr insert $path:nlrecordmapkeypath := $values:nlleaves) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapCompositeWrite schema storage parents payload values state
+  | `(nleffect| insert $path:nlrecordmapkeypath := $value:nlexpr)
+  | `(nleffect| when $_:nlexpr insert $path:nlrecordmapkeypath := $value:nlexpr) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapWrite schema storage parents payload value state
+  | `(nleffect| remove $path:nlrecordmapkeypath)
+  | `(nleffect| when $_:nlexpr remove $path:nlrecordmapkeypath) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapRemove schema storage parents payload state
+  | `(nleffect| insertDefault $path:nlrecordmapkeypath)
+  | `(nleffect| when $_:nlexpr insertDefault $path:nlrecordmapkeypath) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapDefault schema storage parents payload state
   | `(nleffect| read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) =>
     if ← nestedRecordMapCompositeAt schema storage [owner] state then
@@ -5060,6 +5126,13 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| insert $path:nlrecordmapkeypath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings path.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| when $condition:nlexpr insert $path:nlrecordmapkeypath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        !hasCircuitNominalFieldReference fieldBindings path.raw &&
         hasCircuitNominalFieldReference fieldBindings payload.raw
   | `(nleffect| pushFront $path:nlpath := $payload:nlleaves) =>
       !hasCircuitNominalFieldReference fieldBindings path.raw &&
