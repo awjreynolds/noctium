@@ -1,0 +1,21 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+export ledger total: Field;
+witness visit(index: Uint<8>): Field;
+
+circuit applyRange<#START, #END>(): Field {
+  total = 0 as Field;
+  for (const index of START..END) {
+    total = disclose(total + visit(index as Uint<8>));
+  }
+  return disclose(total);
+}
+
+export circuit nonEmptyRange(): Field {
+  return applyRange<1, 3>();
+}
+
+export circuit emptyRange(): Field {
+  return applyRange<2, 2>();
+}
