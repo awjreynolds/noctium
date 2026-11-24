@@ -208,7 +208,7 @@ private def opaqueIdentityCompiles (type : GType) (ty : Ty) : Bool :=
       let signatureOk := parseSignatureArtifact (Lean.toJson result.signatureArtifact) |>.isOk
       inputOk && outputOk && signatureOk
 
--- Opaque types specialize only as root scalar helper inputs and outputs.
+-- Root opaque types keep their scalar identities through specialization.
 #guard opaqueIdentityCompiles .opaqueBytes .opaqueBytes
 #guard opaqueIdentityCompiles .opaqueString .opaqueString
 
@@ -216,9 +216,30 @@ private def opaqueAggregateProgram : GProgram :=
   identityProgram (.tuple [.opaqueBytes])
 
 #guard match specialize opaqueAggregateProgram "entry" with
-  | .error diagnostic => diagnostic.message.contains "opaque byte strings are not scalar values"
-  | .ok result => messageContains (Helpers.compile result.program result.exportName)
-      "opaque byte strings are not scalar values"
+  | .error _ => false
+  | .ok result =>
+    let expectedType := SignatureType.tuple [.opaqueBytes]
+    let signatureOk := match parseSignatureArtifact (Lean.toJson result.signatureArtifact) with
+      | .ok artifact => artifact.declarations.any fun declaration =>
+          declaration.parameters == [⟨"value", expectedType⟩] &&
+            declaration.result == expectedType
+      | .error _ => false
+    let signature : SignatureArtifact := result.signatureArtifact
+    let declarations := signature.declarations.map fun (declaration : SpecializedSignature) =>
+      {declaration with witnesses := [⟨"opaque", expectedType⟩]}
+    let witnessSignature := {signature with declarations}
+    let witnessRejected := match parseSignatureArtifact (Lean.toJson witnessSignature) with
+      | .error message => message == "opaque types are unsupported in specialization witness signatures"
+      | .ok _ => false
+    let circuitOk := match Helpers.compile result.program result.exportName with
+      | .ok circuit => match circuit.inputs, circuit.outputs with
+        | [input], [output] =>
+          input.name == "value.0" && input.ty == .native && input.visibility == .public &&
+            output.name == "result.0" && output.ty == .native &&
+            output.nativeReturnFieldCount == 1 && (Backend.Zkir.lowerCircuit circuit).isOk
+        | _, _ => false
+      | .error _ => false
+    signatureOk && witnessRejected && circuitOk
 
 private def genericBox (id : String) : Structure :=
   ⟨id, [⟨"T", .type⟩], [("value", .parameter "T")], {}⟩
