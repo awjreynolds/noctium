@@ -1003,6 +1003,30 @@ fn shape(v: &Json, required: &[&str], span: bool) -> Result<()> {
     }
     Ok(())
 }
+fn assertion_shape(v: &Json) -> Result<Option<String>> {
+    let object = v
+        .as_object()
+        .ok_or_else(|| anyhow!("invalid control descriptor"))?;
+    ensure!(
+        ["tag", "condition"].iter().all(|key| object.contains_key(*key))
+            && object
+                .keys()
+                .all(|key| ["tag", "condition", "message", "span"].contains(&key.as_str())),
+        "invalid control fields"
+    );
+    if let Some(span) = object.get("span") {
+        ensure!(span.is_object(), "invalid control span");
+    }
+    object
+        .get("message")
+        .map(|message| {
+            message
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow!("invalid control assertion message"))
+        })
+        .transpose()
+}
 fn name(value: &str) -> Result<String> {
     ensure!(
         !value.is_empty() && value.len() <= 1024 && !value.chars().any(char::is_control),
@@ -1093,7 +1117,7 @@ enum ExprKind {
 enum Stmt {
     Bind(String, Type, Arc<Expr>),
     Evaluate(Arc<Expr>),
-    Assert(Arc<Expr>),
+    Assert(Arc<Expr>, Option<String>),
     Return(Option<Arc<Expr>>),
     If(Arc<Expr>, Arc<Block>, Arc<Block>),
     Stage(String, String, String, Arc<Expr>),
@@ -2119,13 +2143,13 @@ impl Parser<'_> {
                     Stmt::Evaluate(self.expr(field(value, "value")?, &env, depth + 1)?)
                 }
                 "assert" => {
-                    shape(value, &["tag", "condition"], true)?;
+                    let message = assertion_shape(value)?;
                     let x = self.expr(field(value, "condition")?, &env, depth + 1)?;
                     ensure!(
                         x.ty == Type::Scalar(ScalarType::Bool),
                         "control assertion requires Boolean"
                     );
-                    Stmt::Assert(x)
+                    Stmt::Assert(x, message)
                 }
                 "return" => {
                     shape(value, &["tag", "value"], true)?;
@@ -4556,7 +4580,7 @@ impl Abstractor<'_> {
                     }
                     flow.falls = falls;
                 }
-                Stmt::Evaluate(_) | Stmt::Assert(_) | Stmt::Stage(_, _, _, _) => {}
+                Stmt::Evaluate(_) | Stmt::Assert(_, _) | Stmt::Stage(_, _, _, _) => {}
             }
         }
         Ok(flow)
@@ -5029,7 +5053,7 @@ enum Task {
     Body(Arc<Block>, usize, Env, bool, Type),
     Bind(String, Type, Arc<Block>, usize, Env, bool, Type, Arc<Expr>),
     Discard,
-    Assert,
+    Assert(Option<String>),
     Return(Type, bool),
     Boundary(Type, bool, Option<String>),
     Finish,
@@ -5159,9 +5183,17 @@ enum Phase {
     Ready,
     Waiting,
     Complete(Json),
-    Failed,
+    Failed(Option<String>),
     Cancelled,
 }
+#[derive(Debug)]
+struct AuthoredAssertionFailure(String);
+impl std::fmt::Display for AuthoredAssertionFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+impl std::error::Error for AuthoredAssertionFailure {}
 /// A source-only invocation. No acceptance/commit notices or native proof API is exposed.
 pub struct Session {
     plan: Plan,
@@ -5647,7 +5679,7 @@ impl Session {
             self.native_target_context_id.is_some()
                 && self.has_ledger_calls()
                 && self.guarded_native_binding()
-                && !matches!(self.phase, Phase::Failed | Phase::Cancelled),
+                && !matches!(self.phase, Phase::Failed(_) | Phase::Cancelled),
             "partial native inputs require an authenticated ledger witness invocation"
         );
         self.ensure_native_guard_values()?;
@@ -5784,6 +5816,9 @@ impl Session {
         self.native_guard_reservations.clear();
     }
     fn reject(&mut self) {
+        self.reject_with_message(None);
+    }
+    fn reject_with_message(&mut self, message: Option<String>) {
         self.clear_writes();
         self.clear_native_guard_values();
         self.tasks.clear();
@@ -5796,7 +5831,7 @@ impl Session {
         if let Some(mut host) = self.host.take() {
             let _ = host.cancel();
         }
-        self.phase = Phase::Failed;
+        self.phase = Phase::Failed(message);
     }
     pub fn private_trace(&self) -> Json {
         json!({"protocolVersion":1,"events":self.trace})
@@ -6382,9 +6417,13 @@ impl Session {
                     .collect();
                 return Ok(AccountedJson::new(v.clone(), reservations));
             }
-            Phase::Failed => {
+            Phase::Failed(message) => {
+                let mut error = json!({"code":"execution_rejected"});
+                if let Some(message) = message {
+                    error["message"] = json!(message);
+                }
                 return Ok(AccountedJson::new(
-                    json!({"abiVersion":1,"status":"failed","error":{"code":"execution_rejected"}}),
+                    json!({"abiVersion":1,"status":"failed","error":error}),
                     Vec::new(),
                 ));
             }
@@ -6402,8 +6441,11 @@ impl Session {
                 return self.advance_accounted();
             }
             self.remaining -= 1;
-            if self.step(task).is_err() {
-                self.reject();
+            if let Err(error) = self.step(task) {
+                let message = error
+                    .downcast_ref::<AuthoredAssertionFailure>()
+                    .map(|failure| failure.0.clone());
+                self.reject_with_message(message);
                 return self.advance_accounted();
             }
             if !matches!(self.phase, Phase::Ready) {
@@ -7196,7 +7238,7 @@ impl Session {
                             self.tasks.push(Task::Discard);
                             self.tasks.push(Task::Eval(x.clone(), env));
                         }
-                        Stmt::Assert(x) => {
+                        Stmt::Assert(x, message) => {
                             self.tasks.push(Task::Body(
                                 body.clone(),
                                 index + 1,
@@ -7204,7 +7246,7 @@ impl Session {
                                 control,
                                 result,
                             ));
-                            self.tasks.push(Task::Assert);
+                            self.tasks.push(Task::Assert(message.clone()));
                             self.tasks.push(Task::Eval(x.clone(), env));
                         }
                         Stmt::Return(x) => {
@@ -7255,8 +7297,13 @@ impl Session {
             Task::Discard => {
                 self.pop()?;
             }
-            Task::Assert => {
-                ensure!(self.pop()?.boolean()?, "control assertion failed");
+            Task::Assert(message) => {
+                if !self.pop()?.boolean()? {
+                    if let Some(message) = message {
+                        return Err(anyhow::Error::new(AuthoredAssertionFailure(message)));
+                    }
+                    bail!("control assertion failed");
+                }
             }
             Task::Return(ty, control) => {
                 let mut value = ty.coerce(self.pop()?)?;

@@ -11,9 +11,12 @@ end
 noctium_witness_circuit nestedUnitAssertion where
   public enabled : Bool
   public allowed : Bool
+  public secondAllowed : Bool
   if enabled then
-    let checked := assertUnit(allowed)
+    let checked := assertUnit(allowed, "first gate denied")
     let unitAlias := checked
+    let secondChecked := assertUnit(secondAllowed, "second gate denied")
+    let secondAlias := secondChecked
   end
   let result : Native := if enabled then 7 else 9
   output value : Native := disclose(result)

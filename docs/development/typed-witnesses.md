@@ -20,6 +20,13 @@ and `JubjubPoint`. The `.observations.json` records authored proof conditions
 separately from generated validity checks for source review. Composite curve
 schemas and structured source branches remain separate work.
 
+Use `assertUnit(condition, "message")` to attach a static message to a readable
+assertion. The message appears in the failed result from the local portable
+`Session` witness runner, which helps distinguish assertion sites. The one-argument
+form keeps its generic failure. These messages stay in the portable control plan;
+they do not enter ZKIR or change the circuit relation. Native checking still
+rejects a false assertion through the circuit constraints.
+
 On the ZKIR 3.2.1 profile, a provider can return a private `Secp256k1Point`
 to a readable circuit. `keccak256(point)` executes inside the Rust witness
 session. The native checker binds the same digest to the entrypoint return.

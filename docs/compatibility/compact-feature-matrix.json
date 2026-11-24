@@ -1267,7 +1267,7 @@
       "layer": "language",
       "surface": "Assertions",
       "noctiumStatus": "subset",
-      "notes": "Readable assertUnit(condition) is a Unit-valued expression and works in let initializers inside guarded branches. Native execution and Compact 0.36.1 agree that a false assertion in an inactive branch succeeds, while the same selected false assertion rejects; successful Unit aliases add no private inputs or returned fields. Compact reports the caller-authored failure message. Noctium reports its generic assertion error. Broader expression-placement coverage remains open.",
+      "notes": "Readable assertUnit(condition[, message]) is a Unit-valued expression and works in let initializers inside guarded branches. Native execution and Compact 0.36.1 agree that a false assertion in an inactive branch succeeds, while the same selected false assertion rejects; successful Unit aliases add no private inputs or returned fields. Optional static messages reach the local portable witness caller and distinguish selected assertion sites. The native relation keeps its unchanged assertion constraints and rejects a false relation independently. Broader expression-placement coverage remains open.",
       "source": [
         "reference",
         "release0360"
