@@ -2248,8 +2248,11 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         | _ => _root_.Bool.false
       unless numericTarget do
         throwErrorAt stx "enum casts require a Native or UInt target"
-      let result := mergeLowered (.scalar target)
-        (.cast target (.project value.term .enumTag)) [value]
+      let castTerm := match targetSource.nominalField with
+        | some nominal => Noctium.Helpers.Term.castNominalField nominal
+            (.project value.term .enumTag)
+        | none => .cast target (.project value.term .enumTag)
+      let result := mergeLowered (.scalar target) castTerm [value]
       pure {result with
         nominalUInt := targetSource.nominalUInt,
         nominalField := targetSource.nominalField,
@@ -2259,9 +2262,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         throwErrorAt stx "Jubjub values require an explicitly supported curve route"
       if source.isBytes || target.isBytes then
         throwErrorAt stx "byte strings do not support scalar casts"
+      if targetSource.nominalField.isSome && source != .native then
+        throwErrorAt stx "nominal Field casts require a Native source"
+      let castTerm := match targetSource.nominalField with
+        | some nominal => Noctium.Helpers.Term.castNominalField nominal value.term
+        | none => .cast target value.term
       pure {value with
         type := .scalar target,
-        term := .cast target value.term,
+        term := castTerm,
         nominalUInt := targetSource.nominalUInt,
         nominalField := targetSource.nominalField,
         generatedValidity := (s!"checked cast {renderExpr stx}") :: value.generatedValidity
@@ -2824,21 +2832,23 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         if let .point _ := kind then ["canonical foreign point decoding"] else []).eraseDups}
   | `(nlexpr| invoke($function:ident, [$args:nlexpr,*])) => do
     let values ← args.getElems.toList.mapM (lowerExpr programName callPrefix env)
-    if values.any (·.nominalField.isSome) then
-      throwErrorAt stx "invoke helper arguments do not retain nominal Field identity; explicitly cast to Native"
     let span ← liftM (spanValue stx)
     let (before, arguments, staged) ← stageIterationValues callPrefix env span values
     let program ← iterationProgram stx programName (values.flatMap (·.signatures))
     let helperEnv := iterationEnvironment env staged (← get).iterationParameters
-    let (program, term) ←
-      match Iteration.applyWithLimits {} program 0 helperEnv span (.named function.getId.toString) arguments with
-      | .ok result => pure result
+    let signature ← match Helpers.resolveWithLimits {} program 0 function.getId.toString
+        (values.map (·.type)) span with
+      | .ok signature => pure signature
       | .error diagnostic => throwErrorAt function diagnostic.message
+    let term := Helpers.Term.call signature.name arguments
     let type ← match Helpers.inferWithLimits {} program 0 helperEnv span term with
       | .ok value => pure value.ty
       | .error diagnostic => throwErrorAt function diagnostic.message
+    for (value, parameter) in values.zip signature.parameters do
+      unless value.nominalField == signature.nominalFieldParameters.lookup parameter.name do
+        throwErrorAt stx "nominal Field helper arguments require the declared alias or an explicit cast"
     modify fun state => {state with iterationProgram := some program, requiresOutputViews := _root_.Bool.true}
-    pure {mergeLowered type term values with before}
+    pure {mergeLowered type term values with before, nominalField := signature.nominalFieldResult}
   | `(nlexpr| witness $function:ident($args:nlexpr,*)) => do
     let signature ← liftM (witnessSignature function)
     let signatureName := signature.name
@@ -3262,6 +3272,8 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
   | .castNominalUInt target value => do
     let target ← nominalUIntTypeTerm target
     `(Noctium.Helpers.Term.castNominalUInt $target $(← termTerm value))
+  | .castNominalField target value => do
+    `(Noctium.Helpers.Term.castNominalField $(stringTerm target) $(← termTerm value))
   | .disclose span value => do
     let span ← quoteSpan span
     `(Noctium.Helpers.Term.disclose $span $(← termTerm value))
@@ -4108,9 +4120,11 @@ private partial def lowerReadableStatement (programName path : String)
     let mut parameters : List Parameter := []
     let mut inputs : List Input := []
     let mut nominalUIntInputs : List (String × NominalUIntType) := []
+    let mut nominalFieldInputs : List (String × String) := []
     let mut aggregateInputs : List AggregateInput := []
     let mut outputName := ""
     let mut outputType : ResultType := .unit
+    let mut outputNominalField : Option String := none
     let mut authoredOutputs : List AuthoredOutput := []
     let sourceStatements := statements.toList
     for (statement, ordinal) in sourceStatements.zipIdx do
@@ -4134,6 +4148,8 @@ private partial def lowerReadableStatement (programName path : String)
             inputs := inputs ++ [{name := valueName, ty := sourceType.type, visibility, span}]
             if let some nominalUInt := sourceType.nominalUInt then
               nominalUIntInputs := nominalUIntInputs ++ [(valueName, nominalUInt)]
+            if let some nominalField := sourceType.nominalField then
+              nominalFieldInputs := nominalFieldInputs ++ [(valueName, nominalField)]
             pure (.scalar sourceType.type, sourceScalarTypeName sourceType,
               sourceType.nominalUInt, sourceType.nominalField)
           | `(noctium_witness_input_type| Payload $codecName:ident) => do
@@ -4242,6 +4258,7 @@ private partial def lowerReadableStatement (programName path : String)
     | [item] =>
       if let .scalar _ := item.value.type then outputName := item.name
       outputType := item.value.type
+      outputNominalField := item.value.nominalField
       body := body ++ item.value.before ++ [.return (some (.at item.span item.value.term))]
     | _ =>
       outputType := .composite compositeType
@@ -4278,7 +4295,9 @@ private partial def lowerReadableStatement (programName path : String)
         name := programNameText,
         parameters := parameters,
         compositeParameters := aggregateInputs.map fun input => (input.name, input.type),
+        nominalFieldParameters := nominalFieldInputs,
         result := outputType,
+        nominalFieldResult := outputNominalField,
         body := body,
         span := declarationSpan }
     let exportSpan ← spanValue stx
@@ -4449,6 +4468,9 @@ private partial def lowerReadableStatement (programName path : String)
       let nominalUIntParameterTerms ← declaration.nominalUIntParameters.mapM fun (name, target) => do
         `(($(stringTerm name), $(← nominalUIntTypeTerm target)))
       let nominalUIntParameterTerms := nominalUIntParameterTerms.toArray
+      let nominalFieldParameterTerms ← declaration.nominalFieldParameters.mapM fun (name, target) =>
+        `(($(stringTerm name), $(stringTerm target)))
+      let nominalFieldParameterTerms := nominalFieldParameterTerms.toArray
       let statementTerms ← declaration.body.mapM statementTerm
       let statementTerms := statementTerms.toArray
       let id ← `(Noctium.Helpers.DeclarationId.mk $(natTerm declaration.id.scope)
@@ -4457,10 +4479,13 @@ private partial def lowerReadableStatement (programName path : String)
       let nominalUIntResult ← match declaration.nominalUIntResult with
         | none => `(none)
         | some target => `(some $(← nominalUIntTypeTerm target))
+      let nominalFieldResult ← match declaration.nominalFieldResult with
+        | none => `(none)
+        | some target => `(some $(stringTerm target))
       let declaredPure ← if declaration.declaredPure then `(Bool.true) else `(Bool.false)
       `(Noctium.Helpers.Declaration.mk $id $(stringTerm declaration.name)
         [$parameterTerms,*] [$compositeParameterTerms,*] [$nominalUIntParameterTerms,*]
-        $result $nominalUIntResult
+        [$nominalFieldParameterTerms,*] $result $nominalUIntResult $nominalFieldResult
         [$statementTerms,*] $declaredPure $(← quoteSpan declaration.span))
     let declarationTerms := declarationTerms.toArray
     let structureTerms ← program.composites.structures.mapM fun structDecl => do

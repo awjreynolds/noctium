@@ -315,6 +315,7 @@ inductive Term where
   | eq (left right : Term)
   | cast (target : Ty) (value : Term)
   | castNominalUInt (target : NominalUIntType) (value : Term)
+  | castNominalField (target : String) (value : Term)
   | disclose (span : SourceSpan) (value : Term)
   | select (condition yes no : Term)
   | ite (condition yes no : Term)
@@ -371,8 +372,10 @@ structure Declaration where
   /-- Nominal aggregate types keyed by parameter name; scalar Parameter stays source-compatible. -/
   compositeParameters : List (String × Types.CompositeType) := []
   nominalUIntParameters : List (String × NominalUIntType) := []
+  nominalFieldParameters : List (String × String) := []
   result : ResultType := .unit
   nominalUIntResult : Option NominalUIntType := none
+  nominalFieldResult : Option String := none
   body : List Statement := []
   declaredPure : Bool := false
   span : SourceSpan := {}
@@ -550,7 +553,7 @@ private partial def staticAssertionTerm : Term → Bool
   | .binary _ left right | .boolAnd left right | .boolOr left right
   | .boolXor left right | .eq left right =>
     staticAssertionTerm left && staticAssertionTerm right
-  | .cast _ value | .castNominalUInt _ value | .at _ value => staticAssertionTerm value
+  | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .at _ value => staticAssertionTerm value
   | _ => false
 
 private def flatStaticAssertionSequence : List Statement → Bool
@@ -596,6 +599,7 @@ private def spanMetadata (span : SourceSpan) : Except Diagnostic Unit := do
 private def termMetadata : Term → Except Diagnostic Unit
   | .ref name | .call name _ | .witness name _ | .effect _ name _ => textMetadata name
   | .castNominalUInt target _ => textMetadata target.name
+  | .castNominalField target _ => textMetadata target
   | .witnessCall site name _ => do
     unless validWitnessIdentifier site && validWitnessIdentifier name do
       fail {} "invalid typed witness site or provider identity"
@@ -658,7 +662,7 @@ where
         | .binary _ a b | .boolAnd a b | .boolOr a b | .boolXor a b
         | .eq a b | .poseidon2 _ a b
         | .andThen a b | .orElse a b => pure [a, b]
-        | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
+        | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value | .at _ value
         | .project value _ | .bytesAt value _ => pure [value]
         | .composite _ leaves => pure leaves
         | .index value index => pure [value, index]
@@ -711,7 +715,7 @@ where
             | .binary _ a b | .boolAnd a b | .boolOr a b | .boolXor a b
             | .eq a b | .poseidon2 _ a b
             | .andThen a b | .orElse a b => pure [a, b]
-            | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
+            | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value | .at _ value
             | .project value _ | .bytesAt value _ => pure [value]
             | .composite _ leaves => pure leaves
             | .index value index => pure [value, index]
@@ -763,7 +767,7 @@ where
           | .binary _ a b | .boolAnd a b | .boolOr a b | .boolXor a b
           | .eq a b | .poseidon2 _ a b | .andThen a b | .orElse a b
           | .index a b => ([a, b], none)
-          | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
+          | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value | .at _ value
           | .project value _ | .bytesAt value _ => ([value], none)
           | .select c a b | .ite c a b => ([c, a, b], none)
           | _ => ([], none)
@@ -997,7 +1001,7 @@ private partial def bodyHasEmptyForRange : List Statement → Bool
 private def traversalTermChildren : Term → List Term
   | .binary _ left right | .boolAnd left right | .boolOr left right | .boolXor left right
   | .eq left right | .poseidon2 _ left right | .andThen left right | .orElse left right => [left, right]
-  | .cast _ value | .castNominalUInt _ value | .disclose _ value | .effect _ _ value | .at _ value
+  | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .disclose _ value | .effect _ _ value | .at _ value
   | .project value _ | .bytesAt value _ => [value]
   | .select condition yes no | .ite condition yes no => [condition, yes, no]
   | .witnessCall _ _ arguments | .call _ arguments | .composite _ arguments
@@ -1087,6 +1091,8 @@ private partial def freshenTermWitnessSites (term : Term) : ExpansionM Term := d
   | .cast target value => return .cast target (← freshenTermWitnessSites value)
   | .castNominalUInt target value =>
     return .castNominalUInt target (← freshenTermWitnessSites value)
+  | .castNominalField target value =>
+    return .castNominalField target (← freshenTermWitnessSites value)
   | .disclose span value => return .disclose span (← freshenTermWitnessSites value)
   | .select condition yes no =>
     return .select (← freshenTermWitnessSites condition) (← freshenTermWitnessSites yes)
@@ -1470,6 +1476,7 @@ private def lookup (program : Program) (id : DeclarationId) (span : SourceSpan) 
 structure TermInfo (Ty := ResultType) where
   ty : Ty
   nominalUInt : Option NominalUIntType := none
+  nominalField : Option String := none
   calls : List DeclarationId := []
   effects : Effects := []
   guarded : Bool := false
@@ -1478,6 +1485,11 @@ structure TermInfo (Ty := ResultType) where
 private abbrev PartialTermInfo := TermInfo (Option ResultType)
 
 private abbrev NominalUIntEnvironment := List (String × Option NominalUIntType)
+private abbrev NominalFieldEnvironment := List (String × Option String)
+
+private structure NominalEnvironment where
+  uints : NominalUIntEnvironment := []
+  fields : NominalFieldEnvironment := []
 
 private def checkNominalUInt (span : SourceSpan)
     (expected actual : Option NominalUIntType) : Except Diagnostic Unit :=
@@ -1497,6 +1509,15 @@ private def signatureNominalUInt (span : SourceSpan) (name : Option String)
   let .scalar (.uint maximum) := type
     | fail span "nominal UInt identity requires a bounded UInt type"
   some <$> namedUInt span name maximum
+
+private def checkNominalField (span : SourceSpan) (expected actual : Option String) : Except Diagnostic Unit :=
+  unless expected == actual do
+    fail span "nominal Field values require an explicit cast and must match the target type"
+
+private def namedNominalField (span : SourceSpan) (name : String) : Except Diagnostic String := do
+  textMetadata name
+  unless validWitnessIdentifier name do fail span "invalid nominal Field identity"
+  pure name
 
 private def combine {Ty : Type} (ty : Ty) (children : List (TermInfo Ty)) (effects : Effects := []) : TermInfo Ty :=
   {ty, calls := children.flatMap (·.calls), effects := (children.flatMap (·.effects) ++ effects).eraseDups, guarded := children.any (·.guarded)}
@@ -1518,7 +1539,7 @@ private def partialCommonType (left right : Option ResultType) : Option (Option 
 
 private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
     (env : PartialEnvironment) (span : SourceSpan) (value : Term)
-    (nominals : Option NominalUIntEnvironment := none)
+    (nominals : Option NominalEnvironment := none)
     (arithmeticCast : Option NominalUIntType := none) : Except Diagnostic PartialTermInfo :=
   match fuel with
   | 0 => resource span "type-analysis depth"
@@ -1535,11 +1556,15 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       pure {ty := some (.scalar (.uint maximum))}
     | .ref name =>
       let some ty := env.lookup name | fail span s!"unknown helper value '{name}'"
-      pure {ty, nominalUInt := nominals.bind fun bindings => (bindings.lookup name).join}
+      pure {
+        ty,
+        nominalUInt := nominals.bind fun bindings => (bindings.uints.lookup name).join,
+        nominalField := nominals.bind fun bindings => (bindings.fields.lookup name).join}
     | .binary op left right =>
       let left ← inferPartialTerm fuel program scope env span left nominals
       let right ← inferPartialTerm fuel program scope env span right nominals
       checkNominalUInt span left.nominalUInt right.nominalUInt
+      checkNominalField span left.nominalField right.nominalField
       let lt ← scalar span (← knownType span left.ty)
       let rt ← scalar span (← knownType span right.ty)
       let result ← liftError span (ScalarPolicy.infer op lt.scalarKind rt.scalarKind)
@@ -1557,7 +1582,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
           fail span "widening nominal UInt arithmetic requires a checked cast to its declared type"
       let info := combine (some (.scalar ty)) [left, right]
         (if op == .sub && lt != .native && rt != .native then [.fallibleCast] else [])
-      pure {info with nominalUInt := left.nominalUInt}
+      pure {info with nominalUInt := left.nominalUInt, nominalField := left.nominalField}
     | .boolAnd left right | .boolOr left right | .boolXor left right =>
       let left ← inferPartialTerm fuel program scope env span left nominals
       let right ← inferPartialTerm fuel program scope env span right nominals
@@ -1568,6 +1593,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let left ← inferPartialTerm fuel program scope env span left nominals
       let right ← inferPartialTerm fuel program scope env span right nominals
       checkNominalUInt span left.nominalUInt right.nominalUInt
+      checkNominalField span left.nominalField right.nominalField
       match left.ty, right.ty with
       | some (.composite left), some (.composite right) =>
         discard (checkedAggregateEquality program span left right)
@@ -1589,6 +1615,13 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       if source.isBytes then fail span "byte strings do not support scalar casts"
       let info := combine (some (.scalar (.uint target.maximum))) [value] [.fallibleCast]
       pure {info with nominalUInt := nominals.map fun _ => target}
+    | .castNominalField target value => do
+      discard (namedNominalField span target)
+      let value ← inferPartialTerm fuel program scope env span value nominals
+      let source ← scalar span (← knownType span value.ty)
+      unless source == .native do fail span "nominal Field cast requires Native"
+      let info := combine (some (.scalar .native)) [value] [.fallibleCast]
+      pure {info with nominalField := nominals.map fun _ => target}
     | .disclose _ value => inferPartialTerm fuel program scope env span value nominals
     | .select condition yes no =>
       let condition ← inferPartialTerm fuel program scope env span condition nominals
@@ -1596,17 +1629,20 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let yes ← inferPartialTerm fuel program scope env span yes nominals
       let no ← inferPartialTerm fuel program scope env span no nominals
       checkNominalUInt span yes.nominalUInt no.nominalUInt
+      checkNominalField span yes.nominalField no.nominalField
       let ty ← common span (← scalar span (← knownType span yes.ty)) (← scalar span (← knownType span no.ty))
-      pure {combine (some (.scalar ty)) [condition, yes, no] with nominalUInt := yes.nominalUInt}
+      pure {combine (some (.scalar ty)) [condition, yes, no] with
+        nominalUInt := yes.nominalUInt, nominalField := yes.nominalField}
     | .ite condition yes no =>
       let condition ← inferPartialTerm fuel program scope env span condition nominals
       unless condition.ty == some (.scalar .bool) do fail span "helper condition requires Bool"
       let yes ← inferPartialTerm fuel program scope env span yes nominals
       let no ← inferPartialTerm fuel program scope env span no nominals
       checkNominalUInt span yes.nominalUInt no.nominalUInt
+      checkNominalField span yes.nominalField no.nominalField
       let some ty := partialCommonType yes.ty no.ty
         | fail span "conditional branches require a common type"
-      pure {combine ty [condition, yes, no] with guarded := true, nominalUInt := yes.nominalUInt}
+      pure {combine ty [condition, yes, no] with guarded := true, nominalUInt := yes.nominalUInt, nominalField := yes.nominalField}
     | .andThen left right | .orElse left right =>
       let left ← inferPartialTerm fuel program scope env span left nominals
       let right ← inferPartialTerm fuel program scope env span right nominals
@@ -1622,22 +1658,31 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       unless arguments.length == signature.parameters.length do fail span "typed witness argument arity mismatch"
       let useNominals := nominals.isSome && (!program.nominalUIntCells.isEmpty ||
         !program.nominalUIntMaps.isEmpty ||
+        program.witnesses.any (fun signature =>
+          signature.resultNominalField.isSome || signature.parameters.any (·.sourceNominalField.isSome)) ||
         program.declarations.any (fun decl =>
-          !decl.nominalUIntParameters.isEmpty || decl.nominalUIntResult.isSome))
+          !decl.nominalUIntParameters.isEmpty || decl.nominalUIntResult.isSome ||
+          !decl.nominalFieldParameters.isEmpty || decl.nominalFieldResult.isSome))
       for (argument, parameter) in arguments.zip signature.parameters do
         unless partialSubtype argument.ty parameter.type do fail span "typed witness argument type mismatch"
         let expected ← if useNominals then signatureNominalUInt span parameter.sourceNominal parameter.type
           else pure none
         checkNominalUInt span expected argument.nominalUInt
+        let expectedField ← if useNominals then pure (parameter.sourceNominalField)
+          else pure none
+        checkNominalField span expectedField argument.nominalField
       let nominalUInt ← if useNominals then signatureNominalUInt span signature.resultNominal signature.result
         else pure none
-      pure {combine (some signature.result) arguments [.witness] with nominalUInt}
+      let nominalField := if useNominals then signature.resultNominalField else none
+      pure {combine (some signature.result) arguments [.witness] with nominalUInt, nominalField}
     | .poseidon2 domain left right =>
       unless domain < Field.modulus do fail span "noncanonical helper hash domain"
       let left ← inferPartialTerm fuel program scope env span left nominals
       let right ← inferPartialTerm fuel program scope env span right nominals
       checkNominalUInt span none left.nominalUInt
       checkNominalUInt span none right.nominalUInt
+      checkNominalField span none left.nominalField
+      checkNominalField span none right.nominalField
       unless partialSubtype left.ty (.scalar .native) && partialSubtype right.ty (.scalar .native) do
         fail span "helper hash arguments require Native"
       pure (combine (some (.scalar .native)) [left, right])
@@ -1651,6 +1696,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let values ← arguments.mapM (fun value => inferPartialTerm fuel program scope env span value nominals)
       for (value, expectedType) in values.zip expected do
         checkNominalUInt span none value.nominalUInt
+        checkNominalField span none value.nominalField
         unless partialSubtype value.ty (.scalar expectedType) do
           fail span s!"{operation.operationName} argument type mismatch"
       pure (combine (some (.scalar result)) values
@@ -1672,6 +1718,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let values ← arguments.mapM (fun value => inferPartialTerm fuel program scope env span value nominals)
       for (value, expectedType) in values.zip expected do
         checkNominalUInt span none value.nominalUInt
+        checkNominalField span none value.nominalField
         unless partialSubtype value.ty (.scalar expectedType) ||
             value.ty.any (operation.acceptsAggregateBytes expectedType) do
           fail span s!"{operation.operationName} argument type mismatch"
@@ -1693,9 +1740,11 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       if nominals.isSome then
         for (argument, parameter) in arguments.zip declaration.parameters do
           checkNominalUInt span (declaration.nominalUIntParameters.lookup parameter.name) argument.nominalUInt
+          checkNominalField span (declaration.nominalFieldParameters.lookup parameter.name) argument.nominalField
       let info := combine (some declaration.result) arguments
       let nominalUInt := nominals.bind fun _ => declaration.nominalUIntResult
-      pure {info with calls := declaration.id :: info.calls, nominalUInt}
+      let nominalField := nominals.bind fun _ => declaration.nominalFieldResult
+      pure {info with calls := declaration.id :: info.calls, nominalUInt, nominalField}
     | .composite type leaves => do
       let compiled ← checkedComposite program span type
       let values ← leaves.mapM (fun value => inferPartialTerm fuel program scope env span value nominals)
@@ -1703,6 +1752,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       unless values.length == expected.length do fail span "aggregate source leaf count mismatch"
       for (value, expectedType) in values.zip expected do
         checkNominalUInt span none value.nominalUInt
+        checkNominalField span none value.nominalField
         unless partialSubtype value.ty (.scalar expectedType) do
           fail span "aggregate source leaf type mismatch"
       pure (combine (some (resultTypeOfComposite type)) values)
@@ -1715,11 +1765,13 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let parent ← inferPartialTerm fuel program scope env span value nominals
       let index ← inferPartialTerm fuel program scope env span index nominals
       checkNominalUInt span none index.nominalUInt
+      checkNominalField span none index.nominalField
       pure (combine (some (← indexResultType span (← knownType span parent.ty) (← knownType span index.ty))) [parent, index])
     | .effect kind _ result =>
       unless kind.impure do fail span "external helper effects require an external effect category"
       let result ← inferPartialTerm fuel program scope env span result nominals
-      pure {combine result.ty [result] [kind] with nominalUInt := result.nominalUInt}
+      pure {combine result.ty [result] [kind] with
+        nominalUInt := result.nominalUInt, nominalField := result.nominalField}
     | .at span value => inferPartialTerm fuel program scope env span value nominals
 
 private def inferTerm (fuel : Nat) (program : Program) (scope : Nat) (env : Environment)
@@ -1777,7 +1829,7 @@ private def checkedMap (program : Program) (span : SourceSpan) (name : String)
 
 private def checkBody (limits : Limits) (program : Program) (declaration : Declaration)
     (fuel : Nat) (env : PartialEnvironment) (body : List Statement)
-    (locals : List String) (nominals : NominalUIntEnvironment) : Except Diagnostic BodyInfo :=
+    (locals : List String) (nominals : NominalEnvironment) : Except Diagnostic BodyInfo :=
   match fuel with
   | 0 => resource declaration.span "statement-analysis depth"
   | fuel + 1 => do
@@ -1796,8 +1848,13 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           if let some nominal := info.nominalUInt then
             unless ty == .scalar (.uint nominal.maximum) do
               fail span "nominal UInt binding requires its declared bound"
+          if info.nominalField.isSome && ty != .scalar .native then
+            fail span "nominal Field helper binding requires Native"
           env := (name, some ty) :: env
-          nominals := (name, info.nominalUInt) :: nominals
+          nominals := {
+            nominals with
+            uints := (name, info.nominalUInt) :: nominals.uints,
+            fields := (name, info.nominalField) :: nominals.fields}
           locals := name :: locals
           pure info
         | .evaluate value => inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
@@ -1810,6 +1867,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
             | some value => inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
             | none => pure {ty := some .unit}
           checkNominalUInt span declaration.nominalUIntResult info.nominalUInt
+          checkNominalField span declaration.nominalFieldResult info.nominalField
           unless partialSubtype info.ty declaration.result do fail span "helper return type mismatch"
           result := {result with returned := true}
           pure info
@@ -1823,14 +1881,17 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
         | .forRange index start stop loopBody => do
           discard (validateSourceLoopRange span index start stop loopBody)
           rejectLoopReturns span limits.maxSourceNodes loopBody
+          let loopNominals := {nominals with uints := (index, none) :: nominals.uints}
+          let loopNominals := {loopNominals with fields := (index, none) :: nominals.fields}
           let bodyInfo ← checkBody limits program declaration fuel
-            ((index, some (.scalar .native)) :: env) loopBody [index] ((index, none) :: nominals)
+            ((index, some (.scalar .native)) :: env) loopBody [index] loopNominals
           pure {ty := some .unit, calls := bodyInfo.calls, effects := bodyInfo.effects, guarded := bodyInfo.guarded}
         | .stage _ _ type value => do
           if type == .unit then fail span "private stage requires a cell value"
           validateResultType program span type
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
           checkNominalUInt span none info.nominalUInt
+          checkNominalField span none info.nominalField
           unless partialSubtype info.ty type do fail span "private stage type mismatch"
           pure {info with effects := (.privateState :: info.effects).eraseDups}
         | .readCell state destination ty => do
@@ -1841,7 +1902,10 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           if let some nominal := nominalUInt then
             unless ty == .uint nominal.maximum do fail span "nominal UInt Cell bound mismatch"
           env := (destination, some (.scalar ty)) :: env
-          nominals := (destination, nominalUInt) :: nominals
+          nominals := {
+            nominals with
+            uints := (destination, nominalUInt) :: nominals.uints,
+            fields := (destination, none) :: nominals.fields}
           locals := destination :: locals
           pure {ty := some .unit, effects := [.ledgerRead]}
         | .writeCell state ty value => do
@@ -1851,6 +1915,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           if let some nominal := expected then
             unless ty == .uint nominal.maximum do fail span "nominal UInt Cell bound mismatch"
           checkNominalUInt span expected info.nominalUInt
+          checkNominalField span none info.nominalField
           unless partialSubtype info.ty (.scalar ty) do fail span "ledger cell write type mismatch"
           pure {info with effects := (.ledgerWrite :: info.effects).eraseDups}
         | .readMap state destination keyTy valueTy key
@@ -1859,6 +1924,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           let nominalMap := program.nominalUIntMaps.lookup state
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
           checkNominalUInt span (nominalMap.bind (·.key)) info.nominalUInt
+          checkNominalField span none info.nominalField
           unless partialSubtype info.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           if locals.contains destination || (inputNames program declaration.id).contains destination then
             fail span s!"ledger read destination '{destination}' shadows an existing binding"
@@ -1869,7 +1935,10 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
             | .readMember .. => none
             | _ => nominalMap.bind (·.value)
           env := (destination, some (.scalar resultTy)) :: env
-          nominals := (destination, resultNominal) :: nominals
+          nominals := {
+            nominals with
+            uints := (destination, resultNominal) :: nominals.uints,
+            fields := (destination, none) :: nominals.fields}
           locals := destination :: locals
           pure {info with ty := some .unit, effects := (.ledgerRead :: info.effects).eraseDups}
         | .writeMap state keyTy valueTy key value => do
@@ -1877,9 +1946,11 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           let nominalMap := program.nominalUIntMaps.lookup state
           let key ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
           checkNominalUInt span (nominalMap.bind (·.key)) key.nominalUInt
+          checkNominalField span none key.nominalField
           unless partialSubtype key.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           let value ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
           checkNominalUInt span (nominalMap.bind (·.value)) value.nominalUInt
+          checkNominalField span none value.nominalField
           unless partialSubtype value.ty (.scalar valueTy) do fail span "ledger map value type mismatch"
           pure (combine (some .unit) [key, value] [.ledgerWrite])
         | .emitEvent kind payload => do
@@ -1914,12 +1985,25 @@ private def checkDeclarationWithEnvironmentUnchecked (limits : Limits) (program 
     discard (namedUInt span nominal.name nominal.maximum)
     unless env.lookup parameter == some (some (.scalar (.uint nominal.maximum))) do
       fail span "nominal UInt helper parameter requires its declared bound"
+  unless uniqueNames (declaration.nominalFieldParameters.map (·.1)) do
+    fail span "duplicate nominal Field helper parameter"
+  for (parameter, nominal) in declaration.nominalFieldParameters do
+    discard (namedNominalField span nominal)
+    unless env.lookup parameter == some (some (.scalar .native)) do
+      fail span "nominal Field helper parameter requires Native"
   if let some nominal := declaration.nominalUIntResult then
     discard (namedUInt span nominal.name nominal.maximum)
     unless declaration.result == .scalar (.uint nominal.maximum) do
       fail span "nominal UInt helper return requires its declared bound"
+  if let some nominal := declaration.nominalFieldResult then
+    discard (namedNominalField span nominal)
+    unless declaration.result == .scalar .native do
+      fail span "nominal Field helper return requires Native"
+  let nominals : NominalEnvironment := {
+    uints := declaration.nominalUIntParameters.map fun (name, nominal) => (name, some nominal),
+    fields := declaration.nominalFieldParameters.map fun (name, nominal) => (name, some nominal)}
   let info ← checkBody limits program declaration limits.maxSourceDepth env declaration.body
-    (env.map (·.1)) (declaration.nominalUIntParameters.map fun (name, nominal) => (name, some nominal))
+    (env.map (·.1)) nominals
   unless info.returned || declaration.result == .unit do fail span "helper fall-through returns unit, incompatible with declared result"
   pure {id := declaration.id, calls := info.calls, direct := info.effects, guarded := info.guarded}
 
@@ -2797,6 +2881,10 @@ mutual
     | .castNominalUInt target value =>
       let value ← lowerTerm program scope env span value
       pure {scalarValue (.cast (.uint target.maximum) value.scalar.value) with constraints := value.constraints}
+    | .castNominalField _ value => do
+      let value ← lowerTerm program scope env span value
+      unless value.scalar.ty == .native do liftD (fail span "nominal Field cast requires Native")
+      pure {scalarValue (.cast .native value.scalar.value) with constraints := value.constraints}
     | .disclose release value =>
       let value ← lowerTerm program scope env span value
       match value.ty with
@@ -3812,6 +3900,9 @@ mutual
     | .castNominalUInt target value =>
       let value ← traceTerm program ctx scope env span value
       traceCast span value (.scalar (.uint target.maximum))
+    | .castNominalField _ value => do
+      let value ← traceTerm program ctx scope env span value
+      traceCast span value (.scalar .native)
     | .eq left right =>
       let left ← traceTerm program ctx scope env span left
       let right ← traceTerm program ctx scope env span right

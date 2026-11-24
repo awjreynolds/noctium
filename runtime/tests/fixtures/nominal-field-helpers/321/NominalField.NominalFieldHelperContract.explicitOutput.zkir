@@ -1,0 +1,10 @@
+{"version": {"minor": 2, "major": 3},
+ "outputs": ["Scalar<BLS12-381>"],
+ "instructions":
+ [{"type": "Scalar<BLS12-381>",
+   "output": "%input_raw",
+   "op": "private_input",
+   "guard": null},
+  {"vals": ["%input_raw"], "op": "output"}],
+ "inputs": [],
+ "do_communications_commitment": true}

@@ -1,0 +1,10 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+pure circuit identityAmount(value: Amount): Amount { return value; }
+export pure circuit forwardAmount(value: Amount): Amount { return identityAmount(value); }
+export pure circuit castInput(raw: Field): Amount { return identityAmount(raw as Amount); }
+export pure circuit castOutput(raw: Field): Amount { return raw as Amount; }

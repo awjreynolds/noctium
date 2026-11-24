@@ -197,7 +197,7 @@ private partial def analyzeTerm (fuel : Nat) (program : Program) (prepared : Pre
       (values.foldl (fun result value => merge result value.indexOrigins) [])
       (values.foldl (fun result value => merge result value.tagOrigins) [])
       (values.foldl (fun result value => merge result value.controlOrigins) []))
-  | .cast _ value | .castNominalUInt _ value | .bytesAt value _ => do
+  | .cast _ value | .castNominalUInt _ value | .castNominalField _ value | .bytesAt value _ => do
     let value ← analyzeTerm fuel program prepared scope env span value
     pure (makeValue info.ty [payloadOrigins value] value.indexOrigins value.tagOrigins value.controlOrigins)
   | .disclose _ value => do

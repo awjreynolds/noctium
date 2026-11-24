@@ -1,4 +1,6 @@
 import Noctium.Frontend
+import Noctium.Backend.Impact
+import Noctium.Compiler
 
 open scoped Noctium
 open Noctium
@@ -80,12 +82,12 @@ noctium_witness_circuit rejectsImplicitFieldErase where
   output result : Native := disclose(amount)
 end
 
-/- error: invoke helper arguments do not retain nominal Field identity; explicitly cast to Native -/
+/- error: nominal Field helper arguments require the declared alias or an explicit cast -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsImplicitFieldInvoke with echoNativeProgram where
-  private amount : Amount
-  let result := invoke(echoNative, [amount])
-  output value : Native := disclose(result)
+  private count : Count
+  let result := invoke(echoNative, [count])
+  output value : Count := disclose(result)
 end
 
 /- error: nominal Field values require an explicit cast to Native before persistentHashNative -/
@@ -99,6 +101,76 @@ noctium_witness_circuit acceptsExplicitFieldInvokeErase with echoNativeProgram w
   private amount : Amount
   let result := invoke(echoNative, [cast(Native, amount)])
   output value : Native := disclose(result)
+end
+
+private def amountIdentityProgram : Helpers.Program := {
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "identityAmount"
+    parameters := [{name := "value", ty := .native}]
+    nominalFieldParameters := [("value", "NominalField.Amount")]
+    result := .scalar .native
+    nominalFieldResult := some "NominalField.Amount"
+    body := [.return (some (.ref "value"))]
+  }]
+}
+
+noctium_witness_circuit fieldHelperIdentity with amountIdentityProgram where
+  private amount : Amount
+  output value : Amount := disclose(invoke(identityAmount, [amount]))
+end
+
+private def explicitFieldReturnProgram : Helpers.Program := {
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "rebrandAmount"
+    parameters := [{name := "raw", ty := .native}]
+    result := .scalar .native
+    nominalFieldResult := some "NominalField.Amount"
+    body := [.return (some (.castNominalField "NominalField.Amount" (.ref "raw")))]
+  }]
+}
+
+noctium_witness_circuit explicitFieldHelperReturn with explicitFieldReturnProgram where
+  private raw : Native
+  output value : Amount := disclose(invoke(rebrandAmount, [raw]))
+end
+
+noctium_witness_circuit acceptsExplicitFieldHelperCast with amountIdentityProgram where
+  private raw : Native
+  output value : Amount := disclose(invoke(identityAmount, [cast(Amount, raw)]))
+end
+
+noctium_contract NominalFieldHelperContract where
+  entry identity uses fieldHelperIdentity where
+    return result : Native := cast(Native, value)
+  end
+  entry explicitInput uses acceptsExplicitFieldHelperCast where
+    return returned : Native := cast(Native, value)
+  end
+  entry explicitOutput uses explicitFieldHelperReturn where
+    return returned : Native := cast(Native, value)
+  end
+end
+
+private def mismatchedFieldHelperProgram : Helpers.Program := {
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "mismatchedFieldHelper"
+    parameters := [{name := "count", ty := .native}]
+    nominalFieldParameters := [("count", "NominalField.Count")]
+    result := .scalar .native
+    nominalFieldResult := some "NominalField.Amount"
+    body := [.return (some (.ref "count"))]
+  }]
+}
+
+/- error: nominal Field values require an explicit cast and must match the target type -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsMismatchedFieldHelperBody with mismatchedFieldHelperProgram where
+  private count : Count
+  let result := invoke(mismatchedFieldHelper, [count])
+  output value : Amount := disclose(result)
 end
 
 /- error: nominal Field witness callback signatures are unsupported in this scalar slice -/

@@ -128,6 +128,8 @@ mutual
     | .cast ty value => abstractCast (.scalar ty) <$> expression checked scope env span value
     | .castNominalUInt target value =>
       abstractCast (.scalar (.uint target.maximum)) <$> expression checked scope env span value
+    | .castNominalField _ value =>
+      abstractCast (.scalar .native) <$> expression checked scope env span value
     | .disclose _ value =>
       let value ← expression checked scope env span value
       pure {value with origins := [], control := []}
@@ -472,6 +474,9 @@ mutual
     | .cast ty value => pure (node span "cast" [("type", toJson (typeName (.scalar ty))), ("value", ← emitExpression checked scope env span value)])
     | .castNominalUInt target value => pure (node span "cast" [
         ("type", toJson (typeName (.scalar (.uint target.maximum)))),
+        ("value", ← emitExpression checked scope env span value)])
+    | .castNominalField _ value => pure (node span "cast" [
+        ("type", toJson (typeName (.scalar .native))),
         ("value", ← emitExpression checked scope env span value)])
     | .disclose _ value => pure (node span "disclose" [("value", ← emitExpression checked scope env span value)])
     | .poseidon2 domain a b => pure (node span "poseidon2" [("domain", toJson (toString domain)),
