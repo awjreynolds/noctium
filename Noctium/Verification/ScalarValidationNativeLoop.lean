@@ -120,6 +120,47 @@ theorem accepted_input_requirement_selected {expected : Expected} {state next : 
     | none => simp [selected] at accepted
     | some requirement => exact ⟨requirement, rfl⟩
 
+/-- The pinned producer only allows guarded inputs through its source-bound
+public-read descriptor. A private-input instruction therefore always selects
+an unguarded requirement. -/
+theorem accepted_private_input_unguarded {expected : Expected} {state next : State}
+    {raw : Json} {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "private_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    requirement.activityGuard = none := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, descriptorParsed, _, fields, accepted⟩
+  have opcodeEq : opcode = "private_input" := Except.ok.inj (op.symm.trans opcodeParsed)
+  have descriptorParsed' : Backend.Native.requireInstruction "private_input" = .ok descriptor := by
+    rw [← opcodeEq]
+    exact descriptorParsed
+  have privateGuard : descriptor.privacy.guard = .unguardedInputOnly := by
+    have descriptorPrivacy :
+        (Backend.Native.requireInstruction "private_input").map
+          (fun item => item.privacy.guard) = .ok .unguardedInputOnly := by
+      rfl
+    have privacy := congrArg (fun result : Except String Backend.Native.Descriptor =>
+      result.map (fun item => item.privacy.guard)) descriptorParsed'
+    rw [descriptorPrivacy] at privacy
+    exact (Except.ok.inj privacy).symm
+  simp only [opcodeEq, selected] at accepted
+  cases guard : requirement.activityGuard with
+  | none => rfl
+  | some guardTerm =>
+    simp only [guard] at accepted
+    have falseGuard :
+        (Backend.Native.GuardRule.unguardedInputOnly ==
+          Backend.Native.GuardRule.sourceBoundPublicRead) = false := by decide
+    rw [privateGuard] at accepted
+    cases ty : requirement.ty <;> simp only [ty] at accepted <;>
+      simp only [bind_ok] at accepted
+    all_goals
+      rcases accepted with ⟨_, _, _, _, _, _, _, guardModeAccepted, _⟩
+      have guardMode := ensure_ok.mp guardModeAccepted
+      simp [falseGuard] at guardMode
+
 inductive NativeStepHolds (hash : Hash) (witness : Assignment) (raw : Json) : Prop where
   | publicInput
       (opcode : Backend.Native.stringField raw "op" = .ok "public_input")
@@ -133,14 +174,16 @@ inductive NativeStepHolds (hash : Hash) (witness : Assignment) (raw : Json) : Pr
 /-- Accepted Native input and arithmetic instructions preserve meaning in
 order. The actual producer state selects each input by its live input count.
 Input steps use the producer's checked output and type schema, plus agreement
-for the selected expected input. -/
+for the selected expected input. Guarded public inputs use the producer's
+source-bound Boolean guard check. Private inputs remain unguarded by the pinned
+producer descriptor. -/
 theorem accepted_native_loop_meaning
     {hash : Hash} {inputs witness : Assignment} {expected : Expected}
     {items : List (Json × Nat)} {initial final : State}
     (invariant : StateMeaning hash inputs witness initial)
     (nativeDefinitions : NativeDefinitions initial)
     (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
+      requirement.ty.isForeign = false)
     (inputAgreement : ∀ requirement ∈ expected.inputs,
       witness requirement.identifier = inputs requirement.identifier)
     (steps : ∀ item ∈ items, NativeStepHolds hash witness item.1)
@@ -163,17 +206,26 @@ theorem accepted_native_loop_meaning
           obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
             (visibility := .«public») (by simpa [inputOpcode] using opcode) checked
           have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-          obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
+          have nonforeignInput := inputSchema requirement member
           have agreement := inputAgreement requirement member
-          exact ⟨public_input_step_meaning invariant selected nonforeignInput unguarded agreement
-              opcode checked,
-            input_nativeDefinitions_step (visibility := .«public») nativeDefinitions selected
-              nonforeignInput unguarded (by simpa [inputOpcode] using opcode) checked⟩
+          cases guarded : requirement.activityGuard with
+          | none =>
+            exact ⟨public_input_step_meaning invariant selected nonforeignInput guarded agreement
+                opcode checked,
+              input_nativeDefinitions_step (visibility := .«public») nativeDefinitions selected
+                nonforeignInput guarded (by simpa [inputOpcode] using opcode) checked⟩
+          | some guardTerm =>
+            exact ⟨guarded_public_input_step_meaning invariant selected nonforeignInput guarded
+                agreement opcode checked,
+              guarded_public_input_nativeDefinitions_step nativeDefinitions selected
+                nonforeignInput guarded (by simpa [inputOpcode] using opcode) checked⟩
         | privateInput opcode =>
           obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
             (visibility := .«private») (by simpa [inputOpcode] using opcode) checked
           have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-          obtain ⟨nonforeignInput, unguarded⟩ := inputSchema requirement member
+          have nonforeignInput := inputSchema requirement member
+          have unguarded := accepted_private_input_unguarded selected
+            (by simpa [inputOpcode] using opcode) checked
           have agreement := inputAgreement requirement member
           exact ⟨private_input_step_meaning invariant selected nonforeignInput unguarded agreement
               opcode checked,
