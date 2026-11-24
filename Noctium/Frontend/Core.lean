@@ -3297,7 +3297,7 @@ private def recordSetKeyValuesAt (schema : List (String × StateKind))
   let (keys, valueSchema) ← lowerTreePath state.env treeSchema parentKeys
   let .recordSet environment type := valueSchema
     | throwErrorAt storage "typed record key operation requires a record Set"
-  let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+  let fields ← match LedgerValueType.recordSetKeyFields environment type with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   let values ← elaborateLedgerFieldValues state payload fields
@@ -5496,7 +5496,7 @@ private def nestedRecordSetSchema (keyTy : Ty)
       (Noctium.LedgerValueType.shieldedCoinSet $environmentTerm $recordTypeTerm))
     pure (schema, term)
   | _, _ => do
-    match LedgerValueType.ledgerRecordWriteFields environment recordType with
+    match LedgerValueType.recordSetKeyFields environment recordType with
     | .error message => throwErrorAt source message
     | .ok _ => pure ()
     let keyTerm ← tyTerm keyTy

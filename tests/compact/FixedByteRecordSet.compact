@@ -1,0 +1,30 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export ledger buckets: Map<Bytes<32>, Set<Key>>;
+
+constructor(owner: Bytes<32>, siblingOwner: Bytes<32>) {
+  buckets.insertDefault(disclose(owner));
+  buckets.insertDefault(disclose(siblingOwner));
+}
+
+export circuit update(owner: Bytes<32>, siblingOwner: Bytes<32>, tag: Bytes<1>,
+                      firstId: Bytes<33>, lateId: Bytes<33>, absentId: Bytes<33>):
+                      [Boolean, Boolean, Boolean, Boolean, Uint<64>, Uint<64>] {
+  const selected = disclose(owner);
+  const sibling = disclose(siblingOwner);
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  const absent = Key { tag: disclose(tag), id: disclose(absentId) };
+  buckets.lookup(selected).insert(first);
+  buckets.lookup(selected).insert(late);
+  buckets.lookup(sibling).insert(first);
+  return [buckets.lookup(selected).member(first), buckets.lookup(selected).member(late),
+          buckets.lookup(selected).member(absent), buckets.lookup(sibling).member(first),
+          buckets.lookup(selected).size(), buckets.lookup(sibling).size()];
+}

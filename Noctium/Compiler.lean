@@ -825,12 +825,14 @@ private def stateJson (state : StateDecl) : Json :=
     (Backend.Impact.cellRecordSchema environment type).toOption.getD Json.null
   let ledgerRecordCompositeSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) : Json :=
     (Backend.Impact.ledgerRecordSchema environment type).toOption.getD Json.null
+  let recordSetKeyCompositeSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) : Json :=
+    (Backend.Impact.recordSetSchema environment type).toOption.getD Json.null
   let rec treeJson : _root_.Bool → _root_.Bool → LedgerValueType → Json
     | _, _, .scalar ty => Json.mkObj [("scalar", toJson (typeName ty))]
     | _, _, .map keyTy value => Json.mkObj [("map", toJson [toJson (typeName keyTy), treeJson Bool.false Bool.true value])]
     | _, _, .set keyTy => Json.mkObj [("set", toJson (typeName keyTy))]
     | _, _, .recordSet environment type => Json.mkObj [("set", Json.mkObj [
-        ("composite", ledgerRecordCompositeSchema environment type)])]
+        ("composite", recordSetKeyCompositeSchema environment type)])]
     | _, _, .recordMapKey environment type valueTy => Json.mkObj [("map", toJson [
         Json.mkObj [("composite", ledgerRecordCompositeSchema environment type)],
         Json.mkObj [("scalar", toJson (typeName valueTy))]])]

@@ -232,6 +232,91 @@ fn nested_record_set_preserves_members_and_sibling_buckets() -> anyhow::Result<(
     Ok(())
 }
 
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_FIXED_BYTE_RECORD_SET_DIR"]
+fn fixed_byte_record_set_keys_distinguish_late_bytes_and_sibling_buckets() -> anyhow::Result<()> {
+    use base_crypto::fab::{Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
+
+    fn bytes_value(value: &[u8]) -> Json {
+        json!({"kind":"bytes", "values":value})
+    }
+
+    fn aligned_bytes(value: &[u8]) -> AlignedValue {
+        AlignedValue::new(
+            FabValue(vec![ValueAtom::from(value)]),
+            Alignment::singleton(AlignmentAtom::Bytes {
+                length: value.len() as u32,
+            }),
+        )
+        .unwrap()
+    }
+
+    fn record_key(tag: &[u8], id: &[u8]) -> AlignedValue {
+        AlignedValue::concat(&[aligned_bytes(tag), aligned_bytes(id)])
+    }
+
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_FIXED_BYTE_RECORD_SET_DIR")
+            .expect("fixed-byte record Set artifacts"),
+    );
+    let plan = load_plan(&directory, "FixedByteRecordSet.update.impact.json");
+    let circuit = load_circuit(&directory, "FixedByteRecordSet.update.zkir");
+    let mut state = create_state(&plan, &BTreeMap::from([("buckets".into(), json!([]))]))?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let owner = [1u8; 32];
+    let sibling_owner = [2u8; 32];
+    let tag = [7u8];
+    let first_id = [3u8; 33];
+    let mut late_id = first_id;
+    late_id[32] = 4;
+    let mut absent_id = first_id;
+    absent_id[32] = 5;
+    let inputs = BTreeMap::from([
+        ("owner".into(), bytes_value(&owner)),
+        ("siblingOwner".into(), bytes_value(&sibling_owner)),
+        ("tag".into(), bytes_value(&tag)),
+        ("firstId".into(), bytes_value(&first_id)),
+        ("lateId".into(), bytes_value(&late_id)),
+        ("missingKeyId".into(), bytes_value(&absent_id)),
+    ]);
+    let result = prepare(&plan, &inputs, &state, parameters, address)?;
+    check(&result, &circuit)?;
+    let returns = result.returns_json();
+    assert_eq!(returns["first"], json!(true));
+    assert_eq!(returns["late"], json!(true));
+    assert_eq!(returns["missingKey"], json!(false));
+    assert_eq!(returns["sibling"], json!(true));
+    assert_eq!(returns["count"], json!("2"));
+    assert_eq!(returns["siblingCount"], json!("1"));
+    state = result.after.state;
+
+    let StateValue::Array(slots) = state.get_ref() else {
+        anyhow::bail!("expected state slots");
+    };
+    let Some(StateValue::Map(buckets)) = slots.get(0) else {
+        anyhow::bail!("expected Bytes32-keyed buckets");
+    };
+    assert_eq!(buckets.size(), 2);
+    let owner_key: AlignedValue = owner.into();
+    let sibling_key: AlignedValue = sibling_owner.into();
+    let selected = buckets.get(&owner_key).expect("owner bucket exists");
+    let sibling = buckets.get(&sibling_key).expect("sibling bucket exists");
+    let StateValue::Map(selected_set) = &*selected else {
+        anyhow::bail!("expected selected Set");
+    };
+    let StateValue::Map(sibling_set) = &*sibling else {
+        anyhow::bail!("expected sibling Set");
+    };
+    assert_eq!(selected_set.size(), 2);
+    assert_eq!(selected_set.get(&record_key(&tag, &first_id)).is_some(), true);
+    assert_eq!(selected_set.get(&record_key(&tag, &late_id)).is_some(), true);
+    assert_eq!(selected_set.get(&record_key(&tag, &absent_id)).is_some(), false);
+    assert_eq!(sibling_set.size(), 1);
+    assert_eq!(sibling_set.get(&record_key(&tag, &first_id)).is_some(), true);
+    Ok(())
+}
+
 fn inputs(
     bucket: u64,
     tag: u8,
