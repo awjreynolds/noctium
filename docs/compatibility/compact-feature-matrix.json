@@ -4270,8 +4270,8 @@
       "id": "C-STDLIB-MERKLETREEDIGEST",
       "layer": "standard-library",
       "surface": "MerkleTreeDigest",
-      "noctiumStatus": "subset",
-      "notes": "The shared Lean Merkle digest schema carries one Native field. A depth-two fixture consumes nested digest witnesses and matches the exact pinned Compact root.",
+      "noctiumStatus": "equivalent",
+      "notes": "The shared Noctium and pinned Compact layouts carry one Field as the nested digest member. The paired mixed-direction path returns the same root. The Noctium typed host checks the canonical digest ID and rejects substitution. The K9 native relation proves and verifies with official parameters and rejects an altered return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4285,19 +4285,22 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
         "Noctium/Types/MerklePath.lean",
         "tests/MerklePathRootNoLeafHash.lean",
         "runtime/tests/merkle_path_types.rs",
         "tests/compact/merkle-path-root-no-leaf-hash.mjs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-MERKLETREEPATHENTRY",
       "layer": "standard-library",
       "surface": "MerkleTreePathEntry",
-      "noctiumStatus": "subset",
-      "notes": "The shared Lean path entry has a nested Native digest and checked Bool direction. The paired depth-two fixture matches mixed left/right order and rejects a malformed direction or wrong path length at the provider boundary.",
+      "noctiumStatus": "equivalent",
+      "notes": "The shared layout is a nested MerkleTreeDigest sibling followed by a checked Bool direction. The pinned Compact and native depth-two case agree on the root for mixed left and right directions in entry order. The typed host rejects a wrong entry or digest ID, invalid direction and wrong path length. The K9 native relation rejects a non-Boolean direction, proves and verifies with official parameters, and rejects an altered return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4311,12 +4314,15 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
         "Noctium/Types/MerklePath.lean",
         "tests/MerklePathRootNoLeafHash.lean",
         "runtime/tests/merkle_path_types.rs",
         "tests/compact/merkle-path-root-no-leaf-hash.mjs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-MERKLETREEPATH",
