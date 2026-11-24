@@ -39,7 +39,7 @@ export circuit emptyNativeMap(): Field {
   const mapped = map((item) => {
     const copy = item;
     const copyAgain = copy;
-    return copyAgain;
+    return true ? copyAgain : copyAgain;
   }, emptyTupleItems());
   const forwarded = mapped;
   return disclose(acceptEmptyNativeVector(forwarded));

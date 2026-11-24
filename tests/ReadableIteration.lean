@@ -39,7 +39,7 @@ noctium_witness_circuit emptyNativeMap using emptyTupleIterationWire,
     let mapped := map([witness iterationEmptyTuple()], fun item => do
       let alias := item
       let aliasAgain := alias
-      return aliasAgain
+      return if true then aliasAgain else aliasAgain
     end) in
     witness acceptEmptyNativeVector(let forwarded := mapped in forwarded))
 end
@@ -55,10 +55,11 @@ noctium_control emptyNativeMapHost from emptyNativeMap.__program
 
 noctium_witness_circuit emptyNativeMapStatement using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
-  let mapped := map([witness iterationEmptyTuple()], fun item => do
-    let alias := item
-    let aliasAgain := alias
-    return aliasAgain
+  let mapped := map([witness iterationEmptyTuple(), witness iterationEmptyTuple()],
+      fun leftItem rightItem => do
+    let yesAlias := leftItem
+    let noAlias := rightItem
+    return if true then yesAlias else noAlias
   end)
   let forwarded := mapped
   output result : Native := disclose(witness acceptEmptyNativeVector(forwarded))
@@ -68,7 +69,7 @@ end
   let compiled := Noctium.Witness.compile emptyNativeMapStatement.__program
     "noctium.witness-circuit.emptyNativeMapStatement.v1"
   compiled.toOption.map (fun source => source.calls.map (·.name)) ==
-    some ["iterationEmptyTuple", "acceptEmptyNativeVector"]
+    some ["iterationEmptyTuple", "iterationEmptyTuple", "acceptEmptyNativeVector"]
 
 noctium_witness_circuit emptyNativeMapBranch using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
@@ -98,6 +99,15 @@ end
 noctium_witness_circuit rejectsEmptyNativeMapWithoutContext using emptyTupleIterationWire where
   let mapped := map([witness iterationEmptyTuple()], fun item => item)
   output result : Native := disclose(0)
+end
+
+/- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsEmptyMapConditionalArithmetic using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  output result : Native := disclose(witness acceptEmptyNativeVector(
+    map([witness iterationEmptyTuple()], fun item =>
+      if true then add(item, item) else add(item, item))))
 end
 
 noctium_contract ReadableIteration where
