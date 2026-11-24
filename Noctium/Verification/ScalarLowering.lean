@@ -1,6 +1,7 @@
 import Noctium.Backend.Zkir
 import Noctium.Verification.ScalarImmediate
 import Noctium.Verification.ScalarInstructionEncoding
+import Noctium.Verification.ScalarValidation
 import Noctium.Verification.ScalarNormalizationSoundness
 import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarWitness
