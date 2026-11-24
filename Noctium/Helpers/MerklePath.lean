@@ -21,7 +21,8 @@ private def rootFold (depth : Nat) (path initial : Term) : List Statement :=
           .binary .sub current (.ref delta)
         ])]
   Statement.bind "current0" (.scalar .native) initial ::
-    steps ++ [.return (some (.ref s!"current{depth}"))]
+    steps ++ [.return (some (.composite Types.MerklePath.digestType
+      [.ref s!"current{depth}"]))]
 
 /-- Build a checked source helper for the no-leaf-hash root of a statically
 depth-bounded canonical Merkle path. The caller supplies the encoded Bytes32
@@ -36,7 +37,7 @@ def rootNoLeafHashProgram (pathId : Types.DeclId) (depth : Nat) : Program :=
       name := "merklePathRootNoLeafHash"
       parameters := [⟨"leafBytes", .bytes 32⟩, ⟨"path", .native⟩]
       compositeParameters := [("path", pathType)]
-      result := .scalar .native
+      result := .composite Types.MerklePath.digestType
       body := rootFold depth path (.bytes .degradeToNative [.ref "leafBytes"])
     }]
     composites := Types.MerklePath.environment {} pathId (.bytes 32) depth
@@ -95,7 +96,7 @@ def rootTypedLeafProgram (base : Types.CompositeEnv) (pathId : Types.DeclId)
       name := "merklePathRootTypedLeaf"
       parameters := [⟨"path", .native⟩]
       compositeParameters := [("path", pathType)]
-      result := .scalar .native
+      result := .composite Types.MerklePath.digestType
       body := rootFold depth path (.bytes .degradeToNative [hash])
     }]
     composites

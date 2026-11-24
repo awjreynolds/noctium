@@ -37,7 +37,11 @@ try {
       { sibling: { field: 29n }, goes_left: false },
     ],
   };
-  console.log(pureCircuits.digestFromPath(path).toString());
+  const expectedRoot = 23615363679718302500648733510038242834016166715802047945282536128750549339216n;
+  const digest = pureCircuits.digestFromPath(path);
+  assert.deepEqual(digest, { field: expectedRoot });
+  assert.equal(digest.field.toString(), expectedRoot.toString());
+  console.log(JSON.stringify({ digest: { field: digest.field.toString() } }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

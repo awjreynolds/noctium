@@ -83,7 +83,7 @@ noctium_witness proofPath() : Payload typedPathWire
 noctium_witness_circuit typedMerklePathRootInputs using typedPathWire
     with typedMerklePathRootProgram where
   let proof := witness proofPath()
-  output candidateRoot : Native := disclose(invoke(merklePathRootTypedLeaf, [proof]))
+  output root := disclose(invoke(merklePathRootTypedLeaf, [proof]))
 end
 
 /- error: undisclosed private -/
@@ -91,12 +91,12 @@ end
 noctium_witness_circuit rejectsUndisclosedTypedMerklePathRoot using typedPathWire
     with typedMerklePathRootProgram where
   let proof := witness proofPath()
-  output candidateRoot : Native := invoke(merklePathRootTypedLeaf, [proof])
+  output root := invoke(merklePathRootTypedLeaf, [proof])
 end
 
 noctium_contract TypedMerklePathRootSource where
   entry root uses typedMerklePathRootInputs where
-    return root : Native := candidateRoot
+    return root
   end
 end
 
