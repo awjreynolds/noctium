@@ -67,3 +67,61 @@ private def evalLazyBooleanOutputs (env : EvalEnv) :
 #guard match evalLazyBooleanOutputs (lazyBooleanEnv Bool.false Bool.true Bool.true Bool.true) with
   | .ok (Bool.false, Bool.true, Bool.true) => _root_.Bool.true
   | _ => _root_.Bool.false
+
+noctium_circuit booleanParityInputs where
+  public left : Bool
+  public right : Bool
+  output alwaysFalseValue : Bool := false
+  output alwaysTrueValue : Bool := true
+  output notValue : Bool := boolNot(left)
+  output andValue : Bool := andThen(left, right)
+  output orValue : Bool := orElse(left, right)
+  output equalValue : Bool := eq(left, right)
+  output differentValue : Bool := boolNot(eq(left, right))
+end
+
+noctium_circuit booleanConversionInputs where
+  public flag : Bool
+  public field : Native
+  public amount : UInt 8
+  output asFieldValue : Native := cast(Native, flag)
+  output asBitValue : UInt 1 := cast(UInt 1, flag)
+  output fromFieldValue : Bool := cast(Bool, field)
+  output fromAmountValue : Bool := cast(Bool, amount)
+  output defaultBoolValue : Bool := default(Bool)
+end
+
+noctium_circuit booleanNarrowInputs where
+  public flag : Bool
+  output zeroValue : UInt 0 := cast(UInt 0, flag)
+end
+
+noctium_contract BooleanParity where
+  entry truthTable uses booleanParityInputs where
+    return alwaysFalse : Bool := alwaysFalseValue
+    return alwaysTrue : Bool := alwaysTrueValue
+    return notResult : Bool := notValue
+    return andResult : Bool := andValue
+    return orResult : Bool := orValue
+    return equalResult : Bool := equalValue
+    return differentResult : Bool := differentValue
+  end
+  entry convert uses booleanConversionInputs where
+    return asField : Native := asFieldValue
+    return asBit : UInt 1 := asBitValue
+    return fromField : Bool := fromFieldValue
+    return fromAmount : Bool := fromAmountValue
+    return defaultBool : Bool := defaultBoolValue
+  end
+  entry narrow uses booleanNarrowInputs where
+    return zero : UInt 0 := zeroValue
+  end
+end
+
+/-- error: andThen requires a Bool right operand -/
+#guard_msgs in
+noctium_circuit invalidLazyBooleanType where
+  public left : Bool
+  public right : Native
+  output result : Bool := andThen(left, right)
+end

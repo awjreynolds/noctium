@@ -140,8 +140,8 @@
       "id": "C-LANG-BOOL",
       "layer": "language",
       "surface": "Boolean",
-      "noctiumStatus": "subset",
-      "notes": "Bool values, equality, constants and constraints are available. Typed Boolean negation works in circuits and readable helpers. Both truth values match pinned Compact 0.36.1 and the native relation. The Lean frontend rejects non-Bool operands. Broader Compact Boolean operator contexts and conversions still need differential checks.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium agree on both literals, the default, negation, equality, inequality, and short-circuit conjunction and disjunction across the Boolean truth table. A checked Uint narrowing shows that both hosts skip inactive branches and reject the same active invalid operands, including nested expressions. Both source checkers reject non-Boolean operands. Matched casts cover Boolean to Field and Uint, zero and nonzero Field and Uint to Boolean, and false success and true failure in the zero-only Uint range. The native checker rejects a noncanonical Boolean field and altered active branches. Four fresh Ledger 9 / ZKIR 3.2.1 relations prove and verify using official K6 and K7 parameters. Changed return commitments fail verification.",
       "source": [
         "reference"
       ],
@@ -150,14 +150,19 @@
         "ZK"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
         "Noctium/IR.lean",
         "Noctium/Frontend.lean",
         "tests/IR.lean",
         "tests/BooleanGates.lean",
         "tests/compact/boolean-negation.mjs",
-        "runtime/tests/native_boolean_gates.rs"
+        "tests/LazyBoolean.lean",
+        "tests/compact/BooleanNegation.compact",
+        "runtime/tests/native_boolean_gates.rs",
+        "runtime/tests/boolean_parity.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-LANG-FIELD",
