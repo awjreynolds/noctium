@@ -748,6 +748,22 @@ def LedgerValueType.ledgerRecordWriteFields (environment : Types.CompositeEnv)
     | .ok _ => .error "shielded coin records require their specialized write effect"
     | .error _ => LedgerValueType.ledgerRecordFields environment type
 
+/-- Root Map values accept fixed Bytes fields with the checked root Cell codec.
+Nested Map values retain the narrower ledger record policy. -/
+def LedgerValueType.rootMapRecordFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+  match LedgerValueType.ledgerRecordFields environment type with
+  | .ok fields => pure fields
+  | .error _ => flatTypedRecordFields environment type true
+
+/-- Root Map record writes accept fixed Bytes while preserving qualified coin
+records' specialized write boundary. -/
+def LedgerValueType.rootMapRecordWriteFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+  match LedgerValueType.shieldedCoinRecordFields environment type with
+  | .ok _ => throw "shielded coin records require their specialized write effect"
+  | .error _ => LedgerValueType.rootMapRecordFields environment type
+
 /-- Record Set keys retain checked Native vector layouts. Flat typed keys also
 accept fixed Bytes widths. Root record Maps reuse this key policy, while nested
 Map keys and values keep their narrower policy. -/
@@ -1747,14 +1763,18 @@ where
       validateStateScalar caps valueTy
     | mapDepth, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
       let keyFields ← LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType mapDepth
-      let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
+      let valueFields ← if mapDepth == 0 then
+        LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType
+      else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
       for (_, ty) in keyFields ++ valueFields do validateStateScalar caps ty
     | _, .shieldedCoinSet environment type => do
       let fields ← LedgerValueType.shieldedCoinRecordFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
-    | _, .composite environment type => do
-      let fields ← LedgerValueType.ledgerRecordFields environment type
+    | mapDepth, .composite environment type => do
+      let fields ← if mapDepth == 1 then
+        LedgerValueType.rootMapRecordFields environment type
+      else LedgerValueType.ledgerRecordFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
     | _, .list environment type => do
@@ -1844,7 +1864,9 @@ private def resolveRecordMapCompositeValue (decls : List StateDecl) (state : Str
   let selected ← resolveRecordMapSchema decls state parentKeys
   let .recordMapComposite _ _ environment type := selected
     | throw s!"path does not select a composite-valued record-key Map in '{state}'"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← if parentKeys.isEmpty then
+    LedgerValueType.rootMapRecordWriteFields environment type
+  else LedgerValueType.ledgerRecordWriteFields environment type
   pure (environment, type, fields)
 
 private def resolveMerkleTreePath (decls : List StateDecl) (state : String)
@@ -2153,7 +2175,7 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       match keyValue.validate caps scalarEnvironment with
       | .error message => throw {span, message}
       | .ok _ => pure ()
-      let checkedFields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+      let checkedFields ← match LedgerValueType.rootMapRecordWriteFields environment type with
         | .ok checkedFields => pure checkedFields
         | .error message => throw {span := destination.span, message}
       match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
@@ -2937,6 +2959,8 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         unless foundType == type do throw "nested composite read type mismatch"
         let fields ← if keys.isEmpty then
           LedgerValueType.cellRecordFields compositeEnv type
+        else if keys.length == 1 then
+          LedgerValueType.rootMapRecordFields compositeEnv type
         else LedgerValueType.ledgerRecordFields compositeEnv type
         unless fields.map Prod.snd == destinations.map Prod.snd do
           throw "nested composite read destination count mismatch"
@@ -2958,7 +2982,8 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
           let .composite compositeEnv foundType ← resolveTreeState decls state keys
             | throw "nested composite write must select a composite value"
           unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.ledgerRecordWriteFields compositeEnv type
+          if keys.length == 1 then LedgerValueType.rootMapRecordWriteFields compositeEnv type
+          else LedgerValueType.ledgerRecordWriteFields compositeEnv type
         unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
           throw "nested composite write field type mismatch"
         for (_, ty) in fields do ty.validate caps

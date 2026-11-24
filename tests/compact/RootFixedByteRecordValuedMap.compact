@@ -7,24 +7,35 @@ export struct Key {
 }
 
 export struct Receipt {
-  accepted: Boolean;
-  code: Uint<16>;
+  label: Bytes<1>;
+  digest: Bytes<33>;
+}
+
+export struct Profile {
+  label: Bytes<1>;
+  digest: Bytes<33>;
 }
 
 export ledger receipts: Map<Key, Receipt>;
+export ledger profiles: Map<Bytes<32>, Profile>;
 
 export circuit update(tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
-                      firstAccepted: Boolean, firstCode: Uint<16>,
-                      lateAccepted: Boolean, lateCode: Uint<16>):
-                      [Boolean, Boolean, Boolean, Uint<16>, Boolean, Uint<16>,
-                       Boolean, Boolean, Boolean, Uint<16>] {
+                      firstReceiptLabel: Bytes<1>, firstReceiptDigest: Bytes<33>,
+                      lateReceiptLabel: Bytes<1>, lateReceiptDigest: Bytes<33>,
+                      firstAccount: Bytes<32>, lateAccount: Bytes<32>,
+                      firstProfileLabel: Bytes<1>, firstProfileDigest: Bytes<33>,
+                      lateProfileLabel: Bytes<1>, lateProfileDigest: Bytes<33>):
+                      [Boolean, Boolean, Bytes<1>, Bytes<33>, Bytes<1>, Bytes<33>,
+                       Boolean, Boolean, Bytes<1>, Bytes<33>,
+                       Boolean, Boolean, Bytes<1>, Bytes<33>, Bytes<1>, Bytes<33>,
+                       Boolean, Boolean, Bytes<1>, Bytes<33>] {
   const first = Key { tag: disclose(tag), id: disclose(firstId) };
   const late = Key { tag: disclose(tag), id: disclose(lateId) };
   const firstReceipt = Receipt {
-    accepted: disclose(firstAccepted), code: disclose(firstCode),
+    label: disclose(firstReceiptLabel), digest: disclose(firstReceiptDigest),
   };
   const lateReceipt = Receipt {
-    accepted: disclose(lateAccepted), code: disclose(lateCode),
+    label: disclose(lateReceiptLabel), digest: disclose(lateReceiptDigest),
   };
   receipts.insert(first, disclose(firstReceipt));
   receipts.insert(late, disclose(lateReceipt));
@@ -36,7 +47,30 @@ export circuit update(tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
   const firstAfter = receipts.member(first);
   const lateAfter = receipts.member(late);
   const retained = receipts.lookup(late);
-  return [firstBefore, lateBefore, storedFirst.accepted, storedFirst.code,
-          storedLate.accepted, storedLate.code, firstAfter, lateAfter,
-          retained.accepted, retained.code];
+
+  const firstProfile = Profile {
+    label: disclose(firstProfileLabel), digest: disclose(firstProfileDigest),
+  };
+  const lateProfile = Profile {
+    label: disclose(lateProfileLabel), digest: disclose(lateProfileDigest),
+  };
+  profiles.insert(disclose(firstAccount), disclose(firstProfile));
+  profiles.insert(disclose(lateAccount), disclose(lateProfile));
+  const firstProfileBefore = profiles.member(disclose(firstAccount));
+  const lateProfileBefore = profiles.member(disclose(lateAccount));
+  const storedFirstProfile = profiles.lookup(disclose(firstAccount));
+  const storedLateProfile = profiles.lookup(disclose(lateAccount));
+  profiles.remove(disclose(firstAccount));
+  const firstProfileAfter = profiles.member(disclose(firstAccount));
+  const lateProfileAfter = profiles.member(disclose(lateAccount));
+  const retainedProfile = profiles.lookup(disclose(lateAccount));
+
+  return [firstBefore, lateBefore, storedFirst.label, storedFirst.digest,
+          storedLate.label, storedLate.digest, firstAfter, lateAfter,
+          retained.label, retained.digest,
+          firstProfileBefore, lateProfileBefore,
+          storedFirstProfile.label, storedFirstProfile.digest,
+          storedLateProfile.label, storedLateProfile.digest,
+          firstProfileAfter, lateProfileAfter,
+          retainedProfile.label, retainedProfile.digest];
 }

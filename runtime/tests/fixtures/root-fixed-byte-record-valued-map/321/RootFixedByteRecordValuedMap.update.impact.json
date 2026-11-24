@@ -18,23 +18,53 @@
         "visibility": "public"
       },
       {
-        "name": "firstAccepted",
-        "type": "Bool",
+        "name": "firstReceiptLabel",
+        "type": "Bytes<1>",
         "visibility": "public"
       },
       {
-        "name": "firstCode",
-        "type": "UIntRange<65536>",
+        "name": "firstReceiptDigest",
+        "type": "Bytes<33>",
         "visibility": "public"
       },
       {
-        "name": "lateAccepted",
-        "type": "Bool",
+        "name": "lateReceiptLabel",
+        "type": "Bytes<1>",
         "visibility": "public"
       },
       {
-        "name": "lateCode",
-        "type": "UIntRange<65536>",
+        "name": "lateReceiptDigest",
+        "type": "Bytes<33>",
+        "visibility": "public"
+      },
+      {
+        "name": "firstAccount",
+        "type": "Bytes<32>",
+        "visibility": "public"
+      },
+      {
+        "name": "lateAccount",
+        "type": "Bytes<32>",
+        "visibility": "public"
+      },
+      {
+        "name": "firstProfileLabel",
+        "type": "Bytes<1>",
+        "visibility": "public"
+      },
+      {
+        "name": "firstProfileDigest",
+        "type": "Bytes<33>",
+        "visibility": "public"
+      },
+      {
+        "name": "lateProfileLabel",
+        "type": "Bytes<1>",
+        "visibility": "public"
+      },
+      {
+        "name": "lateProfileDigest",
+        "type": "Bytes<33>",
         "visibility": "public"
       }
     ],
@@ -98,102 +128,172 @@
       "op": "popeq"
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:1",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "firstAccepted",
-          "tag": "reference"
-        }
+        "name": "firstReceiptLabel",
+        "tag": "reference"
       },
       "op": "push",
       "storage": false
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:1",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "firstAccepted",
-          "tag": "reference"
-        }
+        "name": "firstReceiptLabel",
+        "tag": "reference"
       },
       "op": "popeq"
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:33",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "firstCode",
-          "tag": "reference"
-        }
+        "name": "firstReceiptDigest",
+        "tag": "reference"
       },
       "op": "push",
       "storage": false
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:33",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "firstCode",
-          "tag": "reference"
-        }
+        "name": "firstReceiptDigest",
+        "tag": "reference"
       },
       "op": "popeq"
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:1",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "lateAccepted",
-          "tag": "reference"
-        }
+        "name": "lateReceiptLabel",
+        "tag": "reference"
       },
       "op": "push",
       "storage": false
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:1",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "lateAccepted",
-          "tag": "reference"
-        }
+        "name": "lateReceiptLabel",
+        "tag": "reference"
       },
       "op": "popeq"
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:33",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "lateCode",
-          "tag": "reference"
-        }
+        "name": "lateReceiptDigest",
+        "tag": "reference"
       },
       "op": "push",
       "storage": false
     },
     {
-      "alignment": "field",
+      "alignment": "bytes:33",
       "expression": {
-        "tag": "cast",
-        "type": "Native",
-        "value": {
-          "name": "lateCode",
-          "tag": "reference"
-        }
+        "name": "lateReceiptDigest",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "firstAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "firstAccount",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "lateAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "lateAccount",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "firstProfileLabel",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "firstProfileLabel",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "firstProfileDigest",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "firstProfileDigest",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "lateProfileLabel",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:1",
+      "expression": {
+        "name": "lateProfileLabel",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "lateProfileDigest",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "alignment": "bytes:33",
+      "expression": {
+        "name": "lateProfileDigest",
+        "tag": "reference"
       },
       "op": "popeq"
     },
@@ -233,11 +333,11 @@
     {
       "expressions": [
         {
-          "name": "firstAccepted",
+          "name": "firstReceiptLabel",
           "tag": "reference"
         },
         {
-          "name": "firstCode",
+          "name": "firstReceiptDigest",
           "tag": "reference"
         }
       ],
@@ -245,12 +345,12 @@
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -297,11 +397,11 @@
     {
       "expressions": [
         {
-          "name": "lateAccepted",
+          "name": "lateReceiptLabel",
           "tag": "reference"
         },
         {
-          "name": "lateCode",
+          "name": "lateReceiptDigest",
           "tag": "reference"
         }
       ],
@@ -309,12 +409,12 @@
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -452,11 +552,11 @@
     {
       "expressions": [
         {
-          "name": "firstStored_accepted",
+          "name": "firstStored_label",
           "tag": "reference"
         },
         {
-          "name": "firstStored_code",
+          "name": "firstStored_digest",
           "tag": "reference"
         }
       ],
@@ -464,12 +564,12 @@
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -508,11 +608,11 @@
     {
       "expressions": [
         {
-          "name": "lateStored_accepted",
+          "name": "lateStored_label",
           "tag": "reference"
         },
         {
-          "name": "lateStored_code",
+          "name": "lateStored_digest",
           "tag": "reference"
         }
       ],
@@ -520,12 +620,12 @@
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -685,11 +785,11 @@
     {
       "expressions": [
         {
-          "name": "retained_accepted",
+          "name": "retained_label",
           "tag": "reference"
         },
         {
-          "name": "retained_code",
+          "name": "retained_digest",
           "tag": "reference"
         }
       ],
@@ -697,15 +797,365 @@
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
+      }
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": true,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "firstAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "expressions": [
+        {
+          "name": "firstProfileLabel",
+          "tag": "reference"
+        },
+        {
+          "name": "firstProfileDigest",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      },
+      "storage": true
+    },
+    {
+      "n": 2,
+      "op": "insert"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": true,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "lateAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "expressions": [
+        {
+          "name": "lateProfileLabel",
+          "tag": "reference"
+        },
+        {
+          "name": "lateProfileDigest",
+          "tag": "reference"
+        }
+      ],
+      "op": "pushFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      },
+      "storage": true
+    },
+    {
+      "n": 2,
+      "op": "insert"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "firstAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "firstProfileBefore",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "lateAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "lateProfileBefore",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [
+        {
+          "alignment": "bytes32",
+          "expression": {
+            "name": "firstAccount",
+            "tag": "reference"
+          }
+        }
+      ],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "expressions": [
+        {
+          "name": "firstProfileStored_label",
+          "tag": "reference"
+        },
+        {
+          "name": "firstProfileStored_digest",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      }
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [
+        {
+          "alignment": "bytes32",
+          "expression": {
+            "name": "lateAccount",
+            "tag": "reference"
+          }
+        }
+      ],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "expressions": [
+        {
+          "name": "lateProfileStored_label",
+          "tag": "reference"
+        },
+        {
+          "name": "lateProfileStored_digest",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      }
+    },
+    {
+      "keys": [
+        {
+          "alignment": "bytes32",
+          "expression": {
+            "name": "firstAccount",
+            "tag": "reference"
+          }
+        }
+      ],
+      "op": "mapRemove",
+      "slot": 1
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "firstAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "firstProfileAfter",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "alignment": "bytes32",
+      "expression": {
+        "name": "lateAccount",
+        "tag": "reference"
+      },
+      "op": "push",
+      "storage": false
+    },
+    {
+      "op": "member"
+    },
+    {
+      "alignment": "bit",
+      "expression": {
+        "name": "lateProfileAfter",
+        "tag": "reference"
+      },
+      "op": "popeq"
+    },
+    {
+      "op": "dup"
+    },
+    {
+      "keys": [
+        {
+          "alignment": "bytes32",
+          "expression": {
+            "name": "lateAccount",
+            "tag": "reference"
+          }
+        }
+      ],
+      "op": "indexPath",
+      "pushPath": false,
+      "slot": 1
+    },
+    {
+      "expressions": [
+        {
+          "name": "retainedProfile_label",
+          "tag": "reference"
+        },
+        {
+          "name": "retainedProfile_digest",
+          "tag": "reference"
+        }
+      ],
+      "op": "popeqFields",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
       }
     }
   ],
@@ -723,20 +1173,44 @@
       "type": "Bytes<33>"
     },
     {
-      "name": "firstAccepted",
-      "type": "Bool"
+      "name": "firstReceiptLabel",
+      "type": "Bytes<1>"
     },
     {
-      "name": "firstCode",
-      "type": "UIntRange<65536>"
+      "name": "firstReceiptDigest",
+      "type": "Bytes<33>"
     },
     {
-      "name": "lateAccepted",
-      "type": "Bool"
+      "name": "lateReceiptLabel",
+      "type": "Bytes<1>"
     },
     {
-      "name": "lateCode",
-      "type": "UIntRange<65536>"
+      "name": "lateReceiptDigest",
+      "type": "Bytes<33>"
+    },
+    {
+      "name": "firstAccount",
+      "type": "Bytes<32>"
+    },
+    {
+      "name": "lateAccount",
+      "type": "Bytes<32>"
+    },
+    {
+      "name": "firstProfileLabel",
+      "type": "Bytes<1>"
+    },
+    {
+      "name": "firstProfileDigest",
+      "type": "Bytes<33>"
+    },
+    {
+      "name": "lateProfileLabel",
+      "type": "Bytes<1>"
+    },
+    {
+      "name": "lateProfileDigest",
+      "type": "Bytes<33>"
     },
     {
       "name": "firstBefore",
@@ -749,24 +1223,24 @@
     {
       "components": [
         {
-          "name": "firstStored_accepted",
-          "type": "Bool"
+          "name": "firstStored_label",
+          "type": "Bytes<1>"
         },
         {
-          "name": "firstStored_code",
-          "type": "UIntRange<65536>"
+          "name": "firstStored_digest",
+          "type": "Bytes<33>"
         }
       ],
       "name": "firstStored",
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -776,24 +1250,24 @@
     {
       "components": [
         {
-          "name": "lateStored_accepted",
-          "type": "Bool"
+          "name": "lateStored_label",
+          "type": "Bytes<1>"
         },
         {
-          "name": "lateStored_code",
-          "type": "UIntRange<65536>"
+          "name": "lateStored_digest",
+          "type": "Bytes<33>"
         }
       ],
       "name": "lateStored",
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -811,27 +1285,124 @@
     {
       "components": [
         {
-          "name": "retained_accepted",
-          "type": "Bool"
+          "name": "retained_label",
+          "type": "Bytes<1>"
         },
         {
-          "name": "retained_code",
-          "type": "UIntRange<65536>"
+          "name": "retained_digest",
+          "type": "Bytes<33>"
         }
       ],
       "name": "retained",
       "schema": {
         "fields": [
           {
-            "name": "accepted",
-            "type": "Bool"
+            "name": "label",
+            "type": "Bytes<1>"
           },
           {
-            "name": "code",
-            "type": "UIntRange<65536>"
+            "name": "digest",
+            "type": "Bytes<33>"
           }
         ],
         "id": "RootFixedByteRecordValuedMap.Receipt"
+      },
+      "type": "Composite"
+    },
+    {
+      "name": "firstProfileBefore",
+      "type": "Bool"
+    },
+    {
+      "name": "lateProfileBefore",
+      "type": "Bool"
+    },
+    {
+      "components": [
+        {
+          "name": "firstProfileStored_label",
+          "type": "Bytes<1>"
+        },
+        {
+          "name": "firstProfileStored_digest",
+          "type": "Bytes<33>"
+        }
+      ],
+      "name": "firstProfileStored",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      },
+      "type": "Composite"
+    },
+    {
+      "components": [
+        {
+          "name": "lateProfileStored_label",
+          "type": "Bytes<1>"
+        },
+        {
+          "name": "lateProfileStored_digest",
+          "type": "Bytes<33>"
+        }
+      ],
+      "name": "lateProfileStored",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
+      },
+      "type": "Composite"
+    },
+    {
+      "name": "firstProfileAfter",
+      "type": "Bool"
+    },
+    {
+      "name": "lateProfileAfter",
+      "type": "Bool"
+    },
+    {
+      "components": [
+        {
+          "name": "retainedProfile_label",
+          "type": "Bytes<1>"
+        },
+        {
+          "name": "retainedProfile_digest",
+          "type": "Bytes<33>"
+        }
+      ],
+      "name": "retainedProfile",
+      "schema": {
+        "fields": [
+          {
+            "name": "label",
+            "type": "Bytes<1>"
+          },
+          {
+            "name": "digest",
+            "type": "Bytes<33>"
+          }
+        ],
+        "id": "RootFixedByteRecordValuedMap.Profile"
       },
       "type": "Composite"
     }
@@ -857,38 +1428,38 @@
     },
     {
       "expression": {
-        "name": "firstStored_accepted",
+        "name": "firstStored_label",
         "tag": "reference"
       },
-      "name": "firstAcceptedResult",
-      "type": "Bool",
+      "name": "firstStoredLabel",
+      "type": "Bytes<1>",
       "visibility": "public"
     },
     {
       "expression": {
-        "name": "firstStored_code",
+        "name": "firstStored_digest",
         "tag": "reference"
       },
-      "name": "firstCodeResult",
-      "type": "UIntRange<65536>",
+      "name": "firstStoredDigest",
+      "type": "Bytes<33>",
       "visibility": "public"
     },
     {
       "expression": {
-        "name": "lateStored_accepted",
+        "name": "lateStored_label",
         "tag": "reference"
       },
-      "name": "lateAcceptedResult",
-      "type": "Bool",
+      "name": "lateStoredLabel",
+      "type": "Bytes<1>",
       "visibility": "public"
     },
     {
       "expression": {
-        "name": "lateStored_code",
+        "name": "lateStored_digest",
         "tag": "reference"
       },
-      "name": "lateCodeResult",
-      "type": "UIntRange<65536>",
+      "name": "lateStoredDigest",
+      "type": "Bytes<33>",
       "visibility": "public"
     },
     {
@@ -911,20 +1482,110 @@
     },
     {
       "expression": {
-        "name": "retained_accepted",
+        "name": "retained_label",
         "tag": "reference"
       },
-      "name": "retainedAccepted",
+      "name": "retainedLabel",
+      "type": "Bytes<1>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "retained_digest",
+        "tag": "reference"
+      },
+      "name": "retainedDigest",
+      "type": "Bytes<33>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstProfileBefore",
+        "tag": "reference"
+      },
+      "name": "firstProfile",
       "type": "Bool",
       "visibility": "public"
     },
     {
       "expression": {
-        "name": "retained_code",
+        "name": "lateProfileBefore",
         "tag": "reference"
       },
-      "name": "retainedCode",
-      "type": "UIntRange<65536>",
+      "name": "lateProfile",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstProfileStored_label",
+        "tag": "reference"
+      },
+      "name": "firstProfileStoredLabel",
+      "type": "Bytes<1>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstProfileStored_digest",
+        "tag": "reference"
+      },
+      "name": "firstProfileStoredDigest",
+      "type": "Bytes<33>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateProfileStored_label",
+        "tag": "reference"
+      },
+      "name": "lateProfileStoredLabel",
+      "type": "Bytes<1>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateProfileStored_digest",
+        "tag": "reference"
+      },
+      "name": "lateProfileStoredDigest",
+      "type": "Bytes<33>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "firstProfileAfter",
+        "tag": "reference"
+      },
+      "name": "firstProfileRemaining",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "lateProfileAfter",
+        "tag": "reference"
+      },
+      "name": "lateProfileRemaining",
+      "type": "Bool",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "retainedProfile_label",
+        "tag": "reference"
+      },
+      "name": "retainedProfileLabel",
+      "type": "Bytes<1>",
+      "visibility": "public"
+    },
+    {
+      "expression": {
+        "name": "retainedProfile_digest",
+        "tag": "reference"
+      },
+      "name": "retainedProfileDigest",
+      "type": "Bytes<33>",
       "visibility": "public"
     }
   ],
@@ -953,12 +1614,12 @@
               "composite": {
                 "fields": [
                   {
-                    "name": "accepted",
-                    "type": "Bool"
+                    "name": "label",
+                    "type": "Bytes<1>"
                   },
                   {
-                    "name": "code",
-                    "type": "UIntRange<65536>"
+                    "name": "digest",
+                    "type": "Bytes<33>"
                   }
                 ],
                 "id": "RootFixedByteRecordValuedMap.Receipt"
@@ -968,6 +1629,31 @@
         }
       },
       "name": "receipts"
+    },
+    {
+      "kind": {
+        "tree": {
+          "map": [
+            "Bytes<32>",
+            {
+              "composite": {
+                "fields": [
+                  {
+                    "name": "label",
+                    "type": "Bytes<1>"
+                  },
+                  {
+                    "name": "digest",
+                    "type": "Bytes<33>"
+                  }
+                ],
+                "id": "RootFixedByteRecordValuedMap.Profile"
+              }
+            }
+          ]
+        }
+      },
+      "name": "profiles"
     }
   ],
   "target": "midnight-ledger-9-zkir-3.2.1",

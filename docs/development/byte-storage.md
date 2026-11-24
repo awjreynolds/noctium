@@ -36,6 +36,10 @@ Nonempty ledger reads bind bounded Native chunks in FAB order, from the highest 
 
 Public Bytes32 inputs keep their existing packed two-chunk prologue. Private byte input transport stays bytewise. Storage support adds no native opcode.
 
+## Flat root Map record values
+
+[Issue 1048](https://github.com/awjreynolds/noctium/issues/1048) adds Bytes1 and Bytes33 fields to flat records stored in root Maps. The scoped fixture covers both a Bytes32 scalar key and a record key with Bytes1 and Bytes33 fields. Compact 0.36.1 and the selected Ledger 9/ZKIR 3.2.1 native checker match returned fields and retained aligned values after removal. Wrong key/value widths and nested scalar/record-key record values reject. See the [Lean fixture](../../tests/RootFixedByteRecordValuedMap.lean), [Compact comparison](../../tests/compact/root-fixed-byte-record-valued-map.mjs) and [native case](../../runtime/tests/root_fixed_byte_record_valued_map.rs).
+
 ## Qualification
 
 The focused fixture is [BytesStorage.lean](../../tests/BytesStorage.lean), with the native case in [byte_storage.rs](../../runtime/tests/byte_storage.rs). Implementation and measured results are tracked in [issue 79](https://github.com/awjreynolds/noctium/issues/79).
@@ -46,4 +50,4 @@ The native case passes three updates and all 14 old/new results in 0.05 seconds.
 
 The 66-job compiler build, source fixture, producer-cap guards, guide snippet and legacy 3.2.0 runtime library compilation pass. One focused control case checks projection order, ranges and empty reads. The retained public Bytes32 native compatibility case also passes in 0.06 seconds. No repeated witness Session campaign was run.
 
-This storage slice covers source and native checking. [Foreign ledger keys](foreign-trees.md) have separate evidence. Composite record leaves, proofs, deployment and full compiler preservation remain separate work.
+This storage slice covers source and native checking. [Foreign ledger keys](foreign-trees.md) have separate evidence. Nested composite record leaves, proofs, deployment and full compiler preservation remain separate work.
