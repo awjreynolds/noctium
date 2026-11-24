@@ -67,7 +67,7 @@ fn root_fixed_byte_record_values_match_compact_for_scalar_and_record_keys() -> a
         }}]}]
     });
     let nested_scalar_plan: Plan = serde_json::from_value(nested_scalar_json)?;
-    assert!(create_state(&nested_scalar_plan, &empty_state).is_err());
+    assert!(create_state(&nested_scalar_plan, &empty_state).is_ok());
 
     let mut nested_record_key_json: Json = serde_json::from_str(include_str!(
         "fixtures/root-fixed-byte-record-valued-map/321/RootFixedByteRecordValuedMap.update.impact.json"
