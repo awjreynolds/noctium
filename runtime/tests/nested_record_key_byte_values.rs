@@ -101,7 +101,7 @@ fn assert_survivors(state: &ChargedState<Db>, compact: &Json) -> Result<()> {
     let StateValue::Array(slots) = state.get_ref() else {
         anyhow::bail!("expected contract state slots");
     };
-    let Some(StateValue::Map(owners)) = slots.first() else {
+    let Some(StateValue::Map(owners)) = slots.get(0) else {
         anyhow::bail!("expected the outer owner Map state");
     };
     assert_eq!(

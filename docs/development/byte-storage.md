@@ -42,7 +42,7 @@ Public Bytes32 inputs keep their existing packed two-chunk prologue. Private byt
 
 ## Flat record values in nested Maps
 
-Scalar Map paths support flat record values with fixed-width byte fields. The two-level case stores a record with a Bytes1 label and a Bytes33 digest. Both owner buckets use the same leaf key, and the digests share their first 32 bytes. The comparison checks exact reads and overwrites, removal in one bucket, and preservation of the sibling and the other owner's value. It also covers a malformed digest width and lookup of the removed key. List and nested record-key Map values use their narrower record layout. [Lean fixture](../../tests/NestedFixedByteMapRecordValues.lean) · [Compact oracle](../../tests/compact/nested-fixed-byte-record-values.mjs) · [Native replay](../../runtime/tests/nested_fixed_byte_record_values.rs)
+Scalar Map paths support flat record values with fixed-width byte fields. The two-level case stores a record with a Bytes1 label and a Bytes33 digest. Both owner buckets use the same leaf key, and the digests share their first 32 bytes. The comparison checks exact reads and overwrites, removal in one bucket, and preservation of the sibling and the other owner's value. It also covers a malformed digest width and lookup of the removed key. [Lean fixture](../../tests/NestedFixedByteMapRecordValues.lean) · [Compact oracle](../../tests/compact/nested-fixed-byte-record-values.mjs) · [Native replay](../../runtime/tests/nested_fixed_byte_record_values.rs)
 
 To reproduce the comparison, use Compact 0.36.1 (`COMPACTC_0361`) and Compact Runtime 0.21.0 (`COMPACT_RUNTIME_0210`). The runtime argument is the package directory containing `package.json`.
 
@@ -60,6 +60,8 @@ NOCTIUM_NESTED_FIXED_BYTE_RECORD_VALUES_COMPACT="$scratch/compact.json" \
   cargo test --manifest-path runtime/Cargo.toml --no-default-features \
   --features zkir-321 --test nested_fixed_byte_record_values -- --ignored
 ```
+
+The record-key case uses one Bytes32 parent and an inner key with Bytes1 and Bytes33 fields. Its value stores a Bytes1 label and Bytes33 digest. Compact and the native checker compare six exact readbacks across insertion, overwrite and removal, then check both surviving cells. The fixture rejects a wrong-width ID, a wrong-width digest and lookup of the removed key. To rerun, emit `NestedRecordKeyByteValues.lean` with the same target and run the Compact oracle. Pass the generated directory and oracle JSON to `nested_record_key_byte_values` through `NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_DIR` and `NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_COMPACT`. [Lean fixture](../../tests/NestedRecordKeyByteValues.lean) · [Compact oracle](../../tests/compact/nested-record-key-byte-values.mjs) · [Native replay](../../runtime/tests/nested_record_key_byte_values.rs)
 
 ## Qualification
 
