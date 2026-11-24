@@ -4945,8 +4945,13 @@ private def elaborateRecordMaybeReturn (contractName : String) (label : TSyntax 
     let nominalUIntTerm ← `({name := $name, maximum := $maximum : Noctium.NominalUIntType})
     let path := (#[(stringTerm "value")] ++ fieldPath.toArray.map stringTerm)
     `(Noctium.NominalUIntReturnField.mk [$path,*] $nominalUIntTerm)
-  let view ← `(Noctium.ReturnView.mk $(stringTerm labelName) $environmentTerm
-    $compositeType [$physicalNameTerms,*] [$nominalUIntFieldTerms,*])
+  let view ← `({
+    name := $(stringTerm labelName)
+    environment := $environmentTerm
+    type := $compositeType
+    fields := [$physicalNameTerms,*]
+    nominalUIntFields := [$nominalUIntFieldTerms,*]
+    : Noctium.ReturnView })
   pure {state with
     returns := state.returns ++ returnTerms
     returnViews := state.returnViews.push view
