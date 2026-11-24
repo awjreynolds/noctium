@@ -140,9 +140,13 @@ private def emittedGuardedImpactMatches : Except String _root_.Bool := do
     else Verification.NativeRelation.scalar 23
   let masked := Verification.GuardedImpactObservation.observeImpact
     (guard.read inactive) (operands.map (·.read inactive))
+  let payload := operands.map (·.read active)
   let observed := Verification.GuardedImpactObservation.observeImpact
-    (guard.read active) (operands.map (·.read active))
+    (guard.read active) payload
   let unusedHash : Verification.NativeRelation.Hash := fun _ => Verification.NativeRelation.zero
+  let suffix := [Verification.NativeRelation.scalar 99]
+  let stepObservation := fun (row : Option Verification.GuardedImpactObservation.Observation)
+      transcript => row >>= (Verification.GuardedImpactObservation.consume · transcript)
   let changed := replaceJsonField raw "guard" (toJson ("0x01" : String))
   return after.groupCount == before.groupCount + 1 &&
     guardTerm == .input "%input_enabled" &&
@@ -151,6 +155,10 @@ private def emittedGuardedImpactMatches : Except String _root_.Bool := do
     decide (Verification.GuardedImpactObservation.sourceObservation unusedHash inactive guardTerm group =
       masked ∧ Verification.GuardedImpactObservation.sourceObservation unusedHash active guardTerm group =
       observed ∧ masked = some ⟨Bool.false, List.replicate group.length Verification.NativeRelation.zero⟩ ∧
-      observed = some ⟨Bool.true, operands.map (·.read active)⟩)
+      observed = some ⟨Bool.true, payload⟩ ∧
+      stepObservation masked suffix = some suffix ∧
+      stepObservation observed (payload ++ suffix) = some suffix ∧
+      stepObservation observed payload.dropLast = none ∧
+      stepObservation observed (Verification.NativeRelation.zero :: payload.drop 1) = none)
 
 #guard emittedGuardedImpactMatches.toOption == some Bool.true

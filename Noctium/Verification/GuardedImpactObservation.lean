@@ -42,6 +42,34 @@ theorem observeImpact_rejects_nonboolean (guard : Scalar) (values : List Scalar)
     observeImpact guard values = none := by
   simp [observeImpact, notOne, notZero]
 
+/-- Check the next public transcript fields for an active group. A skipped
+group emits padding and leaves the transcript cursor unchanged. -/
+def consume (observation : Observation) (transcript : List Scalar) : Option (List Scalar) :=
+  if observation.active then
+    if transcript.take observation.payload.length = observation.payload then
+      some (transcript.drop observation.payload.length)
+    else none
+  else some transcript
+
+theorem consume_inactive (payload transcript : List Scalar) :
+    consume ⟨false, payload⟩ transcript = some transcript := rfl
+
+/-- An active group accepts exactly its ordered payload prefix. This excludes
+short transcripts and divergent fields at any position in the group. -/
+theorem consume_active_iff (payload transcript remaining : List Scalar) :
+    consume ⟨true, payload⟩ transcript = some remaining ↔
+      transcript = payload ++ remaining := by
+  constructor
+  · intro accepted
+    simp only [consume, ite_true] at accepted
+    split at accepted
+    next matched =>
+      have suffix := Option.some.inj accepted
+      rw [← matched, ← suffix, List.take_append_drop]
+    next rejected => contradiction
+  · rintro rfl
+    simp [consume]
+
 /-- A successful row observation preserves the input payload width. -/
 theorem observeImpact_preserves_width (guard : Scalar) (values : List Scalar)
     (observation : Observation)
@@ -110,5 +138,27 @@ theorem accepted_impact_observation
   · refine ⟨guardTerm, group, ⟨true, values.map (·.read witness)⟩,
       guardSelected, groupSelected, advanced, ?_, ?_, by simp [width]⟩
     all_goals simp [sourceExact, active, observeImpact_active]
+
+/-- Agreement with the accepted source group extends to the transcript check,
+including rejection and the remaining stream on success. -/
+theorem accepted_impact_transcript
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
+    (invariant : StateMeaning hash inputs witness state)
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decodedGuard : decodeOperandField raw "guard" = .ok guard)
+    (decodedPayload : (do decodeOperands (← raw.getObjVal? "inputs")) = .ok values) :
+    ∃ guardTerm group, sourceImpactGuard expected state = some guardTerm ∧
+      expected.groups[state.groupCount]? = some group ∧
+      ∀ transcript,
+        (sourceObservation hash inputs guardTerm group >>= (consume · transcript)) =
+          (observeImpact (guard.read witness) (values.map (·.read witness)) >>=
+            (consume · transcript)) := by
+  obtain ⟨guardTerm, group, _, guardSelected, groupSelected, _, source, emitted, _⟩ :=
+    accepted_impact_observation invariant accepted opcode decodedGuard decodedPayload
+  refine ⟨guardTerm, group, guardSelected, groupSelected, ?_⟩
+  intro transcript
+  rw [source, emitted]
 
 end Noctium.Verification.GuardedImpactObservation
