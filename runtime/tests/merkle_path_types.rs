@@ -143,8 +143,8 @@ fn path_entry(sibling: &str, direction: Json) -> Json {
 }
 
 fn path_payload(direction: Option<Json>, depth: usize) -> Json {
-    let siblings = ["17", "29"];
-    let directions = [json!(true), json!(false)];
+    let siblings = ["17", "29", "41"];
+    let directions = [json!(true), json!(false), json!(true)];
     let entries = (0..depth)
         .map(|index| {
             path_entry(
@@ -229,6 +229,38 @@ fn nested_merkle_path_preserves_entry_order_and_checks_provider_shape() -> anyho
     wrong_digest_id["fields"][1]["value"]["items"][0]["fields"][0]["value"]["id"] =
         json!("WrongMerkleDigest");
     reject_provider_payload(&control, wrong_digest_id);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh MerklePathRootNoLeafHash outputs in NOCTIUM_MERKLE_PATH_TYPES_DIR"]
+fn no_leaf_hash_root_matches_compact_at_depth_zero_and_three() -> anyhow::Result<()> {
+    let directory = artifacts();
+    for (depth, stem, path_id, expected) in [
+        (
+            0,
+            "MerklePathRootNoLeafHashZeroSource.digestZero",
+            "MerklePathRootNoLeafHashZero.Path",
+            "54980096196880238888162309298627284197919427551736292421657099673115230721",
+        ),
+        (
+            3,
+            "MerklePathRootNoLeafHashThreeSource.digestThree",
+            "MerklePathRootNoLeafHashThree.Path",
+            "16638844364555447002226514103550815772834617616994228403980866356241338707105",
+        ),
+    ] {
+        let control: Json = serde_json::from_reader(fs::File::open(
+            directory.join(format!("{stem}.witness.control.json")),
+        )?)?;
+        let mut payload = path_payload(None, depth);
+        payload["id"] = json!(path_id);
+        assert_eq!(
+            check_path_root(&directory, stem, &control, payload)?,
+            digest(expected),
+            "depth {depth}"
+        );
+    }
     Ok(())
 }
 

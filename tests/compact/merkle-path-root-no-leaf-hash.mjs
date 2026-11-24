@@ -37,11 +37,31 @@ try {
       { sibling: { field: 29n }, goes_left: false },
     ],
   };
+  const emptyPath = { leaf: path.leaf, path: [] };
+  const depthThreePath = {
+    leaf: path.leaf,
+    path: [
+      ...path.path,
+      { sibling: { field: 41n }, goes_left: true },
+    ],
+  };
   const expectedRoot = 23615363679718302500648733510038242834016166715802047945282536128750549339216n;
+  const expectedEmptyRoot = 54980096196880238888162309298627284197919427551736292421657099673115230721n;
+  const expectedDepthThreeRoot = 16638844364555447002226514103550815772834617616994228403980866356241338707105n;
   const digest = pureCircuits.digestFromPath(path);
+  const emptyDigest = pureCircuits.digestFromEmptyPath(emptyPath);
+  const depthThreeDigest = pureCircuits.digestFromDepthThreePath(depthThreePath);
   assert.deepEqual(digest, { field: expectedRoot });
+  assert.deepEqual(emptyDigest, { field: expectedEmptyRoot });
+  assert.deepEqual(depthThreeDigest, { field: expectedDepthThreeRoot });
   assert.equal(digest.field.toString(), expectedRoot.toString());
-  console.log(JSON.stringify({ digest: { field: digest.field.toString() } }, null, 2));
+  assert.equal(emptyDigest.field.toString(), expectedEmptyRoot.toString());
+  assert.equal(depthThreeDigest.field.toString(), expectedDepthThreeRoot.toString());
+  console.log(JSON.stringify({
+    depthTwo: { field: digest.field.toString() },
+    depthZero: { field: emptyDigest.field.toString() },
+    depthThree: { field: depthThreeDigest.field.toString() },
+  }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
