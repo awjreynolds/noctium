@@ -4793,16 +4793,19 @@ private def hasNominalFieldRootRecordMapKey (schema : List (String × StateKind)
   return rootRecordMap && keyHasNominalField &&
     hasCircuitNominalFieldReference state.nominalFieldBindings keyFields.raw
 
-private def hasNominalFieldRootRecordSetKey (schema : List (String × StateKind))
-    (state : EntryEffects) (storage : TSyntax `ident) (keyFields : TSyntax `nlleaves) : _root_.Bool := Id.run do
+private def hasNominalFieldRecordSetKey (schema : List (String × StateKind))
+    (state : EntryEffects) (storage : TSyntax `ident) (parent : Option (TSyntax `nlexpr))
+    (keyFields : TSyntax `nlleaves) : _root_.Bool := Id.run do
   let storageName := storage.getId.toString
-  let rootRecordSet := match schema.lookup storageName with
-    | some (.tree (.recordSet ..)) => _root_.Bool.true
-    | _ => _root_.Bool.false
+  let recordSet := match schema.lookup storageName, parent with
+    | some (.tree (.recordSet ..)), none => _root_.Bool.true
+    | some (.tree (.map _ (.recordSet ..))), some owner =>
+        !hasCircuitNominalFieldReference state.nominalFieldBindings owner.raw
+    | _, _ => _root_.Bool.false
   let keyHasNominalField :=
     ((state.recordKeyFieldTypes.lookup storageName).getD []).any fun (_, sourceType) =>
       sourceType.nominalField.isSome
-  return rootRecordSet && keyHasNominalField &&
+  return recordSet && keyHasNominalField &&
     hasCircuitNominalFieldReference state.nominalFieldBindings keyFields.raw
 
 private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKind))
@@ -4811,7 +4814,9 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
   let typedKey storage keyFields :=
     hasNominalFieldRootRecordMapKey schema state storage keyFields
   let typedRecordSetKey storage keyFields :=
-    hasNominalFieldRootRecordSetKey schema state storage keyFields
+    hasNominalFieldRecordSetKey schema state storage none keyFields
+  let typedNestedRecordSetKey storage owner keyFields :=
+    hasNominalFieldRecordSetKey schema state storage (some owner) keyFields
   match effect with
   | `(nleffect| write $_:ident := $_:nlexpr) => _root_.Bool.true
   | `(nleffect| when $condition:nlexpr write $_:ident := $value:nlexpr) =>
@@ -4844,6 +4849,18 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
   | `(nleffect| when $condition:nlexpr insert $storage:ident [ $keyFields:nlleaves ] := $_:nlexpr) =>
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         typedKey storage keyFields
+  | `(nleffect| insert $storage:ident [ $owner:nlexpr ] [ $keyFields:nlleaves ])
+  | `(nleffect| remove $storage:ident [ $owner:nlexpr ] [ $keyFields:nlleaves ])
+  | `(nleffect| member $storage:ident [ $owner:nlexpr ] [ $keyFields:nlleaves ] as $_:ident) =>
+      typedNestedRecordSetKey storage owner keyFields
+  | `(nleffect| when $condition:nlexpr insert $storage:ident [ $owner:nlexpr ]
+      [ $keyFields:nlleaves ])
+  | `(nleffect| when $condition:nlexpr remove $storage:ident [ $owner:nlexpr ]
+      [ $keyFields:nlleaves ])
+  | `(nleffect| when $condition:nlexpr member $storage:ident [ $owner:nlexpr ]
+      [ $keyFields:nlleaves ] as $_:ident) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        typedNestedRecordSetKey storage owner keyFields
   | `(nleffect| insert $storage:ident [ $keyFields:nlleaves ])
   | `(nleffect| remove $storage:ident [ $keyFields:nlleaves ]) =>
       typedRecordSetKey storage keyFields
@@ -6451,8 +6468,15 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         | `(nlstate| tree $id:ident : $key:nltype => Set struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId
-          let (environment, compositeType, environmentTerm, compositeTypeTerm) ←
-            elaborateNamedRecord contractName record recordFields state
+          let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
+            elaborateTypedLedgerRecord contractName record recordFields state
+              _root_.Bool.false _root_.Bool.true
+          if fieldTypes.any (fun (_, field) => field.contractRef.isSome) then
+            throwErrorAt state "typed contract reference fields are unsupported for this ledger layout"
+          if fieldTypes.any (fun (_, field) => field.nominalUInt.isSome) then
+            throwErrorAt state "nominal UInt record fields are unsupported for this ledger layout"
+          unless fieldTypes.isEmpty do
+            recordKeyFieldTypes := (id.getId.toString, fieldTypes) :: recordKeyFieldTypes
           let (valueSchema, valueTerm) ← nestedRecordSetSchema keyTy environment compositeType
             environmentTerm compositeTypeTerm state
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
