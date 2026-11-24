@@ -177,6 +177,18 @@ jobs:
           lake env lean tests/ByteAlignedUInt128Cell.lean
           lake build Noctium.Verification.UInt128ReadBound
           lake env lean tests/UInt128LedgerReadBound.lean
+          mkdir -p .lake/build/lib/lean/tests build/experiments
+          lake env lean -o .lake/build/lib/lean/tests/UInt128BoundProbe.olean tests/UInt128BoundProbe.lean
+          artifact_dir="$(mktemp -d build/experiments/uint128-ledger-read.XXXXXX)"
+          trap 'rm -rf "$artifact_dir"' EXIT
+          .lake/build/bin/noctium compile tests/UInt128BoundProbe.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json --emit ledger \
+            --output "$artifact_dir/strict"
+          .lake/build/bin/noctium compile tests/UInt128BoundProbe.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json --emit ledger \
+            --ledger-read-bound UInt128BoundProbe.readSupply --output "$artifact_dir/optimized"
+          NOCTIUM_UINT128_READ_BOUND_ARTIFACT_DIR="$artifact_dir" \
+            lake env lean tests/UInt128LedgerReadBoundArtifacts.lean
           lake env lean tests/CounterAmounts.lean
           lake env lean tests/CounterCompare.lean
           lake env lean tests/NativeSet.lean
