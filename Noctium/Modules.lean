@@ -1469,7 +1469,11 @@ private def resolveRecordCellReturn (expansion : Expansion) (moduleInstance : Mo
   let destinations := recordCellDestinations destination fields
   let read := Effect.readCompositePath fieldName destination [] type destinations
   let values := destinations.flatMap fun (name, ty) =>
-    (Expr.ref name : Expr ty).nativeCallFields
+    match ty with
+    | .bytes length =>
+      (List.range length).map fun index =>
+        Expr.cast .native (Expr.bytesAt (Expr.ref name : Expr (.bytes length)) index)
+    | _ => (Expr.ref name : Expr ty).nativeCallFields
   let outputs : List Output := values.zipIdx.map fun (value, index) =>
     {name := s!"moduleRecordReturn_{returned.name}_{index}", ty := .native,
       value, span := returned.span}

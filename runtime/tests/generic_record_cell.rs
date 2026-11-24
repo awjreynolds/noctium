@@ -35,15 +35,24 @@ fn run(
     Ok(execution)
 }
 
-fn update_inputs(enabled: bool, next_issued: &str, next_spent: &str) -> BTreeMap<String, Json> {
-    BTreeMap::from([
+fn update_inputs(
+    enabled: bool,
+    next_issued: &str,
+    next_spent: &str,
+    next_tag: [u8; 4],
+) -> BTreeMap<String, Json> {
+    let mut inputs = BTreeMap::from([
         ("enabled".into(), json!(enabled)),
         ("nextIssued".into(), json!(next_issued)),
         ("nextSpent".into(), json!(next_spent)),
-    ])
+    ]);
+    for (index, byte) in next_tag.into_iter().enumerate() {
+        inputs.insert(format!("nextTag.{index}"), json!(byte.to_string()));
+    }
+    inputs
 }
 
-fn assert_result(execution: &Execution, issued: &str, spent: &str) {
+fn assert_result(execution: &Execution, issued: &str, spent: &str, tag: [u8; 4]) {
     assert_eq!(
         execution.returns_json(),
         BTreeMap::from([(
@@ -53,7 +62,8 @@ fn assert_result(execution: &Execution, issued: &str, spent: &str) {
                 "id":"GenericRecordCell.Ledger",
                 "fields":[
                     {"name":"issued", "value":{"kind":"native", "value":issued}},
-                    {"name":"spent", "value":{"kind":"native", "value":spent}}
+                    {"name":"spent", "value":{"kind":"native", "value":spent}},
+                    {"name":"tag", "value":{"kind":"bytes", "values":tag}}
                 ]
             }),
         )])
@@ -72,27 +82,42 @@ fn generic_record_cell_constructor_and_guarded_write_round_trip() -> Result<()> 
     let constructor_inputs = BTreeMap::from([
         ("issued".into(), json!("5")),
         ("spent".into(), json!("42")),
+        (
+            "initialTag".into(),
+            json!({"kind":"bytes", "values":[1, 2, 3, 4]}),
+        ),
     ]);
     let no_inputs = BTreeMap::new();
     let initial = construct_state(&inspect.0, &constructor_inputs)?;
 
     let before = run(&inspect, &no_inputs, &initial)?;
-    assert_result(&before, "5", "42");
+    assert_result(&before, "5", "42", [1, 2, 3, 4]);
     assert_eq!(before.after.state, initial);
 
     let disabled = run(
         &update,
-        &update_inputs(false, "11", "13"),
+        &update_inputs(false, "11", "13", [9, 8, 7, 6]),
         &before.after.state,
     )?;
-    assert_result(&disabled, "5", "42");
+    assert_result(&disabled, "5", "42", [1, 2, 3, 4]);
     assert_eq!(disabled.after.state, before.after.state);
 
-    let changed = run(&update, &update_inputs(true, "8", "99"), &disabled.after.state)?;
-    assert_result(&changed, "8", "99");
+    let changed = run(
+        &update,
+        &update_inputs(true, "8", "99", [128, 0, 255, 42]),
+        &disabled.after.state,
+    )?;
+    assert_result(&changed, "8", "99", [128, 0, 255, 42]);
     let after_change = run(&inspect, &no_inputs, &changed.after.state)?;
-    assert_result(&after_change, "8", "99");
+    assert_result(&after_change, "8", "99", [128, 0, 255, 42]);
     assert_eq!(after_change.after.state, changed.after.state);
+
+    let mut wrong_width = constructor_inputs;
+    wrong_width.insert(
+        "initialTag".into(),
+        json!({"kind":"bytes", "values":[1, 2, 3]}),
+    );
+    assert!(construct_state(&inspect.0, &wrong_width).is_err());
 
     Ok(())
 }

@@ -4,6 +4,7 @@ import CompactStandardLibrary;
 struct Ledger {
   issued: Field;
   spent: Field;
+  tag: Bytes<4>;
 }
 
 module GenericCell<T> {
@@ -24,15 +25,24 @@ module GenericCell<T> {
 import GenericCell<Ledger> prefix cell_;
 export {cell_value};
 
-constructor() {
-  cell_value = disclose(Ledger { issued: 5 as Field, spent: 42 as Field });
+constructor(initialTag: Bytes<4>) {
+  cell_value = disclose(Ledger {
+    issued: 5 as Field,
+    spent: 42 as Field,
+    tag: disclose(initialTag),
+  });
 }
 
 export circuit inspect(): Ledger {
   return cell_inspect();
 }
 
-export circuit update(enabled: Boolean, nextIssued: Field, nextSpent: Field): Ledger {
-  const next = Ledger { issued: disclose(nextIssued), spent: disclose(nextSpent) };
+export circuit update(enabled: Boolean, nextIssued: Field, nextSpent: Field,
+                      nextTag: Bytes<4>): Ledger {
+  const next = Ledger {
+    issued: disclose(nextIssued),
+    spent: disclose(nextSpent),
+    tag: disclose(nextTag),
+  };
   return cell_update(disclose(enabled), next);
 }
