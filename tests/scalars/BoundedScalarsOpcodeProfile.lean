@@ -1,5 +1,6 @@
 import Lean
 import examples.BoundedScalars
+import Noctium.Verification.NativeRelationInstructionProjection
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationOpcodeProfile
@@ -18,26 +19,6 @@ open Noctium.Verification.ScalarValidationArithmeticLoop (NativeDefinitions)
 open Noctium.Verification.ScalarValidationMeaning (StateMeaning)
 open Noctium.Verification.ScalarValidationOpcodeProfile
 open Noctium.Verification.ScalarValidationNativeDefinitions
-
-private theorem bind_ok {α β : Type} {value : Except String α} {next : α → Except String β}
-    {result : β} : (value >>= next) = .ok result ↔
-      ∃ found, value = .ok found ∧ next found = .ok result := by
-  cases value <;> simp [Bind.bind, Except.bind]
-
-/-- Recover the actual instruction vector parsed by the checked relation
-decoder, without importing the broader unfinished scalar validator proof. -/
-private theorem decode_result {program : Json} {relation : Program}
-    (decoded : Noctium.Verification.NativeRelationJson.decode program = .ok relation) :
-    ∃ instructions : Array Json,
-      Noctium.Backend.Native.arrayField program "instructions" = .ok instructions ∧
-      instructions.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
-        .ok relation.instructions := by
-  unfold Noctium.Verification.NativeRelationJson.decode at decoded
-  simp only [bind_ok] at decoded
-  rcases decoded with ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
-    _, _, _, _, _, _, instructions, parsed, decodedInstructions, decodedParsed, result⟩
-  cases result
-  exact ⟨instructions, parsed, decodedParsed⟩
 
 private theorem zipIdx_values {α : Type} (items : List α) (offset : Nat) :
     (items.zipIdx offset).map Prod.fst = items := by
@@ -124,13 +105,19 @@ theorem boundedApply_nativeAdmission :
       Noctium.Backend.Native.validate expected emittedProgram = .ok () ∧
       Noctium.Backend.Native.arrayField emittedProgram "instructions" =
         .ok ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint selectedEntrypoint) plan).run {}).2.instructions :=
-  Zkir.lowerEntrypoint_validation_and_instructions BoundedScalars.state
-    selectedEntrypoint emittedProgram boundedApply_lowered
+  by
+    obtain ⟨plan, expected, _, impact, schedule, validated, parsed, emitted, _⟩ :=
+      Noctium.Verification.NativeRelationInstructionProjection.lowerEntrypoint_instructionProjection
+        BoundedScalars.state selectedEntrypoint emittedProgram decodedProgram
+        boundedApply_lowered boundedApply_decoded
+    exact ⟨plan, expected, impact, schedule, validated, emitted ▸ parsed⟩
 
 theorem boundedApply_instructionsDecode :
     (emittedItems.map Prod.fst).mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
       .ok decodedProgram.instructions := by
-  obtain ⟨instructions, parsed, decoded⟩ := decode_result boundedApply_decoded
+  obtain ⟨instructions, parsed, decoded⟩ :=
+    Noctium.Verification.NativeRelationInstructionProjection.decode_instructionProjection
+      boundedApply_decoded
   have same : instructions = emittedInstructions :=
     Except.ok.inj (parsed.symm.trans boundedApply_instructionsParsed)
   subst instructions
