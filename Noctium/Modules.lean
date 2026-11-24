@@ -1515,6 +1515,8 @@ private def resolveCellValueReturn (expansion : Expansion) (moduleInstance : Mod
   let (identity, fieldName, kind) ←
     resolveContractState expansion moduleInstance returned.span returned.state
   match kind with
+  | .cell .opaqueBytes | .cell .opaqueString =>
+    fail returned.span "opaque module Cell returns require opaqueCellHashReturns"
   | .cell ty => do
     let destination := s!"moduleCellValue_{returned.name}"
     let read := Effect.readCell fieldName destination ty

@@ -85,3 +85,23 @@ noctium_module_contract OpaqueModuleCells from opaqueModuleCellsRequest
     text.returns[0]?.map (·.ty) == some .native &&
     bytes.returns[0]?.map (·.ty) == some .native
   | _, _ => Bool.false
+
+private def opaqueDirectGetterRegistry : Registry := {
+  modules := [
+    {sourceName := `genericOpaqueCellModule, definition := {
+      genericOpaqueCellModule with
+      entrypoints := genericOpaqueCellModule.entrypoints.map fun operation =>
+        {operation with
+          opaqueCellHashReturns := []
+          cellReturns := [{name := "value", state := .localMember 0}]}
+    }},
+    {sourceName := `opaqueModuleCellsRoot, definition := opaqueModuleCellsRoot}
+  ]
+}
+
+#guard match Modules.expand opaqueDirectGetterRegistry `opaqueModuleCellsRoot [] with
+  | .ok expansion => ["hashString", "hashBytes"].all fun exported =>
+    match expansion.resolveEntrypoint expansion.root exported with
+    | .error diagnostic => diagnostic.message == "opaque module Cell returns require opaqueCellHashReturns"
+    | .ok _ => Bool.false
+  | .error _ => Bool.false

@@ -89,8 +89,9 @@ Pass a declared record as `.checkedTypeValue value environment` when selecting
 a generic module with `stateSchema? := some (.cell (.parameter "T"))`. Its
 reachable type declarations determine the checked ledger layout. Bind
 constructor inputs by field name with `recordFields`. Use `cellReturns` to
-infer the getter's scalar or record return type from the selected Cell. A
-guarded write requires disclosure for private values used as payload or guard.
+infer the getter's scalar or record return type from the selected Cell. Use
+`opaqueCellHashReturns` for opaque Cells. A guarded write requires disclosure
+for private values used as payload or guard.
 
 For a whole-record write, declare the helper input as `next : T` and use
 `.writeRecordCellInput target "next" (disclosed := Bool.true)`. The module
