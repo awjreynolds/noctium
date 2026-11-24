@@ -192,16 +192,16 @@ theorem boundedApply_nativeValidationTrace :
   exact ⟨plan, expected, rawInputs, seed, final, lowered, expectedParsed, validated,
     driverFacts, boundedApply_nativeDefinitionTrace⟩
 
-/-- The decoded input rows of the accepted fixture preserve the source
-schedule in order for the strict scalar input fragment. -/
-theorem boundedApply_decodedInputNames :
+/-- The decoded input rows of the accepted fixture preserve source visibility,
+names and order for the strict scalar input fragment. -/
+theorem boundedApply_decodedInputDescriptors :
     ∃ expected,
       Native.expectedEntrypoint BoundedScalars.state
         (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
       (expected.rawInputs = [] →
         (∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false) →
-        decodedProgram.instructions.flatMap strictInstructionInputNames =
-          expected.inputs.map expectedInputName) := by
+        decodedProgram.instructions.flatMap strictInstructionInputDescriptors =
+          expected.inputs.map expectedInputDescriptor) := by
   obtain ⟨_, expected, _, seed, _, _, source, _, driver, trace⟩ :=
     boundedApply_nativeValidationTrace
   refine ⟨expected, source, ?_⟩
@@ -210,10 +210,10 @@ theorem boundedApply_decodedInputNames :
     rw [driver.emptyRawSeed noRawInputs]
     intro name fact factMember
     simp at factMember
-  have names := validateInstructionLoop_input_names_of_trace
+  have descriptors := validateInstructionLoop_input_descriptors_of_trace
     inputSchema definitions trace driver.instructionTrace
-  rw [driver.inputCount, driver.seedInputCount] at names
-  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append] using names.symm
+  rw [driver.inputCount, driver.seedInputCount] at descriptors
+  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append] using descriptors.symm
 
 /-- Exact decoding of production `BoundedScalars.apply` preserves each ordered
 Impact group boundary and width from its actual Impact plan. This is the first
