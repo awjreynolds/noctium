@@ -2,6 +2,7 @@ import Lean
 import examples.BoundedScalars
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarValidationOpcodeProfile
+import Noctium.Verification.ScalarValidationProjection
 
 namespace BoundedScalarsOpcodeProfile
 
@@ -125,5 +126,27 @@ theorem boundedApply_nativeDefinitionTrace :
     NativeDefinitionTrace emittedItems decodedProgram.instructions :=
   NativeDefinitionTrace.ofDecodedCheckedProfile boundedApply_instructionsDecode
     boundedApply_checkedScalarOpcodeProfile
+
+/-- The closed profile trace is the indexed instruction vector consumed by the
+real `Native.validate` driver. The generic projection theorem supplies the
+producer fold and its final state from the validator's successful result. -/
+theorem boundedApply_nativeValidationTrace :
+    ∃ plan expected rawInputs seed final,
+      Impact.lower BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint) = .ok plan ∧
+      Noctium.Backend.Native.expectedEntrypoint BoundedScalars.state
+        (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
+      Noctium.Backend.Native.validate expected emittedProgram = .ok () ∧
+      Noctium.Verification.ScalarValidationProjection.NativeValidationDriverFacts
+        expected emittedProgram emittedInstructions rawInputs seed final ∧
+      NativeDefinitionTrace emittedItems decodedProgram.instructions := by
+  obtain ⟨plan, expected, lowered, expectedParsed, validated, _⟩ :=
+    boundedApply_nativeAdmission
+  obtain ⟨instructions, rawInputs, seed, final, driverFacts⟩ :=
+    Noctium.Verification.ScalarValidationProjection.validate_driver_result validated
+  have instructionsMatch : instructions = emittedInstructions :=
+    Except.ok.inj (driverFacts.instructionsParsed.symm.trans boundedApply_instructionsParsed)
+  subst instructions
+  exact ⟨plan, expected, rawInputs, seed, final, lowered, expectedParsed, validated,
+    driverFacts, boundedApply_nativeDefinitionTrace⟩
 
 end BoundedScalarsOpcodeProfile
