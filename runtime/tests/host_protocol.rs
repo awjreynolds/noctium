@@ -184,11 +184,20 @@ fn accepted(session: u64, attempt: char, transaction: char) -> Json {
     request
 }
 fn commit(session: u64, value: Json) -> Result<Json, i32> {
-    call(
+    commit_payload(
         session,
-        json!({"abiVersion":1,"requestId":3,"operation":"private_state.compare_exchange.v1","capability":"store","schema":"PrivateStateCasResult/v1","value":value}),
-        noctium_session_resume,
+        json!({
+            "abiVersion":1,
+            "requestId":3,
+            "operation":"private_state.compare_exchange.v1",
+            "capability":"store",
+            "schema":"PrivateStateCasResult/v1",
+            "value":value
+        }),
     )
+}
+fn commit_payload(session: u64, payload: Json) -> Result<Json, i32> {
+    call(session, payload, noctium_session_resume)
 }
 #[test]
 fn provider_capabilities_and_journals_follow_host_cas_lifecycle() {
@@ -233,23 +242,63 @@ fn provider_capabilities_and_journals_follow_host_cas_lifecycle() {
     assert_eq!(store.applies, 0);
     let journal = private(session, PRIVATE_REQUEST).unwrap()["journal"].clone();
     assert_eq!(journal["writes"]["claims/used"]["value"], "8675309");
-    for (base, revision) in [("wrong", "r1"), ("r0", "r0")] {
-        assert_eq!(
-            commit(
-                session,
-                json!({"outcome":"committed","baseRevision":base,"revision":revision,"attemptId":journal["attemptId"],"transactionId":journal["transactionId"],"journalDigest":journal["journalDigest"]})
-            ),
-            Err(INVALID_RESPONSE)
-        );
-    }
     let reply = store.cas(&journal);
     assert_eq!(commit(concurrent, reply.clone()), Err(INVALID_RESPONSE));
-    let mut wrong_digest = reply.clone();
-    wrong_digest["journalDigest"] = json!("0".repeat(64));
-    assert_eq!(commit(session, wrong_digest), Err(INVALID_RESPONSE));
-    let mut wrong_tx = reply.clone();
-    wrong_tx["transactionId"] = json!("c".repeat(64));
-    assert_eq!(commit(session, wrong_tx), Err(INVALID_RESPONSE));
+    // Each mismatch targets one correlation field. The same pending request
+    // remains available until the corrected response arrives.
+    let applies_before_mismatches = store.applies;
+    let correlation_fixture: Json = serde_json::from_str(include_str!(
+        "fixtures/host-cas-correlation.json"
+    ))
+    .unwrap();
+    let correlation_mismatches = correlation_fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| {
+            (
+                case["field"].as_str().unwrap(),
+                case["location"].as_str().unwrap(),
+                case["replacement"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (field, location, replacement) in correlation_mismatches {
+        let mut payload = json!({
+            "abiVersion":1,
+            "requestId":3,
+            "operation":"private_state.compare_exchange.v1",
+            "capability":"store",
+            "schema":"PrivateStateCasResult/v1",
+            "value":reply
+        });
+        if location == "envelope" {
+            payload[field] = replacement;
+        } else {
+            payload["value"][field] = replacement;
+        }
+        assert_eq!(
+            commit_payload(session, payload),
+            Err(INVALID_RESPONSE),
+            "{field}"
+        );
+        assert_eq!(
+            notice(session, 'a', 'b', "accepted").unwrap(),
+            pending,
+            "{field}"
+        );
+        assert_eq!(
+            private(session, PRIVATE_JOURNAL).unwrap()["journalDigest"],
+            journal["journalDigest"],
+            "{field}"
+        );
+        assert_eq!(store.applies, applies_before_mismatches, "{field}");
+    }
+    let mut same_base = reply.clone();
+    same_base["baseRevision"] = json!("r0");
+    same_base["revision"] = json!("r0");
+    assert_eq!(commit(session, same_base), Err(INVALID_RESPONSE));
+    assert_eq!(notice(session, 'a', 'b', "accepted").unwrap(), pending);
     let result = commit(session, reply).unwrap();
     assert_eq!(result["phase"], "committed");
     assert_eq!(store.applies, 1);
