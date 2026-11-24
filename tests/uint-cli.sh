@@ -41,12 +41,28 @@ fi
 grep -F 'unsigned width exceeds target maximum' "$scratch/error" > /dev/null
 test ! -e "$scratch/invalid-output"
 
-"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim"
-node --input-type=module - "$scratch/claim/PrivateClaim.claim.zkir" <<'JS'
-import {readFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
-import {deepStrictEqual} from 'node:assert/strict';
-deepStrictEqual(createHash('sha256').update(readFileSync(process.argv[2])).digest('hex'),
-  'c569dd887fdf6aa3bdd2c8e2358985657ad3612eb72e0eb16f28682bb2b2b81c');
-JS
+"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim-first"
+"$cli" compile examples/PrivateClaim.lean --output "$scratch/claim-second"
+diff -r "$scratch/claim-first" "$scratch/claim-second"
+node tests/private-claim-smoke.mjs "$scratch/claim-first"
+
+# The smoke boundary must reject genuine compiler output for another profile.
+"$cli" compile examples/PrivateClaim.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --output "$scratch/claim-wrong-profile"
+if node tests/private-claim-smoke.mjs "$scratch/claim-wrong-profile" > "$scratch/wrong-profile-error" 2>&1; then
+  echo 'PrivateClaim smoke accepted the wrong target profile' >&2
+  exit 1
+fi
+grep -F 'wrong target profile' "$scratch/wrong-profile-error" > /dev/null
+
+# Compile a real PrivateClaim source variant with a different entrypoint name.
+sed 's/entry claim uses/entry verify uses/' examples/PrivateClaim.lean > "$scratch/wrong-operation.lean"
+"$cli" compile "$scratch/wrong-operation.lean" --output "$scratch/claim-wrong-operation"
+if node tests/private-claim-smoke.mjs "$scratch/claim-wrong-operation" > "$scratch/wrong-operation-error" 2>&1; then
+  echo 'PrivateClaim smoke accepted the wrong entrypoint' >&2
+  exit 1
+fi
+grep -F 'wrong operation' "$scratch/wrong-operation-error" > /dev/null
+
 echo 'Unsigned CLI conformance passed'
