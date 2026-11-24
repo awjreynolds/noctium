@@ -7,6 +7,13 @@ module GenericCell<T> {
   export circuit read(): T {
     return value;
   }
+
+  export circuit update(enabled: Boolean, next: T): T {
+    if (disclose(enabled)) {
+      value = disclose(next);
+    }
+    return value;
+  }
 }
 
 import GenericCell<Field> prefix fieldCell_;
@@ -14,7 +21,8 @@ import GenericCell<Boolean> prefix flagCell_;
 import GenericCell<Uint<16>> prefix countCell_;
 
 export {fieldCell_value, flagCell_value, countCell_value,
-        fieldCell_read, flagCell_read, countCell_read};
+        fieldCell_read, flagCell_read, countCell_read,
+        fieldCell_update, flagCell_update, countCell_update};
 
 constructor(initialField: Field, initialFlag: Boolean, initialCount: Uint<16>) {
   fieldCell_value = disclose(initialField);
@@ -32,4 +40,16 @@ export circuit readFlag(): Boolean {
 
 export circuit readCount(): Uint<16> {
   return countCell_read();
+}
+
+export circuit updateField(enabled: Boolean, next: Field): Field {
+  return fieldCell_update(disclose(enabled), disclose(next));
+}
+
+export circuit updateFlag(enabled: Boolean, next: Boolean): Boolean {
+  return flagCell_update(disclose(enabled), disclose(next));
+}
+
+export circuit updateCount(enabled: Boolean, next: Uint<16>): Uint<16> {
+  return countCell_update(disclose(enabled), disclose(next));
 }
