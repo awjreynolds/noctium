@@ -295,6 +295,58 @@ theorem bounded_relation_accepts (input : Inputs) (outputs : EvalEnv)
     exact (Except.ok.inj run).symm
   exact ⟨exactSum, exactOutput⟩
 
+theorem bounded_relation_runs (input : Inputs) (sumCorrect : input.expected = input.left + input.right)
+    (hleft : input.left ≤ 255) (hright : input.right ≤ 255) :
+    Circuit.run context boundedRelation (inputEnvironment input) =
+      .ok [("result", .uint 510 input.expected)] := by
+  have expectedBound : input.expected ≤ 510 := by
+    rw [sumCorrect]
+    calc
+      input.left + input.right ≤ 255 + 255 := Nat.add_le_add hleft hright
+      _ = 510 := by decide
+  have expectedField : input.expected < Field.modulus := Nat.lt_of_le_of_lt expectedBound (by decide)
+  have leftField : input.left < Field.modulus := Nat.lt_of_le_of_lt hleft (by decide)
+  have rightField : input.right < Field.modulus := Nat.lt_of_le_of_lt hright (by decide)
+  have expectedEval := expected_expression_eval input expectedBound
+  have sumEval := sum_expression_eval input hleft hright
+  have firstEval : (sumExpression.eq sumExpression).eval context (inputEnvironment input) =
+      .ok _root_.Bool.true := by
+    simp only [sumExpression, Expr.eval, sumEval, Except.bind, Bind.bind]
+    change (Except.ok (input.left + input.right == input.left + input.right) : Except String _root_.Bool) =
+      Except.ok _root_.Bool.true
+    simp
+  have secondEval : (sumExpression.eq (Expr.ref "expected")).eval context (inputEnvironment input) =
+      .ok (input.left + input.right == input.expected) := by
+    simp only [sumExpression, Expr.eval, sumEval, expectedEval, Except.bind, Bind.bind]
+    rfl
+  have constraintsAccepted : runConstraints context (inputEnvironment input)
+      relationConstraints = .ok () := by
+    simp [relationConstraints, runConstraints, firstEval, secondEval, sumCorrect]
+  have sourceConstraintsAccepted :
+      runConstraints
+        { modulus := Field.modulus, poseidon2 := fun _ _ _ => .error "unused" }
+        [("expected", .uint 510 input.expected), ("left", .uint 255 input.left),
+         ("right", .uint 255 input.right)]
+        [((Expr.ref "left" : Expr (.uint 255)).uadd (Expr.ref "right" : Expr (.uint 255))).eq
+            ((Expr.ref "left" : Expr (.uint 255)).uadd (Expr.ref "right" : Expr (.uint 255))),
+         ((Expr.ref "left" : Expr (.uint 255)).uadd (Expr.ref "right" : Expr (.uint 255))).eq
+            (Expr.ref "expected" : Expr (.uint 510))] = .ok () := by
+    simpa [context, inputEnvironment, relationConstraints, sumExpression] using constraintsAccepted
+  have expectedEvalSource :
+      Expr.eval { modulus := Field.modulus, poseidon2 := fun _ _ _ => .error "unused" }
+        [("expected", .uint 510 input.expected), ("left", .uint 255 input.left),
+         ("right", .uint 255 input.right)] (Expr.ref "expected" : Expr (.uint 510)) =
+          .ok input.expected := by
+    simpa [context, inputEnvironment] using expectedEval
+  have namesUnique : uniqueNames ["expected", "left", "right"] = _root_.Bool.true := by decide
+  unfold Circuit.run
+  rw [relation_validates]
+  simp [context, boundedRelation, namesUnique,
+    List.lookup, Value.as, canonical_eq, ScalarPolicy.maxUint, ScalarPolicy.maxBits,
+    inputEnvironment, sourceConstraintsAccepted, expectedEvalSource, Value.pack,
+    expectedBound, hleft, hright, expectedField, leftField, rightField]
+  rfl
+
 theorem bounded_relation_private_outputs (left right : Inputs) (leftOutputs rightOutputs : EvalEnv)
     (samePublic : left.expected = right.expected)
     (leftExpectedBound : left.expected ≤ 510) (rightExpectedBound : right.expected ≤ 510)
@@ -351,6 +403,100 @@ theorem successful_apply_private_observation (left right : Inputs) (total : Nat)
   have rightResult := successful_apply_run_from_acceptance right total rightOutputs rightAfter
     totalBound rightExpectedBound rightBound rightRightBound rightRun
   rw [leftResult.2.2.1, leftResult.2.2.2, rightResult.2.2.1, rightResult.2.2.2, samePublic]
+
+theorem apply_effects_run (input : Inputs) (expectedBound : input.expected ≤ 510) :
+    runEffectsWithGuardsAndEnv context applyEntry.effects applyEntry.effectGuards
+      ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input) (state 0) =
+    .ok (("old", .uint 510 0) :: ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input),
+      state input.expected) := by
+  rw [apply_effects_shape, apply_guards_shape]
+  change runEffectsWithEnv context applyEffects
+      ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input) (state 0) = _
+  rw [SourceEffects.runEffectsWithEnv_eq_fold, applyEffects]
+  let initialEnv := [("result", .uint 510 input.expected)] ++ inputEnvironment input
+  let readEnv := ("old", .uint 510 0) :: initialEnv
+  have readStep : SourceEffects.step context (.readCell "total" "old" (.uint 510))
+      (initialEnv, state 0) = .ok (readEnv, state 0) := by
+    simp [readEnv, initialEnv, SourceEffects.step, runEffectWithEnv, state,
+      canonical_eq, context, ScalarPolicy.maxUint, ScalarPolicy.maxBits,
+      Field.modulus, Value.as, Value.pack, pure, Except.pure]
+  have resultLookup : readEnv.lookup "result" = some (.uint 510 input.expected) := by
+    simp [readEnv, initialEnv, inputEnvironment, List.lookup]
+  have resultEval : (Expr.ref "result" : Expr (.uint 510)).eval context readEnv =
+      .ok input.expected := by
+    rw [Expr.eval, resultLookup]
+    have expectedField : input.expected < Field.modulus :=
+      Nat.lt_of_le_of_lt expectedBound (by decide)
+    simp [Value.as, canonical_eq, context, ScalarPolicy.maxUint,
+      ScalarPolicy.maxBits, expectedBound, expectedField, pure, Except.pure]
+  have castEval : (Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eval
+      context readEnv = .ok 0 := by
+    with_unfolding_all rfl
+  have conditionEval :
+      ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)).eval
+        context readEnv = .ok _root_.Bool.true := by
+    simp only [Expr.eval, castEval]
+    rfl
+  have requireStep : SourceEffects.step context
+      (.require ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)))
+      (readEnv, state 0) = .ok (readEnv, state 0) := by
+    simp [SourceEffects.step, runEffectWithEnv, conditionEval, Except.bind, Bind.bind,
+      pure, Except.pure]
+  have writeStep : SourceEffects.step context
+      (.writeCell "total" (.uint 510) (Expr.ref "result"))
+      (readEnv, state 0) = .ok (readEnv, state input.expected) := by
+    simp [SourceEffects.step, runEffectWithEnv, resultEval, state, updateAssoc,
+      Value.pack, Value.as, pure, Except.pure, Except.bind, Bind.bind]
+  change SourceEffects.fold context
+    [.readCell "total" "old" (.uint 510),
+     .require ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)),
+     .writeCell "total" (.uint 510) (Expr.ref "result")]
+    (initialEnv, state 0) = _
+  rw [SourceEffects.fold_cons, readStep, Except.bind,
+    SourceEffects.fold_cons, requireStep, Except.bind,
+    SourceEffects.fold_cons, writeStep, Except.bind, SourceEffects.fold_nil]
+
+theorem apply_runs_when_enabled (input : Inputs)
+    (sumCorrect : input.expected = input.left + input.right)
+    (hleft : input.left ≤ 255) (hright : input.right ≤ 255) :
+    applyEntry.run context (inputEnvironment input) (state 0) =
+      .ok ([ ("result", .uint 510 input.expected) ], state input.expected) := by
+  have expectedBound : input.expected ≤ 510 := by
+    rw [sumCorrect]
+    calc
+      input.left + input.right ≤ 255 + 255 := Nat.add_le_add hleft hright
+      _ = 510 := by decide
+  have circuitSuccess := bounded_relation_runs input sumCorrect hleft hright
+  have effectsSuccess := apply_effects_run input expectedBound
+  have entryCircuit : applyEntry.circuit.run context (inputEnvironment input) =
+      .ok [("result", .uint 510 input.expected)] := by
+    simpa [applyEntry, BoundedScalars] using circuitSuccess
+  have effectsSuccess' : runEffectsWithGuardsAndEnv context applyEntry.effects applyEntry.effectGuards
+      ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input)
+      { cells := [("total", .uint 510 0)] } =
+      .ok (("old", .uint 510 0) :: ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input),
+        state input.expected) := by
+    simpa [state] using effectsSuccess
+  unfold Entrypoint.run
+  rw [apply_disclosure]
+  rw [entryCircuit]
+  simp only [Except.bind, Bind.bind]
+  simp only [state]
+  rw [effectsSuccess']
+  simp [applyEntry, BoundedScalars, state, pure, Except.pure]
+
+theorem apply_success_iff (input : Inputs) (total : Nat) (outputs : EvalEnv)
+    (after : LedgerState) (totalBound : total ≤ 510) (expectedBound : input.expected ≤ 510)
+    (leftBound : input.left ≤ 255) (rightBound : input.right ≤ 255) :
+    applyEntry.run context (inputEnvironment input) (state total) = .ok (outputs, after) ↔
+      input.expected = input.left + input.right ∧ total = 0 ∧
+        outputs = [("result", .uint 510 input.expected)] ∧ after = state input.expected := by
+  constructor
+  · exact successful_apply_run_from_acceptance input total outputs after totalBound
+      expectedBound leftBound rightBound
+  · rintro ⟨sumCorrect, totalZero, outputEq, stateEq⟩
+    rw [totalZero, outputEq, stateEq]
+    exact apply_runs_when_enabled input sumCorrect leftBound rightBound
 
 theorem sample_circuit_run :
     Circuit.run context boundedRelation (inputEnvironment ⟨5, 2, 3⟩) =
