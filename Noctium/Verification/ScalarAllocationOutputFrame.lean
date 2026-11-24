@@ -109,13 +109,40 @@ theorem coldTwoLimbHash_has_producerCapacity {program : Lean.Json}
       _ = .ok hashState.instructions := actualInstructions
   simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
 
+/-- A composed lowering frame connects a supported actual lowering run to the
+producer's validated output-slot budget. Callers must supply the frame for the
+specific lowering path they proved. -/
+theorem lowerCircuit_output_budget_of_frame (circuit : Circuit) {program : Lean.Json}
+    (produced : Zkir.lowerCircuit circuit = .ok program)
+    (frame : Zkir.OutputCapacityFrame {} ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2) :
+    ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next ≤
+      Native.maxInstructions * Native.maxVectorLength := by
+  obtain ⟨expected, _, producerAccepted⟩ :=
+    Zkir.lowerCircuit_validated circuit program produced
+  obtain ⟨instructions, parsed, capacity⟩ :=
+    Native.validate_output_definitions_by_instruction_count producerAccepted
+  have actualInstructions : Native.arrayField program "instructions" =
+      .ok ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions :=
+    Zkir.lowerCircuit_instructions circuit program produced
+  have instructionsEqual : instructions =
+      ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions := by
+    apply Except.ok.inj
+    calc
+      .ok instructions = Native.arrayField program "instructions" := parsed.symm
+      _ = .ok ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions :=
+        actualInstructions
+  have outputCapacity :
+      ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.outputDefinitions ≤
+        Native.maxInstructions * Native.maxVectorLength := by
+    simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
+  exact Zkir.OutputCapacityFrame.next_le_producerCapacity frame outputCapacity
+
 theorem coldTwoLimbHash_names_fit_producerCapacity :
     ∀ {program : Lean.Json}, Zkir.lowerCircuit hashCircuit = .ok program →
       hashState.next ≤ Native.maxInstructions * Native.maxVectorLength := by
   intro program produced
-  exact Zkir.OutputCapacityFrame.next_le_producerCapacity
+  exact lowerCircuit_output_budget_of_frame hashCircuit produced
     coldTwoLimbHash_has_actual_output_capacity_frame
-    (coldTwoLimbHash_has_producerCapacity produced)
 
 #guard accepted (Zkir.lowerCircuit packedInputHashCircuit)
 
@@ -141,8 +168,7 @@ theorem packedInputHash_names_fit_producerCapacity :
     ∀ {program : Lean.Json}, Zkir.lowerCircuit packedInputHashCircuit = .ok program →
       packedInputHashState.next ≤ Native.maxInstructions * Native.maxVectorLength := by
   intro program produced
-  exact Zkir.OutputCapacityFrame.next_le_producerCapacity
+  exact lowerCircuit_output_budget_of_frame packedInputHashCircuit produced
     packedInputHash_has_actual_output_capacity_frame
-    (packedInputHash_has_producerCapacity produced)
 
 end Noctium.Verification.ScalarAllocationOutputFrame
