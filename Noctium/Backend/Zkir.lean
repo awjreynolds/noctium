@@ -1470,18 +1470,25 @@ private def byteChunks (length : Nat) (bytes : ByteOperands) : LowerM (List Stri
     (List.range (Noctium.bytesChunkCount length)).mapM fun index =>
       packBytes ((bytes.values.drop (index * 31)).take 31)
 
-private theorem listMapM_preservesOutputCapacityFrame (items : List α)
-    (operation : α → LowerM β) (preserves : ∀ item, PreservesOutputCapacityFrame (operation item)) :
+private theorem listMapM_preservesOutputCapacityFrame_of_mem (items : List α)
+    (operation : α → LowerM β)
+    (preserves : ∀ item ∈ items, PreservesOutputCapacityFrame (operation item)) :
     PreservesOutputCapacityFrame (items.mapM operation) := by
   induction items with
   | nil => exact pure_preservesOutputCapacityFrame []
   | cons item rest ih =>
     simp only [List.mapM_cons]
-    apply bind_preservesOutputCapacityFrame _ _ (preserves item)
+    apply bind_preservesOutputCapacityFrame _ _ (preserves item (by simp))
     intro output
-    apply bind_preservesOutputCapacityFrame _ _ ih
+    apply bind_preservesOutputCapacityFrame _ _
+      (ih (fun value member => preserves value (List.mem_cons_of_mem _ member)))
     intro outputs
     exact pure_preservesOutputCapacityFrame (output :: outputs)
+
+private theorem listMapM_preservesOutputCapacityFrame (items : List α)
+    (operation : α → LowerM β) (preserves : ∀ item, PreservesOutputCapacityFrame (operation item)) :
+    PreservesOutputCapacityFrame (items.mapM operation) :=
+  listMapM_preservesOutputCapacityFrame_of_mem items operation (fun item _ => preserves item)
 
 private theorem packBytesRecAux_preservesOutputCapacityFrame (zeroCount : Nat)
     (bytes : List String) :
@@ -3316,17 +3323,20 @@ private def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
   lowerConstraints read.inactiveDefaultConstraints
 
 private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read)
-    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    (guards : ∀ scalarRead ∈ read.scalarReads, ∀ guard,
+      scalarRead.guard = some guard → PreservesOutputCapacityFrame (lowerExpr guard))
+    (defaults : ∀ condition ∈ read.inactiveDefaultConstraints,
+      PreservesOutputCapacityFrame (lowerExpr condition)) :
     PreservesOutputCapacityFrame (lowerLedgerRead read) := by
   unfold lowerLedgerRead
   apply bind_preservesOutputCapacityFrame
-  · apply forIn_preservesOutputCapacityFrame
-    intro scalarRead _
+  · apply forIn_preservesOutputCapacityFrame_of_mem
+    intro scalarRead member _
     apply bind_preservesOutputCapacityFrame
-    · cases scalarRead.guard with
+    · cases selected : scalarRead.guard with
       | none => exact pure_preservesOutputCapacityFrame _
       | some guard =>
-        apply bind_preservesOutputCapacityFrame _ _ (expression guard)
+        apply bind_preservesOutputCapacityFrame _ _ (guards scalarRead member guard selected)
         intro _
         exact pure_preservesOutputCapacityFrame _
     · intro activity
@@ -3360,22 +3370,47 @@ private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read
             · apply listMapM_preservesOutputCapacityFrame
               intro binding
               obtain ⟨name, ty⟩ := binding
-              cases scalarRead.guard <;> cases ty <;>
-                first | exact expression _ | exact pure_preservesOutputCapacityFrame _
+              cases selected : scalarRead.guard <;> cases ty <;>
+                try exact pure_preservesOutputCapacityFrame _
+              rename_i guard maximum
+              apply lowerExpr_select_preservesOutputCapacityFrame
+              · exact guards scalarRead member guard selected
+              · simp only [lowerExpr]
+                apply bind_preservesOutputCapacityFrame (get : LowerM LowerState) _
+                  (fun state => OutputCapacityFrame.refl state)
+                intro _
+                exact pure_preservesOutputCapacityFrame _
+              · simpa only [lowerExpr] using pure_preservesOutputCapacityFrame (fieldImmediate 0)
             · intro values
               exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
           · exact pure_preservesOutputCapacityFrame _
         · intro _
           split
           · apply bind_preservesOutputCapacityFrame
-            · cases scalarRead.guard with
+            · cases selected : scalarRead.guard with
               | none => exact pure_preservesOutputCapacityFrame _
-              | some guard => exact expression _
+              | some guard =>
+                apply lowerExpr_select_preservesOutputCapacityFrame
+                · exact guards scalarRead member guard selected
+                · simp only [lowerExpr]
+                  apply bind_preservesOutputCapacityFrame (get : LowerM LowerState) _
+                    (fun state => OutputCapacityFrame.refl state)
+                  intro _
+                  exact pure_preservesOutputCapacityFrame _
+                · simpa only [lowerExpr] using pure_preservesOutputCapacityFrame (fieldImmediate 0)
             · intro x
               apply bind_preservesOutputCapacityFrame
-              · cases scalarRead.guard with
+              · cases selected : scalarRead.guard with
                 | none => exact pure_preservesOutputCapacityFrame _
-                | some guard => exact expression _
+                | some guard =>
+                  apply lowerExpr_select_preservesOutputCapacityFrame
+                  · exact guards scalarRead member guard selected
+                  · simp only [lowerExpr]
+                    apply bind_preservesOutputCapacityFrame (get : LowerM LowerState) _
+                      (fun state => OutputCapacityFrame.refl state)
+                    intro _
+                    exact pure_preservesOutputCapacityFrame _
+                  · simpa only [lowerExpr] using pure_preservesOutputCapacityFrame (fieldImmediate 1)
               · intro y
                 apply bind_preservesOutputCapacityFrame _ _
                   (lowerPointFromCoordinates_preservesOutputCapacityFrame x y)
@@ -3386,7 +3421,7 @@ private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read
                   exact pure_preservesOutputCapacityFrame _
           · exact pure_preservesOutputCapacityFrame _
   · intro _
-    exact lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value)
+    exact lowerConstraints_preservesOutputCapacityFrame _ defaults
 
 private def lowerLedgerReads (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
   -- Public call parameters have already been read in declaration order.
@@ -3396,13 +3431,17 @@ private def lowerLedgerReads (entry : Entrypoint) (plan : Impact.Plan) : LowerM 
 
 private theorem lowerLedgerReads_preservesOutputCapacityFrame (entry : Entrypoint)
     (plan : Impact.Plan)
-    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    (guards : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      ∀ scalarRead ∈ read.scalarReads, ∀ guard, scalarRead.guard = some guard →
+        PreservesOutputCapacityFrame (lowerExpr guard))
+    (defaults : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      ∀ condition ∈ read.inactiveDefaultConstraints, PreservesOutputCapacityFrame (lowerExpr condition)) :
     PreservesOutputCapacityFrame (lowerLedgerReads entry plan) := by
   unfold lowerLedgerReads
-  apply forIn_preservesOutputCapacityFrame
-  intro read _
+  apply forIn_preservesOutputCapacityFrame_of_mem
+  intro read member _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerLedgerRead_preservesOutputCapacityFrame read expression)
+    (lowerLedgerRead_preservesOutputCapacityFrame read (guards read member) (defaults read member))
   intro _
   exact pure_preservesOutputCapacityFrame _
 
@@ -3415,21 +3454,25 @@ private def lowerLedgerOperations (plan : Impact.Plan) : LowerM Unit := do
       bindPublicGuarded guard (← fields.mapM lowerExpr)
 
 private theorem lowerLedgerOperations_preservesOutputCapacityFrame (plan : Impact.Plan)
-    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    (fieldsFrame : ∀ item ∈ plan.operations.zipIdx, ∀ fields ∈ item.1.fieldGroups,
+      ∀ field ∈ fields, PreservesOutputCapacityFrame (lowerExpr field))
+    (guardsFrame : ∀ item ∈ plan.operations.zipIdx, PreservesOutputCapacityFrame
+      (lowerExpr (((plan.activityGuards[item.2]?).getD none).getD (.bool true)))) :
     PreservesOutputCapacityFrame (lowerLedgerOperations plan) := by
   unfold lowerLedgerOperations
-  apply forIn_preservesOutputCapacityFrame
-  intro operationIndex _
+  apply forIn_preservesOutputCapacityFrame_of_mem
+  intro operationIndex member _
   obtain ⟨operation, index⟩ := operationIndex
   apply bind_preservesOutputCapacityFrame
-  · apply forIn_preservesOutputCapacityFrame
-    intro fields _
+  · apply forIn_preservesOutputCapacityFrame_of_mem
+    intro fields group _
     apply bind_preservesOutputCapacityFrame
-    · exact listMapM_preservesOutputCapacityFrame fields lowerExpr expression
+    · exact listMapM_preservesOutputCapacityFrame_of_mem fields lowerExpr
+        (fieldsFrame (operation, index) member fields group)
     · intro values
       apply bind_preservesOutputCapacityFrame
       · unfold bindPublicGuarded
-        apply bind_preservesOutputCapacityFrame _ _ (expression _)
+        apply bind_preservesOutputCapacityFrame _ _ (guardsFrame (operation, index) member)
         intro _
         exact emit_preservesOutputCapacityFrame _ _
       · intro _
@@ -3448,32 +3491,46 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
   let returned ← lowerReturnFields entry.returns
   emit "output" [("vals", toJson returned)]
 
-/-- Compose allocation across the actual stages of an entrypoint. The source
-expression, alias lowering and return preflight frames are explicit premises. -/
+/-- Compose allocation across the actual stages of an entrypoint, requiring
+expression frames only at positions lowered by this source entry and plan. -/
 theorem lowerEntrypointBody_preservesOutputCapacityFrame (entry : Entrypoint) (plan : Impact.Plan)
-    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value))
+    (constraints : ∀ condition ∈ entry.circuit.constraints,
+      PreservesOutputCapacityFrame (lowerExpr condition))
     (aliases : PreservesOutputCapacityFrame (lowerEntrypointAliases entry))
-    (preflight : ∀ output ∈ entry.returns, PreservesOutputCapacityFrame (lowerReturnPreflight output)) :
+    (readGuards : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      ∀ scalarRead ∈ read.scalarReads, ∀ guard, scalarRead.guard = some guard →
+        PreservesOutputCapacityFrame (lowerExpr guard))
+    (readDefaults : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      ∀ condition ∈ read.inactiveDefaultConstraints, PreservesOutputCapacityFrame (lowerExpr condition))
+    (planGuards : ∀ condition ∈ plan.guards, PreservesOutputCapacityFrame (lowerExpr condition))
+    (operationFields : ∀ item ∈ plan.operations.zipIdx, ∀ group ∈ item.1.fieldGroups,
+      ∀ field ∈ group, PreservesOutputCapacityFrame (lowerExpr field))
+    (operationGuards : ∀ item ∈ plan.operations.zipIdx, PreservesOutputCapacityFrame
+      (lowerExpr (((plan.activityGuards[item.2]?).getD none).getD (.bool true))))
+    (preflight : ∀ output ∈ entry.returns, PreservesOutputCapacityFrame (lowerReturnPreflight output))
+    (returns : ∀ output ∈ entry.returns, ∀ projections,
+      output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
+        PreservesOutputCapacityFrame (lowerExpr field)) :
     PreservesOutputCapacityFrame (lowerEntrypointBody entry plan) := by
   unfold lowerEntrypointBody
   apply bind_preservesOutputCapacityFrame _ _ (lowerEntrypointInputs_preservesOutputCapacityFrame entry)
   intro _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value))
+    (lowerConstraints_preservesOutputCapacityFrame _ constraints)
   intro _
   apply bind_preservesOutputCapacityFrame _ _ aliases
   intro _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerLedgerReads_preservesOutputCapacityFrame entry plan expression)
+    (lowerLedgerReads_preservesOutputCapacityFrame entry plan readGuards readDefaults)
   intro _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value))
+    (lowerConstraints_preservesOutputCapacityFrame _ planGuards)
   intro _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerLedgerOperations_preservesOutputCapacityFrame plan expression)
+    (lowerLedgerOperations_preservesOutputCapacityFrame plan operationFields operationGuards)
   intro _
   apply bind_preservesOutputCapacityFrame _ _
-    (lowerReturnFields_preservesOutputCapacityFrame _ preflight (fun _ _ _ _ value _ => expression value))
+    (lowerReturnFields_preservesOutputCapacityFrame _ preflight returns)
   intro _
   exact emit_preservesOutputCapacityFrame _ _
 
