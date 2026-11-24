@@ -24,6 +24,7 @@ private partial def wireLeaves : Types.Layout → Except String (List Leaf)
   | .scalar .nativeField => pure [{type := .native}]
   | .scalar .booleanField => pure [{type := .bool}]
   | .scalar (.boundedUnsignedField maximum) => pure [{type := .uint maximum}]
+  | .opaque _ => throw "opaque Compress leaves are not supported by reversible wire codecs"
   | .curve type => pure [{type}]
   | .tuple items => do
     pure (← items.zipIdx.mapM fun (item, index) =>
@@ -47,6 +48,8 @@ def fabDigestOperands (compiled : Types.CompiledType) (value : Term) :
     Except String (List (Ty × Term)) := do
   let layout := compiled.checked.value
   let fields ← fabHashLayoutFields layout
+  if fields.any fun field => match field.2 with | .opaque _ => true | _ => false then
+    throw "opaque Compress leaves are not supported by generic FAB digest operands"
   let atoms ← fields.mapM fun field => fabHashLayoutAtoms field.2
   let emptyRootVector := match layout with
     | .vector 0 _ => true
@@ -79,6 +82,7 @@ where
       | .curve ty => pure [(ty, value)]
       | .enumeration _ (.enumTagField maximum) _ 0 _ _ =>
         pure [(.uint maximum, .cast (.uint maximum) (.project value .enumTag))]
+      | .opaque _ => throw "opaque Compress leaves are not supported by generic FAB digest operands"
       | _ => throw "unsupported FAB digest leaf type"
 
 /-- Pack checked byte projections in the pinned little-endian FAB field order. -/
@@ -92,6 +96,8 @@ def transientHashOperands (compiled : Types.CompiledType) (value : Term) :
     Except String (List Term) := do
   let layout := compiled.checked.value
   let fields ← transientFabHashLayoutFields layout
+  if fields.any fun field => match field.2 with | .opaque _ => true | _ => false then
+    throw "opaque Compress leaves are not supported by numeric transient hashing"
   unless fabHashEncodedFieldCount fields ≤ Types.defaultLimits.maxVectorLength do
     throw "transientHashValue exceeds the native transient hash field limit"
   visit (compiled.checked.layoutNodes + 1) value layout
@@ -139,6 +145,7 @@ where
       | .curve (.foreign kind) =>
         pure ((List.range kind.encodedFieldCount).map fun index =>
           .curve (.foreignEncodedField kind index) [value])
+      | .opaque _ => throw "opaque Compress leaves are not supported by numeric transient hashing"
       | _ => throw "unsupported transientHashValue leaf type"
 
 private instance : Inhabited Term := ⟨.unit⟩

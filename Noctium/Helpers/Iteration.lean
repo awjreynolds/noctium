@@ -412,7 +412,7 @@ private def mapElementType : ResultType → Types.CompositeType
   | .composite type => type
 
 private partial def layoutProjectionDepth : Types.Layout → Nat
-  | .unit | .scalar _ | .curve _ => 0
+  | .unit | .scalar _ | .opaque _ | .curve _ => 0
   | .tuple items =>
     if items.all (fun item => item.leafCount == 0) then 0
     else 1 + (items.map layoutProjectionDepth).foldl max 0
@@ -428,7 +428,7 @@ private partial def layoutProjectionDepth : Types.Layout → Nat
       variant.2.1.map fun field => 1 + layoutProjectionDepth field.2).foldl max 0
 
 private partial def enumProjectionExpansion (rootProjectionDepth : Nat) : Types.Layout → Nat
-  | .unit | .scalar _ | .curve _ | .bytes _ _ => 0
+  | .unit | .scalar _ | .opaque _ | .curve _ | .bytes _ _ => 0
   | .tuple items => (items.map (enumProjectionExpansion rootProjectionDepth)).sum
   | .structure _ fields => (fields.map (enumProjectionExpansion rootProjectionDepth ∘ Prod.snd)).sum
   | .vector length element => length * enumProjectionExpansion rootProjectionDepth element
@@ -438,7 +438,7 @@ private partial def enumProjectionExpansion (rootProjectionDepth : Nat) : Types.
         variant.2.1.map fun field => enumProjectionExpansion rootProjectionDepth field.2).sum
 
 private partial def layoutContainsCurve : Types.Layout → Bool
-  | .unit | .scalar _ | .bytes _ _ => false
+  | .unit | .scalar _ | .opaque _ | .bytes _ _ => false
   | .curve _ => true
   | .tuple items => items.any layoutContainsCurve
   | .structure _ fields => fields.any fun field => layoutContainsCurve field.2
@@ -446,10 +446,20 @@ private partial def layoutContainsCurve : Types.Layout → Bool
   | .enumeration _ _ _ _ _ variants => variants.any fun variant =>
       variant.2.1.any fun field => layoutContainsCurve field.2
 
+private partial def layoutContainsOpaque : Types.Layout → Bool
+  | .unit | .scalar _ | .curve _ | .bytes _ _ => false
+  | .opaque _ => true
+  | .tuple items => items.any layoutContainsOpaque
+  | .structure _ fields => fields.any fun field => layoutContainsOpaque field.2
+  | .vector _ element => layoutContainsOpaque element
+  | .enumeration _ _ _ _ _ variants => variants.any fun variant =>
+      variant.2.1.any fun field => layoutContainsOpaque field.2
+
 private partial def flattenLayoutTerms (span : SourceSpan) : Types.Layout → Term →
     Except Diagnostic (List Term)
   | .unit, _ => pure []
   | .scalar _, value => pure [value]
+  | .opaque _, value => pure [value]
   | .curve _, value => pure [value]
   | .tuple items, value => do
     let parts ← (List.range items.length).mapM fun index => do
@@ -472,6 +482,8 @@ private partial def flattenLayoutTerms (span : SourceSpan) : Types.Layout → Te
   | .enumeration _ _ _ payloadLeaves _ variants, value => do
     if variants.any fun variant => variant.2.1.any fun field => layoutContainsCurve field.2 then
       failAt span "helper iteration cannot flatten curve-valued enum payloads"
+    if variants.any fun variant => variant.2.1.any fun field => layoutContainsOpaque field.2 then
+      failAt span "helper iteration cannot flatten opaque-valued enum payloads"
     let variantLeaves ← variants.mapM fun (variant, fields, _) => do
       let parts ← fields.mapM fun (name, field) => do
         if field.leafCount == 0 then pure []
