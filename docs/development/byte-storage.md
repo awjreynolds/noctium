@@ -104,6 +104,8 @@ for the default relation and 273 for the opt-in relation, both at K9.
 Compact measured 274 rows at K9. The opt-in build keeps every argument check
 and removes only the three result checks for 8, 16 and 248 bits. Both builds
 emit the exact same Impact plan. Key generation uses the selected relation.
+The opt-in build also matches the Compact fixture's six readbacks and exact
+surviving records in native replay.
 The pinned native ledger accepted a proof generated from the opt-in relation
 and left the stored record unchanged. It rejected the same proved lookup
 against a changed record and against a record with the wrong digest width.
