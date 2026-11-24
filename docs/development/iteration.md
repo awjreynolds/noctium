@@ -140,8 +140,10 @@ or helper argument. Arithmetic and Boolean conditions require an operand type.
 A callback with a known result infers the empty vector element type. When the
 result is still unresolved, pass `expectedElement` to the staged `mapWithLimits`
 API from the surrounding result type. For example, `some (.scalar .native)`
-chooses `Vector 0 Native` for the unannotated identity callback. A fold with
-an explicit result type uses that type for an omitted accumulator annotation.
+chooses `Vector 0 Native` for the unannotated identity callback. Readable map
+gets the element type directly when a declared vector consumer specifies
+it, as in `witness acceptEmptyNativeVector(map([items], fun item => item))`.
+In a readable fold, the seed determines the omitted accumulator type.
 
 The [empty-tuple fixture](../../tests/EmptyTupleIteration.lean) folds over the result
 of an empty map and another empty tuple, with omitted callback parameter types.

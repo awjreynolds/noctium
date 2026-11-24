@@ -6,6 +6,19 @@ noctium_witness iterationSeed() : Native
 noctium_witness iterationBytes() : Bytes 2
 noctium_witness iterationVisit(item : UInt 8) : Native
 
+private def emptyTupleIterationWire : Noctium.Helpers.Wire.Codec := {
+  payload := .tuple []
+  frameBytes := 0
+}
+
+private def emptyNativeVectorIterationWire : Noctium.Helpers.Wire.Codec := {
+  payload := .vector 0 (.scalar .native)
+  frameBytes := 0
+}
+
+noctium_witness iterationEmptyTuple() : Payload emptyTupleIterationWire
+noctium_witness acceptEmptyNativeVector(values : Payload emptyNativeVectorIterationWire) : Native
+
 noctium_witness_circuit readableIteration where
   public offset : Native
   let sum : Native := fold(witness iterationSeed(),
@@ -20,11 +33,36 @@ end
   (compiled.toOption.map (fun source => source.calls.map (·.name))) ==
     some ["iterationSeed", "iterationBytes", "iterationVisit", "iterationVisit"]
 
+noctium_witness_circuit emptyNativeMap using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  output result : Native := disclose(witness acceptEmptyNativeVector(
+    map([witness iterationEmptyTuple()], fun item => item)))
+end
+
+#guard
+  let compiled := Noctium.Witness.compile emptyNativeMap.__program
+    "noctium.witness-circuit.emptyNativeMap.v1"
+  compiled.toOption.map (fun source => source.calls.map (·.name)) ==
+    some ["iterationEmptyTuple", "acceptEmptyNativeVector"]
+
+noctium_control emptyNativeMapHost from emptyNativeMap.__program
+  entry "noctium.witness-circuit.emptyNativeMap.v1"
+
+/- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsEmptyNativeMapWithoutContext using emptyTupleIterationWire where
+  let mapped := map([witness iterationEmptyTuple()], fun item => item)
+  output result : Native := disclose(0)
+end
+
 noctium_contract ReadableIteration where
   cell total : Native
   entry update uses readableIteration where
     write total := result
     return updated : Native := result
+  end
+  entry emptyIdentity uses emptyNativeMap where
+    return mapped : Native := result
   end
 end
 

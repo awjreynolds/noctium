@@ -1364,7 +1364,10 @@ private def lowerFabDigest (site : Syntax) (algorithm : Helpers.FabDigest)
     term := .bytes (.fabDigest algorithm type (operands.map Prod.fst)) (operands.map Prod.snd)}
 
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
-    (stx : TSyntax `nlexpr) : ExprM Lowered := do
+    (stx : TSyntax `nlexpr) (expected : Option ResultType := none) : ExprM Lowered := do
+  if let some type := expected then
+    if let some value ← lowerExpectedIterationRef env type stx then
+      return value
   match stx with
   | `(nlexpr| $id:ident) =>
     match env.find? (fun value => value.1 == id.getId.toString) with
@@ -1511,7 +1514,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           | none => throwErrorAt stx s!"missing record field '{key}'"
       let value ← match ← lowerExpectedIterationRef env expected source with
         | some value => pure value
-        | none => lowerExpr programName callPrefix env source
+        | none => lowerExpr programName callPrefix env source (some expected)
       match expected with
       | .scalar target => coerce source value target
       | _ => do
@@ -1595,6 +1598,16 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         program 0 helperEnv sourceSpan terms with
       | .ok elementTypes => pure elementTypes
       | .error diagnostic => throwErrorAt stx diagnostic.message
+    let sourceLength := values.head?.bind fun value =>
+      match value.type with
+      | .composite (.vector length _) | .composite (.bytes length)
+      | .scalar (.bytes length) => some length
+      | .composite (.tuple elements) => some elements.length
+      | _ => none
+    let expectedElement := match expected, sourceLength with
+      | some (.composite (.vector length element)), some sourceLength =>
+        if length == sourceLength then some (Helpers.resultTypeOfComposite element) else none
+      | _, _ => none
     let parameterNames := parameters.toList
     unless parameterNames.length == terms.length do
       throwErrorAt stx "map callback parameter count must match its sequence count"
@@ -1605,7 +1618,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       requiresOutputViews := _root_.Bool.true}
     let bindings ← prepareCallbackParameters parameterNames elementTypes
     let callback ← lowerExpr programName (callPrefix ++ ".map")
-      (callbackSurfaceEnv bindings ++ env) body
+      (callbackSurfaceEnv bindings ++ env) body expectedElement
     let callbackState ← get
     let localRefs := bindings.filterMap fun binding =>
       if binding.type.isNone then some binding.reference else none
@@ -1621,7 +1634,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let program ← iterationProgram stx programName
       (values.flatMap (·.signatures) ++ callback.signatures)
     let (compiledProgram, term) ←
-      match Iteration.mapWithLimits {} program 0 helperEnv sourceSpan terms operator with
+      match Iteration.mapWithLimits {} program 0 helperEnv sourceSpan terms operator
+          expectedElement with
       | .ok result => pure result
       | .error diagnostic => throwErrorAt stx diagnostic.message
     let type ← match Helpers.inferWithLimits {} compiledProgram 0 helperEnv sourceSpan term with
@@ -1703,7 +1717,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let internalName ← freshReadableLet id
     let ref := Noctium.Helpers.Term.ref internalName
     let body ← lowerExpr programName callPrefix
-      ((id.getId.toString, value.type, ref, value.nominalUInt) :: env) body
+      ((id.getId.toString, value.type, ref, value.nominalUInt) :: env) body expected
     pure
       { body with
         before := value.before ++ [.bind internalName value.type value.term] ++ body.before,
@@ -1732,14 +1746,14 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         let value ← coerce source value .bool
         loweredSteps := {value with before := value.before ++
           [.assert (.at span value.term)]} :: loweredSteps
-    let result ← lowerExpr programName callPrefix localEnv result
+    let result ← lowerExpr programName callPrefix localEnv result expected
     pure (mergeLowered result.type result.term (loweredSteps.reverse ++ [result]))
   | `(nlexpr| assertThen($condition, $body)) => do
     unless (← get).allowAssertThen do
       throwErrorAt stx "assertThen is accepted only inside an explicit prove statement"
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool
-    let body ← lowerExpr programName callPrefix env body
+    let body ← lowerExpr programName callPrefix env body expected
     pure
       { body with
         before := condition.before ++ [.assert condition.term] ++ body.before,
@@ -2338,6 +2352,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           coerceSourceType argument value target
         | .composite parameterType => do
           let value ← lowerExpr programName callPrefix env argument
+            (some (.composite parameterType))
           unless value.type == .composite parameterType do
             throwErrorAt argument "witness callback aggregate argument must use the declared Payload codec"
           pure value
@@ -3044,7 +3059,7 @@ private def ReadableBody.lower (body : ReadableBody) (programName path : String)
     | some type =>
       match ← lowerExpectedIterationRef body.env type source with
       | some value => pure value
-      | none => lowerExpr programName ("s" ++ path) body.env source
+      | none => lowerExpr programName ("s" ++ path) body.env source (some type)
     | none => lowerExpr programName ("s" ++ path) body.env source
   let (value, state) ← action.run
     {exprState with

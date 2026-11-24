@@ -5,6 +5,8 @@ export ledger total: Field;
 witness iterationSeed(): Field;
 witness iterationBytes(): Bytes<2>;
 witness iterationVisit(item: Uint<8>): Field;
+witness emptyTupleItems(): [];
+witness acceptEmptyNativeVector(values: Vector<0, Field>): Field;
 witness blockItems(seed: Field): Vector<2, Uint<8>>;
 witness blockOffset(seed: Field): Field;
 
@@ -31,4 +33,8 @@ export circuit runBlock(seed: Field): [Field, Field, Field] {
     return next;
   }, 0 as Field, mapped);
   return [disclose(mapped[0]), disclose(mapped[1]), disclose(sum)];
+}
+
+export circuit emptyNativeMap(): Field {
+  return disclose(acceptEmptyNativeVector(map((item) => item, emptyTupleItems())));
 }
