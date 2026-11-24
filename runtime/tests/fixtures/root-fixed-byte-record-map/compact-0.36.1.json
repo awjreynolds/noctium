@@ -1,0 +1,27 @@
+{
+  "fixture": "RootFixedByteRecordMap",
+  "compact": "0.36.1 (7fa3a117c 2026-11-11)",
+  "runtime": "0.21.0",
+  "key": {
+    "tag": [
+      7
+    ],
+    "firstId": "030303030303030303030303030303030303030303030303030303030303030303",
+    "lateId": "030303030303030303030303030303030303030303030303030303030303030304"
+  },
+  "insertedValues": {
+    "first": "101",
+    "late": "303"
+  },
+  "outputs": {
+    "first": true,
+    "late": true,
+    "firstValueResult": "101",
+    "lateValueResult": "303",
+    "firstRemaining": false,
+    "lateRemaining": true,
+    "retained": "303"
+  },
+  "remainingEntries": 1,
+  "wrongKeyWidthRejected": true
+}

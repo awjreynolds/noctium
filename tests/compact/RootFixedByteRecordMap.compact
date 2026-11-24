@@ -1,0 +1,27 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export ledger memos: Map<Key, Uint<16>>;
+
+export circuit update(tag: Bytes<1>, firstId: Bytes<33>, lateId: Bytes<33>,
+                      firstValue: Uint<16>, lateValue: Uint<16>):
+                      [Boolean, Boolean, Uint<16>, Uint<16>, Boolean, Boolean, Uint<16>] {
+  const first = Key { tag: disclose(tag), id: disclose(firstId) };
+  const late = Key { tag: disclose(tag), id: disclose(lateId) };
+  memos.insert(first, disclose(firstValue));
+  memos.insert(late, disclose(lateValue));
+  const firstBefore = memos.member(first);
+  const lateBefore = memos.member(late);
+  const storedFirst = memos.lookup(first);
+  const storedLate = memos.lookup(late);
+  memos.remove(first);
+  const firstAfter = memos.member(first);
+  const lateAfter = memos.member(late);
+  const retained = memos.lookup(late);
+  return [firstBefore, lateBefore, storedFirst, storedLate, firstAfter, lateAfter, retained];
+}

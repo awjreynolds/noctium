@@ -3395,7 +3395,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
   let parentKeys ← pathKeysTerm parentKeys
   let term ← match valueSchema with
     | .recordMapKey keyEnvironment keyType valueTy => do
-      let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+      let keyFields ← match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
@@ -3534,7 +3534,12 @@ private def recordMapFieldsAt (schema : List (String × StateKind))
     | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
       pure (environment, type)
     | _ => throwErrorAt storage "typed record key operation requires a record-key Map"
-  let fields ← match LedgerValueType.ledgerRecordWriteFields environment type with
+  let fieldResult := match valueSchema with
+    | .recordMapKey .. =>
+      (if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
+       else LedgerValueType.ledgerRecordWriteFields environment type)
+    | _ => LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← match fieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   let values ← elaborateRecordMapKeyFields state storage payload fields
@@ -5851,7 +5856,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             elaborateTypedLedgerRecord contractName record recordFields state
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
-          match LedgerValueType.ledgerRecordWriteFields environment compositeType with
+          match LedgerValueType.recordMapKeyFields environment compositeType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
           let valueSource ← readCircuitSourceType valueType

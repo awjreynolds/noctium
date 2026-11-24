@@ -3172,7 +3172,8 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             .as_object()
             .filter(|value| value.len() == 1)
             .ok_or_else(|| anyhow!("invalid record-key Map value schema"))?;
-        if let Some(value_type) = value.get("scalar").and_then(Json::as_str) {
+        let scalar_value_type = value.get("scalar").and_then(Json::as_str);
+        if let Some(value_type) = scalar_value_type {
             ensure!(
                 !matches!(value_type, "OpaqueBytes" | "OpaqueString"),
                 "opaque Map values require a Bytes32 key"
@@ -3191,7 +3192,11 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             depth + 2 < 16,
             "record-key Map insertion depth exceeds native insertion depth"
         );
-        checked_map_record_schema(record)?;
+        if depth == 0 && scalar_value_type.is_some() {
+            checked_typed_record_schema(record)?;
+        } else {
+            checked_map_record_schema(record)?;
+        }
         return validate_tree_schema(&parts[1], depth + 1);
     }
     let key_type = ledger_key_type(&parts[0])?;
@@ -3650,7 +3655,7 @@ fn checked_map_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     let schema = checked_typed_record_schema(json)?;
     ensure!(
         schema.fields.iter().all(|field| !matches!(field.ty, ScalarType::Bytes(_))),
-        "fixed Bytes fields are only supported in typed record Set keys"
+        "fixed Bytes fields are unsupported in nested Map keys and record Map values"
     );
     Ok(schema)
 }
