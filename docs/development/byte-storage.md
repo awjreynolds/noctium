@@ -38,7 +38,28 @@ Public Bytes32 inputs keep their existing packed two-chunk prologue. Private byt
 
 ## Flat root Map record values
 
-[Issue 1048](https://github.com/awjreynolds/noctium/issues/1048) adds Bytes1 and Bytes33 fields to flat records stored in root Maps. The scoped fixture covers both a Bytes32 scalar key and a record key with Bytes1 and Bytes33 fields. Compact 0.36.1 and the selected Ledger 9/ZKIR 3.2.1 native checker match returned fields and retained aligned values after removal. Wrong key/value widths and nested scalar/record-key record values reject. See the [Lean fixture](../../tests/RootFixedByteRecordValuedMap.lean), [Compact comparison](../../tests/compact/root-fixed-byte-record-valued-map.mjs) and [native case](../../runtime/tests/root_fixed_byte_record_valued_map.rs).
+[Issue 1048](https://github.com/awjreynolds/noctium/issues/1048) adds Bytes1 and Bytes33 fields to flat records stored in root Maps. The scoped fixture covers both a Bytes32 scalar key and a record key with Bytes1 and Bytes33 fields. Compact 0.36.1 and the selected Ledger 9/ZKIR 3.2.1 native checker match returned fields and retained aligned values after removal. Wrong key and value widths reject. See the [Lean fixture](../../tests/RootFixedByteRecordValuedMap.lean), [Compact comparison](../../tests/compact/root-fixed-byte-record-valued-map.mjs) and [native case](../../runtime/tests/root_fixed_byte_record_valued_map.rs).
+
+## Flat record values in nested Maps
+
+Scalar Map paths support flat record values with fixed-width byte fields. The two-level case stores a record with a Bytes1 label and a Bytes33 digest. Both owner buckets use the same leaf key, and the digests share their first 32 bytes. The comparison checks exact reads and overwrites, removal in one bucket, and preservation of the sibling and the other owner's value. It also covers a malformed digest width and lookup of the removed key. List and nested record-key Map values use their narrower record layout. [Lean fixture](../../tests/NestedFixedByteMapRecordValues.lean) · [Compact oracle](../../tests/compact/nested-fixed-byte-record-values.mjs) · [Native replay](../../runtime/tests/nested_fixed_byte_record_values.rs)
+
+To reproduce the comparison, use Compact 0.36.1 (`COMPACTC_0361`) and Compact Runtime 0.21.0 (`COMPACT_RUNTIME_0210`). The runtime argument is the package directory containing `package.json`.
+
+```sh
+mkdir -p build/experiments
+scratch=$(mktemp -d build/experiments/nested-map-values.XXXXXX)
+trap 'rm -rf "$scratch"' EXIT
+node tests/compact/nested-fixed-byte-record-values.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake exe noctium compile tests/NestedFixedByteMapRecordValues.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_NESTED_FIXED_BYTE_RECORD_VALUES_DIR="$scratch/native" \
+NOCTIUM_NESTED_FIXED_BYTE_RECORD_VALUES_COMPACT="$scratch/compact.json" \
+  cargo test --manifest-path runtime/Cargo.toml --no-default-features \
+  --features zkir-321 --test nested_fixed_byte_record_values -- --ignored
+```
 
 ## Qualification
 
@@ -50,4 +71,4 @@ The native case passes three updates and all 14 old/new results in 0.05 seconds.
 
 The 66-job compiler build, source fixture, producer-cap guards, guide snippet and legacy 3.2.0 runtime library compilation pass. One focused control case checks projection order, ranges and empty reads. The retained public Bytes32 native compatibility case also passes in 0.06 seconds. No repeated witness Session campaign was run.
 
-This storage slice covers source and native checking. [Foreign ledger keys](foreign-trees.md) have separate evidence. Nested composite record leaves, proofs, deployment and full compiler preservation remain separate work.
+This storage slice covers source and native query-context checking. [Foreign ledger keys](foreign-trees.md) have separate evidence. Non-flat record leaves, proofs, finalized deployment and full compiler preservation remain separate work.
