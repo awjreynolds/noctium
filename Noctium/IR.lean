@@ -1759,6 +1759,8 @@ private def validateCellStateScalar (caps : Capabilities) (ty : Ty) : Except Str
 def LedgerValueType.validate (caps : Capabilities) (schema : LedgerValueType) : Except String Unit :=
   match schema with
   | .map (.bytes 32) (.scalar .opaqueString) => Ty.validate caps .opaqueString
+  | .map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString)) =>
+    Ty.validate caps .opaqueString
   | _ => nested 0 schema
 where
   nested : Nat → LedgerValueType → Except String Unit

@@ -242,7 +242,7 @@ fn root_cell_value(declaration: &StateDecl, node: &StateValue<Db>) -> Result<Jso
         if cell_alignment.is_some() {
             return Err(INVALID_ARGUMENT);
         }
-        crate::validate_tree_schema(tree, 0).map_err(|_| INVALID_ARGUMENT)?;
+        crate::validate_tree_schema(tree, 0, true).map_err(|_| INVALID_ARGUMENT)?;
         let tree = tree
             .as_object()
             .filter(|tree| tree.len() == 1)
@@ -1211,7 +1211,9 @@ pub unsafe extern "C" fn noctium_ledger_collection_size(
             .find(|declaration| declaration.name == request.name)
             .ok_or(INVALID_ARGUMENT)?;
         let size_schema = if declaration.kind.get("tree").is_some() {
-            crate::validate_tree_schema(final_schema, keys.len()).map_err(|_| INVALID_ARGUMENT)?;
+            let bytes32_parents = keys.iter().all(|key| key.scalar_type() == ScalarType::Bytes32);
+            crate::validate_tree_schema(final_schema, keys.len(), bytes32_parents)
+                .map_err(|_| INVALID_ARGUMENT)?;
             if final_schema.get("map").is_some() {
                 CollectionSizeSchema::Map
             } else if final_schema.get("set").is_some() {

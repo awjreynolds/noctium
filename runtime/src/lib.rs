@@ -2820,22 +2820,12 @@ fn validate_scalar_storage_type(
             ensure!(depth == 0, "OpaqueString Cell path schema mismatch");
         } else {
             ensure!(
-                depth == 1,
-                "OpaqueString is only supported as a root Cell or Map value"
-            );
-            let tree = state
-                .kind
-                .get("tree")
-                .ok_or_else(|| anyhow!("OpaqueString requires a root tree Map"))?;
-            let map = tree
-                .get("map")
-                .and_then(Json::as_array)
-                .filter(|parts| parts.len() == 2)
-                .ok_or_else(|| anyhow!("OpaqueString requires a root tree Map"))?;
-            ensure!(
-                map[0].as_str() == Some("Bytes<32>")
-                    && map[1] == serde_json::json!({"scalar":"OpaqueString"}),
-                "OpaqueString requires a Bytes32-keyed Map leaf"
+                (1..=2).contains(&depth)
+                    && state.kind.get("tree").is_some()
+                    && map_path_key_types(plan, slot, depth)?
+                        .iter()
+                        .all(|key| *key == ScalarType::Bytes32),
+                "OpaqueString requires a Bytes32-keyed Map leaf at depth one or two"
             );
         }
     }
@@ -3024,21 +3014,20 @@ fn opaque_compressed_storage_path(
     else {
         bail!("opaque write requires an adjacent indexed storage path")
     };
+    let depth = keys.len() + 1;
     ensure!(
-        keys.is_empty(),
-        "opaque write requires a direct Map root path"
-    );
-    let key_types = map_path_key_types(plan, *slot, 1)?;
-    ensure!(
-        key_types.len() == 1 && key_types[0] == ScalarType::Bytes32,
-        "opaque Map key must be Bytes32"
+        depth <= 2
+            && map_path_key_types(plan, *slot, depth)?
+                .iter()
+                .all(|key| *key == ScalarType::Bytes32),
+        "opaque storage requires a Bytes32-keyed Map path at depth one or two"
     );
     ensure!(
-        matches!(insert_operation, Instruction::Insert { n: 2 }),
-        "opaque Map value push must be followed by Insert(2)"
+        matches!(insert_operation, Instruction::Insert { n } if usize::from(*n) == depth + 1),
+        "opaque Map value push must be followed by an insertion at its indexed depth"
     );
-    validate_scalar_storage_type(plan, *slot, 1, ty)?;
-    Ok((*slot, 1))
+    validate_scalar_storage_type(plan, *slot, depth, ty)?;
+    Ok((*slot, depth))
 }
 
 fn reject_jubjub_map_key(ty: &ScalarType) -> Result<()> {
@@ -3086,7 +3075,7 @@ fn map_path_key_types(plan: &Plan, slot: u32, count: usize) -> Result<Vec<Scalar
     Ok(vec![ledger_key_type(&parts[0])?])
 }
 
-fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
+fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> Result<()> {
     ensure!(depth <= 16, "state tree exceeds native path limit");
     let fields = schema
         .as_object()
@@ -3124,8 +3113,9 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
     }
     if let Some(ty) = fields.get("scalar").and_then(Json::as_str) {
         ensure!(
-            validate_tree_scalar_type(ty)? != ScalarType::OpaqueString || depth == 1,
-            "OpaqueString is only supported as a Bytes32-keyed Map value"
+            validate_tree_scalar_type(ty)? != ScalarType::OpaqueString
+                || ((1..=2).contains(&depth) && bytes32_parents),
+            "OpaqueString requires a Bytes32-keyed Map leaf at depth one or two"
         );
         return Ok(());
     }
@@ -3195,16 +3185,14 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             "record-key Map insertion depth exceeds native insertion depth"
         );
         checked_typed_record_schema(record)?;
-        return validate_tree_schema(&parts[1], depth + 1);
+        return validate_tree_schema(&parts[1], depth + 1, false);
     }
     let key_type = ledger_key_type(&parts[0])?;
-    if parts[1].get("scalar").and_then(Json::as_str) == Some("OpaqueString") {
-        ensure!(
-            depth == 0 && key_type == ScalarType::Bytes32,
-            "OpaqueString is only supported as a Bytes32-keyed root Map value"
-        );
-    }
-    validate_tree_schema(&parts[1], depth + 1)
+    validate_tree_schema(
+        &parts[1],
+        depth + 1,
+        bytes32_parents && key_type == ScalarType::Bytes32,
+    )
 }
 
 fn is_shielded_coin_record_schema(schema: &Json) -> bool {
@@ -5881,7 +5869,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
             );
             values.push(StateValue::Map(Default::default()));
         } else if let Some(schema) = d.kind.get("tree") {
-            validate_tree_schema(schema, 0)?;
+            validate_tree_schema(schema, 0, true)?;
             if schema.get("list").is_some() {
                 ensure!(
                     value.as_array().is_some_and(Vec::is_empty),

@@ -148,6 +148,21 @@ type from the verified entrypoint plans. This string run covers one value and
 one Map entry only. It does not establish
 general string equivalence, privacy guarantees or public-network deployment.
 
+### Two-key opaque Maps
+
+Declare `tree buckets : Bytes32 => Bytes32 => OpaqueString` or use
+`OpaqueBytes` for the leaf. The fixture initializes the owner Map on
+first store and guards inner membership with an owner membership read.
+Missing keys and owners give false for this guarded membership check.
+Strict lookup rejects either absence.
+
+The pinned Compact and native fixture preserve exact bytes and UTF-8
+across two owners and an inner sibling. The native checker binds each
+read through its single Compress field. The runtime rejects a crossed
+input type and checks both Bytes32 keys and the matching insertion
+depth. This evidence covers the in-process native relation and state
+transition. [Lean fixture](../../tests/NestedOpaqueMap.lean) · [Compact oracle](../../tests/compact/nested-opaque-map.mjs) · [Native checker](../../runtime/tests/nested_opaque_map.rs)
+
 ### Opaque Maybe values
 
 Readable witness circuits accept `some(value)` and `none(OpaqueString)` or

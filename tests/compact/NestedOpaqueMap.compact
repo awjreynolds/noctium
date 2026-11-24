@@ -1,0 +1,41 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger byteBuckets: Map<Bytes<32>, Map<Bytes<32>, Opaque<"Uint8Array">>>;
+export ledger stringBuckets: Map<Bytes<32>, Map<Bytes<32>, Opaque<"string">>>;
+
+export circuit storeBytes(
+  owner: Bytes<32>, key: Bytes<32>, payload: Opaque<"Uint8Array">,
+): [] {
+  const ownerKey = disclose(owner);
+  if (!byteBuckets.member(ownerKey)) { byteBuckets.insertDefault(ownerKey); }
+  byteBuckets.lookup(ownerKey).insert(disclose(key), disclose(payload));
+}
+
+export circuit hasBytes(owner: Bytes<32>, key: Bytes<32>): Boolean {
+  const ownerKey = disclose(owner);
+  if (!byteBuckets.member(ownerKey)) { return false; }
+  return byteBuckets.lookup(ownerKey).member(disclose(key));
+}
+
+export circuit readBytes(owner: Bytes<32>, key: Bytes<32>): Opaque<"Uint8Array"> {
+  return byteBuckets.lookup(disclose(owner)).lookup(disclose(key));
+}
+
+export circuit storeString(
+  owner: Bytes<32>, key: Bytes<32>, value: Opaque<"string">,
+): [] {
+  const ownerKey = disclose(owner);
+  if (!stringBuckets.member(ownerKey)) { stringBuckets.insertDefault(ownerKey); }
+  stringBuckets.lookup(ownerKey).insert(disclose(key), disclose(value));
+}
+
+export circuit hasString(owner: Bytes<32>, key: Bytes<32>): Boolean {
+  const ownerKey = disclose(owner);
+  if (!stringBuckets.member(ownerKey)) { return false; }
+  return stringBuckets.lookup(ownerKey).member(disclose(key));
+}
+
+export circuit readString(owner: Bytes<32>, key: Bytes<32>): Opaque<"string"> {
+  return stringBuckets.lookup(disclose(owner)).lookup(disclose(key));
+}
