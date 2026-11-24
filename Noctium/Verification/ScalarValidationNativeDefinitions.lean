@@ -1,3 +1,4 @@
+import Noctium.Verification.RangeDedupComparisonMeaning
 import Noctium.Verification.ScalarValidationArithmeticLoop
 import Noctium.Verification.ScalarValidationNativeLoop
 
@@ -12,7 +13,7 @@ private theorem bind_ok {α β : Type} {value : Except String α} {next : α →
       ∃ found, value = .ok found ∧ next found = .ok result := by
   cases value <;> simp [Bind.bind, Except.bind]
 
-private theorem refine_nativeDefinitions {state next : State} {text : String} {maximum : Nat}
+theorem refine_nativeDefinitions {state next : State} {text : String} {maximum : Nat}
     (nativeDefinitions : NativeDefinitions state)
     (accepted : refine state text maximum = .ok next) :
     NativeDefinitions next := by
@@ -68,6 +69,74 @@ theorem accepted_testEq_nativeDefinitions {expected : Expected} {state next : St
     accepted_testEq_components nativeDefinitions opcode accepted
   exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
 
+theorem accepted_constrainBits_nativeDefinitions {expected : Expected} {state next : State}
+    {raw : Json}
+    (nativeDefinitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨valueText, valueTextParsed, accepted⟩
+  rcases accepted with ⟨bits, bitsParsed, refined⟩
+  exact refine_nativeDefinitions nativeDefinitions refined
+
+theorem accepted_assert_nativeDefinitions
+    {expected : Backend.Native.Expected} {state next : Backend.Native.State}
+    {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "assert")
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold Backend.Native.validateInstruction at accepted
+  simp only [ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨opcodeName, opcodeParsed, descriptor, descriptorParsed,
+    registry, fieldsParsed, accepted⟩
+  have opcodeEq : opcodeName = "assert" := Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp at accepted
+  simp only [ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨value, valueParsed, _, booleanAccepted, accepted⟩
+  let assertionCounted := if expected.assertions[state.assertionCount]? == some value.term then
+    {state with assertionCount := state.assertionCount + 1} else state
+  let assertionState : Backend.Native.State :=
+    {assertionCounted with
+      establishedAssertions := (value.term :: assertionCounted.establishedAssertions).eraseDups}
+  have assertionDefinitions : NativeDefinitions assertionState := by
+    intro name fact member
+    cases matched : (expected.assertions[state.assertionCount]? == some value.term)
+    · exact definitions name fact (by
+        simpa [assertionState, assertionCounted, matched] using member)
+    · exact definitions name fact (by
+        simpa [assertionState, assertionCounted, matched] using member)
+  split at accepted
+  · simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨_, _, refined⟩
+    exact refine_nativeDefinitions assertionDefinitions refined
+  · cases accepted
+    exact assertionDefinitions
+
+theorem accepted_lessThan_nativeDefinitions
+    {expected : Backend.Native.Expected} {state next : Backend.Native.State}
+    {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "less_than")
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  obtain ⟨leftText, _, right, _, fact, _, _, _, _, _, _, combined, defined⟩ :=
+    RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
+  have factNative : fact.valueType = NativeValueType.native := combine_native combined
+  have definedFactNative :
+      ({fact with assertedLessThan := match right.term with
+        | .constant bound => if ['%'] <+: leftText.toList then some (leftText, bound) else none
+        | _ => none}).valueType = NativeValueType.native := by
+    simpa using factNative
+  exact defineResult_nativeDefinitions definitions definedFactNative defined
+
 theorem accepted_constrainEq_nativeDefinitions {expected : Expected} {state next : State} {raw : Json}
     (nativeDefinitions : NativeDefinitions state)
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
@@ -99,6 +168,48 @@ theorem accepted_constrainEq_nativeDefinitions {expected : Expected} {state next
   change (name, fact) ∈ nextState.definitions at member
   exact nextStateNative name fact member
 
+private theorem accepted_impact_nativeDefinitions
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, _, _, _, _, accepted⟩
+  split at accepted
+  · simp only [Pure.pure, Except.pure] at accepted
+    cases empty : expected.groupGuards.isEmpty
+    · cases guard : expected.groupGuards[state.groupCount]?
+      · simp [empty, guard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+      · simp [empty, guard, bind_ok] at accepted
+        rcases accepted with ⟨_, _, _, _, rfl⟩
+        exact definitions
+    · simp [empty, bind_ok] at accepted
+      rcases accepted with ⟨_, _, _, _, rfl⟩
+      exact definitions
+  · contradiction
+
+private theorem accepted_output_nativeDefinitions
+    {expected : Expected} {state next : State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (opcode : Backend.Native.stringField raw "op" = .ok "output")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+  rcases accepted with ⟨_, _, _, _, _, _, result⟩
+  subst next
+  exact definitions
+
 /-- The supported opcode profile for this trace fragment. Copy and constrain_eq
 both decode to `.equal`, so the profile records which producer opcode was used. -/
 inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
@@ -117,12 +228,27 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | neg (a : Operand) (output : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "neg") :
       SupportedScalarOpcode raw (.neg a output)
+  | bits (value : Operand) (width : Nat)
+      (opcode : Backend.Native.stringField raw "op" = .ok "constrain_bits") :
+      SupportedScalarOpcode raw (.bits value width)
+  | lessThan (a b : Operand) (width : Nat) (output : String)
+      (opcode : Backend.Native.stringField raw "op" = .ok "less_than") :
+      SupportedScalarOpcode raw (.lessThan a b width output)
+  | assertion (condition : Operand)
+      (opcode : Backend.Native.stringField raw "op" = .ok "assert") :
+      SupportedScalarOpcode raw (.assert condition)
   | testEq (a b : Operand) (output : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "test_eq") :
       SupportedScalarOpcode raw (.testEq a b output)
   | copy (source destination : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "copy") :
       SupportedScalarOpcode raw (.equal (.reference source) (.reference destination))
+  | impact (guard : Operand) (inputs : List Operand)
+      (opcode : Backend.Native.stringField raw "op" = .ok "impact") :
+      SupportedScalarOpcode raw (.impact guard inputs)
+  | output (values : List Operand)
+      (opcode : Backend.Native.stringField raw "op" = .ok "output") :
+      SupportedScalarOpcode raw (.output values)
   | constrainEq (a b : Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq") :
       SupportedScalarOpcode raw (.equal a b)
@@ -219,8 +345,15 @@ private theorem nativeDefinitions_step {expected : Expected} {state next : State
       obtain ⟨_, _, _, _, combined, defined⟩ :=
         accepted_neg_components nativeDefinitions opcode accepted
       exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
+  | bits _ _ opcode =>
+      exact accepted_constrainBits_nativeDefinitions nativeDefinitions opcode accepted
+  | lessThan _ _ _ _ opcode =>
+      exact accepted_lessThan_nativeDefinitions nativeDefinitions opcode accepted
+  | assertion _ opcode => exact accepted_assert_nativeDefinitions nativeDefinitions opcode accepted
   | testEq _ _ _ opcode => exact accepted_testEq_nativeDefinitions nativeDefinitions opcode accepted
   | copy _ _ opcode => exact accepted_copy_nativeDefinitions nativeDefinitions opcode accepted
+  | impact _ _ opcode => exact accepted_impact_nativeDefinitions nativeDefinitions opcode accepted
+  | output _ opcode => exact accepted_output_nativeDefinitions nativeDefinitions opcode accepted
   | constrainEq _ _ opcode =>
       exact accepted_constrainEq_nativeDefinitions nativeDefinitions opcode accepted
 
