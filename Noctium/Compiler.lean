@@ -1342,10 +1342,13 @@ elab "#noctium_check" : command => do
 private def checkRequiredTarget (profile : TargetProfile) : CommandElabM Unit := do
   let required := noctium.requiredTarget.get (← getOptions)
   unless required.isEmpty do
-    unless required == TargetProfile.sourceBaseline.name || required == TargetProfile.selected321.name do
+    unless TargetProfile.supportsName required do
       throwError "unknown Noctium source target requirement '{required}'"
     unless required == profile.name do
       throwError "Noctium source requires target '{required}', selected '{profile.name}'"
+  for requirement in sourceTargetRequirements (← getEnv) do
+    unless requirement.profileName == profile.name do
+      throwError "Noctium module '{requirement.moduleName}' requires target '{requirement.profileName}', selected '{profile.name}'"
 
 private unsafe def checkTarget (profile : TargetProfile) : CommandElabM Unit := do
   checkRequiredTarget profile
