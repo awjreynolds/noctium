@@ -87,6 +87,18 @@ private theorem acceptedIssue43SkippedCellSuffix
       prelude.zipIdx prefixInstructions = Bool.true)
     (holds : ∀ instruction ∈ prefixInstructions,
       Verification.NativeRelation.Instruction.Holds hash assignment instruction)
+    (mixedSuffixSteps : ∀ item ∈ (rest.take 31).zipIdx,
+      Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash assignment item.1)
+    {impactRaw : Json}
+    (impactSplit : rest = rest.take 31 ++ impactRaw :: rest.drop 32)
+    (impactOpcode : Backend.Native.stringField impactRaw "op" = .ok "impact")
+    {impactGuard : Verification.NativeRelation.Operand}
+    (impactGuardDecoded : Verification.NativeRelationJson.decodeOperandField impactRaw "guard" =
+      .ok impactGuard)
+    {impactValues : List Verification.NativeRelation.Operand}
+    (impactPayloadDecoded : (do
+      Verification.NativeRelationJson.decodeOperands (← impactRaw.getObjVal? "inputs")) =
+      .ok impactValues)
     (targetOpcode : Backend.Native.stringField raw "op" = .ok "public_input")
     (targetOutput : Backend.Native.stringField raw "output" = .ok "%input_skippedCell")
     (targetGuard : Verification.NativeRelationJson.decodeOperandField raw "guard" =
@@ -112,7 +124,19 @@ private theorem acceptedIssue43SkippedCellSuffix
           (Verification.NativeRelation.Operand.reference "%input_existed" |>.read assignment) stream =
             match stream with
             | value :: rest => some (value, rest)
-            | [] => none)) := by
+            | [] => none)) ∧
+      (∃ impactBefore impactAfter guardTerm group observation,
+        Backend.Native.validateInstruction expected impactBefore impactRaw = .ok impactAfter ∧
+        Verification.ScalarValidationMeaning.StateMeaning hash inputs assignment impactBefore ∧
+        Verification.ScalarValidationOutputMeaning.sourceImpactGuard expected impactBefore =
+          some guardTerm ∧
+        expected.groups[impactBefore.groupCount]? = some group ∧
+        impactAfter = {impactBefore with groupCount := impactBefore.groupCount + 1} ∧
+        Verification.GuardedImpactObservation.sourceObservation hash inputs guardTerm group =
+          some observation ∧
+        Verification.GuardedImpactObservation.observeImpact (impactGuard.read assignment)
+          (impactValues.map (·.read assignment)) = some observation ∧
+        observation.payload.length = group.length) := by
   obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
     Backend.Zkir.lowerEntrypoint_validation_and_instructions
       Issue43GuardedReads.state issue43GuardedEntry program lowered
@@ -171,8 +195,73 @@ private theorem acceptedIssue43SkippedCellSuffix
       (agreement requirement inputMember) targetOpcode rowAccepted
   have transcript := Verification.GuardedScalarInput.consume_accepted_public_read
     stream beforeMeaning selected nonforeign guarded targetOpcode rowAccepted targetGuard
+  have impactSourceSplit : instructions.toList =
+      (prelude ++ raw :: rest.take 31) ++ impactRaw :: rest.drop 32 := by
+    have suffixSplit := congrArg (fun suffix => prelude ++ raw :: suffix) impactSplit
+    calc
+      instructions.toList = prelude ++ raw :: rest := splitRows
+      _ = prelude ++ raw :: (rest.take 31 ++ impactRaw :: rest.drop 32) := suffixSplit
+      _ = (prelude ++ raw :: rest.take 31) ++ impactRaw :: rest.drop 32 := by
+        simp [List.append_assoc]
+  have mixedPrefixSteps : ∀ item ∈ (prelude ++ raw :: rest.take 31).zipIdx,
+      Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash assignment item.1 := by
+    intro item itemMem
+    have rawMember : item.1 ∈ prelude ++ raw :: rest.take 31 := by
+      rw [← List.zipIdx_map_fst 0 (prelude ++ raw :: rest.take 31)]
+      exact List.mem_map_of_mem itemMem
+    rcases List.mem_append.mp rawMember with preludeMember | afterPrelude
+    · have indexedMember : item.1 ∈ (prelude.zipIdx).map Prod.fst := by
+        simpa only [List.zipIdx_map_fst] using preludeMember
+      obtain ⟨⟨row, index⟩, indexMember, sameRow⟩ := List.mem_map.mp indexedMember
+      have rowEq : row = item.1 := by simpa using sameRow
+      cases rowEq
+      exact steps (item.1, index) indexMember
+    · rcases List.mem_cons.mp afterPrelude with targetMember | suffixMember
+      · cases targetMember
+        exact .native (.publicInput targetOpcode)
+      · have indexedMember : item.1 ∈ ((rest.take 31).zipIdx).map Prod.fst := by
+          simpa only [List.zipIdx_map_fst] using suffixMember
+        obtain ⟨⟨row, index⟩, indexMember, sameRow⟩ := List.mem_map.mp indexedMember
+        have rowEq : row = item.1 := by simpa using sameRow
+        cases rowEq
+        exact mixedSuffixSteps (item.1, index) indexMember
+  obtain ⟨impactBefore, impactAfter, _, impactAccepted, impactMeaning, _⟩ :=
+    Verification.RangeDedupAcceptedArray.accepted_prefix_meaning
+      (Verification.ScalarValidationMeaning.empty_meaning hash inputs assignment)
+      Verification.ScalarValidationNativeDefinitions.empty_nativeDefinitions
+      schema agreement mixedPrefixSteps driver.instructionTrace impactSourceSplit
+  obtain ⟨guardTerm, group, observation, sourceGuard, sourceGroup, impactNext,
+      sourceObservation, emittedObservation, width⟩ :=
+    Verification.GuardedImpactObservation.accepted_impact_observation
+      impactMeaning impactAccepted impactOpcode impactGuardDecoded impactPayloadDecoded
   exact ⟨expected, before, after, requirement, rowAccepted, requirementId, guarded,
-    beforeMeaning, beforeDefinitions, afterMeaning, afterDefinitions, transcript⟩
+    beforeMeaning, beforeDefinitions, afterMeaning, afterDefinitions, transcript,
+    ⟨impactBefore, impactAfter, guardTerm, group, observation, impactAccepted, impactMeaning,
+      sourceGuard, sourceGroup, impactNext, sourceObservation, emittedObservation, width⟩⟩
+
+/-- Continue meaning from the accepted guarded input across a mixed producer
+prefix, then relate the next Impact row to the source-selected observation.
+The prefix admissions are explicit so guarded public inputs use the producer
+opcode classifier even though the strict scalar decoder rejects them. -/
+private def issue43MixedPrefixShape : _root_.Bool :=
+  match Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state issue43GuardedEntry with
+  | .error _ => Bool.false
+  | .ok program =>
+    let rows := (program.getObjValD "instructions").getArr?.toOption.getD #[]
+    let opcodes := (rows.toList.drop 6).take 31 |>.map fun row =>
+      (row.getObjValD "op").getStr?.toOption.getD ""
+    opcodes == [
+      "cond_select", "test_eq", "assert", "public_input", "cond_select", "test_eq", "assert",
+      "test_eq", "public_input", "constrain_to_boolean", "cond_select", "test_eq", "assert",
+      "public_input", "cond_select", "test_eq", "assert", "public_input", "cond_select",
+      "test_eq", "assert", "impact", "impact", "impact", "impact", "impact", "impact",
+      "impact", "impact", "cond_select", "impact"] &&
+      rows.size > 37 &&
+      (rows[37]!.getObjValD "op").getStr?.toOption == some "impact" &&
+      (rows[37]!.getObjValD "guard").getStr?.toOption == some "%input_existed" &&
+      (rows[37]!.getObjValD "inputs").getArr?.toOption == some #[toJson ("0x30" : String)]
+
+#guard issue43MixedPrefixShape == Bool.true
 
 
 #guard match issue43GuardedEntry.run issue43GuardedContext issue43GuardedInputs issue43GuardedState with
