@@ -3045,9 +3045,7 @@ theorem lowerEntrypointInputs_preservesOutputCapacityFrame (entry : Entrypoint) 
   intro _
   exact pure_preservesOutputCapacityFrame _
 
-def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
-  lowerEntrypointInputs entry
-  lowerConstraints entry.circuit.constraints
+def lowerEntrypointAliases (entry : Entrypoint) : LowerM Unit := do
   for output in entry.circuit.outputs do
     match output with
     | {name, ty := .bytes _, value, ..} =>
@@ -3062,18 +3060,16 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
     | {name, value, ..} =>
       let value ← lowerExpr value
       modify fun s => {s with aliases := (name, value) :: s.aliases}
-  -- Public parameters were read above in declaration order. Remaining reads
-  -- come from ledger cells and the VM membership result in transcript order.
-  let publicCount := Impact.publicInputReadCount entry.circuit.inputs
-  for read in plan.reads.drop publicCount do
-    for scalarRead in Impact.Read.scalarReads read do
-      let activity ← match scalarRead.guard with
-        | none => pure none
-        | some guard => pure (some (← lowerExpr guard))
-      let activityJson := (activity.map toJson).getD Json.null
-      for (name, ty) in scalarRead.bindings do
-        let output := "%input_" ++ name
-        match ty with
+
+private def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
+  for scalarRead in Impact.Read.scalarReads read do
+    let activity ← (match scalarRead.guard with
+      | none => pure none
+      | some guard => do pure (some (← lowerExpr guard)) : LowerM (Option String))
+    let activityJson := (activity.map toJson).getD Json.null
+    for (name, ty) in scalarRead.bindings do
+      let output := "%input_" ++ name
+      let bindRead : LowerM Unit := match ty with
         | .jubjubScalar => do
           emit "public_input" [
             ("guard", activityJson),
@@ -3086,43 +3082,199 @@ def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit 
           emit "public_input" [
             ("guard", activityJson),
             ("type", toJson kind.nativeName), ("output", toJson output)]
-        | _ =>
+        | _ => do
           emit "public_input" [
             ("guard", activityJson),
             ("type", nativeType), ("output", toJson output)]
           constrainType ty output
-      if let .bytes _ := scalarRead.ty then do
-        let values ← scalarRead.bindings.mapM fun (name, ty) => do
-          match scalarRead.guard, ty with
-          | some guard, .uint maximum =>
-            lowerExpr (.select guard (.ref name : Expr (.uint maximum)) (.uint maximum 0))
-          | _, _ => pure ("%input_" ++ name)
-        modify fun state => {state with byteAliases :=
-          (scalarRead.name, {values := values.reverse, packed := true}) :: state.byteAliases}
-      if scalarRead.ty == .jubjubPoint then do
-        let xName := scalarRead.bindings[0]!.1
-        let yName := scalarRead.bindings[1]!.1
-        let x := "%input_" ++ xName
-        let y := "%input_" ++ yName
-        let x ← match scalarRead.guard with
-          | none => pure x
-          | some guard => lowerExpr (.select guard (.ref xName : Expr .native) (.native 0))
-        let y ← match scalarRead.guard with
-          | none => pure y
-          | some guard => lowerExpr (.select guard (.ref yName : Expr .native) (.native 1))
-        let point ← lowerPointFromCoordinates x y
-        modify fun state => {state with aliases := (scalarRead.name, point) :: state.aliases}
-    lowerConstraints read.inactiveDefaultConstraints
-  lowerConstraints plan.guards
-  -- The ledger consumes one activity/skip entry per VM opcode. Compound
-  -- Impact operations split their field vectors at each native opcode.
+      bindRead
+    let maskBytes : LowerM Unit := match scalarRead.ty with
+      | .bytes _ => do
+          let values ← scalarRead.bindings.mapM fun (name, ty) => do
+            match scalarRead.guard, ty with
+            | some guard, .uint maximum =>
+              lowerExpr (.select guard (.ref name : Expr (.uint maximum)) (.uint maximum 0))
+            | _, _ => pure ("%input_" ++ name)
+          modify fun state => {state with byteAliases :=
+            (scalarRead.name, {values := values.reverse, packed := true}) :: state.byteAliases}
+      | _ => pure ()
+    maskBytes
+    if scalarRead.ty == .jubjubPoint then do
+      let xName := scalarRead.bindings[0]!.1
+      let yName := scalarRead.bindings[1]!.1
+      let x := "%input_" ++ xName
+      let y := "%input_" ++ yName
+      let x ← (match scalarRead.guard with
+        | none => pure x
+        | some guard => lowerExpr (.select guard (.ref xName : Expr .native) (.native 0)) : LowerM String)
+      let y ← (match scalarRead.guard with
+        | none => pure y
+        | some guard => lowerExpr (.select guard (.ref yName : Expr .native) (.native 1)) : LowerM String)
+      let point ← lowerPointFromCoordinates x y
+      modify fun state => {state with aliases := (scalarRead.name, point) :: state.aliases}
+  lowerConstraints read.inactiveDefaultConstraints
+
+private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read)
+    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerLedgerRead read) := by
+  unfold lowerLedgerRead
+  apply bind_preservesOutputCapacityFrame
+  · apply forIn_preservesOutputCapacityFrame
+    intro scalarRead _
+    apply bind_preservesOutputCapacityFrame
+    · cases scalarRead.guard with
+      | none => exact pure_preservesOutputCapacityFrame _
+      | some guard =>
+        apply bind_preservesOutputCapacityFrame _ _ (expression guard)
+        intro _
+        exact pure_preservesOutputCapacityFrame _
+    · intro activity
+      apply bind_preservesOutputCapacityFrame
+      · apply forIn_preservesOutputCapacityFrame
+        intro binding _
+        obtain ⟨name, ty⟩ := binding
+        apply bind_preservesOutputCapacityFrame
+        · split
+          · apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+            intro _
+            apply bind_preservesOutputCapacityFrame _ _
+              (lowerJubjubScalarFromNative_preservesOutputCapacityFrame _)
+            intro scalar
+            apply bind_preservesOutputCapacityFrame _ _
+              (lowerJubjubScalarToNative_preservesOutputCapacityFrame _)
+            intro encoded
+            apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+            intro _
+            exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
+          · exact emit_preservesOutputCapacityFrame _ _
+          · apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+            intro _
+            exact constrainType_preservesOutputCapacityFrame _ _
+        · intro _
+          exact pure_preservesOutputCapacityFrame _
+      · intro _
+        apply bind_preservesOutputCapacityFrame
+        · split
+          · apply bind_preservesOutputCapacityFrame
+            · apply listMapM_preservesOutputCapacityFrame
+              intro binding
+              obtain ⟨name, ty⟩ := binding
+              cases scalarRead.guard <;> cases ty <;>
+                first | exact expression _ | exact pure_preservesOutputCapacityFrame _
+            · intro values
+              exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
+          · exact pure_preservesOutputCapacityFrame _
+        · intro _
+          split
+          · apply bind_preservesOutputCapacityFrame
+            · cases scalarRead.guard with
+              | none => exact pure_preservesOutputCapacityFrame _
+              | some guard => exact expression _
+            · intro x
+              apply bind_preservesOutputCapacityFrame
+              · cases scalarRead.guard with
+                | none => exact pure_preservesOutputCapacityFrame _
+                | some guard => exact expression _
+              · intro y
+                apply bind_preservesOutputCapacityFrame _ _
+                  (lowerPointFromCoordinates_preservesOutputCapacityFrame x y)
+                intro point
+                apply bind_preservesOutputCapacityFrame
+                · exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
+                · intro _
+                  exact pure_preservesOutputCapacityFrame _
+          · exact pure_preservesOutputCapacityFrame _
+  · intro _
+    exact lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value)
+
+private def lowerLedgerReads (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
+  -- Public call parameters have already been read in declaration order.
+  let publicCount := Impact.publicInputReadCount entry.circuit.inputs
+  for read in plan.reads.drop publicCount do
+    lowerLedgerRead read
+
+private theorem lowerLedgerReads_preservesOutputCapacityFrame (entry : Entrypoint)
+    (plan : Impact.Plan)
+    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerLedgerReads entry plan) := by
+  unfold lowerLedgerReads
+  apply forIn_preservesOutputCapacityFrame
+  intro read _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerLedgerRead_preservesOutputCapacityFrame read expression)
+  intro _
+  exact pure_preservesOutputCapacityFrame _
+
+private def lowerLedgerOperations (plan : Impact.Plan) : LowerM Unit := do
+  -- The ledger consumes one activity entry per VM opcode. Compound Impact
+  -- operations split their field vectors at each native opcode.
   for (operation, index) in plan.operations.zipIdx do
     let guard := ((plan.activityGuards[index]?).getD none).getD (.bool true)
     for fields in operation.fieldGroups do
       bindPublicGuarded guard (← fields.mapM lowerExpr)
+
+private theorem lowerLedgerOperations_preservesOutputCapacityFrame (plan : Impact.Plan)
+    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerLedgerOperations plan) := by
+  unfold lowerLedgerOperations
+  apply forIn_preservesOutputCapacityFrame
+  intro operationIndex _
+  obtain ⟨operation, index⟩ := operationIndex
+  apply bind_preservesOutputCapacityFrame
+  · apply forIn_preservesOutputCapacityFrame
+    intro fields _
+    apply bind_preservesOutputCapacityFrame
+    · exact listMapM_preservesOutputCapacityFrame fields lowerExpr expression
+    · intro values
+      apply bind_preservesOutputCapacityFrame
+      · unfold bindPublicGuarded
+        apply bind_preservesOutputCapacityFrame _ _ (expression _)
+        intro _
+        exact emit_preservesOutputCapacityFrame _ _
+      · intro _
+        exact pure_preservesOutputCapacityFrame _
+  · intro _
+    exact pure_preservesOutputCapacityFrame _
+
+def lowerEntrypointBody (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
+  lowerEntrypointInputs entry
+  lowerConstraints entry.circuit.constraints
+  lowerEntrypointAliases entry
+  lowerLedgerReads entry plan
+  lowerConstraints plan.guards
+  lowerLedgerOperations plan
   -- Entrypoint returns are public outputs committed with the call statement.
   let returned ← lowerReturnFields entry.returns
   emit "output" [("vals", toJson returned)]
+
+/-- Compose allocation across the actual stages of an entrypoint. The source
+expression, alias lowering and return preflight frames are explicit premises. -/
+theorem lowerEntrypointBody_preservesOutputCapacityFrame (entry : Entrypoint) (plan : Impact.Plan)
+    (expression : ∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value))
+    (aliases : PreservesOutputCapacityFrame (lowerEntrypointAliases entry))
+    (preflight : ∀ output ∈ entry.returns, PreservesOutputCapacityFrame (lowerReturnPreflight output)) :
+    PreservesOutputCapacityFrame (lowerEntrypointBody entry plan) := by
+  unfold lowerEntrypointBody
+  apply bind_preservesOutputCapacityFrame _ _ (lowerEntrypointInputs_preservesOutputCapacityFrame entry)
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value))
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _ aliases
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerLedgerReads_preservesOutputCapacityFrame entry plan expression)
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerConstraints_preservesOutputCapacityFrame _ (fun value _ => expression value))
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerLedgerOperations_preservesOutputCapacityFrame plan expression)
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerReturnFields_preservesOutputCapacityFrame _ preflight (fun _ _ _ _ value _ => expression value))
+  intro _
+  exact emit_preservesOutputCapacityFrame _ _
 
 /-- Lower an already-pruned entrypoint and return its plan with the checked
 ledger relation. The producer check still derives its schedule from source. -/
