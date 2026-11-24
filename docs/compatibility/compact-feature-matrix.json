@@ -1199,7 +1199,7 @@
       "layer": "language",
       "surface": "Bindings, patterns and lexical scope",
       "noctiumStatus": "subset",
-      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements and circuit inputs destructure records by name and tuples, fixed vectors and bytes by position. Nested patterns evaluate the source once and preserve private origins. The native nested cases match Compact 0.36.1. A parameter pattern binds aliases to one named ABI input and supports several returned values. Constructor parameters and broader shadowing and expression binding remain open.",
+      "notes": "Readable witness lets infer Unit in statements and nested expressions. Unused bindings retain callback evaluation, and a Unit alias adds no callback or private field. Readable statements and circuit inputs destructure records by name and tuples, fixed vectors and bytes by position. Nested patterns evaluate the source once and preserve private origins. The native nested cases match Compact 0.36.1. A parameter pattern binds aliases to one named ABI input and supports several returned values. Each readable conditional arm supports branch-local lets and destructuring that shadow outer names. Initializers resolve the previous binding. Same-block duplicates reject and the continuation sees the original value. Pinned Compact and native cases agree on the selected provider, checked arm values and shared continuation. The Compact fixture saves the outer value under an alias before declaring the inner name. Constructor parameters and broader scope parity remain open.",
       "source": [
         "reference"
       ],
@@ -1214,7 +1214,10 @@
         "tests/ReadableBindPatterns.lean",
         "tests/compact/readable-bind-patterns.mjs",
         "tests/compact/readable-input-patterns.mjs",
-        "runtime/tests/readable_bind_patterns.rs"
+        "runtime/tests/readable_bind_patterns.rs",
+        "tests/ReadableLazyConditional.lean",
+        "tests/compact/lazy-conditional.mjs",
+        "runtime/tests/readable_lazy_conditional.rs"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

@@ -216,7 +216,8 @@ fn run_case(
     let selected = if choice { "loadLeft" } else { "loadRight" };
     let expected_provider = format!("{SOURCE_NAMESPACE}.{selected}");
     let amount = if choice { "7" } else { "9" };
-    let expects_tail = fixture.entrypoint == "branchChoice" && accepted;
+    let expects_tail = matches!(fixture.entrypoint.as_str(), "branchChoice" | "branchShadowing")
+        && accepted;
     let mut providers = 0;
     let outcome = loop {
         let status = session.advance()?;
@@ -259,7 +260,12 @@ fn run_case(
         &ledger::structure::INITIAL_PARAMETERS,
         ContractAddress::default(),
     )?;
-    assert_eq!(execution.returns_json()["observed"], amount);
+    let observed = if fixture.entrypoint == "branchShadowing" {
+        expected
+    } else {
+        amount
+    };
+    assert_eq!(execution.returns_json()["observed"], observed);
     assert_eq!(execution.returns_json()["enabled"], choice);
     assert_eq!(
         check(&execution, &fixture.circuit)?,
@@ -267,7 +273,7 @@ fn run_case(
     );
 
     let wrong_expected = if choice { "9" } else { "7" };
-    if fixture.entrypoint == "branchChoice" {
+    if expects_tail {
         let amount_index = if choice { 0 } else { 2 };
         assert_eq!(execution.preimage.private_transcript.len(), 4);
         assert_eq!(
@@ -333,5 +339,21 @@ fn readable_statement_branch_runs_the_continuation_once() -> Result<()> {
     run_case(&fixture, true, "7", 7, true)?;
     run_case(&fixture, false, "9", 8, true)?;
     run_case(&fixture, true, "9", 9, false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableLazyConditional artifacts in NOCTIUM_READABLE_LAZY_CONDITIONAL_DIR"]
+fn readable_branch_shadowing_keeps_outer_binding_and_checks_both_arms() -> Result<()> {
+    let fixture = Fixture::load("branchShadowing")?;
+    assert_fixture_shape(&fixture);
+    let calls = fixture.binding["calls"].as_array().expect("native call sites");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2]["name"], format!("{SOURCE_NAMESPACE}.afterChoice"));
+    assert_eq!(calls[2]["guard"], json!({"tag":"bool","value":true}));
+
+    run_case(&fixture, true, "7", 10, true)?;
+    run_case(&fixture, false, "8", 11, true)?;
+    run_case(&fixture, true, "9", 12, false)?;
     Ok(())
 }

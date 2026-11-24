@@ -72,6 +72,36 @@ noctium_witness_circuit branchChoice using payloadWire where
   output selectedEnabled : Bool := choice
 end
 
+noctium_witness_circuit branchShadowing using payloadWire where
+  public choice : Bool
+  public expected : Native
+  let x := expected
+  if choice then
+    let selected := witness loadLeft()
+    let x := add(x, 1)
+    prove eq(x, add(expected, 1))
+    prove eq(field(selected, amount), expected)
+    prove field(field(selected, extra), enabled)
+  else
+    let selected := witness loadRight()
+    let {amount := x} := selected
+    prove eq(x, add(expected, 1))
+    prove boolNot(field(field(selected, extra), enabled))
+  end
+  witness afterChoice(expected)
+  output selectedAmount : Native := x
+  output selectedEnabled : Bool := choice
+end
+
+/- error: duplicate readable witness value -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsSameBlockShadowing where
+  public source : Native
+  let x := source
+  let x := source
+  output observed : Native := x
+end
+
 /- error: readable witness expression type mismatch -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit rejectsNonBoolBranch where
@@ -147,6 +177,10 @@ noctium_contract ReadableLazyConditional where
     return enabled : Bool := selectedEnabled
   end
   entry branchChoice uses ReadableLazyConditional.branchChoice where
+    return observed : Native := selectedAmount
+    return enabled : Bool := selectedEnabled
+  end
+  entry branchShadowing uses ReadableLazyConditional.branchShadowing where
     return observed : Native := selectedAmount
     return enabled : Bool := selectedEnabled
   end
