@@ -418,6 +418,8 @@ structure Program where
   nominalFieldCells : List (String × String) := []
   /-- Source labels for scalar keys and values in direct ledger Maps. -/
   nominalUIntMaps : List (String × NominalUIntMap) := []
+  /-- Source nominal Field labels for direct Native-keyed Maps. -/
+  nominalFieldMapKeys : List (String × String) := []
   deriving Repr
 
 /-- Reapply source-only state aliases when a structured helper is attached to
@@ -431,6 +433,12 @@ def Program.withNominalUIntState (program : Program)
 def Program.withNominalFieldState (program : Program)
     (cells : List (String × String)) : Program :=
   {program with nominalFieldCells := cells}
+
+/-- Reapply source-only nominal Field key labels when a structured helper is
+attached to its owning contract. Map values remain unlabelled here. -/
+def Program.withNominalFieldMapKeys (program : Program)
+    (maps : List (String × String)) : Program :=
+  {program with nominalFieldMapKeys := maps}
 
 /-- Link independently declared helper libraries into one deterministic lexical
 program. Each library's root declarations become members of the shared root
@@ -447,6 +455,7 @@ def linkPrograms (libraries : List Program) : Except String Program := do
   let mut nominalUIntCells : List (String × NominalUIntType) := []
   let mut nominalFieldCells : List (String × String) := []
   let mut nominalUIntMaps : List (String × NominalUIntMap) := []
+  let mut nominalFieldMapKeys : List (String × String) := []
   let mut rootValues : List String := []
   let mut nextScope := 1
   let mut nextRootOrdinal := 0
@@ -488,10 +497,11 @@ def linkPrograms (libraries : List Program) : Except String Program := do
     nominalUIntCells := nominalUIntCells ++ library.nominalUIntCells
     nominalFieldCells := nominalFieldCells ++ library.nominalFieldCells
     nominalUIntMaps := nominalUIntMaps ++ library.nominalUIntMaps
+    nominalFieldMapKeys := nominalFieldMapKeys ++ library.nominalFieldMapKeys
   scopes := [{id := 0, values := rootValues.eraseDups}] ++ scopes.drop 1
   return {
     scopes, declarations, witnesses, composites, ledger, nominalUIntCells,
-    nominalFieldCells, nominalUIntMaps
+    nominalFieldCells, nominalUIntMaps, nominalFieldMapKeys
   }
 
 private def fail (span : SourceSpan) (message : String) : Except Diagnostic α :=
@@ -929,6 +939,17 @@ private def sourcePreflight (limits : Limits) (program : Program) :
         liftError {} (ScalarPolicy.validate (.uint nominal.maximum))
         unless ty == .uint nominal.maximum do
           fail {} s!"nominal UInt Map '{name}' type mismatch"
+  if program.nominalFieldMapKeys.length > limits.maxDeclarations then resource {} "nominal Field Map keys"
+  unless uniqueNames (program.nominalFieldMapKeys.map Prod.fst) do
+    fail {} "duplicate nominal Field Map key"
+  for (name, nominal) in program.nominalFieldMapKeys do
+    let some declaration := program.ledger.find? (·.name == name)
+      | fail {} s!"unknown nominal Field Map '{name}'"
+    let .map keyTy _ := declaration.kind
+      | fail {} s!"nominal Field state '{name}' is not a direct Map"
+    unless keyTy == .native do fail {} s!"nominal Field Map key '{name}' must use Native storage"
+    textMetadata nominal
+    unless validWitnessIdentifier nominal do fail {} "invalid nominal Field identity"
   checkLedgerSchema {} program.ledger
   if program.declarations.length > limits.maxDeclarations then resource {} "declarations"
   if program.scopes.length > limits.maxScopes then resource {} "scopes"
@@ -1679,6 +1700,7 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       let useNominals := nominals.isSome && (!program.nominalUIntCells.isEmpty ||
         !program.nominalFieldCells.isEmpty ||
         !program.nominalUIntMaps.isEmpty ||
+        !program.nominalFieldMapKeys.isEmpty ||
         program.witnesses.any (fun signature =>
           signature.resultNominalField.isSome || signature.parameters.any (·.sourceNominalField.isSome)) ||
         program.declarations.any (fun decl =>
@@ -1949,9 +1971,10 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
         | .readMember state destination keyTy valueTy key => do
           checkedMap program span state keyTy valueTy
           let nominalMap := program.nominalUIntMaps.lookup state
+          let nominalFieldKey := program.nominalFieldMapKeys.lookup state
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
           checkNominalUInt span (nominalMap.bind (·.key)) info.nominalUInt
-          checkNominalField span none info.nominalField
+          checkNominalField span nominalFieldKey info.nominalField
           unless partialSubtype info.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           if locals.contains destination || (inputNames program declaration.id).contains destination then
             fail span s!"ledger read destination '{destination}' shadows an existing binding"
@@ -1971,9 +1994,10 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
         | .writeMap state keyTy valueTy key value => do
           checkedMap program span state keyTy valueTy true
           let nominalMap := program.nominalUIntMaps.lookup state
+          let nominalFieldKey := program.nominalFieldMapKeys.lookup state
           let key ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span key (some nominals)
           checkNominalUInt span (nominalMap.bind (·.key)) key.nominalUInt
-          checkNominalField span none key.nominalField
+          checkNominalField span nominalFieldKey key.nominalField
           unless partialSubtype key.ty (.scalar keyTy) do fail span "ledger map key type mismatch"
           let value ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span value (some nominals)
           checkNominalUInt span (nominalMap.bind (·.value)) value.nominalUInt
