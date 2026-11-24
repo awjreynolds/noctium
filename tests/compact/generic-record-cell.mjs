@@ -42,7 +42,7 @@ try {
   const contract = new Contract({});
   const walletKey = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(
-    runtime.createConstructorContext(null, walletKey),
+    runtime.createConstructorContext(null, walletKey), Uint8Array.from([1, 2, 3, 4]),
   );
   const run = async (name, state, ...args) => {
     const context = runtime.createCircuitContext({
@@ -56,36 +56,48 @@ try {
     return [call.result, call.context.callContext.currentQueryContext.state];
   };
   const readCell = state => ledger(state).cell_value;
-  const expected = (issued, spent) => ({ issued: BigInt(issued), spent: BigInt(spent) });
+  const expected = (issued, spent, tag) => ({
+    issued: BigInt(issued), spent: BigInt(spent), tag: Uint8Array.from(tag),
+  });
+  const initialTag = [1, 2, 3, 4];
+  const disabledTag = [9, 8, 7, 6];
+  const enabledTag = [128, 0, 255, 42];
 
   let state = currentContractState.data;
-  assert.deepEqual(readCell(state), expected(5, 42));
+  assert.deepEqual(readCell(state), expected(5, 42, initialTag));
 
   let [inspected] = await run('inspect', state);
-  assert.deepEqual(inspected, expected(5, 42));
+  assert.deepEqual(inspected, expected(5, 42, initialTag));
 
-  let [disabledResult, afterDisabled] = await run('update', state, false, 11n, 13n);
-  assert.deepEqual(disabledResult, expected(5, 42));
-  assert.deepEqual(readCell(afterDisabled), expected(5, 42));
+  let [disabledResult, afterDisabled] = await run(
+    'update', state, false, 11n, 13n, Uint8Array.from(disabledTag),
+  );
+  assert.deepEqual(disabledResult, expected(5, 42, initialTag));
+  assert.deepEqual(readCell(afterDisabled), expected(5, 42, initialTag));
   state = afterDisabled;
 
-  let [updatedResult, afterUpdate] = await run('update', state, true, 8n, 99n);
-  assert.deepEqual(updatedResult, expected(8, 99));
-  assert.deepEqual(readCell(afterUpdate), expected(8, 99));
+  let [updatedResult, afterUpdate] = await run(
+    'update', state, true, 8n, 99n, Uint8Array.from(enabledTag),
+  );
+  assert.deepEqual(updatedResult, expected(8, 99, enabledTag));
+  assert.deepEqual(readCell(afterUpdate), expected(8, 99, enabledTag));
   state = afterUpdate;
 
   [inspected, state] = await run('inspect', state);
-  assert.deepEqual(inspected, expected(8, 99));
-  assert.deepEqual(readCell(state), expected(8, 99));
+  assert.deepEqual(inspected, expected(8, 99, enabledTag));
+  assert.deepEqual(readCell(state), expected(8, 99, enabledTag));
 
   console.log(JSON.stringify({
     fixture: 'GenericRecordCell',
     compiler: compilerVersion,
     runtime: runtimePackage.version,
-    initial: { issued: '5', spent: '42' },
-    disabledWrite: { inputs: { enabled: false, nextIssued: '11', nextSpent: '13' }, result: { issued: '5', spent: '42' } },
-    enabledWrite: { result: { issued: '8', spent: '99' } },
-    reread: { issued: '8', spent: '99' },
+    initial: { issued: '5', spent: '42', tag: initialTag },
+    disabledWrite: {
+      inputs: { enabled: false, nextIssued: '11', nextSpent: '13', nextTag: disabledTag },
+      result: { issued: '5', spent: '42', tag: initialTag },
+    },
+    enabledWrite: { result: { issued: '8', spent: '99', tag: enabledTag } },
+    reread: { issued: '8', spent: '99', tag: enabledTag },
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

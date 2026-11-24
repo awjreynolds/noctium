@@ -627,7 +627,7 @@ private def flatTypedRecordFields (environment : Types.CompositeEnv)
       ScalarPolicy.validate (.uint maximum)
       pure (field.name, .uint maximum)
     | .scalar (.bytes 32) => pure (field.name, Ty.bytes 32)
-    | .scalar (.bytes length) => do
+    | .scalar (.bytes length) | .bytes length => do
       unless allowFixedBytes do
         throw "typed ledger records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
       unless length ≤ maxBytesLength do

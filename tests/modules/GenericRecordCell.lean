@@ -11,7 +11,8 @@ private def genericRecordCellLedgerEnvironment : Types.CompositeEnv := {
     id := "GenericRecordCell.Ledger"
     fields := [
       {name := "issued", type := .scalar .native},
-      {name := "spent", type := .scalar .native}
+      {name := "spent", type := .scalar .native},
+      {name := "tag", type := .bytes 4}
     ]
   }]
 }
@@ -34,7 +35,8 @@ def genericRecordCellUpdateProgram : Program := {
     values := [
       ("enabled", .bool),
       ("nextIssued", .native),
-      ("nextSpent", .native)
+      ("nextSpent", .native),
+      ("nextTag", .bytes (.literal 4))
     ]
     result := .unit
     body := [.return]
@@ -45,7 +47,8 @@ def genericRecordCellUpdateProgram : Program := {
     inputs := [
       {name := "enabled", type := .bool, visibility := .private},
       {name := "nextIssued", type := .native, visibility := .private},
-      {name := "nextSpent", type := .native, visibility := .private}
+      {name := "nextSpent", type := .native, visibility := .private},
+      {name := "nextTag", type := .bytes (.literal 4), visibility := .private}
     ]
   }]
 }
@@ -64,6 +67,14 @@ private def genericRecordCellEntrypointMember (id : Nat) (name : String) : Membe
   kind := .entrypoint
   visibility := .«public»
 }
+
+private def genericRecordCellTagInputs : List String :=
+  (List.range 4).map fun index => s!"nextTag.{index}"
+
+private def genericRecordCellTag : Expr (.bytes 4) :=
+  let packed := genericRecordCellTagInputs.zipIdx.foldl (fun total (name, index) =>
+    Expr.add total (Expr.mul (.ref name) (.native (256 ^ index)))) (.native 0)
+  .sliceBytes (.toBytes32 packed) 0 4
 
 def genericRecordCellModule : Definition := {
   parameters := [⟨"T", .type⟩]
@@ -94,11 +105,12 @@ def genericRecordCellModule : Definition := {
       «member» := 4
       name := "update"
       circuit := .localMember 2
-      callInputs := ["enabled", "nextIssued", "nextSpent"]
+      callInputs := ["enabled", "nextIssued", "nextSpent"] ++ genericRecordCellTagInputs
       effects := [{
         effect := .writeRecordCell (.localMember 0) [
           ("issued", .mk .native (.disclose {} (.ref "nextIssued" : Expr .native))),
-          ("spent", .mk .native (.disclose {} (.ref "nextSpent" : Expr .native)))
+          ("spent", .mk .native (.disclose {} (.ref "nextSpent" : Expr .native))),
+          ("tag", .mk (.bytes 4) (.disclose {} genericRecordCellTag))
         ]
         guard := some (.disclose {} (.ref "enabled" : Expr .bool))
       }]
@@ -142,7 +154,7 @@ def genericRecordCellRequest : Request := {
   arguments := []
   constructorInputs := [{
     state := .importedMember "record" "ledger"
-    recordFields := [("issued", "issued"), ("spent", "spent")]
+    recordFields := [("issued", "issued"), ("spent", "spent"), ("tag", "initialTag")]
   }]
 }
 
@@ -163,7 +175,7 @@ private def genericRecordCellWrongFieldsRequest : Request := {
   genericRecordCellRequest with
   constructorInputs := [{
     state := .importedMember "record" "ledger"
-    recordFields := [("issued", "issued"), ("missing", "spent")]
+    recordFields := [("issued", "issued"), ("missing", "spent"), ("tag", "initialTag")]
   }]
 }
 
@@ -172,7 +184,8 @@ private def genericRecordCellWrongTypeEnvironment : Types.CompositeEnv := {
     id := "GenericRecordCell.Ledger"
     fields := [
       {name := "issued", type := .scalar .native},
-      {name := "spent", type := .scalar .bool}
+      {name := "spent", type := .scalar .bool},
+      {name := "tag", type := .bytes 4}
     ]
   }]
 }
@@ -202,12 +215,13 @@ private def genericRecordCellWrongLayoutPlan : Except Diagnostic ModuleContractP
     genericRecordCellWrongLayoutRequest.sourceName genericRecordCellWrongLayoutRequest.arguments
   expansion.contractPlan expansion.root genericRecordCellWrongLayoutRequest.constructorInputs
 
-#guard match Types.layout Types.defaultLimits genericRecordCellLedgerEnvironment
+#guard match LedgerValueType.cellRecordFields genericRecordCellLedgerEnvironment
     (.structure "GenericRecordCell.Ledger") with
-  | .ok (.structure "GenericRecordCell.Ledger" [
-      ("issued", .scalar .nativeField),
-      ("spent", .scalar .nativeField)
-    ]) => Bool.true
+  | .ok [
+      ("issued", .native),
+      ("spent", .native),
+      ("tag", .bytes 4)
+    ] => Bool.true
   | _ => Bool.false
 
 #guard match genericRecordCellPlanFor genericRecordCellRequest with
@@ -216,7 +230,8 @@ private def genericRecordCellWrongLayoutPlan : Except Diagnostic ModuleContractP
     | some constr =>
       constr.parameters.map (fun parameter => (parameter.name, parameter.type)) == [
           ("issued", .scalar .native),
-          ("spent", .scalar .native)
+          ("spent", .scalar .native),
+          ("initialTag", .scalar (.bytes 4))
         ]
     | none => Bool.false
   | .error _ => Bool.false
