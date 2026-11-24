@@ -55,6 +55,8 @@ The funded isolated localnet accepted the catalog deployment and proved call. Th
 | Deploy | 30934 | `8fb8b254d3a39fac4d5b09a07a980d9015a872ecc8a05d8faf17f15d2ab1c729` |
 | Call | 30937 | `1844e41af5c35a445d3f3a86d94c7fe661ce9186eb0a9a1b16051792d65e5f21` |
 
+A later authenticated bundle deployed at block 83708 and finalized the catalog call at 83711. All eleven logs matched the pinned Compact reference in order, version, tag, aligned width, and full-width payload digest. The receipt records the bundle, source, profile, and tested optional and address flags. [Finalized catalog receipt](../../tests/standard-event-catalog-localnet-evidence.json)
+
 ```sh
 lake build noctium
 .lake/build/bin/noctium compile examples/StandardEvents.lean \
@@ -67,10 +69,12 @@ NOCTIUM_EVENT_ARTIFACTS="$PWD/build/experiments/standard-events" \
 
 Generate keys, assemble the authenticated bundle and submit with the Rust client for localnet qualification. [Bundle workflow](portable-artifacts.md#build-and-use) · [Native client](native-client.md)
 
-To reproduce the funded helper checks, assemble verified bundles for all three `StandardEvents.Token` operations with the pinned target. Point `NOCTIUM_STANDARD_EVENTS_BUNDLES` at a directory with `logSpend/`, `logCatalog/`, and `logHelperSpend/` bundles. Set `NOCTIUM_STANDARD_EVENTS_MANIFESTS` to a JSON map of operation names to trusted manifest hashes. Set `NOCTIUM_STANDARD_EVENTS_PARAMETER_CACHE` to the verified parameter cache and `NOCTIUM_STANDARD_EVENTS_NODE` to the pinned loopback development RPC.
+To reproduce the funded catalog and helper checks, assemble verified bundles for all three `StandardEvents.Token` operations with the pinned target. Point `NOCTIUM_STANDARD_EVENTS_BUNDLES` at a directory with `logSpend/`, `logCatalog/`, and `logHelperSpend/` bundles. Set `NOCTIUM_STANDARD_EVENTS_MANIFESTS` to a JSON map of operation names to trusted manifest hashes. Set `NOCTIUM_STANDARD_EVENTS_PARAMETER_CACHE` to the verified parameter cache and `NOCTIUM_STANDARD_EVENTS_NODE` to the pinned loopback development RPC.
 
 ```sh
 cargo test --manifest-path runtime/Cargo.toml --locked \
   --no-default-features --features zkir-321,localnet --lib \
   localnet::tests::standard_event_helper_finalizes_logs -- --ignored --exact --nocapture
 ```
+
+Use `localnet::tests::standard_event_catalog_finalizes_all_logs` as the test filter to reproduce the eleven-event call.
