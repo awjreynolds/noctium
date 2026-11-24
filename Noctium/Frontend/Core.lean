@@ -1087,6 +1087,25 @@ private def commonType (stx : Syntax) (left right : Ty) : CommandElabM Ty := do
 private def wireCodecTerm (type : Ty) : CommandElabM (TSyntax `term) := do
   `((Noctium.Wire.scalarCodec $(← tyTerm type)).get (by decide))
 
+private def scalarSerializeTerm (span : Syntax) (type : Ty) (value : TSyntax `term)
+    (length : Nat) : CommandElabM (TSyntax `term) := do
+  let some width := Wire.scalarWidth type
+    | throwErrorAt span "serialize requires a scalar or fixed bytes"
+  unless width ≤ length && length ≤ maxBytesLength do
+    throwErrorAt span s!"serialize requires a byte length from {width} through {maxBytesLength}"
+  let codec ← wireCodecTerm type
+  `(Noctium.Wire.ScalarCodec.serialize $codec $value $(natTerm length) (by decide))
+
+private def scalarDeserializeTerm (span : Syntax) (type source : Ty)
+    (value : TSyntax `term) : CommandElabM (TSyntax `term) := do
+  let some width := Wire.scalarWidth type
+    | throwErrorAt span "deserialize requires a scalar or fixed bytes"
+  let .bytes length := source
+    | throwErrorAt span "deserialize requires a Bytes expression"
+  unless width ≤ length do
+    throwErrorAt span s!"deserialize requires at least {width} bytes"
+  `(Noctium.Wire.ScalarCodec.deserialize $(← wireCodecTerm type) $value)
+
 /-- A new partial scalar operation must execute even beneath a total wrapper.
 Mark every subtraction conservatively, including total native-field subtraction. -/
 private partial def hasPartialScalar (stx : TSyntax `nlexpr) : _root_.Bool :=
@@ -1285,14 +1304,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     | _ => throwErrorAt stx "fromBytesChecked supports only Native and UInt"
   | `(nlexpr| serialize($value, $size:num)) => do
     let (ty, value) ← expression env value
-    let some width := Wire.scalarWidth ty
-      | throwErrorAt stx "serialize requires a scalar or fixed bytes"
     let length := size.getNat
-    unless width ≤ length && length ≤ maxBytesLength do
-      throwErrorAt size s!"serialize requires a byte length from {width} through {maxBytesLength}"
-    let codec ← wireCodecTerm ty
-    pure (.bytes length, ← `(Noctium.Wire.ScalarCodec.serialize $codec $value
-      $(natTerm length) (by decide)))
+    pure (.bytes length, ← scalarSerializeTerm size ty value length)
   | `(nlexpr| toBytes($value, $size:num)) => do
     let (source, value) ← expression env value
     let length := size.getNat
@@ -1306,13 +1319,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       $(natTerm length) (by decide)))
   | `(nlexpr| deserialize($target:nltype, $value)) => do
     let ty ← readTy target
-    let some width := Wire.scalarWidth ty
-      | throwErrorAt target "deserialize requires a scalar or fixed bytes"
     let (sourceTy, value) ← expression env value
-    let .bytes length := sourceTy | throwErrorAt stx "deserialize requires a Bytes expression"
-    unless width ≤ length do
-      throwErrorAt stx s!"deserialize requires at least {width} bytes"
-    pure (ty, ← `(Noctium.Wire.ScalarCodec.deserialize $(← wireCodecTerm ty) $value))
+    pure (ty, ← scalarDeserializeTerm target ty sourceTy value)
   | `(nlexpr| byteAt($value, $index:num)) => do
     let (valueTy, value) ← expression env value
     let .bytes length := valueTy
@@ -2024,6 +2032,16 @@ private partial def circuitSourceExpression (env : Bindings) (nominalEnv : Circu
     | `(nlexpr| copyValue($value)) => do
       let (type, value, nominalUInt) ← circuitSourceExpression env nominalEnv value
       pure (type, ← `(Noctium.Expr.copyValue $value), nominalUInt)
+    | `(nlexpr| serialize($sourceValue, $length:num)) => do
+      let (source, value, _) ← circuitSourceExpression env nominalEnv sourceValue
+      pure (.bytes length.getNat,
+        ← scalarSerializeTerm length source value length.getNat, none)
+    | `(nlexpr| deserialize($targetType:nltype, $sourceValue)) => do
+      let target ← readCircuitSourceType targetType
+      let (source, value, _) ← circuitSourceExpression env nominalEnv sourceValue
+      pure (target.type,
+        ← scalarDeserializeTerm targetType target.type source value,
+        target.nominalUInt)
     | `(nlexpr| assertThen($condition, $body)) => do
       let (conditionType, conditionTerm, conditionNominal) ←
         circuitSourceExpression env nominalEnv condition
@@ -2137,6 +2155,16 @@ private partial def circuitFieldExpression (env : Bindings) (nominalEnv : Circui
   | `(nlexpr| copyValue($value)) => do
     let (type, term, nominalField) ← circuitFieldExpression env nominalEnv fieldEnv value
     pure (type, ← `(Noctium.Expr.copyValue $term), nominalField)
+  | `(nlexpr| serialize($sourceValue, $length:num)) => do
+    let (source, value, _) ← circuitFieldExpression env nominalEnv fieldEnv sourceValue
+    pure (.bytes length.getNat,
+      ← scalarSerializeTerm length source value length.getNat, none)
+  | `(nlexpr| deserialize($targetType:nltype, $sourceValue)) => do
+    let target ← readCircuitSourceType targetType _root_.Bool.true
+    let (source, value, _) ← circuitFieldExpression env nominalEnv fieldEnv sourceValue
+    pure (target.type,
+      ← scalarDeserializeTerm targetType target.type source value,
+      target.nominalField)
   | `(nlexpr| $id:ident) => do
     let some (_, type, value) := env.find? (fun binding => binding.1 == id.getId.toString)
       | throwErrorAt id s!"unknown Noctium value '{id.getId}'"

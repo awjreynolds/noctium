@@ -333,9 +333,6 @@ private def alignedBytes32Value (value : Expr (.bytes 32))
     else alignedBytes32Fields normalized
   | _ => alignedBytes32Fields normalized
 
-private def bytes32FromChunksTerm (low31 highByte : Term) : Term :=
-  .unary "bytes32_from_chunks" (.hash [low31, highByte])
-
 /-- A fixed byte projection after reconstructing canonical Bytes32 chunks. -/
 def bytes32ByteAtTerm (bytes : Term) (index : Nat) : Term :=
   .unary s!"bytes32_byte_at:{index}" bytes
@@ -801,7 +798,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
   | .fromBytes32 (target := target) value => do
     let normalized ← normalize env value
     let (highByte, low31) ← alignedBytes32Fields normalized
-    let rawBytes := bytes32FromChunksTerm low31 highByte
+    let rawBytes := bytesFromChunksTerm32 low31 highByte
     let (term, maximum?, assertions) ← match target with
       | .native => do
         let (term, maximum) ← typedScalarFromBytesTerm .native 32 rawBytes
