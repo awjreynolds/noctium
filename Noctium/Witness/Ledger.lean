@@ -23,6 +23,7 @@ private structure BuildState where
   nominalUIntCells : List (String × NominalUIntType) := []
   nominalUIntMaps : List (String × NominalUIntMap) := []
   nominalFieldMapKeys : List (String × String) := []
+  nominalFieldMapValues : List (String × String) := []
   next : Nat := 0
   reserved : List String := []
   calls : List LedgerCall := []
@@ -56,7 +57,8 @@ private def signatureResult (kind : String) (valueTy : Ty) : ResultType :=
   else .scalar (if kind == "readMember" then .bool else valueTy)
 
 private def registerCall (kind stateName : String) (keyTy : Option Ty) (valueTy : Ty)
-    (parameters : List WitnessParameter) (resultNominal : Option String := none) :
+    (parameters : List WitnessParameter) (resultNominal : Option String := none)
+    (resultNominalField : Option String := none) :
     BuildM (String × String) := do
   let site ← fresh "site"
   let name ← fresh "signature"
@@ -66,7 +68,7 @@ private def registerCall (kind stateName : String) (keyTy : Option Ty) (valueTy 
     capability := "noctium.ledger",
     parameters,
     result := signatureResult kind valueTy,
-    resultNominal}
+    resultNominal, resultNominalField}
   modify fun current => {current with
     calls := current.calls ++ [{site, name, kind, state := stateName, keyTy, valueTy}]
     signatures := current.signatures ++ [signature]}
@@ -103,9 +105,12 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
     let nominalMap := ((← get).nominalUIntMaps.lookup state).getD {}
     let keyNominal := nominalMap.key.map (·.name)
     let keyNominalField := (← get).nominalFieldMapKeys.lookup state
+    let nominalFieldMapValues ← get
     let resultNominal := if kind == "readMember" then none else nominalMap.value.map (·.name)
+    let resultNominalField := if kind == "readMember" then none
+      else nominalFieldMapValues.nominalFieldMapValues.lookup state
     let (site, name) ← registerCall kind state (some keyTy) valueTy
-      [scalarParameter "key" keyTy keyNominal keyNominalField] resultNominal
+      [scalarParameter "key" keyTy keyNominal keyNominalField] resultNominal resultNominalField
     let bindKey := Statement.bind keyName (.scalar keyTy) key
     -- Native equality ties the disclosed provider value to the public ledger read.
     let bindResult := Statement.bind destination (.scalar resultTy)
@@ -128,9 +133,10 @@ private def transformStatement (statement : Statement) : BuildM (List Statement 
     let valueName ← fresh "value"
     let nominalMap := ((← get).nominalUIntMaps.lookup state).getD {}
     let keyNominalField := (← get).nominalFieldMapKeys.lookup state
+    let valueNominalField := (← get).nominalFieldMapValues.lookup state
     let (site, name) ← registerCall "writeMap" state (some keyTy) valueTy
       [scalarParameter "key" keyTy (nominalMap.key.map (·.name)) keyNominalField,
-        scalarParameter "value" valueTy (nominalMap.value.map (·.name))]
+        scalarParameter "value" valueTy (nominalMap.value.map (·.name)) valueNominalField]
     let bindKey := Statement.bind keyName (.scalar keyTy) key
     let bindValue := Statement.bind valueName (.scalar valueTy) value
     let notify := Statement.evaluate (callTerm site name [.ref keyName, .ref valueName])
@@ -174,6 +180,7 @@ def transform (program : Program) : Except Diagnostic Transformed := do
     source, nominalUIntCells := program.nominalUIntCells,
     nominalUIntMaps := program.nominalUIntMaps,
     nominalFieldMapKeys := program.nominalFieldMapKeys,
+    nominalFieldMapValues := program.nominalFieldMapValues,
     reserved := program.witnesses.map (·.name)}
   let action : BuildM (List Declaration × List Declaration) := transformDeclarations program.declarations
   let ((hostDeclarations, nativeDeclarations), result) ← action.run initial
