@@ -1,10 +1,10 @@
 #![cfg(feature = "zkir-321")]
 
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
-use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+use noctium_runtime::{Plan, check, create_state, field_value, prepare, zkir::IrSource};
 use onchain_runtime::state::StateValue;
 use serde_json::{Value as Json, json};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, env, fs::File, path::PathBuf};
 
 fn bytes_value(value: &[u8]) -> Json {
     json!({"kind":"bytes", "values":value})
@@ -198,5 +198,62 @@ fn root_fixed_byte_record_values_match_compact_for_scalar_and_record_keys() -> a
         coin_structure::contract::ContractAddress::default(),
     )
     .is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh NominalFieldRecordMap outputs in NOCTIUM_NOMINAL_FIELD_RECORD_MAP_DIR"]
+fn nominal_field_record_map_aliases_match_compact_and_reject_wrong_aliases() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        env::var_os("NOCTIUM_NOMINAL_FIELD_RECORD_MAP_DIR")
+            .expect("NOCTIUM_NOMINAL_FIELD_RECORD_MAP_DIR must point at fresh compiler outputs"),
+    );
+    let stem = "NominalFieldRecordMap.RecordMap.roundTrip";
+    let plan: Plan = serde_json::from_reader(File::open(
+        directory.join(format!("{stem}.impact.json")),
+    )?)?;
+    let circuit = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
+    let compact: Json = serde_json::from_str(include_str!(
+        "fixtures/nominal-field-record-map/compact-0.36.1.json"
+    ))?;
+    assert_eq!(compact["compact"], "0.36.1 (7fa3a117c 2026-11-11)");
+    assert_eq!(compact["runtime"], "0.21.0");
+
+    let state = create_state(&plan, &BTreeMap::from([("records".into(), json!([]))]))?;
+    let inputs = BTreeMap::from([
+        ("keyAmount".into(), json!("17")),
+        ("memoAmount".into(), json!("42")),
+    ]);
+    let result = prepare(
+        &plan,
+        &inputs,
+        &state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    check(&result, &circuit)?;
+    let actual_outputs = Json::Object(result.returns_json().into_iter().collect());
+    assert_eq!(actual_outputs, compact["outputs"]);
+
+    let StateValue::Array(slots) = result.after.state.get_ref() else {
+        anyhow::bail!("expected contract state slots");
+    };
+    let Some(StateValue::Map(records)) = slots.get(0) else {
+        anyhow::bail!("expected the root record-key Map state");
+    };
+    let expected_entries: usize = compact["remainingEntries"]
+        .as_str()
+        .expect("Compact remaining-entry count")
+        .parse()?;
+    assert_eq!(records.size(), expected_entries);
+    let stored = records
+        .get(&field_value(transient_crypto::curve::Fr::from(17u64)))
+        .expect("record key with matching Amount alias remains");
+    let StateValue::Cell(stored) = &*stored else {
+        anyhow::bail!("expected the flat Memo value in one native cell");
+    };
+    assert_eq!(**stored, field_value(transient_crypto::curve::Fr::from(42u64)));
+    assert_eq!(compact["wrongKeyAliasRejected"], true);
+    assert_eq!(compact["wrongRecordValueAliasRejected"], true);
     Ok(())
 }
