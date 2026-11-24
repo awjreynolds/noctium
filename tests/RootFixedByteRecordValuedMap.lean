@@ -178,10 +178,9 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
       (LedgerValueType.mapRecordFields scalarEnvironment scalarType).isOk &&
       (LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.composite scalarEnvironment scalarType))).isOk &&
-      (match LedgerValueType.validate Capabilities.source
-        (.map (.bytes 32) (.map (.bytes 32) (.composite scalarEnvironment scalarType))) with
-        | .error _ => _root_.Bool.true
-        | .ok _ => _root_.Bool.false) &&
+      (LedgerValueType.validate Capabilities.source
+        (.map (.bytes 32) (.map (.bytes 32)
+          (.composite scalarEnvironment scalarType)))).isOk &&
       (match LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.recordMapComposite keyEnvironment keyType valueEnvironment valueType)) with
         | .error _ => _root_.Bool.true
