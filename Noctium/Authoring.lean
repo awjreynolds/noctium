@@ -4520,7 +4520,7 @@ private partial def lowerReadableStatement (programName path : String)
           nominalUIntCells := [$nominalUIntCellTerms,*]
           nominalUIntMaps := [$nominalUIntMapTerms,*]
         : Noctium.Helpers.Program })
-    let programTerm ← if libraryNames.isEmpty && !codecTerms.isEmpty then
+    let programTerm ← if libraryNames.isEmpty && !codecTerms.isEmpty && helperProgram.isNone then
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with
         | .ok program => program
         | .error _ => {}) else pure programTerm
