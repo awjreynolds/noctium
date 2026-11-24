@@ -115,10 +115,73 @@ theorem accepted_output_meaning
   · rw [← matched]
     simpa only [List.map_map, Function.comp_def] using valuesMeaning
 
+/-- The source activity term for this row, using the producer's unguarded
+default only when the whole activity schedule is empty. -/
+def sourceImpactGuard (expected : Expected) (state : State) : Option Backend.Native.Term :=
+  if expected.groupGuards.isEmpty then some (.constant 1)
+  else expected.groupGuards[state.groupCount]?
+
+private theorem accepted_impact_operands {expected : Expected}
+    {state next : State} {raw : Json}
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact") :
+    ∃ text guard facts,
+      Backend.Native.stringField raw "guard" = .ok text ∧
+      operand state text = .ok guard ∧ guard.maximum ≤ 1 ∧
+      sourceImpactGuard expected state = some guard.term ∧
+      arguments state raw "inputs" = .ok facts ∧
+      expected.groups[state.groupCount]? = some (facts.map (·.term)) ∧
+      next = {state with groupCount := state.groupCount + 1} := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
+  have same := Except.ok.inj (op.symm.trans opcode)
+  subst found
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, text, textParsed, guard, guardParsed, booleanUnit, booleanChecked,
+    facts, factsParsed, accepted⟩
+  change (do
+    let fact ← operand state text
+    Backend.Native.ensure (fact.valueType == NativeValueType.native)
+      "native instruction operand must have Native type"
+    pure fact) = .ok guard at guardParsed
+  rcases bind_ok.mp guardParsed with ⟨fact, factParsed, typed⟩
+  rcases bind_ok.mp typed with ⟨_, _, guardEq⟩
+  change Except.ok fact = Except.ok guard at guardEq
+  cases guardEq
+  cases booleanUnit
+  have maximum : guard.maximum ≤ 1 := of_decide_eq_true (ensure_ok.mp booleanChecked)
+  have argumentsAccepted := arguments_of_checked_native_arguments factsParsed
+  refine ⟨text, guard, facts, textParsed, factParsed, maximum, ?_⟩
+  split at accepted
+  next group groupParsed =>
+    simp only [Pure.pure, Except.pure] at accepted
+    cases empty : expected.groupGuards.isEmpty
+    · cases scheduled : expected.groupGuards[state.groupCount]?
+      · simp [empty, scheduled, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+      · simp [empty, scheduled, bind_ok] at accepted
+        obtain ⟨⟨guardUnit, guardChecked⟩, ⟨payloadUnit, payloadChecked⟩, advanced⟩ :=
+          accepted
+        cases guardUnit
+        cases payloadUnit
+        rw [← eq_of_beq (ensure_ok.mp payloadChecked)] at groupParsed
+        exact ⟨by simpa [sourceImpactGuard, empty, scheduled] using
+          (eq_of_beq (ensure_ok.mp guardChecked)).symm,
+          argumentsAccepted, groupParsed, advanced.symm⟩
+    · simp [empty, bind_ok] at accepted
+      obtain ⟨⟨guardUnit, guardChecked⟩, ⟨payloadUnit, payloadChecked⟩, advanced⟩ :=
+        accepted
+      cases guardUnit
+      cases payloadUnit
+      rw [← eq_of_beq (ensure_ok.mp payloadChecked)] at groupParsed
+      exact ⟨by simpa [sourceImpactGuard, empty] using
+        (eq_of_beq (ensure_ok.mp guardChecked)).symm,
+        argumentsAccepted, groupParsed, advanced.symm⟩
+  next => contradiction
+
 /-- The strict decoder and accepted producer read the same ordered Impact
-payload. Each term in the producer's selected source group has a scalar
-interpretation equal to its corresponding decoded operand under the witness.
-The strict decoder currently accepts literal-one Impact guards. -/
+payload. Each selected source term has a scalar interpretation equal to its
+corresponding decoded operand. -/
 theorem accepted_impact_meaning
     {hash : Hash} {inputs witness : Assignment} {expected : Expected}
     {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
@@ -129,86 +192,53 @@ theorem accepted_impact_meaning
     ∃ group, expected.groups[state.groupCount]? = some group ∧
       next = {state with groupCount := state.groupCount + 1} ∧
       group.map (interpret hash inputs) = (values.map (·.read witness)).map some := by
-  unfold validateInstruction at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
-  have same := Except.ok.inj (op.symm.trans opcode)
-  subst found
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨_, _, _, _, _, _, _, _, facts, factsParsed, accepted⟩
-  have argumentsAccepted := arguments_of_checked_native_arguments factsParsed
-  split at accepted
-  next group groupParsed =>
-    simp only [Pure.pure, Except.pure] at accepted
-    have checked :
-        (facts.map (·.term) == group) = true ∧
-          next = {state with groupCount := state.groupCount + 1} := by
-      cases empty : expected.groupGuards.isEmpty
-      · cases sourceGuard : expected.groupGuards[state.groupCount]?
-        · simp [empty, sourceGuard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
-        · simp [empty, sourceGuard, bind_ok] at accepted
-          obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
-          exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
-      · simp [empty, bind_ok] at accepted
-        obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
-        exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
-    have matched : facts.map (·.term) = group := eq_of_beq checked.1
-    simp [NativeRelationJson.decodeInstruction, opcode, bind_ok,
-      nativeJson_stringField_eq] at decoded
-    rcases decoded with ⟨_, decodedGuard, _, decoded⟩
-    cases decodedGuard <;> simp [bind_ok, map_ok] at decoded
-    rcases decoded with ⟨_, json, jsonParsed, valuesDecoded, _⟩
-    have valuesMeaning := arguments_decoded_meaning invariant argumentsAccepted (by
-      simp only [jsonParsed]
-      exact valuesDecoded)
-    refine ⟨group, groupParsed, checked.2, ?_⟩
-    rw [← matched]
-    simpa only [List.map_map, Function.comp_def] using valuesMeaning
-  next => contradiction
+  obtain ⟨_, _, facts, _, _, _, _, parsed, selected, advanced⟩ :=
+    accepted_impact_operands accepted opcode
+  simp [NativeRelationJson.decodeInstruction, opcode, bind_ok,
+    nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨_, decodedGuard, _, decoded⟩
+  cases decodedGuard <;> simp [bind_ok, map_ok] at decoded
+  rcases decoded with ⟨_, json, jsonParsed, valuesDecoded, _⟩
+  have valuesMeaning := arguments_decoded_meaning invariant parsed (by
+    simp only [jsonParsed]
+    exact valuesDecoded)
+  exact ⟨facts.map (·.term), selected, advanced,
+    by simpa only [List.map_map, Function.comp_def] using valuesMeaning⟩
 
-/-- The accepted producer selects the next Impact payload group and advances
-its cursor once. The payload can be decoded independently of the strict
-instruction decoder, which intentionally rejects dynamic guard operands. -/
-theorem accepted_impact_payload_meaning
+/-- An accepted Impact row independently decoded from the emitted JSON has
+the source-selected guard and payload under the same witness. The Boolean
+fact comes from producer validation and the scalar meaning invariant. -/
+theorem accepted_impact_guard_and_payload_meaning
     {hash : Hash} {inputs witness : Assignment} {expected : Expected}
-    {state next : State} {raw : Json} {values : List Operand}
+    {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
     (invariant : StateMeaning hash inputs witness state)
     (accepted : validateInstruction expected state raw = .ok next)
     (opcode : Backend.Native.stringField raw "op" = .ok "impact")
-    (decoded : (do NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")) =
+    (decodedGuard : NativeRelationJson.decodeOperandField raw "guard" = .ok guard)
+    (decodedPayload : (do NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")) =
       .ok values) :
-    ∃ group, expected.groups[state.groupCount]? = some group ∧
+    ∃ guardTerm group, sourceImpactGuard expected state = some guardTerm ∧
+      expected.groups[state.groupCount]? = some group ∧
       next = {state with groupCount := state.groupCount + 1} ∧
+      interpret hash inputs guardTerm = some (guard.read witness) ∧
+      (guard.read witness = zero ∨ guard.read witness = one) ∧
       group.map (interpret hash inputs) = (values.map (·.read witness)).map some := by
-  classical
-  unfold validateInstruction at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨found, op, _, _, _, _, accepted⟩
-  have same := Except.ok.inj (op.symm.trans opcode)
-  subst found
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨_, _, _, _, _, _, _, _, facts, factsParsed, accepted⟩
-  have argumentsAccepted := arguments_of_checked_native_arguments factsParsed
-  split at accepted
-  next group groupParsed =>
-    simp only [Pure.pure, Except.pure] at accepted
-    have checked :
-        (facts.map (·.term) == group) = true ∧
-          next = {state with groupCount := state.groupCount + 1} := by
-      cases empty : expected.groupGuards.isEmpty
-      · cases sourceGuard : expected.groupGuards[state.groupCount]?
-        · simp [empty, sourceGuard, Bind.bind, Except.bind, MonadExcept.throw] at accepted
-        · simp [empty, sourceGuard, bind_ok] at accepted
-          obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
-          exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
-      · simp [empty, bind_ok] at accepted
-        obtain ⟨_, ⟨_, payloadChecked⟩, advanced⟩ := accepted
-        exact ⟨ensure_ok.mp payloadChecked, advanced.symm⟩
-    have matched : facts.map (·.term) = group := eq_of_beq checked.1
-    have valuesMeaning := arguments_decoded_meaning invariant argumentsAccepted decoded
-    refine ⟨group, groupParsed, checked.2, ?_⟩
-    rw [← matched]
-    simpa only [List.map_map, Function.comp_def] using valuesMeaning
-  next => contradiction
+  obtain ⟨_, fact, facts, textParsed, parsed, maximum, guardSelected, payloadParsed,
+    groupSelected, advanced⟩ := accepted_impact_operands accepted opcode
+  unfold Backend.Native.stringField at textParsed
+  unfold NativeRelationJson.decodeOperandField at decodedGuard
+  obtain ⟨guardJson, jsonParsed, textAccepted⟩ := bind_ok.mp textParsed
+  rw [jsonParsed] at decodedGuard
+  change NativeRelationJson.decodeOperand guardJson = .ok guard at decodedGuard
+  have meaning := operand_decoded_meaning invariant textAccepted parsed decodedGuard
+  have bound := Nat.le_trans meaning.bound maximum
+  have boolean : (guard.read witness).val = 0 ∨ (guard.read witness).val = 1 := by omega
+  have valuesMeaning := arguments_decoded_meaning invariant payloadParsed decodedPayload
+  refine ⟨fact.term, facts.map (·.term), guardSelected, groupSelected,
+    advanced, meaning.term, ?_, ?_⟩
+  · rcases boolean with inactive | active
+    · exact Or.inl (Fin.ext inactive)
+    · exact Or.inr (Fin.ext active)
+  · simpa only [List.map_map, Function.comp_def] using valuesMeaning
 
 end Noctium.Verification.ScalarValidationOutputMeaning

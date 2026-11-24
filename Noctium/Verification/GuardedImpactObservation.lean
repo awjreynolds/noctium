@@ -1,11 +1,12 @@
-import Lean
-import Noctium.Verification.NativeRelationJson
+import Noctium.Verification.ScalarValidationOutputMeaning
 
 namespace Noctium.Verification.GuardedImpactObservation
 
 open Lean
+open Backend.Native
 open Noctium.Verification.NativeRelation
 open Noctium.Verification.NativeRelationJson
+open ScalarNormalization ScalarValidationMeaning ScalarValidationOutputMeaning
 
 /-- A single observation emitted by pinned scalar Impact preprocessing. The
 activity bit is kept even when every masked payload field is zero, so inactive
@@ -56,68 +57,58 @@ theorem observeImpact_preserves_width (guard : Scalar) (values : List Scalar)
       simp
     · simp [observeImpact, active, inactive] at accepted
 
-/-- Ordered Impact rows either all decode to observations or reject on the
-first non-Boolean activity guard. -/
-def observeRows : List (Scalar × List Scalar) → Option (List Observation)
-  | [] => some []
-  | (guard, values) :: rows =>
-    match observeImpact guard values with
-    | none => none
-    | some head =>
-      match observeRows rows with
-      | none => none
-      | some tail => some (head :: tail)
+def sourceObservation (hash : Hash) (inputs : Assignment) (guard : Backend.Native.Term)
+    (group : List Backend.Native.Term) : Option Observation := do
+  let active ← interpret hash inputs guard
+  let values ← group.mapM (interpret hash inputs)
+  observeImpact active values
 
-theorem observeRows_cons (row : Scalar × List Scalar) (rows : List (Scalar × List Scalar)) :
-    observeRows (row :: rows) =
-      match observeImpact row.1 row.2, observeRows rows with
-      | some head, some tail => some (head :: tail)
-      | _, _ => none := by
-  cases row with
-  | mk guard values =>
-    cases observed : observeImpact guard values <;>
-      cases tail : observeRows rows <;> simp [observeRows, observed, tail]
+private theorem mapM_of_values (f : α → Option β)
+    {terms : List α} {values : List β} (matched : terms.map f = values.map some) :
+    terms.mapM f = some values := by
+  induction terms generalizing values with
+  | nil => cases values <;> simp_all
+  | cons head tail ih =>
+    cases values with
+    | nil => simp at matched
+    | cons value rest =>
+      simp only [List.map_cons, List.cons.injEq] at matched
+      simp [List.mapM_cons, matched.1, ih matched.2]
 
-/-- Successful observation preserves the number and order of static groups. -/
-theorem observeRows_preserves_group_count (rows : List (Scalar × List Scalar))
-    (observations : List Observation)
-    (accepted : observeRows rows = some observations) :
-    observations.length = rows.length := by
-  induction rows generalizing observations with
-  | nil =>
-    simp [observeRows] at accepted
-    cases accepted
-    rfl
-  | cons row rows ih =>
-    rw [observeRows_cons] at accepted
-    cases head : observeImpact row.1 row.2 with
-    | none => simp [head] at accepted
-    | some observation =>
-      cases tail : observeRows rows with
-      | none => simp [head, tail] at accepted
-      | some tailObservations =>
-        have same : observations = observation :: tailObservations := by
-          simpa [observeRows, head, tail] using accepted.symm
-        subst observations
-        have tailCount := ih tailObservations tail
-        simp [tailCount]
-
-/-- This concrete mixed schedule preserves row order and width while masking
-only the inactive row's payload. -/
-theorem observeRows_ordered_example (a b c d : Scalar) :
-    observeRows [(one, [a, b]), (zero, [c]), (one, [d])] =
-      some [⟨true, [a, b]⟩, ⟨false, [zero]⟩, ⟨true, [d]⟩] := by
-  simp [observeRows, observeImpact, zero_ne_one]
-
-/-- The existing strict parser accepts the producer's literal-one Impact row.
-Dynamic guards remain outside its current decoder profile. -/
-private def literalImpactRow : Json := Json.mkObj [
-  ("op", toJson ("impact" : String)),
-  ("guard", toJson ("0x01" : String)),
-  ("inputs", toJson (["%left", "%right"] : List String))]
-
-#guard match NativeRelationJson.decodeInstruction literalImpactRow with
-  | .ok (.impact (.immediate guard) [.reference "%left", .reference "%right"]) => guard == one
-  | _ => false
+/-- With scalar meaning at the accepted row pre-state, independent raw operand
+decoding produces the same activity and ordered public payload as the
+source-selected terms. An inactive group keeps its width and contributes
+zeros. This relates one row to the preprocessing model. -/
+theorem accepted_impact_observation
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
+    (invariant : StateMeaning hash inputs witness state)
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decodedGuard : decodeOperandField raw "guard" = .ok guard)
+    (decodedPayload : (do decodeOperands (← raw.getObjVal? "inputs")) = .ok values) :
+    ∃ guardTerm group observation, sourceImpactGuard expected state = some guardTerm ∧
+      expected.groups[state.groupCount]? = some group ∧
+      next = {state with groupCount := state.groupCount + 1} ∧
+      sourceObservation hash inputs guardTerm group = some observation ∧
+      observeImpact (guard.read witness) (values.map (·.read witness)) = some observation ∧
+      observation.payload.length = group.length := by
+  obtain ⟨guardTerm, group, guardSelected, groupSelected, advanced, guardMeaning, boolean,
+      payloadMeaning⟩ :=
+    accepted_impact_guard_and_payload_meaning invariant accepted opcode decodedGuard decodedPayload
+  have evaluated := mapM_of_values _ payloadMeaning
+  have width : group.length = values.length := by
+    simpa using congrArg List.length payloadMeaning
+  have sourceExact :
+      sourceObservation hash inputs guardTerm group =
+        observeImpact (guard.read witness) (values.map (·.read witness)) := by
+    simp [sourceObservation, guardMeaning, evaluated]
+  rcases boolean with inactive | active
+  · refine ⟨guardTerm, group, ⟨false, List.replicate values.length zero⟩,
+      guardSelected, groupSelected, advanced, ?_, ?_, by simp [width]⟩
+    all_goals simp [sourceExact, inactive, observeImpact_inactive]
+  · refine ⟨guardTerm, group, ⟨true, values.map (·.read witness)⟩,
+      guardSelected, groupSelected, advanced, ?_, ?_, by simp [width]⟩
+    all_goals simp [sourceExact, active, observeImpact_active]
 
 end Noctium.Verification.GuardedImpactObservation
