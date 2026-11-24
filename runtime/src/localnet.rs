@@ -7588,6 +7588,209 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "submits a funded GenericJubjubPointCell update to the authorized isolated localnet"]
+    fn generic_jubjub_point_cell_finalizes_funded_update() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::Digest;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_JUBJUB_POINT_FUNDED_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19945",
+                "GenericJubjubPointCell requires the authorized loopback node on port 19945"
+            );
+
+            let entries = [
+                (
+                    "read",
+                    "NOCTIUM_JUBJUB_POINT_FUNDED_READ_BUNDLE",
+                    "NOCTIUM_JUBJUB_POINT_FUNDED_READ_SHA256",
+                ),
+                (
+                    "update",
+                    "NOCTIUM_JUBJUB_POINT_FUNDED_UPDATE_BUNDLE",
+                    "NOCTIUM_JUBJUB_POINT_FUNDED_UPDATE_SHA256",
+                ),
+            ];
+            let mut bundles = Vec::with_capacity(entries.len());
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            let mut degrees = BTreeMap::new();
+            let mut pins = BTreeMap::new();
+            for (entry, bundle_env, digest_env) in entries {
+                let bundle = artifacts::verify(
+                    Path::new(&setting(bundle_env)?),
+                    Some(&setting(digest_env)?),
+                )?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(
+                    plan.entrypoint == entry,
+                    "unexpected GenericJubjubPointCell {entry} plan"
+                );
+                let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+                degrees.insert(entry.to_owned(), circuit.k());
+                plans.insert(entry.to_owned(), plan);
+                circuits.insert(entry.to_owned(), circuit);
+                pins.insert(entry.to_owned(), setting(digest_env)?);
+                bundles.push(bundle);
+            }
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_JUBJUB_POINT_FUNDED_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let mut parameters = BTreeMap::new();
+            for entry in ["read", "update"] {
+                parameters.insert(entry, cache.parameters(degrees[entry]).await?);
+            }
+
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let initial = json!({"kind": "jubjubPoint", "x": "0", "y": "1"});
+            let next = json!({
+                "kind": "jubjubPoint",
+                "x": "28336281903124990867587793011069573392383982287722241916350956173377953689573",
+                "y": "39385640392217313770878525135509063452020585410343666726093009378539878503883"
+            });
+            let constructor_inputs = BTreeMap::from([("initial".to_owned(), initial.clone())]);
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &serde_json::to_vec(&json!({"state": &constructor_inputs}))?,
+                ttl,
+                &mut rng,
+            )?;
+            target.operation("read", &parameters["read"], ttl)?;
+            let update = target.operation("update", &parameters["update"], ttl)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid GenericJubjubPointCell address"))?,
+            ));
+            let model_state = crate::construct_state(&plans["read"], &constructor_inputs)?;
+            let (deployed_context, deployment) = funded.deploy(&target, "read").await?;
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.contract_address == target.contract_address()
+                    && deployment.chain.genesis == DEVELOPMENT_GENESIS
+                    && deployed.data.get_ref() == model_state.get_ref(),
+                "deployed GenericJubjubPointCell state differs from native construction"
+            );
+
+            let snapshot = funded.node.sync()?;
+            let update_inputs = BTreeMap::from([("next".to_owned(), next.clone())]);
+            let update_execution = crate::prepare(
+                &plans["update"],
+                &update_inputs,
+                &model_state,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            ensure!(
+                crate::check(&update_execution, &circuits["update"])?
+                    == update_execution.activity_schedule
+                    && update_execution.returns_json().get("result") == Some(&next),
+                "native GenericJubjubPointCell update differs from the requested generator"
+            );
+
+            let mut current = Some(deployed_context);
+            let (bound, receipt) = funded
+                .call_with_bound(&update, &mut current, &parameters["update"], update_inputs)
+                .await?;
+            bound.check_receipt(&receipt)?;
+            let updated: ContractState<Db> = native_decode(&receipt.contract_state)?;
+            ensure!(
+                receipt.chain.genesis == DEVELOPMENT_GENESIS
+                    && receipt.contract_address == target.contract_address()
+                    && receipt.contract_state == bound.expected_state()
+                    && updated.data.get_ref() == update_execution.after.state.get_ref(),
+                "finalized GenericJubjubPointCell update differs from checked native state"
+            );
+
+            let fetched = funded
+                .node
+                .finalized_contract_state(&target.contract_address())?;
+            ensure!(
+                fetched.chain.genesis == DEVELOPMENT_GENESIS
+                    && fetched.bytes == receipt.contract_state,
+                "fetched GenericJubjubPointCell canonical state differs from the finalized update"
+            );
+            let fetched_state: ContractState<Db> = native_decode(&fetched.bytes)?;
+            let mut replay_cache = None;
+            let fetched_snapshot =
+                funded
+                    .node
+                    .replay_to(&fetched.block_hash, &mut replay_cache, None)?;
+            ensure!(
+                fetched_snapshot.finalized_hash == fetched.block_hash,
+                "fetched GenericJubjubPointCell state is not at its replayed finalized block"
+            );
+            let read_execution = crate::prepare(
+                &plans["read"],
+                &BTreeMap::new(),
+                &fetched_state.data,
+                &fetched_snapshot.state.parameters,
+                address,
+            )?;
+            ensure!(
+                crate::check(&read_execution, &circuits["read"])?
+                    == read_execution.activity_schedule
+                    && read_execution.returns_json().get("result") == Some(&next),
+                "native GenericJubjubPointCell read differs from fetched canonical state"
+            );
+            let read_returns_sha256 = hex::encode(sha2::Sha256::digest(serde_json::to_vec(
+                &read_execution.returns_json(),
+            )?));
+
+            if let Some(path) = env::var_os("NOCTIUM_JUBJUB_POINT_FUNDED_EVIDENCE") {
+                let (runtime_code_hash, metadata_sha256) = funded.node.runtime_fingerprint();
+                let receipt_evidence = |receipt: &FinalizedReceipt| {
+                    json!({
+                        "blockHash": receipt.block_hash,
+                        "finalizedHash": receipt.finalized_hash,
+                        "transactionId": receipt.transaction_id,
+                        "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                    })
+                };
+                let evidence = json!({
+                    "schemaVersion": 1,
+                    "scope": "funded generic Jubjub point Cell deploy, update, fetched-state native read",
+                    "contractAddress": target.contract_address(),
+                    "genesis": DEVELOPMENT_GENESIS,
+                    "runtimeCodeHash": runtime_code_hash,
+                    "metadataSha256": metadata_sha256,
+                    "profile": crate::profile::NAME,
+                    "bundleManifestSha256": pins,
+                    "deployment": receipt_evidence(&deployment),
+                    "update": receipt_evidence(&receipt),
+                    "fetchedCanonicalState": {
+                        "blockHash": fetched.block_hash,
+                        "stateSha256": hex::encode(sha2::Sha256::digest(&fetched.bytes)),
+                        "readReturnsSha256": read_returns_sha256,
+                        "readCircuitChecked": true,
+                        "readMatchesUpdatedPoint": true,
+                    },
+                });
+                std::fs::write(path, serde_json::to_vec_pretty(&evidence)?)?;
+            }
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "submits funded FlatRecordCellReset updates to the authorized isolated localnet"]
     fn flat_record_cell_reset_finalizes_guarded_record_defaults() -> anyhow::Result<()> {
         use crate::{
