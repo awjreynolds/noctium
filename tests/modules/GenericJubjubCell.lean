@@ -162,6 +162,71 @@ private def genericJubjubScalarDefaultRequest : Request := {
     | .error _ => Bool.false
   | .error _ => Bool.false
 
+def genericJubjubPointCellRoot : Definition := {
+  imports := [{
+    viewName := "point"
+    target := `genericJubjubScalarCellModule
+    arguments := [.typeValue (.scalar .jubjubPoint)]
+    selections := [
+      {sourceName := "value", localName := "value"},
+      {sourceName := "read", localName := "read"},
+      {sourceName := "update", localName := "update"}
+    ]
+  }]
+  exports := [
+    {name := "value", target := .importedMember "point" "value"},
+    {name := "read", target := .importedMember "point" "read"},
+    {name := "update", target := .importedMember "point" "update"}
+  ]
+}
+
+noctium_module from genericJubjubPointCellRoot
+
+def genericJubjubPointCellRequest : Request := {
+  sourceName := `genericJubjubPointCellRoot
+  arguments := []
+  constructorInputs := [{
+    state := .importedMember "point" "value"
+    parameterName := "initial"
+  }]
+}
+
+noctium_module_contract GenericJubjubPointCell from genericJubjubPointCellRequest
+
+#guard match GenericJubjubPointCell.constructor with
+  | some constr =>
+    constr.parameters.map (fun parameter => (parameter.name, parameter.type)) ==
+      [("initial", .scalar .jubjubPoint)] &&
+    constr.initializers.map (fun initializer => initializer.type) ==
+      [.scalar .jubjubPoint]
+  | none => Bool.false
+
+private def genericJubjubPointCellReturnType (entryName : String) : _root_.Bool :=
+  match GenericJubjubPointCell.entrypoints.find? (·.name == entryName) with
+  | some operation =>
+    match operation.returns with
+    | [returned] => returned.name == "result" && returned.ty == .jubjubPoint
+    | _ => Bool.false
+  | none => Bool.false
+
+#guard genericJubjubPointCellReturnType "read" &&
+  genericJubjubPointCellReturnType "update"
+
+private def genericJubjubPointCellRegistry : Registry := {
+  modules := [
+    {sourceName := `genericJubjubScalarCellModule, definition := genericJubjubScalarCellModule},
+    {sourceName := `genericJubjubPointCellRoot, definition := genericJubjubPointCellRoot}
+  ]
+}
+
+#guard match Modules.expand genericJubjubPointCellRegistry
+    `genericJubjubPointCellRoot [] with
+  | .ok expansion =>
+    match expansion.contractPlan expansion.root genericJubjubPointCellRequest.constructorInputs with
+    | .ok _ => Bool.true
+    | .error _ => Bool.false
+  | .error _ => Bool.false
+
 #guard match Modules.expand genericJubjubScalarDefaultRegistry
     `genericJubjubScalarCellModule [.type (.scalar .jubjubScalar)] with
   | .ok expansion =>

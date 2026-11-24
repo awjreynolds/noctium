@@ -15,15 +15,20 @@ module GenericValue<T> {
 }
 
 import GenericValue<JubjubScalar> prefix explicit_;
+import GenericValue<JubjubPoint> prefix point_;
 
 export {
   explicit_value,
   explicit_read,
   explicit_update,
+  point_value,
+  point_read,
+  point_update,
 };
 
-constructor(initial: JubjubScalar) {
+constructor(initial: JubjubScalar, initialPoint: JubjubPoint) {
   explicit_value = disclose(initial);
+  point_value = disclose(initialPoint);
 }
 
 export circuit readExplicit(): JubjubScalar {
@@ -33,4 +38,13 @@ export circuit readExplicit(): JubjubScalar {
 export circuit updateExplicit(next: JubjubScalar): JubjubScalar {
   explicit_update(disclose(next));
   return explicit_read();
+}
+
+export circuit readPoint(): JubjubPoint {
+  return point_read();
+}
+
+export circuit updatePoint(next: JubjubPoint): JubjubPoint {
+  point_update(disclose(next));
+  return point_read();
 }
