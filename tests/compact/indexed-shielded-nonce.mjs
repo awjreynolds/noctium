@@ -30,6 +30,7 @@ try {
   ]);
 
   const index = (1n << 128n) - 1n;
+  const overflowIndex = 1n << 128n;
   const zeroIndex = 0n;
   const nonce = Uint8Array.from({ length: 32 }, (_, offset) => offset + 1);
   const nonceWithDifferentHighByte = nonce.slice();
@@ -37,6 +38,12 @@ try {
   const evolvedAtZero = pureCircuits.indexedNonce(zeroIndex, nonce);
   const evolved = pureCircuits.indexedNonce(index, nonce);
   const evolvedWithDifferentHighByte = pureCircuits.indexedNonce(index, nonceWithDifferentHighByte);
+  assert.throws(() => pureCircuits.indexedNonce(overflowIndex, nonce));
+  assert.throws(() => pureCircuits.indexedNonce(zeroIndex, nonce.slice(0, 31)));
+  assert.equal(Buffer.from(evolvedAtZero).toString('hex'),
+    'f2bd6732969e6e5d895070978de9462e7d70a932ac37b21387b1521f207f5300');
+  assert.equal(Buffer.from(evolved).toString('hex'),
+    '0c0163afc8a0a7f18df615e077cfc07cb21784e19a74f23eb48318b51ccb1800');
   assert.notDeepEqual(evolvedAtZero, evolved);
   assert.deepEqual(evolvedWithDifferentHighByte, evolved);
   console.log(JSON.stringify({

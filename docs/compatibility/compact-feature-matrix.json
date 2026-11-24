@@ -6200,8 +6200,8 @@
       "id": "C-STDLIB-EVOLVENONCE",
       "layer": "standard-library",
       "surface": "evolveNonce",
-      "noctiumStatus": "subset",
-      "notes": "Lean shieldedIndexedNonce takes a UInt128 index and Bytes32 nonce. Native 3.2.1 matches pinned Compact at index zero and UInt128 maximum, and drops the nonce's high byte before hashing. Source checks reject mismatched types and require disclosure of private-derived public results. Other source and host routes remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "The pinned Compact signature takes a UInt128 index and Bytes32 nonce and returns Bytes32. Lean shieldedIndexedNonce uses the same domain, argument order and high-byte truncation. Compact 0.36.1 and native ZKIR 3.2.1 match exact outputs at zero and UInt128 maximum and after changing the unused high nonce byte. Both reject index overflow and a 31-byte nonce. The emitted K10 relation proves and verifies the zero-index vector with official parameters. Verification rejects a modified output commitment. Lean checks disclosure for a private-derived public return.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6215,11 +6215,13 @@
         "ABI"
       ],
       "observedEvidence": [
+        "Noctium/Wire.lean",
+        "tests/compact/IndexedShieldedNonce.compact",
         "tests/IndexedShieldedNonce.lean",
         "runtime/tests/indexed_shielded_nonce.rs",
         "tests/compact/indexed-shielded-nonce.mjs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SHIELDEDBURNADDRESS",
