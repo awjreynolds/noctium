@@ -1,0 +1,23 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Key {
+  tag: Bytes<1>;
+  id: Bytes<33>;
+}
+
+export ledger entries: Map<Key, Uint<16>>;
+
+constructor(tag: Bytes<1>, id: Bytes<33>, amount: Uint<16>, enabled: Boolean) {
+  if (disclose(enabled)) {
+    entries.insert(disclose(Key {tag: disclose(tag), id: disclose(id)}), disclose(amount));
+  }
+}
+
+export circuit member(tag: Bytes<1>, id: Bytes<33>): Boolean {
+  return entries.member(disclose(Key {tag: disclose(tag), id: disclose(id)}));
+}
+
+export circuit inspect(tag: Bytes<1>, id: Bytes<33>): Uint<16> {
+  return entries.lookup(disclose(Key {tag: disclose(tag), id: disclose(id)}));
+}
