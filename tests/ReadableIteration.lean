@@ -17,8 +17,16 @@ private def emptyNativeVectorIterationWire : Noctium.Helpers.Wire.Codec := {
   frameBytes := 0
 }
 
+private def bytePair : Noctium.Helpers.Wire.Codec := {
+  payload := .vector 2 (.scalar (.uint 255))
+  frameBytes := 2
+}
+
 noctium_witness iterationEmptyTuple() : Payload emptyTupleIterationWire
 noctium_witness acceptEmptyNativeVector(values : Payload emptyNativeVectorIterationWire) : Native
+noctium_witness pairLeftItems() : Payload bytePair
+noctium_witness pairRightItems() : Payload bytePair
+noctium_witness pairVisit(left : UInt 8, right : UInt 8) : Native
 
 noctium_witness_circuit readableIteration where
   public offset : Native
@@ -158,6 +166,19 @@ noctium_witness_circuit rejectsEmptyMapConditionalArithmetic using emptyTupleIte
       if true then add(item, item) else add(item, item))))
 end
 
+noctium_witness_circuit twoProviderMap using bytePair where
+  let mapped := map([witness pairLeftItems(), witness pairRightItems()],
+    fun left right => witness pairVisit(left, right))
+  let sum := fold(0, [mapped], fun acc value => add(acc, value))
+  output result : Native := disclose(sum)
+end
+
+#guard
+  let compiled := Noctium.Witness.compile twoProviderMap.__program
+    "noctium.witness-circuit.twoProviderMap.v1"
+  compiled.toOption.map (fun source => source.calls.map (·.name)) ==
+    some ["pairLeftItems", "pairRightItems", "pairVisit", "pairVisit"]
+
 noctium_contract ReadableIteration where
   cell total : Native
   entry update uses readableIteration where
@@ -170,6 +191,10 @@ noctium_contract ReadableIteration where
   entry emptyTupleEquality uses emptyMapTupleEquality where
     return empty : Bool := result
   end
+  entry twoProviderMap uses twoProviderMap where
+    write total := result
+    return sum : Native := result
+  end
 end
 
 /-- public output -/
@@ -178,11 +203,6 @@ noctium_witness_circuit uncheckedIteration where
   private data : Bytes 2
   output leaked : Native := fold(0, [data], fun acc value => add(acc, value))
 end
-
-private def bytePair : Noctium.Helpers.Wire.Codec := {
-  payload := .vector 2 (.scalar (.uint 255))
-  frameBytes := 2
-}
 
 noctium_witness_circuit decodedIteration using bytePair where
   public frame : Bytes 2
