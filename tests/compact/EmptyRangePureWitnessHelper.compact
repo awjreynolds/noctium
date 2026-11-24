@@ -1,0 +1,14 @@
+pragma language_version >= 0.28;
+
+witness secret(index: Field): Field;
+
+pure circuit readSecretInEmptyRange(): Field {
+  for (const i of 0..0) {
+    secret(i);
+  }
+  return 0 as Field;
+}
+
+export circuit ordinaryCaller(): Field {
+  return readSecretInEmptyRange();
+}

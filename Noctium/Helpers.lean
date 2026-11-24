@@ -922,6 +922,14 @@ private partial def bodyHasForRange : List Statement → Bool
     bodyHasForRange yes || bodyHasForRange no || bodyHasForRange rest
   | _ :: rest => bodyHasForRange rest
 
+private partial def bodyHasEmptyForRange : List Statement → Bool
+  | [] => false
+  | .forRange _ start stop body :: rest =>
+    start == stop || bodyHasEmptyForRange body || bodyHasEmptyForRange rest
+  | .branch _ yes no :: rest =>
+    bodyHasEmptyForRange yes || bodyHasEmptyForRange no || bodyHasEmptyForRange rest
+  | _ :: rest => bodyHasEmptyForRange rest
+
 private def traversalTermChildren : Term → List Term
   | .binary _ left right | .boolAnd left right | .boolOr left right | .boolXor left right
   | .eq left right | .poseidon2 _ left right | .andThen left right | .orElse left right => [left, right]
@@ -1856,15 +1864,51 @@ private def checkDeclarationUnchecked (limits : Limits) (program : Program) (dec
   checkDeclarationWithEnvironmentUnchecked limits program declaration
     (declaration.parameters.map fun parameter => (parameter.name, some (declaration.parameterType parameter)))
 
+private def reachableDeclarations (limits : Limits) (edges : DeclarationId → List DeclarationId)
+    (roots : List DeclarationId) : Except Diagnostic (List DeclarationId) := do
+  let mut pending := roots
+  let mut visited := []
+  for _ in [0:limits.maxAnalysisSteps] do
+    let id :: remaining := pending | break
+    pending := remaining
+    if !visited.contains id then
+      visited := id :: visited
+      pending := edges id ++ pending
+  unless pending.isEmpty do resource {} "source purity analysis steps"
+  pure visited
+
+-- Compact checks the typed source's effects before eliminating empty loops.
+-- Keep these summaries out of the graph used for runtime and native lowering.
+private def checkSourcePurity (limits : Limits) (program : Program) : Except Diagnostic Unit := do
+  let summaries ← program.declarations.mapM (checkDeclarationUnchecked limits program)
+  let reachable ← reachableDeclarations limits
+    (fun id => ((summaries.find? (·.id == id)).map (·.calls)).getD [])
+    (program.exports.map (·.target))
+  let pureDeclarations := program.declarations.filter fun declaration =>
+    declaration.declaredPure && reachable.contains declaration.id
+  if pureDeclarations.isEmpty then return
+  let summaries := summaries.filter fun summary => reachable.contains summary.id
+  let impure := (summaries.filter fun summary => summary.direct.any EffectKind.impure).map (·.id)
+  let impureCallers ← reachableDeclarations limits
+    (fun id => (summaries.filter fun summary => summary.calls.contains id).map (·.id))
+    impure
+  for declaration in pureDeclarations do
+    if impureCallers.contains declaration.id then
+      fail declaration.span s!"declared-pure helper '{declaration.name}' has transitive effects"
+
 private def prepareProgramAndSizes (limits : Limits) (program : Program) :
     Except Diagnostic (Program × List (DeclarationId × SourceSize)) := do
   let sizes ← sourcePreflight limits program
   let expandedNodes ← expandedSourceNodeCount limits program
   if expandedNodes > limits.maxSourceNodes then resource {} "expanded source nodes"
   if program.declarations.any (fun declaration => bodyHasForRange declaration.body) then
-    for declaration in program.declarations do
-      if bodyHasForRange declaration.body then
-        discard (checkDeclarationUnchecked limits program declaration)
+    if program.declarations.any (·.declaredPure) &&
+        program.declarations.any (fun declaration => bodyHasEmptyForRange declaration.body) then
+      checkSourcePurity limits program
+    else
+      for declaration in program.declarations do
+        if bodyHasForRange declaration.body then
+          discard (checkDeclarationUnchecked limits program declaration)
     let originalSites ← program.declarations.mapM fun declaration =>
       witnessSites declaration.body limits.maxSourceNodes
     let initial : ExpansionState := {reservedSites := originalSites.flatten}

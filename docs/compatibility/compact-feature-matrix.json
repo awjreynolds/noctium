@@ -1060,7 +1060,7 @@
       "layer": "language",
       "surface": "Pure/impure analysis",
       "noctiumStatus": "subset",
-      "notes": "Pure circuits exclude ledger operations, events and witness calls.",
+      "notes": "Pure circuits exclude ledger operations, events and witness calls. Source purity checking follows reachable helper calls before removing empty finite ranges. Compact 0.36.1 and the Noctium control compiler reject a declared-pure helper whose empty range calls a witness. The ordinary helper remains valid and the emitted Noctium plan has no callback.",
       "source": [
         "reference"
       ],
@@ -1068,7 +1068,11 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": [],
+      "observedEvidence": [
+        "SEM",
+        "tests/Control.lean",
+        "tests/compact/empty-range-purity.mjs"
+      ],
       "equivalence": "unverified",
       "implementationUpdate": {
         "checkedOn": "2026-11-16",

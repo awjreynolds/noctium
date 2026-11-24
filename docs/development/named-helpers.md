@@ -96,9 +96,10 @@ reads, ledger writes, assertions, fallible casts, events and cross-contract
 calls. Assertions and fallible scalar casts are permitted in pure helpers.
 Witness/private-state access, ledger access, events and cross-contract calls
 make a helper impure, including through another helper. Declared purity checks
-all statement syntax before lowering. `FN-PURE-INACTIVE` remains registered for
-CF-01, which introduces structured branch syntax. Existing eager `select`
-checks and evaluates both operands.
+reachable helper bodies, including literal-false branches and empty finite
+ranges. An ordinary helper with an empty range emits no callbacks from its
+body. Eager `select` checks and evaluates both operands.
+[Compact empty-range comparison](../../tests/compact/empty-range-purity.mjs)
 
 External effects currently lack helper backend implementations. Compilation
 returns a named native capability error. `Helpers.trace` evaluates explicit
