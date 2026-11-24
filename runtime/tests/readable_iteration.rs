@@ -1,22 +1,33 @@
 #![cfg(feature = "zkir-321")]
 
 use coin_structure::contract::ContractAddress;
+use futures::executor::block_on;
 use noctium_runtime::{
     Plan, check,
     control::{InvocationTarget, Session, TypedResponse},
     create_state,
     host::{self, Capability, Context, Limits, Operation, Provider},
     prepare,
+    proof::TrustedParameters,
     zkir::IrSource,
 };
+use rand::rngs::OsRng;
 use serde_json::{Value as Json, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use transient_crypto::curve::Fr;
+use transient_crypto::{
+    curve::Fr,
+    proofs::{ParamsVerifier, Zkir},
+};
 
 const SOURCE_NAME: &str = "ReadableIterationBlock";
 const ENTRYPOINT: &str = "run";
 const PROFILE: &str = "midnight-ledger-9-zkir-3.2.1";
+const PROOF_K: u8 = 7;
+const RELATION_SHA256: &str =
+    "ebc341570a89fd0530660dbbd0e0583c2f6d3fd45087011aa3982702d32685fe";
+const OFFICIAL_SRS_SHA256: &str =
+    "e82ae890c080188355f37feaffe91372584cd810615082d9143d4dec0453fd9d";
 
 fn items() -> Json {
     json!({
@@ -331,6 +342,74 @@ fn statement_bodied_map_and_fold_match_host_and_native_relations() -> anyhow::Re
     let (_rejected_session, rejected, failure_trace) = run_case(&fixture, "40", 2)?;
     assert_eq!(rejected["status"], "failed");
     assert_eq!(failure_trace, success_trace);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableIterationBlock artifacts and the pinned trusted SRS"]
+fn readable_iteration_generates_and_binds_native_proof() -> anyhow::Result<()> {
+    let fixture = Fixture::load()?;
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_READABLE_ITERATION_DIR")
+            .expect("NOCTIUM_READABLE_ITERATION_DIR"),
+    );
+    let relation_bytes = fs::read(directory.join(format!("{SOURCE_NAME}.{ENTRYPOINT}.zkir")))?;
+    assert_eq!(hex::encode(Sha256::digest(&relation_bytes)), RELATION_SHA256);
+    assert_eq!(fixture.circuit.k(), PROOF_K);
+
+    let (mut accepted_session, completed, _) = run_case(&fixture, "10", 3)?;
+    assert_eq!(completed["status"], "completed");
+    let completion = accepted_session.private_completion(&fixture.binding["nativeRelation"])?;
+    let inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
+    let execution = prepare_execution(&fixture, &inputs)?;
+    assert_eq!(execution.returns_json()["mappedFirst"], "12");
+    assert_eq!(execution.returns_json()["mappedSecond"], "13");
+    assert_eq!(execution.returns_json()["sum"], "25");
+    assert_eq!(check(&execution, &fixture.circuit)?, execution.activity_schedule);
+    assert_eq!(
+        execution.preimage.private_transcript,
+        [2u64, 3, 10].map(Fr::from)
+    );
+
+    let mut invalid_offset = execution.preimage.clone();
+    invalid_offset.private_transcript[2] = Fr::from(40u64);
+    assert!(invalid_offset.check(&fixture.circuit).is_err());
+
+    let parameter_bytes = fs::read(
+        std::env::var_os("NOCTIUM_READABLE_ITERATION_PROOF_PARAMETERS")
+            .expect("NOCTIUM_READABLE_ITERATION_PROOF_PARAMETERS"),
+    )?;
+    let parameters = TrustedParameters::from_bytes(
+        &parameter_bytes,
+        PROOF_K,
+        OFFICIAL_SRS_SHA256,
+    )?;
+    assert_eq!(parameters.sha256(), OFFICIAL_SRS_SHA256);
+    let verifier_parameters = ParamsVerifier::read(parameter_bytes.as_slice())?;
+    let (prover_key, verifier_key) = block_on(fixture.circuit.keygen(&parameters))?;
+    let (proof, statement, activity) = block_on(fixture.circuit.prove(
+        OsRng,
+        &parameters,
+        prover_key,
+        &execution.preimage,
+    ))?;
+    assert_eq!(activity, execution.activity_schedule);
+    let (return_commitment, _) = execution
+        .preimage
+        .communications_commitment
+        .expect("public returns are bound by the communication commitment");
+    assert_eq!(statement.get(1), Some(&return_commitment));
+    verifier_key.verify(&verifier_parameters, &proof, statement.iter().copied())?;
+
+    let mut changed_return_commitment = statement;
+    changed_return_commitment[1] = return_commitment + Fr::from(1u64);
+    assert!(verifier_key
+        .verify(
+            &verifier_parameters,
+            &proof,
+            changed_return_commitment.iter().copied(),
+        )
+        .is_err());
     Ok(())
 }
 
