@@ -27,7 +27,7 @@ private def genericInput (name : String) (type : GType)
 
 private def genericExport (name : String) (target : DeclarationId)
     (arguments : List GArg) (inputs : List GInput := []) : GExport :=
-  ⟨name, target, arguments, inputs, {}⟩
+  {name, target, arguments, inputs}
 
 private def identityDeclarationAt (id : DeclarationId) (release : Bool := false) : GDecl := {
   id := id
