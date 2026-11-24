@@ -4,12 +4,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const [compactc, runtimeDirectory] = process.argv.slice(2);
-assert.ok(compactc && runtimeDirectory,
+const [compactc, runtimePath] = process.argv.slice(2);
+assert.ok(compactc && runtimePath,
   'usage: node tests/compact/fixed-byte-list-maybe.mjs <compactc-0.36.1> <compact-runtime-0.21.0>');
 const compilerVersion = execFileSync(compactc, ['--version'], {encoding: 'utf8'}).trim();
 assert.match(compilerVersion, /^0\.36\.1 \(7fa3a117c/, `unexpected Compact compiler: ${compilerVersion}`);
+const runtimeDirectory = resolve(runtimePath);
 const runtimePackage = JSON.parse(readFileSync(join(runtimeDirectory, 'package.json'), 'utf8'));
+assert.equal(runtimePackage.name, '@midnight-ntwrk/compact-runtime');
 assert.equal(runtimePackage.version, '0.21.0');
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -85,8 +87,8 @@ try {
     compact: compilerVersion,
     runtime: runtimePackage.version,
     nativeOutputFields: outputFieldCounts,
-    empty: empty.map(value => ({is_some: value.is_some, length: value.value.length})),
-    populated: heads.map(value => ({is_some: value.is_some, length: value.value.length})),
+    empty: empty.map(({is_some, value}) => ({is_some, value: [...value]})),
+    populated: heads.map(({is_some, value}) => ({is_some, value: [...value]})),
     zkirOutputs: zkir.outputs.length,
   }));
 } finally {

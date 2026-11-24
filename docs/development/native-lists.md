@@ -113,6 +113,16 @@ List element's nominal type and orders the tag before the record fields.
 The paired fixture checks an empty List and a List seeded with `{17, 23}`.
 [Compact runner](../../tests/compact/record-list-head-maybe.mjs) · [Native checker](../../runtime/tests/record_list_head_maybe.rs)
 
+For fixed-width byte Lists, `returnMaybe` emits the Boolean tag followed
+by the packed byte fields. The return view reconstructs the typed bytes
+and supplies a zero-filled value for an absent head. The pinned Compact
+and native checks match empty and populated heads at widths 1, 32 and 128.
+Their return layouts use 2, 3 and 6 fields respectively. The native relation
+rejects a changed byte field.
+[Lean fixture](../../tests/FixedByteListMaybe.lean) ·
+[Compact oracle](../../tests/compact/fixed-byte-list-maybe.mjs) ·
+[Native checker](../../runtime/tests/fixed_byte_list_maybe.rs)
+
 ## Opaque List heads
 
 Root Lists accept `OpaqueString` and `OpaqueBytes`. The ledger stores each
