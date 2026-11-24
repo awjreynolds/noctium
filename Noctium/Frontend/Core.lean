@@ -37,6 +37,13 @@ initialize noctiumNominalFieldTypeRegistry : SimplePersistentEnvExtension
     addEntryFn := Array.push
   }
 
+initialize noctiumImportedModuleTypeRegistry : SimplePersistentEnvExtension
+    (String × Noctium.Modules.TypeInfo) (Array (String × Noctium.Modules.TypeInfo)) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
 /-- Source-only labels for Midnight address and key values represented by
 Bytes32 expressions at circuit and native boundaries. -/
 inductive NominalBytes32 where
@@ -6106,6 +6113,34 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
       throwErrorAt source s!"root {label} layout does not match its Native width"
   pure (environment, compositeType, environmentTerm, compositeTypeTerm)
 
+private def importedModuleTypeInfo? (source : TSyntax `nltype) : CommandElabM
+    (Option (Name × Modules.TypeInfo)) := do
+  let `(nltype| $alias:ident) := source | return none
+  let name := alias.getId.eraseMacroScopes
+  let current := (← getCurrNamespace) ++ name
+  let registry := noctiumImportedModuleTypeRegistry.getState (← getEnv)
+  if let some (_, info) := registry.find? (·.1 == current.toString) then
+    return some (current, info)
+  return (registry.find? (·.1 == name.toString)).map fun (_, info) => (name, info)
+
+private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
+    (Option (LedgerValueType × TSyntax `term × List (String × CircuitSourceType))) := do
+  let some (alias, info) ← importedModuleTypeInfo? source | return none
+  let .structure _ := info.value | return none
+  let fields ← match LedgerValueType.recordSetKeyFields info.environment info.value with
+    | .ok fields => pure fields
+    | .error message => throwErrorAt source message
+  let sourceFields := fields.map fun (fieldName, fieldType) =>
+    let nominalField := (info.nominalFieldPaths.lookup [fieldName]).map fun identity =>
+      {name := identity}
+    (fieldName, {type := fieldType, nominalField})
+  let typeInfo := mkIdent alias
+  let environmentTerm ← `(($typeInfo).environment)
+  let typeTerm ← `(($typeInfo).value)
+  let valueSchema := LedgerValueType.recordSet info.environment info.value
+  let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $typeTerm)
+  return some (valueSchema, valueTerm, sourceFields)
+
 @[command_elab contractCommand] unsafe def elabContract : CommandElab := fun stx => do
   match stx with
   | `(noctium_contract $name:ident where $states:nlstate* $entries:nlentry* end) =>
@@ -6318,16 +6353,22 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         | `(nlstate| sealed counter $id:ident) =>
           pure (id, StateKind.tree .counter,
             ← `(Noctium.StateKind.tree Noctium.LedgerValueType.counter))
-        | `(nlstate| sealed set $id:ident : $element:nltype) => do
-          let memberSource ← readCollectionScalarSourceType element _root_.Bool.true
-          let nominal : CollectionNominals := {
-            pathKeys := [memberSource.nominalUInt]
-            pathFieldKeys := [memberSource.nominalField]}
-          unless nominal.isEmpty do
-            nominalCollections := (id.getId.toString, nominal) :: nominalCollections
-          let keyTy := memberSource.type
-          pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
-            (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
+        | `(nlstate| sealed set $id:ident : $key:nltype)
+        | `(nlstate| set $id:ident : $key:nltype) => do
+          if let some (recordSchema, term, fieldTypes) ← importedRecordSetSchema? key then
+            unless fieldTypes.isEmpty do
+              recordKeyFieldTypes := (id.getId.toString, fieldTypes) :: recordKeyFieldTypes
+            pure (id, StateKind.tree recordSchema, ← `(Noctium.StateKind.tree $term))
+          else
+            let memberSource ← readCollectionScalarSourceType key _root_.Bool.true
+            let nominal : CollectionNominals := {
+              pathKeys := [memberSource.nominalUInt]
+              pathFieldKeys := [memberSource.nominalField]}
+            unless nominal.isEmpty do
+              nominalCollections := (id.getId.toString, nominal) :: nominalCollections
+            let keyTy := memberSource.type
+            pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
+              (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
         | `(nlstate| sealed $listKind:ident $id:ident : $element:nltype) => do
           unless listKind.getId.toString == "list" do
             throwErrorAt listKind "expected a sealed scalar List declaration"
@@ -6338,16 +6379,6 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             contractRefState := (id.getId.toString, interface) :: contractRefState
           let (kind, term) ← elaborateScalarListDecl [] sourceType.type
           pure (id, kind, term)
-        | `(nlstate| set $id:ident : $key:nltype) => do
-          let memberSource ← readCollectionScalarSourceType key _root_.Bool.true
-          let nominal : CollectionNominals := {
-            pathKeys := [memberSource.nominalUInt]
-            pathFieldKeys := [memberSource.nominalField]}
-          unless nominal.isEmpty do
-            nominalCollections := (id.getId.toString, nominal) :: nominalCollections
-          let keyTy := memberSource.type
-          pure (id, StateKind.tree (.set keyTy), ← `(Noctium.StateKind.tree
-            (Noctium.LedgerValueType.set $(← tyTerm keyTy))))
         | `(nlstate| tree $id:ident : $key:nltype => Set $memberType:nltype) => do
           let mapKey ← readCollectionScalarSourceType key
           let memberSource ← readCollectionScalarSourceType memberType
@@ -7386,7 +7417,11 @@ scoped syntax (name := moduleTypeCommand) "noctium_module_type" ident "from" ide
   | `(noctium_module_type $binding:ident from $requestSource:ident with $viewName:str, $memberName:str) => do
     let aliasName := (← getCurrNamespace) ++ binding.getId.eraseMacroScopes
     let types := noctiumNominalUIntTypeRegistry.getState (← getEnv)
-    if (← getEnv).contains aliasName || types.any (·.1 == aliasName.toString) then
+    let fieldTypes := noctiumNominalFieldTypeRegistry.getState (← getEnv)
+    let importedTypes := noctiumImportedModuleTypeRegistry.getState (← getEnv)
+    if (← getEnv).contains aliasName || types.any (·.1 == aliasName.toString) ||
+        fieldTypes.any (·.1 == aliasName.toString) ||
+        importedTypes.any (·.1 == aliasName.toString) then
       throwErrorAt binding s!"duplicate imported type name '{aliasName}'"
     let requestName ← liftCoreM <| resolveGlobalConstNoOverload requestSource
     let request ← evalConstCheck Modules.Request ``Modules.Request requestName
@@ -7394,6 +7429,10 @@ scoped syntax (name := moduleTypeCommand) "noctium_module_type" ident "from" ide
     let info ← match Modules.importedType registry request viewName.getString memberName.getString with
       | .ok info => pure info
       | .error diagnostic => failDisclosure diagnostic *> throwError "module type import failed"
+    for (_, identity) in info.nominalFieldPaths do
+      unless fieldTypes.any (·.1 == identity) do
+        throwErrorAt binding
+          s!"imported type '{memberName}' refers to unknown nominal Field type '{identity}'"
     let registryTerm ← moduleRegistryTerm
     let requestTerm := mkIdent requestName
     elabCommand (← `(def $binding : Noctium.Modules.TypeInfo :=
@@ -7403,6 +7442,8 @@ scoped syntax (name := moduleTypeCommand) "noctium_module_type" ident "from" ide
     if let some nominalUInt := info.nominalUInt? then
       modifyEnv fun env =>
         noctiumNominalUIntTypeRegistry.addEntry env (aliasName.toString, nominalUInt)
+    modifyEnv fun env =>
+      noctiumImportedModuleTypeRegistry.addEntry env (aliasName.toString, info)
   | _ => throwUnsupportedSyntax
 
 scoped syntax (name := moduleContractCommand) "noctium_module_contract" ident
