@@ -5012,6 +5012,160 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "spends the published development wallet on the pinned isolated localnet"]
+    fn standard_event_flag_branches_finalize_on_localnet() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use base_crypto::fab::{Alignment, AlignmentAtom};
+        use futures::executor::block_on;
+        use onchain_runtime::state::StateValue;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::{Value as Json, json};
+        use sha2::{Digest, Sha256};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let directory = setting("NOCTIUM_EVENT_FLAG_BUNDLE")?;
+            let pin = setting("NOCTIUM_EVENT_FLAG_MANIFEST")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&pin))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            let entrypoint = "emitFlagBranches";
+            ensure!(plan.entrypoint == entrypoint, "wrong standard event plan");
+            let k = IrSource::load(bundle.file(Role::Circuit)?)?.k();
+            let compiler = bundle.manifest().compiler.clone();
+            let artifacts = bundle.manifest().entries.clone();
+            let reference: Json = serde_json::from_slice(include_bytes!(
+                "../../tests/standard-event-flag-branches-compact.json"
+            ))?;
+            let fixed_inputs: BTreeMap<String, Json> =
+                serde_json::from_value(reference["nativeInputs"].clone())?;
+            let cases = reference["cases"]
+                .as_array()
+                .context("missing Compact flag cases")?;
+            let cache = ProofCache::new(
+                setting("NOCTIUM_EVENT_FLAG_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let parameters = cache.parameters(k).await?;
+            let funded =
+                FundedLedgerTest::connect(&setting("NOCTIUM_EVENT_FLAG_NODE")?, &cache).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let mut rng = StdRng::from_entropy();
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation(entrypoint, &parameters, ttl)?;
+            let (deployed, deployment) = funded.deploy(&target, entrypoint).await?;
+            let mut current = Some(deployed);
+            let receipt_fields = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height, "blockHash": receipt.block_hash,
+                    "finalizedHeight": receipt.finalized_height, "finalizedHash": receipt.finalized_hash,
+                    "extrinsicIndex": receipt.extrinsic_index, "extrinsicHash": receipt.extrinsic_hash,
+                    "transactionId": receipt.transaction_id,
+                })
+            };
+            let mut observed = Vec::new();
+            for (present, route) in [(false, false), (false, true), (true, false), (true, true)] {
+                let expected = cases
+                    .iter()
+                    .find(|case| case["present"] == json!(present) && case["route"] == json!(route))
+                    .context("missing selected Compact flag case")?;
+                let expected_logs = expected["events"]
+                    .as_array()
+                    .context("missing Compact events")?;
+                let mut inputs = fixed_inputs.clone();
+                inputs.insert("present".into(), json!(present));
+                inputs.insert("route".into(), json!(route));
+                let (bound, receipt) = funded
+                    .call_with_bound(&operation, &mut current, &parameters, inputs)
+                    .await?;
+                ensure!(
+                    receipt.contract_state == deployment.contract_state,
+                    "event call changed contract state"
+                );
+                let logs = finalized_contract_logs(&funded.node, &bound, &receipt)?;
+                ensure!(
+                    logs.len() == 6 && logs.len() == expected_logs.len(),
+                    "wrong finalized event count"
+                );
+                let address = bound.contract_address().to_owned();
+                let expected_entrypoint =
+                    onchain_runtime::state::EntryPointBuf(entrypoint.as_bytes().to_vec());
+                for (order, (log, expected)) in logs.iter().zip(expected_logs).enumerate() {
+                    ensure!(hex::encode(log.address.0.0) == address, "wrong log address");
+                    ensure!(
+                        log.entry_point == expected_entrypoint,
+                        "wrong log entrypoint"
+                    );
+                    ensure!(
+                        expected["order"] == json!(order),
+                        "wrong Compact event order"
+                    );
+                    ensure!(
+                        expected["version"] == json!(log.item.version),
+                        "wrong log version"
+                    );
+                    ensure!(
+                        expected["tag"] == json!(log.item.event_type as u8),
+                        "wrong log tag"
+                    );
+                    let width = u32::try_from(
+                        expected["payloadLength"]
+                            .as_u64()
+                            .context("missing byte width")?,
+                    )?;
+                    let StateValue::Cell(data) = &log.item.data else {
+                        anyhow::bail!("expected a byte cell event");
+                    };
+                    ensure!(
+                        data.alignment
+                            == Alignment::singleton(AlignmentAtom::Bytes { length: width }),
+                        "wrong event alignment"
+                    );
+                    let [atom] = data.value.0.as_slice() else {
+                        anyhow::bail!("expected one byte atom");
+                    };
+                    let mut padded = atom.0.clone();
+                    ensure!(
+                        padded.len() <= width as usize,
+                        "event bytes exceed the alignment"
+                    );
+                    padded.resize(width as usize, 0);
+                    ensure!(
+                        expected["payloadSha256"] == json!(hex::encode(Sha256::digest(&padded))),
+                        "wrong event digest"
+                    );
+                }
+                observed.push(json!({
+                    "present": present, "route": route, "contractAddress": address,
+                    "confirmation": receipt_fields(&receipt), "events": expected_logs,
+                }));
+            }
+            println!(
+                "{}",
+                json!({
+                    "schemaVersion": 1, "profile": crate::profile::NAME,
+                    "network": deployment.chain, "entrypoint": entrypoint, "k": k,
+                    "compiler": compiler, "artifactEntries": artifacts, "bundleManifestSha256": pin,
+                    "deployment": receipt_fields(&deployment), "calls": observed, "stateUnchanged": true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the pinned NativeUnshieldedMintRecipient bundle and funded development node"]
     fn funded_recipient_mint_distinguishes_contract_and_user_with_same_address_bytes()
     -> anyhow::Result<()> {

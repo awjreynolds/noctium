@@ -4742,8 +4742,8 @@
       "id": "C-STDLIB-SHIELDEDRECEIVE",
       "layer": "language-ledger",
       "surface": "ShieldedReceive",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "All four combinations of the ciphertext and contract address presence flags match the pinned Compact layout, including the nonzero bytes in absent options. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4763,16 +4763,22 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SHIELDEDMINT",
       "layer": "language-ledger",
       "surface": "ShieldedMint",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Both amount-presence values match the pinned Compact layout, including the retained nonzero amount when absent. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4792,16 +4798,22 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-SHIELDEDBURN",
       "layer": "language-ledger",
       "surface": "ShieldedBurn",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Both amount-presence values match the pinned Compact layout, including the retained nonzero amount when absent. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4821,16 +4833,22 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDSPEND",
       "layer": "language-ledger",
       "surface": "UnshieldedSpend",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Both sender address branches match the pinned Compact layout, including nonzero values in both address slots. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4850,16 +4868,22 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDRECEIVE",
       "layer": "language-ledger",
       "surface": "UnshieldedReceive",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Both recipient address branches match the pinned Compact layout, including nonzero values in both address slots. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4879,9 +4903,15 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-UNSHIELDEDMINT",
@@ -4916,8 +4946,8 @@
       "id": "C-STDLIB-UNSHIELDEDBURN",
       "layer": "language-ledger",
       "surface": "UnshieldedBurn",
-      "noctiumStatus": "related-subset",
-      "notes": "The published catalog fixture includes this event. The native checker matches its version, tag, width and payload digest to pinned Compact values, and a catalog call finalized on Ledger 9.1.0.1. Full semantic equivalence remains unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Both sender address branches match the pinned Compact layout, including nonzero values in both address slots. Official native checking matches the exact version, tag, order, width and padded payload digest and rejects the substituted flag tape. All four cases finalized through the same authenticated Ledger 9.1.0.1 entrypoint with unchanged contract state.",
       "source": [
         "stdlib",
         "events",
@@ -4937,9 +4967,15 @@
         "tests/standard-event-catalog-localnet-evidence.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
-        "docs/development/standard-events.md"
+        "docs/development/standard-events.md",
+        "tests/StandardEventFlagBranches.lean",
+        "tests/compact/StandardEventFlagBranches.compact",
+        "tests/compact/standard-event-flag-branches.mjs",
+        "tests/standard-event-flag-branches-compact.json",
+        "tests/standard-event-flag-branches-localnet-evidence.json",
+        "runtime/tests/standard_event_flag_branches.rs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-PAUSED",

@@ -40,6 +40,23 @@ node tests/compact/standard-event-catalog.mjs "$COMPACTC" "$COMPACT_RUNTIME"
 
 The catalog checks reject a 255-byte `Misc` memo and an amount of `2^128` on both runtimes. Native checking accepts separately prepared alternate payloads and rejects each altered event tape against its original call. The historical runner and source recorded in the finalized receipt remain pinned to their original files. [Finalized catalog receipt](../../tests/standard-event-catalog-localnet-evidence.json)
 
+## Optional-field and address branches
+
+`EventFlagBranches.emitFlagBranches` exercises six events across all four combinations of two public Bool inputs. The inputs independently control ShieldedReceive ciphertext and contract address presence, ShieldedMint and ShieldedBurn amount presence, and the user-key or contract-address arm for UnshieldedSpend, UnshieldedReceive, and UnshieldedBurn. Every absent optional and unselected address arm carries nonzero bytes or amount data, so the payload checks cover the discarded slots too.
+
+The pinned Compact 0.36.1 runner and runtime 0.21.0 retain 24 ordered event digests. The ZKIR 3.2.1 native test checks the same four cases against the exact emitted Impact plan and ZKIR circuit. It compares version, catalog tag, order, aligned width, and SHA-256 over each full padded event payload. Replacing the false/false case's public flag tape with the true/true tape fails native checking. This is checker-only flag-branch evidence. It does not establish proof generation or ledger acceptance.
+
+```sh
+node tests/compact/standard-event-flag-branches.mjs "$COMPACTC" "$COMPACT_RUNTIME"
+lake exe noctium compile tests/StandardEventFlagBranches.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output build/experiments/1061-event-flags
+NOCTIUM_EVENT_FLAG_ARTIFACTS="$PWD/build/experiments/1061-event-flags" \
+  cargo test --manifest-path runtime/Cargo.toml --locked --no-default-features \
+  --features zkir-321 --test standard_event_flag_branches -- \
+  --ignored --exact standard_event_optional_and_address_flags_match_pinned_compact
+```
+
 The first catalog used a bytewise public prologue for the 256-byte memo. Its 19,217-byte call was rejected with pool error 111, `TransactionTooLarge`. A committed memo argument qualified at 9,918 bytes and 5,000 rows. The current compiler packs an ordinary public memo into nine fields and one push/readback pair.
 
 | Memo layout | VM operations for the whole call | Circuit rows | K | Signed transaction bytes |
@@ -80,3 +97,13 @@ cargo test --manifest-path runtime/Cargo.toml --locked \
 ```
 
 Use `localnet::tests::standard_event_catalog_finalizes_all_logs` as the test filter to reproduce the eleven-event call.
+
+The same variable-flag entrypoint finalized all four input pairs on the isolated Ledger 9.1.0.1 chain. Deployment finalized at block 84455, followed by calls at 84458, 84461, 84464 and 84467. The twelve optional-event logs and twelve address-choice logs matched Compact in order and full padded payload digest. The bundle records all source, key, ledger parameter and toolchain hashes. [Finalized flag-branch receipts](../../tests/standard-event-flag-branches-localnet-evidence.json)
+
+To reproduce the flag-branch receipt, assemble an authenticated bundle for `EventFlagBranches.emitFlagBranches`. Set `NOCTIUM_EVENT_FLAG_BUNDLE` and `NOCTIUM_EVENT_FLAG_MANIFEST` to the bundle directory and trusted manifest digest. Set `NOCTIUM_EVENT_FLAG_PARAMETER_CACHE` to the verified proof and DUST material and `NOCTIUM_EVENT_FLAG_NODE` to the pinned loopback RPC.
+
+```sh
+cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib \
+  localnet::tests::standard_event_flag_branches_finalize_on_localnet -- --ignored --exact
+```

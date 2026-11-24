@@ -1,0 +1,372 @@
+{
+  "artifactEntries": [
+    {
+      "name": "tests/StandardEventFlagBranches.lean",
+      "path": "source/tests/StandardEventFlagBranches.lean",
+      "role": "source",
+      "sha256": "93bc74b48544ef02b1451c02111da0423aa52ac9c8173906c8098e4cdb13ee87",
+      "size": 2322
+    },
+    {
+      "name": "EventFlagBranches.emitFlagBranches.zkir",
+      "path": "circuit/entrypoint.zkir",
+      "role": "circuit",
+      "sha256": "e6b2cc9eb8b7f87507ba7c3c3986ed9f028602866e66aebb41ec6ff1f55250bc",
+      "size": 392502
+    },
+    {
+      "name": "EventFlagBranches.emitFlagBranches.impact.json",
+      "path": "plan/entrypoint.impact.json",
+      "role": "plan",
+      "sha256": "76b4b14f216711b6bc7feb38a0e523606d34b5ae6b1158636ee0fbacb79651c6",
+      "size": 7806
+    },
+    {
+      "name": "noctium.json",
+      "path": "schema/noctium.json",
+      "role": "metadata",
+      "sha256": "88cade3678b2c07c688a5316733a88129be3bc920983617f0daf29ea7f056a1c",
+      "size": 7455
+    },
+    {
+      "name": "noctium_runtime.h",
+      "path": "schema/noctium_runtime.h",
+      "role": "abi",
+      "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+      "size": 5282
+    },
+    {
+      "name": "target.json",
+      "path": "profile/target.json",
+      "role": "profile",
+      "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+      "size": 528
+    },
+    {
+      "name": "ledger.params",
+      "path": "parameters/ledger.params",
+      "role": "ledgerParameters",
+      "sha256": "b83717ae6b9cbffa2585f0db97d42796331d395b5e089772565f46290a23719a",
+      "size": 791
+    },
+    {
+      "name": "entrypoint.prover",
+      "path": "keys/entrypoint.prover",
+      "role": "proverKey",
+      "sha256": "45d5c37caa6b78a8a184a1970aaaf1c2c4197d726fe590ab064079ad09023b4f",
+      "size": 7227220
+    },
+    {
+      "name": "entrypoint.verifier",
+      "path": "keys/entrypoint.verifier",
+      "role": "verifierKey",
+      "sha256": "f49c2489ab258157c11738caa6e26dd939df33d821e42301135a95e66b530e9c",
+      "size": 1353
+    },
+    {
+      "name": "native-zkir.json",
+      "path": "provenance/native-zkir.json",
+      "role": "toolchain",
+      "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+      "size": 529
+    }
+  ],
+  "bundleManifestSha256": "2bc020296602c880e2f4a89abbc1c5718cfb891387724bfa5b18a5d86b0fc288",
+  "calls": [
+    {
+      "confirmation": {
+        "blockHash": "82e7b4d5fca906cb2516714526306df4f187098bc7aecf0a19d33f2e179006c8",
+        "extrinsicHash": "194ecbb5737a8137a6fe3e0ceb11e1964bcbe403ee2c59f16015de60cb88a3db",
+        "extrinsicIndex": 4,
+        "finalizedHash": "82e7b4d5fca906cb2516714526306df4f187098bc7aecf0a19d33f2e179006c8",
+        "finalizedHeight": 84458,
+        "height": 84458,
+        "transactionId": "6257608ff35a635f2467626ff5553f1703a8478fb809d0f5402d111515fd7b18"
+      },
+      "contractAddress": "e755de5f6295a8d05229af0fe95564b8ff8642802debc9b808f391e3a4601f8d",
+      "events": [
+        {
+          "eventType": "shielded-receive",
+          "order": 0,
+          "payloadLength": 578,
+          "payloadSha256": "3487913157d2e9bbd488e406fe3543fe9c1082ab126c39fabc61e38bf951a637",
+          "tag": 1,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-mint",
+          "order": 1,
+          "payloadLength": 81,
+          "payloadSha256": "b4847b267cf7f0f8219c96804be5bec3e9a4b4e1a1e8d2ccc00c2ad6264a1978",
+          "tag": 2,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-burn",
+          "order": 2,
+          "payloadLength": 49,
+          "payloadSha256": "d7ecd0fa03dd09b99f552d9cac1b898ae8e584689b5cd311d789a2112b7cab1c",
+          "tag": 3,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-spend",
+          "order": 3,
+          "payloadLength": 145,
+          "payloadSha256": "0ff865c27176ac073eec35ca44ca1fde58251df5ebe9c28d7b099f5e9cab1c2b",
+          "tag": 4,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-receive",
+          "order": 4,
+          "payloadLength": 145,
+          "payloadSha256": "79ffb8d0d2cce83db6626b55bc5a3ed476a8ee5c42db5ed4cfcc22cc42e9c890",
+          "tag": 5,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-burn",
+          "order": 5,
+          "payloadLength": 113,
+          "payloadSha256": "9b53e6686b437d20d7cc68ac90bc46de6b16015a187e08f029cbd29793c4fac6",
+          "tag": 7,
+          "version": 1
+        }
+      ],
+      "present": false,
+      "route": false
+    },
+    {
+      "confirmation": {
+        "blockHash": "1859ab2d87e69c0509c42743a8f8eab34d0fc9a2d9b4347a748e2c13c52fe6ea",
+        "extrinsicHash": "1bba448fa551bd9b68813b5479d7c535d6b859f4d957f1783b93aac71f74b94e",
+        "extrinsicIndex": 4,
+        "finalizedHash": "1859ab2d87e69c0509c42743a8f8eab34d0fc9a2d9b4347a748e2c13c52fe6ea",
+        "finalizedHeight": 84461,
+        "height": 84461,
+        "transactionId": "a87657d2130ff2d149da5464b7e8536312cfebe69080d5421d8b2998bb33c659"
+      },
+      "contractAddress": "e755de5f6295a8d05229af0fe95564b8ff8642802debc9b808f391e3a4601f8d",
+      "events": [
+        {
+          "eventType": "shielded-receive",
+          "order": 0,
+          "payloadLength": 578,
+          "payloadSha256": "de3bd55462fdab5a60d2f67e1daded4e2ccb2b36a2d1f10a7ded3d4d8c69cc47",
+          "tag": 1,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-mint",
+          "order": 1,
+          "payloadLength": 81,
+          "payloadSha256": "b4847b267cf7f0f8219c96804be5bec3e9a4b4e1a1e8d2ccc00c2ad6264a1978",
+          "tag": 2,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-burn",
+          "order": 2,
+          "payloadLength": 49,
+          "payloadSha256": "6f2870a7b77ff71c6c8016c7bc00a1fb06314bea1b5b280b590d0a4bbc7049e7",
+          "tag": 3,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-spend",
+          "order": 3,
+          "payloadLength": 145,
+          "payloadSha256": "0ff865c27176ac073eec35ca44ca1fde58251df5ebe9c28d7b099f5e9cab1c2b",
+          "tag": 4,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-receive",
+          "order": 4,
+          "payloadLength": 145,
+          "payloadSha256": "99d62fa8e7a7c1a1ff363c937b37fd898aacc5750a9ce8414132ff1db604dc65",
+          "tag": 5,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-burn",
+          "order": 5,
+          "payloadLength": 113,
+          "payloadSha256": "525d9cef9e0fcbfe6390a96c0d13806354763997d7054d6740092b466f2311f0",
+          "tag": 7,
+          "version": 1
+        }
+      ],
+      "present": false,
+      "route": true
+    },
+    {
+      "confirmation": {
+        "blockHash": "adea4b039b5367b670405e6095df1ab56a55019e1640b65a0ca74662362d73cb",
+        "extrinsicHash": "7a21d3b32c55182213e6e8baccb932e5c39478cd02fe58a02f7c3387712b46e0",
+        "extrinsicIndex": 4,
+        "finalizedHash": "adea4b039b5367b670405e6095df1ab56a55019e1640b65a0ca74662362d73cb",
+        "finalizedHeight": 84464,
+        "height": 84464,
+        "transactionId": "a795295d4227227b10a0cc7963409e5d566cb4772892534a2ef69c06ad2dac32"
+      },
+      "contractAddress": "e755de5f6295a8d05229af0fe95564b8ff8642802debc9b808f391e3a4601f8d",
+      "events": [
+        {
+          "eventType": "shielded-receive",
+          "order": 0,
+          "payloadLength": 578,
+          "payloadSha256": "fd433200f2dfd2feab9fd7f02481aae7fe7953ec00631dcf397c517f49a45228",
+          "tag": 1,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-mint",
+          "order": 1,
+          "payloadLength": 81,
+          "payloadSha256": "ffae0ae63fc8d7ef40090adc9ee4484642d05584550c50f9e9e8b9a12a075387",
+          "tag": 2,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-burn",
+          "order": 2,
+          "payloadLength": 49,
+          "payloadSha256": "d7ecd0fa03dd09b99f552d9cac1b898ae8e584689b5cd311d789a2112b7cab1c",
+          "tag": 3,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-spend",
+          "order": 3,
+          "payloadLength": 145,
+          "payloadSha256": "cdf4df3d5cba307882a99cc473a4f46a8f533010aad0f06cd21aaf63d726cf48",
+          "tag": 4,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-receive",
+          "order": 4,
+          "payloadLength": 145,
+          "payloadSha256": "79ffb8d0d2cce83db6626b55bc5a3ed476a8ee5c42db5ed4cfcc22cc42e9c890",
+          "tag": 5,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-burn",
+          "order": 5,
+          "payloadLength": 113,
+          "payloadSha256": "9b53e6686b437d20d7cc68ac90bc46de6b16015a187e08f029cbd29793c4fac6",
+          "tag": 7,
+          "version": 1
+        }
+      ],
+      "present": true,
+      "route": false
+    },
+    {
+      "confirmation": {
+        "blockHash": "5646ce3e87ff9692ddc511ecfea38084cae6b2640a63defe8c1ce25a271495a9",
+        "extrinsicHash": "3e939d8e2847b4abea6583832fbdbadd4df5a1cc07409170c46c83f41a369e56",
+        "extrinsicIndex": 4,
+        "finalizedHash": "5646ce3e87ff9692ddc511ecfea38084cae6b2640a63defe8c1ce25a271495a9",
+        "finalizedHeight": 84467,
+        "height": 84467,
+        "transactionId": "2f5eda7e83e9e4268ef6f5be38e1aa6ea6123283e2dda9a6aa6545ecf2f1bec7"
+      },
+      "contractAddress": "e755de5f6295a8d05229af0fe95564b8ff8642802debc9b808f391e3a4601f8d",
+      "events": [
+        {
+          "eventType": "shielded-receive",
+          "order": 0,
+          "payloadLength": 578,
+          "payloadSha256": "5e69001f2725fb0a2313cfdaad3eb079df17090076ecc0f52a9a60b11ee16ae5",
+          "tag": 1,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-mint",
+          "order": 1,
+          "payloadLength": 81,
+          "payloadSha256": "ffae0ae63fc8d7ef40090adc9ee4484642d05584550c50f9e9e8b9a12a075387",
+          "tag": 2,
+          "version": 1
+        },
+        {
+          "eventType": "shielded-burn",
+          "order": 2,
+          "payloadLength": 49,
+          "payloadSha256": "6f2870a7b77ff71c6c8016c7bc00a1fb06314bea1b5b280b590d0a4bbc7049e7",
+          "tag": 3,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-spend",
+          "order": 3,
+          "payloadLength": 145,
+          "payloadSha256": "cdf4df3d5cba307882a99cc473a4f46a8f533010aad0f06cd21aaf63d726cf48",
+          "tag": 4,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-receive",
+          "order": 4,
+          "payloadLength": 145,
+          "payloadSha256": "99d62fa8e7a7c1a1ff363c937b37fd898aacc5750a9ce8414132ff1db604dc65",
+          "tag": 5,
+          "version": 1
+        },
+        {
+          "eventType": "unshielded-burn",
+          "order": 5,
+          "payloadLength": 113,
+          "payloadSha256": "525d9cef9e0fcbfe6390a96c0d13806354763997d7054d6740092b466f2311f0",
+          "tag": 7,
+          "version": 1
+        }
+      ],
+      "present": true,
+      "route": true
+    }
+  ],
+  "compiler": {
+    "implementation": "Lean4",
+    "sourceRevision": "a009d27801a71ebfd2fd582f209e60cb64e5e0bb",
+    "toolchain": "leanprover/lean4:v4.35.0"
+  },
+  "deployment": {
+    "blockHash": "cc077c274020e94a2e602ddf3204a50b2782a7bfc1650421fbdaa23d3005e84b",
+    "extrinsicHash": "9f94ab8c5d30e9ecbe29ac7be311b057ecf64f79d02c2cc79fc558ad5d6843c1",
+    "extrinsicIndex": 4,
+    "finalizedHash": "cc077c274020e94a2e602ddf3204a50b2782a7bfc1650421fbdaa23d3005e84b",
+    "finalizedHeight": 84455,
+    "height": 84455,
+    "transactionId": "4f96768aada7ebcef3b104fac00b483e929574db83f887c95082174530e75aaf"
+  },
+  "entrypoint": "emitFlagBranches",
+  "k": 13,
+  "network": {
+    "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "networkId": "undeployed",
+    "profile": "midnight-ledger-9-zkir-3.2.1",
+    "specVersion": 2001100,
+    "transactionVersion": 4
+  },
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "schemaVersion": 1,
+  "stateUnchanged": true,
+  "scope": "One authenticated deployment and all four flag pairs of the same entrypoint on the pinned isolated development chain. Each finalized log matched the ordered Compact payload width and SHA-256. The event calls left contract state unchanged.",
+  "checkedOn": "2026-11-24",
+  "compactReference": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "runtime": "0.21.0",
+    "referencePath": "tests/standard-event-flag-branches-compact.json",
+    "referenceSha256": "9bd5c22110741e9cecd2fca59dd2ea9300d42ef79ef6ac1dd5ef8ab1737d3ee5",
+    "source": "tests/compact/StandardEventFlagBranches.compact",
+    "sourceSha256": "53d67ec0e27d75ba8a4538707180e208f298dd4131478672cb3d622f5ff0cba1",
+    "runner": "tests/compact/standard-event-flag-branches.mjs",
+    "runnerSha256": "184444e3154392a11131cd59c9bdf078e5c3b32d2709f39219eef82caa617ddc"
+  },
+  "circuitRows": 7383
+}

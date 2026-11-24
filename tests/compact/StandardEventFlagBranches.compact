@@ -1,0 +1,55 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export circuit emitFlagBranches(
+  present: Boolean, route: Boolean,
+  receiveCommitment: Bytes<32>, receiveCiphertext: Bytes<512>, receiveContract: Bytes<32>,
+  mintCommitment: Bytes<32>, mintDomain: Bytes<32>, mintAmount: Uint<128>,
+  burnNullifier: Bytes<32>, burnAmount: Uint<128>,
+  spendUserKey: Bytes<32>, spendContract: Bytes<32>, spendDomain: Bytes<32>,
+  spendToken: Bytes<32>, spendAmount: Uint<128>,
+  receiveUserKey: Bytes<32>, receiveAddress: Bytes<32>, receiveDomain: Bytes<32>,
+  receiveToken: Bytes<32>, receiveAmount: Uint<128>,
+  unshieldedBurnUserKey: Bytes<32>, unshieldedBurnContract: Bytes<32>,
+  unshieldedBurnToken: Bytes<32>, unshieldedBurnAmount: Uint<128>
+): [] {
+  const shownPresent = disclose(present);
+  const shownRoute = disclose(route);
+  emit(ShieldedReceive {
+    commitment: disclose(receiveCommitment),
+    ciphertext: Maybe<Bytes<512>> { is_some: shownPresent, value: disclose(receiveCiphertext) },
+    contractAddress: Maybe<Bytes<32>> { is_some: shownRoute, value: disclose(receiveContract) }
+  });
+  emit(ShieldedMint {
+    commitment: disclose(mintCommitment), domainSep: disclose(mintDomain),
+    amount: Maybe<Uint<128>> { is_some: shownPresent, value: disclose(mintAmount) }
+  });
+  emit(ShieldedBurn {
+    nullifier: disclose(burnNullifier),
+    amount: Maybe<Uint<128>> { is_some: shownRoute, value: disclose(burnAmount) }
+  });
+  emit(UnshieldedSpend {
+    sender: Either<ZswapCoinPublicKey, ContractAddress> {
+      is_left: shownPresent,
+      left: ZswapCoinPublicKey { bytes: disclose(spendUserKey) },
+      right: ContractAddress { bytes: disclose(spendContract) }
+    },
+    domainSep: disclose(spendDomain), tokenType: disclose(spendToken), amount: disclose(spendAmount)
+  });
+  emit(UnshieldedReceive {
+    recipient: Either<ZswapCoinPublicKey, ContractAddress> {
+      is_left: shownRoute,
+      left: ZswapCoinPublicKey { bytes: disclose(receiveUserKey) },
+      right: ContractAddress { bytes: disclose(receiveAddress) }
+    },
+    domainSep: disclose(receiveDomain), tokenType: disclose(receiveToken), amount: disclose(receiveAmount)
+  });
+  emit(UnshieldedBurn {
+    sender: Either<ZswapCoinPublicKey, ContractAddress> {
+      is_left: shownRoute,
+      left: ZswapCoinPublicKey { bytes: disclose(unshieldedBurnUserKey) },
+      right: ContractAddress { bytes: disclose(unshieldedBurnContract) }
+    },
+    tokenType: disclose(unshieldedBurnToken), amount: disclose(unshieldedBurnAmount)
+  });
+}
