@@ -139,8 +139,7 @@ def packByteTermsRec : List Term → Term
     if allLiteralZeroTerms rest then byte
     else .binary "add" byte (.binary "mul" (.constant 256) (packByteTermsRec rest))
 
-/-- Pack a normalized byte chunk, collapsing an all-zero chunk while retaining
-the original symbolic fold for every mixed or dynamic chunk. -/
+/-- Pack a normalized byte chunk, folding exact literal-zero suffixes. -/
 def packByteTerms (values : List Term) : Term :=
   if allLiteralZeroTerms values then .constant 0 else packByteTermsRec values
 
