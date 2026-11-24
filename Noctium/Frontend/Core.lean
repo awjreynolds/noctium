@@ -100,6 +100,7 @@ structure CircuitInfo where
   structured contract. These tags are reapplied when the helper source is rebuilt. -/
   stateNominalUIntMaps : List (String × NominalUIntMap) := []
   stateNominalFieldMapKeys : List (String × String) := []
+  stateNominalFieldMapValues : List (String × String) := []
   specializationArtifact? : Option String := none
   deriving Inhabited
 
@@ -2681,13 +2682,14 @@ private def directNominalUIntMaps (schema : List (String × StateKind))
     if key.isNone && metadata.scalarValue.isNone then none
     else some (name, {key := key, value := metadata.scalarValue})
 
-private def directNominalFieldMapKeys (schema : List (String × StateKind))
-    (nominals : List (String × CollectionNominals)) : List (String × String) :=
+private def directNominalFieldMapLabels (schema : List (String × StateKind))
+    (nominals : List (String × CollectionNominals))
+    (label : CollectionNominals → Option NominalFieldType) : List (String × String) :=
   schema.filterMap fun (name, kind) => do
     let .map .. := kind | none
     let metadata ← nominals.lookup name
-    let key ← metadata.pathFieldKeys.head?.join
-    some (name, key.name)
+    let nominal ← label metadata
+    some (name, nominal.name)
 
 private structure EntryEffects where
   env : Bindings
@@ -6863,7 +6865,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
         unless info.stateNominalFieldCells.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Cell circuit to its contract"
-        unless info.stateNominalFieldMapKeys.isEmpty do
+        unless info.stateNominalFieldMapKeys.isEmpty && info.stateNominalFieldMapValues.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Map circuit to its contract"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
@@ -6935,7 +6937,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           | throwErrorAt circuit "entrypoint requires a registered Noctium circuit"
         unless info.stateNominalFieldCells.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Cell circuit to its contract"
-        unless info.stateNominalFieldMapKeys.isEmpty do
+        unless info.stateNominalFieldMapKeys.isEmpty && info.stateNominalFieldMapValues.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal Field Map circuit to its contract"
         unless info.stateNominalUIntCells.isEmpty && info.stateNominalUIntMaps.isEmpty do
           throwErrorAt circuit "use 'entry from' to bind a structured nominal UInt circuit to its contract"
@@ -6983,10 +6985,14 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         let program ← evalConstCheck Helpers.Program ``Helpers.Program sourceName
         let entryNominalUIntMaps := directNominalUIntMaps schema nominalCollections
         let entryNominalFieldCells := nominalFieldCells.map fun (storage, field) => (storage, field.name)
-        let entryNominalFieldMapKeys := directNominalFieldMapKeys schema nominalCollections
+        let entryNominalFieldMapKeys := directNominalFieldMapLabels schema nominalCollections
+          (·.pathFieldKeys.head?.join)
+        let entryNominalFieldMapValues := directNominalFieldMapLabels schema nominalCollections
+          (·.scalarFieldValue)
         let program := program.withNominalUIntState nominalUIntCells entryNominalUIntMaps
         let program := program.withNominalFieldState entryNominalFieldCells
         let program := program.withNominalFieldMapKeys entryNominalFieldMapKeys
+        let program := program.withNominalFieldMapValues entryNominalFieldMapValues
         let value ← match Witness.compileStateEntrypoint program exportName.getString concreteSchema with
           | .ok value => pure value
           | .error diagnostic => failDisclosure diagnostic *> throwError "structured ledger compilation failed"
@@ -6995,9 +7001,6 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           | .readCell storage _ _ | .writeCell storage _ _ =>
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
-          | .readMap storage .. | .writeMap storage .. =>
-            if ((nominalCollections.lookup storage).bind (·.scalarFieldValue)).isSome then
-              throwErrorAt entryStx "structured helpers do not support nominal Field Map values"
           | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
               .mapSize storage .. | .insertPath storage .. | .writePath storage .. |
               .emptyMapPath storage .. | .setInsert storage .. | .removePath storage .. =>
@@ -7029,12 +7032,16 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           `(($(stringTerm storage), $(stringTerm nominal)))
         let nominalFieldMapKeyTerms ← entryNominalFieldMapKeys.toArray.mapM fun (storage, nominal) => do
           `(($(stringTerm storage), $(stringTerm nominal)))
-        let taggedProgram ← `(Noctium.Helpers.Program.withNominalFieldMapKeys
-          (Noctium.Helpers.Program.withNominalFieldState
-            (Noctium.Helpers.Program.withNominalUIntState $sourceTerm
-              [$nominalUIntCellTerms,*] [$nominalUIntMapTerms,*])
-            [$nominalFieldCellTerms,*])
-          [$nominalFieldMapKeyTerms,*])
+        let nominalFieldMapValueTerms ← entryNominalFieldMapValues.toArray.mapM fun (storage, nominal) => do
+          `(($(stringTerm storage), $(stringTerm nominal)))
+        let taggedProgram ← `(Noctium.Helpers.Program.withNominalFieldMapValues
+          (Noctium.Helpers.Program.withNominalFieldMapKeys
+            (Noctium.Helpers.Program.withNominalFieldState
+              (Noctium.Helpers.Program.withNominalUIntState $sourceTerm
+                [$nominalUIntCellTerms,*] [$nominalUIntMapTerms,*])
+              [$nominalFieldCellTerms,*])
+            [$nominalFieldMapKeyTerms,*])
+          [$nominalFieldMapValueTerms,*])
         elabCommand (← `(def $circuitId : Noctium.Circuit :=
           match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with
           | .ok compiledEntry => {compiledEntry.circuit with name := $circuitName}
@@ -7049,7 +7056,8 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           stateNominalUIntCells := nominalUIntCells
           stateNominalFieldCells := nominalFieldCells
           stateNominalUIntMaps := entryNominalUIntMaps
-          stateNominalFieldMapKeys := entryNominalFieldMapKeys}
+          stateNominalFieldMapKeys := entryNominalFieldMapKeys
+          stateNominalFieldMapValues := entryNominalFieldMapValues}
         let circuitTerm := mkIdent fullCircuitName
         entryTerms := entryTerms.push (← `(
           match Noctium.Witness.compileStateEntrypoint $taggedProgram $exportName [$stateTerms,*] with

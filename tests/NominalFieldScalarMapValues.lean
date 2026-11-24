@@ -141,7 +141,7 @@ private def uncheckedStore : Helpers.Program := {
   exports := [{name := "store", target := ⟨0, 0⟩}]
 }
 
-/- error: structured helpers do not support nominal Field Map values -/
+/-- error: :1:1: nominal Field values require an explicit cast and must match the target type -/
 #guard_msgs (substring := true) in
 noctium_contract RejectHelperValueErasure where
   map balances : Native => Count
