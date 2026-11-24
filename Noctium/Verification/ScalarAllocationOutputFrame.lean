@@ -601,7 +601,7 @@ theorem lowerEntrypoint_name_budget_of_frame (state : List StateDecl)
     (entry : Entrypoint) (program : Lean.Json)
     (accepted : Zkir.lowerEntrypoint state entry = .ok program)
     (frame : ∀ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan →
-      Zkir.PreservesOutputCapacityFrame (Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan)) :
+      Zkir.OutputCapacityFrame {} ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2) :
     ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
       let next := ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.next
       next ≤ Native.maxInstructions * Native.maxVectorLength ∧
@@ -609,7 +609,7 @@ theorem lowerEntrypoint_name_budget_of_frame (state : List StateDecl)
   obtain ⟨plan, planAccepted, capacity⟩ :=
     lowerEntrypoint_outputDefinitions_budget state entry program accepted
   have bounded := Zkir.OutputCapacityFrame.next_le_producerCapacity
-    (frame plan planAccepted {}) capacity
+    (frame plan planAccepted) capacity
   refine ⟨plan, planAccepted, bounded, ?_⟩
   intro index indexBound
   exact NativeRelationJson.generatedIdentifier_fits_output_capacity index

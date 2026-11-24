@@ -4,6 +4,7 @@ import Noctium.Verification.NativeInputOrdinalTrace
 import Noctium.Verification.NativeRelationInstructionProjection
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.RangeDedupAcceptedArray
+import Noctium.Verification.ScalarAllocationOutputFrame
 import Noctium.Verification.ScalarValidationOpcodeProfile
 import Noctium.Verification.ScalarValidationProjection
 
@@ -132,6 +133,25 @@ theorem boundedApply_decodedInstructionBudget :
       BoundedScalars.state selectedEntrypoint emittedProgram decodedProgram
       boundedApply_lowered boundedApply_decoded
   exact budget
+
+/-- The actual default ledger body stays within the decoder's identifier budget.
+The kernel evaluates the concrete allocation frame. Producer acceptance supplies
+the separate limit on emitted output slots. -/
+theorem boundedApply_emittedNameBudget (program : Json)
+    (accepted : loweredResult = .ok program) :
+    ∃ plan, Impact.lower BoundedScalars.state (Passes.pruneEntrypoint selectedEntrypoint) = .ok plan ∧
+      let next := ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint selectedEntrypoint) plan).run {}).2.next
+      next ≤ Native.maxInstructions * Native.maxVectorLength ∧
+        ∀ index, index < next →
+          Noctium.Verification.NativeRelationJson.validIdentifier s!"%v{index}" = Bool.true := by
+  apply Noctium.Verification.ScalarAllocationOutputFrame.lowerEntrypoint_name_budget_of_frame
+    BoundedScalars.state selectedEntrypoint program accepted
+  intro plan lowered
+  have canonical : plan = boundedApplyImpactPlan := by
+    rw [boundedApplyImpactPlan, lowered]
+    rfl
+  subst plan
+  constructor <;> decide +kernel
 
 /-- The exact decoded BoundedScalars.apply vector now yields the native trace
 without a caller-authored opcode trace or profile premise. -/
