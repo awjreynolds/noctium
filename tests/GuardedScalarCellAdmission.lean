@@ -84,35 +84,6 @@ theorem exact_evalPlan_success :
       simp [evaluationSucceeded, result] at succeeded
   | ok evaluated => simp [operations, result]
 
-private def operationFieldsAdmitted (operation : Backend.Impact.Op) : _root_.Bool :=
-  match operation with
-  | .index slot _ | .mapIndex slot _ => decide (slot < Field.modulus)
-  | .insert levels => decide (0x90 + levels < Field.modulus)
-  | _ => _root_.Bool.true
-
-private theorem operationFieldsAdmitted_all :
-    plan.operations.all operationFieldsAdmitted = _root_.Bool.true := by
-  native_decide
-
-private theorem field_admitted :
-    ∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation := by
-  intro operation membership
-  have checked := (List.all_eq_true.mp operationFieldsAdmitted_all) operation membership
-  cases operation with
-  | index slot _ =>
-      change decide (slot < Field.modulus) = _root_.Bool.true at checked
-      change slot < Field.modulus
-      exact of_decide_eq_true checked
-  | mapIndex slot _ =>
-      change decide (slot < Field.modulus) = _root_.Bool.true at checked
-      change slot < Field.modulus
-      exact of_decide_eq_true checked
-  | «insert» levels =>
-      change decide (0x90 + levels < Field.modulus) = _root_.Bool.true at checked
-      change 0x90 + levels < Field.modulus
-      exact of_decide_eq_true checked
-  | _ => simp [GenericStateOps.FieldAdmitted]
-
 /-- The exact accepted guarded Cell plan decomposes into the accepted public
 input prefix and guarded append. Its separate evalPlan success preserves the
 ordered native field groups and establishes scalar operation support. -/
@@ -130,15 +101,16 @@ theorem lower_guarded_cell_plan_groups :
         GenericStateOps.evalFields context environment operation.fields) =
           .ok (NativeState.groups operations) ∧
       (∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation) := by
-  obtain ⟨production, fields, scalarSupport⟩ :=
-    GenericStateAdmissionBridge.lower_plan_groups_supported_given_admission
-    sourceState updateEntry plan context environment operations lowered (by rfl)
-    field_admitted exact_evalPlan_success
-  obtain ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend⟩ := production
+  obtain ⟨fields, scalarSupport⟩ :=
+    GenericStateAdmissionBridge.lower_evaluated_plan_groups sourceState updateEntry plan
+      context environment operations lowered rfl exact_evalPlan_success
+  obtain ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend⟩ :=
+    GenericStateAdmissionPrefix.lower_input_prefix sourceState updateEntry plan lowered
   have trace := Backend.Impact.appendEffectsGuardedWithBoundaries_trace sourceState
     updateEntry.effects updateEntry.effectGuards inputPlan plan boundaries guardedAppend
-  exact ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend,
-    trace, field_admitted, fields, scalarSupport⟩
+  exact ⟨boundaries, inputPlan, loweredExact, inputAccepted, guardedAppend, trace,
+    GenericStateAdmissionBridge.lower_field_admission sourceState updateEntry plan lowered,
+    fields, scalarSupport⟩
 
 /-- The single guarded Cell write uses the checked concrete operation suffix
 to split successful whole-plan evaluation at the source effect boundary. -/
