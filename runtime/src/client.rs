@@ -1299,6 +1299,13 @@ impl BoundTransaction {
             receipt.height > self.data.after_height && receipt.height <= receipt.finalized_height,
             Error::StaleReceipt,
         )?;
+        // A receipt observed at the finalized height names the finalized block itself.
+        // When finality has advanced, inclusion and head hashes identify different blocks.
+        require(
+            (receipt.height == receipt.finalized_height)
+                == (receipt.block_hash == receipt.finalized_hash),
+            Error::Receipt,
+        )?;
         require(
             canonical_hash(&receipt.block_hash)
                 && canonical_hash(&receipt.finalized_hash)
@@ -2555,6 +2562,30 @@ pub(crate) mod tests {
         composed.secondary_states.remove(&callee);
         assert_eq!(multi.check_receipt(&composed), Err(Error::Receipt));
     }
+
+    #[test]
+    fn receipt_inclusion_and_finalization_hashes_match_their_heights() {
+        let tx = bound();
+        let mut receipt = receipt(&tx);
+
+        // Inclusion at the finalized height identifies the finalized block.
+        receipt.finalized_height = receipt.height;
+        receipt.finalized_hash.clone_from(&receipt.block_hash);
+        tx.check_receipt(&receipt).unwrap();
+
+        // A later finalized head has a distinct block identity. The archived
+        // composition fixture exercises this historical-receipt shape too.
+        receipt.finalized_height += 1;
+        receipt.finalized_hash = "3".repeat(64);
+        tx.check_receipt(&receipt).unwrap();
+
+        // Reject both inconsistent combinations.
+        receipt.finalized_hash.clone_from(&receipt.block_hash);
+        assert_eq!(tx.check_receipt(&receipt), Err(Error::Receipt));
+        receipt.finalized_height = receipt.height;
+        receipt.finalized_hash = "3".repeat(64);
+        assert_eq!(tx.check_receipt(&receipt), Err(Error::Receipt));
+    }
     #[test]
     fn partial_checkpoint_restores_receipt_and_staged_writes_without_resubmission_or_cas() {
         use ledger::structure::{ContractCall, ProofVersioned};
@@ -3291,6 +3322,14 @@ pub(crate) mod tests {
         assert_eq!(reference.transaction_id(), bound.transaction_id());
         assert_eq!(reference.contract_address(), bound.contract_address());
         assert_eq!(reference.event(), ContractEvent::Deploy);
+        let mut receipt = receipt(&bound);
+        receipt.height = 21;
+        receipt.finalized_height = 21;
+        receipt.finalized_hash.clone_from(&receipt.block_hash);
+        receipt.contract_state.clone_from(&state);
+        reference.check_receipt(&receipt).unwrap();
+        receipt.secondary_states.insert("f".repeat(64), vec![9]);
+        assert_eq!(reference.check_receipt(&receipt), Err(Error::Receipt));
         #[cfg(feature = "localnet")]
         assert!(reference.development_submission_view().is_ok());
         assert!(
