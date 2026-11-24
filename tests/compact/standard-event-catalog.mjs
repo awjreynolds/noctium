@@ -45,17 +45,19 @@ try {
   const { currentContractState } = await contract.initialState(
     runtime.createConstructorContext(null, coinPublicKey),
   );
-  const context = runtime.createCircuitContext({
-    circuitId: 'logCatalog',
-    contractAddress: runtime.dummyContractAddress(),
-    coinPublicKeyOrZswapState: coinPublicKey,
-    contractState: currentContractState.data,
-    privateState: null,
-  });
-  const quantity = (1n << 127n) + 0x10203n;
-  const call = await contract.circuits.logCatalog(
-    context, bytes(32, 1), bytes(32, 225), bytes(512, 1), bytes(256, 2), quantity,
+  const runCatalog = async (memo, quantity) => contract.circuits.logCatalog(
+    runtime.createCircuitContext({
+      circuitId: 'logCatalog',
+      contractAddress: runtime.dummyContractAddress(),
+      coinPublicKeyOrZswapState: coinPublicKey,
+      contractState: currentContractState.data,
+      privateState: null,
+    }),
+    bytes(32, 1), bytes(32, 225), bytes(512, 1), memo, quantity,
   );
+  const quantity = (1n << 127n) + 0x10203n;
+  const memo = bytes(256, 2);
+  const call = await runCatalog(memo, quantity);
   assert.equal(call.context.events.length, eventTypes.length);
 
   const events = call.context.events.map(({ version, eventType, data }, tag) => {
@@ -81,7 +83,9 @@ try {
     const retained = join(projectRoot, 'tests/standard-event-catalog-compact.json');
     assert.deepEqual(reference, JSON.parse(readFileSync(retained, 'utf8')));
   }
-  console.log(`Compact ${compiler} matched all ${events.length} standard event payload layouts`);
+  await assert.rejects(() => runCatalog(bytes(255, 2), quantity), /256/);
+  await assert.rejects(() => runCatalog(memo, 1n << 128n), /expected value of type Uint.*received 340282366920938463463374607431768211456n/);
+  console.log(`Compact ${compiler} matched all ${events.length} layouts and rejected invalid memo width and amount`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

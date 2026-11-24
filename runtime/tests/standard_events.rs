@@ -219,13 +219,16 @@ fn standard_event_catalog_matches_pinned_reference_payloads() -> Result<()> {
             json!(((1u128 << 127) + 0x10203).to_string()),
         ),
     ]);
-    let execution = prepare(
-        &plan,
-        &inputs,
-        &state,
-        &INITIAL_PARAMETERS,
-        ContractAddress::default(),
-    )?;
+    let execute = |inputs: &BTreeMap<String, serde_json::Value>| {
+        prepare(
+            &plan,
+            inputs,
+            &state,
+            &INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )
+    };
+    let mut execution = execute(&inputs)?;
     check(&execution, &circuit)?;
 
     assert_eq!(execution.program.len(), 28);
@@ -273,6 +276,37 @@ fn standard_event_catalog_matches_pinned_reference_payloads() -> Result<()> {
         let mut bytes = atom.0.clone();
         bytes.resize(length as usize, 0);
         assert_eq!(hex::encode(Sha256::digest(bytes)), digest, "{kind:?}");
+    }
+    for (name, malformed) in [
+        ("memo", bytes(255, 2)),
+        ("value", json!("340282366920938463463374607431768211456")),
+    ] {
+        let mut bad = inputs.clone();
+        bad.insert(name.into(), malformed);
+        assert!(
+            execute(&bad).is_err(),
+            "{name} must meet the declared input type"
+        );
+    }
+
+    for (name, replacement, event) in [
+        ("memo", bytes(256, 3), Misc),
+        ("value", json!("0"), UnshieldedMint),
+    ] {
+        let mut changed = inputs.clone();
+        changed.insert(name.into(), replacement);
+        let alternate = execute(&changed)?;
+        check(&alternate, &circuit)?;
+        let index = event_types.iter().position(|kind| *kind == event).unwrap();
+        assert_ne!(execution.logs[index].data, alternate.logs[index].data);
+        execution
+            .preimage
+            .public_transcript_inputs
+            .clone_from(&alternate.preimage.public_transcript_inputs);
+        assert!(
+            check(&execution, &circuit).is_err(),
+            "changed {event:?} payload must fail"
+        );
     }
     Ok(())
 }
