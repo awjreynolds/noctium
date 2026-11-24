@@ -2328,8 +2328,6 @@ def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Uni
     match input.ty.validate caps with
     | .error message => throw {span := input.span, message}
     | .ok _ => pure ()
-    if input.ty == .opaqueString && input.visibility != .public then
-      throw {span := input.span, message := "OpaqueString inputs currently require public visibility"}
   if !uniqueNames (c.inputs.flatMap Input.nativeIdentifiers) then
     throw {span := c.span, message := "input names collide after native byte expansion"}
   let projections := c.inputs.flatMap Input.publicProjectionIdentifiers

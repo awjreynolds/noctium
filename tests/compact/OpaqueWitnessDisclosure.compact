@@ -1,0 +1,13 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger label: Opaque<"string">;
+witness readPrivateLabel(): Opaque<"string">;
+
+export circuit publish(): [] {
+  label = disclose(readPrivateLabel());
+}
+
+export circuit readLabel(): Opaque<"string"> {
+  return label;
+}
