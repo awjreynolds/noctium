@@ -131,8 +131,7 @@ payload as one FAB Compress atom. Use `headOrDefault` followed by
 head carries an empty string or byte array. An active empty pop writes
 `Null`, and the next read rejects.
 
-Private byte inputs require `disclose` at the write. Opaque string
-circuit inputs currently require public visibility.
+Private payloads require `disclose` before a public write.
 
 The paired check exercises LIFO order, embedded NUL and zero bytes,
 trailing-zero rejection, and altered public inputs and returns. The test
