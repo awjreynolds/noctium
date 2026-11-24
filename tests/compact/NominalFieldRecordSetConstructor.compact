@@ -1,0 +1,22 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export struct Key {
+  amount: Amount;
+}
+
+export sealed ledger members: Set<Key>;
+
+constructor(seed: Amount, extra: Field, enabled: Boolean) {
+  members.insert(Key { amount: disclose(seed) });
+  if (disclose(enabled)) {
+    members.insert(Key { amount: disclose(extra as Amount) });
+  }
+}
+
+export circuit inspect(amount: Amount): Boolean {
+  return members.member(Key { amount: disclose(amount) });
+}

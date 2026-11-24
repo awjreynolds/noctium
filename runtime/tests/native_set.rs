@@ -729,3 +729,50 @@ fn record_set_constructor_checks_guard_key_encoding_and_duplicates() -> anyhow::
     assert!(noctium_runtime::construct_state(&plan, &arguments).is_err());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_NOMINAL_FIELD_RECORD_SET_CONSTRUCTOR_DIR"]
+fn nominal_field_record_set_constructor_preserves_native_keys() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_NOMINAL_FIELD_RECORD_SET_CONSTRUCTOR_DIR")
+            .expect("nominal Field record Set constructor artifacts"),
+    );
+    let entry = "NominalFieldRecordSetConstructor.Registry.inspect";
+    let plan = load_plan(&directory, &format!("{entry}.impact.json"));
+    let circuit = load_circuit(&directory, &format!("{entry}.zkir"));
+    assert!(plan.state[0].sealed);
+    for enabled in [false, true] {
+        let state = noctium_runtime::construct_state(
+            &plan,
+            &BTreeMap::from([
+                ("seed".into(), json!("17")),
+                ("extra".into(), json!("42")),
+                ("enabled".into(), json!(enabled)),
+            ]),
+        )?;
+        let StateValue::Array(slots) = state.get_ref() else {
+            anyhow::bail!("expected a state array");
+        };
+        let Some(StateValue::Map(members)) = slots.get(0) else {
+            anyhow::bail!("expected a Set-backed map");
+        };
+        assert_eq!(members.size(), if enabled { 2 } else { 1 });
+        for (amount, expected) in [(17u64, true), (42, enabled), (99, false)] {
+            assert_eq!(
+                members.get(&field_value(Fr::from(amount))).is_some(),
+                expected
+            );
+            let execution = prepare(
+                &plan,
+                &BTreeMap::from([("amount".into(), json!(amount.to_string()))]),
+                &state,
+                &ledger::structure::INITIAL_PARAMETERS,
+                coin_structure::contract::ContractAddress::default(),
+            )?;
+            assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+            assert_eq!(execution.returns_json()["isPresent"], json!(expected));
+            assert_eq!(execution.after.state, state);
+        }
+    }
+    Ok(())
+}
