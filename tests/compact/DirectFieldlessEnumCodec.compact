@@ -1,0 +1,19 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+enum Status { Pending, Done }
+
+export pure circuit serializeDone(): [Bytes<1>, Bytes<2>, Status] {
+  const exactOrdinal = serialize<Status, 1>(Status.Done);
+  const paddedOrdinal = serialize<Status, 2>(Status.Done);
+  const decoded = deserialize<Status, 1>(exactOrdinal);
+  return [exactOrdinal, paddedOrdinal, decoded];
+}
+
+export pure circuit deserializeStatus(input: Bytes<1>): Status {
+  return deserialize<Status, 1>(input);
+}
+
+export pure circuit deserializePaddedStatus(input: Bytes<2>): Status {
+  return deserialize<Status, 2>(input);
+}

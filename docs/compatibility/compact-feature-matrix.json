@@ -7141,7 +7141,7 @@
       "layer": "standard-library",
       "surface": "serialize",
       "noctiumStatus": "subset",
-      "notes": "Direct scalar and fixed-byte source encoding uses explicit length and zero right padding. Focused Bool, UInt, Bytes, Native, Secp256k1Scalar, and nominal Field and Uint<7> cases match Compact 0.36.1. The ordinary and readable source forms use the same scalar wire format. The nested payment frame matches the pinned reference, and the readable source emits identical ZKIR to the earlier helper form. Full conformance remains open.",
+      "notes": "Direct scalar and fixed-byte source encoding uses explicit length and zero right padding. Focused Bool, UInt, Bytes, Native, Secp256k1Scalar, and nominal Field and Uint<7> cases match Compact 0.36.1. The ordinary and readable source forms use the same scalar wire format. The nested payment frame matches the pinned reference, and the readable source emits identical ZKIR to the earlier helper form. Readable fieldless enums encode their checked ordinal with the requested right padding. Full conformance remains open.",
       "source": [
         "stdlib",
         "serialization",
@@ -7162,7 +7162,9 @@
         "runtime/tests/aggregate_serialization.rs",
         "tests/OrdinaryAliasSerialization.lean",
         "tests/ReadableNominalScalarSerialization.lean",
-        "tests/compact/nominal-scalar-serialization.mjs"
+        "tests/compact/nominal-scalar-serialization.mjs",
+        "tests/DirectFieldlessEnumCodec.lean",
+        "tests/compact/direct-fieldless-enum-codec.mjs"
       ],
       "equivalence": "unverified"
     },
@@ -7171,7 +7173,7 @@
       "layer": "standard-library",
       "surface": "deserialize",
       "noctiumStatus": "subset",
-      "notes": "Direct scalar and fixed-byte source decoding uses type-sized prefixes. Native, Bool and UInt bounds are checked. Foreign scalar decoding reduces by the target modulus. Ordinary and readable scalar decoding retain the requested nominal Field or UInt identity. Readable named codecs decode records, tuples, vectors, bytes and fieldless enums using a fixed frame. The authenticated host and native checker agree on the nested payment case and reject malformed UInt, Bool and enum values. Full conformance remains open.",
+      "notes": "Direct scalar and fixed-byte source decoding uses type-sized prefixes. Native, Bool and UInt bounds are checked. Foreign scalar decoding reduces by the target modulus. Ordinary and readable scalar decoding retain the requested nominal Field or UInt identity. Readable named codecs decode records, tuples, vectors, bytes and fieldless enums using a fixed frame. The authenticated host and native checker agree on the nested payment case and reject malformed UInt, Bool and enum values. Readable fieldless enum decoding checks the ordinal and preserves the declared enum identity. Full conformance remains open.",
       "source": [
         "stdlib",
         "serialization",
@@ -7192,7 +7194,9 @@
         "runtime/tests/aggregate_serialization.rs",
         "tests/OrdinaryAliasSerialization.lean",
         "tests/ReadableNominalScalarSerialization.lean",
-        "tests/compact/nominal-scalar-serialization.mjs"
+        "tests/compact/nominal-scalar-serialization.mjs",
+        "tests/DirectFieldlessEnumCodec.lean",
+        "tests/compact/direct-fieldless-enum-codec.mjs"
       ],
       "equivalence": "unverified"
     }

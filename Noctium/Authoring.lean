@@ -166,6 +166,7 @@ scoped syntax "map(" "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "fold(" nlexpr "," "[" nlexpr,* "]" "," "fun" ident* "=>" nlexpr ")" : nlexpr
 scoped syntax "encode(" ident "," nlexpr ")" : nlexpr
 scoped syntax "decode(" ident "," nlexpr ")" : nlexpr
+scoped syntax "deserialize(" "Payload" ident "," nlexpr ")" : nlexpr
 scoped syntax "default(" "Payload" ident ")" : nlexpr
 declare_syntax_cat noctium_record_field
 scoped syntax ident ":=" nlexpr : noctium_record_field
@@ -926,6 +927,8 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| disclose($value)) => s!"disclose({renderExpr value})"
   | `(nlexpr| encode($codec:ident, $value)) => s!"encode({codec.getId}, {renderExpr value})"
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
+  | `(nlexpr| deserialize(Payload $codec:ident, $value)) =>
+    s!"deserialize(Payload {codec.getId}, {renderExpr value})"
   | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
   | `(nlexpr| default($type:nltype)) => s!"default({renderType type})"
   | `(nlexpr| record(Payload $codec:ident, { $fields,* })) =>
@@ -1116,6 +1119,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
   | `(nlexpr| fromBytesChecked($_:nltype, $value))
   | `(nlexpr| deserialize($_:nltype, $value))
+  | `(nlexpr| deserialize(Payload $_:ident, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
   | `(nlexpr| field($value, $_:ident))
@@ -1219,6 +1223,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| serialize($value, $_:num)) | `(nlexpr| toBytes($value, $_:num))
   | `(nlexpr| fromBytesChecked($_:nltype, $value))
   | `(nlexpr| deserialize($_:nltype, $value))
+  | `(nlexpr| deserialize(Payload $_:ident, $value))
   | `(nlexpr| encode($_:ident, $value)) | `(nlexpr| decode($_:ident, $value))
   | `(nlexpr| some($value))
   | `(nlexpr| field($value, $_:ident))
@@ -2637,14 +2642,18 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar (.bytes 32)) (.bytes operation [value.term]) [value])
   | `(nlexpr| serialize($value, $length:num)) => do
     let value ← lowerExpr programName callPrefix env value
-    let .scalar source := value.type | throwErrorAt stx "serialize requires a scalar or fixed bytes"
+    let (source, representation) ← match value.type with
+      | .scalar source => pure (source, if value.nominalField.isSome || value.nominalUInt.isSome
+          then .cast source value.term else value.term)
+      | .composite (payload@(.enumeration _)) => do
+        let members ← checkedFieldlessEnumMembers stx payload
+        let maximum := members.length - 1
+        pure (.uint maximum, .cast (.uint maximum) (.project value.term .enumTag))
+      | _ => throwErrorAt stx "serialize requires a scalar, fixed bytes, or fieldless enum"
     let operation := Noctium.Helpers.BytesOp.serialize source length.getNat
     let (_, result) ← match operation.signature 1 with
       | .ok signature => pure signature
       | .error message => throwErrorAt stx message
-    let representation :=
-      if value.nominalField.isSome || value.nominalUInt.isSome then .cast source value.term
-      else value.term
     pure (mergeLowered (.scalar result) (.bytes operation [representation]) [value])
   | `(nlexpr| toBytes($sourceValue, $length:num)) => do
     let value ← lowerExpr programName callPrefix env sourceValue
@@ -2685,6 +2694,18 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       nominalField := sourceType.nominalField
       nominalUInt := sourceType.nominalUInt
       generatedValidity := s!"checked wire decode {renderExpr stx}" :: result.generatedValidity}
+  | `(nlexpr| deserialize(Payload $target:ident, $value)) => do
+    let (codec, helper) ← selectedCodec target
+    let members ← checkedFieldlessEnumMembers target codec.payload
+    let value ← lowerExpr programName callPrefix env value
+    unless value.type == .scalar (.bytes codec.frameBytes) do
+      throwErrorAt stx s!"deserialize(Payload {target.getId}, ...) requires Bytes {codec.frameBytes}"
+    let result := mergeLowered (.composite codec.payload)
+      (.call (helper ++ "Decode") [value.term]) [value]
+    modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    pure {result with generatedValidity :=
+      (s!"checked fieldless enum decode ({members.length} variants): {renderExpr stx}") ::
+        result.generatedValidity}
   | `(nlexpr| fromBytesChecked($target:nltype, $value)) => do
     let target ← readScalarTy target
     unless target == .native ||
