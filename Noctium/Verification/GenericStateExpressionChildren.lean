@@ -4,6 +4,30 @@ namespace Noctium.Verification.GenericStateExpressionChildren
 
 open Noctium
 
+/-- Inverting a successful `Except.bind` exposes the result of its first
+checked step. -/
+theorem bind_success_first {α β : Type} {first : Except String α}
+    {next : α → Except String β} {result : β}
+    (success : Except.bind first next = .ok result) :
+    ∃ value, first = .ok value := by
+  cases first with
+  | error message => simp [Except.bind] at success
+  | ok value => exact ⟨value, rfl⟩
+
+/-- A simple validation gate preserves first-step success after its guard
+passes. -/
+theorem guarded_bind_success_first (guard : Bool) (message : String)
+    {α β : Type} (first : Except String α)
+    (next : α → Except String β) (result : β)
+    (success : (if !guard then .error message else
+      Except.bind first next) = .ok result) :
+    ∃ value, first = .ok value := by
+  cases guard with
+  | false => simp at success
+  | true =>
+    simp only [Bool.not_true] at success
+    exact bind_success_first success
+
 private theorem forIn_extract {α ε : Type}
     (body : α → PUnit → Except ε (ForInStep PUnit))
     (property : α → Prop) (values : List α)
