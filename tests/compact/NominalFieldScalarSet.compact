@@ -1,0 +1,40 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export ledger members: Set<Amount>;
+export ledger plain: Set<Amount>;
+export ledger constructorMembers: Set<Amount>;
+
+constructor(seed: Amount, raw: Field, enabled: Boolean) {
+  constructorMembers.insert(disclose(seed));
+  if (disclose(enabled)) {
+    constructorMembers.insert(disclose(raw as Amount));
+  }
+}
+
+export circuit update(amount: Amount, raw: Field, adding: Boolean, removing: Boolean):
+                       [Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean, Boolean] {
+  const direct = disclose(amount);
+  const casted = disclose(raw as Amount);
+  const plainBefore = plain.member(direct);
+  plain.insert(direct);
+  const plainAfterInsert = plain.member(direct);
+  plain.remove(direct);
+  const plainAfterRemove = plain.member(direct);
+  const before = members.member(direct);
+  if (disclose(adding)) { members.insert(direct); }
+  const afterInsert = members.member(direct);
+  if (disclose(adding)) { members.insert(casted); }
+  const castedPresent = members.member(casted);
+  if (disclose(removing)) {
+    members.remove(direct);
+    members.remove(casted);
+  }
+  const afterRemove = members.member(direct);
+  const castedAfterRemove = members.member(casted);
+  return [plainBefore, plainAfterInsert, plainAfterRemove, before, afterInsert,
+          castedPresent, afterRemove, castedAfterRemove];
+}
