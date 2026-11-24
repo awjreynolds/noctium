@@ -108,4 +108,3 @@ private def nestedOpaqueEntry (name : String) : Entrypoint :=
   match Disclosure.entrypoint operation with
   | .ok _ => Bool.true
   | .error _ => Bool.false
-
