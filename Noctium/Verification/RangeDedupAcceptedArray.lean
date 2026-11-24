@@ -820,6 +820,35 @@ def SupportsMeaning (raw : Json) : Prop :=
       Instruction.Holds hash witness instruction) →
     AcceptedMeaningStep hash witness raw
 
+/-- An accepted private input row has the producer-selected, unguarded native
+input shape and supplies the corresponding meaning-step classification. The
+input opcode itself is not decoded as a ZKIR relation, so this case uses the
+producer's input selector and descriptor checks instead of claiming a relation
+meaning for the input row. -/
+theorem acceptedPrivateInputSupportsMeaning
+    {hash : Hash} {witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {initial final : Backend.Native.State}
+    {raw : Json} {index : Nat}
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final)
+    (member : (raw, index) ∈ items)
+    (opcode : Backend.Native.stringField raw "op" = .ok "private_input")
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none) :
+    ∃ state next requirement,
+      Backend.Native.validateInstruction expected state raw = .ok next ∧
+      expected.inputs[state.inputCount]? = some requirement ∧
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none ∧
+      SupportsMeaning raw := by
+  obtain ⟨state, next, checked⟩ :=
+    RangeDedupProducer.validateInstructionLoop_step accepted member
+  obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+    (visibility := .«private») (by simpa [inputOpcode] using opcode) checked
+  have unguarded := accepted_private_input_unguarded selected opcode checked
+  have inputMember : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+  have ⟨nonforeign, _⟩ := inputSchema requirement inputMember
+  exact ⟨state, next, requirement, checked, selected, nonforeign, unguarded,
+    fun _hash _witness _holds => .native (.privateInput opcode)⟩
+
 theorem supportsMeaning_impact {raw : Json} {guard : Operand} {values : List Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "impact")
     (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
