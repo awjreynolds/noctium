@@ -3136,7 +3136,11 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if depth <= 1 {
             checked_cell_record_schema(schema)?;
         } else {
-            checked_map_record_schema(schema)?;
+            // Scalar-key nested Maps store typed records as values. Their
+            // fixed-width byte fields use the normal typed-record layout.
+            // Keep the narrower check for record-key Maps below, where the
+            // native nested map value representation has a separate limit.
+            checked_typed_record_schema(schema)?;
         }
         return Ok(());
     }

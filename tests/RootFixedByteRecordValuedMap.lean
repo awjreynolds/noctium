@@ -150,7 +150,7 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
   }]
 }
 
-#guard match LedgerValueType.rootMapRecordWriteFields qualifiedCoinRecordEnvironment
+#guard match LedgerValueType.mapRecordWriteFields qualifiedCoinRecordEnvironment
     (.structure "QualifiedCoin") with
   | .error message => message == "shielded coin records require their specialized write effect"
   | .ok _ => _root_.Bool.false
@@ -167,7 +167,7 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
       {kind := .tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType), ..},
       {kind := .tree (.map (.bytes 32) (.composite scalarEnvironment scalarType)), ..}] =>
       (LedgerValueType.recordMapKeyFields keyEnvironment keyType).isOk &&
-      (match LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType with
+      (match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
         | .ok fields => fields == [("label", .bytes 1), ("digest", .bytes 33)]
         | .error _ => _root_.Bool.false) &&
       (match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
@@ -175,13 +175,12 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
         | .ok _ => _root_.Bool.false) &&
       (LedgerValueType.validate Capabilities.source
         (.recordMapComposite keyEnvironment keyType valueEnvironment valueType)).isOk &&
-      (LedgerValueType.rootMapRecordFields scalarEnvironment scalarType).isOk &&
+      (LedgerValueType.mapRecordFields scalarEnvironment scalarType).isOk &&
       (LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.composite scalarEnvironment scalarType))).isOk &&
-      (match LedgerValueType.validate Capabilities.source
-        (.map (.bytes 32) (.map (.bytes 32) (.composite scalarEnvironment scalarType))) with
-        | .error _ => _root_.Bool.true
-        | .ok _ => _root_.Bool.false) &&
+      (LedgerValueType.validate Capabilities.source
+        (.map (.bytes 32) (.map (.bytes 32)
+          (.composite scalarEnvironment scalarType)))).isOk &&
       (match LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.recordMapComposite keyEnvironment keyType valueEnvironment valueType)) with
         | .error _ => _root_.Bool.true
@@ -189,7 +188,7 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
       (match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 2 with
         | .error _ => _root_.Bool.true
         | .ok _ => _root_.Bool.false) &&
-      (match LedgerValueType.rootMapRecordWriteFields fixedByteRecordMapValueEnvironment
+      (match LedgerValueType.mapRecordWriteFields fixedByteRecordMapValueEnvironment
         (.structure "FixedByteMapValue") with
         | .ok _ => _root_.Bool.true
         | .error _ => _root_.Bool.false)

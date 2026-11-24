@@ -1,0 +1,95 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct Profile {
+  label: Bytes<1>;
+  digest: Bytes<33>;
+}
+
+export ledger profiles: Map<Bytes<32>, Map<Bytes<32>, Profile>>;
+
+export circuit initializeOwner(owner: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  if (!profiles.member(ownerKey)) { profiles.insertDefault(ownerKey); }
+}
+
+export circuit exercise(
+  ownerA: Bytes<32>, ownerB: Bytes<32>,
+  firstKey: Bytes<32>, siblingKey: Bytes<32>,
+  firstLabel: Bytes<1>, firstDigest: Bytes<33>,
+  siblingLabel: Bytes<1>, siblingDigest: Bytes<33>,
+  ownerBLabel: Bytes<1>, ownerBDigest: Bytes<33>,
+  replacementLabel: Bytes<1>, replacementDigest: Bytes<33>,
+): [Boolean, Boolean, Boolean, Boolean, Boolean, Boolean,
+    Bytes<1>, Bytes<33>, Bytes<1>, Bytes<33>, Bytes<1>, Bytes<33>,
+    Bytes<1>, Bytes<33>, Boolean, Boolean, Boolean] {
+  const ownerAKey = disclose(ownerA);
+  const ownerBKey = disclose(ownerB);
+  const first = disclose(firstKey);
+  const sibling = disclose(siblingKey);
+
+  const firstBefore = profiles.lookup(ownerAKey).member(first);
+  const siblingBefore = profiles.lookup(ownerAKey).member(sibling);
+  const ownerBBefore = profiles.lookup(ownerBKey).member(first);
+
+  profiles.lookup(ownerAKey).insert(first, disclose(Profile {
+    label: firstLabel, digest: firstDigest,
+  }));
+  profiles.lookup(ownerAKey).insert(sibling, disclose(Profile {
+    label: siblingLabel, digest: siblingDigest,
+  }));
+  profiles.lookup(ownerBKey).insert(first, disclose(Profile {
+    label: ownerBLabel, digest: ownerBDigest,
+  }));
+
+  const firstValue = profiles.lookup(ownerAKey).lookup(first);
+  const siblingValue = profiles.lookup(ownerAKey).lookup(sibling);
+  const ownerBValue = profiles.lookup(ownerBKey).lookup(first);
+  const firstPresent = profiles.lookup(ownerAKey).member(first);
+  const siblingPresent = profiles.lookup(ownerAKey).member(sibling);
+  const ownerBPresent = profiles.lookup(ownerBKey).member(first);
+
+  profiles.lookup(ownerAKey).insert(first, disclose(Profile {
+    label: replacementLabel, digest: replacementDigest,
+  }));
+  const replaced = profiles.lookup(ownerAKey).lookup(first);
+  profiles.lookup(ownerAKey).remove(first);
+
+  return [
+    firstBefore, siblingBefore, ownerBBefore,
+    firstPresent, siblingPresent, ownerBPresent,
+    firstValue.label, firstValue.digest,
+    siblingValue.label, siblingValue.digest,
+    ownerBValue.label, ownerBValue.digest,
+    replaced.label, replaced.digest,
+    profiles.lookup(ownerAKey).member(first),
+    profiles.lookup(ownerAKey).member(sibling),
+    profiles.lookup(ownerBKey).member(first),
+  ];
+}
+
+export circuit lookupAbsent(
+  owner: Bytes<32>, missingKey: Bytes<32>,
+): [Bytes<1>] {
+  const missing = profiles.lookup(disclose(owner)).lookup(disclose(missingKey));
+  return [missing.label];
+}
+
+export circuit inspect(
+  ownerA: Bytes<32>, ownerB: Bytes<32>,
+  firstKey: Bytes<32>, siblingKey: Bytes<32>,
+): [Boolean, Boolean, Boolean, Bytes<1>, Bytes<33>, Bytes<1>, Bytes<33>] {
+  const ownerAKey = disclose(ownerA);
+  const ownerBKey = disclose(ownerB);
+  const first = disclose(firstKey);
+  const sibling = disclose(siblingKey);
+  const siblingValue = profiles.lookup(ownerAKey).lookup(sibling);
+  const ownerBValue = profiles.lookup(ownerBKey).lookup(first);
+  return [
+    profiles.lookup(ownerAKey).member(first),
+    profiles.lookup(ownerAKey).member(sibling),
+    profiles.lookup(ownerBKey).member(first),
+    siblingValue.label, siblingValue.digest,
+    ownerBValue.label, ownerBValue.digest,
+  ];
+}
