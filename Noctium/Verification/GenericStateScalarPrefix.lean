@@ -62,6 +62,39 @@ theorem lower_scalar_operations_admitted
   exact ⟨boundaries, inputPlan, detailedAccepted, inputsAccepted,
     effectsAccepted, operationsExact, prefixSupported, planSupported⟩
 
+/-- A successful production lower with no source effects admits exactly the
+scalar-compatible public-input operations. This establishes scalar VM support
+from source admission, before any interpreter evaluation succeeds. -/
+theorem lower_public_input_only_scalar_supported
+    (state : List StateDecl) (entry : Entrypoint) (plan : Impact.Plan)
+    (lowered : Impact.lower state entry = .ok plan)
+    (noEffects : entry.effects = [])
+    (compatible : ∀ input ∈ entry.circuit.inputs,
+      Impact.publicInputScalarCompatible input) :
+    ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation := by
+  obtain ⟨boundaries, detailedAccepted⟩ :=
+    lower_boundary_result state entry plan lowered
+  obtain ⟨inputPlan, inputsAccepted, effectsAccepted⟩ :=
+    Impact.lowerWithEffectBoundaries_inputPrefix state entry plan boundaries
+      detailedAccepted
+  have guardsEmpty : entry.effectGuards = [] := by
+    cases guards : entry.effectGuards with
+    | nil => rfl
+    | cons head tail =>
+      have impossible := effectsAccepted
+      rw [noEffects, guards, Impact.appendEffectsGuardedWithBoundaries] at impossible
+      cases impossible
+  have appended := effectsAccepted
+  rw [noEffects, guardsEmpty, Impact.appendEffectsGuardedWithBoundaries] at appended
+  have operationsEq : plan.operations = inputPlan.operations := by
+    have pairEq := Except.ok.inj appended
+    have planEq : inputPlan = plan := congrArg Prod.fst pairEq
+    exact congrArg (fun candidate : Impact.Plan => candidate.operations) planEq.symm
+  have inputSupported := GenericStateOps.publicInputPlan_scalar_supported
+    entry.circuit.inputs {} inputPlan inputsAccepted compatible (by simp)
+  rw [operationsEq]
+  exact inputSupported
+
 def publicInputScalarExpressions : Input → List (Expr .native)
   | .mk name .native .«public» _ => [(.ref name : Expr .native)]
   | .mk name .bool .«public» _ =>
