@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -17,11 +17,12 @@ mkdirSync(experiments, { recursive: true });
 const scratch = mkdtempSync(join(experiments, 'record-set-constructor-'));
 try {
   const source = fileURLToPath(new URL('./RecordSetConstructor.compact', import.meta.url));
-  execFileSync(compactc, ['--skip-zk', source, scratch]);
+  const standard = join(scratch, 'standard');
+  execFileSync(compactc, ['--skip-zk', source, standard]);
   const link = join(scratch, 'node_modules/@midnight-ntwrk/compact-runtime');
   mkdirSync(dirname(link), { recursive: true });
   symlinkSync(runtimeDirectory, link, 'dir');
-  const { Contract, ledger } = await import(pathToFileURL(join(scratch, 'contract/index.js')));
+  const { Contract, ledger } = await import(pathToFileURL(join(standard, 'contract/index.js')));
   const contract = new Contract({});
   const wallet = '00'.repeat(32);
   const tag = new Uint8Array([7]);
@@ -42,6 +43,39 @@ try {
     assert.deepEqual(result, [true, enabled, count]);
   }
   console.log(`Compact ${version}: checked guarded record Set construction and duplicate insertion`);
+
+  const nominalSource = fileURLToPath(new URL('./NominalFieldRecordSetConstructor.compact', import.meta.url));
+  const nominal = join(scratch, 'nominal');
+  execFileSync(compactc, ['--skip-zk', nominalSource, nominal]);
+  const nominalModule = await import(pathToFileURL(join(nominal, 'contract/index.js')));
+  const registry = new nominalModule.Contract({});
+  for (const enabled of [false, true]) {
+    const { currentContractState } = await registry.initialState(
+      runtime.createConstructorContext(null, wallet), 17n, 42n, enabled,
+    );
+    const state = currentContractState.data;
+    const { members } = nominalModule.ledger(state);
+    assert.equal(members.size(), enabled ? 2n : 1n);
+    for (const [amount, expected] of [[17n, true], [42n, enabled], [99n, false]]) {
+      assert.equal(members.member({ amount }), expected);
+      const { result } = await registry.circuits.inspect(runtime.createCircuitContext({
+        circuitId: 'inspect', contractAddress: runtime.dummyContractAddress(),
+        coinPublicKeyOrZswapState: wallet, contractState: state, privateState: null,
+      }), amount);
+      assert.equal(result, expected);
+    }
+  }
+  const validSource = readFileSync(nominalSource, 'utf8');
+  for (const [index, rejectedType] of ['Field', 'Count'].entries()) {
+    const invalid = join(scratch, `invalid-${index}.compact`);
+    writeFileSync(invalid, validSource.replace('seed: Amount', `seed: ${rejectedType}`));
+    const rejected = spawnSync(compactc, ['--skip-zk', invalid, join(scratch, `invalid-${index}`)], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr + rejected.stdout, /declared type Amount/);
+  }
+  console.log('Checked sealed nominal Field record Set keys, guarded construction and incompatible aliases');
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
