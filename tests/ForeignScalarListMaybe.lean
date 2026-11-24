@@ -1,13 +1,8 @@
 import Noctium.Frontend
-import Noctium.Backend.Impact
 import Noctium.Backend.Zkir
-import Noctium.Compiler
-import Noctium.Types.ValueSchema
 
 open scoped Noctium
-open Lean
 open Noctium
-open Noctium.Types
 
 noctium_circuit foreignScalarListPushInputs where
   private value : Secp256k1Scalar
@@ -55,35 +50,8 @@ private def foreignScalarListMaybeRun (name : String) (inputs : EvalEnv)
     (state : LedgerState) :=
   (foreignScalarListMaybeEntry name).run foreignScalarListMaybeContext inputs state
 
-#guard match Backend.Impact.lower ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "push") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
-
-#guard match Backend.Impact.lower ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "head") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
-
-#guard match Backend.Impact.lower ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "pop") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
-
-#guard match Backend.Zkir.lowerEntrypoint ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "head") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
-
-#guard match Backend.Zkir.lowerEntrypoint ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "push") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
-
-#guard match Backend.Zkir.lowerEntrypoint ForeignScalarListMaybe.state
-    (foreignScalarListMaybeEntry "pop") with
-  | .ok _ => Bool.true
-  | .error _ => Bool.false
+#guard ForeignScalarListMaybe.entrypoints.all fun candidate =>
+  (Backend.Zkir.lowerEntrypoint ForeignScalarListMaybe.state candidate).isOk
 
 -- `None` keeps the canonical two-limb foreign encoding of scalar zero.
 #guard match foreignScalarListMaybeRun "head" [] foreignScalarListMaybeEmpty with
