@@ -1,0 +1,218 @@
+{
+  "activeAbsentPathRejectedBeforeSubmission": true,
+  "bundleManifestSha256": {
+    "inspect": "47be6fd3849fcb2c2f4fc4e46426c4a84e7209ffd81d0b9c7a2d480ca36d3710",
+    "seed": "ee5d0ac2508fd593b385a820820c7e9177123ae18d2e432a007d9eaf1dce799b"
+  },
+  "bundles": {
+    "inspect": {
+      "entries": [
+        {
+          "name": "tests/ListIsEmptyParity.lean",
+          "path": "source/tests/ListIsEmptyParity.lean",
+          "role": "source",
+          "sha256": "43634f29f3b39b8d3de08cee670ff5730be2626f1ffdb8acb92c85a3d92aa3d7",
+          "size": 5793
+        },
+        {
+          "name": "ListIsEmptyParity.inspect.zkir",
+          "path": "circuit/entrypoint.zkir",
+          "role": "circuit",
+          "sha256": "d30d6f7ac3470741981a26951d1b1dc3af1b4caf0799da2d05de2397ec83bc10",
+          "size": 7589
+        },
+        {
+          "name": "ListIsEmptyParity.inspect.impact.json",
+          "path": "plan/entrypoint.impact.json",
+          "role": "plan",
+          "sha256": "49c7e30c8bf1e4f45d505dd3bb6022dcbc3b2ecd197ebbf7d77d8eaf462ce4c5",
+          "size": 5772
+        },
+        {
+          "name": "noctium.json",
+          "path": "schema/noctium.json",
+          "role": "metadata",
+          "sha256": "db5aa19c7a1638b5ca5e678554aeb9f5d27e5c0ee14ea57d5fe55cc28ebc9c6c",
+          "size": 6547
+        },
+        {
+          "name": "noctium_runtime.h",
+          "path": "schema/noctium_runtime.h",
+          "role": "abi",
+          "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+          "size": 5282
+        },
+        {
+          "name": "target.json",
+          "path": "profile/target.json",
+          "role": "profile",
+          "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+          "size": 528
+        },
+        {
+          "name": "ledger.params",
+          "path": "parameters/ledger.params",
+          "role": "ledgerParameters",
+          "sha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+          "size": 791
+        },
+        {
+          "name": "entrypoint.prover",
+          "path": "keys/entrypoint.prover",
+          "role": "proverKey",
+          "sha256": "5d1e1bc1ed1a6bb3f0a05eaccd9b6b8f541f21d6d77de1dfcc46706d86cac9f9",
+          "size": 890945
+        },
+        {
+          "name": "entrypoint.verifier",
+          "path": "keys/entrypoint.verifier",
+          "role": "verifierKey",
+          "sha256": "0cace56913e8c0ba4efc4cb752bed0f0c528cf23267546fc9caf6d2cae8f3012",
+          "size": 1353
+        },
+        {
+          "name": "native-zkir.json",
+          "path": "provenance/native-zkir.json",
+          "role": "toolchain",
+          "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+          "size": 529
+        }
+      ],
+      "k": 10,
+      "rows": 712
+    },
+    "seed": {
+      "entries": [
+        {
+          "name": "tests/ListIsEmptyParity.lean",
+          "path": "source/tests/ListIsEmptyParity.lean",
+          "role": "source",
+          "sha256": "43634f29f3b39b8d3de08cee670ff5730be2626f1ffdb8acb92c85a3d92aa3d7",
+          "size": 5793
+        },
+        {
+          "name": "ListIsEmptyParity.seed.zkir",
+          "path": "circuit/entrypoint.zkir",
+          "role": "circuit",
+          "sha256": "c13e0408253d3b393ae30695294723798a1d346ea1b8f428806cc3ee40188ab2",
+          "size": 5393
+        },
+        {
+          "name": "ListIsEmptyParity.seed.impact.json",
+          "path": "plan/entrypoint.impact.json",
+          "role": "plan",
+          "sha256": "9bb8026c8473802269d77ef9e2d0cff1f250b95086c6fc8a7ab6a281900332c5",
+          "size": 3163
+        },
+        {
+          "name": "noctium.json",
+          "path": "schema/noctium.json",
+          "role": "metadata",
+          "sha256": "db5aa19c7a1638b5ca5e678554aeb9f5d27e5c0ee14ea57d5fe55cc28ebc9c6c",
+          "size": 6547
+        },
+        {
+          "name": "noctium_runtime.h",
+          "path": "schema/noctium_runtime.h",
+          "role": "abi",
+          "sha256": "9adb028a54398dd7bccc35fae814616829d940ff58c29690bb74e400c2c8787d",
+          "size": 5282
+        },
+        {
+          "name": "target.json",
+          "path": "profile/target.json",
+          "role": "profile",
+          "sha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+          "size": 528
+        },
+        {
+          "name": "ledger.params",
+          "path": "parameters/ledger.params",
+          "role": "ledgerParameters",
+          "sha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+          "size": 791
+        },
+        {
+          "name": "entrypoint.prover",
+          "path": "keys/entrypoint.prover",
+          "role": "proverKey",
+          "sha256": "6dac2aa1bed04d425fca313115ec54f7d2f6605da66a6bab909d6cf3104b7a72",
+          "size": 447605
+        },
+        {
+          "name": "entrypoint.verifier",
+          "path": "keys/entrypoint.verifier",
+          "role": "verifierKey",
+          "sha256": "269911d84fe39b8f36531fef0e9ae305b0adfc72f728a685403a05ced920f69d",
+          "size": 1353
+        },
+        {
+          "name": "native-zkir.json",
+          "path": "provenance/native-zkir.json",
+          "role": "toolchain",
+          "sha256": "dccec8838ddd4739ef31f5a3268aef62ea7e8eff498fe8b875ab1ed763dc663b",
+          "size": 529
+        }
+      ],
+      "k": 9,
+      "rows": 429
+    }
+  },
+  "compactReference": {
+    "activeMissingPath": "rejected by Compact 0.36.1 for absent map parent",
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "emptyBytes0List": true,
+    "emptyRecordList": true,
+    "fixture": "ListIsEmptyParity",
+    "inactiveMissingPath": false,
+    "oneElementBytes0List": false,
+    "populatedRecordList": false,
+    "runtime": "0.21.0"
+  },
+  "contractAddress": "3df4bb8fe272e21eb3eb50495845720ad7acc45258df3f7dcbc18212028ae950",
+  "deployment": {
+    "blockHash": "28a657a0a696fdd1f8180d704ee5f55942999d03ddddc51da8c75c1c3c4a3d2b",
+    "finalizedHash": "28a657a0a696fdd1f8180d704ee5f55942999d03ddddc51da8c75c1c3c4a3d2b",
+    "finalizedHeight": 85346,
+    "height": 85346,
+    "stateBytes": 3250,
+    "stateSha256": "e7a7d25e41508ca29a28ce5c4ae6334ba9a62176207eb93bc74aa6020db099a2",
+    "transactionId": "5c3b01d59f8a18a0f03b54e9faaa22d30d9a61ab80b4116059ec0246fcf86915"
+  },
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "inspect": {
+    "blockHash": "1e4b1273ae49135d646425685441f17fe7e683ab3dc4e4c433abed5f69176aa5",
+    "finalizedHash": "1e4b1273ae49135d646425685441f17fe7e683ab3dc4e4c433abed5f69176aa5",
+    "finalizedHeight": 85352,
+    "height": 85352,
+    "stateBytes": 4375,
+    "stateSha256": "724420e016787598d17e8f595650280bb3e2210d45d801514249ef0a344de06d",
+    "transactionId": "f01bb107fda300eef22595be3a21b99d5fb7e850169c64e2d803e6760a076c30"
+  },
+  "k": {
+    "inspect": 10,
+    "seed": 9
+  },
+  "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+  "ledgerVersion": "9.1.0.1",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "returns": {
+    "emptyBytesResult": true,
+    "emptyRecordListResult": true,
+    "missingRecordListResult": false,
+    "oneEmptyByteResult": false,
+    "populatedRecordListResult": false
+  },
+  "scope": "A funded development deployment, seed call and valid inspect call for root Bytes0 and two-key nested Memo Lists. All five typed returns match Compact. The inspection leaves state bytes unchanged. Active absence rejects in native preflight and has no submitted transaction.",
+  "seed": {
+    "blockHash": "634de51c823a233954298aa267096167eef61327b9084abfce32fa8e2c0e66c1",
+    "finalizedHash": "634de51c823a233954298aa267096167eef61327b9084abfce32fa8e2c0e66c1",
+    "finalizedHeight": 85349,
+    "height": 85349,
+    "stateBytes": 4375,
+    "stateSha256": "724420e016787598d17e8f595650280bb3e2210d45d801514249ef0a344de06d",
+    "transactionId": "3ce73db2cae13079e8ec390383d306738607f4ec718fd1007eea73359baaee56"
+  },
+  "sourceCompilerRevision": "2100510258abf43e3f36f7134c5f4d4527e73a74",
+  "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0"
+}

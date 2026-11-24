@@ -3465,7 +3465,7 @@
       "layer": "language-ledger",
       "surface": "List.isEmpty",
       "noctiumStatus": "subset",
-      "notes": "List isEmpty binds a Bool from the ordered native length read. The matched fixture covers standalone Native and nested Bytes128 Lists. A false guard skips the path and binds false, including an absent nested path. The host method remains unqualified.",
+      "notes": "List isEmpty binds a Bool from the ordered native length read. The matched fixture covers standalone Native and nested Bytes128 Lists. A false guard skips the path and binds false, including an absent nested path. A pinned Compact and funded Ledger 9 comparison covers empty Bytes0 Lists, one zero-width item, and empty and populated record Lists beneath two Map keys. The read at height 85352 matched all five Booleans and preserved the seeded state bytes. The active missing path rejects before native submission and in Compact. Full layout coverage and the host method remain unqualified.",
       "source": [
         "adt"
       ],
@@ -3478,7 +3478,10 @@
         "tests/NativeScalarList.lean",
         "runtime/tests/native_scalar_list.rs",
         "tests/compact/native-scalar-list.mjs",
-        "docs/development/native-lists.md"
+        "docs/development/native-lists.md",
+        "tests/ListIsEmptyParity.lean",
+        "tests/compact/list-isempty-parity.mjs",
+        "docs/development/list-isempty-localnet-receipt.json"
       ],
       "equivalence": "unverified"
     },
