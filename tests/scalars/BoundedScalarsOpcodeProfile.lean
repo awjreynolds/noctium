@@ -18,7 +18,6 @@ open Noctium.Verification.ScalarValidationArithmeticLoop (NativeDefinitions)
 open Noctium.Verification.ScalarValidationMeaning (StateMeaning)
 open Noctium.Verification.ScalarValidationOpcodeProfile
 open Noctium.Verification.ScalarValidationNativeDefinitions
-open Noctium.Verification.ScalarValidationOutputMeaning (accepted_impact_meaning)
 
 private theorem bind_ok {α β : Type} {value : Except String α} {next : α → Except String β}
     {result : β} : (value >>= next) = .ok result ↔
@@ -186,27 +185,9 @@ theorem boundedApply_decodedImpactGroupWidths :
     rfl
   · native_decide
 
-private theorem decoded_mem {items : List Json} {instructions : List Instruction}
-    {raw : Json} {instruction : Instruction}
-    (decoded : items.mapM decodeInstruction = .ok instructions)
-    (rowMember : raw ∈ items) (row : decodeInstruction raw = .ok instruction) :
-    instruction ∈ instructions := by
-  induction items generalizing instructions with
-  | nil => simp at rowMember
-  | cons item rest ih =>
-    simp only [List.mapM_cons, bind_ok] at decoded
-    obtain ⟨head, headParsed, tail, tailParsed, result⟩ := decoded
-    cases result
-    rcases List.mem_cons.mp rowMember with same | restMember
-    · subst item
-      have sameInstruction := Except.ok.inj (row.symm.trans headParsed)
-      simp [sameInstruction]
-    · exact List.mem_cons_of_mem _ (ih tailParsed restMember)
-
-/-- Every Impact row in the actual accepted BoundedScalars.apply relation
-reads the scalar values of its selected source group in order. The input
-agreement and producer seed describe the source assignment, and the
-independently decoded relation supplies the per-instruction constraints. -/
+/-- The full ordered public Impact payload of the emitted BoundedScalars.apply
+relation agrees with the source schedule under the admitted input schema,
+source assignment agreement and satisfaction of the decoded circuit. -/
 theorem boundedApply_acceptedImpactPayloads :
     ∃ expected seed final,
       Native.expectedEntrypoint BoundedScalars.state
@@ -214,34 +195,34 @@ theorem boundedApply_acceptedImpactPayloads :
       Native.validateInstructionLoop expected emittedItems seed = .ok final ∧
       ∀ (hash : Hash) (inputs assignment : Assignment) (streams : InputStreams)
         (groups : List (List Scalar)),
-        StateMeaning hash inputs assignment seed →
-        NativeDefinitions seed →
+        expected.rawInputs = [] →
         (∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false) →
+        (∀ requirement ∈ expected.inputs, requirement.activityGuard = none) →
         (∀ requirement ∈ expected.inputs,
           assignment requirement.identifier = inputs requirement.identifier) →
         CircuitSatisfies hash decodedProgram streams assignment groups →
-        ∀ raw index guard values, (raw, index) ∈ emittedItems →
-          Native.stringField raw "op" = .ok "impact" →
-          decodeInstruction raw = .ok (.impact guard values) →
-          ∃ before after group,
-            validateInstruction expected before raw = .ok after ∧
-            expected.groups[before.groupCount]? = some group ∧
-            group.map (Noctium.Verification.ScalarNormalization.interpret hash inputs) =
-              (values.map (·.read assignment)).map some := by
+        expected.groups.map (List.map
+          (Noctium.Verification.ScalarNormalization.interpret hash inputs)) =
+          groups.map (List.map some) := by
   obtain ⟨_, expected, _, seed, final, _, source, _, driver, trace⟩ :=
     boundedApply_nativeValidationTrace
   refine ⟨expected, seed, final, source, driver.instructionTrace, ?_⟩
-  intro hash inputs assignment streams groups seedMeaning seedTypes inputSchema inputAgreement sat
-  have steps : ∀ item ∈ emittedItems, AcceptedMeaningStep hash assignment item.1 := by
-    intro item indexedMember
-    exact nativeDefinitionTrace_supportsMeaning trace item indexedMember hash assignment
-      (fun instruction parsed => sat.instructions instruction
-        (decoded_mem boundedApply_instructionsDecode (List.mem_map_of_mem indexedMember) parsed))
-  obtain ⟨_, _, visit⟩ := accepted_loop_meaning_at_steps seedMeaning seedTypes inputSchema
-    inputAgreement steps driver.instructionTrace
-  intro raw index guard values rowMember opcode decoded
-  obtain ⟨before, after, meaning, _, checked, _, _⟩ := visit raw index rowMember
-  obtain ⟨group, selected, _, observed⟩ := accepted_impact_meaning meaning checked opcode decoded
-  exact ⟨before, after, group, checked, selected, observed⟩
+  intro hash inputs assignment streams groups noRawInputs inputSchema inputGuards inputAgreement sat
+  have seedEmpty := driver.emptyRawSeed noRawInputs
+  have meaning : StateMeaning hash inputs assignment seed := by
+    rw [seedEmpty]
+    intro name fact factMember
+    simp at factMember
+  have definitions : NativeDefinitions seed := by
+    rw [seedEmpty]
+    intro name fact factMember
+    simp at factMember
+  have ordered := acceptedProfileOrderedImpactPayloads trace meaning definitions inputSchema
+    inputGuards inputAgreement sat.instructions driver.instructionTrace
+  rw [driver.groupCount, seedEmpty] at ordered
+  have decodedGroups : (Program.mk decodedProgram.instructions 0 Bool.false).groups assignment =
+      decodedProgram.groups assignment := rfl
+  simpa only [List.take_length, Native.State.groupCount, List.take_zero,
+    List.map_nil, List.nil_append, decodedGroups, sat.groups] using ordered
 
 end BoundedScalarsOpcodeProfile
