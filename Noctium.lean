@@ -1,4 +1,5 @@
 import Noctium.Target
+import Noctium.Midnight.PublicAddress
 import Noctium.Midnight.ShieldedSendResult
 import Noctium.Compiler
 import Noctium.Claim
