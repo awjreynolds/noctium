@@ -131,6 +131,30 @@ the valid identity point for the stored point.
 [Lean fixture](../../tests/JubjubListMaybe.lean) ·
 [Native checker](../../runtime/tests/jubjub_list_maybe.rs)
 
+Root `Secp256k1Scalar` List heads also return typed `Maybe` values. The absent
+head keeps the canonical two-limb encoding of zero. A present head keeps both
+foreign scalar limbs, and the native relation rejects a changed low limb.
+[Lean fixture](../../tests/ForeignScalarListMaybe.lean) ·
+[Native checker](../../runtime/tests/foreign_scalar_list_maybe.rs)
+
+The Compact 0.36.1 probe compiles a `List<Secp256k1Scalar>` push control. The
+matching `head(): Maybe<Secp256k1Scalar>` source triggers the pinned compiler's
+`cannot-happen` assertion in `reduce-to-zkir.ss` at line 518. The probe runner
+checks the compiler version and records this exact result.
+[Compact source](../../tests/compact/ForeignScalarListMaybe.compact) ·
+[Probe runner](../../tests/compact/foreign-scalar-list-maybe.mjs)
+
+```sh
+node tests/compact/foreign-scalar-list-maybe.mjs <compactc-0.36.1>
+lake exe noctium compile tests/ForeignScalarListMaybe.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output build/experiments/foreign-scalar-list-maybe
+source .lake/noctium-dev.env && \
+  NOCTIUM_FOREIGN_SCALAR_LIST_MAYBE_DIR="$PWD/build/experiments/foreign-scalar-list-maybe" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+    --no-default-features --features zkir-321 --test foreign_scalar_list_maybe -- --ignored
+```
+
 ## Opaque List heads
 
 Root Lists accept `OpaqueString` and `OpaqueBytes`. The ledger stores each

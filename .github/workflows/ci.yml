@@ -310,6 +310,7 @@ jobs:
           lake env lean tests/NominalUIntNestedRecords.lean
           lake env lean tests/NominalRecordMaybe.lean
           lake env lean tests/MaybeBytesCurves.lean
+          lake env lean tests/ForeignScalarListMaybe.lean
           lake env lean tests/CompositeEither.lean
           lake env lean tests/CompositeEitherInput.lean
           lake env lean tests/NominalRecordEquality.lean

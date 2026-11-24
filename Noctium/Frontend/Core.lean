@@ -5376,6 +5376,8 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     | .opaqueString => some ("MaybeOpaqueString", .scalar .opaqueString)
     | .jubjubScalar => some ("MaybeJubjubScalar", .scalar .jubjubScalar)
     | .jubjubPoint => some ("MaybeJubjubPoint", .scalar .jubjubPoint)
+    | .foreign (.scalar .secp256k1) =>
+      some ("MaybeSecp256k1Scalar", .scalar (.foreign (.scalar .secp256k1)))
     | _ => none
   let typeId ← match typedPayload with
   | some (suffix, _) => do
@@ -5424,6 +5426,8 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
         `(Noctium.Expr.bytesLiteral $(natTerm length) $zeros)
       | .opaqueBytes => `(Noctium.Expr.opaqueBytesEmpty)
       | .opaqueString => `(Noctium.Expr.opaqueStringEmpty)
+      | .foreign (.scalar .secp256k1) =>
+        `(Noctium.Expr.foreignScalar Noctium.Foreign.Curve.secp256k1 0)
       | _ => throwErrorAt statement "returnMaybe payload must be a scalar"
     `(Noctium.Expr.select $presentExpression $payloadExpression $payloadDefault)
   let isSomeReturnName := s!"{labelName}_is_some"
@@ -5434,6 +5438,8 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
   let curveReturnNames := match payloadType with
     | .jubjubScalar => [payloadReturnName]
     | .jubjubPoint => jubjubPointReturnNames
+    | .foreign (.scalar .secp256k1) =>
+      [s!"{payloadReturnName}_low", s!"{payloadReturnName}_high"]
     | _ => []
   let legacyPhysicalReturnNames := if zeroWidthBytes then [isSomeReturnName]
     else [isSomeReturnName, payloadReturnName]
@@ -5475,6 +5481,13 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     let xReturn ← `(Noctium.Output.mk $xName Noctium.Ty.native $canonicalX $span)
     let yReturn ← `(Noctium.Output.mk $yName Noctium.Ty.native $canonicalY $span)
     returnTerms := returnTerms.push xReturn |>.push yReturn
+  else if payloadType == .foreign (.scalar .secp256k1) then
+    for (returnName, index) in curveReturnNames.zipIdx do
+      let value ← `(Noctium.Expr.foreignEncodedField
+        (kind := Noctium.Foreign.Kind.scalar Noctium.Foreign.Curve.secp256k1)
+        $canonicalPayload $(natTerm index))
+      let foreignReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native $value $span)
+      returnTerms := returnTerms.push foreignReturn
   else
     for (returnName, index) in (packedByteReturnNames.getD []).zipIdx do
       let chunk ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native
