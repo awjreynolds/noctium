@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+export ledger first: Uint<8>;
+export ledger last: Uint<8>;
+constructor(source: Bytes<3>) {
+  first = disclose(source[0]);
+  last = disclose(source[2]);
+}
+export circuit inspect(): [Uint<8>, Uint<8>] {
+  return [first, last];
+}

@@ -22,6 +22,23 @@ constructor. Its deployment `state` argument then contains constructor arguments
 Without a constructor, existing explicit state configuration remains supported.
 `create_state` remains the low-level explicit state constructor/hydrator.
 
+## Bind fixed-byte positions
+
+A constructor alias pattern selects bytes from one checked argument.
+
+```lean
+constructor(source : Bytes 3 as [firstByte, _, lastByte]) where
+  initialize first := firstByte
+  initialize last := lastByte
+end
+```
+
+The ABI retains a single `source : Bytes 3` argument. Each named position has
+type `UInt 8`. A pattern requires one position per byte and a distinct name
+for each binding. The pinned Compact case uses indexing and initializes the
+same cells. [Lean fixture](../../tests/ConstructorBytePattern.lean) ·
+[Compact fixture](../../tests/compact/ConstructorBytePattern.compact)
+
 ## Seed a flat Map
 
 ```lean
