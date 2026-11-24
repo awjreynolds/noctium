@@ -2666,9 +2666,10 @@ private structure CollectionNominals where
   /-- Nominal Field identities for the same keys, currently used by root scalar Sets. -/
   pathFieldKeys : List (Option NominalFieldType) := []
   scalarValue : Option NominalUIntType := none
+  scalarFieldValue : Option NominalFieldType := none
 
 private def CollectionNominals.isEmpty (nominals : CollectionNominals) : _root_.Bool :=
-  nominals.scalarValue.isNone && nominals.pathKeys.all Option.isNone &&
+  nominals.scalarValue.isNone && nominals.scalarFieldValue.isNone && nominals.pathKeys.all Option.isNone &&
     nominals.pathFieldKeys.all Option.isNone
 
 private def directNominalUIntMaps (schema : List (String × StateKind))
@@ -2774,8 +2775,9 @@ private def checkedRootMapKey (state : EntryEffects) (storage : TSyntax `ident)
 
 private def checkedMapValue (state : EntryEffects) (storage : TSyntax `ident)
     (value : TSyntax `nlexpr) (ty : Ty) : CommandElabM (TSyntax `term) :=
+  let nominals := state.collectionNominals storage
   checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
-    {type := ty, nominalUInt := (state.collectionNominals storage).scalarValue}
+    {type := ty, nominalUInt := nominals.scalarValue, nominalField := nominals.scalarFieldValue}
     state.nominalFieldBindings
 
 private partial def nominalBytes32OfExpression (state : EntryEffects)
@@ -3156,9 +3158,13 @@ private def elaborateCounterLessThan (schema : List (String × StateKind))
 private def bindMapRead (state : EntryEffects) (storage destination : TSyntax `ident)
     (readName : String) (valueTy : Ty) : CommandElabM EntryEffects := do
   let updated ← bindReadName state destination.getId.toString readName valueTy
+  let metadata := state.collectionNominals storage
   let bindings := bindCircuitNominal updated.nominalUIntBindings destination.getId.toString
-    (state.collectionNominals storage).scalarValue
-  pure {updated with nominalUIntBindings := bindings}
+    metadata.scalarValue
+  let fieldBindings := match metadata.scalarFieldValue with
+    | none => updated.nominalFieldBindings
+    | some field => (destination.getId.toString, some field) :: updated.nominalFieldBindings
+  pure {updated with nominalUIntBindings := bindings, nominalFieldBindings := fieldBindings}
 
 private def elaborateTreeRead (storage destination : TSyntax `ident)
     (keys : List (TSyntax `nlexpr))
@@ -5827,7 +5833,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           {type := keyTy, nominalUInt := nominal.pathKeys.head?.join,
             nominalField := nominal.pathFieldKeys.head?.join} nominalFieldBindings
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.scalarValue} nominalFieldBindings
+          {type := valueTy, nominalUInt := nominal.scalarValue, nominalField := nominal.scalarFieldValue}
+          nominalFieldBindings
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         let orderedInsert ← `(Noctium.ConstructorOrderedMapInsert.mk $(stringTerm destination)
@@ -5949,7 +5956,8 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           {type := keyTy, nominalUInt := nominal.pathKeys.head?.join,
             nominalField := nominal.pathFieldKeys.head?.join} nominalFieldBindings
         let valueExpression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-          {type := valueTy, nominalUInt := nominal.scalarValue} nominalFieldBindings
+          {type := valueTy, nominalUInt := nominal.scalarValue, nominalField := nominal.scalarFieldValue}
+          nominalFieldBindings
         let key ← `(Noctium.PathKey.mk $(← tyTerm keyTy) $keyExpression)
         let valueType ← tyTerm valueTy
         mapInsertTerms := mapInsertTerms.push
@@ -6442,11 +6450,12 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         | `(nlstate| sealed map $id:ident : $key:nltype => $value:nltype)
         | `(nlstate| map $id:ident : $key:nltype => $value:nltype) => do
           let key ← readCollectionScalarSourceType key _root_.Bool.true
-          let value ← readCollectionScalarSourceType value
+          let value ← readCollectionScalarSourceType value _root_.Bool.true
           let nominal : CollectionNominals := {
             pathKeys := [key.nominalUInt]
             pathFieldKeys := [key.nominalField]
-            scalarValue := value.nominalUInt}
+            scalarValue := value.nominalUInt
+            scalarFieldValue := value.nominalField}
           unless nominal.isEmpty do
             nominalCollections := (id.getId.toString, nominal) :: nominalCollections
           pure (id, StateKind.map key.type value.type,
@@ -6986,11 +6995,14 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           | .readCell storage _ _ | .writeCell storage _ _ =>
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
+          | .readMap storage .. | .writeMap storage .. =>
+            if ((nominalCollections.lookup storage).bind (·.scalarFieldValue)).isSome then
+              throwErrorAt entryStx "structured helpers do not support nominal Field Map values"
           | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
               .mapSize storage .. | .insertPath storage .. | .writePath storage .. |
               .emptyMapPath storage .. | .setInsert storage .. | .removePath storage .. =>
             if let some metadata := nominalCollections.lookup storage then
-              if metadata.pathFieldKeys.any Option.isSome then
+              if metadata.scalarFieldValue.isSome || metadata.pathFieldKeys.any Option.isSome then
                 throwErrorAt entryStx "structured helpers do not support nominal Field collection paths"
               throwErrorAt entryStx "structured helpers do not support nominal UInt collection paths"
           | _ => pure ()
