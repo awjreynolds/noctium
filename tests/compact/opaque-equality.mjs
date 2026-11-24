@@ -39,6 +39,7 @@ try {
     { a: '', b: '', same: true },
     { a: 'exact', b: 'exact', same: true },
     { a: 'a\0b', b: 'a\0b', same: true },
+    { a: 'a', b: 'a\0b', same: false },
     { a: 'prefix\x01', b: 'prefix\x02', same: false },
     { a: 'left', b: 'right', same: false },
   ];
@@ -46,6 +47,7 @@ try {
     { a: [], b: [], same: true },
     { a: [0x00, 0x01, 0xff], b: [0x00, 0x01, 0xff], same: true },
     { a: [0x41, 0x00, 0x42], b: [0x41, 0x00, 0x42], same: true },
+    { a: [0x41], b: [0x41, 0x00, 0x42], same: false },
     { a: [0x70, 0x72, 0x65, 0x66, 0x69, 0x78, 0x01], b: [0x70, 0x72, 0x65, 0x66, 0x69, 0x78, 0x02], same: false },
     { a: [0x41], b: [0x42], same: false },
   ];

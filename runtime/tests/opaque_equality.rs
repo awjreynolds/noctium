@@ -30,7 +30,7 @@ fn opaque_equality_matches_compact_and_binds_the_result() -> Result<()> {
         let plan: Plan =
             serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?;
         let relation = IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?;
-        let state = create_state(&plan, &BTreeMap::new())?;
+        let state = create_state(&plan, &BTreeMap::from([("last".into(), json!(false))]))?;
         let cases = compact[family]
             .as_array()
             .context("missing Compact cases")?;

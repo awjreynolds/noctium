@@ -633,7 +633,7 @@
       "layer": "language",
       "surface": "Opaque string and Uint8Array",
       "noctiumStatus": "subset",
-      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field.",
+      "notes": "OpaqueBytes and OpaqueString store and read typed public values in root Bytes32-keyed Maps. Each binds one FAB Compress field on ZKIR 3.2.1. Separate development Ledger 9 runs finalized a binary and a UTF-8 store and read with unchanged read state. The string run preserves an embedded NUL and binds the exact public read return to the proof transcript. The native string check also covers empty input and rejects trailing NUL, malformed stored UTF-8, byte-tag substitution and a changed transcript. Sealed constructor strings use a separate path. Root Cells also support mutable byte and string values. The paired native check covers canonical empty defaults, exact bytes and altered transcript rejection. Funded root Cells round-trip both payloads with proof-bound returns. Full host equivalence remains open. The paired generic module Cell case also checks constructor initialization and the length-bound transient hash for each opaque type. A paired generic identity case preserves raw opaque scalar arguments and results, and the native relation binds the returned Compress field. The host rejects cross-type substitution. The paired two-key Maps exercise typed raw byte and string payloads beneath two Bytes32 owners. Native stores and strict reads preserve exact typed data and bind each returned Compress field. Same-kind opaque equality matches the pinned Compact return and ledger Bool update for the exercised canonical inputs. ZKIR compares the Compress fields; mixed kinds, implicit disclosure and a changed return reject.",
       "source": [
         "reference"
       ],
@@ -642,6 +642,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/OpaqueEquality.lean",
+        "tests/compact/opaque-equality.mjs",
+        "runtime/tests/opaque_equality.rs",
         "tests/NestedOpaqueMap.lean",
         "tests/compact/nested-opaque-map.mjs",
         "runtime/tests/nested_opaque_map.rs",
