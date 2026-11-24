@@ -997,7 +997,7 @@
       "layer": "language",
       "surface": "Named circuits and circuit calls",
       "noctiumStatus": "subset",
-      "notes": "Parameters, arity, results, helper calls and recursive-call rejection. Readable witness circuits link independently declared Lean helper programs and invoke checked named helpers with scalar or aggregate arguments. Linking remaps overlapping declaration and nested-scope IDs deterministically, keeps source helper names and witness order, and rejects ambiguous overloads. The paired Compact and native fixture calls one aggregate helper from two entries, preserves argument witness order and rejects a wrong arity during elaboration.",
+      "notes": "Parameters, arity, results, helper calls and recursive-call rejection. Readable witness circuits link independently declared Lean helper programs and invoke checked named helpers with scalar or aggregate arguments. Linking remaps overlapping declaration and nested-scope IDs deterministically, keeps source helper names and witness order, and rejects ambiguous overloads. The paired Compact and native fixture calls one aggregate helper from two entries, preserves argument witness order and rejects a wrong arity during elaboration. The native relation for three linked libraries returns 207 and 702 for swapped operands.",
       "source": [
         "reference"
       ],
@@ -1006,6 +1006,8 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/ReadableLinkedHelpers.lean",
+        "runtime/tests/pure_helpers.rs",
         "tests/ReadableRecordConstruction.lean",
         "tests/compact/readable-record-construction.mjs",
         "runtime/tests/readable_record_construction.rs",

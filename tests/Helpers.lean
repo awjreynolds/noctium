@@ -58,7 +58,6 @@ private def linkedLibraries : Program :=
   match linkPrograms [linkedLibraryOne, linkedLibraryTwo] with
   | .ok program => program
   | .error _ => {}
-#eval linkPrograms [linkedLibraryOne, linkedLibraryTwo]
 
 -- Independently declared root/nested IDs overlap, then receive stable distinct IDs.
 #guard linkedLibraries.scopes.map (·.id) == [0, 1, 2]

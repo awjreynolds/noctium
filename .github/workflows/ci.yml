@@ -476,6 +476,10 @@ jobs:
               --no-default-features --features zkir-321 --test effect_blocks \
               --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi \
               --test constructor_actions
+          NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test pure_helpers -- \
+              --ignored --exact linked_readable_helpers_preserve_native_argument_order
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
