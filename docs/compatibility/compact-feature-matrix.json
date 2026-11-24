@@ -4271,7 +4271,7 @@
       "layer": "standard-library",
       "surface": "MerkleTreeDigest",
       "noctiumStatus": "equivalent",
-      "notes": "The shared Noctium and pinned Compact layouts carry one Field as the nested digest member. The paired mixed-direction path returns the same root. The Noctium typed host checks the canonical digest ID and rejects substitution. The K9 native relation proves and verifies with official parameters and rejects an altered return commitment.",
+      "notes": "The shared Noctium and pinned Compact layouts carry one Field as the nested digest member and as the typed root result. The paired mixed-direction path returns the same root. The Noctium typed host checks the canonical digest ID and rejects substitution. The K9 native relation proves and verifies with official parameters and rejects an altered return commitment.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6111,7 +6111,7 @@
       "layer": "standard-library",
       "surface": "merkleTreePathRoot",
       "noctiumStatus": "subset",
-      "notes": "The reusable typed helper hashes the mdn:lh domain and a checked FAB leaf before folding the path at its declared depth. The native ZKIR 3.2.1 depth-two case matches the pinned Compact mixed-record leaf root and rejects a wrong leaf type. The leaf and directions stay private until explicit root disclosure. The existing depth-20 shielded role example also matches its pinned Compact workload. Leaf layouts outside the checked FAB schema and broader host qualification remain open.",
+      "notes": "The reusable typed helper hashes the mdn:lh domain and a checked FAB leaf before folding the path at its declared depth. The native ZKIR 3.2.1 depth-two case matches the pinned Compact mixed-record leaf root, returns the canonical MerkleTreeDigest layout, and rejects a wrong leaf type. The leaf and directions stay private until explicit root disclosure. The existing depth-20 shielded role example also matches its pinned Compact workload. Leaf layouts outside the checked FAB schema and broader host qualification remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6138,7 +6138,7 @@
       "layer": "standard-library",
       "surface": "merkleTreePathRootNoLeafHash",
       "noctiumStatus": "subset",
-      "notes": "A reusable Lean source helper degrades the Bytes32 leaf and folds the canonical path entries at a declared depth. The depth-two native ZKIR 3.2.1 fixture matches the pinned Compact result. Path directions remain private through fixed arithmetic and the source explicitly releases the root. The Lean checker rejects an undisclosed root, and the typed provider rejects malformed directions and path lengths. Broader depth and host coverage remain open.",
+      "notes": "A reusable Lean source helper degrades the Bytes32 leaf and folds the canonical path entries at a declared depth. The depth-two native ZKIR 3.2.1 fixture matches the pinned Compact root field and returns its canonical MerkleTreeDigest wrapper. Path directions remain private through fixed arithmetic and the source explicitly releases the root. The K9 proof still verifies over the exact same native relation bytes. The Lean checker rejects an undisclosed root, and the typed provider rejects malformed directions and path lengths. Broader depth and host coverage remain open.",
       "source": [
         "stdlib",
         "stdlibSource",

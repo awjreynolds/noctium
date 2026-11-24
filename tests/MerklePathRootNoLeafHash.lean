@@ -43,7 +43,7 @@ noctium_witness_circuit merklePathRootInputs using merklePathWire, merkleLeafWir
   let encodedLeaf := encode(merkleLeafWire, field(proof, leaf))
   let path := field(proof, path)
   let currentRoot := invoke(merklePathRootNoLeafHash, [encodedLeaf, path])
-  output candidateRoot : Native := disclose(currentRoot)
+  output root := disclose(currentRoot)
 end
 
 /- error: undisclosed private -/
@@ -54,12 +54,12 @@ noctium_witness_circuit rejectsUndisclosedMerklePathRoot
   let encodedLeaf := encode(merkleLeafWire, field(proof, leaf))
   let path := field(proof, path)
   let currentRoot := invoke(merklePathRootNoLeafHash, [encodedLeaf, path])
-  output candidateRoot : Native := currentRoot
+  output root := currentRoot
 end
 
 noctium_contract MerklePathRootNoLeafHashSource where
   entry digest uses merklePathRootInputs where
-    return root : Native := candidateRoot
+    return root
   end
 end
 

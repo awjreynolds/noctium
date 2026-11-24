@@ -5,8 +5,8 @@ export circuit hashPair(left: Field, right: Field): Field {
   return disclose(transientHash<Vector<2, Field>>([left, right]));
 }
 
-export circuit digestFromPath(path: MerkleTreePath<2, Bytes<32>>): Field {
-  return disclose(merkleTreePathRootNoLeafHash<2>(path).field);
+export circuit digestFromPath(path: MerkleTreePath<2, Bytes<32>>): MerkleTreeDigest {
+  return disclose(merkleTreePathRootNoLeafHash<2>(path));
 }
 
 export circuit checkNativePath(root: Field, path: MerkleTreePath<2, Field>): [] {
@@ -24,8 +24,8 @@ export circuit checkTypedPath(root: Field, path: MerkleTreePath<2, MixedMerkleLe
   assert(merkleTreePathRoot<2, MixedMerkleLeaf>(path).field == root, "Merkle path root mismatch");
 }
 
-export circuit typedPathRoot(path: MerkleTreePath<2, MixedMerkleLeaf>): Field {
-  return disclose(merkleTreePathRoot<2, MixedMerkleLeaf>(path).field);
+export circuit typedPathRoot(path: MerkleTreePath<2, MixedMerkleLeaf>): MerkleTreeDigest {
+  return disclose(merkleTreePathRoot<2, MixedMerkleLeaf>(path));
 }
 
 export ledger claims: MerkleTree<2, MixedMerkleLeaf>;

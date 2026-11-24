@@ -32,13 +32,22 @@ assert.deepEqual(found, tree.pathForLeaf(3n, leaf));
 assert.equal(tree.findPathForLeaf(changed), undefined);
 const replacement = tree.pathForLeaf(3n, changed);
 const snapshotRoot = tree.root().field;
-const candidateRoot = (await invoke('typedPathRoot', replacement)).result;
-assert.equal((await invoke('typedPathRoot', found)).result, snapshotRoot);
+const candidateDigest = (await invoke('typedPathRoot', replacement)).result;
+const snapshotDigest = (await invoke('typedPathRoot', found)).result;
+assert.equal(snapshotRoot,
+  31400609395615079034746563944767363629115546679921774204850545210160415781421n);
+assert.deepEqual(candidateDigest, {
+  field: 31726889946271747810121760555431048011583312353587929966004038628449158629802n,
+});
+assert.deepEqual(snapshotDigest, {
+  field: 31400609395615079034746563944767363629115546679921774204850545210160415781421n,
+});
+const candidateRoot = candidateDigest.field;
 assert.notEqual(candidateRoot, snapshotRoot);
 console.log(JSON.stringify({
   firstInsert,
-  snapshotRoot: snapshotRoot.toString(),
-  candidateRoot: candidateRoot.toString(),
+  snapshotRoot: snapshotDigest.field.toString(),
+  candidateRoot: candidateDigest.field.toString(),
   steps: replacement.path.map(({sibling, goes_left}) => ({
     sibling: sibling.field.toString(), goesLeft: goes_left,
   })),

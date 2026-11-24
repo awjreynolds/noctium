@@ -125,12 +125,18 @@ fn reply(request: &Json, attempt_id: &str, value: Json) -> TypedResponse {
     .unwrap()
 }
 
+fn digest(field: &str) -> Json {
+    json!({
+        "kind":"struct", "id":"MerkleTreeDigest", "fields":[
+            {"name":"field","value":{"kind":"native","value":field}}
+        ]
+    })
+}
+
 fn path_entry(sibling: &str, direction: Json) -> Json {
     json!({
         "kind":"struct", "id":"MerkleTreePathEntry", "fields":[
-            {"name":"sibling","value":{"kind":"struct","id":"MerkleTreeDigest","fields":[
-                {"name":"field","value":{"kind":"native","value":sibling}}
-            ]}},
+            {"name":"sibling","value":digest(sibling)},
             {"name":"goes_left","value":{"kind":"bool", "value":direction}}
         ]
     })
@@ -210,7 +216,7 @@ fn nested_merkle_path_preserves_entry_order_and_checks_provider_shape() -> anyho
     )?)?;
     assert_eq!(
         check_path_root(&directory, stem, &control, path_payload(None, 2))?,
-        EXPECTED_ROOT
+        digest(EXPECTED_ROOT)
     );
 
     reject_provider_payload(&control, path_payload(Some(json!(2)), 2));
@@ -264,7 +270,7 @@ fn merkle_path_entry_generates_and_binds_native_proof() -> anyhow::Result<()> {
         coin_structure::contract::ContractAddress::default(),
     )?;
     assert_eq!(check(&execution, &relation)?, execution.activity_schedule);
-    assert_eq!(execution.returns_json()["root"], EXPECTED_ROOT);
+    assert_eq!(execution.returns_json()["root"], digest(EXPECTED_ROOT));
     assert_eq!(
         execution.preimage.private_transcript,
         (1u64..=32)
@@ -335,7 +341,7 @@ fn typed_merkle_path_hashes_the_canonical_leaf_and_matches_compact() -> anyhow::
     let root = check_path_root(&directory, stem, &control, payload.clone())?;
     assert_eq!(
         root,
-        "31400609395615079034746563944767363629115546679921774204850545210160415781421"
+        digest("31400609395615079034746563944767363629115546679921774204850545210160415781421")
     );
 
     let mut wrong_leaf = payload;
