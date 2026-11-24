@@ -36,5 +36,9 @@ export circuit runBlock(seed: Field): [Field, Field, Field] {
 }
 
 export circuit emptyNativeMap(): Field {
-  return disclose(acceptEmptyNativeVector(map((item) => item, emptyTupleItems())));
+  const mapped = map((item) => {
+    const copy = item;
+    return copy;
+  }, emptyTupleItems());
+  return disclose(acceptEmptyNativeVector(mapped));
 }

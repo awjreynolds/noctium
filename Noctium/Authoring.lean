@@ -575,6 +575,93 @@ private def callbackStep (step : TSyntax `noctium_callback_step) :
   | `(noctium_callback_step| prove $value:nlexpr) => some (none, value)
   | _ => none
 
+private def expressionIdentifierName (stx : TSyntax `nlexpr) : Option String :=
+  match stx with
+  | `(nlexpr| $id:ident) => some id.getId.toString
+  | _ => none
+
+private def isMapExpression (stx : TSyntax `nlexpr) : _root_.Bool :=
+  match stx with
+  | `(nlexpr| map([$_,*], fun $_:ident* => $_)) => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+/-- Collect typed vector witness arguments that directly consume a lexical name.
+The walk respects let and callback parameter scopes, so a same-named inner
+binding does not constrain an outer binding. -/
+private partial def expectedVectorWitnessArguments (name : String)
+    (stx : TSyntax `nlexpr) : CommandElabM (List ResultType) := do
+  match stx with
+  | `(nlexpr| witness $function:ident($arguments:nlexpr,*)) => do
+    let directArguments := (arguments.getElems.toList.zipIdx).filterMap fun (argument, index) =>
+      if expressionIdentifierName argument == some name then some index else none
+    let mut found := []
+    if !directArguments.isEmpty then
+      let signature ← witnessSignature function
+      for index in directArguments do
+        if let some parameter := signature.parameters[index]? then
+          match parameter.type with
+          | .composite (.vector ..) => found := found ++ [parameter.type]
+          | _ => pure ()
+    for argument in arguments.getElems do
+      found := found ++ (← expectedVectorWitnessArguments name argument)
+    pure found
+  | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
+    let inValue ← expectedVectorWitnessArguments name value
+    if id.getId.toString == name then
+      pure inValue
+    else
+      pure (inValue ++ (← expectedVectorWitnessArguments name body))
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => do
+    let mut found := []
+    let mut shadowed := _root_.Bool.false
+    for step in steps do
+      let some (binder, value) := callbackStep step | continue
+      if !shadowed then
+        found := found ++ (← expectedVectorWitnessArguments name value)
+      if binder.map (·.getId.toString) == some name then
+        shadowed := _root_.Bool.true
+    if !shadowed then
+      found := found ++ (← expectedVectorWitnessArguments name result)
+    pure found
+  | `(nlexpr| map([$sequences,*], fun $parameters:ident* => $body)) => do
+    let mut found := []
+    for sequence in sequences.getElems do
+      found := found ++ (← expectedVectorWitnessArguments name sequence)
+    unless parameters.toList.any (·.getId.toString == name) do
+      found := found ++ (← expectedVectorWitnessArguments name body)
+    pure found
+  | `(nlexpr| fold($initial, [$sequences,*], fun $parameters:ident* => $body)) => do
+    let mut found ← expectedVectorWitnessArguments name initial
+    for sequence in sequences.getElems do
+      found := found ++ (← expectedVectorWitnessArguments name sequence)
+    unless parameters.toList.any (·.getId.toString == name) do
+      found := found ++ (← expectedVectorWitnessArguments name body)
+    pure found
+  | _ => do
+    let mut found := []
+    for child in stx.raw.getArgs do
+      let childExpr : TSyntax `nlexpr := ⟨child⟩
+      found := found ++ (← expectedVectorWitnessArguments name childExpr)
+    pure found
+
+private def expectedVectorFromFollowingStatements (name : String)
+    (following : List (TSyntax `noctium_witness_statement)) : CommandElabM (Option ResultType) := do
+  let mut contexts : List ResultType := []
+  let mut shadowed := _root_.Bool.false
+  for statement in following do
+    if shadowed then break
+    match statement with
+    | `(noctium_witness_statement| let $id:ident $[: $type:nltype]? := $source:nlexpr) => do
+      contexts := contexts ++ (← expectedVectorWitnessArguments name source)
+      if id.getId.toString == name then
+        shadowed := _root_.Bool.true
+    | `(noctium_witness_statement| output $_:ident $[: $type:nltype]? := $source:nlexpr) =>
+      contexts := contexts ++ (← expectedVectorWitnessArguments name source)
+    | _ => pure ()
+  match contexts.eraseDups with
+  | [type] => pure (some type)
+  | _ => pure none
+
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   match stx with
   | `(nlexpr| $id:ident) => id.getId.toString
@@ -1732,7 +1819,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         (values.flatMap (·.generatedValidity) ++ callback.generatedValidity).eraseDups
     }
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
-    let value ← lowerExpr programName callPrefix env value
+    let name := id.getId.toString
+    let contextualUses ← if isMapExpression value then
+      liftM <| expectedVectorWitnessArguments name body
+      else pure []
+    let valueExpected := match expected, expressionIdentifierName body with
+      | some type, some bodyName => if bodyName == name then some type else none
+      | _, _ =>
+        match contextualUses.eraseDups with
+        | [type] => some type
+        | _ => none
+    let value ← lowerExpr programName callPrefix env value valueExpected
     let internalName ← freshReadableLet id
     let ref := Noctium.Helpers.Term.ref internalName
     let body ← lowerExpr programName callPrefix
@@ -1744,15 +1841,25 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         witnessNames := (value.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (value.generatedValidity ++ body.generatedValidity).eraseDups }
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => do
+    let resultName := expressionIdentifierName result
+    let expectedBinderIndex := match expected, resultName with
+      | some _, some resultName =>
+        (steps.toList.zipIdx).foldl (fun selected (step, index) =>
+          match callbackStep step with
+          | some (some id, _) =>
+            if id.getId.toString == resultName then some index else selected
+          | _ => selected) none
+      | _, _ => none
     let mut localEnv := env
     let mut loweredSteps := []
-    for step in steps do
+    for (step, index) in steps.toList.zipIdx do
       let some (binder, source) := callbackStep step
         | throwErrorAt step "invalid readable callback statement"
       let span ← liftM (spanValue step)
       match binder with
       | some id =>
-        let value ← lowerExpr programName callPrefix localEnv source
+        let sourceExpected := if expectedBinderIndex == some index then expected else none
+        let value ← lowerExpr programName callPrefix localEnv source sourceExpected
         let name ← freshReadableLet id
         localEnv := (id.getId.toString, value.type, .ref name, value.nominalUInt) :: localEnv
         loweredSteps := {value with before := value.before ++
@@ -3218,7 +3325,8 @@ private def lowerReadablePattern (programName path : String) (exprState : Author
 
 private partial def lowerReadableStatement (programName path : String)
     (exprState : AuthoringExprState) (codecTerms : Array (TSyntax `term))
-    (body : ReadableBody) (statement : TSyntax `noctium_witness_statement) :
+    (body : ReadableBody) (statement : TSyntax `noctium_witness_statement)
+    (following : Unit → List (TSyntax `noctium_witness_statement) := fun _ => []) :
     CommandElabM ReadableBody := do
   match statement with
   | `(noctium_witness_statement| let [$items,*] := $source:nlexpr) =>
@@ -3263,8 +3371,14 @@ private partial def lowerReadableStatement (programName path : String)
     let annotation ← match type with
       | some annotation => some <$> readSourceScalarType annotation
       | none => pure none
+    let laterVectorContext ← if annotation.isNone && isMapExpression source then
+      expectedVectorFromFollowingStatements valueName (following ())
+      else pure none
+    let expected := match annotation with
+      | some annotation => some (ResultType.scalar annotation.type)
+      | none => laterVectorContext
     let (lowered, body) ← body.lower programName path exprState source
-      (annotation.map fun sourceType => ResultType.scalar sourceType.type)
+      expected
     let value ← match annotation with
       | some annotation => coerceSourceType source lowered annotation
       | none => pure lowered
@@ -3506,7 +3620,8 @@ private partial def lowerReadableStatement (programName path : String)
     let mut outputName := ""
     let mut outputType : ResultType := .unit
     let mut authoredOutputs : List AuthoredOutput := []
-    for (statement, ordinal) in statements.toList.zip (List.range statements.size) do
+    let sourceStatements := statements.toList
+    for (statement, ordinal) in sourceStatements.zipIdx do
       sourceBody := {sourceBody with nextLet := 0}
       let isOutput := statement.raw[0].getAtomVal == "output"
       if !authoredOutputs.isEmpty && !isOutput then
@@ -3574,7 +3689,7 @@ private partial def lowerReadableStatement (programName path : String)
         sourceBody := updatedBody.observe value [sourceExpr]
       | _ =>
         sourceBody ← lowerReadableStatement programNameText (toString ordinal) exprState codecTerms
-          sourceBody statement
+          sourceBody statement (fun _ => sourceStatements.drop (ordinal + 1))
     let witnesses := sourceBody.witnesses
     let resultCodecs := (noctiumWitnessResultCodecRegistry.getState (← getEnv)).toList
     let parameterCodecs := (noctiumWitnessParameterCodecRegistry.getState (← getEnv)).toList

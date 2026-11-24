@@ -35,8 +35,11 @@ end
 
 noctium_witness_circuit emptyNativeMap using emptyTupleIterationWire,
     emptyNativeVectorIterationWire where
-  output result : Native := disclose(witness acceptEmptyNativeVector(
-    map([witness iterationEmptyTuple()], fun item => item)))
+  output result : Native := disclose(
+    let mapped := map([witness iterationEmptyTuple()], fun item => do
+      let alias := item
+      return alias
+    end) in witness acceptEmptyNativeVector(mapped))
 end
 
 #guard
@@ -47,6 +50,31 @@ end
 
 noctium_control emptyNativeMapHost from emptyNativeMap.__program
   entry "noctium.witness-circuit.emptyNativeMap.v1"
+
+noctium_witness_circuit emptyNativeMapStatement using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  let mapped := map([witness iterationEmptyTuple()], fun item => do
+    let alias := item
+    return alias
+  end)
+  output result : Native := disclose(witness acceptEmptyNativeVector(mapped))
+end
+
+#guard
+  let compiled := Noctium.Witness.compile emptyNativeMapStatement.__program
+    "noctium.witness-circuit.emptyNativeMapStatement.v1"
+  compiled.toOption.map (fun source => source.calls.map (·.name)) ==
+    some ["iterationEmptyTuple", "acceptEmptyNativeVector"]
+
+/- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/
+#guard_msgs (substring := true) in
+noctium_witness_circuit rejectsShadowedEmptyNativeMap using emptyTupleIterationWire,
+    emptyNativeVectorIterationWire where
+  output result : Native := disclose(
+    let mapped := map([witness iterationEmptyTuple()], fun item => item) in
+    let mapped := default(Payload emptyNativeVectorIterationWire) in
+      witness acceptEmptyNativeVector(mapped))
+end
 
 /- error: cannot infer the type of empty tuple item 'item'. Use a typed binding or loop annotation -/
 #guard_msgs (substring := true) in
