@@ -3056,21 +3056,51 @@ theorem lowerCircuit_validated (circuit : Circuit) (program : Json)
     obtain ⟨equal, checked⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
     exact ⟨expected, expectedAccepted, by rw [equal]; exact checked⟩
 
+/-- Link rewritten standalone-circuit JSON to the exact instruction vector
+produced by the selected rewrite mode over the pruned source's LowerM output. -/
+private theorem lowerCircuit_instructions_with_rewrites (circuit : Circuit) (rewrites : Rewrites)
+    (program : Json) (accepted : lowerCircuit circuit rewrites = .ok program) :
+    Native.arrayField program "instructions" = .ok
+      (optimizedInstructions rewrites
+        ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions) := by
+  cases rewrites <;> simp only [lowerCircuit, bind, bind_ok] at accepted
+  all_goals
+    rcases accepted with ⟨_, disclosure, _, validation, _, constants, _, outputConstants, gate⟩
+    cases produced : (lowerBody (Passes.pruneCircuit circuit)).run {} with
+    | mk value state =>
+      simp only [produced] at gate
+      rw [bind_ok] at gate
+      rcases gate with ⟨expected, expectedAccepted, producerAccepted⟩
+      obtain ⟨equal, checked⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
+      rw [equal]
+      rfl
+
 /-- Relate the accepted JSON instruction vector to the actual lowerBody run. -/
 theorem lowerCircuit_instructions (circuit : Circuit) (program : Json)
     (accepted : lowerCircuit circuit = .ok program) :
     Native.arrayField program "instructions" =
       .ok ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions := by
-  simp only [lowerCircuit, bind, bind_ok] at accepted
-  rcases accepted with ⟨_, disclosure, _, validation, _, constants, _, outputConstants, gate⟩
-  cases produced : (lowerBody (Passes.pruneCircuit circuit)).run {} with
-  | mk value state =>
-    simp only [produced] at gate
-    rw [bind_ok] at gate
-    rcases gate with ⟨expected, expectedAccepted, producerAccepted⟩
-    obtain ⟨equal, checked⟩ := (validateProduced_ok _ _ _ _).mp producerAccepted
-    rw [equal]
-    rfl
+  exact lowerCircuit_instructions_with_rewrites circuit .disabled program accepted
+
+/-- Both accepted rewrite modes consume the same pruned lowerBody vector. The
+comparison-enabled result adds comparison reuse after range deduplication. -/
+theorem lowerCircuit_comparison_pipeline
+    (circuit : Circuit) (rangeProgram comparisonProgram : Json)
+    (rangeAccepted : lowerCircuit circuit .rangeAndAssertions = .ok rangeProgram)
+    (comparisonAccepted : lowerCircuit circuit .includingComparisons = .ok comparisonProgram) :
+    let raw := ((lowerBody (Passes.pruneCircuit circuit)).run {}).2.instructions
+    Native.arrayField rangeProgram "instructions" =
+        .ok (RangeDedup.removeDuplicateAssertions (RangeDedup.run raw)) ∧
+      Native.arrayField comparisonProgram "instructions" =
+        .ok (RangeDedup.removeDuplicateAssertions (RangeDedup.reuseComparisons
+          (RangeDedup.run raw))) := by
+  constructor
+  · simpa [optimizedInstructions] using
+      (lowerCircuit_instructions_with_rewrites circuit .rangeAndAssertions rangeProgram
+        rangeAccepted)
+  · simpa [optimizedInstructions] using
+      (lowerCircuit_instructions_with_rewrites circuit .includingComparisons comparisonProgram
+        comparisonAccepted)
 
 def lowerEntrypointInputs (entry : Entrypoint) : LowerM Unit := do
   for input in entry.circuit.inputs do
