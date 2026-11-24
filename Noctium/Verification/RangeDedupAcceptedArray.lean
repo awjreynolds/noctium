@@ -813,6 +813,32 @@ private theorem acceptedLoopCut {expected : Backend.Native.Expected}
       simp only [checked, bind_pure_comp]
       exact prefixChecked
 
+/-- Tie the meaning at the end of a proved prefix to the next row of the
+actual accepted producer trace. No relation premise is needed for that row
+or the remaining suffix. -/
+theorem accepted_prefix_meaning
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {source : Array Json} {initial final : Backend.Native.State}
+    {prelude rest : List Json} {raw : Json}
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (steps : ∀ item ∈ prelude.zipIdx, AcceptedMeaningStep hash witness item.1)
+    (accepted : Backend.Native.validateInstructionLoop expected source.toList.zipIdx
+      initial = .ok final)
+    (split : source.toList = prelude ++ raw :: rest) :
+    ∃ before after,
+      Backend.Native.validateInstructionLoop expected prelude.zipIdx initial = .ok before ∧
+      Backend.Native.validateInstruction expected before raw = .ok after ∧
+      StateMeaning hash inputs witness before ∧ NativeDefinitions before := by
+  rw [split, List.zipIdx_append, List.zipIdx_cons] at accepted
+  obtain ⟨before, after, checkedPrefix, checkedRow⟩ := acceptedLoopCut accepted
+  have ⟨meaning, definitions, _⟩ := accepted_loop_meaning_at_steps initialMeaning
+    initialDefinitions inputSchema inputAgreement steps checkedPrefix
+  exact ⟨before, after, checkedPrefix, checkedRow, meaning, definitions⟩
+
 /-- An instruction is in the producer meaning proof's supported step class
 when its decoded relation supplies the corresponding step premise. -/
 def SupportsMeaning (raw : Json) : Prop :=
@@ -1067,8 +1093,6 @@ theorem acceptedComparisonBoundsFromPrefix
     (opcode : NativeRelationJson.stringField raw "op" = .ok "less_than")
     (decoded : decodeInstruction raw = .ok (.lessThan left right width output)) :
     (left.read witness).val < 2 ^ width ∧ (right.read witness).val < 2 ^ width := by
-  rw [split, List.zipIdx_append, List.zipIdx_cons] at accepted
-  obtain ⟨before, _, checkedPrefix, checkedComparison⟩ := acceptedLoopCut accepted
   have prefixSteps : ∀ item ∈ prelude.zipIdx, AcceptedMeaningStep hash witness item.1 := by
     intro item indexed
     have member : item.1 ∈ prelude := by
@@ -1078,8 +1102,8 @@ theorem acceptedComparisonBoundsFromPrefix
       rw [split]
       exact List.mem_append_left _ member
     exact steps item.1 sourceMember hash witness (prefixHolds item.1 member)
-  have ⟨beforeMeaning, _, _⟩ := accepted_loop_meaning_at_steps initialMeaning
-    initialDefinitions inputSchema (fun _ _ => rfl) prefixSteps checkedPrefix
+  obtain ⟨_, _, _, checkedComparison, beforeMeaning, _⟩ := accepted_prefix_meaning
+    initialMeaning initialDefinitions inputSchema (fun _ _ => rfl) prefixSteps accepted split
   exact accepted_lessThan_witnessBounds beforeMeaning
     (by simpa only [ScalarValidationOutputMeaning.nativeJson_stringField_eq] using opcode)
     decoded checkedComparison
