@@ -305,6 +305,11 @@ private def nestedFixedByteRecordMapScenario : Except String _root_.Bool := do
 #guard match LedgerValueType.validate Capabilities.source
     (.map (.bytes 32) (.map (.bytes 32) (.recordMapKey nestedFixedByteRecordMapKeyEnvironment
       (.structure "NestedFixedByteRecordMap.Key") (.uint 65535)))) with
+  | .ok _ => _root_.Bool.true
+  | .error _ => _root_.Bool.false
+
+#guard match LedgerValueType.recordMapKeyFieldsAtDepth nestedFixedByteRecordMapKeyEnvironment
+    (.structure "NestedFixedByteRecordMap.Key") 14 with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false
 

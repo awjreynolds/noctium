@@ -160,20 +160,34 @@ fn nested_fixed_byte_record_maps_match_compact_and_isolate_parent_buckets() -> R
     )
     .is_err());
 
-    let mut fixed_byte_value: Json = serde_json::from_str(include_str!(
+    let mut fixed_byte_value_json: Json = serde_json::from_str(include_str!(
         "fixtures/nested-fixed-byte-record-map/321/NestedFixedByteRecordMap.exercise.impact.json"
     ))?;
-    fixed_byte_value["state"][1]["kind"]["tree"]["map"][1]["map"][1]["composite"]["fields"][0]
+    fixed_byte_value_json["state"][1]["kind"]["tree"]["map"][1]["map"][1]["composite"]["fields"][0]
         ["type"] = json!("Bytes<1>");
-    let fixed_byte_value: Plan = serde_json::from_value(fixed_byte_value)?;
+    let fixed_byte_value: Plan = serde_json::from_value(fixed_byte_value_json.clone())?;
     assert!(create_state(&fixed_byte_value, &config).is_ok());
+
+    let record_map = fixed_byte_value_json["state"][1]["kind"]["tree"]["map"][1].clone();
+    let wrap_scalar_parents = |parent_count: usize| {
+        let mut tree = record_map.clone();
+        for _ in 0..parent_count {
+            tree = json!({"map":["Bytes<32>", tree]});
+        }
+        tree
+    };
+
+    let mut maximum_depth: Json = serde_json::from_str(include_str!(
+        "fixtures/nested-fixed-byte-record-map/321/NestedFixedByteRecordMap.exercise.impact.json"
+    ))?;
+    maximum_depth["state"][1]["kind"]["tree"] = wrap_scalar_parents(13);
+    let maximum_depth: Plan = serde_json::from_value(maximum_depth)?;
+    assert!(create_state(&maximum_depth, &config).is_ok());
 
     let mut excessive_depth: Json = serde_json::from_str(include_str!(
         "fixtures/nested-fixed-byte-record-map/321/NestedFixedByteRecordMap.exercise.impact.json"
     ))?;
-    let record_map = excessive_depth["state"][1]["kind"]["tree"]["map"][1].clone();
-    excessive_depth["state"][1]["kind"]["tree"]["map"][1] =
-        json!({"map":["Bytes<32>", record_map]});
+    excessive_depth["state"][1]["kind"]["tree"] = wrap_scalar_parents(14);
     let excessive_depth: Plan = serde_json::from_value(excessive_depth)?;
     assert!(create_state(&excessive_depth, &config).is_err());
     Ok(())

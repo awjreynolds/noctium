@@ -465,6 +465,10 @@ declare_syntax_cat nlmaprecordtail
 scoped syntax "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax ident "struct" ident "{" nlcompositefield* "}" : nlmaprecordtail
 scoped syntax nltype "=>" nlmaprecordtail : nlmaprecordtail
+declare_syntax_cat nlrecordmaptail
+scoped syntax "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlrecordmaptail
+scoped syntax "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlrecordmaptail
+scoped syntax nltype "=>" nlrecordmaptail : nlrecordmaptail
 scoped syntax "map" ident ":" "Vector(" num "," nltype ")" "=>"
   "struct" ident "{" nlcompositefield* "}" : nlstate
 declare_syntax_cat nlmapsettail
@@ -480,8 +484,7 @@ scoped syntax num "of" "struct" ident "{" nlmerkleafield* "}" : nlmerklespec
 scoped syntax "merkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "historicMerkleTree" ident ":" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
-scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
-scoped syntax "tree" ident ":" nltype "=>" "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "tree" ident ":" nltype "=>" nlrecordmaptail : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "Set" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" nltype : nlstate
 scoped syntax "tree" ident ":" "struct" ident "{" nlcompositefield* "}" "=>" "struct" ident "{" nlcompositefield* "}" : nlstate
@@ -527,6 +530,12 @@ scoped syntax nlleaves : nlledgervalue
 declare_syntax_cat nlpath
 scoped syntax ident : nlpath
 scoped syntax nlpath "[" nlexpr "]" : nlpath
+
+declare_syntax_cat nlrecordmapkeysteps
+scoped syntax "[" nlleaves "]" : nlrecordmapkeysteps
+scoped syntax "[" nlexpr "]" nlrecordmapkeysteps : nlrecordmapkeysteps
+declare_syntax_cat nlrecordmapkeypath
+scoped syntax ident "[" nlexpr "]" "[" nlexpr "]" nlrecordmapkeysteps : nlrecordmapkeypath
 
 declare_syntax_cat nlupdate
 scoped syntax "claimContractCall" "(" nlexpr "," nlexpr "," nlexpr ")" : nlupdate
@@ -671,6 +680,19 @@ scoped syntax "when" nlexpr "blockTimeAtOrBefore(" nlexpr ")" "as" ident : nleff
 scoped syntax "when" nlexpr "insert" nlpath : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" : nleffect
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" "[" nlleaves "]" : nleffect
+
+scoped syntax "read" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "when" nlexpr "read" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "member" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "when" nlexpr "member" nlrecordmapkeypath "as" ident : nleffect
+scoped syntax "insert" nlrecordmapkeypath ":=" nlexpr : nleffect
+scoped syntax "when" nlexpr "insert" nlrecordmapkeypath ":=" nlexpr : nleffect
+scoped syntax "insert" nlrecordmapkeypath ":=" nlleaves : nleffect
+scoped syntax "when" nlexpr "insert" nlrecordmapkeypath ":=" nlleaves : nleffect
+scoped syntax "remove" nlrecordmapkeypath : nleffect
+scoped syntax "when" nlexpr "remove" nlrecordmapkeypath : nleffect
+scoped syntax "insertDefault" nlrecordmapkeypath : nleffect
+scoped syntax "when" nlexpr "insertDefault" nlrecordmapkeypath : nleffect
 
 declare_syntax_cat nlstatement
 scoped syntax nleffect : nlstatement
@@ -2361,6 +2383,23 @@ private partial def sourcePathParts (path : TSyntax `nlpath) :
     pure (storage, keys ++ [key])
   | _ => throwErrorAt path "invalid recursive state path"
 
+private partial def recordMapKeySteps (steps : TSyntax `nlrecordmapkeysteps) :
+    CommandElabM (List (TSyntax `nlexpr) × TSyntax `nlleaves) := do
+  match steps with
+  | `(nlrecordmapkeysteps| [$key:nlleaves]) => pure ([], key)
+  | `(nlrecordmapkeysteps| [$parent:nlexpr] $rest:nlrecordmapkeysteps) => do
+    let (parents, key) ← recordMapKeySteps rest
+    pure (parent :: parents, key)
+  | _ => throwErrorAt steps "invalid record-key Map path"
+
+private def recordMapPathParts (path : TSyntax `nlrecordmapkeypath) :
+    CommandElabM (TSyntax `ident × List (TSyntax `nlexpr) × TSyntax `nlleaves) := do
+  match path with
+  | `(nlrecordmapkeypath| $storage:ident [$first:nlexpr] [$second:nlexpr] $steps:nlrecordmapkeysteps) =>
+    let (parents, key) ← recordMapKeySteps steps
+    pure (storage, first :: second :: parents, key)
+  | _ => throwErrorAt path "invalid record-key Map path"
+
 private def lowerMerkleTreePath (schema : List (String × StateKind)) (env : Bindings)
     (path : TSyntax `nlpath) :
     CommandElabM (TSyntax `ident × TSyntax `term × Nat × _root_.Bool × _root_.Bool) := do
@@ -2867,6 +2906,12 @@ private def addNominalBytes32Binding (state : EntryEffects) (name : String)
 
 private def explicitEffectGuard (effect : TSyntax `nleffect) : Option (TSyntax `nlexpr) :=
   match effect with
+  | `(nleffect| when $condition:nlexpr read $_:nlrecordmapkeypath as $_:ident)
+  | `(nleffect| when $condition:nlexpr member $_:nlrecordmapkeypath as $_:ident)
+  | `(nleffect| when $condition:nlexpr insert $_:nlrecordmapkeypath := $_:nlexpr)
+  | `(nleffect| when $condition:nlexpr insert $_:nlrecordmapkeypath := $_:nlleaves)
+  | `(nleffect| when $condition:nlexpr remove $_:nlrecordmapkeypath)
+  | `(nleffect| when $condition:nlexpr insertDefault $_:nlrecordmapkeypath) => some condition
   | `(nleffect| when $condition:nlexpr $update:nlupdate) => some condition
   | `(nleffect| when $condition:nlexpr write $_state:ident := $_value:nlexpr) => some condition
   | `(nleffect| when $condition:nlexpr insert $_state:ident [ $_key:nlexpr ] := $_value:nlexpr) => some condition
@@ -3490,7 +3535,8 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
   let parentKeys ← pathKeysTerm parentKeys
   let term ← match valueSchema with
     | .recordMapKey keyEnvironment keyType valueTy => do
-      let keyFields ← match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
+      let keyFields ← match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType
+          parentPath.length with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
@@ -3503,9 +3549,7 @@ private def elaborateRecordMapDefault (schema : List (String × StateKind))
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let keyValues ← elaborateRecordMapKeyFields state storage payload keyFields
-      let valueFields ← match (if parentPath.length ≤ 1 then
-          LedgerValueType.mapRecordWriteFields valueEnvironment valueType
-        else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
+      let valueFields ← match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
         | .ok fields => pure fields
         | .error message => throwErrorAt storage message
       let values ← zeroLedgerFieldValues valueFields
@@ -3712,9 +3756,7 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
-  let valueFields ← match (if parentKeys.length ≤ 1 then
-      LedgerValueType.mapRecordWriteFields valueEnvironment valueType
-    else LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType) with
+  let valueFields ← match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   pure (← pathKeysTerm keys, keyType, keyFields, valueType, valueFields)
@@ -4611,6 +4653,33 @@ private def elaborateEffect (schema : List (String × StateKind))
   | `(nleffect| counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident)
   | `(nleffect| when $_:nlexpr counterLessThan $path:nlpath against $threshold:nlexpr as $destination:ident) =>
     state ← elaborateCounterLessThan schema path threshold destination depth state
+  | `(nleffect| read $path:nlrecordmapkeypath as $destination:ident)
+  | `(nleffect| when $_:nlexpr read $path:nlrecordmapkeypath as $destination:ident) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    if ← nestedRecordMapCompositeAt schema storage parents state then
+      state := ← elaborateRecordMapCompositeRead schema storage parents payload destination depth state
+    else
+      state := ← elaborateRecordMapRead schema storage parents payload destination depth state
+  | `(nleffect| member $path:nlrecordmapkeypath as $destination:ident)
+  | `(nleffect| when $_:nlexpr member $path:nlrecordmapkeypath as $destination:ident) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapMember schema storage parents payload destination depth state
+  | `(nleffect| insert $path:nlrecordmapkeypath := $values:nlleaves)
+  | `(nleffect| when $_:nlexpr insert $path:nlrecordmapkeypath := $values:nlleaves) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapCompositeWrite schema storage parents payload values state
+  | `(nleffect| insert $path:nlrecordmapkeypath := $value:nlexpr)
+  | `(nleffect| when $_:nlexpr insert $path:nlrecordmapkeypath := $value:nlexpr) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapWrite schema storage parents payload value state
+  | `(nleffect| remove $path:nlrecordmapkeypath)
+  | `(nleffect| when $_:nlexpr remove $path:nlrecordmapkeypath) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapRemove schema storage parents payload state
+  | `(nleffect| insertDefault $path:nlrecordmapkeypath)
+  | `(nleffect| when $_:nlexpr insertDefault $path:nlrecordmapkeypath) => do
+    let (storage, parents, payload) ← recordMapPathParts path
+    state := ← elaborateRecordMapDefault schema storage parents payload state
   | `(nleffect| read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident)
   | `(nleffect| when $_:nlexpr read $storage:ident [ $owner:nlexpr ] [ $payload:nlleaves ] as $destination:ident) =>
     if ← nestedRecordMapCompositeAt schema storage [owner] state then
@@ -5060,6 +5129,13 @@ private def hasOnlyCheckedNominalFieldPosition (schema : List (String × StateKi
       !hasCircuitNominalFieldReference fieldBindings condition.raw &&
         !hasCircuitNominalFieldReference fieldBindings outerKey.raw &&
         !hasCircuitNominalFieldReference fieldBindings keyFields.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| insert $path:nlrecordmapkeypath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings path.raw &&
+        hasCircuitNominalFieldReference fieldBindings payload.raw
+  | `(nleffect| when $condition:nlexpr insert $path:nlrecordmapkeypath := $payload:nlleaves) =>
+      !hasCircuitNominalFieldReference fieldBindings condition.raw &&
+        !hasCircuitNominalFieldReference fieldBindings path.raw &&
         hasCircuitNominalFieldReference fieldBindings payload.raw
   | `(nleffect| pushFront $path:nlpath := $payload:nlleaves) =>
       !hasCircuitNominalFieldReference fieldBindings path.raw &&
@@ -6206,6 +6282,25 @@ private partial def readMapRecordTail (tail : TSyntax `nlmaprecordtail) :
     pure (keyTy :: restTypes, asList, record, recordFields)
   | _ => throwErrorAt tail "expected a nested Map key or record leaf"
 
+private inductive RecordMapTailValue where
+  | scalar (source : TSyntax `nltype)
+  | composite (record : TSyntax `ident) (fields : Array (TSyntax `nlcompositefield))
+
+private partial def readRecordMapTail (tail : TSyntax `nlrecordmaptail) :
+    CommandElabM (List (TSyntax `nltype) × TSyntax `ident ×
+      Array (TSyntax `nlcompositefield) × RecordMapTailValue) := do
+  match tail with
+  | `(nlrecordmaptail| struct $record:ident { $recordFields:nlcompositefield* }
+      => $valueType:nltype) =>
+    pure ([], record, recordFields, .scalar valueType)
+  | `(nlrecordmaptail| struct $keyRecord:ident { $keyFields:nlcompositefield* }
+      => struct $valueRecord:ident { $valueFields:nlcompositefield* }) =>
+    pure ([], keyRecord, keyFields, .composite valueRecord valueFields)
+  | `(nlrecordmaptail| $key:nltype => $rest:nlrecordmaptail) => do
+    let (parentTypes, record, recordFields, value) ← readRecordMapTail rest
+    pure (key :: parentTypes, record, recordFields, value)
+  | _ => throwErrorAt tail "expected a nested Map key followed by a record key and value"
+
 private def readCollectionScalarSourceType (source : TSyntax `nltype)
     (allowNominalField : _root_.Bool := _root_.Bool.false) : CommandElabM CircuitSourceType := do
   let sourceType ← readCircuitSourceType source allowNominalField
@@ -6660,59 +6755,55 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
             let keyTerm ← tyTerm keyType
             valueTerm ← `(Noctium.LedgerValueType.map $keyTerm $valueTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
-        | `(nlstate| tree $id:ident : $outer:nltype => struct $keyRecord:ident
-            { $keyFields:nlcompositefield* } => $valueType:nltype) => do
+        | `(nlstate| tree $id:ident : $outer:nltype => $tail:nlrecordmaptail) => do
           let outerTy ← readTy outer
-          let valueSource ← readCircuitSourceType valueType
-          let valueTy := valueSource.type
-          if let some interface := valueSource.contractRef then
-            contractRefState := (id.getId.toString, interface) :: contractRefState
-          if valueSource.nominalUInt.isSome then
-            nominalCollections := (id.getId.toString, {scalarValue := valueSource.nominalUInt}) ::
-              nominalCollections
-          let contractName := (← getCurrNamespace) ++ name.getId
-          let ((environment, compositeType, environmentTerm, compositeTypeTerm), sourceKeys) ←
-            elaborateTypedLedgerRecord contractName keyRecord keyFields state
-          unless sourceKeys.isEmpty do
-            recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
-          match LedgerValueType.recordMapKeyFieldsAtDepth environment compositeType 1 with
-          | .ok _ => pure ()
-          | .error message => throwErrorAt state message
-          let nestedSchema := LedgerValueType.recordMapKey environment compositeType valueTy
-          let valueSchema := LedgerValueType.map outerTy nestedSchema
-          let outerTerm ← tyTerm outerTy
-          let valueTerm ← tyTerm valueTy
-          let treeTerm ← `(Noctium.LedgerValueType.map $outerTerm
-            (Noctium.LedgerValueType.recordMapKey
-              $environmentTerm $compositeTypeTerm $valueTerm))
-          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $treeTerm))
-        | `(nlstate| tree $id:ident : $outer:nltype => struct $keyRecord:ident
-            { $keyFields:nlcompositefield* } => struct $valueRecord:ident
-            { $valueFields:nlcompositefield* }) => do
-          let outerTy ← readTy outer
+          let (restTypes, keyRecord, keyFields, valueDecl) ← readRecordMapTail tail
+          let parentTypes ← restTypes.mapM readTy
+          let parentTypes := outerTy :: parentTypes
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((keyEnvironment, keyType, keyEnvironmentTerm, keyTypeTerm), sourceKeys) ←
             elaborateTypedLedgerRecord contractName keyRecord keyFields state
-          let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm), sourceValues) ←
-            elaborateTypedLedgerRecord contractName valueRecord valueFields state
-              _root_.Bool.false _root_.Bool.true
           unless sourceKeys.isEmpty do
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
-          unless sourceValues.isEmpty do
-            recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
-          match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 1 with
+          match LedgerValueType.recordMapKeyFieldsAtDepth
+              keyEnvironment keyType parentTypes.length with
           | .ok _ => pure ()
           | .error message => throwErrorAt state message
-          match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
-          | .ok _ => pure ()
-          | .error message => throwErrorAt state message
-          let valueSchema := LedgerValueType.map outerTy
-            (.recordMapComposite keyEnvironment keyType valueEnvironment valueType)
-          let outerTerm ← tyTerm outerTy
-          let treeTerm ← `(Noctium.LedgerValueType.map $outerTerm
-            (Noctium.LedgerValueType.recordMapComposite
-              $keyEnvironmentTerm $keyTypeTerm $valueEnvironmentTerm $valueTypeTerm))
-          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $treeTerm))
+          let (recordValueSchema, recordValueTerm) ← match valueDecl with
+            | .scalar valueType => do
+              let valueSource ← readCircuitSourceType valueType
+              if let some interface := valueSource.contractRef then
+                contractRefState := (id.getId.toString, interface) :: contractRefState
+              if valueSource.nominalUInt.isSome then
+                nominalCollections := (id.getId.toString,
+                  {scalarValue := valueSource.nominalUInt}) :: nominalCollections
+              let valueSchema := LedgerValueType.recordMapKey
+                keyEnvironment keyType valueSource.type
+              let valueTy ← tyTerm valueSource.type
+              let valueTerm ← `(Noctium.LedgerValueType.recordMapKey
+                $keyEnvironmentTerm $keyTypeTerm $valueTy)
+              pure (valueSchema, valueTerm)
+            | .composite valueRecord valueFields => do
+              let ((valueEnvironment, valueType, valueEnvironmentTerm, valueTypeTerm),
+                  sourceValues) ← elaborateTypedLedgerRecord contractName valueRecord valueFields state
+                    _root_.Bool.false _root_.Bool.true
+              unless sourceValues.isEmpty do
+                recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
+              match LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
+              | .ok _ => pure ()
+              | .error message => throwErrorAt state message
+              let valueSchema := LedgerValueType.recordMapComposite
+                keyEnvironment keyType valueEnvironment valueType
+              let valueTerm ← `(Noctium.LedgerValueType.recordMapComposite
+                $keyEnvironmentTerm $keyTypeTerm $valueEnvironmentTerm $valueTypeTerm)
+              pure (valueSchema, valueTerm)
+          let valueSchema := parentTypes.reverse.foldl
+            (fun value keyType => LedgerValueType.map keyType value) recordValueSchema
+          let mut valueTerm := recordValueTerm
+          for keyType in parentTypes.reverse do
+            let keyTerm ← tyTerm keyType
+            valueTerm ← `(Noctium.LedgerValueType.map $keyTerm $valueTerm)
+          pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| tree $id:ident : $key:nltype => Set struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId

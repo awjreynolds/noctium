@@ -1,14 +1,14 @@
 #![cfg(feature = "zkir-321")]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
 use noctium_runtime::{Db, Execution, Plan, check, create_state, prepare, zkir::IrSource};
 use onchain_runtime::state::{ChargedState, StateValue};
 use serde_json::{Value as Json, json};
 use std::{collections::BTreeMap, env, fs::File, path::Path};
 
-fn load(directory: &Path, entry: &str) -> Result<(Plan, IrSource)> {
-    let stem = format!("NestedRecordKeyByteValues.{entry}");
+fn load(directory: &Path, contract: &str, entry: &str) -> Result<(Plan, IrSource)> {
+    let stem = format!("{contract}.{entry}");
     let plan = serde_json::from_reader(File::open(
         directory.join(format!("{stem}.impact.json")),
     )?)?;
@@ -59,22 +59,31 @@ fn owner(byte: u8) -> [u8; 32] {
     [byte; 32]
 }
 
-fn store_inputs(owner_byte: u8, id: &[u8], label: &[u8], digest: &[u8]) -> BTreeMap<String, Json> {
-    BTreeMap::from([
-        ("owner".into(), bytes(&owner(owner_byte))),
-        ("tag".into(), bytes(&[7])),
-        ("id".into(), bytes(id)),
+fn store_inputs(
+    parent: u8,
+    id: &[u8],
+    label: &[u8],
+    digest: &[u8],
+    outer_owner: Option<u8>,
+) -> BTreeMap<String, Json> {
+    let mut inputs = lookup_inputs(parent, id, outer_owner);
+    inputs.extend([
         ("label".into(), bytes(label)),
         ("digest".into(), bytes(digest)),
-    ])
+    ]);
+    inputs
 }
 
-fn lookup_inputs(owner_byte: u8, id: &[u8]) -> BTreeMap<String, Json> {
-    BTreeMap::from([
-        ("owner".into(), bytes(&owner(owner_byte))),
+fn lookup_inputs(parent: u8, id: &[u8], outer_owner: Option<u8>) -> BTreeMap<String, Json> {
+    let mut inputs = BTreeMap::from([
+        ("owner".into(), bytes(&owner(outer_owner.unwrap_or(parent)))),
         ("tag".into(), bytes(&[7])),
         ("id".into(), bytes(id)),
-    ])
+    ]);
+    if outer_owner.is_some() {
+        inputs.insert("group".into(), bytes(&owner(parent)));
+    }
+    inputs
 }
 
 fn outputs(execution: &Execution) -> Json {
@@ -97,7 +106,7 @@ fn run(
     Ok(execution)
 }
 
-fn assert_survivors(state: &ChargedState<Db>, compact: &Json) -> Result<()> {
+fn assert_survivors(state: &ChargedState<Db>, compact: &Json, outer_owner: Option<u8>) -> Result<()> {
     let StateValue::Array(slots) = state.get_ref() else {
         anyhow::bail!("expected contract state slots");
     };
@@ -108,8 +117,23 @@ fn assert_survivors(state: &ChargedState<Db>, compact: &Json) -> Result<()> {
         owners.size(),
         compact["ownerBucketsAfterRemoval"].as_u64().unwrap() as usize
     );
+    let parents = if let Some(outer_owner) = outer_owner {
+        let outer = owners
+            .get(&aligned_bytes(&owner(outer_owner)))
+            .expect("outer owner bucket remains");
+        let StateValue::Map(groups) = &*outer else {
+            anyhow::bail!("expected the nested group Map");
+        };
+        assert_eq!(
+            groups.size(),
+            compact["groupBucketsAfterRemoval"].as_u64().unwrap() as usize
+        );
+        groups.clone()
+    } else {
+        owners.clone()
+    };
 
-    let owner_a = owners
+    let owner_a = parents
         .get(&aligned_bytes(&owner(1)))
         .expect("owner A bucket remains after removal");
     let StateValue::Map(owner_a_profiles) = &*owner_a else {
@@ -136,7 +160,7 @@ fn assert_survivors(state: &ChargedState<Db>, compact: &Json) -> Result<()> {
         )
     );
 
-    let owner_b = owners
+    let owner_b = parents
         .get(&aligned_bytes(&owner(2)))
         .expect("owner B bucket remains");
     let StateValue::Map(owner_b_profiles) = &*owner_b else {
@@ -167,22 +191,49 @@ fn assert_survivors(state: &ChargedState<Db>, compact: &Json) -> Result<()> {
 #[test]
 #[ignore = "requires fresh NestedRecordKeyByteValues Impact/ZKIR artifacts and Compact output JSON"]
 fn nested_record_byte_keys_match_compact_and_preserve_parent_buckets() -> Result<()> {
-    let artifacts_directory = env::var_os("NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_DIR")
+    compare_record_key_values(
+        "NestedRecordKeyByteValues",
+        "NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES",
+        None,
+    )
+}
+
+#[test]
+#[ignore = "requires fresh NestedTwoParentRecordKeyValues artifacts and Compact output JSON"]
+fn record_byte_keys_under_two_parents_match_compact() -> Result<()> {
+    compare_record_key_values(
+        "NestedTwoParentRecordKeyValues",
+        "NOCTIUM_TWO_PARENT_RECORD_KEY_VALUES",
+        Some(1),
+    )
+}
+
+fn compare_record_key_values(
+    contract: &str,
+    env_prefix: &str,
+    outer_owner: Option<u8>,
+) -> Result<()> {
+    let directory_key = format!("{env_prefix}_DIR");
+    let compact_key = format!("{env_prefix}_COMPACT");
+    let artifacts_directory = env::var_os(&directory_key)
         .map(std::path::PathBuf::from)
-        .expect("NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_DIR must point at fresh Noctium artifacts");
-    let compact_path = env::var_os("NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_COMPACT")
-        .map(std::path::PathBuf::from)
-        .expect("NOCTIUM_NESTED_RECORD_KEY_BYTE_VALUES_COMPACT must point at Compact output JSON");
+        .with_context(|| format!("set {directory_key} to the freshly emitted artifact directory"))?;
+    let compact_path = env::var_os(&compact_key)
+        .with_context(|| format!("set {compact_key} to the Compact output JSON"))?;
     let compact: Json = serde_json::from_reader(File::open(compact_path)?)?;
+    assert_eq!(compact["fixture"], contract);
     assert_eq!(compact["compact"], "0.36.1 (7fa3a117c 2026-11-11)");
     assert_eq!(compact["runtime"], "0.21.0");
 
-    let store = load(&artifacts_directory, "store")?;
-    let lookup = load(&artifacts_directory, "lookup")?;
-    let remove = load(&artifacts_directory, "remove")?;
+    let store = load(&artifacts_directory, contract, "store")?;
+    let lookup = load(&artifacts_directory, contract, "lookup")?;
+    let remove = load(&artifacts_directory, contract, "remove")?;
     let config = BTreeMap::from([("profiles".into(), json!([]))]);
     let mut state = create_state(&store.0, &config)?;
 
+    let store_at = |parent, id: &[u8], label: &[u8], digest: &[u8]|
+        store_inputs(parent, id, label, digest, outer_owner);
+    let lookup_at = |parent, id: &[u8]| lookup_inputs(parent, id, outer_owner);
     let first_id = id(4);
     let sibling_id = id(5);
     let first_digest = digest(4);
@@ -190,29 +241,29 @@ fn nested_record_byte_keys_match_compact_and_preserve_parent_buckets() -> Result
     let other_owner_digest = digest(6);
     let initial_first = run(
         &store,
-        &store_inputs(1, &first_id, &[11], &first_digest),
+        &store_at(1, &first_id, &[11], &first_digest),
         &state,
     )?;
     state = initial_first.after.state;
-    let first_lookup = run(&lookup, &lookup_inputs(1, &first_id), &state)?;
+    let first_lookup = run(&lookup, &lookup_at(1, &first_id), &state)?;
     assert_eq!(outputs(&first_lookup), compact["outputs"]["initialFirst"]);
 
     let initial_sibling = run(
         &store,
-        &store_inputs(1, &sibling_id, &[12], &sibling_digest),
+        &store_at(1, &sibling_id, &[12], &sibling_digest),
         &state,
     )?;
     state = initial_sibling.after.state;
-    let sibling_lookup = run(&lookup, &lookup_inputs(1, &sibling_id), &state)?;
+    let sibling_lookup = run(&lookup, &lookup_at(1, &sibling_id), &state)?;
     assert_eq!(outputs(&sibling_lookup), compact["outputs"]["initialSibling"]);
 
     let initial_other_owner = run(
         &store,
-        &store_inputs(2, &first_id, &[21], &other_owner_digest),
+        &store_at(2, &first_id, &[21], &other_owner_digest),
         &state,
     )?;
     state = initial_other_owner.after.state;
-    let other_owner_lookup = run(&lookup, &lookup_inputs(2, &first_id), &state)?;
+    let other_owner_lookup = run(&lookup, &lookup_at(2, &first_id), &state)?;
     assert_eq!(
         outputs(&other_owner_lookup),
         compact["outputs"]["initialOtherOwner"]
@@ -220,40 +271,40 @@ fn nested_record_byte_keys_match_compact_and_preserve_parent_buckets() -> Result
 
     let overwritten = run(
         &store,
-        &store_inputs(1, &first_id, &[13], &digest(7)),
+        &store_at(1, &first_id, &[13], &digest(7)),
         &state,
     )?;
     state = overwritten.after.state;
-    let overwrite_lookup = run(&lookup, &lookup_inputs(1, &first_id), &state)?;
+    let overwrite_lookup = run(&lookup, &lookup_at(1, &first_id), &state)?;
     assert_eq!(outputs(&overwrite_lookup), compact["outputs"]["overwritten"]);
 
-    let remove_result = run(&remove, &lookup_inputs(1, &first_id), &state)?;
+    let remove_result = run(&remove, &lookup_at(1, &first_id), &state)?;
     state = remove_result.after.state;
     assert_eq!(compact["entriesPerParentAfterRemoval"], json!([1, 1]));
-    assert_survivors(&state, &compact)?;
+    assert_survivors(&state, &compact, outer_owner)?;
 
-    let surviving_sibling = run(&lookup, &lookup_inputs(1, &sibling_id), &state)?;
+    let surviving_sibling = run(&lookup, &lookup_at(1, &sibling_id), &state)?;
     assert_eq!(
         outputs(&surviving_sibling),
         compact["outputs"]["survivingSibling"]
     );
-    let surviving_other_owner = run(&lookup, &lookup_inputs(2, &first_id), &state)?;
+    let surviving_other_owner = run(&lookup, &lookup_at(2, &first_id), &state)?;
     assert_eq!(
         outputs(&surviving_other_owner),
         compact["outputs"]["survivingOtherOwner"]
     );
 
     let wrong_id = [3; 32];
-    assert!(run(&lookup, &lookup_inputs(1, &wrong_id), &state).is_err());
+    assert!(run(&lookup, &lookup_at(1, &wrong_id), &state).is_err());
     assert_eq!(compact["wrongIdWidthRejected"], true);
     assert!(run(
         &store,
-        &store_inputs(1, &first_id, &[13], &[6; 32]),
+        &store_at(1, &first_id, &[13], &[6; 32]),
         &state,
     )
     .is_err());
     assert_eq!(compact["wrongDigestWidthRejected"], true);
-    assert!(run(&lookup, &lookup_inputs(1, &first_id), &state).is_err());
+    assert!(run(&lookup, &lookup_at(1, &first_id), &state).is_err());
     assert_eq!(compact["removedLookupRejected"], true);
     Ok(())
 }

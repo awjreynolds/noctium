@@ -188,9 +188,12 @@ private def qualifiedCoinRecordEnvironment : Types.CompositeEnv := {
       (match LedgerValueType.validate Capabilities.source
         (.map (.bytes 32) (.map (.bytes 32)
           (.recordMapComposite keyEnvironment keyType valueEnvironment valueType))) with
-        | .error _ => _root_.Bool.true
-        | .ok _ => _root_.Bool.false) &&
+        | .ok _ => _root_.Bool.true
+        | .error _ => _root_.Bool.false) &&
       (match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 2 with
+        | .ok _ => _root_.Bool.true
+        | .error _ => _root_.Bool.false) &&
+      (match LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType 14 with
         | .error _ => _root_.Bool.true
         | .ok _ => _root_.Bool.false) &&
       (match LedgerValueType.mapRecordWriteFields fixedByteRecordMapValueEnvironment

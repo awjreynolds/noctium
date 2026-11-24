@@ -3170,10 +3170,6 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         .filter(|parts| parts.len() == 2)
         .ok_or_else(|| anyhow!("invalid state tree map schema"))?;
     if let Some(record) = ordinary_record_key_schema(&parts[0]) {
-        ensure!(
-            depth <= 1,
-            "record-key Maps may only be root or one Map level deep"
-        );
         let value = parts[1]
             .as_object()
             .filter(|value| value.len() == 1)
@@ -3190,11 +3186,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
                     && !is_shielded_coin_record_schema(value_record),
                 "record-key Maps require an ordinary typed record value"
             );
-            if depth == 0 {
-                checked_cell_record_schema(value_record)?;
-            } else {
-                checked_cell_record_schema(value_record)?;
-            }
+            checked_cell_record_schema(value_record)?;
         } else {
             bail!("record-key Maps require a scalar or record value")
         }
