@@ -60,7 +60,7 @@ private def recordMapRun (keyAmount memoAmount : Nat) (state : LedgerState) :=
 #guard match RecordMap.state with
   | [{kind := .tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType), ..}] =>
       match LedgerValueType.recordMapKeyFields keyEnvironment keyType,
-          LedgerValueType.rootMapRecordWriteFields valueEnvironment valueType with
+          LedgerValueType.mapRecordWriteFields valueEnvironment valueType with
       | .ok keyFields, .ok valueFields =>
           keyFields == [("amount", .native)] && valueFields == [("amount", .native)]
       | _, _ => _root_.Bool.false

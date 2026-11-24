@@ -85,7 +85,7 @@ private def recordEntry (name : String) : Entrypoint :=
       (match LedgerValueType.cellRecordFields cellEnvironment cellType with
         | .ok fields => fields == [("amount", .native)]
         | .error _ => _root_.Bool.false) &&
-        (match LedgerValueType.rootMapRecordFields mapEnvironment mapType with
+        (match LedgerValueType.mapRecordFields mapEnvironment mapType with
           | .ok fields => fields == [("amount", .native)]
           | .error _ => _root_.Bool.false) &&
         (match LedgerValueType.listElementFields listEnvironment listType with
