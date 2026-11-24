@@ -990,11 +990,15 @@ inductive LedgerFieldExpr where
   | mk (ty : Ty) (value : Expr ty)
   deriving Repr
 
+inductive ConstructorRecordKeyMapValue where
+  | scalar (valueType : Ty) (value : Expr valueType)
+  | record (valueType : Types.CompositeType) (fields : List LedgerFieldExpr)
+  deriving Repr
+
 structure ConstructorRecordKeyMapInsert where
   state : String
   fields : List LedgerFieldExpr
-  valueType : Ty
-  value : Expr valueType
+  value : ConstructorRecordKeyMapValue
   guard : Option (Expr .bool) := none
   deriving Repr
 
@@ -2090,19 +2094,41 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
         throw {span, message := s!"invalid constructor Map state name '{stateName}'"}
       let some destination := states.find? (·.name == stateName)
         | throw {span, message := s!"constructor inserts into unknown Map '{stateName}'"}
-      let .tree (.recordMapKey environment type valueTy) := destination.kind
-        | throw {span := destination.span, message :=
-          s!"constructor fields insert requires a root scalar-valued record-key Map '{stateName}'"}
-      unless insertion.valueType == valueTy do
-        throw {span := destination.span, message :=
-          s!"constructor Map value type mismatch for '{stateName}'"}
-      let checkedFields ← match LedgerValueType.recordMapKeyFields environment type with
+      let (keyEnvironment, keyType) ← match destination.kind, insertion.value with
+        | .tree (.recordMapKey environment type valueTy), .scalar actualTy value => do
+          unless actualTy == valueTy do
+            throw {span := destination.span, message :=
+              s!"constructor Map value type mismatch for '{stateName}'"}
+          match value.validate caps scalarEnvironment with
+          | .error message => throw {span, message}
+          | .ok _ => pure ()
+          pure (environment, type)
+        | .tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType),
+            .record actualType fields => do
+          unless actualType == valueType do
+            throw {span := destination.span, message :=
+              s!"constructor record Map value type mismatch for '{stateName}'"}
+          let checkedFields ← match LedgerValueType.ledgerRecordWriteFields
+              valueEnvironment valueType with
+            | .ok checkedFields => pure checkedFields
+            | .error message => throw {span := destination.span, message}
+          match validateConstructorRecordFields caps scalarEnvironment checkedFields fields with
+          | .error message => throw {span, message}
+          | .ok _ => pure ()
+          pure (keyEnvironment, keyType)
+        | .tree (.recordMapKey ..), .record .. =>
+          throw {span := destination.span, message :=
+            s!"constructor record Map value shape mismatch for '{stateName}'"}
+        | .tree (.recordMapComposite ..), .scalar .. =>
+          throw {span := destination.span, message :=
+            s!"constructor record Map value shape mismatch for '{stateName}'"}
+        | _, _ =>
+          throw {span := destination.span, message :=
+            s!"constructor fields insert requires a root record-key Map '{stateName}'"}
+      let checkedFields ← match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
         | .ok checkedFields => pure checkedFields
         | .error message => throw {span := destination.span, message}
       match validateConstructorRecordFields caps scalarEnvironment checkedFields insertion.fields with
-      | .error message => throw {span, message}
-      | .ok _ => pure ()
-      match insertion.value.validate caps scalarEnvironment with
       | .error message => throw {span, message}
       | .ok _ => pure ()
       if let some guard := insertion.guard then

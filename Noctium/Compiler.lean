@@ -953,8 +953,14 @@ private def constructorActionJson (action : ConstructorAction) : Json :=
       ("kind", toJson ("insertRecordKeyMap" : String)),
       ("state", toJson insertion.state),
       ("fields", toJson (insertion.fields.map ledgerFieldExprJson)),
-      ("valueType", toJson (typeName insertion.valueType)),
-      ("value", nativeExpressionJson insertion.value)] ++
+      ("value", match insertion.value with
+        | .scalar valueType value => Json.mkObj [
+            ("kind", toJson ("scalar" : String)),
+            ("valueType", toJson (typeName valueType)),
+            ("expression", nativeExpressionJson value)]
+        | .record _ fields => Json.mkObj [
+            ("kind", toJson ("record" : String)),
+            ("fields", toJson (fields.map ledgerFieldExprJson))])] ++
       insertion.guard.toList.map fun guard => ("guard", nativeExpressionJson guard))
   | .insertRecordMap state key fields guard => Json.mkObj ([
       ("kind", toJson ("insertRecordMap" : String)),

@@ -33,7 +33,7 @@ try {
   const id = Uint8Array.from({length: 33}, (_, index) => index * 5 + 2);
   const key = {tag, id};
   const initialFor = enabled => contract.initialState(
-    runtime.createConstructorContext(null, wallet), tag, id, 513n, enabled,
+    runtime.createConstructorContext(null, wallet), tag, id, 513n, true, 700n, enabled,
   );
   const context = state => runtime.createCircuitContext({
     circuitId: 'inspect', contractAddress: runtime.dummyContractAddress(),
@@ -44,9 +44,13 @@ try {
     const initial = await initialFor(enabled);
     const state = initial.currentContractState.data;
     const entries = ledger(state).entries;
+    const receipts = ledger(state).receipts;
     assert.equal(entries.size(), BigInt(Number(enabled)));
+    assert.equal(receipts.size(), BigInt(Number(enabled)));
     assert.equal(entries.member(key), enabled);
+    assert.equal(receipts.member(key), enabled);
     assert.equal((await contract.circuits.member(context(state), tag, id)).result, enabled);
+    assert.equal((await contract.circuits.receiptsMember(context(state), tag, id)).result, enabled);
     const neighboringId = id.slice();
     neighboringId[neighboringId.length - 1] += 1;
     assert.equal(
@@ -56,6 +60,11 @@ try {
     if (enabled) {
       assert.equal(await entries.lookup(key), 513n);
       assert.equal((await contract.circuits.inspect(context(state), tag, id)).result, 513n);
+      assert.deepEqual(await receipts.lookup(key), {accepted: true, code: 700n});
+      assert.deepEqual(
+        (await contract.circuits.inspectReceipt(context(state), tag, id)).result,
+        [true, 700n],
+      );
     }
     else {
       let lookupFailed = false;
@@ -65,13 +74,20 @@ try {
         lookupFailed = true;
       }
       assert.equal(lookupFailed, true);
+      let receiptLookupFailed = false;
+      try {
+        await receipts.lookup(key);
+      } catch {
+        receiptLookupFailed = true;
+      }
+      assert.equal(receiptLookupFailed, true);
     }
   }
 
   let wrongWidthRejected = false;
   try {
     await contract.initialState(
-      runtime.createConstructorContext(null, wallet), tag, new Uint8Array(32), 513n, true,
+      runtime.createConstructorContext(null, wallet), tag, new Uint8Array(32), 513n, true, 700n, true,
     );
   } catch {
     wrongWidthRejected = true;

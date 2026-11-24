@@ -501,6 +501,8 @@ scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlexpr "]" ":=" nlleaves : nlconstructorinit
 scoped syntax "insert" ident "[" nlleaves "]" ":=" nlexpr : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlexpr : nlconstructorinit
+scoped syntax "insert" ident "[" nlleaves "]" ":=" nlleaves : nlconstructorinit
+scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlleaves : nlconstructorinit
 scoped syntax "insert" ident "[" nlleaves "]" : nlconstructorinit
 scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" : nlconstructorinit
 scoped syntax "pushFront" ident ":=" nlleaves : nlconstructorinit
@@ -5412,6 +5414,44 @@ private def elaborateConstructor (source : TSyntax `nlstate)
       orderedActionTerms := orderedActionTerms.push
         (← `(Noctium.ConstructorAction.insertRecordMap $(stringTerm destination) $key $values $guard))
       hasOrderedActions := _root_.Bool.true
+    | `(nlconstructorinit| insert $stateName:ident[$keyPayload:nlleaves] := $payload:nlleaves)
+    | `(nlconstructorinit|
+        when $condition:nlexpr insert $stateName:ident[$keyPayload:nlleaves] := $payload:nlleaves) => do
+      if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
+          setInsertTerms.size >= 64 then
+        throwErrorAt initializer "constructor collection action limit exceeded"
+      let destination := stateName.getId.toString
+      let some (.tree (.recordMapComposite keyEnvironment keyType valueEnvironment valueType)) :=
+          schema.lookup destination
+        | throwErrorAt stateName
+            "constructor fields insert requires a root record-valued record-key Map"
+      let .structure valueTypeId := valueType
+        | throwErrorAt stateName "constructor record Map values require a named structure"
+      let checkedKeyFields ← match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt stateName message
+      let keyValues ← elaborateRecordMapKeyFields bindings stateName keyPayload checkedKeyFields
+      let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
+        | .ok fields => pure fields
+        | .error message => throwErrorAt stateName message
+      let valueValues ← elaborateLedgerFieldValues bindings payload valueFields
+        ((recordFieldTypes.lookup destination).getD [])
+      let guard ← match initializer with
+        | `(nlconstructorinit|
+            when $condition:nlexpr insert $_:ident[$_:nlleaves] := $_:nlleaves) => do
+          let expression ← checkedCircuitSourceExpression bindings.env
+            bindings.nominalUIntBindings condition {type := .bool}
+          `(some $expression)
+        | `(nlconstructorinit|
+            insert $_:ident[$_:nlleaves] := $_:nlleaves) => `(none)
+        | _ => throwErrorAt initializer "invalid constructor record-valued Map insert"
+      let valueType ← `(Noctium.Types.CompositeType.structure $(stringTerm valueTypeId))
+      let value ← `(Noctium.ConstructorRecordKeyMapValue.record $valueType $valueValues)
+      let insertion ← `(Noctium.ConstructorRecordKeyMapInsert.mk
+        $(stringTerm destination) $keyValues $value $guard)
+      orderedActionTerms := orderedActionTerms.push
+        (← `(Noctium.ConstructorAction.insertRecordKeyMap $insertion))
+      hasOrderedActions := _root_.Bool.true
     | `(nlconstructorinit| insert $stateName:ident[$keyFields:nlleaves] := $value:nlexpr)
     | `(nlconstructorinit|
         when $condition:nlexpr insert $stateName:ident[$keyFields:nlleaves] := $value:nlexpr) => do
@@ -5437,8 +5477,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           `(some $expression)
         | `(nlconstructorinit| insert $_:ident[$_:nlleaves] := $_:nlexpr) => `(none)
         | _ => throwErrorAt initializer "invalid constructor record-key Map insert"
+      let recordKeyMapValue ← `(Noctium.ConstructorRecordKeyMapValue.scalar
+        $valueType $value)
       let insertion ← `(Noctium.ConstructorRecordKeyMapInsert.mk
-        $(stringTerm destination) $values $valueType $value $guard)
+        $(stringTerm destination) $values $recordKeyMapValue $guard)
       orderedActionTerms := orderedActionTerms.push
         (← `(Noctium.ConstructorAction.insertRecordKeyMap $insertion))
       hasOrderedActions := _root_.Bool.true

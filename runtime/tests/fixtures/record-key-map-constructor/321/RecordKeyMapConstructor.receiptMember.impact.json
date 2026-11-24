@@ -1,0 +1,123 @@
+{"targetProfile":
+ {"zkir": "3.2.1",
+  "zkStdlib": "2.4.0",
+  "schemaVersion": 1,
+  "qualification": "selected-native-subset-qualified",
+  "proofServer": "9.0.0",
+  "onchainRuntime": "4.0.1",
+  "nativeSource":
+  {"tag": "zkir-3.2.1",
+   "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+   "repository": "https://github.com/midnightntwrk/midnight-zkir",
+   "reportedCliVersion": "midnight-zkir 3.2.0",
+   "declaredCrateVersion": "3.2.0"},
+  "name": "midnight-ledger-9-zkir-3.2.1",
+  "ledger": "9.1.0.1",
+  "circuits": "7.3.0"},
+ "target": "midnight-ledger-9-zkir-3.2.1",
+ "state":
+ [{"name": "entries",
+   "kind":
+   {"tree":
+    {"map":
+     [{"composite":
+       {"id": "RecordKeyMapConstructor.Key",
+        "fields":
+        [{"type": "Bytes<1>", "name": "tag"},
+         {"type": "Bytes<33>", "name": "id"}]}},
+      {"scalar": "UIntRange<65536>"}]}}},
+  {"name": "receipts",
+   "kind":
+   {"tree":
+    {"map":
+     [{"composite":
+       {"id": "RecordKeyMapConstructor.Key",
+        "fields":
+        [{"type": "Bytes<1>", "name": "tag"},
+         {"type": "Bytes<33>", "name": "id"}]}},
+      {"composite":
+       {"id": "RecordKeyMapConstructor.Receipt",
+        "fields":
+        [{"type": "Bool", "name": "accepted"},
+         {"type": "UIntRange<65536>", "name": "code"}]}}]}}}],
+ "schemaVersion": 1,
+ "returns":
+ [{"visibility": "public",
+   "type": "Bool",
+   "name": "present",
+   "expression": {"tag": "reference", "name": "receiptPresent"}}],
+ "reads":
+ [{"type": "Bytes<1>", "name": "tag"},
+  {"type": "Bytes<33>", "name": "id"},
+  {"type": "Bool", "name": "receiptPresent"}],
+ "operations":
+ [{"storage": false,
+   "op": "push",
+   "expression": {"tag": "reference", "name": "tag"},
+   "alignment": "bytes:1"},
+  {"op": "popeq",
+   "expression": {"tag": "reference", "name": "tag"},
+   "alignment": "bytes:1"},
+  {"storage": false,
+   "op": "push",
+   "expression": {"tag": "reference", "name": "id"},
+   "alignment": "bytes:33"},
+  {"op": "popeq",
+   "expression": {"tag": "reference", "name": "id"},
+   "alignment": "bytes:33"},
+  {"op": "dup"},
+  {"slot": 1, "pushPath": false, "op": "indexPath", "keys": []},
+  {"storage": false,
+   "schema":
+   {"id": "RecordKeyMapConstructor.Key",
+    "fields":
+    [{"type": "Bytes<1>", "name": "tag"}, {"type": "Bytes<33>", "name": "id"}]},
+   "op": "pushFields",
+   "expressions":
+   [{"tag": "reference", "name": "tag"}, {"tag": "reference", "name": "id"}]},
+  {"op": "member"},
+  {"op": "popeq",
+   "expression": {"tag": "reference", "name": "receiptPresent"},
+   "alignment": "bit"}],
+ "nativeCircuitFile": "RecordKeyMapConstructor.receiptMember.zkir",
+ "guards": [],
+ "entrypoint": "receiptMember",
+ "contractName": "RecordKeyMapConstructor",
+ "constructor":
+ {"parameters":
+  [{"type": "Bytes<1>", "name": "tag"},
+   {"type": "Bytes<33>", "name": "id"},
+   {"type": "UIntRange<65536>", "name": "amount"},
+   {"type": "Bool", "name": "accepted"},
+   {"type": "UIntRange<65536>", "name": "code"},
+   {"type": "Bool", "name": "enabled"}],
+  "initializers": [],
+  "actions":
+  [{"value":
+    {"valueType": "UIntRange<65536>",
+     "kind": "scalar",
+     "expression": {"tag": "reference", "name": "amount"}},
+    "state": "entries",
+    "kind": "insertRecordKeyMap",
+    "guard": {"tag": "reference", "name": "enabled"},
+    "fields":
+    [{"tag": "reference", "name": "tag"}, {"tag": "reference", "name": "id"}]},
+   {"value":
+    {"kind": "record",
+     "fields":
+     [{"tag": "reference", "name": "accepted"},
+      {"tag": "reference", "name": "code"}]},
+    "state": "receipts",
+    "kind": "insertRecordKeyMap",
+    "guard": {"tag": "reference", "name": "enabled"},
+    "fields":
+    [{"tag": "reference", "name": "tag"},
+     {"tag": "reference", "name": "id"}]}]},
+ "circuit":
+ {"outputs": [],
+  "name": "recordKeyMapConstructorInspection",
+  "inputs":
+  [{"visibility": "public", "type": "Bytes<1>", "name": "tag"},
+   {"visibility": "public", "type": "Bytes<33>", "name": "id"}],
+  "file": "recordKeyMapConstructorInspection.zkir",
+  "constraints": []}}

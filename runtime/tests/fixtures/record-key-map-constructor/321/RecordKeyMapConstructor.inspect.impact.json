@@ -25,7 +25,21 @@
         "fields":
         [{"type": "Bytes<1>", "name": "tag"},
          {"type": "Bytes<33>", "name": "id"}]}},
-      {"scalar": "UIntRange<65536>"}]}}}],
+      {"scalar": "UIntRange<65536>"}]}}},
+  {"name": "receipts",
+   "kind":
+   {"tree":
+    {"map":
+     [{"composite":
+       {"id": "RecordKeyMapConstructor.Key",
+        "fields":
+        [{"type": "Bytes<1>", "name": "tag"},
+         {"type": "Bytes<33>", "name": "id"}]}},
+      {"composite":
+       {"id": "RecordKeyMapConstructor.Receipt",
+        "fields":
+        [{"type": "Bool", "name": "accepted"},
+         {"type": "UIntRange<65536>", "name": "code"}]}}]}}}],
  "schemaVersion": 1,
  "returns":
  [{"visibility": "public",
@@ -74,12 +88,26 @@
   [{"type": "Bytes<1>", "name": "tag"},
    {"type": "Bytes<33>", "name": "id"},
    {"type": "UIntRange<65536>", "name": "amount"},
+   {"type": "Bool", "name": "accepted"},
+   {"type": "UIntRange<65536>", "name": "code"},
    {"type": "Bool", "name": "enabled"}],
   "initializers": [],
   "actions":
-  [{"valueType": "UIntRange<65536>",
-    "value": {"tag": "reference", "name": "amount"},
+  [{"value":
+    {"valueType": "UIntRange<65536>",
+     "kind": "scalar",
+     "expression": {"tag": "reference", "name": "amount"}},
     "state": "entries",
+    "kind": "insertRecordKeyMap",
+    "guard": {"tag": "reference", "name": "enabled"},
+    "fields":
+    [{"tag": "reference", "name": "tag"}, {"tag": "reference", "name": "id"}]},
+   {"value":
+    {"kind": "record",
+     "fields":
+     [{"tag": "reference", "name": "accepted"},
+      {"tag": "reference", "name": "code"}]},
+    "state": "receipts",
     "kind": "insertRecordKeyMap",
     "guard": {"tag": "reference", "name": "enabled"},
     "fields":
