@@ -1,6 +1,6 @@
 # Exact-length byte ledger values
 
-Byte values use their declared length in native FAB alignment. Source types from `Bytes 0` through `Bytes 1024`, including `Bytes32`, use this representation in cells, map values and nested scalar leaves. Byte keys remain restricted to Bytes32. Other key restrictions stay unchanged.
+Byte values use their declared length in native FAB alignment. Source types from `Bytes 0` through `Bytes 1024`, including `Bytes32`, use this representation in cells, map values and nested scalar leaves. Fixed-byte Map keys and Set elements support widths from `Bytes 0` through `Bytes 1024`. Wallet-specific key paths remain restricted to Bytes32. Other key restrictions stay unchanged.
 
 The ledger stores public state. Writing a private witness value or a value derived from one requires `disclose(...)`. Byte storage preserves the existing disclosure checks.
 

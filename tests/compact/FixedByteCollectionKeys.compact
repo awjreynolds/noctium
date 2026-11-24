@@ -31,6 +31,7 @@ export {
 };
 
 export ledger oneByteKeys: Set<Bytes<1>>;
+export ledger nestedGroups: Map<Bytes<0>, Set<Bytes<1>>>;
 
 export circuit insertBytes0(key: Bytes<0>, next: Uint<8>): Uint<8> {
   return bytes0_insert(disclose(key), disclose(next));
@@ -63,4 +64,15 @@ export circuit insertOneByteSet(key: Bytes<1>): Boolean {
 
 export circuit containsOneByteSet(key: Bytes<1>): Boolean {
   return oneByteKeys.member(disclose(key));
+}
+
+export circuit insertNestedOneByteSet(parent: Bytes<0>, key: Bytes<1>): [Boolean, Boolean, Boolean] {
+  const parentKey = disclose(parent);
+  const memberKey = disclose(key);
+  const initialized = nestedGroups.member(parentKey);
+  if (!initialized) { nestedGroups.insertDefault(parentKey); }
+  const before = nestedGroups.lookup(parentKey).member(memberKey);
+  nestedGroups.lookup(parentKey).insert(memberKey);
+  const after = nestedGroups.lookup(parentKey).member(memberKey);
+  return [initialized, before, after];
 }

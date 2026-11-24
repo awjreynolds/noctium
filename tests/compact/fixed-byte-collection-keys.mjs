@@ -71,9 +71,20 @@ try {
   const [setRead] = await run('containsOneByteSet', stateSet, key1);
   assert.equal(setRead, true);
 
+  const [nestedFirst, stateNestedFirst] = await run('insertNestedOneByteSet', stateSet, key0, key1);
+  assert.deepEqual(nestedFirst, [false, false, true]);
+  const [nestedDuplicate, stateNestedDuplicate] = await run(
+    'insertNestedOneByteSet', stateNestedFirst, key0, key1);
+  assert.deepEqual(nestedDuplicate, [true, true, true]);
+  const [nestedSibling, stateNestedSibling] = await run(
+    'insertNestedOneByteSet', stateNestedDuplicate, key0, Uint8Array.of(168));
+  assert.deepEqual(nestedSibling, [true, false, true]);
+
   await assert.rejects(run('insertBytes0', stateSet, Uint8Array.of(1), 1n));
   await assert.rejects(run('insertBytes1', stateSet, Uint8Array.of(167, 1), 1n));
   await assert.rejects(run('insertBytes33', stateSet, key33.subarray(1), 1n));
+  await assert.rejects(run('insertNestedOneByteSet', stateNestedSibling, Uint8Array.of(0), key1));
+  await assert.rejects(run('insertNestedOneByteSet', stateNestedSibling, key0, Uint8Array.of(167, 168)));
 
   console.log(JSON.stringify({
     fixture: 'FixedByteCollectionKeys',
@@ -85,6 +96,13 @@ try {
       { keyType: 'Bytes<33>', key: Array.from(key33), valueType: 'Field', insertReturn: '42', readBack: '42' },
     ],
     set: { keyType: 'Bytes<1>', key: [167], insertThenMember: true, readBack: true },
+    nestedSet: {
+      keyType: 'Map<Bytes<0>, Set<Bytes<1>>>',
+      firstInsert: nestedFirst,
+      duplicateInsert: nestedDuplicate,
+      siblingInsert: nestedSibling,
+      rejectedLengths: { parent: 1, member: 2 },
+    },
     rejectedLengths: { bytes0: 1, bytes1: 2, bytes33: 32 },
   }, null, 2));
 } finally {
