@@ -434,3 +434,32 @@ private def genericRecordMapWrongValueSpecialization : Except Diagnostic Special
   | .error diagnostic =>
     diagnostic.message.contains "module record Map input 'next' does not match the checked Map layout"
   | .ok _ => _root_.Bool.false
+
+def genericJubjubScalarMapRequest : Request := {
+  sourceName := `genericRecordMapModule
+  arguments := [.type (.scalar .native), .type (.scalar .jubjubScalar)]
+}
+
+def genericJubjubPointMapRequest : Request := {
+  sourceName := `genericRecordMapModule
+  arguments := [.type (.bytes 32), .type (.scalar .jubjubPoint)]
+}
+
+noctium_module_contract GenericJubjubScalarMap from genericJubjubScalarMapRequest
+noctium_module_contract GenericJubjubPointMap from genericJubjubPointMapRequest
+
+private def hasTypedCurveMap (contract : Contract) (key value : Ty) : _root_.Bool :=
+  contract.state.any (fun declared => declared.kind == .map key value) &&
+    match contract.entrypoints.find? (·.name == "lookup") with
+    | some operation => operation.returns.map (fun returned => (returned.name, returned.ty)) ==
+      [("result", value)]
+    | none => Bool.false
+
+#guard hasTypedCurveMap GenericJubjubScalarMap .native .jubjubScalar
+#guard hasTypedCurveMap GenericJubjubPointMap (.bytes 32) .jubjubPoint
+
+#guard match Modules.expand genericRecordMapRegistry `genericRecordMapModule
+    [.type (.scalar .jubjubPoint), .type (.scalar .jubjubScalar)] with
+  | .error diagnostic =>
+    diagnostic.message.contains "Jubjub state parameters are not supported by module specialization"
+  | .ok _ => Bool.false
