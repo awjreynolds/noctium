@@ -580,46 +580,81 @@ private def expressionIdentifierName (stx : TSyntax `nlexpr) : Option String :=
   | `(nlexpr| $id:ident) => some id.getId.toString
   | _ => none
 
-private def callbackExpectedSourceIndex (name : String)
-    (steps : Array (TSyntax `noctium_callback_step)) : Option Nat := Id.run do
-  let mut currentName := name
-  let mut selected : Option Nat := none
-  for (step, index) in steps.toList.zipIdx.reverse do
-    let some (some binder, value) := callbackStep step | continue
-    if binder.getId.toString == currentName then
-      selected := some index
-      match expressionIdentifierName value with
-      | some sourceName => currentName := sourceName
-      | none => return selected
-  return selected
-
 private def isMapExpression (stx : TSyntax `nlexpr) : _root_.Bool :=
   match stx with
   | `(nlexpr| map([$_,*], fun $_:ident* => $_)) => _root_.Bool.true
   | _ => _root_.Bool.false
 
-private def aliasAfterBinding (aliases : List String) (binder : String)
-    (source : TSyntax `nlexpr) : List String :=
-  let sourceAliases := match expressionIdentifierName source with
-    | some sourceName => aliases.contains sourceName
-    | none => _root_.Bool.false
-  let aliases := aliases.filter (· != binder)
-  if sourceAliases then binder :: aliases else aliases
-
-private partial def expressionReturnsAlias (aliases : List String)
-    (stx : TSyntax `nlexpr) : _root_.Bool :=
+private def isConditionalExpression (stx : TSyntax `nlexpr) : _root_.Bool :=
   match stx with
-  | `(nlexpr| $id:ident) => aliases.contains id.getId.toString
+  | `(nlexpr| ite($_condition, $_yes, $_no))
+  | `(nlexpr| if $_condition then $_yes else $_no) => _root_.Bool.true
+  | _ => _root_.Bool.false
+
+private partial def resultReferenceNamesIn (aliases : List (String × List String))
+    (stx : TSyntax `nlexpr) : List String :=
+  match stx with
+  | `(nlexpr| $id:ident) =>
+    (aliases.find? (·.1 == id.getId.toString)).map Prod.snd |>.getD [id.getId.toString]
+  | `(nlexpr| ite($_condition, $yes, $no))
+  | `(nlexpr| if $_condition then $yes else $no) =>
+    (resultReferenceNamesIn aliases yes ++ resultReferenceNamesIn aliases no).eraseDups
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) =>
-    expressionReturnsAlias (aliasAfterBinding aliases (id.getId.toString) value) body
+    let name := id.getId.toString
+    let valueNames := resultReferenceNamesIn aliases value
+    let bodyAliases := (name, valueNames) :: aliases.filter (·.1 != name)
+    resultReferenceNamesIn bodyAliases body
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => Id.run do
     let mut localAliases := aliases
     for step in steps do
       let some (binder, value) := callbackStep step | continue
       if let some binder := binder then
-        localAliases := aliasAfterBinding localAliases (binder.getId.toString) value
-    return expressionReturnsAlias localAliases result
-  | _ => _root_.Bool.false
+        let name := binder.getId.toString
+        let valueNames := resultReferenceNamesIn localAliases value
+        localAliases := (name, valueNames) :: localAliases.filter (·.1 != name)
+    return resultReferenceNamesIn localAliases result
+  | _ => []
+
+private def resultReferenceNames (stx : TSyntax `nlexpr) : List String :=
+  (resultReferenceNamesIn [] stx).eraseDups
+
+private def aliasAfterBinding (aliases : List String) (binder : String)
+    (source : TSyntax `nlexpr) : List String :=
+  let sourceAliases := (resultReferenceNames source).any aliases.contains
+  let aliases := aliases.filter (· != binder)
+  if sourceAliases then binder :: aliases else aliases
+
+private def callbackExpectedSourceIndices
+    (steps : Array (TSyntax `noctium_callback_step)) (result : TSyntax `nlexpr) : List Nat := Id.run do
+  let mut pending := resultReferenceNames result
+  let mut selected : List Nat := []
+  for (step, index) in steps.toList.zipIdx.reverse do
+    let some (some binder, source) := callbackStep step | continue
+    let name := binder.getId.toString
+    if pending.contains name then
+      selected := index :: selected
+      pending := ((pending.filter (· != name)) ++ resultReferenceNames source).eraseDups
+  return selected.eraseDups
+
+private def expressionReturnsAlias (aliases : List String)
+    (stx : TSyntax `nlexpr) : _root_.Bool :=
+  (resultReferenceNames stx).any aliases.contains
+
+private partial def needsExpectedResult (stx : TSyntax `nlexpr) : _root_.Bool :=
+  if isMapExpression stx || isConditionalExpression stx then _root_.Bool.true
+  else
+    match stx with
+    | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) =>
+      if expressionReturnsAlias [id.getId.toString] body then needsExpectedResult value
+      else needsExpectedResult body
+    | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) =>
+      needsExpectedResult result || (callbackExpectedSourceIndices steps result).any fun index =>
+        match steps[index]? with
+        | some step => (callbackStep step).any fun
+          | (some _, value) => needsExpectedResult value
+          | _ => _root_.Bool.false
+        | none => _root_.Bool.false
+    | _ => _root_.Bool.false
 
 /-- Collect typed vector witness arguments that consume a lexical name or one of
 its direct aliases. The walk respects lexical scopes and masks shadowed names. -/
@@ -1857,7 +1892,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     }
   | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) => do
     let name := id.getId.toString
-    let contextualUses ← if isMapExpression value then
+    let contextualUses ← if needsExpectedResult value then
       liftM <| expectedVectorWitnessArguments name body
       else pure []
     let valueExpected :=
@@ -1878,11 +1913,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         witnessNames := (value.witnessNames ++ body.witnessNames).eraseDups,
         generatedValidity := (value.generatedValidity ++ body.generatedValidity).eraseDups }
   | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => do
-    let resultName := expressionIdentifierName result
-    let expectedBinderIndex := match expected, resultName with
-      | some _, some resultName =>
-        callbackExpectedSourceIndex resultName steps
-      | _, _ => none
+    let expectedBinderIndices := if expected.isSome then
+      callbackExpectedSourceIndices steps result
+      else []
     let mut localEnv := env
     let mut loweredSteps := []
     for (step, index) in steps.toList.zipIdx do
@@ -1891,7 +1924,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       let span ← liftM (spanValue step)
       match binder with
       | some id =>
-        let sourceExpected := if expectedBinderIndex == some index then expected else none
+        let sourceExpected := if expectedBinderIndices.contains index then expected else none
         let value ← lowerExpr programName callPrefix localEnv source sourceExpected
         let name ← freshReadableLet id
         localEnv := (id.getId.toString, value.type, .ref name, value.nominalUInt) :: localEnv
@@ -2047,8 +2080,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| if $condition then $yes else $no) => do
     let predicate ← lowerExpr programName callPrefix env condition
     let predicate ← coerce condition predicate .bool
-    let yesValue ← lowerExpr programName callPrefix env yes
-    let noValue ← lowerExpr programName callPrefix env no
+    let yesValue ← lowerExpr programName callPrefix env yes expected
+    let noValue ← lowerExpr programName callPrefix env no expected
     unless yesValue.nominalUInt == noValue.nominalUInt do
       throwErrorAt stx "conditional branches require the same nominal UInt type"
     let some type := Helpers.commonType yesValue.type noValue.type
@@ -3404,7 +3437,7 @@ private partial def lowerReadableStatement (programName path : String)
     let annotation ← match type with
       | some annotation => some <$> readSourceScalarType annotation
       | none => pure none
-    let laterVectorContext ← if annotation.isNone && isMapExpression source then
+    let laterVectorContext ← if annotation.isNone && needsExpectedResult source then
       expectedVectorFromFollowingStatements valueName (following ())
       else pure none
     let expected := match annotation with
