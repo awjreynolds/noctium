@@ -849,6 +849,32 @@ theorem acceptedPrivateInputSupportsMeaning
   exact ⟨state, next, requirement, checked, selected, nonforeign, unguarded,
     fun _hash _witness _holds => .native (.privateInput opcode)⟩
 
+/-- An accepted public input row selects one concrete nonforeign requirement
+from the producer's live input slot and supplies its meaning-step
+classification. Public rows can be guarded, so this theorem does not impose
+the private-input unguardedness rule. -/
+theorem acceptedPublicInputSupportsMeaning
+    {hash : Hash} {witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {initial final : Backend.Native.State}
+    {raw : Json} {index : Nat}
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final)
+    (member : (raw, index) ∈ items)
+    (opcode : Backend.Native.stringField raw "op" = .ok "public_input")
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false) :
+    ∃ state next requirement,
+      Backend.Native.validateInstruction expected state raw = .ok next ∧
+      expected.inputs[state.inputCount]? = some requirement ∧
+      requirement.ty.isForeign = false ∧ SupportsMeaning raw := by
+  obtain ⟨state, next, checked⟩ :=
+    RangeDedupProducer.validateInstructionLoop_step accepted member
+  obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+    (visibility := .«public») (by simpa [inputOpcode] using opcode) checked
+  have inputMember : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+  have nonforeign := inputSchema requirement inputMember
+  exact ⟨state, next, requirement, checked, selected, nonforeign,
+    fun _hash _witness _holds => .native (.publicInput opcode)⟩
+
 theorem supportsMeaning_impact {raw : Json} {guard : Operand} {values : List Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "impact")
     (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
