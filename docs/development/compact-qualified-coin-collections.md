@@ -73,6 +73,10 @@ root. The ordinary receipt observer still needs a fix for the second call.
 [Finalized evidence](funded-four-parent-coin-list-localnet-receipt.json) ·
 [Receipt and replay ticket](https://github.com/awjreynolds/noctium/issues/791)
 
+The observer reports the failed receipt check through `ReceiptRejected`,
+including distinct reasons for primary and secondary state. The historical
+second-call diagnosis still requires its expected state or a fresh reproduction.
+
 The deeper List route qualifies the coin before reading the List, then
 rebuilds cached Map ancestors one key at a time. The emitted ZKIR 3.2.1
 case passes at thirteen Bytes32 Map parents, the ordinary native List

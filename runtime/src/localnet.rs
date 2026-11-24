@@ -9,7 +9,7 @@ use crate::{
     Db,
     client::{
         BoundTransaction, ChainIdentity, FinalizedReceipt, NetworkPolicy, Observation,
-        PartialReceipt, Snapshot,
+        PartialReceipt, ReceiptCheckReason, Snapshot,
     },
 };
 use base_crypto::{
@@ -46,12 +46,16 @@ pub enum Error {
     Metadata,
     State,
     Replay,
+    ReceiptRejected(ReceiptCheckReason),
     Proof,
     Storage,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "noctium_localnet_{self:?}")
+        match self {
+            Self::ReceiptRejected(reason) => write!(f, "noctium_localnet_receipt_{reason:?}"),
+            _ => write!(f, "noctium_localnet_{self:?}"),
+        }
     }
 }
 impl std::error::Error for Error {}
@@ -1383,8 +1387,8 @@ impl Node {
                     Observation::Partial(partial)
                 } else {
                     transaction
-                        .check_receipt(&receipt)
-                        .map_err(|_| Error::Response)?;
+                        .check_receipt_detailed(&receipt)
+                        .map_err(Error::ReceiptRejected)?;
                     Observation::Finalized(receipt)
                 });
             }

@@ -62,6 +62,31 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 type Result<T> = std::result::Result<T, Error>;
+
+/// Safe classification for a rejected finalized receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReceiptCheckReason {
+    ChainPolicy,
+    ChainIdentity,
+    InclusionHeight,
+    FinalityIdentity,
+    TransactionIdentity,
+    PrimaryState,
+    SecondaryState,
+}
+impl ReceiptCheckReason {
+    fn client_error(self) -> Error {
+        match self {
+            Self::ChainPolicy => Error::Policy,
+            Self::ChainIdentity => Error::Network,
+            Self::InclusionHeight => Error::StaleReceipt,
+            Self::FinalityIdentity
+            | Self::TransactionIdentity
+            | Self::PrimaryState
+            | Self::SecondaryState => Error::Receipt,
+        }
+    }
+}
 fn require(valid: bool, error: Error) -> Result<()> {
     if valid { Ok(()) } else { Err(error) }
 }
@@ -1275,12 +1300,22 @@ impl BoundTransaction {
         }
     }
     pub fn check_receipt(&self, receipt: &FinalizedReceipt) -> Result<()> {
-        self.check_receipt_identity(receipt)?;
-        require(
-            receipt.contract_state == self.data.expected_state
-                && receipt.secondary_states == self.data.secondary_states,
-            Error::Receipt,
-        )
+        self.check_receipt_detailed(receipt)
+            .map_err(ReceiptCheckReason::client_error)
+    }
+    /// Check a finalized receipt and retain a value-free reason for host diagnostics.
+    pub(crate) fn check_receipt_detailed(
+        &self,
+        receipt: &FinalizedReceipt,
+    ) -> std::result::Result<(), ReceiptCheckReason> {
+        self.check_receipt_identity_detailed(receipt)?;
+        if receipt.contract_state != self.data.expected_state {
+            return Err(ReceiptCheckReason::PrimaryState);
+        }
+        if receipt.secondary_states != self.data.secondary_states {
+            return Err(ReceiptCheckReason::SecondaryState);
+        }
+        Ok(())
     }
     pub fn check_partial_receipt(&self, partial: &PartialReceipt) -> Result<()> {
         let prefix = self.data.checkpoint.as_ref().ok_or(Error::Receipt)?;
@@ -1294,28 +1329,41 @@ impl BoundTransaction {
         )
     }
     fn check_receipt_identity(&self, receipt: &FinalizedReceipt) -> Result<()> {
-        self.data.policy.check(&receipt.chain)?;
-        require(
-            receipt.height > self.data.after_height && receipt.height <= receipt.finalized_height,
-            Error::StaleReceipt,
-        )?;
+        self.check_receipt_identity_detailed(receipt)
+            .map_err(ReceiptCheckReason::client_error)
+    }
+    fn check_receipt_identity_detailed(
+        &self,
+        receipt: &FinalizedReceipt,
+    ) -> std::result::Result<(), ReceiptCheckReason> {
+        self.data
+            .policy
+            .check(&receipt.chain)
+            .map_err(|error| match error {
+                Error::Policy => ReceiptCheckReason::ChainPolicy,
+                _ => ReceiptCheckReason::ChainIdentity,
+            })?;
+        if receipt.height <= self.data.after_height || receipt.height > receipt.finalized_height {
+            return Err(ReceiptCheckReason::InclusionHeight);
+        }
         // A receipt observed at the finalized height names the finalized block itself.
         // When finality has advanced, inclusion and head hashes identify different blocks.
-        require(
-            (receipt.height == receipt.finalized_height)
-                == (receipt.block_hash == receipt.finalized_hash),
-            Error::Receipt,
-        )?;
-        require(
-            canonical_hash(&receipt.block_hash)
-                && canonical_hash(&receipt.finalized_hash)
-                && canonical_hash(&receipt.extrinsic_hash)
-                && receipt.transaction_id == self.data.transaction_id
-                && receipt.intent_id == self.data.intent_id
-                && receipt.contract_address == self.data.contract_address
-                && receipt.event == self.data.event,
-            Error::Receipt,
-        )
+        if (receipt.height == receipt.finalized_height)
+            != (receipt.block_hash == receipt.finalized_hash)
+        {
+            return Err(ReceiptCheckReason::FinalityIdentity);
+        }
+        if !canonical_hash(&receipt.block_hash)
+            || !canonical_hash(&receipt.finalized_hash)
+            || !canonical_hash(&receipt.extrinsic_hash)
+            || receipt.transaction_id != self.data.transaction_id
+            || receipt.intent_id != self.data.intent_id
+            || receipt.contract_address != self.data.contract_address
+            || receipt.event != self.data.event
+        {
+            return Err(ReceiptCheckReason::TransactionIdentity);
+        }
+        Ok(())
     }
 }
 
@@ -2566,6 +2614,10 @@ pub(crate) mod tests {
         let mut wrong = good.clone();
         wrong.chain.genesis = "f".repeat(64);
         assert_eq!(tx.check_receipt(&wrong), Err(Error::Network));
+        assert_eq!(
+            tx.check_receipt_detailed(&wrong),
+            Err(ReceiptCheckReason::ChainIdentity)
+        );
         let mut wrong = good.clone();
         wrong.chain.profile = "other-profile".into();
         assert_eq!(tx.check_receipt(&wrong), Err(Error::Network));
@@ -2587,6 +2639,33 @@ pub(crate) mod tests {
         let mut wrong = good;
         wrong.finalized_height = 20;
         assert_eq!(tx.check_receipt(&wrong), Err(Error::StaleReceipt));
+
+        let mut wrong = receipt(&tx);
+        wrong.finalized_hash.clone_from(&wrong.block_hash);
+        assert_eq!(
+            tx.check_receipt(&wrong),
+            Err(Error::Receipt)
+        );
+        assert_eq!(
+            tx.check_receipt_detailed(&wrong),
+            Err(ReceiptCheckReason::FinalityIdentity)
+        );
+
+        let mut wrong = receipt(&tx);
+        wrong.contract_state.push(0);
+        assert_eq!(tx.check_receipt(&wrong), Err(Error::Receipt));
+        assert_eq!(
+            tx.check_receipt_detailed(&wrong),
+            Err(ReceiptCheckReason::PrimaryState)
+        );
+
+        let mut wrong = receipt(&tx);
+        wrong.secondary_states.insert("e".repeat(64), vec![9]);
+        assert_eq!(tx.check_receipt(&wrong), Err(Error::Receipt));
+        assert_eq!(
+            tx.check_receipt_detailed(&wrong),
+            Err(ReceiptCheckReason::SecondaryState)
+        );
 
         let mut multi = tx;
         multi.data.event = ContractEvent::Call;
