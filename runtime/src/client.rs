@@ -2390,6 +2390,45 @@ pub(crate) mod tests {
             secondary_states: tx.secondary_states().clone(),
         }
     }
+    fn synthetic_public_call_reference() -> PublicTransactionReference {
+        use ledger::structure::{ContractCall, ProofVersioned};
+        use onchain_runtime::{state::EntryPointBuf, transcript::Transcript};
+        use transient_crypto::{curve::Fr, proofs::Proof};
+
+        let mut rng = StdRng::from_seed([8; 32]);
+        let transcript = || {
+            Sp::new(Transcript {
+                gas: Default::default(),
+                effects: Default::default(),
+                program: vec![Op::Ckpt].into(),
+                version: None,
+            })
+        };
+        let call = ContractCall {
+            address: Default::default(),
+            entry_point: EntryPointBuf(b"claim".to_vec()),
+            guaranteed_transcript: Some(transcript()),
+            fallible_transcript: Some(transcript()),
+            communication_commitment: Fr::from(0u64),
+            proof: ProofVersioned::V3(Proof(Vec::new())),
+        };
+        let intent = Intent {
+            actions: vec![ContractAction::Call(Sp::new(call))].into(),
+            guaranteed_unshielded_offer: None,
+            fallible_unshielded_offer: None,
+            dust_actions: None,
+            binding_commitment: rng.r#gen(),
+            ttl: Timestamp::from_secs(2_000_000_000),
+        };
+        let sealed = crate::funding::one_intent("undeployed", CONTRACT_SEGMENT, intent).seal(rng);
+        PublicTransactionReference::from_bytes(
+            policy(),
+            &encode(&sealed).unwrap(),
+            20,
+            &[1, 2, 3],
+        )
+        .unwrap()
+    }
     impl ChainAdapter for FakeChain {
         async fn snapshot(&self) -> std::result::Result<Snapshot, HostFailure> {
             Ok(Snapshot {
@@ -2586,6 +2625,28 @@ pub(crate) mod tests {
         receipt.finalized_hash = "3".repeat(64);
         assert_eq!(tx.check_receipt(&receipt), Err(Error::Receipt));
     }
+
+    #[test]
+    fn archived_single_call_reference_checks_receipt_before_accepting_observation() {
+        // Retained PrivateClaim evidence contains receipt summaries, not public transaction bytes.
+        // Use a synthetic single Call to exercise the same read-only verifier boundary.
+        let reference = synthetic_public_call_reference();
+        let bound = reference.bound_view();
+        let mut archived = receipt(&bound);
+        archived.finalized_height = archived.height + 5;
+        archived.finalized_hash = "5".repeat(64);
+
+        // The archived receipt keeps its own historical finality identity.
+        reference.check_receipt(&archived).unwrap();
+
+        // Reject an unexpected second contract state before trusting the independent observation.
+        let mut observation = archived;
+        observation
+            .secondary_states
+            .insert("f".repeat(64), vec![9]);
+        assert_eq!(reference.check_receipt(&observation), Err(Error::Receipt));
+    }
+
     #[test]
     fn partial_checkpoint_restores_receipt_and_staged_writes_without_resubmission_or_cas() {
         use ledger::structure::{ContractCall, ProofVersioned};

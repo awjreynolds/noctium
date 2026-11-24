@@ -1880,6 +1880,235 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires the read-only loopback chain retaining the archived Swift PrivateClaim blocks"]
+    fn archived_swift_private_claim_receipt_is_verified_before_replay() -> anyhow::Result<()> {
+        use crate::client::{ContractEvent, PublicTransactionReference};
+        use anyhow::{Context, ensure};
+        use coin_structure::contract::ContractAddress;
+        use serde_json::Value as JsonValue;
+        use std::{env, time::Duration};
+
+        let fixture: JsonValue = serde_json::from_str(include_str!(
+            "../../docs/development/swift-private-claim-receipts.json"
+        ))?;
+        let profile = fixture["profile"]
+            .as_str()
+            .context("archived profile is missing")?;
+        ensure!(
+            profile == crate::profile::NAME,
+            "archived receipt profile differs from this build"
+        );
+        let run = fixture["runs"]
+            .as_array()
+            .and_then(|runs| runs.iter().find(|run| run["platform"] == "macOS arm64"))
+            .context("archived macOS receipt is missing")?;
+        let fields = &run["call"];
+        ensure!(fields["event"] == "Call", "expected a single-call receipt");
+
+        let height = fields["height"]
+            .as_str()
+            .context("archived inclusion height is missing")?
+            .parse::<u64>()?;
+        let finalized_height = fields["finalizedHeight"]
+            .as_str()
+            .context("archived finalized height is missing")?
+            .parse::<u64>()?;
+        let extrinsic_index = fields["extrinsicIndex"]
+            .as_u64()
+            .and_then(|index| u32::try_from(index).ok())
+            .context("archived extrinsic index is invalid")?;
+        let block_hash = fields["blockHash"]
+            .as_str()
+            .context("archived inclusion hash is missing")?;
+        let transaction_id = fields["transactionId"]
+            .as_str()
+            .context("archived transaction id is missing")?;
+        let intent_id = fields["intentId"]
+            .as_str()
+            .context("archived intent id is missing")?;
+        let contract_address = fields["contractAddress"]
+            .as_str()
+            .context("archived contract address is missing")?;
+        let expected_state_len = fields["contractStateBytes"]
+            .as_u64()
+            .and_then(|length| usize::try_from(length).ok())
+            .context("archived state length is invalid")?;
+        let expected_state_sha256 = fields["contractStateSha256"]
+            .as_str()
+            .context("archived state digest is missing")?;
+        let archived_finalized_hash = fields["finalizedHash"]
+            .as_str()
+            .context("archived finalized hash is missing")?;
+
+        ensure!(height == finalized_height, "fixture should record inclusion finality");
+        ensure!(block_hash == archived_finalized_hash, "fixture finality hash differs");
+
+        let endpoint = env::var("NOCTIUM_ARCHIVED_PRIVATE_CLAIM_NODE")
+            .context("set NOCTIUM_ARCHIVED_PRIVATE_CLAIM_NODE to the loopback RPC endpoint")?;
+        let policy = NetworkPolicy {
+            network_id: "undeployed".into(),
+            genesis: DEVELOPMENT_GENESIS.into(),
+            spec_version: 2_001_100,
+            transaction_version: 4,
+            profile: crate::profile::NAME.into(),
+            max_dust: 10u128.pow(22),
+        };
+        let node = Node::connect(
+            &endpoint,
+            policy.clone(),
+            Duration::from_secs(15),
+            64 * 1024 * 1024,
+            100_000,
+        )?;
+
+        let canonical_at_height = hash_text(&node.rpc.call("chain_getBlockHash", json!([height]))?)?;
+        ensure!(canonical_at_height == block_hash, "archived block is not canonical at its height");
+        node.check_runtime(block_hash)?;
+        let header = node
+            .rpc
+            .call("chain_getHeader", json!([format!("0x{block_hash}")]))?;
+        let observed_height = u64::from_str_radix(
+            header["number"]
+                .as_str()
+                .context("archived block header number is missing")?
+                .trim_start_matches("0x"),
+            16,
+        )?;
+        ensure!(observed_height == height, "archived block height differs");
+
+        let current_head = hash_text(&node.rpc.call("chain_getFinalizedHead", json!([]))?)?;
+        let current_header = node
+            .rpc
+            .call("chain_getHeader", json!([format!("0x{current_head}")]))?;
+        let current_height = u64::from_str_radix(
+            current_header["number"]
+                .as_str()
+                .context("current finalized height is missing")?
+                .trim_start_matches("0x"),
+            16,
+        )?;
+        ensure!(
+            current_height > height && current_head != archived_finalized_hash,
+            "current finalized head must be later than the archived receipt"
+        );
+
+        let block = node
+            .rpc
+            .call("chain_getBlock", json!([format!("0x{block_hash}")]))?;
+        let extrinsics = block["block"]["extrinsics"]
+            .as_array()
+            .context("archived block has no extrinsics")?;
+        let extrinsic = extrinsics
+            .get(extrinsic_index as usize)
+            .context("archived extrinsic index is outside its block")?;
+        let encoded_extrinsic = hex_bytes(extrinsic)?;
+        let actual_extrinsic_hash = hex::encode(
+            <blake2::Blake2b<blake2::digest::consts::U32> as blake2::Digest>::digest(
+                &encoded_extrinsic,
+            ),
+        );
+        ensure!(
+            actual_extrinsic_hash == fields["extrinsicHash"],
+            "archived extrinsic hash differs"
+        );
+        let (_, decoded_transactions) =
+            node.transactions(std::slice::from_ref(extrinsic), None, false)?;
+        ensure!(
+            decoded_transactions.len() == 1,
+            "archived extrinsic does not contain one native transaction"
+        );
+        let ReplayTransaction::Native(native_transaction) = &decoded_transactions[0] else {
+            anyhow::bail!("archived extrinsic is not a native contract transaction");
+        };
+        ensure!(
+            node.metadata.extrinsic(native_transaction)? == encoded_extrinsic,
+            "metadata re-encoding differs from the archived extrinsic"
+        );
+
+        let state_body = hex_bytes(&node.rpc.call(
+            "midnight_contractState",
+            json!([contract_address, format!("0x{block_hash}")]),
+        )?)?;
+        let state: onchain_runtime::state::ContractState<Db> = native_decode(&state_body)
+            .map_err(|_| anyhow::anyhow!("RPC state is not a tagged ContractState"))?;
+        let mut canonical_state = Vec::new();
+        serialize::tagged_serialize(&state, &mut canonical_state)
+            .map_err(|_| anyhow::anyhow!("cannot serialize canonical ContractState"))?;
+        ensure!(canonical_state == state_body, "RPC state is not canonical tagged state");
+        ensure!(
+            canonical_state.len() == expected_state_len
+                && hex::encode(sha2::Sha256::digest(&canonical_state)) == expected_state_sha256,
+            "canonical replay state differs from the archived full-state digest"
+        );
+
+        let reference = PublicTransactionReference::from_bytes(
+            policy.clone(),
+            native_transaction,
+            height - 1,
+            &canonical_state,
+        )?;
+        ensure!(
+            reference.transaction_id() == transaction_id
+                && reference.contract_address() == contract_address
+                && reference.event() == ContractEvent::Call,
+            "archived public reference identity differs"
+        );
+        let bound = reference.bound_view();
+        ensure!(bound.intent_id() == intent_id, "archived intent id differs");
+        let archived_receipt = FinalizedReceipt {
+            chain: node.rpc.chain_identity(block_hash, &policy.profile)?,
+            block_hash: block_hash.into(),
+            height,
+            finalized_hash: archived_finalized_hash.into(),
+            finalized_height,
+            extrinsic_hash: actual_extrinsic_hash,
+            extrinsic_index,
+            transaction_id: transaction_id.into(),
+            intent_id: intent_id.into(),
+            contract_address: contract_address.into(),
+            event: ContractEvent::Call,
+            contract_state: canonical_state,
+            secondary_states: BTreeMap::new(),
+        };
+        reference.check_receipt(&archived_receipt)?;
+
+        let mut unexpected_secondary = archived_receipt.clone();
+        unexpected_secondary
+            .secondary_states
+            .insert("f".repeat(64), vec![9]);
+        ensure!(
+            reference.check_receipt(&unexpected_secondary) == Err(crate::client::Error::Receipt),
+            "public reference accepted an unexpected secondary state"
+        );
+
+        let mut replay_cache = None;
+        let replayed = node.replay_to(block_hash, &mut replay_cache, None)?;
+        ensure!(
+            replayed.height == height && replayed.finalized_hash == block_hash,
+            "replay did not stop at the archived inclusion block"
+        );
+        let address = ContractAddress(HashOutput(
+            hex::decode(contract_address)?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("archived contract address has wrong length"))?,
+        ));
+        let replayed_contract = replayed
+            .state
+            .contract
+            .get(&address)
+            .context("replayed contract state is missing")?;
+        let mut replayed_state = Vec::new();
+        serialize::tagged_serialize(&*replayed_contract, &mut replayed_state)
+            .map_err(|_| Error::State)?;
+        ensure!(
+            replayed_state == archived_receipt.contract_state,
+            "replayed inclusion state differs from the archived receipt"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires the pinned NativeBlockTime checkTime bundle and funded development node"]
     fn native_block_time_strict_edges_finalize_without_state_changes() -> anyhow::Result<()> {
         use crate::{
