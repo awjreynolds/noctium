@@ -1,0 +1,38 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+struct Memo {
+  x: Field;
+  y: Field;
+}
+
+export ledger emptyBytes: List<Bytes<0>>;
+export ledger oneEmptyByte: List<Bytes<0>>;
+export ledger memos: Map<Bytes<32>, Map<Bytes<32>, List<Memo>>>;
+
+export circuit seed(owner: Bytes<32>, emptySpender: Bytes<32>, populatedSpender: Bytes<32>): [] {
+  memos.insertDefault(disclose(owner));
+  memos.lookup(disclose(owner)).insertDefault(disclose(emptySpender));
+  memos.lookup(disclose(owner)).insertDefault(disclose(populatedSpender));
+  oneEmptyByte.pushFront(pad(0, ""));
+  memos.lookup(disclose(owner)).lookup(disclose(populatedSpender)).pushFront(
+    disclose(Memo { x: 17 as Field, y: 42 as Field }),
+  );
+}
+
+export circuit inspect(owner: Bytes<32>, emptySpender: Bytes<32>, populatedSpender: Bytes<32>,
+                       missingOwner: Bytes<32>, missingSpender: Bytes<32>,
+                       probeMissing: Boolean): [Boolean, Boolean, Boolean, Boolean, Boolean] {
+  const emptyBytesEmpty = emptyBytes.isEmpty();
+  const oneEmptyByteEmpty = oneEmptyByte.isEmpty();
+  const emptyRecordListEmpty = memos.lookup(disclose(owner)).lookup(disclose(emptySpender)).isEmpty();
+  const populatedRecordListEmpty = memos.lookup(disclose(owner)).lookup(disclose(populatedSpender)).isEmpty();
+  if (disclose(probeMissing)) {
+    const missingRecordListEmpty =
+      memos.lookup(disclose(missingOwner)).lookup(disclose(missingSpender)).isEmpty();
+    return [emptyBytesEmpty, oneEmptyByteEmpty, emptyRecordListEmpty,
+            populatedRecordListEmpty, missingRecordListEmpty];
+  }
+  return [emptyBytesEmpty, oneEmptyByteEmpty, emptyRecordListEmpty,
+          populatedRecordListEmpty, false];
+}

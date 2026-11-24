@@ -7562,6 +7562,207 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "requires pinned ListIsEmptyParity bundles and the funded development node"]
+    fn list_is_empty_finalizes_zero_width_and_nested_record_reads() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::Sha256;
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_LIST_EMPTY_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "List.isEmpty qualification requires the funded loopback node"
+            );
+            let directory = setting("NOCTIUM_LIST_EMPTY_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_LIST_EMPTY_SHA256")?)?;
+            ensure!(
+                pins.len() == 2 && pins.contains_key("seed") && pins.contains_key("inspect"),
+                "expected exactly the seed and inspect bundle pins"
+            );
+            let mut bundles = Vec::new();
+            let mut plans = BTreeMap::new();
+            let mut circuits = BTreeMap::new();
+            for name in ["seed", "inspect"] {
+                let bundle =
+                    artifacts::verify(&Path::new(&directory).join(name), Some(&pins[name]))?;
+                let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+                ensure!(plan.entrypoint == name, "unexpected List.isEmpty plan");
+                circuits.insert(name, IrSource::load(bundle.file(Role::Circuit)?)?);
+                plans.insert(name, plan);
+                bundles.push(bundle);
+            }
+            let degrees = BTreeMap::from([
+                ("seed", circuits["seed"].k()),
+                ("inspect", circuits["inspect"].k()),
+            ]);
+            let cache = ProofCache::new(
+                setting("NOCTIUM_LIST_EMPTY_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let seed_parameters = cache.parameters(degrees["seed"]).await?;
+            let inspect_parameters = cache.parameters(degrees["inspect"]).await?;
+            let snapshot = funded.node.sync()?;
+            let ttl = snapshot.block.tblock.to_secs() + 1800;
+            let state_values = BTreeMap::from([
+                ("emptyBytes".into(), json!([])),
+                ("oneEmptyByte".into(), json!([])),
+                ("memos".into(), json!([])),
+            ]);
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                &serde_json::to_vec(&json!({"state":&state_values}))?,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid List.isEmpty address"))?,
+            ));
+            let seed_operation = target.operation("seed", &seed_parameters, ttl)?;
+            let inspect_operation = target.operation("inspect", &inspect_parameters, ttl)?;
+            let bytes = |byte: u8| json!({"kind":"bytes","values":vec![byte;32]});
+            let seed_inputs = BTreeMap::from([
+                ("owner".into(), bytes(1)),
+                ("emptySpender".into(), bytes(2)),
+                ("populatedSpender".into(), bytes(3)),
+            ]);
+            let inspect_inputs = |probe_missing| {
+                let mut inputs = seed_inputs.clone();
+                inputs.extend([
+                    ("missingOwner".into(), bytes(4)),
+                    ("missingSpender".into(), bytes(5)),
+                    ("probeMissing".into(), json!(probe_missing)),
+                ]);
+                inputs
+            };
+            let initial = crate::create_state(&plans["seed"], &state_values)?;
+            let seeded = crate::prepare(
+                &plans["seed"],
+                &seed_inputs,
+                &initial,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            crate::check(&seeded, &circuits["seed"])?;
+            let inspected = crate::prepare(
+                &plans["inspect"],
+                &inspect_inputs(false),
+                &seeded.after.state,
+                &snapshot.state.parameters,
+                address,
+            )?;
+            let expected_returns = BTreeMap::from([
+                ("emptyBytesResult".into(), json!(true)),
+                ("oneEmptyByteResult".into(), json!(false)),
+                ("emptyRecordListResult".into(), json!(true)),
+                ("populatedRecordListResult".into(), json!(false)),
+                ("missingRecordListResult".into(), json!(false)),
+            ]);
+            ensure!(
+                crate::check(&inspected, &circuits["inspect"])? == inspected.activity_schedule
+                    && inspected.returns_json() == expected_returns
+                    && inspected.after.state == seeded.after.state,
+                "List.isEmpty preparation differs from the Compact oracle"
+            );
+            ensure!(
+                crate::prepare(
+                    &plans["inspect"],
+                    &inspect_inputs(true),
+                    &seeded.after.state,
+                    &snapshot.state.parameters,
+                    address,
+                )
+                .is_err(),
+                "active absent List path must reject before submission"
+            );
+
+            let receipt_json = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height":receipt.height, "blockHash":receipt.block_hash,
+                    "finalizedHeight":receipt.finalized_height,
+                    "finalizedHash":receipt.finalized_hash,
+                    "transactionId":receipt.transaction_id,
+                    "stateBytes":receipt.contract_state.len(),
+                    "stateSha256":hex::encode(Sha256::digest(&receipt.contract_state)),
+                })
+            };
+            let (deployed, deployment) = funded.deploy(&target, "seed").await?;
+            println!(
+                "{}",
+                json!({"stage":"deployment","receipt":receipt_json(&deployment)})
+            );
+            let initial_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                initial_state.data == initial,
+                "List deployment did not start empty"
+            );
+            let mut current = Some(deployed);
+            let (seed_binding, seed_receipt) = funded
+                .call_with_bound(
+                    &seed_operation,
+                    &mut current,
+                    &seed_parameters,
+                    seed_inputs.clone(),
+                )
+                .await?;
+            println!(
+                "{}",
+                json!({"stage":"seed","receipt":receipt_json(&seed_receipt)})
+            );
+            seed_binding.check_receipt(&seed_receipt)?;
+            let seeded_state: ContractState<Db> = native_decode(&seed_receipt.contract_state)?;
+            ensure!(
+                seeded_state.data == seeded.after.state,
+                "finalized List seed differs"
+            );
+            let (inspect_binding, inspect_receipt) = funded
+                .call_with_bound(
+                    &inspect_operation,
+                    &mut current,
+                    &inspect_parameters,
+                    inspect_inputs(false),
+                )
+                .await?;
+            println!(
+                "{}",
+                json!({"stage":"inspect","receipt":receipt_json(&inspect_receipt)})
+            );
+            inspect_binding.check_receipt(&inspect_receipt)?;
+            ensure!(
+                inspect_receipt.contract_state == seed_receipt.contract_state,
+                "finalized List.isEmpty read changed seeded state bytes"
+            );
+            println!(
+                "{}",
+                json!({
+                    "contractAddress":target.contract_address(),"genesis":DEVELOPMENT_GENESIS,
+                    "bundleManifestSha256":pins,"k":degrees,
+                    "deployment":receipt_json(&deployment),"seed":receipt_json(&seed_receipt),
+                    "inspect":receipt_json(&inspect_receipt),"returns":expected_returns,
+                    "activeAbsentPathRejectedBeforeSubmission":true,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated OpaqueCells bundles and a funded development node"]
     fn opaque_root_cells_finalize_typed_store_and_reads() -> anyhow::Result<()> {
         use crate::{

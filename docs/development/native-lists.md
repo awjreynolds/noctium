@@ -112,3 +112,17 @@ same source form for a record with Native fields. The return keeps the
 List element's nominal type and orders the tag before the record fields.
 The paired fixture checks an empty List and a List seeded with `{17, 23}`.
 [Compact runner](../../tests/compact/record-list-head-maybe.mjs) · [Native checker](../../runtime/tests/record_list_head_maybe.rs)
+
+## Check emptiness for zero-width and nested record Lists
+
+The paired fixture compares an empty `List<Bytes<0>>` with a List containing
+one zero-width item. It also compares empty and populated record Lists beneath
+two Map keys. The active read through an absent parent rejects in Compact and
+native preflight. A disabled guard skips the path and returns false.
+
+The development deployment finalized at height 85346 and seeded both layouts
+at 85349. The K10 inspection relation has 712 rows. The finalized inspection
+at 85352 matched all five Boolean returns and preserved the exact seeded state
+bytes. [Lean fixture](../../tests/ListIsEmptyParity.lean) ·
+[Compact oracle](../../tests/compact/list-isempty-parity.mjs) ·
+[Finalized receipt](list-isempty-localnet-receipt.json)
