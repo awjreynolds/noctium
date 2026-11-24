@@ -1006,6 +1006,17 @@ private def moduleRecordType? (types : TypeEnvironment) : ModuleScalarType → O
     | _ => none
   | _ => none
 
+private def resolveModuleMapValueType (limits : Limits) (span : SourceSpan)
+    (types : TypeEnvironment) (naturals : NaturalEnvironment)
+    (value : ModuleScalarType) : Except Diagnostic Ty := do
+  if let .parameter name := value then
+    if let some moduleType := types.lookup name then
+      match moduleType.value with
+      | .scalar .jubjubScalar => return .jubjubScalar
+      | .scalar .jubjubPoint => return .jubjubPoint
+      | _ => pure ()
+  resolveStateScalar limits span types naturals value
+
 private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
     (types : TypeEnvironment) (naturals : NaturalEnvironment) :
     ModuleStateKind → Except Diagnostic StateKind
@@ -1031,7 +1042,7 @@ private def resolveModuleStateKind (limits : Limits) (span : SourceSpan)
       discard <| (LedgerValueType.ledgerRecordWriteFields
         recordValue.environment recordValue.value).mapError fun message => {span, message}
       return .tree (.map keyTy (.composite recordValue.environment recordValue.value))
-    let valueTy ← resolveStateScalar limits span types naturals value
+    let valueTy ← resolveModuleMapValueType limits span types naturals value
     if valueTy.isOpaqueBytes || valueTy.isOpaqueString then
       fail span "opaque types are not supported by module Map state specialization"
     pure (.map keyTy valueTy)

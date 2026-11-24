@@ -14,7 +14,11 @@ fn artifacts() -> PathBuf {
 }
 
 fn fixture(directory: &PathBuf, entry: &str) -> Result<(Plan, IrSource)> {
-    let stem = format!("GenericRecordMap.{entry}");
+    contract_fixture(directory, "GenericRecordMap", entry)
+}
+
+fn contract_fixture(directory: &PathBuf, contract: &str, entry: &str) -> Result<(Plan, IrSource)> {
+    let stem = format!("{contract}.{entry}");
     let plan = serde_json::from_reader(File::open(
         directory.join(format!("{stem}.impact.json")),
     )?)?;
@@ -293,4 +297,73 @@ fn generic_record_map_put_record_key_updates_one_uint16() -> Result<()> {
 #[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
 fn generic_record_map_put_record_key_receipt_guards_replace_and_preserves_siblings() -> Result<()> {
     check_record_key_receipt_map()
+}
+
+fn check_curve_map(
+    contract: &str,
+    key: fn(u8) -> BTreeMap<String, Json>,
+    values: [Json; 3],
+) -> Result<()> {
+    let directory = artifacts();
+    let put = contract_fixture(&directory, contract, "put")?;
+    let lookup = contract_fixture(&directory, contract, "lookup")?;
+    let mut state = empty_maps_state(&put.0)?;
+    for (index, value) in [1, 2, 1].into_iter().zip(values.iter()) {
+        let mut inputs = key(index);
+        inputs.insert("enabled".into(), json!(true));
+        inputs.insert("next".into(), value.clone());
+        state = run(&put, &inputs, &state)?.after.state;
+        let read = run(&lookup, &key(index), &state)?;
+        assert_eq!(read.returns_json().get("result"), Some(value));
+        assert_eq!(read.after.state, state);
+    }
+    let sibling = run(&lookup, &key(2), &state)?;
+    assert_eq!(sibling.returns_json().get("result"), Some(&values[1]));
+    assert!(
+        prepare(
+            &lookup.0,
+            &key(3),
+            &state,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh GenericJubjubScalarMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
+fn generic_jubjub_scalar_map_preserves_sibling_values() -> Result<()> {
+    check_curve_map(
+        "GenericJubjubScalarMap",
+        field_key,
+        ["5", "17", "23"].map(|value| json!({"kind":"jubjubScalar","value":value})),
+    )
+}
+
+#[test]
+#[ignore = "requires fresh GenericJubjubPointMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
+fn generic_jubjub_point_map_preserves_sibling_values() -> Result<()> {
+    let point = |x: &str, y: &str| json!({"kind":"jubjubPoint","x":x,"y":y});
+    let byte_key = |byte: u8| {
+        (0..32)
+            .map(|index| (format!("key.{index}"), json!(byte.to_string())))
+            .collect()
+    };
+    check_curve_map(
+        "GenericJubjubPointMap",
+        byte_key,
+        [
+            point("0", "1"),
+            point(
+                "28336281903124990867587793011069573392383982287722241916350956173377953689573",
+                "39385640392217313770878525135509063452020585410343666726093009378539878503883",
+            ),
+            point(
+                "28470720865600895264575250048565445848783776096727055802752773414594395577565",
+                "22436823168302830732060329876357833227584559018655015131868680653136578255473",
+            ),
+        ],
+    )
 }

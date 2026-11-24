@@ -1,0 +1,23 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+module GenericMap<K, V> {
+  export ledger values: Map<K, V>;
+
+  export circuit put(key: K, next: V): [] {
+    values.insert(disclose(key), disclose(next));
+    return [];
+  }
+
+  export circuit lookup(key: K): V {
+    return values.lookup(disclose(key));
+  }
+}
+
+import GenericMap<Field, JubjubScalar> prefix scalar_;
+import GenericMap<Bytes<32>, JubjubPoint> prefix point_;
+
+export {
+  scalar_values, scalar_put, scalar_lookup,
+  point_values, point_put, point_lookup,
+};
