@@ -6,11 +6,20 @@ struct Key {
   id: Bytes<33>;
 }
 
-export ledger entries: Map<Key, Uint<16>>;
+struct Receipt {
+  accepted: Boolean;
+  code: Uint<16>;
+}
 
-constructor(tag: Bytes<1>, id: Bytes<33>, amount: Uint<16>, enabled: Boolean) {
+export ledger entries: Map<Key, Uint<16>>;
+export ledger receipts: Map<Key, Receipt>;
+
+constructor(tag: Bytes<1>, id: Bytes<33>, amount: Uint<16>, accepted: Boolean,
+            code: Uint<16>, enabled: Boolean) {
   if (disclose(enabled)) {
     entries.insert(disclose(Key {tag: disclose(tag), id: disclose(id)}), disclose(amount));
+    receipts.insert(disclose(Key {tag: disclose(tag), id: disclose(id)}),
+      disclose(Receipt {accepted: disclose(accepted), code: disclose(code)}));
   }
 }
 
@@ -18,6 +27,15 @@ export circuit member(tag: Bytes<1>, id: Bytes<33>): Boolean {
   return entries.member(disclose(Key {tag: disclose(tag), id: disclose(id)}));
 }
 
+export circuit receiptsMember(tag: Bytes<1>, id: Bytes<33>): Boolean {
+  return receipts.member(disclose(Key {tag: disclose(tag), id: disclose(id)}));
+}
+
 export circuit inspect(tag: Bytes<1>, id: Bytes<33>): Uint<16> {
   return entries.lookup(disclose(Key {tag: disclose(tag), id: disclose(id)}));
+}
+
+export circuit inspectReceipt(tag: Bytes<1>, id: Bytes<33>): [Boolean, Uint<16>] {
+  const receipt = receipts.lookup(disclose(Key {tag: disclose(tag), id: disclose(id)}));
+  return [receipt.accepted, receipt.code];
 }

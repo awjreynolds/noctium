@@ -57,6 +57,19 @@ pub struct MapInsert {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum RecordKeyMapValue {
+    Scalar {
+        #[serde(rename = "valueType")]
+        value_type: String,
+        expression: Expr,
+    },
+    Record {
+        fields: Vec<Expr>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum ConstructorAction {
     MapInsert {
         state: String,
@@ -87,9 +100,7 @@ pub enum ConstructorAction {
     InsertRecordKeyMap {
         state: String,
         fields: Vec<Expr>,
-        #[serde(rename = "valueType")]
-        value_type: String,
-        value: Expr,
+        value: RecordKeyMapValue,
         #[serde(default)]
         guard: Option<Expr>,
     },
@@ -512,10 +523,15 @@ fn record_map_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedReco
     Ok((slot, crate::checked_typed_record_schema(record)?))
 }
 
+enum RecordKeyMapValueSchema {
+    Scalar(ScalarType),
+    Record(crate::CheckedRecordSchema),
+}
+
 fn record_key_map_slot(
     plan: &Plan,
     name: &str,
-) -> Result<(usize, crate::CheckedRecordSchema, ScalarType)> {
+) -> Result<(usize, crate::CheckedRecordSchema, RecordKeyMapValueSchema)> {
     let (slot, declaration) = plan
         .state
         .iter()
@@ -527,7 +543,7 @@ fn record_key_map_slot(
             .kind
             .as_object()
             .is_some_and(|kind| kind.len() == 1 && kind.contains_key("tree")),
-        "constructor record-key Map insert requires a root scalar-valued record-key Map"
+        "constructor record-key Map insert requires a root record-key Map"
     );
     let tree = declaration
         .kind
@@ -545,16 +561,21 @@ fn record_key_map_slot(
         .filter(|key| key.len() == 1)
         .and_then(|key| key.get("composite"))
         .ok_or_else(|| anyhow!("constructor record-key Map key must be a record"))?;
-    let value_type = map[1]
+    let value = map[1]
         .as_object()
         .filter(|value| value.len() == 1)
-        .and_then(|value| value.get("scalar"))
-        .and_then(Json::as_str)
-        .ok_or_else(|| anyhow!("constructor record-key Map value must be scalar"))?;
+        .ok_or_else(|| anyhow!("constructor record-key Map value must be scalar or record"))?;
+    let value_schema = if let Some(value_type) = value.get("scalar").and_then(Json::as_str) {
+        RecordKeyMapValueSchema::Scalar(ScalarType::parse(value_type)?)
+    } else if let Some(record) = value.get("composite") {
+        RecordKeyMapValueSchema::Record(crate::checked_typed_record_schema(record)?)
+    } else {
+        bail!("constructor record-key Map value must be scalar or record")
+    };
     Ok((
         slot,
         crate::checked_typed_record_schema(key_schema)?,
-        ScalarType::parse(value_type)?,
+        value_schema,
     ))
 }
 
@@ -638,13 +659,33 @@ fn validate_ordered_action_targets(
                 flat_map_slot(plan, state)?;
             }
             ConstructorAction::InsertRecordKeyMap {
-                state, value_type, ..
+                state,
+                fields,
+                value,
+                ..
             } => {
-                let (_, _, expected_type) = record_key_map_slot(plan, state)?;
+                let (_, key_schema, expected_schema) = record_key_map_slot(plan, state)?;
                 ensure!(
-                    ScalarType::parse(value_type)? == expected_type,
-                    "constructor record-key Map value type mismatch"
+                    fields.len() == key_schema.fields.len(),
+                    "constructor record-key Map key field count mismatch"
                 );
+                match (value, expected_schema) {
+                    (
+                        RecordKeyMapValue::Scalar { value_type, .. },
+                        RecordKeyMapValueSchema::Scalar(expected_type),
+                    ) => ensure!(
+                        ScalarType::parse(value_type)? == expected_type,
+                        "constructor record-key Map value type mismatch"
+                    ),
+                    (
+                        RecordKeyMapValue::Record { fields },
+                        RecordKeyMapValueSchema::Record(schema),
+                    ) => ensure!(
+                        fields.len() == schema.fields.len(),
+                        "constructor record-key Map value field count mismatch"
+                    ),
+                    _ => bail!("constructor record-key Map value shape mismatch"),
+                }
             }
             ConstructorAction::CounterIncrement { state, .. } => {
                 constructor_counter_slot(plan, state)?;
@@ -800,7 +841,6 @@ fn apply_ordered_actions(
             ConstructorAction::InsertRecordKeyMap {
                 state: map_name,
                 fields,
-                value_type,
                 value,
                 guard,
             } => {
@@ -811,27 +851,47 @@ fn apply_ordered_actions(
                 )? {
                     continue;
                 }
-                let (slot, schema, expected_type) = record_key_map_slot(plan, map_name)?;
-                ensure!(
-                    ScalarType::parse(value_type)? == expected_type,
-                    "constructor record-key Map value type mismatch"
-                );
+                let (slot, schema, value_schema) = record_key_map_slot(plan, map_name)?;
                 let key_values =
                     crate::record_values_from_expressions(&schema, fields, environment)?;
                 let key = crate::aligned_record_value(&schema, &key_values)?;
-                let value = evaluate(value, environment)?;
-                ensure!(
-                    value.scalar_type() == expected_type,
-                    "constructor record-key Map value type mismatch"
-                );
-                value.validate()?;
+                let value = match (value, value_schema) {
+                    (
+                        RecordKeyMapValue::Scalar {
+                            value_type,
+                            expression,
+                        },
+                        RecordKeyMapValueSchema::Scalar(expected_type),
+                    ) => {
+                        ensure!(
+                            ScalarType::parse(value_type)? == expected_type,
+                            "constructor record-key Map value type mismatch"
+                        );
+                        let value = evaluate(expression, environment)?;
+                        ensure!(
+                            value.scalar_type() == expected_type,
+                            "constructor record-key Map value type mismatch"
+                        );
+                        value.validate()?;
+                        crate::aligned_storage_cell(&value)?
+                    }
+                    (
+                        RecordKeyMapValue::Record { fields },
+                        RecordKeyMapValueSchema::Record(value_schema),
+                    ) => {
+                        let values = crate::record_values_from_expressions(
+                            &value_schema,
+                            fields,
+                            environment,
+                        )?;
+                        crate::aligned_record_value(&value_schema, &values)?
+                    }
+                    _ => bail!("constructor record-key Map value shape mismatch"),
+                };
                 let Some(StateValue::Map(map)) = slots.get(slot) else {
                     bail!("constructor record-key Map requires map storage")
                 };
-                let map = map.insert(
-                    key,
-                    StateValue::Cell(Sp::new(crate::aligned_storage_cell(&value)?)),
-                );
+                let map = map.insert(key, StateValue::Cell(Sp::new(value)));
                 slots = slots
                     .insert(slot, StateValue::Map(map))
                     .ok_or_else(|| anyhow!("constructor record-key Map slot is outside state"))?;
