@@ -9,6 +9,14 @@ namespace OrdinaryNominalField
 
 noctium_field_type Amount := Field
 noctium_field_type Count := Field
+noctium_uint_type Small := UInt 8
+noctium_uint_type OtherSmall := UInt 8
+
+/- error: nominal Field aliases are only supported in ordinary circuit declarations -/
+#guard_msgs (substring := true) in
+noctium_interface FieldAliasInterface where
+  entry takeAmount accepts [amount : Amount] yields [result : Amount]
+end
 
 noctium_circuit addAmount where
   private left : Amount
@@ -19,10 +27,25 @@ noctium_circuit addAmount where
   output product : Amount := disclose(mul(left, right))
 end
 
+/- error: contract entrypoints do not retain nominal Field circuit ABI identity -/
+#guard_msgs (substring := true) in
+noctium_contract FieldContractAlias where
+  entry echo uses addAmount where
+    return result : Native := result
+  end
+end
+
 noctium_circuit castField where
   private raw : Native
   let amount : Amount := cast(Amount, raw)
   output result : Native := disclose(cast(Native, amount))
+end
+
+noctium_circuit inlineFieldCasts where
+  private left : Native
+  private right : Native
+  let total : Amount := add(cast(Amount, left), cast(Amount, right))
+  output result : Amount := disclose(total)
 end
 
 /- error: nominal Field arithmetic requires matching nominal operands -/
@@ -49,6 +72,23 @@ noctium_circuit rejectsMixedAliasBinding where
   output result : Amount := disclose(total)
 end
 
+/- error: nominal Field arithmetic requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsFieldAndNominalUIntMix where
+  private amount : Amount
+  private count : Small
+  output result : Amount := disclose(add(amount, count))
+end
+
+/- error: nominal UInt arithmetic requires matching nominal operands -/
+#guard_msgs (substring := true) in
+noctium_circuit retainsNominalUIntChecksInsideFieldExpression where
+  private amount : Amount
+  private first : Small
+  private second : OtherSmall
+  output result : Amount := disclose(add(amount, add(first, second)))
+end
+
 #guard addAmount.inputs.map (·.ty) == [.native, .native]
 #guard addAmount.outputs.map (·.ty) == [.native, .native, .native]
 
@@ -68,6 +108,11 @@ private def fieldContext : EvalContext := {
 
 #guard match castField.run fieldContext [("raw", .native 37)] with
   | .ok values => values == [("result", .native 37)]
+  | _ => Bool.false
+
+#guard match inlineFieldCasts.run fieldContext [
+    ("left", .native (fieldModulus - 1)), ("right", .native 2)] with
+  | .ok values => values == [("result", .native 1)]
   | _ => Bool.false
 
 end OrdinaryNominalField
