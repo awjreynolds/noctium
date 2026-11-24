@@ -147,7 +147,11 @@ expression or statements in the same block. A shadowed binding has its own
 scope. The callback may pass its item through local aliases and conditional
 result arms. A compatible typed arm also supplies the type of an unresolved
 sibling arm when the context has no declared result type. Conditions and
-arithmetic operands still require their own types.
+arithmetic operands still require their own types. Equality with an empty
+tuple or vector only needs the length of an empty map. In this case the source
+witness runs once, the callback stays unevaluated, and equality returns true
+even when both callback result arms have unresolved types. A value used at a
+typed boundary still needs an element type.
 In a readable fold, the seed determines the omitted accumulator type.
 
 The [empty-tuple fixture](../../tests/EmptyTupleIteration.lean) folds over the result

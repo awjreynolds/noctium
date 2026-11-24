@@ -209,20 +209,24 @@ impl Fixture {
     }
 }
 
-struct EmptyIdentityFixture {
+struct EmptyMapFixture {
     binding: Json,
     control: Json,
     plan: Plan,
     circuit: IrSource,
 }
 
-impl EmptyIdentityFixture {
-    fn load() -> anyhow::Result<Self> {
+impl EmptyMapFixture {
+    fn load(
+        entrypoint: &str,
+        source_export: &str,
+        expected_calls: &[&str],
+    ) -> anyhow::Result<Self> {
         let directory = PathBuf::from(
             std::env::var_os("NOCTIUM_READABLE_ITERATION_DIR")
                 .expect("NOCTIUM_READABLE_ITERATION_DIR"),
         );
-        let stem = "ReadableIteration.emptyIdentity";
+        let stem = format!("ReadableIteration.{entrypoint}");
         let binding: Json =
             serde_json::from_slice(&fs::read(directory.join(format!("{stem}.witness.json")))?)?;
         let control: Json = serde_json::from_slice(&fs::read(
@@ -232,15 +236,14 @@ impl EmptyIdentityFixture {
             serde_json::from_str::<Json>(control["binding"].as_str().expect("binding"))?,
             binding
         );
-        assert_eq!(
-            binding["sourceExport"],
-            "noctium.witness-circuit.emptyNativeMap.v1"
-        );
-        assert_eq!(binding["target"]["entrypoint"], "emptyIdentity");
+        assert_eq!(binding["sourceExport"], source_export);
+        assert_eq!(binding["target"]["entrypoint"], entrypoint);
         let calls = binding["calls"].as_array().expect("emitted witness calls");
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0]["name"], "iterationEmptyTuple");
-        assert_eq!(calls[1]["name"], "acceptEmptyNativeVector");
+        let call_names = calls
+            .iter()
+            .map(|call| call["name"].as_str().expect("witness name"))
+            .collect::<Vec<_>>();
+        assert_eq!(call_names, expected_calls);
 
         let plan: Plan =
             serde_json::from_slice(&fs::read(directory.join(format!("{stem}.impact.json")))?)?;
@@ -254,17 +257,22 @@ impl EmptyIdentityFixture {
         })
     }
 
-    fn session(&self, attempt_id: &str) -> anyhow::Result<Session> {
+    fn session(
+        &self,
+        attempt_id: &str,
+        entrypoint: &str,
+        inputs: BTreeMap<String, Json>,
+    ) -> anyhow::Result<Session> {
         let binding_text = self.control["binding"].as_str().expect("control binding");
         let digest = hex::encode(Sha256::digest(binding_text.as_bytes()));
         Ok(Session::from_json_with_invocation_target(
             self.control.clone(),
-            BTreeMap::new(),
+            inputs,
             source_context(&self.control, attempt_id),
             Some(&digest),
             Some(InvocationTarget {
                 contract_address: "a".repeat(64),
-                entrypoint: "emptyIdentity".into(),
+                entrypoint: entrypoint.into(),
             }),
         )?)
     }
@@ -416,9 +424,13 @@ fn readable_iteration_generates_and_binds_native_proof() -> anyhow::Result<()> {
 #[test]
 #[ignore = "requires fresh ReadableIteration outputs in NOCTIUM_READABLE_ITERATION_DIR"]
 fn empty_identity_map_passes_an_empty_native_vector_without_a_map_callback() -> anyhow::Result<()> {
-    let fixture = EmptyIdentityFixture::load()?;
+    let fixture = EmptyMapFixture::load(
+        "emptyIdentity",
+        "noctium.witness-circuit.emptyNativeMap.v1",
+        &["iterationEmptyTuple", "acceptEmptyNativeVector"],
+    )?;
     let attempt_id = format!("{:064x}", 3);
-    let mut session = fixture.session(&attempt_id)?;
+    let mut session = fixture.session(&attempt_id, "emptyIdentity", BTreeMap::new())?;
 
     let first = session.advance()?;
     assert_eq!(first["status"], "need_host");
@@ -457,6 +469,59 @@ fn empty_identity_map_passes_an_empty_native_vector_without_a_map_callback() -> 
         ContractAddress::default(),
     )?;
     assert_eq!(execution.returns_json()["mapped"], "41");
-    assert_eq!(check(&execution, &fixture.circuit)?, execution.activity_schedule);
+    assert_eq!(
+        check(&execution, &fixture.circuit)?,
+        execution.activity_schedule
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ReadableIteration outputs in NOCTIUM_READABLE_ITERATION_DIR"]
+fn empty_map_tuple_equality_uses_only_the_empty_tuple_witness() -> anyhow::Result<()> {
+    let fixture = EmptyMapFixture::load(
+        "emptyTupleEquality",
+        "noctium.witness-circuit.emptyMapTupleEquality.v1",
+        &["iterationEmptyTuple"],
+    )?;
+    let attempt_id = format!("{:064x}", 4);
+    let mut session = fixture.session(
+        &attempt_id,
+        "emptyTupleEquality",
+        BTreeMap::from([("chooseItem".into(), json!(true))]),
+    )?;
+
+    let first = session.advance()?;
+    assert_eq!(first["status"], "need_host");
+    assert_eq!(first["request"]["name"], "iterationEmptyTuple");
+    assert_eq!(session.private_request()?["arguments"], json!({}));
+    session.resume_typed(reply(
+        &first["request"],
+        &attempt_id,
+        json!({"kind":"tuple","items":[]}),
+    )?)?;
+
+    let completed = session.advance()?;
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["result"], json!(true));
+
+    let completion = session.private_completion(&fixture.binding["nativeRelation"])?;
+    let inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
+    let initial = create_state(
+        &fixture.plan,
+        &BTreeMap::from([("total".into(), json!("0"))]),
+    )?;
+    let execution = prepare(
+        &fixture.plan,
+        &inputs,
+        &initial,
+        &ledger::structure::INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )?;
+    assert_eq!(execution.returns_json()["empty"], json!(true));
+    assert_eq!(
+        check(&execution, &fixture.circuit)?,
+        execution.activity_schedule
+    );
     Ok(())
 }

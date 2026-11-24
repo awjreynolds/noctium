@@ -6,6 +6,7 @@ witness iterationSeed(): Field;
 witness iterationBytes(): Bytes<2>;
 witness iterationVisit(item: Uint<8>): Field;
 witness emptyTupleItems(): [];
+witness emptyMapVisit(item: Field): Field;
 witness acceptEmptyNativeVector(values: Vector<0, Field>): Field;
 witness blockItems(seed: Field): Vector<2, Uint<8>>;
 witness blockOffset(seed: Field): Field;
@@ -59,6 +60,15 @@ export circuit emptyNativeMapSiblingThen(chooseItem: Boolean): Boolean {
 
 export circuit emptyNativeMapUnresolvedBranches(chooseItem: Boolean): Boolean {
   const mapped = map((item) => chooseItem ? item : item, emptyTupleItems());
+  return mapped == [];
+}
+
+// Keep a host witness in the callback so the runtime comparator proves the
+// zero-length map evaluates its source but never invokes its callback.
+export circuit emptyNativeMapCallback(chooseItem: Boolean): Boolean {
+  const mapped = map((item) => chooseItem
+    ? emptyMapVisit(item)
+    : emptyMapVisit(item), emptyTupleItems());
   return mapped == [];
 }
 

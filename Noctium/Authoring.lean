@@ -214,6 +214,7 @@ private structure Lowered where
   type : ResultType
   term : Noctium.Helpers.Term
   nominalUInt : Option NominalUIntType := none
+  shapeOnly : _root_.Bool := _root_.Bool.false
   before : List Statement := []
   signatures : List WitnessSignature := []
   witnessNames : List String := []
@@ -241,6 +242,7 @@ private structure AuthoringExprState where
   nextCall : Nat := 0
   nextLet : Nat := 0
   iterationParameters : List IterationParameter := []
+  shapeOnlyRefs : List String := []
   allowAssertThen : _root_.Bool := _root_.Bool.false
   deriving Inhabited
 
@@ -786,6 +788,46 @@ private def expectedVectorFromFollowingStatements (name : String)
   match contexts.eraseDups with
   | [type] => pure (some type)
   | _ => pure none
+
+-- An unknown map result remains local to a shape comparison. In particular,
+-- a typed use of a shadowing binding supplies no evidence for the outer map.
+private partial def hasShapeEqualityUse (aliases : List String) (stx : TSyntax `nlexpr) :
+    _root_.Bool :=
+  if aliases.isEmpty then _root_.Bool.false
+  else match stx with
+  | `(nlexpr| eq($left, $right)) =>
+    expressionReturnsAlias aliases left || expressionReturnsAlias aliases right ||
+      hasShapeEqualityUse aliases left || hasShapeEqualityUse aliases right
+  | `(nlexpr| let $id:ident := $value:nlexpr in $body:nlexpr) =>
+    hasShapeEqualityUse aliases value ||
+      hasShapeEqualityUse (aliasAfterBinding aliases id.getId.toString value) body
+  | `(nlexpr| do $steps:noctium_callback_step* return $result:nlexpr end) => Id.run do
+    let mut localAliases := aliases
+    for step in steps do
+      let some (binder, value) := callbackStep step | continue
+      if hasShapeEqualityUse localAliases value then return _root_.Bool.true
+      if let some id := binder then
+        localAliases := aliasAfterBinding localAliases id.getId.toString value
+    return hasShapeEqualityUse localAliases result
+  | `(nlexpr| map([$sequences,*], fun $parameters:ident* => $body)) =>
+    sequences.getElems.any (hasShapeEqualityUse aliases) ||
+      hasShapeEqualityUse
+        (aliases.filter fun name => !parameters.toList.any (·.getId.toString == name)) body
+  | `(nlexpr| fold($initial, [$sequences,*], fun $parameters:ident* => $body)) =>
+    hasShapeEqualityUse aliases initial || sequences.getElems.any (hasShapeEqualityUse aliases) ||
+      hasShapeEqualityUse
+        (aliases.filter fun name => !parameters.toList.any (·.getId.toString == name)) body
+  | _ => stx.raw.getArgs.any fun child => hasShapeEqualityUse aliases ⟨child⟩
+
+private def hasFollowingShapeEqualityUse (name : String)
+    (following : List (TSyntax `noctium_witness_statement)) : _root_.Bool := Id.run do
+  let mut aliases := [name]
+  for statement in following do
+    if aliases.isEmpty then break
+    if hasShapeEqualityUse aliases ⟨statement.raw⟩ then return _root_.Bool.true
+    if let `(noctium_witness_statement| let $id:ident $[: $_:nltype]? := $value:nlexpr) := statement then
+      aliases := aliasAfterBinding aliases id.getId.toString value
+  return _root_.Bool.false
 
 private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   match stx with
@@ -1595,7 +1637,8 @@ private def lowerFabDigest (site : Syntax) (algorithm : Helpers.FabDigest)
     term := .bytes (.fabDigest algorithm type (operands.map Prod.fst)) (operands.map Prod.snd)}
 
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
-    (stx : TSyntax `nlexpr) (expected : Option ResultType := none) : ExprM Lowered := do
+    (stx : TSyntax `nlexpr) (expected : Option ResultType := none)
+    (allowShapeOnly : _root_.Bool := _root_.Bool.false) : ExprM Lowered := do
   if let some type := expected then
     if let some value ← lowerExpectedIterationRef env type stx then
       return value
@@ -1604,7 +1647,12 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     match env.find? (fun value => value.1 == id.getId.toString) with
     | some (_, type, term, nominalUInt) =>
       if let .ref refName := term then
-        match (← get).iterationParameters.find? (·.reference == refName) with
+        let state ← get
+        if state.shapeOnlyRefs.contains refName then
+          unless allowShapeOnly && expected.isNone do
+            throwErrorAt id "empty map has no element type. Use a typed result context at its definition"
+          return {type, term, shapeOnly := _root_.Bool.true}
+        match state.iterationParameters.find? (·.reference == refName) with
         | some parameter =>
           match parameter.views with
           | [(viewName, viewType)] => pure {type := viewType, term := .ref viewName}
@@ -1848,8 +1896,23 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       iterationProgram := some program
       requiresOutputViews := _root_.Bool.true}
     let bindings ← prepareCallbackParameters parameterNames elementTypes
-    let callback ← lowerExpr programName (callPrefix ++ ".map")
-      (callbackSurfaceEnv bindings ++ env) body expectedElement
+    let callbackEnv := callbackSurfaceEnv bindings ++ env
+    let lowerCallback := fun expectedType =>
+      lowerExpr programName (callPrefix ++ ".map") callbackEnv body expectedType
+    let (callback, shapeOnly) ←
+      if allowShapeOnly && expected.isNone && sourceLength == some 0 &&
+          elementTypes.any Option.isNone then do
+        let beforeCallback ← get
+        let commandState ← liftM (get : CommandElabM Command.State)
+        try
+          pure (← lowerCallback none, _root_.Bool.false)
+        catch error =>
+          unless ← liftM (isUnresolvedIterationDiagnostic beforeCallback error) do throw error
+          modify fun _ => beforeCallback
+          liftM (modifyThe Command.State (fun _ => commandState) : CommandElabM Unit)
+          -- Unit is only a checkable result stand-in for code with zero calls.
+          pure (← lowerCallback (some .unit), _root_.Bool.true)
+      else pure (← lowerCallback expectedElement, _root_.Bool.false)
     let callbackState ← get
     let localRefs := bindings.filterMap fun binding =>
       if binding.type.isNone then some binding.reference else none
@@ -1866,7 +1929,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       (values.flatMap (·.signatures) ++ callback.signatures)
     let (compiledProgram, term) ←
       match Iteration.mapWithLimits {} program 0 helperEnv sourceSpan terms operator
-          expectedElement with
+          (if shapeOnly then some .unit else expectedElement) with
       | .ok result => pure result
       | .error diagnostic => throwErrorAt stx diagnostic.message
     let type ← match Helpers.inferWithLimits {} compiledProgram 0 helperEnv sourceSpan term with
@@ -1877,7 +1940,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       iterationWitnesses := compiledProgram.witnesses
       requiresOutputViews := _root_.Bool.true}
     pure {
-      type, term, before
+      type, term, before, shapeOnly
       signatures := uniqueWitnesses (values.flatMap (·.signatures) ++ callback.signatures)
       witnessNames := (values.flatMap (·.witnessNames) ++ callback.witnessNames).eraseDups
       generatedValidity :=
@@ -1954,11 +2017,19 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
         match contextualUses.eraseDups with
         | [type] => some type
         | _ => none
+    let shapeUse := valueExpected.isNone &&
+      (needsExpectedResult value || !(← get).shapeOnlyRefs.isEmpty) &&
+      hasShapeEqualityUse [name] body
     let value ← lowerExpr programName callPrefix env value valueExpected
+      (allowShapeOnly := shapeUse || (allowShapeOnly && expressionReturnsAlias [name] body))
     let internalName ← freshReadableLet id
     let ref := Noctium.Helpers.Term.ref internalName
+    if value.shapeOnly then
+      modify fun state => {state with shapeOnlyRefs := internalName :: state.shapeOnlyRefs}
     let body ← lowerExpr programName callPrefix
-      ((id.getId.toString, value.type, ref, value.nominalUInt) :: env) body expected
+      ((id.getId.toString, value.type, ref, value.nominalUInt) :: env) body expected allowShapeOnly
+    if value.shapeOnly then
+      modify fun state => {state with shapeOnlyRefs := state.shapeOnlyRefs.filter (· != internalName)}
     pure
       { body with
         before := value.before ++ [.bind internalName value.type value.term] ++ body.before,
@@ -2090,8 +2161,18 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
   | `(nlexpr| sub($left, $right)) => lowerArithmetic programName callPrefix env stx .sub left right
   | `(nlexpr| mul($left, $right)) => lowerArithmetic programName callPrefix env stx .mul left right
   | `(nlexpr| eq($left, $right)) => do
-    let left ← lowerExpr programName callPrefix env left
-    let right ← lowerExpr programName callPrefix env right
+    let left ← lowerExpr programName callPrefix env left (allowShapeOnly := _root_.Bool.true)
+    let right ← lowerExpr programName callPrefix env right (allowShapeOnly := _root_.Bool.true)
+    if left.shapeOnly || right.shapeOnly then
+      let isEmptySequence : ResultType → _root_.Bool
+        | .composite (.vector 0 _) | .composite (.tuple []) => _root_.Bool.true
+        | _ => _root_.Bool.false
+      unless isEmptySequence left.type && isEmptySequence right.type do
+        throwErrorAt stx "shape-only empty map equality requires two zero-length sequences"
+      let span ← liftM (spanValue stx)
+      let before := [left, right].flatMap fun value =>
+        value.before ++ [.evaluate (.at span value.term)]
+      return {mergeLowered (.scalar .bool) (.bool _root_.Bool.true) [left, right] with before}
     match left.type, right.type with
     | .composite leftType, .composite rightType => do
       let compactEnumMatch ← compactFieldlessEnumCompatible stx leftType rightType
@@ -3345,11 +3426,12 @@ private structure ReadableBody where
   helperProgram : Option Helpers.Program := none
   requiresOutputViews : _root_.Bool := _root_.Bool.false
   iterationParameters : List IterationParameter := []
+  shapeOnlyRefs : List String := []
   deriving Inhabited
 
 private def ReadableBody.lower (body : ReadableBody) (programName path : String)
     (exprState : AuthoringExprState) (source : TSyntax `nlexpr)
-    (expected : Option ResultType := none) :
+    (expected : Option ResultType := none) (allowShapeOnly : _root_.Bool := _root_.Bool.false) :
     CommandElabM (Lowered × ReadableBody) := do
   let action : ExprM Lowered := do
     match expected with
@@ -3357,7 +3439,7 @@ private def ReadableBody.lower (body : ReadableBody) (programName path : String)
       match ← lowerExpectedIterationRef body.env type source with
       | some value => pure value
       | none => lowerExpr programName ("s" ++ path) body.env source (some type)
-    | none => lowerExpr programName ("s" ++ path) body.env source
+    | none => lowerExpr programName ("s" ++ path) body.env source (allowShapeOnly := allowShapeOnly)
   let (value, state) ← action.run
     {exprState with
       composites := body.composites
@@ -3365,7 +3447,8 @@ private def ReadableBody.lower (body : ReadableBody) (programName path : String)
       iterationWitnesses := body.witnesses
       requiresOutputViews := body.requiresOutputViews
       nextLet := body.nextLet
-      iterationParameters := body.iterationParameters}
+      iterationParameters := body.iterationParameters
+      shapeOnlyRefs := body.shapeOnlyRefs}
   pure (value, {body with
     composites := state.composites
     nextLet := state.nextLet
@@ -3538,8 +3621,11 @@ private partial def lowerReadableStatement (programName path : String)
     let expected := match annotation with
       | some annotation => some (ResultType.scalar annotation.type)
       | none => laterVectorContext
+    let shapeUse := expected.isNone &&
+      (needsExpectedResult source || !body.shapeOnlyRefs.isEmpty) &&
+      hasFollowingShapeEqualityUse valueName (following ())
     let (lowered, body) ← body.lower programName path exprState source
-      expected
+      expected (allowShapeOnly := shapeUse)
     let value ← match annotation with
       | some annotation => coerceSourceType source lowered annotation
       | none => pure lowered
@@ -3550,6 +3636,7 @@ private partial def lowerReadableStatement (programName path : String)
     pure {body with
       env := (valueName, value.type, .ref valueName, value.nominalUInt) :: body.env
       statements := body.statements ++ value.before ++ [.bind valueName value.type (.at (← spanValue statement) value.term)]
+      shapeOnlyRefs := if value.shapeOnly then valueName :: body.shapeOnlyRefs else body.shapeOnlyRefs
       logicalAliases}
   | `(noctium_witness_statement| prove $source:nlexpr $[as $binder:ident]?) => do
     if let some id := binder then

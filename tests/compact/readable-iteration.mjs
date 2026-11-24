@@ -56,6 +56,13 @@ assert.notEqual(incompatibleBranches.status, 0,
   'Compact should reject incompatible Field and Boolean map branches');
 assert.match(`${incompatibleBranches.stderr}\n${incompatibleBranches.stdout}`,
   /mismatch between type Field and type Boolean of condition branches/);
+const arithmeticWithoutItemType = compileProbe('empty-map-arithmetic-without-item-type', `
+  export circuit emptyMapArithmeticWithoutItemType(): Vector<0, Field> {
+    return map((item) => item + item, emptyTupleItems());
+  }
+`);
+assert.notEqual(arithmeticWithoutItemType.status, 0,
+  'Compact should reject callback arithmetic when an empty tuple leaves the item type unresolved');
 
 const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
 mkdirSync(dirname(runtimeLink), { recursive: true });
@@ -69,6 +76,7 @@ assert.equal(runtime.versionString, '0.21.0');
 const blockCalls = [];
 let blockOffset = 10n;
 const emptyNativeMapCalls = [];
+const emptyMapVisitCalls = [];
 const contract = new Contract({
   iterationSeed: ({ privateState }) => [[...privateState, 'seed'], 7n],
   iterationBytes: ({ privateState }) => [[...privateState, 'bytes'], Uint8Array.from([4, 5])],
@@ -76,6 +84,10 @@ const contract = new Contract({
   emptyTupleItems: ({ privateState }) => {
     emptyNativeMapCalls.push('emptyTupleItems');
     return [privateState, []];
+  },
+  emptyMapVisit: ({ privateState }, item) => {
+    emptyMapVisitCalls.push(item);
+    return [privateState, item];
   },
   acceptEmptyNativeVector: ({ privateState }, values) => {
     emptyNativeMapCalls.push('acceptEmptyNativeVector');
@@ -144,6 +156,13 @@ const unresolvedBranches = await contract.circuits.emptyNativeMapUnresolvedBranc
 assert.equal(unresolvedBranches.result, true);
 assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
 emptyNativeMapCalls.length = 0;
+const emptyCallback = await contract.circuits.emptyNativeMapCallback(
+  circuitContext('emptyNativeMapCallback'), true,
+);
+assert.equal(emptyCallback.result, true);
+assert.deepEqual(emptyNativeMapCalls, ['emptyTupleItems']);
+assert.deepEqual(emptyMapVisitCalls, [], 'zero-length map must not invoke its callback witness');
+emptyNativeMapCalls.length = 0;
 const declaredContext = await contract.circuits.emptyNativeMapDeclaredContext(
   circuitContext('emptyNativeMapDeclaredContext'),
 );
@@ -154,6 +173,8 @@ console.log(JSON.stringify({
   bothUnresolved: unresolvedBranches.result,
   declaredContext: declaredContext.result,
   incompatibleBranches: 'rejected',
+  arithmeticWithoutItemType: 'rejected',
+  emptyCallbackCalls: emptyMapVisitCalls,
   calls: ['emptyTupleItems'],
 }));
 
