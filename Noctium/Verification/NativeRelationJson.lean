@@ -387,6 +387,26 @@ def decode (json : Json) : Except String Program := do
     communicationsCommitment
   }
 
+structure ScalarCall where
+  arguments : List String
+  body : Program
+  deriving Repr, DecidableEq
+
+/-- Preserve ordered scalar call-header names separately from transcript inputs.
+Their values are fixed in the assignment used to interpret the body. -/
+def decodeScalarCall (json : Json) : Except String ScalarCall := do
+  let fields ← json.getObj?
+  let inputs ← arrayField json "inputs"
+  let arguments ← inputs.toList.mapM fun input => do
+    exactFields input ["name", "type"]
+    checkNativeType (← input.getObjVal? "type")
+    let name ← stringField input "name"
+    ensure (validIdentifier name) "invalid scalar call input name"
+    pure name
+  ensure (arguments.eraseDups.length == arguments.length) "repeated scalar call input"
+  let body ← decode (.obj (fields.insert "inputs" (.arr #[])))
+  pure {arguments, body}
+
 private def hexByte (value : Nat) : String :=
   let digit (n : Nat) : Char := Char.ofNat ((if n < 10 then '0'.toNat else 'a'.toNat - 10) + n)
   String.ofList [digit (value / 16), digit (value % 16)]

@@ -1,5 +1,5 @@
 import Noctium.Frontend
-import Noctium.Backend.Zkir
+import Noctium.Backend.LedgerReadOptimization
 
 open scoped Noctium
 open Noctium
@@ -47,3 +47,23 @@ end
 #guard (NestedRecordKeyByteValues.validate Capabilities.source).isOk
 #guard NestedRecordKeyByteValues.entrypoints.all fun operation =>
   (Backend.Zkir.lowerEntrypoint NestedRecordKeyByteValues.state operation).isOk
+
+#guard match Backend.LedgerReadOptimization.lowerRecordMap
+    NestedRecordKeyByteValues "lookup" "profile" with
+  | .ok operation => operation.certificate.fieldWidths == [1, 33] &&
+      operation.certificate.chunks ==
+        [("%input__noctium_bytes_profile_label_0", 8),
+         ("%input__noctium_bytes_profile_digest_0", 16),
+         ("%input__noctium_bytes_profile_digest_1", 248)]
+  | .error _ => _root_.Bool.false
+
+private def guardedRecordKeyByteLookup : Contract :=
+  {NestedRecordKeyByteValues with entrypoints :=
+    NestedRecordKeyByteValues.entrypoints.map fun operation =>
+      if operation.name == "lookup" then
+        {operation with effectGuards := [some (.bool _root_.Bool.true)]}
+      else operation}
+
+#guard match Backend.LedgerReadBound.checkRecordMap guardedRecordKeyByteLookup "lookup" "profile" with
+  | .error message => message == "guarded record Map reads do not have unconditional byte bounds"
+  | .ok _ => _root_.Bool.false

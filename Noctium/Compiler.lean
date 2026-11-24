@@ -1504,21 +1504,37 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       if !(emit .witness) && witnesses.any (·.circuitName.toString == ep.circuit.name) then
         throwError "ledger entrypoint '{name}.{ep.name}' requires --emit witness"
       let (plan, json) ← if !ledgerReadBound.isEmpty && s!"{name}.{ep.name}" == ledgerReadBound then do
-        let reads := ep.effects.zipIdx.filterMap fun (effect, index) => match effect with
+        let reads := ep.effects.zipIdx.filterMap fun (effect, index) =>
+          match effect with
           | .readCell stateName destination (.uint maximum) =>
             if maximum == 2 ^ 128 - 1 && (ep.effectGuardAt index).isNone &&
                 contract.state.any (fun declaration => declaration.name == stateName &&
-                  declaration.cellAlignment? == some .u128) then some (stateName, destination) else none
+                  declaration.cellAlignment? == some .u128) then some (some stateName, destination) else none
+          | .readRecordMapComposite _ destination _ _ _ _ => some (none, destination)
           | _ => none
-        let [(stateName, destination)] := reads
-          | throwError "--ledger-read-bound requires one unguarded byte-aligned UInt128 read in '{ledgerReadBound}'"
-        match Backend.LedgerReadOptimization.lower contract ep.name stateName destination with
-        | .error reason => throwError "ledger-bound lowering for '{ledgerReadBound}': {reason}"
-        | .ok optimized =>
-          ledgerReadAssumptions := ledgerReadAssumptions.insert (nativeCircuitFile name ep) (Json.mkObj [
-            ("input", toJson optimized.proofInput), ("stateCell", toJson stateName),
-            ("encoding", toJson ("Bytes(16)" : String))])
-          pure (optimized.plan, optimized.optimized)
+        let [(sourceCell, destination)] := reads
+          | throwError "--ledger-read-bound requires one eligible aligned UInt128 cell or fixed-byte record Map read in '{ledgerReadBound}'"
+        let (plan, relation, assumption) ← match sourceCell with
+          | some stateName =>
+            match Backend.LedgerReadOptimization.lower contract ep.name stateName destination with
+            | .error reason => throwError "ledger-bound lowering for '{ledgerReadBound}': {reason}"
+            | .ok optimized => pure (optimized.plan, optimized.optimized, Json.mkObj [
+                ("input", toJson optimized.proofInput), ("stateCell", toJson stateName),
+                ("encoding", toJson ("Bytes(16)" : String))])
+          | none =>
+            match Backend.LedgerReadOptimization.lowerRecordMap contract ep.name destination with
+            | .error reason => throwError "ledger-bound lowering for '{ledgerReadBound}': {reason}"
+            | .ok optimized =>
+              let certificate := optimized.certificate
+              pure (optimized.plan, optimized.optimized, Json.mkObj [
+                ("stateMap", toJson certificate.stateName),
+                ("destination", toJson certificate.destination),
+                ("popeqGroup", toJson certificate.popeqGroup),
+                ("fieldWidths", toJson certificate.fieldWidths),
+                ("chunks", toJson (certificate.chunks.map fun (input, bits) => Json.mkObj [
+                  ("input", toJson input), ("bits", toJson bits)]))])
+        ledgerReadAssumptions := ledgerReadAssumptions.insert (nativeCircuitFile name ep) assumption
+        pure (plan, relation)
       else
         match Backend.Zkir.lowerPrunedEntrypoint contract.state ep rewrites with
         | .error d => failDiagnostic d
