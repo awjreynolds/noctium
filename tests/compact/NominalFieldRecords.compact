@@ -1,0 +1,40 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Count = Field;
+
+export struct Memo {
+  amount: Amount;
+}
+
+export ledger memo: Memo;
+export ledger memos: Map<Field, Memo>;
+export ledger records: List<Memo>;
+
+export circuit writeCell(amount: Amount): [] {
+  const exposed = disclose(amount);
+  memo = disclose(Memo { amount: exposed });
+}
+
+export circuit readCell(): Amount {
+  return memo.amount;
+}
+
+export circuit writeMap(key: Field, amount: Amount): [] {
+  const exposed = disclose(amount);
+  memos.insert(disclose(key), disclose(Memo { amount: exposed }));
+}
+
+export circuit readMap(key: Field): Amount {
+  return memos.lookup(disclose(key)).amount;
+}
+
+export circuit pushList(amount: Amount): [] {
+  const exposed = disclose(amount);
+  records.pushFront(disclose(Memo { amount: exposed }));
+}
+
+export circuit readList(): Amount {
+  return records.head().value.amount;
+}
