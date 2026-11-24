@@ -5915,8 +5915,8 @@
       "id": "C-STDLIB-NEG",
       "layer": "standard-library",
       "surface": "neg",
-      "noctiumStatus": "subset",
-      "notes": "The typed Lean foreignNeg lowering matches pinned Compact for the base and scalar fields of Secp256k1, Secp256r1 and Curve25519. A native 3.2.1 fixture checks one nonzero value and zero for each field. ABI and full semantic coverage remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium match modular negation for all six exported foreign Base and Scalar types: Secp256k1, Secp256r1 and Curve25519. Ordinary, zero and maximum canonical (modulus minus one) inputs match in Compact pure circuits and the Noctium circuit plus contract entrypoint routes. A readable Secp256k1Base witness route also matches. Native ZKIR 3.2.1 checking and a K14 proof verify the relation, and a changed output commitment rejects. Canonical typed host values cover all six types.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5930,18 +5930,22 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
         "tests/ForeignFieldNegInv.lean",
+        "tests/compact/ForeignFieldNegInv.compact",
         "runtime/tests/foreign_field_neg_inv.rs",
         "tests/compact/foreign-field-neg-inv.mjs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-INV",
       "layer": "standard-library",
       "surface": "inv",
-      "noctiumStatus": "subset",
-      "notes": "The typed Lean foreignInv lowering matches pinned Compact for the base and scalar fields of Secp256k1, Secp256r1 and Curve25519. The native 3.2.1 fixture checks one nonzero inverse per field and rejects each active zero inverse. ABI and full semantic coverage remain unverified.",
+      "noctiumStatus": "equivalent",
+      "notes": "Pinned Compact 0.36.1 and Noctium match modular inversion for all six exported foreign Base and Scalar types: Secp256k1, Secp256r1 and Curve25519. Ordinary and maximum canonical (modulus minus one) inputs match in Compact pure circuits and the Noctium circuit plus contract entrypoint routes. A readable Secp256k1Base witness route also matches. Both reject inverse zero when active for every type. Native ZKIR 3.2.1 checking and a K14 proof verify the relation, and a changed output commitment rejects. Canonical typed host values cover all six types.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5955,11 +5959,15 @@
         "ABI"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "ABI",
         "tests/ForeignFieldNegInv.lean",
+        "tests/compact/ForeignFieldNegInv.compact",
         "runtime/tests/foreign_field_neg_inv.rs",
         "tests/compact/foreign-field-neg-inv.mjs"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-STDLIB-HASHTOCURVE",

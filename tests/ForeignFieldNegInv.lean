@@ -6,6 +6,22 @@ import Noctium.Disclosure
 open scoped Noctium
 open Noctium
 
+private def foreignFieldWire : Helpers.Wire.Codec := {
+  payload := .structure "ForeignFieldNegInv.FieldValue"
+  frameBytes := 32
+  composites := {structures := [{
+    id := "ForeignFieldNegInv.FieldValue"
+    fields := [{name := "value", type := .scalar (.foreign (.base .secp256k1))}]
+  }]}
+}
+
+noctium_witness_circuit readableForeignFieldNegInv using foreignFieldWire where
+  private input : Payload foreignFieldWire
+  let value : Secp256k1Base := field(input, value)
+  output negative : Secp256k1Base := disclose(foreignNeg(value))
+  output inverse : Secp256k1Base := disclose(foreignInv(value))
+end
+
 noctium_circuit foreignFieldNegInv where
   private k1Base : Secp256k1Base
   private k1Scalar : Secp256k1Scalar
@@ -19,6 +35,12 @@ noctium_circuit foreignFieldNegInv where
   private r1ScalarZero : Secp256r1Scalar
   private c255BaseZero : Curve25519Base
   private c255ScalarZero : Curve25519Scalar
+  private k1BaseBoundary : Secp256k1Base
+  private k1ScalarBoundary : Secp256k1Scalar
+  private r1BaseBoundary : Secp256r1Base
+  private r1ScalarBoundary : Secp256r1Scalar
+  private c255BaseBoundary : Curve25519Base
+  private c255ScalarBoundary : Curve25519Scalar
   private rejectK1BaseInvZero : Bool
   private rejectK1ScalarInvZero : Bool
   private rejectR1BaseInvZero : Bool
@@ -43,6 +65,18 @@ noctium_circuit foreignFieldNegInv where
   output r1ScalarZeroNegOutput : Secp256r1Scalar := disclose(foreignNeg(r1ScalarZero))
   output c255BaseZeroNegOutput : Curve25519Base := disclose(foreignNeg(c255BaseZero))
   output c255ScalarZeroNegOutput : Curve25519Scalar := disclose(foreignNeg(c255ScalarZero))
+  output k1BaseBoundaryNegOutput : Secp256k1Base := disclose(foreignNeg(k1BaseBoundary))
+  output k1BaseBoundaryInvOutput : Secp256k1Base := disclose(foreignInv(k1BaseBoundary))
+  output k1ScalarBoundaryNegOutput : Secp256k1Scalar := disclose(foreignNeg(k1ScalarBoundary))
+  output k1ScalarBoundaryInvOutput : Secp256k1Scalar := disclose(foreignInv(k1ScalarBoundary))
+  output r1BaseBoundaryNegOutput : Secp256r1Base := disclose(foreignNeg(r1BaseBoundary))
+  output r1BaseBoundaryInvOutput : Secp256r1Base := disclose(foreignInv(r1BaseBoundary))
+  output r1ScalarBoundaryNegOutput : Secp256r1Scalar := disclose(foreignNeg(r1ScalarBoundary))
+  output r1ScalarBoundaryInvOutput : Secp256r1Scalar := disclose(foreignInv(r1ScalarBoundary))
+  output c255BaseBoundaryNegOutput : Curve25519Base := disclose(foreignNeg(c255BaseBoundary))
+  output c255BaseBoundaryInvOutput : Curve25519Base := disclose(foreignInv(c255BaseBoundary))
+  output c255ScalarBoundaryNegOutput : Curve25519Scalar := disclose(foreignNeg(c255ScalarBoundary))
+  output c255ScalarBoundaryInvOutput : Curve25519Scalar := disclose(foreignInv(c255ScalarBoundary))
 end
 
 noctium_contract ForeignFieldNegInv where
@@ -85,6 +119,22 @@ noctium_contract ForeignFieldNegInv where
     return r1ScalarZeroNeg : Secp256r1Scalar := r1ScalarZeroNegOutput
     return c255BaseZeroNeg : Curve25519Base := c255BaseZeroNegOutput
     return c255ScalarZeroNeg : Curve25519Scalar := c255ScalarZeroNegOutput
+    return k1BaseBoundaryNeg : Secp256k1Base := k1BaseBoundaryNegOutput
+    return k1BaseBoundaryInv : Secp256k1Base := k1BaseBoundaryInvOutput
+    return k1ScalarBoundaryNeg : Secp256k1Scalar := k1ScalarBoundaryNegOutput
+    return k1ScalarBoundaryInv : Secp256k1Scalar := k1ScalarBoundaryInvOutput
+    return r1BaseBoundaryNeg : Secp256r1Base := r1BaseBoundaryNegOutput
+    return r1BaseBoundaryInv : Secp256r1Base := r1BaseBoundaryInvOutput
+    return r1ScalarBoundaryNeg : Secp256r1Scalar := r1ScalarBoundaryNegOutput
+    return r1ScalarBoundaryInv : Secp256r1Scalar := r1ScalarBoundaryInvOutput
+    return c255BaseBoundaryNeg : Curve25519Base := c255BaseBoundaryNegOutput
+    return c255BaseBoundaryInv : Curve25519Base := c255BaseBoundaryInvOutput
+    return c255ScalarBoundaryNeg : Curve25519Scalar := c255ScalarBoundaryNegOutput
+    return c255ScalarBoundaryInv : Curve25519Scalar := c255ScalarBoundaryInvOutput
+  end
+  entry checkReadableFields uses readableForeignFieldNegInv arguments [input] where
+    return neg : Secp256k1Base := negative
+    return inv : Secp256k1Base := inverse
   end
 end
 
