@@ -2159,6 +2159,12 @@ private theorem evaluator_recordSafe (fuel : Nat) :
             · exact termSafe value
             · intro result
               exact recordSafe_liftResult (castRuntime context (.uint target.maximum) result)
+        | castNominalField _ value =>
+            simp only [evalTerm]
+            apply recordSafe_bind
+            · exact termSafe value
+            · intro result
+              exact recordSafe_liftResult (castRuntime context .native result)
         | disclose span value => simp only [evalTerm]; exact termSafe value
         | select condition yes no =>
             simp only [evalTerm]
@@ -3761,15 +3767,15 @@ private theorem evalTerm_successSim_step (fuel : Nat) (program : Program)
       · exact termSim scope environment value
       · intro result
         exact successSim_liftResult (castRuntime context (.uint target.maximum) result)
-        | castNominalField _ value =>
-            simp only [evalTerm]
-            apply successSim_bind
-            · exact termSafe scope environment value
-            · intro _
-              exact recordSafe_liftResult _
-            · exact termSim scope environment value
-            · intro result
-              exact successSim_liftResult (castRuntime context .native result)
+  | castNominalField _ value =>
+      simp only [evalTerm]
+      apply successSim_bind
+      · exact termSafe scope environment value
+      · intro _
+        exact recordSafe_liftResult _
+      · exact termSim scope environment value
+      · intro result
+        exact successSim_liftResult (castRuntime context .native result)
   | disclose span value =>
       simp only [evalTerm]
       exact termSim scope environment value
