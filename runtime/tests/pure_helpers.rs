@@ -70,3 +70,32 @@ fn declared_pure_helper_preserves_its_assertion_and_checked_cast() -> Result<()>
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh ReadableLinkedHelpers artifacts"]
+fn linked_readable_helpers_preserve_native_argument_order() -> Result<()> {
+    let directory = PathBuf::from(
+        env::var_os("NOCTIUM_READABLE_LINKED_HELPERS_DIR")
+            .expect("NOCTIUM_READABLE_LINKED_HELPERS_DIR"),
+    );
+    let plan: Plan = serde_json::from_reader(File::open(
+        directory.join("LinkedHelperContract.calculate.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(File::open(
+        directory.join("LinkedHelperContract.calculate.zkir"),
+    )?)?;
+    let state = create_state(&plan, &BTreeMap::new())?;
+    for (x, y, result) in [("7", "2", "207"), ("2", "7", "702")] {
+        let execution = prepare(
+            &plan,
+            &BTreeMap::from([("x".into(), json!(x)), ("y".into(), json!(y))]),
+            &state,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(execution.returns_json()["result"], json!(result));
+        assert_eq!(execution.after.state, state);
+    }
+    Ok(())
+}

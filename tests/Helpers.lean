@@ -35,6 +35,44 @@ private def selected (value : Except Diagnostic Declaration) : Option Declaratio
   {id := ⟨0, 0⟩, name := "f", parameters := [⟨"x", .uint 7⟩]},
   {id := ⟨0, 1⟩, name := "f", parameters := [⟨"x", .uint 3⟩]}]} 0 "f" [.scalar (.uint 1)]) "ambiguous"
 
+private def linkedLibraryOne : Program := {
+  scopes := [{id := 0}, {id := 1, parent := some 0}]
+  declarations := [
+    {id := ⟨0, 0⟩, name := "outer", parameters := [⟨"x", .native⟩], result := .scalar .native,
+      body := [.return (some (.call "middle" [.ref "x"]))]},
+    {id := ⟨0, 1⟩, name := "middle", parameters := [⟨"x", .native⟩], result := .scalar .native,
+      body := [.return (some (.call "leaf" [.ref "x"]))]},
+    {id := ⟨1, 0⟩, name := "privateOne", parameters := [⟨"x", .native⟩], result := .scalar .native,
+      body := [.return (some (.ref "x"))]}]
+}
+private def linkedLibraryTwo : Program := {
+  scopes := [{id := 0}, {id := 1, parent := some 0}]
+  declarations := [
+    {id := ⟨0, 0⟩, name := "leaf", parameters := [⟨"x", .native⟩], result := .scalar .native,
+      body := [.return (some (.binary .mul (.ref "x") (.ref "x")))]},
+    {id := ⟨1, 0⟩, name := "privateLeaf", parameters := [⟨"x", .native⟩], result := .scalar .native,
+      body := [.return (some (.ref "x"))]}]
+  witnesses := [{name := "observe", operation := "observe.v1", capability := "observe", result := .scalar .native}]
+}
+private def linkedLibraries : Program :=
+  match linkPrograms [linkedLibraryOne, linkedLibraryTwo] with
+  | .ok program => program
+  | .error _ => {}
+
+-- Independently declared root/nested IDs overlap, then receive stable distinct IDs.
+#guard linkedLibraries.scopes.map (·.id) == [0, 1, 2]
+#guard linkedLibraries.declarations.map (·.id) == [⟨0, 0⟩, ⟨0, 1⟩, ⟨1, 0⟩, ⟨0, 2⟩, ⟨2, 0⟩]
+#guard linkedLibraries.witnesses.map (·.name) == ["observe"]
+#guard (resolve linkedLibraries 0 "outer" [.scalar .native]).isOk
+#guard (resolve linkedLibraries 0 "middle" [.scalar .native]).isOk
+#guard (resolve linkedLibraries 0 "leaf" [.scalar .native]).isOk
+#guard errorContains (resolve (match linkPrograms [
+    linkedLibraryOne,
+    {linkedLibraryTwo with declarations := linkedLibraryTwo.declarations ++ [
+      {id := ⟨0, 2⟩, name := "leaf", parameters := [⟨"x", .native⟩], result := .scalar .native,
+        body := [.return (some (.ref "x"))]}]}]
+  with | .ok program => program | .error _ => {}) 0 "leaf" [.scalar .native]) "ambiguous"
+
 -- FN-RECURSION-DIRECT and FN-RECURSION-MUTUAL include syntax after return.
 #guard errorContains (analyze (exported [{id := ⟨0, 0⟩, name := "f", body := [.evaluate (.call "f" [])]}])) "recursive"
 #guard errorContains (analyze (exported [

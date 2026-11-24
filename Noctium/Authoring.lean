@@ -232,7 +232,7 @@ scoped syntax "for" ident "in" noctium_range_bound "..<" noctium_range_bound "do
 scoped syntax "for" ident (":" nltype)? "in" nlexpr "do" noctium_witness_statement* "end" :
   noctium_witness_statement
 scoped syntax (name := noctiumAuthoredWitnessCircuitCommand) "noctium_witness_circuit" ident
-  ("using" ident,+)? ("with" ident)? ("expose" ident)? "where"
+  ("using" ident,+)? ("with" ident,*)? ("expose" ident)? "where"
   noctium_witness_statement* "end" : command
 
 private abbrev SurfaceEnv := List
@@ -4039,7 +4039,7 @@ private partial def lowerReadableStatement (programName path : String)
 @[command_elab noctiumAuthoredWitnessCircuitCommand] unsafe def elabAuthoredWitnessCircuit : CommandElab := fun stx => do
   match stx with
   | `(noctium_witness_circuit $name:ident $[using $usingCodecs:ident,*]?
-      $[with $librarySource:ident]? $[expose $exposure:ident]?
+      $[with $librarySources:ident,*]? $[expose $exposure:ident]?
       where $statements:noctium_witness_statement* end) => do
     let quoteCheckedCircuit ← match exposure with
       | none => pure Bool.false
@@ -4070,13 +4070,21 @@ private partial def lowerReadableStatement (programName path : String)
       codecs := codecs ++ [(codecName.getId, codec)]
       resolvedCodecs := resolvedCodecs ++ [(source, codec)]
       codecTerms := codecTerms.push ⟨mkIdent source⟩
-    let (libraryName, library) ← match librarySource with
-      | none => pure (none, none)
-      | some librarySource => do
-        let source ← liftCoreM <| resolveGlobalConstNoOverload librarySource
-        let library ← evalConstCheck Helpers.Program ``Helpers.Program source
-        pure (some source, some library)
-    let attached ← match library with
+    let librarySourceSyntaxes := (librarySources.map (·.getElems)).getD #[]
+    let mut libraryNames : List Name := []
+    let mut libraries : List Helpers.Program := []
+    for librarySource in librarySourceSyntaxes do
+      let source ← liftCoreM <| resolveGlobalConstNoOverload librarySource
+      if libraryNames.contains source then
+        throwErrorAt librarySource "duplicate readable helper program"
+      let library ← evalConstCheck Helpers.Program ``Helpers.Program source
+      libraryNames := libraryNames ++ [source]
+      libraries := libraries ++ [library]
+    let linkedLibrary ← if libraries.isEmpty then pure none else
+      match Helpers.linkPrograms libraries with
+      | .ok value => pure (some value)
+      | .error message => throwErrorAt stx message
+    let attached ← match linkedLibrary with
       | none => pure none
       | some library =>
         match Helpers.Wire.attach library (codecs.map (·.2)) with
@@ -4253,7 +4261,7 @@ private partial def lowerReadableStatement (programName path : String)
     let observation := sourceBody.observation
     let helperProgram := sourceBody.helperProgram
     let mut ordinal := 0
-    if library.isSome then
+    if linkedLibrary.isSome then
       let declarations := (helperProgram.map (·.declarations)).getD []
       while declarations.any (fun declaration => declaration.id == ⟨0, ordinal⟩) do
         ordinal := ordinal + 1
@@ -4284,7 +4292,7 @@ private partial def lowerReadableStatement (programName path : String)
       | some program =>
         {program with
           declarations := (program.declarations.filter fun item =>
-            library.isSome || item.id != ⟨0, 0⟩) ++ [declaration]
+            linkedLibrary.isSome || item.id != ⟨0, 0⟩) ++ [declaration]
           exports := [entryExport]
           composites := {
             sourceBody.composites with
@@ -4421,7 +4429,7 @@ private partial def lowerReadableStatement (programName path : String)
       `(Noctium.Helpers.AggregateInput.mk $(stringTerm input.name) $(← compositeTypeTerm input.type)
         $visibility $(← quoteSpan input.span))
     let aggregateInputTerms := aggregateInputTerms.toArray
-    let libraryDeclarations := (library.map (·.declarations)).getD []
+    let libraryDeclarations := (attached.map (·.declarations)).getD []
     let newDeclarations := program.declarations.filter fun declaration =>
       !libraryDeclarations.any (fun inherited => inherited.id == declaration.id)
     let declarationTerms ← newDeclarations.mapM fun declaration => do
@@ -4490,20 +4498,7 @@ private partial def lowerReadableStatement (programName path : String)
         | some target => `(some $(← nominalUIntTypeTerm target))
       `(($(stringTerm name), ({key := $key, value := $value} : Noctium.NominalUIntMap)))
     let nominalUIntMapTerms := nominalUIntMapTerms.toArray
-    let programTerm ← match libraryName with
-      | some source =>
-        let library := mkIdent source
-        `({
-          scopes := $(library).scopes
-          declarations := $(library).declarations ++ $localDeclarations
-          exports := [$exportTerm]
-          composites := $compositeEnvTerm
-          witnesses := [$signatureTerms,*]
-          ledger := $(library).ledger
-          nominalUIntCells := [$nominalUIntCellTerms,*]
-          nominalUIntMaps := [$nominalUIntMapTerms,*]
-          : Noctium.Helpers.Program })
-      | none => `({
+    let programTerm ← if libraryNames.isEmpty then `({
           scopes := [{id := 0}]
           declarations := $localDeclarations
           exports := [$exportTerm]
@@ -4511,11 +4506,30 @@ private partial def lowerReadableStatement (programName path : String)
           witnesses := [$signatureTerms,*]
           nominalUIntCells := [$nominalUIntCellTerms,*]
           nominalUIntMaps := [$nominalUIntMapTerms,*]
-          : Noctium.Helpers.Program })
-    let programTerm ← if codecTerms.isEmpty || helperProgram.isSome then pure programTerm else
+          : Noctium.Helpers.Program }) else do
+      let libraryTerms := (libraryNames.map fun source => (⟨mkIdent source⟩ : TSyntax `term)).toArray
+      let linkedStructures ← `([$structureTerms,*])
+      let linkedEnumerations ← `([$enumerationTerms,*])
+      `(let linked := match Noctium.Helpers.linkPrograms [$libraryTerms,*] with
+        | .ok library => library
+        | .error _ => {}
+        let attached := match Noctium.Helpers.Wire.attach linked [$codecTerms,*] with
+          | .ok program => program
+          | .error _ => {}
+        {attached with
+          declarations := attached.declarations ++ $localDeclarations
+          exports := [$exportTerm]
+          composites := {
+            structures := (attached.composites.structures ++ $linkedStructures).eraseDups
+            enumerations := (attached.composites.enumerations ++ $linkedEnumerations).eraseDups}
+          witnesses := [$signatureTerms,*]
+          nominalUIntCells := [$nominalUIntCellTerms,*]
+          nominalUIntMaps := [$nominalUIntMapTerms,*]
+        : Noctium.Helpers.Program })
+    let programTerm ← if libraryNames.isEmpty && !codecTerms.isEmpty then
       `(match Noctium.Helpers.Wire.attach $programTerm [$codecTerms,*] with
         | .ok program => program
-        | .error _ => {})
+        | .error _ => {}) else pure programTerm
     let assertionDiagnostics ← sourceStatements.flatMapM (authoredAssertionDiagnostics ∘ (·.raw))
     let observation := {observation with assertionDiagnostics}
     let metadataTerm ← observationTerm observation
