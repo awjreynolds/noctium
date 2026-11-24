@@ -5633,7 +5633,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             let valueTerm ← `(Noctium.LedgerValueType.shieldedCoinSet $environmentTerm $compositeTypeTerm)
             pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
           | .error _ => do
-            match LedgerValueType.ledgerRecordFields environment compositeType with
+            match LedgerValueType.recordSetKeyFields environment compositeType with
             | .ok _ =>
               let valueSchema := LedgerValueType.recordSet environment compositeType
               let valueTerm ← `(Noctium.LedgerValueType.recordSet $environmentTerm $compositeTypeTerm)
