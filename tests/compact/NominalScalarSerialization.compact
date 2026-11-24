@@ -1,0 +1,20 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export new type Amount = Field;
+export new type Small = Uint<7>;
+export new type OtherAmount = Field;
+export new type OtherSmall = Uint<7>;
+
+export pure circuit roundTrip(amount: Amount, small: Small):
+  [Bytes<32>, Amount, Bytes<1>, Small] {
+  const amountBytes = serialize<Amount, 32>(amount);
+  const amountDecoded = deserialize<Amount, 32>(amountBytes);
+  const smallBytes = serialize<Small, 1>(small);
+  const smallDecoded = deserialize<Small, 1>(smallBytes);
+  return [amountBytes, amountDecoded, smallBytes, smallDecoded];
+}
+
+export pure circuit decodeSmall(input: Bytes<1>): Small {
+  return deserialize<Small, 1>(input);
+}

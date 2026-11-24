@@ -2637,14 +2637,15 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure (mergeLowered (.scalar (.bytes 32)) (.bytes operation [value.term]) [value])
   | `(nlexpr| serialize($value, $length:num)) => do
     let value ← lowerExpr programName callPrefix env value
-    if value.type == .scalar .native then
-      liftM (rejectNominalFieldErasure stx "serialize" value)
     let .scalar source := value.type | throwErrorAt stx "serialize requires a scalar or fixed bytes"
     let operation := Noctium.Helpers.BytesOp.serialize source length.getNat
     let (_, result) ← match operation.signature 1 with
       | .ok signature => pure signature
       | .error message => throwErrorAt stx message
-    pure (mergeLowered (.scalar result) (.bytes operation [value.term]) [value])
+    let representation :=
+      if value.nominalField.isSome || value.nominalUInt.isSome then .cast source value.term
+      else value.term
+    pure (mergeLowered (.scalar result) (.bytes operation [representation]) [value])
   | `(nlexpr| toBytes($sourceValue, $length:num)) => do
     let value ← lowerExpr programName callPrefix env sourceValue
     if value.type == .scalar .native then
@@ -2664,15 +2665,26 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       (if target == source then [] else [s!"checked byte fit {renderExpr stx}"]) ++
         result.generatedValidity |>.eraseDups}
   | `(nlexpr| deserialize($target:nltype, $value)) => do
-    let target ← readScalarTy target
+    let sourceType ← readSourceScalarType target
+    let target := sourceType.type
     let value ← lowerExpr programName callPrefix env value
     let .scalar (.bytes length) := value.type | throwErrorAt stx "deserialize requires fixed bytes"
     let operation := Noctium.Helpers.BytesOp.deserialize target length
     match operation.signature 1 with
     | .error message => throwErrorAt stx message
     | .ok _ => pure ()
-    let result := mergeLowered (.scalar target) (.bytes operation [value.term]) [value]
-    pure {result with generatedValidity := s!"checked wire decode {renderExpr stx}" :: result.generatedValidity}
+    let decoded := Noctium.Helpers.Term.bytes operation [value.term]
+    if sourceType.nominalField.isSome || sourceType.nominalUInt.isSome then
+      modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+    let typed := match sourceType.nominalField, sourceType.nominalUInt with
+      | some nominal, _ => Noctium.Helpers.Term.castNominalField nominal decoded
+      | none, some nominal => Noctium.Helpers.Term.castNominalUInt nominal decoded
+      | none, none => decoded
+    let result := mergeLowered (.scalar target) typed [value]
+    pure {result with
+      nominalField := sourceType.nominalField
+      nominalUInt := sourceType.nominalUInt
+      generatedValidity := s!"checked wire decode {renderExpr stx}" :: result.generatedValidity}
   | `(nlexpr| fromBytesChecked($target:nltype, $value)) => do
     let target ← readScalarTy target
     unless target == .native ||
