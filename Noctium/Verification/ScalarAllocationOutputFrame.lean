@@ -16,6 +16,18 @@ private def hashCircuit : Circuit := {
 private def hashState : Zkir.LowerState :=
   ((Zkir.lowerBody (Passes.pruneCircuit hashCircuit)).run {}).2
 
+private def cachedHashCircuit : Circuit := {
+  name := "cachedAllocationOutputFrame"
+  outputs := [
+    {name := "firstDigest", ty := .bytes 32,
+      value := .persistentHash32 (.bytes32Literal (List.replicate 32 0))},
+    {name := "secondDigest", ty := .bytes 32,
+      value := .persistentHash32 (.bytes32Literal (List.replicate 32 0))}]
+}
+
+private def cachedHashState : Zkir.LowerState :=
+  ((Zkir.lowerBody (Passes.pruneCircuit cachedHashCircuit)).run {}).2
+
 private def packedInputHashCircuit : Circuit := {
   name := "packedInputHashOutputFrame"
   inputs := [{name := "preimage", ty := .bytes 32, visibility := .«public»}]
@@ -85,6 +97,26 @@ theorem coldTwoLimbHash_has_actual_output_capacity_frame :
   · change 0 + (hashState.next - 0) ≤ hashState.outputDefinitions
     decide +kernel
 
+/-- A repeated persistent hash emits both public results but reuses the one
+hash and packing sequence. -/
+theorem cachedTwoLimbHash_counts_and_cache_hit :
+    cachedHashCircuit.outputs.length = 2 ∧ cachedHashState.next = 3 ∧
+      cachedHashState.instructions.size = 4 ∧
+      cachedHashState.outputDefinitions = 3 ∧
+      (cachedHashState.instructions.toList.map Native.opcode).count "persistent_hash" = 1 ∧
+      (cachedHashState.instructions.toList.map Native.opcode).count "bytes_into_natives" = 1 ∧
+      Native.outputDefinitionsInInstruction cachedHashState.instructions[1]! = 2 ∧
+      (cachedHashState.instructions.toList.map Native.opcode).count "output" = 1 := by
+  decide +kernel
+
+theorem cachedTwoLimbHash_has_actual_output_capacity_frame :
+    Zkir.OutputCapacityFrame {} cachedHashState := by
+  constructor
+  · change 0 ≤ cachedHashState.next
+    decide +kernel
+  · change 0 + (cachedHashState.next - 0) ≤ cachedHashState.outputDefinitions
+    decide +kernel
+
 private def accepted {ε α} : Except ε α → Bool
   | .ok _ => true
   | .error _ => false
@@ -112,6 +144,8 @@ theorem lowerCircuit_output_budget_of_frame (circuit : Circuit) {program : Lean.
 
 #guard accepted (Zkir.lowerCircuit hashCircuit)
 
+#guard accepted (Zkir.lowerCircuit cachedHashCircuit)
+
 theorem coldTwoLimbHash_has_producerCapacity {program : Lean.Json}
     (produced : Zkir.lowerCircuit hashCircuit = .ok program) :
     hashState.outputDefinitions ≤ Native.maxInstructions * Native.maxVectorLength :=
@@ -122,6 +156,17 @@ theorem coldTwoLimbHash_names_fit_producerCapacity :
       hashState.next ≤ Native.maxInstructions * Native.maxVectorLength :=
   fun produced => lowerCircuit_output_budget_of_frame hashCircuit produced
     coldTwoLimbHash_has_actual_output_capacity_frame
+
+theorem cachedTwoLimbHash_has_producerCapacity {program : Lean.Json}
+    (produced : Zkir.lowerCircuit cachedHashCircuit = .ok program) :
+    cachedHashState.outputDefinitions ≤ Native.maxInstructions * Native.maxVectorLength :=
+  lowerCircuit_outputDefinitions_budget cachedHashCircuit produced
+
+theorem cachedTwoLimbHash_names_fit_producerCapacity :
+    ∀ {program : Lean.Json}, Zkir.lowerCircuit cachedHashCircuit = .ok program →
+      cachedHashState.next ≤ Native.maxInstructions * Native.maxVectorLength :=
+  fun produced => lowerCircuit_output_budget_of_frame cachedHashCircuit produced
+    cachedTwoLimbHash_has_actual_output_capacity_frame
 
 #guard accepted (Zkir.lowerCircuit packedInputHashCircuit)
 
