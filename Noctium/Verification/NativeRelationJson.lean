@@ -6,6 +6,11 @@ namespace Noctium.Verification.NativeRelationJson
 open Lean
 open Noctium.Verification.NativeRelation
 
+private theorem bind_ok {ε α β} {first : Except ε α} {next : α → Except ε β}
+    {value : β} : (first >>= next) = .ok value ↔
+    ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
 def ensure (condition : Bool) (message : String) : Except String Unit :=
   if condition then .ok () else .error message
 
@@ -232,6 +237,67 @@ theorem decodeInstruction_copyJson (source destination : String)
   unfold decodeInstruction
   rw [opcode]
   simpa only [Bind.bind, Except.bind] using decoded
+
+/-- Any successfully decoded Copy exposes the same source and destination
+strings in its raw fields. -/
+theorem decodeInstruction_copyFields {raw : Json} {source destination : String}
+    (opcode : stringField raw "op" = .ok "copy")
+    (decoded : decodeInstruction raw =
+      .ok (.equal (.reference source) (.reference destination))) :
+    stringField raw "val" = .ok source ∧
+      stringField raw "output" = .ok destination ∧
+      validIdentifier source = true := by
+  unfold decodeInstruction at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
+  have opcodeEq : opcodeName = "copy" := Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  unfold decodeCopy at body
+  simp only [bind_ok] at body
+  rcases body with ⟨_, _, sourceName, sourceParsed, _, sourceValid, _, outputParsed, result⟩
+  rcases result with ⟨_, rest⟩
+  rcases rest with ⟨_, pureResult⟩
+  simp only [Pure.pure, Except.pure] at pureResult
+  have resultEq := Except.ok.inj pureResult
+  injection resultEq with sourceEq destinationEq
+  injection sourceEq with sourceTextEq
+  injection destinationEq with destinationTextEq
+  have sourceValidBool : validIdentifier sourceName = true := by
+    unfold ensure at sourceValid
+    by_cases valid : validIdentifier sourceName
+    · exact valid
+    · simp [valid] at sourceValid
+  have sourceIdentifierValid : validIdentifier source = true := by
+    rw [← sourceTextEq]
+    exact sourceValidBool
+  constructor
+  · rw [← sourceTextEq]
+    exact sourceParsed
+  constructor
+  · rw [← destinationTextEq]
+    exact outputParsed
+  · exact sourceIdentifierValid
+
+theorem decodeOperandField_reference_of_stringField {raw : Json} {name text : String}
+    (parsed : stringField raw name = .ok text)
+    (reference : validIdentifier text = true) :
+    decodeOperandField raw name = .ok (.reference text) := by
+  unfold stringField at parsed
+  unfold decodeOperandField
+  simp only [bind_ok] at parsed
+  rcases parsed with ⟨json, jsonParsed, textParsed⟩
+  rw [jsonParsed]
+  unfold decodeOperand
+  have startsPercent : text.startsWith "%" = true := by
+    have validShape : (text.startsWith "%" && text.length > 1 &&
+        text.utf8ByteSize ≤ 1024) = true := by simpa [validIdentifier] using reference
+    exact (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp validShape).1).1
+  have noHex : ¬ (['0', 'x'] <+: text.toList) := by
+    have pref : ['%'] <+: text.toList := by simpa using startsPercent
+    rcases pref with ⟨tail, equal⟩
+    rw [← equal]
+    simp
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, textParsed, noHex, reference, ensure]
 
 /-- Decode the exact ZKIR 3.2 root and typed Native relation subset represented
 by `NativeRelation`. This checks JSON shape and encoding only. -/

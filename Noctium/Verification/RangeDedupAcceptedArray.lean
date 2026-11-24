@@ -134,6 +134,13 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.assert condition))
       (holds : Instruction.Holds hash witness (.assert condition)) :
       AcceptedMeaningStep hash witness raw
+  | copy {source destination : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "copy")
+      (decoded : NativeRelationJson.decodeInstruction raw =
+        .ok (.equal (.reference source) (.reference destination)))
+      (holds : Instruction.Holds hash witness
+        (.equal (.reference source) (.reference destination))) :
+      AcceptedMeaningStep hash witness raw
   | output {values : List Operand}
       (opcode : Backend.Native.stringField raw "op" = .ok "output")
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.output values)) :
@@ -388,6 +395,38 @@ private theorem acceptedMeaningStep_preserves
   | assertion opcode decoded holds =>
     exact ⟨RangeDedupAssertMeaning.assertStepMeaning meaning opcode decoded holds accepted,
       accepted_assert_nativeDefinitions definitions opcode accepted⟩
+  | @copy source destination opcode decoded holds =>
+    obtain ⟨sourceFact, sourceAccepted, sourceNative, defined⟩ :=
+      accepted_copy_components definitions opcode accepted
+    have typed := defineResult_nativeDefinitions definitions sourceNative defined
+    have fields := NativeRelationJson.decodeInstruction_copyFields opcode decoded
+    have sourceDecoded : NativeRelationJson.decodeOperandField raw "val" =
+        .ok (.reference source) := by
+      exact NativeRelationJson.decodeOperandField_reference_of_stringField fields.1 fields.2.2
+    have sourceMeaning := argument_decoded_meaning meaning sourceAccepted sourceDecoded
+    have sourceDestinationEqual : witness source = witness destination := by
+      change Operand.read witness (.reference source) =
+        Operand.read witness (.reference destination)
+      exact holds
+    have destinationMeaning : FactMeaning hash inputs witness sourceFact (witness destination) := by
+      refine ⟨?_, ?_, ?_⟩
+      · rw [← sourceDestinationEqual]
+        exact sourceMeaning.term
+      · rw [← sourceDestinationEqual]
+        exact sourceMeaning.bound
+      · intro identifier exclusive asserted nonzero
+        apply sourceMeaning.comparison identifier exclusive asserted
+        change witness source ≠ zero
+        rw [sourceDestinationEqual]
+        exact nonzero
+    have outputMeaning : ∀ identifier,
+        Backend.Native.stringField raw "output" = .ok identifier →
+        FactMeaning hash inputs witness sourceFact (witness identifier) := by
+      intro identifier parsed
+      have same : identifier = destination := Except.ok.inj (parsed.symm.trans fields.2.1)
+      subst identifier
+      exact destinationMeaning
+    exact ⟨defineResult_meaning meaning outputMeaning defined, typed⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
