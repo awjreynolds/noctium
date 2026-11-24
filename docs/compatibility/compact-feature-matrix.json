@@ -4677,6 +4677,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "tests/compact/StandardHelperEvents.compact",
         "tests/compact/standard-helper-events.mjs",
         "tests/standard-helper-event-localnet-evidence.json",
@@ -4705,6 +4708,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4730,6 +4736,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4755,6 +4764,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4780,6 +4792,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4805,6 +4820,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4830,6 +4848,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4855,6 +4876,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"
@@ -4880,6 +4904,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "ABI",
         "ZK",
         "LEDGER",
@@ -4912,6 +4939,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "ABI",
         "ZK",
         "LEDGER",
@@ -4944,6 +4974,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/StandardEventCatalog.compact",
+        "tests/compact/standard-event-catalog.mjs",
+        "tests/standard-event-catalog-compact.json",
         "examples/StandardEvents.lean",
         "runtime/tests/standard_events.rs",
         "docs/development/standard-events.md"

@@ -164,7 +164,11 @@ fn guarded_pause_events_bind_empty_ordered_logs() -> Result<()> {
     check(&active, &circuit)?;
     check(&inactive, &circuit)?;
     assert_eq!(
-        active.logs.iter().map(|event| event.event_type).collect::<Vec<_>>(),
+        active
+            .logs
+            .iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>(),
         [LogEventType::Paused, LogEventType::Unpaused],
     );
     for event in &active.logs {
@@ -227,68 +231,34 @@ fn standard_event_catalog_matches_pinned_reference_payloads() -> Result<()> {
     assert_eq!(execution.program.len(), 28);
     assert_eq!(execution.preimage.public_transcript_outputs.len(), 12);
 
-    // SHA-256 of the full-width payloads emitted by Compact 0.36.1.
-    let expected = [
-        (
-            ShieldedSpend,
-            32,
-            "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9",
-        ),
-        (
-            ShieldedReceive,
-            578,
-            "1f894f5631ee86b966eb75cb30000fb875358b76941b3bd74240ef6ab8ede75f",
-        ),
-        (
-            ShieldedMint,
-            81,
-            "b329b5b9d69bf9cc6ab38fd41b423a9affad55818d6b6b3986480d8cba3cb70c",
-        ),
-        (
-            ShieldedBurn,
-            49,
-            "613499b3079da64d91e1a334445d217519649cda4ed3884dfa6342b3d57011ac",
-        ),
-        (
-            UnshieldedSpend,
-            145,
-            "a8d750bd5550bc06d48b3b48ede2c4288fe6936c14134b069c736cd0af16360c",
-        ),
-        (
-            UnshieldedReceive,
-            145,
-            "e78bc48c9e71b2f201d3cac5a096ee7893bec1416f0650a347c0304b37d976cd",
-        ),
-        (
-            UnshieldedMint,
-            80,
-            "e347b43bac53302784c05ab04d42504d02b4f73db937e9d7c084472474c77d08",
-        ),
-        (
-            UnshieldedBurn,
-            113,
-            "aeb91a0abf52d4a369ae937e8b9776c4d0dcb29cc58e6b7833fa6b231a77508b",
-        ),
-        (
-            Paused,
-            0,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        ),
-        (
-            Unpaused,
-            0,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        ),
-        (
-            Misc,
-            288,
-            "3cb9fe229efe9f4eb74a3865ded415c6d9e549235a1a96b68f93f8d5a3cf08a8",
-        ),
+    let compact: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/standard-event-catalog-compact.json"
+    ))?;
+    assert_eq!(compact["compiler"], "0.36.1 (7fa3a117c 2026-11-11)");
+    assert_eq!(compact["runtime"], "0.21.0");
+    let expected = compact["events"].as_array().expect("Compact event catalog");
+    let event_types = [
+        ShieldedSpend,
+        ShieldedReceive,
+        ShieldedMint,
+        ShieldedBurn,
+        UnshieldedSpend,
+        UnshieldedReceive,
+        UnshieldedMint,
+        UnshieldedBurn,
+        Paused,
+        Unpaused,
+        Misc,
     ];
     assert_eq!(execution.logs.len(), expected.len());
-    for (event, (kind, length, digest)) in execution.logs.iter().zip(expected) {
-        assert_eq!(event.version, 1);
+    assert_eq!(execution.logs.len(), event_types.len());
+    for (tag, (event, reference)) in execution.logs.iter().zip(expected).enumerate() {
+        assert_eq!(reference["tag"], json!(tag));
+        assert_eq!(reference["version"], json!(event.version));
+        let kind = event_types[tag];
         assert_eq!(event.event_type, kind);
+        let length = u32::try_from(reference["payloadLength"].as_u64().expect("payload width"))?;
+        let digest = reference["payloadSha256"].as_str().expect("payload digest");
         let StateValue::Cell(data) = &event.data else {
             panic!("expected event payload cell");
         };
