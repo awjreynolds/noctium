@@ -3536,7 +3536,7 @@ private def recordMapFieldsAt (schema : List (String × StateKind))
       pure (environment, type)
     | _ => throwErrorAt storage "typed record key operation requires a record-key Map"
   let fieldResult := match valueSchema with
-    | .recordMapKey .. =>
+    | .recordMapKey .. | .recordMapComposite .. =>
       (if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
        else LedgerValueType.ledgerRecordWriteFields environment type)
     | _ => LedgerValueType.ledgerRecordWriteFields environment type
@@ -3610,7 +3610,10 @@ private def recordMapCompositeFieldsAt (schema : List (String × StateKind))
   let (keys, selected) ← lowerTreePath state.env treeSchema parentKeys
   let .recordMapComposite keyEnvironment keyType valueEnvironment valueType := selected
     | throwErrorAt storage "typed record Map value operation requires a composite-valued record-key Map"
-  let keyFields ← match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+  let keyFieldResult := if parentKeys.isEmpty then
+      LedgerValueType.recordMapKeyFields keyEnvironment keyType
+    else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+  let keyFields ← match keyFieldResult with
     | .ok fields => pure fields
     | .error message => throwErrorAt storage message
   let valueFields ← match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with
@@ -5883,7 +5886,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             recordKeyFieldTypes := (id.getId.toString, sourceKeys) :: recordKeyFieldTypes
           unless sourceValues.isEmpty do
             recordFieldTypes := (id.getId.toString, sourceValues) :: recordFieldTypes
-          match LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType with
+          match LedgerValueType.recordMapKeyFields keyEnvironment keyType with
           | .error message => throwErrorAt state message
           | .ok _ => pure ()
           match LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType with

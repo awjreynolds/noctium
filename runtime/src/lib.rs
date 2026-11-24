@@ -3192,7 +3192,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             depth + 2 < 16,
             "record-key Map insertion depth exceeds native insertion depth"
         );
-        if depth == 0 && scalar_value_type.is_some() {
+        if depth == 0 {
             checked_typed_record_schema(record)?;
         } else {
             checked_map_record_schema(record)?;
