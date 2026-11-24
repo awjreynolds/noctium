@@ -5376,8 +5376,8 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     | .opaqueString => some ("MaybeOpaqueString", .scalar .opaqueString)
     | .jubjubScalar => some ("MaybeJubjubScalar", .scalar .jubjubScalar)
     | .jubjubPoint => some ("MaybeJubjubPoint", .scalar .jubjubPoint)
-    | .foreign (.scalar .secp256k1) =>
-      some ("MaybeSecp256k1Scalar", .scalar (.foreign (.scalar .secp256k1)))
+    | .foreign kind =>
+      some (s!"Maybe{kind.sourceName}", .scalar (.foreign kind))
     | _ => none
   let typeId ← match typedPayload with
   | some (suffix, _) => do
@@ -5426,8 +5426,12 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
         `(Noctium.Expr.bytesLiteral $(natTerm length) $zeros)
       | .opaqueBytes => `(Noctium.Expr.opaqueBytesEmpty)
       | .opaqueString => `(Noctium.Expr.opaqueStringEmpty)
-      | .foreign (.scalar .secp256k1) =>
-        `(Noctium.Expr.foreignScalar Noctium.Foreign.Curve.secp256k1 0)
+      | .foreign kind => do
+        let curve ← foreignCurveTerm kind.curve
+        match kind with
+        | .base _ => `(Noctium.Expr.foreignBase $curve 0)
+        | .scalar _ => `(Noctium.Expr.foreignScalar $curve 0)
+        | .point _ => `(Noctium.Expr.foreignIdentity $curve)
       | _ => throwErrorAt statement "returnMaybe payload must be a scalar"
     `(Noctium.Expr.select $presentExpression $payloadExpression $payloadDefault)
   let isSomeReturnName := s!"{labelName}_is_some"
@@ -5438,8 +5442,11 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
   let curveReturnNames := match payloadType with
     | .jubjubScalar => [payloadReturnName]
     | .jubjubPoint => jubjubPointReturnNames
-    | .foreign (.scalar .secp256k1) =>
-      [s!"{payloadReturnName}_low", s!"{payloadReturnName}_high"]
+    | .foreign kind =>
+      let suffixes := match kind with
+        | .base _ | .scalar _ => ["low", "high"]
+        | .point _ => ["x_low", "x_high", "y_low", "y_high", "identity"]
+      (suffixes.take kind.encodedFieldCount).map fun suffix => s!"{payloadReturnName}_{suffix}"
     | _ => []
   let legacyPhysicalReturnNames := if zeroWidthBytes then [isSomeReturnName]
     else [isSomeReturnName, payloadReturnName]
@@ -5481,10 +5488,11 @@ private def elaborateMaybeReturn (contractName : String) (label : TSyntax `ident
     let xReturn ← `(Noctium.Output.mk $xName Noctium.Ty.native $canonicalX $span)
     let yReturn ← `(Noctium.Output.mk $yName Noctium.Ty.native $canonicalY $span)
     returnTerms := returnTerms.push xReturn |>.push yReturn
-  else if payloadType == .foreign (.scalar .secp256k1) then
+  else if let .foreign kind := payloadType then
+    let kindTerm ← foreignKindTerm kind
     for (returnName, index) in curveReturnNames.zipIdx do
       let value ← `(Noctium.Expr.foreignEncodedField
-        (kind := Noctium.Foreign.Kind.scalar Noctium.Foreign.Curve.secp256k1)
+        (kind := $kindTerm)
         $canonicalPayload $(natTerm index))
       let foreignReturn ← `(Noctium.Output.mk $(stringTerm returnName) Noctium.Ty.native $value $span)
       returnTerms := returnTerms.push foreignReturn

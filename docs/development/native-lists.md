@@ -137,6 +137,25 @@ foreign scalar limbs, and the native relation rejects a changed low limb.
 [Lean fixture](../../tests/ForeignScalarListMaybe.lean) ·
 [Native checker](../../runtime/tests/foreign_scalar_list_maybe.rs)
 
+Foreign `Base`, `Scalar`, and `Point` List heads also return typed `Maybe`
+values for secp256k1, secp256r1, and curve25519. Empty heads use typed zero or
+the point identity. The grouped native check covers all nine kinds, exact
+present values, absence after popping the sole value, and rejection of changed
+encoded fields. Field roles use two lanes, secp points use five, and curve25519
+points use four.
+[Lean fixture](../../tests/ForeignListMaybe.lean) ·
+[Native checker](../../runtime/tests/foreign_list_maybe.rs)
+
+```sh
+lake exe noctium compile tests/ForeignListMaybe.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output build/experiments/foreign-list-maybe
+source .lake/noctium-dev.env && \
+  NOCTIUM_FOREIGN_LIST_MAYBE_DIR="$PWD/build/experiments/foreign-list-maybe" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+    --no-default-features --features zkir-321 --test foreign_list_maybe -- --ignored
+```
+
 The Compact 0.36.1 probe compiles a `List<Secp256k1Scalar>` push control. The
 matching `head(): Maybe<Secp256k1Scalar>` source triggers the pinned compiler's
 `cannot-happen` assertion in `reduce-to-zkir.ss` at line 518. The probe runner
