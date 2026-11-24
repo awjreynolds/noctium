@@ -1,0 +1,18 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit stringSome(value: Opaque<"string">): Maybe<Opaque<"string">> {
+  return some<Opaque<"string">>(value);
+}
+
+export pure circuit stringNone(): Maybe<Opaque<"string">> {
+  return none<Opaque<"string">>();
+}
+
+export pure circuit bytesSome(value: Opaque<"Uint8Array">): Maybe<Opaque<"Uint8Array">> {
+  return some<Opaque<"Uint8Array">>(value);
+}
+
+export pure circuit bytesNone(): Maybe<Opaque<"Uint8Array">> {
+  return none<Opaque<"Uint8Array">>();
+}
