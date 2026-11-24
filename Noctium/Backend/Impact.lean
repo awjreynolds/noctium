@@ -1500,9 +1500,7 @@ private def recordMapKeySchema (state : List StateDecl) (name : String)
   let slot ← stateSlot state name
   let .recordMapKey environment type valueTy ← resolveTreeState state name parentKeys
     | throw s!"path does not select a scalar-valued record-key Map in '{name}'"
-  let fields ← if parentKeys.isEmpty then
-      LedgerValueType.recordMapKeyFields environment type
-    else LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   let schema ← recordSchemaForFields environment type fields
@@ -1518,12 +1516,8 @@ private def anyRecordMapKeySchema (state : List StateDecl) (name : String)
     | .recordMapComposite environment type _ _ => pure (environment, type)
     | _ => throw s!"state '{name}' is not a record-key Map"
   let fields ← match selected with
-    | .recordMapKey .. =>
-      if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
-      else LedgerValueType.ledgerRecordWriteFields environment type
-    | .recordMapComposite .. =>
-      if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
-      else LedgerValueType.ledgerRecordWriteFields environment type
+    | .recordMapKey .. | .recordMapComposite .. =>
+      LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
     | _ => LedgerValueType.ledgerRecordWriteFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
@@ -1547,9 +1541,8 @@ private def recordMapCompositeSchemas (state : List StateDecl) (name : String)
     | if parentKeys.isEmpty then
         throw s!"state '{name}' is not a composite-valued record-key Map"
       else throw s!"path does not select a composite-valued record-key Map in '{name}'"
-  let keyFields ← if parentKeys.isEmpty then
-      LedgerValueType.recordMapKeyFields keyEnvironment keyType
-    else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+  let keyFields ← LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType
+    parentKeys.length
   unless keyFields.map Prod.snd == keyValues.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType

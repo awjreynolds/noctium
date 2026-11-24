@@ -759,12 +759,19 @@ def LedgerValueType.recordSetKeyFields (environment : Types.CompositeEnv)
     | .vector _ (.scalar .native) => LedgerValueType.recordFields environment type
     | _ => flatTypedRecordFields environment type true
 
-/-- Root record-key Maps accept the same flat fixed-byte layouts as root record
-Sets. Keep nested Map keys and record Map values on the narrower ledger record
-write policy. -/
+/-- Root and one-level nested record-key Maps accept the same flat fixed-byte
+layouts as record Sets. The nested form has one scalar Map parent. Deeper Map
+keys and record Map values retain the narrower ledger record write policy. -/
 def LedgerValueType.recordMapKeyFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) :=
   LedgerValueType.recordSetKeyFields environment type
+
+/-- A record-key Map at depth zero or one may use fixed-byte fields. Depth is
+the count of scalar Maps containing the record-key Map. -/
+def LedgerValueType.recordMapKeyFieldsAtDepth (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (mapDepth : Nat) : Except String (List (String × Ty)) :=
+  if mapDepth ≤ 1 then LedgerValueType.recordMapKeyFields environment type
+  else LedgerValueType.ledgerRecordWriteFields environment type
 
 /-- Ordinary root Cell writes accept checked Native and typed flat records,
 including fixed Bytes widths. Qualified coin records keep specialized writes. -/
@@ -1711,18 +1718,18 @@ private def validateCellStateScalar (caps : Capabilities) (ty : Ty) : Except Str
 def LedgerValueType.validate (caps : Capabilities) (schema : LedgerValueType) : Except String Unit :=
   match schema with
   | .map (.bytes 32) (.scalar .opaqueString) => Ty.validate caps .opaqueString
-  | _ => nested true schema
+  | _ => nested 0 schema
 where
-  nested : Bool → LedgerValueType → Except String Unit
+  nested : Nat → LedgerValueType → Except String Unit
     | _, .counter => pure ()
     | _, .merkleTree depth _ => do
       unless 2 ≤ depth && depth ≤ 32 do
         throw "MerkleTree depth must be between 2 and 32"
     | _, .scalar ty => validateStateScalar caps ty
-    | _, .map keyTy value => do
+    | mapDepth, .map keyTy value => do
       validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
-      nested false value
+      nested (mapDepth + 1) value
     | _, .set keyTy => do
       validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
@@ -1730,15 +1737,12 @@ where
       let fields ← LedgerValueType.recordSetKeyFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
-    | root, .recordMapKey environment type valueTy => do
-      let fields ← if root then LedgerValueType.recordMapKeyFields environment type
-        else LedgerValueType.ledgerRecordWriteFields environment type
+    | mapDepth, .recordMapKey environment type valueTy => do
+      let fields ← LedgerValueType.recordMapKeyFieldsAtDepth environment type mapDepth
       for (_, ty) in fields do validateStateScalar caps ty
       validateStateScalar caps valueTy
-    | root, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
-      let keyFields ← if root then
-          LedgerValueType.recordMapKeyFields keyEnvironment keyType
-        else LedgerValueType.ledgerRecordWriteFields keyEnvironment keyType
+    | mapDepth, .recordMapComposite keyEnvironment keyType valueEnvironment valueType => do
+      let keyFields ← LedgerValueType.recordMapKeyFieldsAtDepth keyEnvironment keyType mapDepth
       let valueFields ← LedgerValueType.ledgerRecordWriteFields valueEnvironment valueType
       for (_, ty) in keyFields ++ valueFields do validateStateScalar caps ty
     | _, .shieldedCoinSet environment type => do
@@ -1802,9 +1806,7 @@ private def resolveRecordMap (decls : List StateDecl) (state : String)
     Except String (Types.CompositeEnv × List (String × Ty) × Ty) := do
   let .recordMapKey environment type valueTy ← resolveRecordMapSchema decls state parentKeys
     | throw s!"path does not select a scalar-valued record-key Map in '{state}'"
-  let fields ← if parentKeys.isEmpty then
-      LedgerValueType.recordMapKeyFields environment type
-    else LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure (environment, fields, valueTy)
@@ -1815,8 +1817,7 @@ private def resolveAnyRecordMapKeyFields (decls : List StateDecl) (state : Strin
   let selected ← resolveRecordMapSchema decls state parentKeys
   let fields ← match selected with
     | .recordMapKey environment type _ | .recordMapComposite environment type _ _ =>
-      if parentKeys.isEmpty then LedgerValueType.recordMapKeyFields environment type
-      else LedgerValueType.ledgerRecordWriteFields environment type
+      LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
     | _ => throw s!"path does not select a record-key Map in '{state}'"
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
@@ -1828,9 +1829,7 @@ private def resolveRecordMapCompositeKey (decls : List StateDecl) (state : Strin
   let selected ← resolveRecordMapSchema decls state parentKeys
   let .recordMapComposite environment type _ _ := selected
     | throw s!"path does not select a composite-valued record-key Map in '{state}'"
-  let fields ← if parentKeys.isEmpty then
-      LedgerValueType.recordMapKeyFields environment type
-    else LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordMapKeyFieldsAtDepth environment type parentKeys.length
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Map key field type mismatch"
   pure (environment, type, fields)
