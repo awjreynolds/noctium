@@ -89,6 +89,27 @@ The Noctium fixtures declare public circuit inputs. Their relations read those v
 
 To reproduce the first table, emit the Lean fixtures with `--emit ledger` as above, compile the paired `.compact` files with `--skip-zk` into separate directories, and run `zkir mock-compile` on each `.zkir` file. For the explicit-argument variant, change the input declarations in `NestedRecordKeyByteValues.lean` to `private`, list each entrypoint's arguments in declaration order with `arguments [...]`, and wrap their ledger uses in `disclose(...)`. Use a scratch copy and pass its emitted directory to the same native comparison. These measurements cover synthesized rows and K. Proving latency and key-transfer cost remain unmeasured.
 
+### Opt-in bounds for fixed-byte record lookups
+
+Pass `--ledger-read-bound NestedRecordKeyByteValues.lookup` when compiling
+the explicit-argument variant above. The compiler checks that one
+unconditional record Map read binds the exact source widths and public
+chunk names in its Impact Popeq group. The manifest records that group,
+the field widths and the removed checks. The Lean preservation theorem
+applies when the authenticated ledger group supplies those byte chunks.
+The default build keeps the explicit checks.
+
+On the fixture with five scalar header fields, ZKIR 3.2.1 measured 341 rows
+for the default relation and 273 for the opt-in relation, both at K9.
+Compact measured 274 rows at K9. The opt-in build keeps every argument check
+and removes only the three result checks for 8, 16 and 248 bits. Both builds
+emit the exact same Impact plan. Key generation uses the selected relation.
+The pinned native ledger accepted a proof generated from the opt-in relation
+and left the stored record unchanged. It rejected the same proved lookup
+against a changed record and against a record with the wrong digest width.
+[In-process ledger test](../../runtime/tests/fixed_byte_record_read_bound.rs) ·
+[Lean preservation theorem](../../Noctium/Verification/LedgerByteReadBounds.lean) · [Qualification ticket](https://github.com/awjreynolds/noctium/issues/1189)
+
 ## Qualification
 
 The focused fixture is [BytesStorage.lean](../../tests/BytesStorage.lean), with the native case in [byte_storage.rs](../../runtime/tests/byte_storage.rs). Implementation and measured results are tracked in [issue 79](https://github.com/awjreynolds/noctium/issues/79).
