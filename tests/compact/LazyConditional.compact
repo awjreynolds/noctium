@@ -28,6 +28,26 @@ export circuit branchChoice(choice: Boolean, expected: Field): [Field, Boolean] 
   return [expected, choice];
 }
 
+export circuit branchShadowing(choice: Boolean, expected: Field): [Field, Boolean] {
+  const outerX = expected;
+  const x = expected;
+  if (choice) {
+    const selected = loadLeft();
+    const branchInput = outerX;
+    const x = branchInput + 1;
+    assert(x == expected + 1, "then binding must use the outer value");
+    assert(selected.amount == expected, "left amount must match expected");
+    assert(selected.extra.enabled, "left payload must be enabled");
+  } else {
+    const selected = loadRight();
+    const { amount: x } = selected;
+    assert(x == expected + 1, "pattern binding must match the selected amount");
+    assert(!selected.extra.enabled, "right payload must be disabled");
+  }
+  const completed = afterChoice(expected);
+  return [x, choice];
+}
+
 export circuit branches(thenCondition: Boolean, elseCondition: Boolean, amount: Uint<8>): [Boolean, Boolean] {
   return [
     thenCondition ? ((amount as Uint<1>) == 1) : true,

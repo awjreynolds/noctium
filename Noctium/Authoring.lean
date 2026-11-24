@@ -3425,6 +3425,7 @@ private structure ReadableBody where
   observation : ObservationMetadata
   composites : Types.CompositeEnv := {}
   logicalAliases : List LogicalAliasBinding := []
+  scopeBindings : List String := []
   nextLet : Nat := 0
   helperProgram : Option Helpers.Program := none
   requiresOutputViews : _root_.Bool := _root_.Bool.false
@@ -3493,6 +3494,23 @@ private def checkPrivateFieldCodec (fieldPath : TSyntax `ident) (field : Private
 
 private abbrev PatternBinding := TSyntax `ident × ResultType × (Helpers.Term → Helpers.Term)
 
+private structure ScopedPatternBinding where
+  id : TSyntax `ident
+  internalName : String
+  type : ResultType
+  project : Helpers.Term → Helpers.Term
+
+private def bindReadableName (body : ReadableBody) (id : TSyntax `ident) :
+    CommandElabM (ReadableBody × String) := do
+  let name := id.getId.toString
+  if body.scopeBindings.contains name then
+    throwErrorAt id s!"duplicate readable witness value '{name}'"
+  let shadowed := body.env.any (·.1 == name)
+  let internalName := if shadowed then s!"__noctium:branch-shadow:{body.nextLet}" else name
+  pure ({body with
+    scopeBindings := body.scopeBindings ++ [name]
+    nextLet := if shadowed then body.nextLet + 1 else body.nextLet}, internalName)
+
 private partial def patternBindings (composites : Types.CompositeEnv)
     (pattern : TSyntax `noctium_bind_pattern) (type : ResultType)
     (select : Helpers.Term → Helpers.Term) : CommandElabM (List PatternBinding) := do
@@ -3538,34 +3556,35 @@ private partial def patternBindings (composites : Types.CompositeEnv)
     pure bindings
   | _ => throwErrorAt pattern "unsupported readable binding pattern"
 
-private def extendPatternEnvironment (initial : SurfaceEnv) (bindings : List PatternBinding) :
-    CommandElabM SurfaceEnv := do
-  let mut env := initial
-  for (id, type, _) in bindings do
-    let name := id.getId.toString
-    if env.any (·.1 == name) then throwErrorAt id s!"duplicate readable witness value '{name}'"
-    env := (name, type, .ref name, none) :: env
-  pure env
+private def scopePatternBindings (initial : ReadableBody) (bindings : List PatternBinding) :
+    CommandElabM (ReadableBody × List ScopedPatternBinding) := do
+  let mut body := initial
+  let mut scopedBindings := []
+  for (id, type, project) in bindings do
+    let (updated, internalName) ← bindReadableName body id
+    body := {updated with env := (id.getId.toString, type, .ref internalName, none) :: updated.env}
+    scopedBindings := scopedBindings ++ [{id, internalName, type, project}]
+  pure (body, scopedBindings)
 
-private def patternStatements (bindings : List PatternBinding) (source : Helpers.Term) :
+private def patternStatements (bindings : List ScopedPatternBinding) (source : Helpers.Term) :
     CommandElabM (List Statement) :=
-  bindings.mapM fun (id, type, project) => do
-    pure (.bind id.getId.toString type (.at (← spanValue id) (project source)))
+  bindings.mapM fun binding => do
+    pure (.bind binding.internalName binding.type
+      (.at (← spanValue binding.id) (binding.project source)))
 
 private def lowerReadablePattern (programName path : String) (exprState : AuthoringExprState)
     (body : ReadableBody) (statement : Syntax) (pattern : TSyntax `noctium_bind_pattern)
     (source : TSyntax `nlexpr) : CommandElabM ReadableBody := do
   let (value, body) ← body.lower programName path exprState source
   let bindings ← patternBindings body.composites pattern value.type id
-  let env ← extendPatternEnvironment body.env bindings
+  let (body, bindings) ← scopePatternBindings body bindings
   let span ← spanValue statement
-  let ((before, terms, _), state) ← (stageIterationValues ("s" ++ path) env span [value]).run
+  let ((before, terms, _), state) ← (stageIterationValues ("s" ++ path) body.env span [value]).run
     {exprState with nextLet := body.nextLet, iterationProgram := body.helperProgram}
   let [staged] := terms | throwErrorAt statement "binding pattern must stage one source value"
   let projected ← patternStatements bindings staged
   let body := body.observe value [source]
   pure {body with
-    env := env
     statements := body.statements ++ before ++ projected
     nextLet := state.nextLet
     requiresOutputViews := _root_.Bool.true}
@@ -3599,8 +3618,7 @@ private partial def lowerReadableStatement (programName path : String)
   | `(noctium_witness_statement| read private $fieldPath:ident as $id:ident) => do
     let field ← lookupPrivateField fieldPath
     let valueName := id.getId.toString
-    if body.env.any (·.1 == valueName) then
-      throwErrorAt id s!"duplicate readable witness value '{valueName}'"
+    let (body, internalName) ← bindReadableName body id
     let site := s!"{programName}.read.{path}"
     validIdentity statement site
     checkPrivateFieldCodec fieldPath field codecTerms
@@ -3613,8 +3631,8 @@ private partial def lowerReadableStatement (programName path : String)
       | .scalar ty => body.logicalAliases ++ [{name := valueName, ty, source := .call site}]
       | _ => body.logicalAliases
     pure {body with
-      env := (valueName, signature.result, .ref valueName, resultNominal) :: body.env
-      statements := body.statements ++ [.bind valueName signature.result (.at (← spanValue statement) readTerm)]
+      env := (valueName, signature.result, .ref internalName, resultNominal) :: body.env
+      statements := body.statements ++ [.bind internalName signature.result (.at (← spanValue statement) readTerm)]
       witnesses := uniqueWitnesses (body.witnesses ++ [signature])
       logicalAliases
       observation := {body.observation with
@@ -3629,8 +3647,7 @@ private partial def lowerReadableStatement (programName path : String)
     pure {body with statements := body.statements ++ value.before ++ [.evaluate value.term]}
   | `(noctium_witness_statement| let $id:ident $[: $type:nltype]? := $source:nlexpr) => do
     let valueName := id.getId.toString
-    if body.env.any (·.1 == valueName) then
-      throwErrorAt id s!"duplicate readable witness value '{valueName}'"
+    let (body, internalName) ← bindReadableName body id
     let annotation ← match type with
       | some annotation => some <$> readSourceScalarType annotation
       | none => pure none
@@ -3653,14 +3670,16 @@ private partial def lowerReadableStatement (programName path : String)
       | _ => body.logicalAliases
     let body := body.observe value [source]
     pure {body with
-      env := (valueName, value.type, .ref valueName, value.nominalUInt) :: body.env
-      statements := body.statements ++ value.before ++ [.bind valueName value.type (.at (← spanValue statement) value.term)]
-      shapeOnlyRefs := if value.shapeOnly then valueName :: body.shapeOnlyRefs else body.shapeOnlyRefs
+      env := (valueName, value.type, .ref internalName, value.nominalUInt) :: body.env
+      statements := body.statements ++ value.before ++ [.bind internalName value.type (.at (← spanValue statement) value.term)]
+      shapeOnlyRefs := if value.shapeOnly then internalName :: body.shapeOnlyRefs else body.shapeOnlyRefs
       logicalAliases}
   | `(noctium_witness_statement| prove $source:nlexpr $[as $binder:ident]?) => do
-    if let some id := binder then
-      if body.env.any (·.1 == id.getId.toString) then
-        throwErrorAt id s!"duplicate readable witness value '{id.getId}'"
+    let (body, internalBinder) ← match binder with
+      | none => pure (body, none)
+      | some id => do
+        let (body, internalName) ← bindReadableName body id
+        pure (body, some internalName)
     let (lowered, body) ← body.lower programName path
       {exprState with allowAssertThen := _root_.Bool.true} source
     let value ← coerce source lowered .bool
@@ -3673,9 +3692,10 @@ private partial def lowerReadableStatement (programName path : String)
     | none => pure body
     | some id =>
       let name := id.getId.toString
+      let internalName := internalBinder.getD name
       pure {body with
-        env := (name, .unit, .ref name, none) :: body.env
-        statements := body.statements ++ [.bind name .unit (.at span .unit)]}
+        env := (name, .unit, .ref internalName, none) :: body.env
+        statements := body.statements ++ [.bind internalName .unit (.at span .unit)]}
   | `(noctium_witness_statement| stage $fieldPath:ident := $source:nlexpr) => do
     let field ← lookupPrivateField fieldPath
     checkPrivateFieldCodec fieldPath field codecTerms
@@ -3702,11 +3722,19 @@ private partial def lowerReadableStatement (programName path : String)
     let (conditionValue, body) ← body.lower programName path exprState condition
     let conditionValue ← coerce condition conditionValue .bool
     let body := body.observe conditionValue [condition]
-    let mut yesBody := {body with statements := [], logicalAliases := []}
+    let mut yesBody := {body with
+      statements := []
+      logicalAliases := []
+      scopeBindings := []}
     for (child, ordinal) in yes.toList.zipIdx do
       yesBody ← lowerReadableStatement programName s!"{path}.0.{ordinal}"
         exprState codecTerms yesBody child (fun _ => yes.toList.drop (ordinal + 1))
-    let mut noBody := {yesBody with env := body.env, statements := [], logicalAliases := []}
+    let mut noBody := {yesBody with
+      env := body.env
+      statements := []
+      logicalAliases := []
+      scopeBindings := []
+      shapeOnlyRefs := body.shapeOnlyRefs}
     for (child, ordinal) in (no.getD #[]).toList.zipIdx do
       noBody ← lowerReadableStatement programName s!"{path}.1.{ordinal}"
         exprState codecTerms noBody child (fun _ => (no.getD #[]).toList.drop (ordinal + 1))
@@ -3726,6 +3754,8 @@ private partial def lowerReadableStatement (programName path : String)
     pure {noBody with
       env := body.env
       logicalAliases := body.logicalAliases
+      scopeBindings := body.scopeBindings
+      shapeOnlyRefs := body.shapeOnlyRefs
       statements := body.statements ++ conditionValue.before ++ [.evaluate term]
       helperProgram := lowered.iterationProgram}
   | `(noctium_witness_statement| for $index:ident in $start:noctium_range_bound ..<
@@ -3738,6 +3768,7 @@ private partial def lowerReadableStatement (programName path : String)
     let mut loop := {body with
       env := (indexName, .scalar .native, .ref indexName, none) :: body.env
       statements := []
+      scopeBindings := body.scopeBindings ++ [indexName]
       logicalAliases := []}
     for (child, ordinal) in nested.toList.zipIdx do
       loop ← lowerReadableStatement programName s!"{path}.{ordinal}"
@@ -3795,6 +3826,7 @@ private partial def lowerReadableStatement (programName path : String)
     let mut loop := {sourceBody with
       env := (itemName, placeholderType, .ref elementRef, none) :: sourceBody.env
       statements := []
+      scopeBindings := sourceBody.scopeBindings ++ [itemName]
       logicalAliases := []
       helperProgram := some program
       nextLet := loopExprState.nextLet
@@ -3903,7 +3935,8 @@ private partial def lowerReadableStatement (programName path : String)
       | `(noctium_witness_statement| public $id:ident : $type:noctium_witness_input_type $[as $pattern:noctium_bind_pattern]?)
       | `(noctium_witness_statement| private $id:ident : $type:noctium_witness_input_type $[as $pattern:noctium_bind_pattern]?) => do
         let valueName := id.getId.toString
-        if sourceBody.env.any (·.1 == valueName) then throwErrorAt id s!"duplicate readable witness value '{valueName}'"
+        if sourceBody.scopeBindings.contains valueName then
+          throwErrorAt id s!"duplicate readable witness value '{valueName}'"
         let visibility := if statement.raw[0].getAtomVal == "public" then Noctium.Visibility.public else Noctium.Visibility.private
         let span ← spanValue statement
         let (inputType, inputLabel, inputNominal) : ResultType × String × Option NominalUIntType ← match type with
@@ -3925,13 +3958,13 @@ private partial def lowerReadableStatement (programName path : String)
         let source := Helpers.Term.ref valueName
         sourceBody := {sourceBody with
           env := (valueName, inputType, source, inputNominal) :: sourceBody.env
+          scopeBindings := sourceBody.scopeBindings ++ [valueName]
           observation := {sourceBody.observation with inputs := sourceBody.observation.inputs ++ [input]}}
         if let some pattern := pattern then
           let bindings ← patternBindings sourceBody.composites pattern inputType _root_.id
-          let env ← extendPatternEnvironment sourceBody.env bindings
+          let (sourceBodyWithPattern, bindings) ← scopePatternBindings sourceBody bindings
           let projected ← patternStatements bindings source
-          sourceBody := {sourceBody with
-            env := env
+          sourceBody := {sourceBodyWithPattern with
             statements := sourceBody.statements ++ projected
             requiresOutputViews := _root_.Bool.true}
       | `(noctium_witness_statement| output $id:ident $[: $type:nltype]? := $value:nlexpr) => do

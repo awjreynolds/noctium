@@ -42,3 +42,14 @@ assert.deepEqual((await branchChoice(false, 9n)).result, [9n, false]);
 assert.deepEqual(calls.splice(0), ['right', ['tail', 9n]]);
 await assert.rejects(branchChoice(true, 9n));
 assert.deepEqual(calls, ['left']);
+
+calls.length = 0;
+const branchShadowing = (choice, expected) => contract.circuits.branchShadowing(
+  context('branchShadowing'), choice, expected,
+);
+assert.deepEqual((await branchShadowing(true, 7n)).result, [7n, true]);
+assert.deepEqual(calls.splice(0), ['left', ['tail', 7n]]);
+assert.deepEqual((await branchShadowing(false, 8n)).result, [8n, false]);
+assert.deepEqual(calls.splice(0), ['right', ['tail', 8n]]);
+await assert.rejects(branchShadowing(true, 9n));
+assert.deepEqual(calls, ['left']);

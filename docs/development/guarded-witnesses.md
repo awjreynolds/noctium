@@ -18,6 +18,12 @@ Private values used to control public observations still require explicit disclo
 
 The [Source fixture](../../tests/GuardedWitness.lean) uses `noctium_witness_circuit` and an ordinary contract entrypoint. Its flag provider selects an amount provider and a unit or empty-result provider. A shared tail call follows the branch. Each selected branch stages a private value, and the contract stores the checked public result.
 
+Each readable conditional arm has its own scope. A branch-local `let` or
+destructuring pattern may reuse an outer name. Its right-hand side resolves
+before the new binding enters scope. The continuation sees the original
+binding, and a duplicate name in one block fails elaboration.
+[Branch shadowing fixture](../../tests/ReadableLazyConditional.lean)
+
 Use `Witness.compile` for declared typed providers. Ordinary `Helpers.compile` retains its conservative guarded-witness gate. Untyped private witness placeholders do not acquire provider bindings through this format. Host-only `noctium_control` plans keep their separate qualification boundary.
 
 The separate [structured state entry](structured-cells.md) route supports native cell and map statements inside helper bodies. A [nested scalar fixture](structured-cells.md#nested-hosted-branches-on-ledger-9) combines provider scheduling and private staging with native proving and finalized state checks. Broader ledger effects and compiler preservation have separate evidence requirements. [Guarded witness binding](https://github.com/awjreynolds/noctium/issues/84) · [Compiler preservation](https://github.com/awjreynolds/noctium/issues/21)
