@@ -134,6 +134,16 @@ theorem boundedApply_decodedInstructionBudget :
       boundedApply_lowered boundedApply_decoded
   exact budget
 
+theorem boundedApply_aliasFrame :
+    Zkir.PreservesOutputCapacityFrame
+      (Zkir.lowerEntrypointAliases (Passes.pruneEntrypoint selectedEntrypoint)) := by
+  apply Zkir.lowerEntrypointAliases_preservesOutputCapacityFrame
+  intro aliased ha
+  change aliased ∈ [boundedRelation.outputs[0]'(by decide)] at ha
+  rw [List.mem_singleton.mp ha]
+  exact Noctium.Verification.ScalarAllocationOutputFrame.lowerExpr_admitted_preservesOutputCapacityFrame
+    _ (.ref _ (.uint _))
+
 /-- The actual default ledger body stays within the decoder's identifier budget.
 The kernel evaluates the concrete allocation frame. Producer acceptance supplies
 the separate limit on emitted output slots. -/
