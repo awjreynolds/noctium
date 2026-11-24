@@ -193,6 +193,7 @@ jobs:
           lake env lean tests/NativeKernelContext.lean
           lake env lean tests/NativeCellReset.lean
           lake env lean tests/FlatRecordCellReset.lean
+          lake env lean tests/MixedRecordCellReset.lean
           lake env lean tests/TypedRecordCell.lean
           lake env lean tests/RecordConstructor.lean
           lake env lean tests/ConstructorBytePattern.lean

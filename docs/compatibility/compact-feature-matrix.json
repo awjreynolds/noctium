@@ -2460,7 +2460,7 @@
       "layer": "language-ledger",
       "surface": "Cell.resetToDefault",
       "noctiumStatus": "subset",
-      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact, the native checker and funded Ledger 9.1.0.1 on both guards. The inactive call at 84805 preserved the deployed state bytes. The active call at 84808 stored two zero fields and preserved marker 37. The native checker rejects sealed and mismatched schemas. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. Equivalence for other aggregate layouts remains open. A flat Bool/UInt16 record resets to the exact constructor state and returns its typed defaults. The native checker restores the exact constructor state of a root Bytes4/UInt16 record Cell.",
+      "notes": "Compact 0.36.1, the native checker, and funded Ledger 9.1.0.1 agree for seeded Field, UInt64, Bool and Bytes4 cells. Inactive clear preserves exact state and active clear writes canonical defaults. The qualified Coin reset matches Compact and the native checker for both guard outcomes and preserves the adjacent marker. The active Coin reset finalized exact typed zeros and preserved marker 37 at height 50102. A two-Native-field record matches Compact, the native checker and funded Ledger 9.1.0.1 on both guards. The inactive call at 84805 preserved the deployed state bytes. The active call at 84808 stored two zero fields and preserved marker 37. The native checker rejects sealed and mismatched schemas. OpaqueBytes and OpaqueString resets match both Compact guard outcomes. The inactive call at 51583 preserved the exact seeded state, and the active call at 51586 restored the exact empty state. Both calls bound their typed returns. A single funded deployment qualified Bool/UInt16 and Bool/Bytes4/UInt16 record Cells against the pinned Compact constructor and both guards. At height 85082 the disabled call preserved exact seeded state and returned the five seeded fields. At height 85085 the enabled call returned both false and zero integer fields and four zero bytes, with the expected finalized state. Other aggregate layouts remain open.",
       "source": [
         "adt"
       ],
@@ -2486,6 +2486,9 @@
         "tests/compact/flat-record-cell-reset.mjs",
         "runtime/tests/flat_record_cell.rs",
         "docs/development/flat-record-cell-reset-localnet-receipt.json",
+        "tests/MixedRecordCellReset.lean",
+        "tests/compact/mixed-record-cell-reset.mjs",
+        "docs/development/mixed-record-cell-reset-localnet-receipt.json",
         "tests/OpaqueCellReset.lean",
         "tests/compact/opaque-cell-reset.mjs",
         "runtime/tests/opaque_cell_reset.rs",

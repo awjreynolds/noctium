@@ -7383,6 +7383,185 @@ mod tests {
 
     #[cfg(feature = "zkir-321")]
     #[test]
+    #[ignore = "submits mixed record Cell resets to the funded development node"]
+    fn mixed_record_cell_resets_finalize_typed_defaults() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+        use std::{collections::BTreeMap, env, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_MIXED_RECORD_RESET_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "mixed record reset requires the funded loopback node"
+            );
+            let directory = setting("NOCTIUM_MIXED_RECORD_RESET_BUNDLE")?;
+            let pin = setting("NOCTIUM_MIXED_RECORD_RESET_SHA256")?;
+            let bundle = artifacts::verify(Path::new(&directory), Some(&pin))?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(
+                plan.entrypoint == "clearMemos",
+                "unexpected mixed record reset plan"
+            );
+            let circuit = IrSource::load(bundle.file(Role::Circuit)?)?;
+            let k = circuit.k();
+            let cache = ProofCache::new(
+                setting("NOCTIUM_MIXED_RECORD_RESET_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let parameters = cache.parameters(k).await?;
+            let ttl = funded.node.sync()?.block.tblock.to_secs() + 1800;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(vec![bundle])?,
+                br#"{"state":{}}"#,
+                ttl,
+                &mut StdRng::from_entropy(),
+            )?;
+            let operation = target.operation("clearMemos", &parameters, ttl)?;
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid mixed record reset address"))?,
+            ));
+
+            let state_values = |active: bool, amount: &str, fixed_amount: &str, bytes: &[u8]| {
+                BTreeMap::from([
+                    ("typedMemo".into(), json!({"active":active,"amount":amount})),
+                    (
+                        "fixedBytesMemo".into(),
+                        json!({
+                            "active":active,"amount":fixed_amount,
+                            "payload":{"kind":"bytes","values":bytes},
+                        }),
+                    ),
+                ])
+            };
+            let seed = state_values(true, "513", "1027", b"seed");
+            let defaults = state_values(false, "0", "0", &[0; 4]);
+            let mut expected_state = crate::create_state(&plan, &seed)?;
+            let reset_state = crate::create_state(&plan, &defaults)?;
+            let constructor = crate::construct_state(&plan, &BTreeMap::new())?;
+            ensure!(
+                constructor.get_ref() == expected_state.get_ref(),
+                "mixed record constructor differs from the oracle"
+            );
+            let (committed, deployment) = funded.deploy(&target, "clearMemos").await?;
+            let receipt_json = |entry: &FinalizedReceipt| {
+                json!({
+                    "height":entry.height,
+                    "blockHash":entry.block_hash,
+                    "finalizedHeight":entry.finalized_height,
+                    "finalizedHash":entry.finalized_hash,
+                    "transactionId":entry.transaction_id,
+                    "stateBytes":entry.contract_state.len(),
+                    "stateSha256":hex::encode(Sha256::digest(&entry.contract_state)),
+                })
+            };
+            println!(
+                "{}",
+                json!({
+                    "stage":"deployment","contractAddress":target.contract_address(),
+                    "receipt":receipt_json(&deployment),
+                })
+            );
+            let deployed: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployment.chain.genesis == DEVELOPMENT_GENESIS
+                    && deployment.contract_address == target.contract_address()
+                    && deployed.data.get_ref() == expected_state.get_ref(),
+                "finalized constructor state differs"
+            );
+            let mut current = Some(committed);
+            let mut calls = Vec::new();
+            for enabled in [false, true] {
+                let inputs = BTreeMap::from([("enabled".into(), json!(enabled))]);
+                let snapshot = funded.node.sync()?;
+                let execution = crate::prepare(
+                    &plan,
+                    &inputs,
+                    &expected_state,
+                    &snapshot.state.parameters,
+                    address,
+                )?;
+                let expected = if enabled { &defaults } else { &seed };
+                let returns = BTreeMap::from([
+                    (
+                        "typedActiveAfterReset".into(),
+                        expected["typedMemo"]["active"].clone(),
+                    ),
+                    (
+                        "typedAmountAfterReset".into(),
+                        expected["typedMemo"]["amount"].clone(),
+                    ),
+                    (
+                        "fixedBytesActiveAfterReset".into(),
+                        expected["fixedBytesMemo"]["active"].clone(),
+                    ),
+                    (
+                        "fixedBytesPayloadAfterReset".into(),
+                        expected["fixedBytesMemo"]["payload"].clone(),
+                    ),
+                    (
+                        "fixedBytesAmountAfterReset".into(),
+                        expected["fixedBytesMemo"]["amount"].clone(),
+                    ),
+                ]);
+                let post_state = if enabled {
+                    &reset_state
+                } else {
+                    &expected_state
+                };
+                ensure!(
+                    crate::check(&execution, &circuit)? == execution.activity_schedule
+                        && execution.returns_json() == returns
+                        && execution.after.state.get_ref() == post_state.get_ref(),
+                    "native state or typed returns differ for enabled={enabled}"
+                );
+                let (bound, receipt) = funded
+                    .call_with_bound(&operation, &mut current, &parameters, inputs)
+                    .await?;
+                let call = json!({
+                    "enabled":enabled,"receipt":receipt_json(&receipt),"typedReturns":returns,
+                });
+                println!("{}", json!({"stage":"clearMemos","call":call}));
+                bound.check_receipt(&receipt)?;
+                let finalized: ContractState<Db> = native_decode(&receipt.contract_state)?;
+                ensure!(
+                    receipt.chain.genesis == DEVELOPMENT_GENESIS
+                        && receipt.contract_address == target.contract_address()
+                        && finalized.data == execution.after.state
+                        && (receipt.contract_state == deployment.contract_state) != enabled,
+                    "finalized state differs for enabled={enabled}"
+                );
+                expected_state = execution.after.state;
+                calls.push(call);
+            }
+            println!(
+                "{}",
+                json!({
+                    "contractAddress":target.contract_address(),"genesis":DEVELOPMENT_GENESIS,
+                    "bundleManifestSha256":pin,"k":k,"deployment":receipt_json(&deployment),
+                    "guardedCalls":calls,
+                })
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "zkir-321")]
+    #[test]
     #[ignore = "requires authenticated OpaqueCells bundles and a funded development node"]
     fn opaque_root_cells_finalize_typed_store_and_reads() -> anyhow::Result<()> {
         use crate::{
