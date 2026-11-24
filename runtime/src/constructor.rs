@@ -84,6 +84,15 @@ pub enum ConstructorAction {
         state: String,
         fields: Vec<Expr>,
     },
+    InsertRecordKeyMap {
+        state: String,
+        fields: Vec<Expr>,
+        #[serde(rename = "valueType")]
+        value_type: String,
+        value: Expr,
+        #[serde(default)]
+        guard: Option<Expr>,
+    },
     PushRecordList {
         state: String,
         fields: Vec<Expr>,
@@ -503,6 +512,52 @@ fn record_map_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedReco
     Ok((slot, crate::checked_typed_record_schema(record)?))
 }
 
+fn record_key_map_slot(
+    plan: &Plan,
+    name: &str,
+) -> Result<(usize, crate::CheckedRecordSchema, ScalarType)> {
+    let (slot, declaration) = plan
+        .state
+        .iter()
+        .enumerate()
+        .find(|(_, declaration)| declaration.name == name)
+        .ok_or_else(|| anyhow!("unknown constructor record-key Map state"))?;
+    ensure!(
+        declaration
+            .kind
+            .as_object()
+            .is_some_and(|kind| kind.len() == 1 && kind.contains_key("tree")),
+        "constructor record-key Map insert requires a root scalar-valued record-key Map"
+    );
+    let tree = declaration
+        .kind
+        .get("tree")
+        .and_then(Json::as_object)
+        .filter(|tree| tree.len() == 1)
+        .ok_or_else(|| anyhow!("constructor record-key Map insert requires a root Map"))?;
+    let map = tree
+        .get("map")
+        .and_then(Json::as_array)
+        .filter(|map| map.len() == 2)
+        .ok_or_else(|| anyhow!("constructor record-key Map insert requires a root Map"))?;
+    let key_schema = map[0]
+        .as_object()
+        .filter(|key| key.len() == 1)
+        .and_then(|key| key.get("composite"))
+        .ok_or_else(|| anyhow!("constructor record-key Map key must be a record"))?;
+    let value_type = map[1]
+        .as_object()
+        .filter(|value| value.len() == 1)
+        .and_then(|value| value.get("scalar"))
+        .and_then(Json::as_str)
+        .ok_or_else(|| anyhow!("constructor record-key Map value must be scalar"))?;
+    Ok((
+        slot,
+        crate::checked_typed_record_schema(key_schema)?,
+        ScalarType::parse(value_type)?,
+    ))
+}
+
 fn record_list_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRecordSchema)> {
     let (slot, declaration) = plan
         .state
@@ -581,6 +636,15 @@ fn validate_ordered_action_targets(
         match action {
             ConstructorAction::MapInsert { state, .. } => {
                 flat_map_slot(plan, state)?;
+            }
+            ConstructorAction::InsertRecordKeyMap {
+                state, value_type, ..
+            } => {
+                let (_, _, expected_type) = record_key_map_slot(plan, state)?;
+                ensure!(
+                    ScalarType::parse(value_type)? == expected_type,
+                    "constructor record-key Map value type mismatch"
+                );
             }
             ConstructorAction::CounterIncrement { state, .. } => {
                 constructor_counter_slot(plan, state)?;
@@ -732,6 +796,45 @@ fn apply_ordered_actions(
                 slots = slots
                     .insert(slot, StateValue::Cell(Sp::new(value)))
                     .ok_or_else(|| anyhow!("constructor record Cell slot is outside state"))?;
+            }
+            ConstructorAction::InsertRecordKeyMap {
+                state: map_name,
+                fields,
+                value_type,
+                value,
+                guard,
+            } => {
+                if !constructor_guard_enabled(
+                    guard.as_ref(),
+                    environment,
+                    "constructor record-key Map insert",
+                )? {
+                    continue;
+                }
+                let (slot, schema, expected_type) = record_key_map_slot(plan, map_name)?;
+                ensure!(
+                    ScalarType::parse(value_type)? == expected_type,
+                    "constructor record-key Map value type mismatch"
+                );
+                let key_values =
+                    crate::record_values_from_expressions(&schema, fields, environment)?;
+                let key = crate::aligned_record_value(&schema, &key_values)?;
+                let value = evaluate(value, environment)?;
+                ensure!(
+                    value.scalar_type() == expected_type,
+                    "constructor record-key Map value type mismatch"
+                );
+                value.validate()?;
+                let Some(StateValue::Map(map)) = slots.get(slot) else {
+                    bail!("constructor record-key Map requires map storage")
+                };
+                let map = map.insert(
+                    key,
+                    StateValue::Cell(Sp::new(crate::aligned_storage_cell(&value)?)),
+                );
+                slots = slots
+                    .insert(slot, StateValue::Map(map))
+                    .ok_or_else(|| anyhow!("constructor record-key Map slot is outside state"))?;
             }
             ConstructorAction::PushRecordList {
                 state: list_name,

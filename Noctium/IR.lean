@@ -980,6 +980,14 @@ inductive LedgerFieldExpr where
   | mk (ty : Ty) (value : Expr ty)
   deriving Repr
 
+structure ConstructorRecordKeyMapInsert where
+  state : String
+  fields : List LedgerFieldExpr
+  valueType : Ty
+  value : Expr valueType
+  guard : Option (Expr .bool) := none
+  deriving Repr
+
 def LedgerFieldExpr.ty : LedgerFieldExpr → Ty
   | .mk ty _ => ty
 
@@ -987,6 +995,7 @@ inductive ConstructorAction where
   | mapInsert (action : ConstructorOrderedMapInsert)
   | initializeCellFromMapMember (action : ConstructorMapMemberInitializer)
   | initializeRecordCell (state : String) (fields : List LedgerFieldExpr)
+  | insertRecordKeyMap (insertion : ConstructorRecordKeyMapInsert)
   | insertRecordMap (state : String) (key : PathKey) (fields : List LedgerFieldExpr)
       (guard : Option (Expr .bool))
   | pushRecordList (state : String) (fields : List LedgerFieldExpr) (guard : Option (Expr .bool))
@@ -2073,6 +2082,31 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       if initializerNames.contains stateName || orderedInitializerNames.contains stateName then
         throw {span, message := s!"duplicate constructor state initializer for '{stateName}'"}
       orderedInitializerNames := stateName :: orderedInitializerNames
+    | .insertRecordKeyMap insertion => do
+      let stateName := insertion.state
+      unless Types.validFieldName stateName do
+        throw {span, message := s!"invalid constructor Map state name '{stateName}'"}
+      let some destination := states.find? (·.name == stateName)
+        | throw {span, message := s!"constructor inserts into unknown Map '{stateName}'"}
+      let .tree (.recordMapKey environment type valueTy) := destination.kind
+        | throw {span := destination.span, message :=
+          s!"constructor fields insert requires a root scalar-valued record-key Map '{stateName}'"}
+      unless insertion.valueType == valueTy do
+        throw {span := destination.span, message :=
+          s!"constructor Map value type mismatch for '{stateName}'"}
+      let checkedFields ← match LedgerValueType.recordMapKeyFields environment type with
+        | .ok checkedFields => pure checkedFields
+        | .error message => throw {span := destination.span, message}
+      match validateConstructorRecordFields caps scalarEnvironment checkedFields insertion.fields with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      match insertion.value.validate caps scalarEnvironment with
+      | .error message => throw {span, message}
+      | .ok _ => pure ()
+      if let some guard := insertion.guard then
+        match guard.validate caps scalarEnvironment with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
     | .insertRecordMap stateName key fields guard => do
       unless Types.validFieldName stateName do
         throw {span, message := s!"invalid constructor Map state name '{stateName}'"}

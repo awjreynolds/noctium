@@ -1,0 +1,96 @@
+{"targetProfile":
+ {"zkir": "3.2.1",
+  "zkStdlib": "2.4.0",
+  "schemaVersion": 1,
+  "qualification": "selected-native-subset-qualified",
+  "proofServer": "9.0.0",
+  "onchainRuntime": "4.0.1",
+  "nativeSource":
+  {"tag": "zkir-3.2.1",
+   "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+   "repository": "https://github.com/midnightntwrk/midnight-zkir",
+   "reportedCliVersion": "midnight-zkir 3.2.0",
+   "declaredCrateVersion": "3.2.0"},
+  "name": "midnight-ledger-9-zkir-3.2.1",
+  "ledger": "9.1.0.1",
+  "circuits": "7.3.0"},
+ "target": "midnight-ledger-9-zkir-3.2.1",
+ "state":
+ [{"name": "entries",
+   "kind":
+   {"tree":
+    {"map":
+     [{"composite":
+       {"id": "RecordKeyMapConstructor.Key",
+        "fields":
+        [{"type": "Bytes<1>", "name": "tag"},
+         {"type": "Bytes<33>", "name": "id"}]}},
+      {"scalar": "UIntRange<65536>"}]}}}],
+ "schemaVersion": 1,
+ "returns":
+ [{"visibility": "public",
+   "type": "UIntRange<65536>",
+   "name": "stored",
+   "expression": {"tag": "reference", "name": "amount"}}],
+ "reads":
+ [{"type": "Bytes<1>", "name": "tag"},
+  {"type": "Bytes<33>", "name": "id"},
+  {"type": "UIntRange<65536>", "name": "amount"}],
+ "operations":
+ [{"storage": false,
+   "op": "push",
+   "expression": {"tag": "reference", "name": "tag"},
+   "alignment": "bytes:1"},
+  {"op": "popeq",
+   "expression": {"tag": "reference", "name": "tag"},
+   "alignment": "bytes:1"},
+  {"storage": false,
+   "op": "push",
+   "expression": {"tag": "reference", "name": "id"},
+   "alignment": "bytes:33"},
+  {"op": "popeq",
+   "expression": {"tag": "reference", "name": "id"},
+   "alignment": "bytes:33"},
+  {"op": "dup"},
+  {"slot": 0,
+   "schema":
+   {"id": "RecordKeyMapConstructor.Key",
+    "fields":
+    [{"type": "Bytes<1>", "name": "tag"}, {"type": "Bytes<33>", "name": "id"}]},
+   "op": "indexRecordPath",
+   "expressions":
+   [{"tag": "reference", "name": "tag"}, {"tag": "reference", "name": "id"}]},
+  {"op": "popeq",
+   "expression":
+   {"value": {"tag": "reference", "name": "amount"},
+    "type": "Native",
+    "tag": "cast"},
+   "alignment": "field"}],
+ "nativeCircuitFile": "RecordKeyMapConstructor.readValue.zkir",
+ "guards": [],
+ "entrypoint": "readValue",
+ "contractName": "RecordKeyMapConstructor",
+ "constructor":
+ {"parameters":
+  [{"type": "Bytes<1>", "name": "tag"},
+   {"type": "Bytes<33>", "name": "id"},
+   {"type": "UIntRange<65536>", "name": "amount"},
+   {"type": "Bool", "name": "enabled"}],
+  "initializers": [],
+  "actions":
+  [{"valueType": "UIntRange<65536>",
+    "value": {"tag": "reference", "name": "amount"},
+    "state": "entries",
+    "kind": "insertRecordKeyMap",
+    "guard": {"tag": "reference", "name": "enabled"},
+    "fields":
+    [{"tag": "reference", "name": "tag"},
+     {"tag": "reference", "name": "id"}]}]},
+ "circuit":
+ {"outputs": [],
+  "name": "recordKeyMapConstructorInspection",
+  "inputs":
+  [{"visibility": "public", "type": "Bytes<1>", "name": "tag"},
+   {"visibility": "public", "type": "Bytes<33>", "name": "id"}],
+  "file": "recordKeyMapConstructorInspection.zkir",
+  "constraints": []}}
