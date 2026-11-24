@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger values: List<Bytes<0>>;
+
+export circuit push(): [] {
+  values.pushFront(disclose(default<Bytes<0>>));
+}
+
+export circuit head(): Maybe<Bytes<0>> {
+  return values.head();
+}
+
+export circuit pop(): [] {
+  values.popFront();
+}

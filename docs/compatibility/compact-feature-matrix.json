@@ -3514,7 +3514,7 @@
       "layer": "language-ledger",
       "surface": "List.head",
       "noctiumStatus": "subset",
-      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The native snapshot ABI exposes the optional scalar or record head for admitted root and nested paths. It validates List nodes with the paging reader and returns explicit absence for a valid empty List. The paired one-parent Map/List fixture checks head on A after pushes 11 and 22 over [5], then on A after one pop, while B remains [99]. A paired root List case returns an optional nested record with Native and Bool leaves. It preserves the inner field paths and canonical absent payload.",
+      "notes": "Scalar and named-record Lists expose strict head and headOrDefault. Strict head requires a nonempty List. The optional form binds presence and the declared scalar or record fields. The matched Native and Bytes128 case checks empty and nonempty values. The matched UInt8 case returns a typed Maybe with the tag first and canonical zero for an empty List. The matched Native record and Bool/UInt16 record cases preserve the nominal type and field order. The native Bool/UInt16 case rejects insertion overflow. The native snapshot ABI exposes the optional scalar or record head for admitted root and nested paths. It validates List nodes with the paging reader and returns explicit absence for a valid empty List. The paired one-parent Map/List fixture checks head on A after pushes 11 and 22 over [5], then on A after one pop, while B remains [99]. A paired root List case returns an optional nested record with Native and Bool leaves. It preserves the inner field paths and canonical absent payload. A paired Lean and Compact fixture covers List<Bytes<0>>: empty head returns None with an empty value, push returns Some with an empty value, and popping the populated list restores None. `returnMaybe` keeps the logical `value` typed as Bytes0 while the physical return view contains only its Bool tag. The fresh Native 3.2.1 Rust check matches Compact's typed results, then confirms that popping an already empty List writes Null and a following read rejects.",
       "source": [
         "adt"
       ],
@@ -3542,6 +3542,10 @@
         "tests/NativeScalarList.lean",
         "runtime/tests/native_scalar_list.rs",
         "tests/compact/native-scalar-list.mjs",
+        "tests/NativeZeroWidthListMaybe.lean",
+        "tests/compact/ZeroWidthListMaybe.compact",
+        "tests/compact/zero-width-list-maybe.mjs",
+        "runtime/tests/native_zero_width_list_maybe.rs",
         "docs/development/native-lists.md",
         "runtime/tests/collection_reads.rs",
         "docs/development/native-client-abi.md",
