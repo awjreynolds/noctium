@@ -41,20 +41,35 @@ fn run(
     Ok(execution)
 }
 
-fn put_inputs(enabled: bool, key: u64, amount: u64, active: bool) -> BTreeMap<String, Json> {
-    BTreeMap::from([
-        ("enabled".into(), json!(enabled)),
-        ("key".into(), json!(key.to_string())),
-        ("next.amount".into(), json!(amount.to_string())),
-        (
-            "next.active".into(),
-            json!(if active { "1" } else { "0" }),
-        ),
-    ])
+fn field_key(suffix: u8) -> BTreeMap<String, Json> {
+    BTreeMap::from([("key".into(), json!(suffix.to_string()))])
 }
 
-fn lookup_inputs(key: u64) -> BTreeMap<String, Json> {
-    BTreeMap::from([("key".into(), json!(key.to_string()))])
+fn byte_key(suffix: u8) -> BTreeMap<String, Json> {
+    (1..=31)
+        .chain([suffix])
+        .enumerate()
+        .map(|(index, byte)| (format!("key.{index}"), json!(byte.to_string())))
+        .collect()
+}
+
+fn empty_maps_state(plan: &Plan) -> Result<ChargedState<Db>> {
+    let config = plan
+        .state
+        .iter()
+        .map(|state| (state.name.clone(), json!([])))
+        .collect();
+    Ok(create_state(plan, &config)?)
+}
+
+fn assert_same_map_schema(left: &Plan, right: &Plan) {
+    assert_eq!(left.state.len(), 2, "fixture has both root Maps");
+    assert_eq!(right.state.len(), left.state.len());
+    for (left_state, right_state) in left.state.iter().zip(&right.state) {
+        assert_eq!(left_state.name, right_state.name);
+        assert!(left_state.kind.pointer("/tree/map").is_some());
+        assert!(right_state.kind.pointer("/tree/map").is_some());
+    }
 }
 
 fn receipt(amount: &str, active: bool) -> Json {
@@ -68,76 +83,60 @@ fn receipt(amount: &str, active: bool) -> Json {
     })
 }
 
-fn assert_lookup(
-    lookup: &(Plan, IrSource),
-    state: &ChargedState<Db>,
-    key: u64,
-    expected_amount: &str,
-    expected_active: bool,
+fn check_map(
+    put_entry: &str,
+    lookup_entry: &str,
+    key: fn(u8) -> BTreeMap<String, Json>,
 ) -> Result<()> {
-    let execution = run(lookup, &lookup_inputs(key), state)?;
-    assert_eq!(
-        execution.returns_json(),
-        BTreeMap::from([("result".into(), receipt(expected_amount, expected_active))])
-    );
-    assert_eq!(execution.after.state, *state);
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
-fn generic_record_map_put_updates_one_checked_record() -> Result<()> {
     let directory = artifacts();
-    let put = fixture(&directory, "put")?;
-    let lookup = fixture(&directory, "lookup")?;
-    assert_eq!(put.0.state.len(), 1, "fixture has one root Map");
-    assert_eq!(lookup.0.state.len(), 1, "lookup has the same root Map");
-    assert_eq!(lookup.0.state[0].name, put.0.state[0].name);
-    assert!(
-        put.0.state[0].kind.pointer("/tree/map").is_some(),
-        "state is a recursive Map with a record value"
-    );
+    let put = fixture(&directory, put_entry)?;
+    let lookup = fixture(&directory, lookup_entry)?;
+    assert_same_map_schema(&put.0, &lookup.0);
     assert!(put.0.returns.is_empty(), "put has no returns");
     assert!(put.0.return_views.is_empty(), "put has no composite returns");
 
-    let initial = create_state(
-        &put.0,
-        &BTreeMap::from([(put.0.state[0].name.clone(), json!([]))]),
-    )?;
+    let insert = |state: &ChargedState<Db>, enabled, suffix, amount: u64, active| {
+        let mut inputs = key(suffix);
+        inputs.extend([
+            ("enabled".into(), json!(enabled)),
+            ("next.amount".into(), json!(amount.to_string())),
+            ("next.active".into(), json!(if active { "1" } else { "0" })),
+        ]);
+        let execution = run(&put, &inputs, state)?;
+        assert!(execution.returns_json().is_empty(), "put has no returns");
+        Ok::<_, anyhow::Error>(execution.after.state)
+    };
+    let read = |state: &ChargedState<Db>, suffix, amount, active| {
+        let execution = run(&lookup, &key(suffix), state)?;
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([("result".into(), receipt(amount, active))])
+        );
+        assert_eq!(execution.after.state, *state);
+        Ok::<_, anyhow::Error>(())
+    };
 
-    let inserted_a = run(&put, &put_inputs(true, 11, 101, true), &initial)?;
-    assert!(inserted_a.returns_json().is_empty(), "put has no returns");
-    assert_lookup(&lookup, &inserted_a.after.state, 11, "101", true)?;
+    let initial = empty_maps_state(&put.0)?;
+    let inserted_a = insert(&initial, true, 11, 101, true)?;
+    read(&inserted_a, 11, "101", true)?;
 
-    let inserted_b = run(&put, &put_inputs(true, 12, 303, true), &inserted_a.after.state)?;
-    assert!(inserted_b.returns_json().is_empty(), "put has no returns");
-    assert_lookup(&lookup, &inserted_b.after.state, 11, "101", true)?;
-    assert_lookup(&lookup, &inserted_b.after.state, 12, "303", true)?;
+    let inserted_b = insert(&inserted_a, true, 12, 303, true)?;
+    read(&inserted_b, 11, "101", true)?;
+    read(&inserted_b, 12, "303", true)?;
 
-    let disabled_a = run(
-        &put,
-        &put_inputs(false, 11, 999, false),
-        &inserted_b.after.state,
-    )?;
-    assert_eq!(disabled_a.after.state, inserted_b.after.state);
-    assert!(disabled_a.returns_json().is_empty(), "put has no returns");
-    assert_lookup(&lookup, &disabled_a.after.state, 11, "101", true)?;
-    assert_lookup(&lookup, &disabled_a.after.state, 12, "303", true)?;
+    let disabled = insert(&inserted_b, false, 11, 999, false)?;
+    assert_eq!(disabled, inserted_b);
+    read(&disabled, 11, "101", true)?;
+    read(&disabled, 12, "303", true)?;
 
-    let overwritten_a = run(
-        &put,
-        &put_inputs(true, 11, 202, false),
-        &disabled_a.after.state,
-    )?;
-    assert!(overwritten_a.returns_json().is_empty(), "put has no returns");
-    assert_lookup(&lookup, &overwritten_a.after.state, 11, "202", false)?;
-    assert_lookup(&lookup, &overwritten_a.after.state, 12, "303", true)?;
-
+    let overwritten = insert(&disabled, true, 11, 202, false)?;
+    read(&overwritten, 11, "202", false)?;
+    read(&overwritten, 12, "303", true)?;
     assert!(
         prepare(
             &lookup.0,
-            &lookup_inputs(13),
-            &overwritten_a.after.state,
+            &key(13),
+            &overwritten,
             &ledger::structure::INITIAL_PARAMETERS,
             ContractAddress::default(),
         )
@@ -145,4 +144,16 @@ fn generic_record_map_put_updates_one_checked_record() -> Result<()> {
         "lookup of a missing key must reject"
     );
     Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
+fn generic_record_map_put_updates_one_checked_record() -> Result<()> {
+    check_map("put", "lookup", field_key)
+}
+
+#[test]
+#[ignore = "requires fresh GenericRecordMap artifacts in NOCTIUM_GENERIC_RECORD_MAP_DIR"]
+fn generic_record_map_put_bytes_updates_one_checked_record() -> Result<()> {
+    check_map("putBytes", "lookupBytes", byte_key)
 }

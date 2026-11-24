@@ -84,10 +84,10 @@ def genericRecordMapModule : Definition := {
       «member» := 3
       name := "put"
       circuit := .localMember 1
-      callInputs := ["enabled", "key"]
+      callInputs := ["enabled"]
       effects := [{
         effect := .writeMapInput (.localMember 0)
-          (.mk .native (.disclose {} (.ref "key" : Expr .native))) "next"
+          (.argument "key" (disclosed := Bool.true)) "next"
           (disclosed := Bool.true)
         guard := some (.disclose {} (.ref "enabled" : Expr .bool))
       }]
@@ -96,11 +96,10 @@ def genericRecordMapModule : Definition := {
       «member» := 4
       name := "lookup"
       circuit := .localMember 2
-      callInputs := ["key"]
       mapReturns := [{
         name := "result"
         state := .localMember 0
-        key := .mk .native (.disclose {} (.ref "key" : Expr .native))
+        key := .argument "key" (disclosed := Bool.true)
       }]
     }
   ]
@@ -114,24 +113,43 @@ def genericRecordMapModule : Definition := {
 noctium_module from genericRecordMapModule
 
 def genericRecordMapRoot : Definition := {
-  imports := [{
-    viewName := "receiptMap"
-    target := `genericRecordMapModule
-    arguments := [
-      .typeValue (.scalar .native),
-      .checkedTypeValue (.structure "GenericRecordMap.Receipt")
-        genericRecordMapReceiptEnvironment
-    ]
-    selections := [
-      {sourceName := "receipts", localName := "receipts"},
-      {sourceName := "put", localName := "put"},
-      {sourceName := "lookup", localName := "lookup"}
-    ]
-  }]
+  imports := [
+    {
+      viewName := "receiptMap"
+      target := `genericRecordMapModule
+      arguments := [
+        .typeValue (.scalar .native),
+        .checkedTypeValue (.structure "GenericRecordMap.Receipt")
+          genericRecordMapReceiptEnvironment
+      ]
+      selections := [
+        {sourceName := "receipts", localName := "receipts"},
+        {sourceName := "put", localName := "put"},
+        {sourceName := "lookup", localName := "lookup"}
+      ]
+    },
+    {
+      viewName := "receiptBytesMap"
+      target := `genericRecordMapModule
+      arguments := [
+        .typeValue (.bytes 32),
+        .checkedTypeValue (.structure "GenericRecordMap.Receipt")
+          genericRecordMapReceiptEnvironment
+      ]
+      selections := [
+        {sourceName := "receipts", localName := "receipts"},
+        {sourceName := "put", localName := "putBytes"},
+        {sourceName := "lookup", localName := "lookupBytes"}
+      ]
+    }
+  ]
   exports := [
     {name := "receipts", target := .importedMember "receiptMap" "receipts"},
+    {name := "receiptsBytes", target := .importedMember "receiptBytesMap" "receipts"},
     {name := "put", target := .importedMember "receiptMap" "put"},
-    {name := "lookup", target := .importedMember "receiptMap" "lookup"}
+    {name := "lookup", target := .importedMember "receiptMap" "lookup"},
+    {name := "putBytes", target := .importedMember "receiptBytesMap" "putBytes"},
+    {name := "lookupBytes", target := .importedMember "receiptBytesMap" "lookupBytes"}
   ]
 }
 
@@ -143,3 +161,48 @@ def genericRecordMapRequest : Request := {
 }
 
 noctium_module_contract GenericRecordMap from genericRecordMapRequest
+
+private def genericRecordMapStateHasKeyType (keyType : Ty) : _root_.Bool :=
+  GenericRecordMap.state.any fun declared =>
+    match declared.kind with
+    | .tree (.map actualKey (.composite environment type)) =>
+      actualKey == keyType && environment == genericRecordMapReceiptEnvironment &&
+        type == .structure "GenericRecordMap.Receipt"
+    | _ => _root_.Bool.false
+
+private def genericRecordMapEntry (name : String) : Option Entrypoint :=
+  GenericRecordMap.entrypoints.find? (·.name == name)
+
+private def genericRecordMapHasHeader (name : String) (expected : List String) : _root_.Bool :=
+  match genericRecordMapEntry name with
+  | some operation => operation.callInputs == expected
+  | none => _root_.Bool.false
+
+private def genericRecordMapHasInputView (entryName viewName : String)
+    (fields : List (String × Ty)) : _root_.Bool :=
+  match genericRecordMapEntry entryName with
+  | some operation => operation.callInputViews.any fun view =>
+      view.name == viewName && view.fields == fields
+  | none => _root_.Bool.false
+
+private def genericRecordMapBytesKeyFields : List (String × Ty) :=
+  (List.range 32).map fun index => (s!"key.{index}", .uint 255)
+
+private def genericRecordMapReceiptInputFields : List (String × Ty) := [
+  ("next.amount", .native), ("next.active", .bool)
+]
+
+#guard genericRecordMapStateHasKeyType .native &&
+  genericRecordMapStateHasKeyType (.bytes 32)
+
+#guard genericRecordMapHasHeader "put" ["enabled", "key", "next.amount", "next.active"] &&
+  genericRecordMapHasHeader "lookup" ["key"] &&
+  genericRecordMapHasHeader "putBytes"
+    (["enabled"] ++ genericRecordMapBytesKeyFields.map Prod.fst ++
+      genericRecordMapReceiptInputFields.map Prod.fst) &&
+  genericRecordMapHasHeader "lookupBytes" (genericRecordMapBytesKeyFields.map Prod.fst)
+
+#guard genericRecordMapHasInputView "put" "next" genericRecordMapReceiptInputFields &&
+  genericRecordMapHasInputView "putBytes" "next" genericRecordMapReceiptInputFields &&
+  genericRecordMapHasInputView "putBytes" "key" genericRecordMapBytesKeyFields &&
+  genericRecordMapHasInputView "lookupBytes" "key" genericRecordMapBytesKeyFields

@@ -21,13 +21,25 @@ module GenericMap<K, V> {
   }
 }
 
-import GenericMap<Field, Receipt> prefix receiptMap_;
-export {receiptMap_values, receiptMap_put, receiptMap_lookup};
+import GenericMap<Field, Receipt> prefix fieldReceiptMap_;
+import GenericMap<Bytes<32>, Receipt> prefix byteReceiptMap_;
+export {
+  fieldReceiptMap_values, fieldReceiptMap_put, fieldReceiptMap_lookup,
+  byteReceiptMap_values, byteReceiptMap_put, byteReceiptMap_lookup,
+};
 
 export circuit put(enabled: Boolean, key: Field, next: Receipt): [] {
-  return receiptMap_put(disclose(enabled), disclose(key), disclose(next));
+  return fieldReceiptMap_put(disclose(enabled), disclose(key), disclose(next));
 }
 
 export circuit lookup(key: Field): Receipt {
-  return receiptMap_lookup(disclose(key));
+  return fieldReceiptMap_lookup(disclose(key));
+}
+
+export circuit putBytes(enabled: Boolean, key: Bytes<32>, next: Receipt): [] {
+  return byteReceiptMap_put(disclose(enabled), disclose(key), disclose(next));
+}
+
+export circuit lookupBytes(key: Bytes<32>): Receipt {
+  return byteReceiptMap_lookup(disclose(key));
 }
