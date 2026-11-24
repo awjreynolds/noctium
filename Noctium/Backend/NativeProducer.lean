@@ -166,6 +166,38 @@ private theorem bind_ok {ε α β} {first : Except ε α} {next : α → Except 
     ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem define_inputCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) : next.inputCount = state.inputCount := by
+  unfold define at accepted
+  rcases bind_ok.mp accepted with ⟨_, _, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, _, result⟩
+  cases result
+  rfl
+
+private theorem forIn_preserves_inputCount {α : Type} {items : List α}
+    {initial final : State} {step : α → State → Except String State}
+    (preserves : ∀ item state next, step item state = .ok next →
+      next.inputCount = state.inputCount)
+    (accepted : forIn items initial (fun item state => do
+      let next ← step item state
+      pure (.yield next)) = .ok final) :
+    final.inputCount = initial.inputCount := by
+  induction items generalizing initial final with
+  | nil =>
+    simp only [List.forIn_nil] at accepted
+    cases accepted
+    rfl
+  | cons head tail ih =>
+    rw [List.forIn_cons] at accepted
+    cases checked : step head initial with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok middle =>
+      simp only [checked, bind_pure_comp] at accepted
+      have headCount := preserves head initial middle checked
+      have tailCount := ih (initial := middle) (final := final)
+        accepted
+      omega
+
 /-- A successful native argument is also an ordinary argument with a checked
 Native type. This exposes the exact fact selected by native-only opcodes. -/
 theorem nativeArgument_parts {state : State} {instruction : Json}
@@ -938,6 +970,68 @@ def validateInstructionLoop (expected : Expected) (items : List (Json × Nat))
       throw s!"native instruction {index}: {message}"
       pure (.yield state)
 
+private def seedRawInputFact (expected : Expected) (rawInput : Json) (index : Nat) :
+    Except String (String × Fact) := do
+  let some required := expected.rawInputs[index]? | throw "unexpected native raw call input"
+  fields rawInput ["name", "type"]
+  ensure (required.visibility == .«private» && !required.ty.isBytes)
+    "native raw call inputs require private scalar projections"
+  let name ← stringField rawInput "name"
+  ensure (name == required.identifier) "native raw call input name/order mismatch"
+  let valueType ← match required.ty with
+    | .foreign kind => do
+      ensure ((← stringField rawInput "type") == kind.nativeName) "native raw call input type mismatch"
+      pure (.foreign kind : NativeValueType)
+    | _ => do
+      nativeType (← rawInput.getObjVal? "type")
+      pure .native
+  let foreignValid := isForeignType valueType
+  pure (name, {
+    term := .input name
+    valueType
+    foreignValid
+    maximum := if foreignValid then 0 else Field.modulus - 1
+  })
+
+private def seedRawInput (expected : Expected) (rawInput : Json) (index : Nat)
+    (state : State) : Except String State := do
+  let (name, fact) ← seedRawInputFact expected rawInput index
+  define state name fact
+
+private theorem seedRawInput_inputCount {expected : Expected} {rawInput : Json}
+    {index : Nat} {state next : State}
+    (accepted : seedRawInput expected rawInput index state = .ok next) :
+    next.inputCount = state.inputCount := by
+  unfold seedRawInput at accepted
+  rcases bind_ok.mp accepted with ⟨_, _, defineAccepted⟩
+  exact define_inputCount defineAccepted
+
+/-- Validate and seed the raw private scalar input header before instructions. -/
+def seedRawInputs (expected : Expected) (rawInputs : Array Json) : Except String State := do
+  let mut state : State := {}
+  for (rawInput, index) in rawInputs.toList.zipIdx do
+    state ← seedRawInput expected rawInput index state
+  pure state
+
+/-- Raw input definitions preserve the Native transcript input count. -/
+theorem seedRawInputs_inputCount {expected : Expected} {rawInputs : Array Json}
+    {seed : State} (accepted : seedRawInputs expected rawInputs = .ok seed) :
+    seed.inputCount = 0 := by
+  unfold seedRawInputs at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨loopState, loopAccepted, result⟩
+  cases result
+  have preserves : ∀ (item : Json × Nat) state next,
+      seedRawInput expected item.1 item.2 state = .ok next →
+        next.inputCount = state.inputCount := by
+    intro item state next stepAccepted
+    exact seedRawInput_inputCount stepAccepted
+  have count := forIn_preserves_inputCount
+    (initial := ({} : State))
+    (step := fun (item : Json × Nat) state => seedRawInput expected item.1 item.2 state)
+    preserves loopAccepted
+  simpa using count
+
 theorem validateInstructionLoop_prefixInvariant {expected : Expected}
     {items : List (Json × Nat)} {initial final : State} (property : State → Prop)
     (initialProperty : property initial)
@@ -1215,28 +1309,7 @@ def validate (expected : Expected) (program : Json) : Except String Unit := do
   let instructionNames := expected.inputs.map (·.identifier)
   ensure ((rawNames ++ instructionNames).eraseDups.length == rawNames.length + instructionNames.length)
     "native raw and instruction input names collide"
-  let mut state : State := {}
-  for (rawInput, index) in rawInputs.toList.zipIdx do
-    let some required := expected.rawInputs[index]? | throw "unexpected native raw call input"
-    fields rawInput ["name", "type"]
-    ensure (required.visibility == .«private» && !required.ty.isBytes)
-      "native raw call inputs require private scalar projections"
-    let name ← stringField rawInput "name"
-    ensure (name == required.identifier) "native raw call input name/order mismatch"
-    let valueType ← match required.ty with
-      | .foreign kind => do
-        ensure ((← stringField rawInput "type") == kind.nativeName) "native raw call input type mismatch"
-        pure (.foreign kind : NativeValueType)
-      | _ => do
-        nativeType (← rawInput.getObjVal? "type")
-        pure .native
-    let foreignValid := isForeignType valueType
-    state ← define state name {
-      term := .input name
-      valueType
-      foreignValid
-      maximum := if foreignValid then 0 else Field.modulus - 1
-    }
+  let mut state ← seedRawInputs expected rawInputs
   let returns ← arrayField program "outputs"
   ensure (returns.size == expected.returns.length) "native output header count mismatch"
   for output in returns do nativeType output
