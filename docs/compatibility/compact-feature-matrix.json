@@ -2645,7 +2645,7 @@
       "layer": "language-ledger",
       "surface": "Set.insert",
       "noctiumStatus": "subset",
-      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native query-context test stores each flat Bool and UInt16 record as one root Set key. The native checker also covers Curve25519Point members. The pinned Compact and native tests keep a duplicate Bool/UInt16 key at one member in a Bytes32-keyed nested Set. The paired root Set case inserts Native vector keys, preserves their field order, and leaves a duplicate at one member. A nested Set beneath a Bytes32 Map accepts checked record keys with a Bytes1 tag and Bytes33 identifier. The funded 3.2.1 call kept two keys with the same prefix and different final bytes. A root Set with the same Bytes1 and Bytes33 layout stores both distinct keys in the pinned Compact and native ZKIR 3.2.1 fixtures.",
+      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native query-context test stores each flat Bool and UInt16 record as one root Set key. The native checker also covers Curve25519Point members. The pinned Compact and native tests keep a duplicate Bool/UInt16 key at one member in a Bytes32-keyed nested Set. The paired root Set case inserts Native vector keys, preserves their field order, and leaves a duplicate at one member. A nested Set beneath a Bytes32 Map accepts checked record keys with a Bytes1 tag and Bytes33 identifier. The funded 3.2.1 call kept two keys with the same prefix and different final bytes. A root Set with the same Bytes1 and Bytes33 layout stores both distinct keys in the pinned Compact and native ZKIR 3.2.1 fixtures. The checked root record insert and removal sequence finalized on Ledger 9.1.0.1.",
       "source": [
         "adt"
       ],
@@ -2655,6 +2655,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/root-fixed-byte-record-set-localnet-receipt.json",
         "tests/RootFixedByteRecordSet.lean",
         "tests/compact/root-fixed-byte-record-set.mjs",
         "tests/FixedByteRecordSet.lean",
@@ -2743,7 +2744,7 @@
       "layer": "language-ledger",
       "surface": "Set.member",
       "noctiumStatus": "subset",
-      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. Native query-context tests distinguish the Bool and UInt16 fields of root and nested record keys. The native checker also covers Curve25519Point members. The C ABI checks membership by typed key in pinned snapshots, with tested scalar, flat record and qualified coin cases. Broader composite member shapes need separate evidence. The paired root Set case distinguishes vectors by the second field and by field order. Pinned Compact and finalized localnet agree on membership of two record keys with a Bytes1 tag and a Bytes33 identifier under the same Bytes32 Map bucket, absence of a third key, and membership and count in the sibling bucket. The paired root Set fixture finds both keys before removal, rejects a wrong-width argument, and finds only the retained key afterward.",
+      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. Native query-context tests distinguish the Bool and UInt16 fields of root and nested record keys. The native checker also covers Curve25519Point members. The C ABI checks membership by typed key in pinned snapshots, with tested scalar, flat record and qualified coin cases. Broader composite member shapes need separate evidence. The paired root Set case distinguishes vectors by the second field and by field order. Pinned Compact and finalized localnet agree on membership of two record keys with a Bytes1 tag and a Bytes33 identifier under the same Bytes32 Map bucket, absence of a third key, and membership and count in the sibling bucket. The paired root Set fixture finds both keys before removal, rejects a wrong-width argument, and finds only the retained key afterward. The funded root record call preserved the Compact-matched membership lifecycle and exact post-state.",
       "source": [
         "adt"
       ],
@@ -2753,6 +2754,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/root-fixed-byte-record-set-localnet-receipt.json",
         "tests/RootFixedByteRecordSet.lean",
         "tests/compact/root-fixed-byte-record-set.mjs",
         "tests/FixedByteRecordSet.lean",
@@ -2781,7 +2783,7 @@
       "layer": "language-ledger",
       "surface": "Set.remove",
       "noctiumStatus": "subset",
-      "notes": "Removal matches Compact and funded Ledger 9.1.0.1 for root and map-nested Bytes32 Sets. An absent member leaves the Set unchanged. The native query-context test removes one Bool and UInt16 record key and retains the other. The native checker also covers Curve25519Point members. General composite member keys remain open. The native Bytes32-keyed nested Set preserves the other record and the sibling bucket after removal. The paired root Set case removes one Native vector key and preserves the reversed and second-field variants. For the root Bytes1 and Bytes33 record key, Compact and the native checker agree that removing one record retains the exact key with the differing last byte.",
+      "notes": "Removal matches Compact and funded Ledger 9.1.0.1 for root and map-nested Bytes32 Sets. An absent member leaves the Set unchanged. The native query-context test removes one Bool and UInt16 record key and retains the other. The native checker also covers Curve25519Point members. General composite member keys remain open. The native Bytes32-keyed nested Set preserves the other record and the sibling bucket after removal. The paired root Set case removes one Native vector key and preserves the reversed and second-field variants. For the root Bytes1 and Bytes33 record key, Compact and the native checker agree that removing one record retains the exact key with the differing last byte. The funded root record Set kept the exact retained member through independent finalized state readback.",
       "source": [
         "adt"
       ],
@@ -2791,6 +2793,7 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "docs/development/root-fixed-byte-record-set-localnet-receipt.json",
         "tests/RootFixedByteRecordSet.lean",
         "tests/compact/root-fixed-byte-record-set.mjs",
         "tests/VectorSetKeys.lean",
