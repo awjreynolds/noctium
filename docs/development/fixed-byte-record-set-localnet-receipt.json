@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "network": "funded development localnet",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "runtime": {
+    "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+    "zkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "rust": "1.100.0",
+    "host": "darwin-arm64",
+    "specVersion": 2001100,
+    "transactionVersion": 4,
+    "ledgerParameterToolkit": "midnightntwrk/midnight-node-toolkit@sha256:904f824f3350530bc2fb03448906cc5f9f200b98e98bd9fbb274a1cc25b9f89c"
+  },
+  "artifactProvenance": {
+    "sourceSha256": "f15e7b7662d7563d0c646e0f7f1ca9be6db56e769db3d5c759c4f51ce339ce6b",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "ledgerParametersSha256": "27eb882109310560df1a1bed6109a85999ae27cf7453c234163a178abad850d5",
+    "nativeZkirBinarySha256": "7396c9a368e70fb66cb91f39d1508c9f983cacc8d3bc27f7a94e12d9fe327c40",
+    "proofParametersSha256": {
+      "bls_midnight_2p10": "46b2290933cbed4c378889e4ba971f1a92888331ffb09466acd4ff61a1e2cb42",
+      "dust/10/spend.prover": "3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81",
+      "dust/10/spend.verifier": "d15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb",
+      "dust/10/spend.bzkir": "d211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1"
+    },
+    "operation": {
+      "name": "FixedByteRecordSet.update",
+      "k": 10,
+      "rows": 757,
+      "bundleManifestSha256": "5ae5a1feb303e892aaf2accb2f54c68a52d0004d6b98a2511b905b42536202aa",
+      "circuitSha256": "886b582ae564fd15bb44e6bcebf3af08c4e2013dce2fef76fc7680e9b27772e8",
+      "planSha256": "c096e6d03ffe4dc3ca68a4b6ec2158e2d23110491cd939e95d0c1e16c138493e",
+      "proverKeySha256": "e5242548d8046d6a6bd0540120c62e1fdd785ab1771573a8a1df162982e8ab78",
+      "verifierKeySha256": "ebd99855eb9ec1576dd47914bb0b99a0cb0705f9ad5bc9498cdf4d0c8e232891"
+    },
+    "compilerBaseRevision": "19d8c3f397997a81a6433ab58208be72d4049d93",
+    "compilerSourcePatchSha256": "801d000c40cdc4ac0ad2a676e91255e851009b77a0891d062b05767850b954db"
+  },
+  "checks": {
+    "lateByteKeysRemainDistinct": true,
+    "missingMemberReturnsFalse": true,
+    "siblingBucketPreserved": true,
+    "exactPredictedStateAccepted": true,
+    "returns": {
+      "first": true,
+      "late": true,
+      "missingKey": false,
+      "sibling": true,
+      "count": "2",
+      "siblingCount": "1"
+    }
+  },
+  "finalized": {
+    "deploymentHeight": 81994,
+    "callHeight": 81997,
+    "contractAddress": "940e2efe1c24637c74355b26050911bc4e8466a37ec57e25147b5ed2d8ecb5fa",
+    "transactionIds": {
+      "deploy": "0x7ad1f9fa69397ddc33b44ce059b403e8ed5b319783158411c7fa0e560a19a332",
+      "call": "0xc8df850edb096c8540801d4c2576cac2347a9b3e8825edd312dfbc82a0af450f"
+    },
+    "blockHashes": {
+      "deploy": "0x3f37528c30c1b7c7f08673c4d529e4766ef472d60c5f0bfdbcdeb8180e738033",
+      "call": "0x41ddc44fff3ad5edeb43b7f085dee63a0b2783beab5df8e1cfc5bfa7c5d9ed3e"
+    },
+    "stateBytes": 2542,
+    "stateSha256": "7a4e1eae45f5a6cb13ad72d4644ec458495265fffd4ab55f3a8e01c6a329f6ba",
+    "extrinsicHashes": {
+      "deploy": "0xe446667140e0eff7bc964c4fd9a2b4904cd5a13efdbb6dbb8e0d0caea7a4974b",
+      "call": "0x1a7ffda2c3d5d0a7ee7205692591f667f94b6e26a00790c8abb3a7409ed87884"
+    },
+    "independentReadOnlyEventAndStateCheck": true
+  },
+  "fixtureInputs": {
+    "owner": "01 repeated 32 bytes",
+    "siblingOwner": "02 repeated 32 bytes",
+    "tag": "07",
+    "firstId": "03 repeated 33 bytes",
+    "lateId": "03 repeated 32 bytes followed by 04",
+    "missingKeyId": "03 repeated 32 bytes followed by 05"
+  }
+}

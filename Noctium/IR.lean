@@ -698,6 +698,14 @@ def LedgerValueType.ledgerRecordWriteFields (environment : Types.CompositeEnv)
     | .ok _ => .error "shielded coin records require their specialized write effect"
     | .error _ => LedgerValueType.ledgerRecordFields environment type
 
+/-- Record Set keys accept the fixed-byte fields supported by the ordinary
+typed record layout. Keep the broader Map and List value policies separate. -/
+def LedgerValueType.recordSetKeyFields (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
+  match LedgerValueType.shieldedCoinRecordFields environment type with
+  | .ok _ => throw "shielded coin records require their specialized write effect"
+  | .error _ => flatTypedRecordFields environment type true
+
 /-- Ordinary root Cell writes accept checked Native and typed flat records,
 including fixed Bytes widths. Qualified coin records keep specialized writes. -/
 def LedgerValueType.cellWriteRecordFields (environment : Types.CompositeEnv)
@@ -1649,7 +1657,7 @@ where
       validateLedgerMapKeyType keyTy
       validateStateScalar caps keyTy
     | .recordSet environment type => do
-      let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+      let fields ← LedgerValueType.recordSetKeyFields environment type
       for (_, ty) in fields do
         validateStateScalar caps ty
     | .recordMapKey environment type valueTy => do
@@ -1702,7 +1710,7 @@ private def resolveRecordSetFields (decls : List StateDecl) (state : String)
   let selected ← if keys.isEmpty then pure schema else schema.resolvePath keys
   let .recordSet environment type := selected
     | throw s!"path does not select a typed record Set in '{state}'"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordSetKeyFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Set key field type mismatch"
   pure fields

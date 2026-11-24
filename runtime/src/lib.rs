@@ -3124,7 +3124,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
         if depth == 0 {
             checked_cell_record_schema(schema)?;
         } else {
-            checked_typed_record_schema(schema)?;
+            checked_map_record_schema(schema)?;
         }
         return Ok(());
     }
@@ -3173,7 +3173,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
                     && !is_shielded_coin_record_schema(value_record),
                 "record-key Maps require an ordinary typed record value"
             );
-            checked_typed_record_schema(value_record)?;
+            checked_map_record_schema(value_record)?;
         } else {
             bail!("record-key Maps require a scalar or record value")
         }
@@ -3181,7 +3181,7 @@ fn validate_tree_schema(schema: &Json, depth: usize) -> Result<()> {
             depth + 2 < 16,
             "record-key Map insertion depth exceeds native insertion depth"
         );
-        checked_typed_record_schema(record)?;
+        checked_map_record_schema(record)?;
         return validate_tree_schema(&parts[1], depth + 1);
     }
     let key_type = ledger_key_type(&parts[0])?;
@@ -3636,6 +3636,15 @@ fn checked_typed_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Typed)
 }
 
+fn checked_map_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    let schema = checked_typed_record_schema(json)?;
+    ensure!(
+        schema.fields.iter().all(|field| !matches!(field.ty, ScalarType::Bytes(_))),
+        "fixed Bytes fields are only supported in typed record Set keys"
+    );
+    Ok(schema)
+}
+
 fn checked_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Cell)
 }
@@ -3762,7 +3771,7 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
         let admitted = match &ty {
             ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint => true,
             ScalarType::Bool | ScalarType::UInt(_) => !matches!(scope, RecordScope::Legacy),
-            ScalarType::Bytes(_) => matches!(scope, RecordScope::Cell),
+            ScalarType::Bytes(_) => matches!(scope, RecordScope::Typed | RecordScope::Cell),
             _ => false,
         };
         ensure!(

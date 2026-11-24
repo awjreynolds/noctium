@@ -2636,7 +2636,7 @@
       "layer": "language-ledger",
       "surface": "Set.insert",
       "noctiumStatus": "subset",
-      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native query-context test stores each flat Bool and UInt16 record as one root Set key. The native checker also covers Curve25519Point members. The pinned Compact and native tests keep a duplicate Bool/UInt16 key at one member in a Bytes32-keyed nested Set. The paired root Set case inserts Native vector keys, preserves their field order, and leaves a duplicate at one member.",
+      "notes": "Ordered insertion into root or map-nested Sets. Compact and funded Ledger 9.1.0.1 agree on inserting a Bytes32 member and leaving exact state unchanged after a duplicate. The native query-context test stores each flat Bool and UInt16 record as one root Set key. The native checker also covers Curve25519Point members. The pinned Compact and native tests keep a duplicate Bool/UInt16 key at one member in a Bytes32-keyed nested Set. The paired root Set case inserts Native vector keys, preserves their field order, and leaves a duplicate at one member. A nested Set beneath a Bytes32 Map accepts checked record keys with a Bytes1 tag and Bytes33 identifier. The funded 3.2.1 call kept two keys with the same prefix and different final bytes.",
       "source": [
         "adt"
       ],
@@ -2646,6 +2646,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedByteRecordSet.lean",
+        "tests/compact/fixed-byte-record-set.mjs",
+        "docs/development/fixed-byte-record-set-localnet-receipt.json",
         "tests/VectorSetKeys.lean",
         "tests/compact/vector-set-keys.mjs",
         "runtime/tests/vector_set_keys.rs",
@@ -2729,7 +2732,7 @@
       "layer": "language-ledger",
       "surface": "Set.member",
       "noctiumStatus": "subset",
-      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. Native query-context tests distinguish the Bool and UInt16 fields of root and nested record keys. The native checker also covers Curve25519Point members. The C ABI checks membership by typed key in pinned snapshots, with tested scalar, flat record and qualified coin cases. Broader composite member shapes need separate evidence. The paired root Set case distinguishes vectors by the second field and by field order.",
+      "notes": "Circuit membership for root and map-nested Bytes32 Sets agrees with Compact and finalized on Ledger 9.1.0.1 across insertion and removal. Native query-context tests distinguish the Bool and UInt16 fields of root and nested record keys. The native checker also covers Curve25519Point members. The C ABI checks membership by typed key in pinned snapshots, with tested scalar, flat record and qualified coin cases. Broader composite member shapes need separate evidence. The paired root Set case distinguishes vectors by the second field and by field order. Pinned Compact and finalized localnet agree on membership of two record keys with a Bytes1 tag and a Bytes33 identifier under the same Bytes32 Map bucket, absence of a third key, and membership and count in the sibling bucket.",
       "source": [
         "adt"
       ],
@@ -2739,6 +2742,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedByteRecordSet.lean",
+        "tests/compact/fixed-byte-record-set.mjs",
+        "docs/development/fixed-byte-record-set-localnet-receipt.json",
         "tests/VectorSetKeys.lean",
         "tests/compact/vector-set-keys.mjs",
         "runtime/tests/vector_set_keys.rs",
@@ -2823,7 +2829,7 @@
       "layer": "language-ledger",
       "surface": "Set.size",
       "noctiumStatus": "equivalent",
-      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset. The native Bytes32-keyed nested Set binds the exact count through duplicate insertion and removal. The native C ABI reads the size of root and Map-nested Sets from pinned snapshots. The paired Native vector key case counts three distinct keys, including a reversed key, and excludes a duplicate.",
+      "notes": "Circuit size binds the UInt64 count of distinct members. Compact and funded Ledger 9.1.0.1 agree on one member after insertion and duplicate insertion and zero after removal and reset for root and nested Sets. The root typed-record Set native relation uses Memo { active: Bool, amount: UInt16 } and checks size zero initially, two after inserting (true, 513) and (false, 513), and zero after reset. The native Bytes32-keyed nested Set binds the exact count through duplicate insertion and removal. The native C ABI reads the size of root and Map-nested Sets from pinned snapshots. The paired Native vector key case counts three distinct keys, including a reversed key, and excludes a duplicate. The funded fixed-byte record key case counts two late-byte-distinct keys and one unchanged sibling member on Ledger 9.1.0.1.",
       "source": [
         "adt"
       ],
@@ -2833,6 +2839,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/FixedByteRecordSet.lean",
+        "tests/compact/fixed-byte-record-set.mjs",
+        "docs/development/fixed-byte-record-set-localnet-receipt.json",
         "tests/VectorSetKeys.lean",
         "tests/compact/vector-set-keys.mjs",
         "runtime/tests/vector_set_keys.rs",

@@ -1384,6 +1384,12 @@ def ledgerRecordSchema (environment : Types.CompositeEnv) (type : Types.Composit
   let fields ← LedgerValueType.ledgerRecordWriteFields environment type
   recordSchemaForFields environment type fields
 
+/-- Produce the checked record schema used by a typed record Set key. -/
+def recordSetSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
+    Except String Lean.Json := do
+  let fields ← LedgerValueType.recordSetKeyFields environment type
+  recordSchemaForFields environment type fields
+
 /-- Produce the record schema shared by List operations and state metadata. -/
 def listElementOperationSchema (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String Lean.Json :=
@@ -1475,7 +1481,7 @@ private def recordSetKeySchema (state : List StateDecl) (name : String)
   let slot ← stateSlot state name
   let .recordSet environment type ← resolveTreeState state name keys
     | throw s!"path does not select a record Set in '{name}'"
-  let fields ← LedgerValueType.ledgerRecordWriteFields environment type
+  let fields ← LedgerValueType.recordSetKeyFields environment type
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "record Set key field type mismatch"
   let schema ← recordSchemaForFields environment type fields
