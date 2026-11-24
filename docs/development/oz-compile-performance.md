@@ -237,6 +237,22 @@ validates the optimized relation. The six aggregate native cases pass,
 including altered-frame rejection. The sizing run excludes key generation
 and proving. [Issue 74](https://github.com/awjreynolds/noctium/issues/74)
 
+A focused run on `febc3b33` isolates the current comparison opt-in for
+`inspectPayment`. The default and flagged builds each emit 215 instructions.
+The flag replaces 63 of 65 `less_than` instructions with `copy`. The pinned
+ZKIR 3.2.1 tool measures 708 rows at K10 by default and 330 rows at K9 with
+the flag. Both native executions return the same named aggregates and reject
+a modified private frame under the original commitment. The Impact plan
+matches byte for byte. Witness metadata changes only where it embeds the
+new relation. The same paired PrivateClaim build reproduces all three files
+byte for byte. [Comparison acceptance issue](https://github.com/awjreynolds/noctium/issues/691)
+
+| `inspectPayment` artifact | SHA-256 |
+| --- | --- |
+| Default relation | `a70f2f66bfb89f48e76ed482170b1a6e6db273ff322c534271d718d9482dc2a2` |
+| Opt-in relation | `9f7494528fcb49e07b74a116a3300b1ccfd8fa0fec91f04e05b134a96c2602fa` |
+| Impact plan for both builds | `65cce3f9c946bc3954f79bff52a2bfafc665ec95306e47ba2c43edcd5e8d5336` |
+
 A matched OpenZeppelin token run on the same M3 Max compiled all 16 ledger
 entrypoints and witness artifacts in 4.75 s with the flag off and 4.67 s with
 it on. `transferFrom` used 63,110 and 61,798 rows respectively at K16. The
