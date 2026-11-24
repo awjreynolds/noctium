@@ -1465,11 +1465,24 @@ private def stateSlot (state : List StateDecl) (name : String) : Except String N
   | some index => pure index
   | none => throw s!"unknown ledger state '{name}'"
 
+/-- The first declaration selected by a source Cell effect has the requested
+type and uses the ordinary field representation. -/
+def UnalignedCellDeclaration (state : List StateDecl) (name : String) (ty : Ty) : Prop :=
+  ∃ declaration, state.find? (·.name == name) = some declaration ∧
+    declaration.kind = .cell ty ∧ declaration.cellAlignment? = none
+
 private def stateCellAlignment (state : List StateDecl) (name : String) : Option CellAlignment :=
   (state.find? (·.name == name)).bind fun declaration =>
     match declaration.kind with
     | .cell _ => declaration.cellAlignment?
     | _ => none
+
+private theorem stateCellAlignment_eq_none {state : List StateDecl}
+    {name : String} {ty : Ty}
+    (declaration : UnalignedCellDeclaration state name ty) :
+    stateCellAlignment state name = none := by
+  rcases declaration with ⟨declaration, found, kind, unaligned⟩
+  simp [stateCellAlignment, found, kind, unaligned]
 
 private def resolveTreeState (state : List StateDecl) (name : String)
     (keys : List PathKey) : Except String LedgerValueType := do
@@ -2346,6 +2359,61 @@ def appendEffect (state : List StateDecl) (effect : Effect)
     pure {plan with operations := plan.operations ++ (← emptyMapOps state name keys)}
   | .setInsert name keys =>
     pure {plan with operations := plan.operations ++ (← setInsertOps state name keys)}
+
+private theorem append_bind_ok {α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
+    (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+/-- Accepted reads from an ordinary bounded UInt Cell use the scalar field
+alignment. The declaration evidence names the exact state entry selected by
+`appendEffect`, so byte-aligned UInt128 Cells stay outside this projection. -/
+theorem appendEffect_unalignedUIntCell_read_shape
+    (state : List StateDecl) (name destination : String) (maximum : Nat)
+    (declaration : UnalignedCellDeclaration state name (.uint maximum))
+    (before after : Plan)
+    (accepted : appendEffect state (.readCell name destination (.uint maximum)) before = .ok after) :
+    ∃ slot, after.operations = before.operations ++
+      [.dup, .index slot, .popeq (.field
+        (.cast .native (.ref destination : Expr (.uint maximum))))] := by
+  simp only [appendEffect, append_bind_ok] at accepted
+  rcases accepted with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
+  have alignmentNone := stateCellAlignment_eq_none declaration
+  have valueShape : value = .popeq (.field
+      (.cast .native (.ref destination : Expr (.uint maximum)))) := by
+    rw [alignmentNone] at valueAccepted
+    change (Except.ok (.popeq (.field
+      (.cast .native (.ref destination : Expr (.uint maximum))))) :
+      Except String Op) = .ok value at valueAccepted
+    exact (Except.ok.inj valueAccepted).symm
+  refine ⟨slot, ?_⟩
+  simpa [valueShape] using
+    (congrArg Plan.operations (Except.ok.inj resultAccepted)).symm
+
+/-- Accepted writes from an ordinary bounded UInt Cell use the scalar field
+alignment. The declaration evidence names the exact state entry selected by
+`appendEffect`, so byte-aligned UInt128 Cells stay outside this projection. -/
+theorem appendEffect_unalignedUIntCell_write_shape
+    (state : List StateDecl) (name : String) (maximum : Nat)
+    (value : Expr (.uint maximum))
+    (declaration : UnalignedCellDeclaration state name (.uint maximum))
+    (before after : Plan)
+    (accepted : appendEffect state (.writeCell name (.uint maximum) value) before = .ok after) :
+    ∃ slot, after.operations = before.operations ++
+      [.push (.field (.native slot)),
+        .push (.field (.cast .native value)) true, .insert 1] := by
+  simp only [appendEffect, append_bind_ok] at accepted
+  rcases accepted with ⟨slot, slotAccepted, stored, storedAccepted, resultAccepted⟩
+  have alignmentNone := stateCellAlignment_eq_none declaration
+  have storedShape : stored = .push (.field (.cast .native value)) true := by
+    rw [alignmentNone] at storedAccepted
+    change (Except.ok (.push (.field (.cast .native value)) true) :
+      Except String Op) = .ok stored at storedAccepted
+    exact (Except.ok.inj storedAccepted).symm
+  refine ⟨slot, ?_⟩
+  simpa [storedShape] using
+    (congrArg Plan.operations (Except.ok.inj resultAccepted)).symm
 
 def appendEffects (state : List StateDecl) (effects : List Effect)
     (initial : Plan) : Except String Plan :=
