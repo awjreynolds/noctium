@@ -1,6 +1,10 @@
 import examples.BoundedScalars
+import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.SourceEffects
 
 namespace Noctium.BoundedScalarsVerification
+
+open Verification
 
 def applyEntry : Entrypoint :=
   BoundedScalars.entrypoints.headD {name := "missing", circuit := {name := "missing"}}
@@ -26,6 +30,158 @@ def relationConstraints : List (Expr .bool) :=
    sumExpression.eq (Expr.ref "expected")]
 
 def context : EvalContext := { modulus := Field.modulus, poseidon2 := fun _ _ _ => .error "unused" }
+
+def state (total : Nat) : LedgerState := { cells := [("total", .uint 510 total)] }
+
+def applyEffects : List Effect :=
+  [.readCell "total" "old" (.uint 510),
+   .require ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)),
+   .writeCell "total" (.uint 510) (Expr.ref "result")]
+
+theorem apply_effects_shape : applyEntry.effects = applyEffects := by
+  with_unfolding_all rfl
+
+theorem apply_guards_shape : applyEntry.effectGuards = [none, none, none] := by
+  with_unfolding_all rfl
+
+private theorem require_step_success_condition (condition : Expr .bool) (env : EvalEnv)
+    (ledger : LedgerState) (after : EvalEnv × LedgerState)
+    (success : Noctium.Verification.SourceEffects.step context (.require condition) (env, ledger) = .ok after) :
+    condition.eval context env = .ok _root_.Bool.true ∧ after = (env, ledger) := by
+  cases evaluated : condition.eval context env with
+  | error message =>
+    simp [Noctium.Verification.SourceEffects.step, runEffectWithEnv, evaluated,
+      Except.bind, Bind.bind] at success
+  | ok value =>
+    cases value with
+    | «false» =>
+      simp [Noctium.Verification.SourceEffects.step, runEffectWithEnv, evaluated,
+        Except.bind, Bind.bind] at success
+    | «true» =>
+      simp [Noctium.Verification.SourceEffects.step, runEffectWithEnv, evaluated,
+        Except.bind, Bind.bind] at success
+      exact ⟨rfl, (Except.ok.inj success).symm⟩
+
+theorem apply_effects_success (input : Inputs) (total : Nat)
+    (finalEnv : EvalEnv) (after : LedgerState)
+    (totalBound : total ≤ 510) (expectedBound : input.expected ≤ 510)
+    (success : runEffectsWithGuardsAndEnv context applyEntry.effects applyEntry.effectGuards
+      ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input) (state total) =
+      .ok (finalEnv, after)) :
+    total = 0 ∧
+      finalEnv = ("old", .uint 510 total) :: ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input) ∧
+      after = state input.expected := by
+  rw [apply_effects_shape, apply_guards_shape] at success
+  change runEffectsWithEnv context applyEffects
+    ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input) (state total) =
+      .ok (finalEnv, after) at success
+  rw [SourceEffects.runEffectsWithEnv_eq_fold, applyEffects] at success
+  let initialEnv := [("result", .uint 510 input.expected)] ++ inputEnvironment input
+  let readEnv := ("old", .uint 510 total) :: initialEnv
+  have totalField : total < Field.modulus := Nat.lt_of_le_of_lt totalBound (by decide)
+  have readStep : SourceEffects.step context (.readCell "total" "old" (.uint 510))
+      (initialEnv, state total) = .ok (readEnv, state total) := by
+    simp [readEnv, initialEnv, SourceEffects.step, runEffectWithEnv, state,
+      canonical_eq, context, ScalarPolicy.maxUint, ScalarPolicy.maxBits,
+      totalBound, Field.modulus, Value.as, Value.pack]
+    split
+    · omega
+    · simp [pure, Except.pure]
+  rw [SourceEffects.fold_cons, readStep, Except.bind] at success
+  rw [SourceEffects.fold_cons] at success
+  have resultLookup : readEnv.lookup "result" = some (.uint 510 input.expected) := by
+    simp [readEnv, initialEnv, inputEnvironment, List.lookup]
+  have resultEval : (Expr.ref "result" : Expr (.uint 510)).eval context readEnv =
+      .ok input.expected := by
+    rw [Expr.eval, resultLookup]
+    have expectedField : input.expected < Field.modulus :=
+      Nat.lt_of_le_of_lt expectedBound (by decide)
+    simp [Value.as, canonical_eq, context, ScalarPolicy.maxUint,
+      ScalarPolicy.maxBits, expectedBound, expectedField, pure, Except.pure]
+  have castEval : (Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eval
+      context readEnv = .ok total := by
+    have oldLookup : readEnv.lookup "old" = some (.uint 510 total) := by
+      rfl
+    have oldEval : (Expr.ref "old" : Expr (.uint 510)).eval context readEnv = .ok total := by
+      rw [Expr.eval, oldLookup]
+      simp [Value.as, canonical_eq, context, ScalarPolicy.maxUint,
+        ScalarPolicy.maxBits, totalBound, totalField, pure, Except.pure]
+    have castResult := ScalarNormalization.eval_cast_scalar context readEnv
+      (Expr.ref "old" : Expr (.uint 510)) (.uint 510) .native total oldEval
+    simp [ScalarNormalization.scalarCast, ScalarNormalization.number, context,
+      totalField] at castResult
+    exact castResult
+  have conditionEval :
+      ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)).eval
+        context readEnv = .ok (total == 0) := by
+    simp only [Expr.eval, castEval]
+    rfl
+  cases requireStep : SourceEffects.step context
+      (.require ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)))
+      (readEnv, state total) with
+  | error message => simp [requireStep, Except.bind] at success
+  | ok middle =>
+  rw [requireStep, Except.bind] at success
+  rw [SourceEffects.fold_cons] at success
+  have conditionAccepted := require_step_success_condition
+    ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0))
+    readEnv (state total) middle requireStep
+  rcases conditionAccepted with ⟨conditionAccepted, frameAfter⟩
+  rw [conditionEval] at conditionAccepted
+  have totalZero : total = 0 := of_decide_eq_true (Except.ok.inj conditionAccepted)
+  have middleEq : middle = (readEnv, state total) := frameAfter
+  subst middle
+  subst total
+  have writeStep : SourceEffects.step context
+      (.writeCell "total" (.uint 510) (Expr.ref "result"))
+      (readEnv, state 0) = .ok (readEnv, state input.expected) := by
+    rw [SourceEffects.step, runEffectWithEnv]
+    rw [resultEval]
+    rfl
+  have finalEq : (Except.ok (readEnv, state input.expected) : Except String (EvalEnv × LedgerState)) =
+      .ok (finalEnv, after) := by
+    simpa only [writeStep, Except.bind, SourceEffects.fold_nil] using success
+  have afterEq : state input.expected = after :=
+    congrArg Prod.snd (Except.ok.inj finalEq)
+  have environmentEq : readEnv = finalEnv := congrArg Prod.fst (Except.ok.inj finalEq)
+  exact ⟨rfl, environmentEq.symm, afterEq.symm⟩
+
+private theorem successful_apply_run (input : Inputs) (total : Nat) (outputs : EvalEnv)
+    (after : LedgerState) (totalBound : total ≤ 510)
+    (expectedBound : input.expected ≤ 510)
+    (circuitSuccess : Circuit.run context boundedRelation (inputEnvironment input) =
+      .ok [("result", .uint 510 input.expected)])
+    (success : applyEntry.run context (inputEnvironment input) (state total) =
+      .ok (outputs, after)) :
+    total = 0 ∧ outputs = [("result", .uint 510 input.expected)] ∧ after = state input.expected := by
+  have entryCircuit : applyEntry.circuit.run context (inputEnvironment input) =
+      .ok [("result", .uint 510 input.expected)] := by
+    simpa [applyEntry, BoundedScalars] using circuitSuccess
+  unfold Entrypoint.run at success
+  rw [apply_disclosure, entryCircuit] at success
+  simp [applyEntry, BoundedScalars, state] at success
+  simp only [Except.bind, Bind.bind] at success
+  let effectRunner := runEffectsWithGuardsAndEnv context
+    [Effect.readCell "total" "old" (.uint 510),
+     Effect.require ((Expr.cast .native (Expr.ref "old" : Expr (.uint 510))).eq (Expr.native 0)),
+     Effect.writeCell "total" (.uint 510) (Expr.ref "result")]
+    [none, none, none] ([ ("result", .uint 510 input.expected) ] ++ inputEnvironment input)
+    (state total)
+  change (fun a => ([("result", .uint 510 input.expected)], a.2)) <$> effectRunner =
+    .ok (outputs, after) at success
+  cases effects : effectRunner with
+  | error message =>
+    rw [effects] at success
+    cases success
+  | ok frame =>
+    rcases frame with ⟨effectEnv, effectState⟩
+    have pairEq : ([("result", .uint 510 input.expected)], effectState) = (outputs, after) := by
+      rw [effects] at success
+      injection success
+    have transition := apply_effects_success input total effectEnv effectState
+      totalBound expectedBound (by simpa [effectRunner, applyEntry, BoundedScalars] using effects)
+    have afterEq : effectState = after := congrArg Prod.snd pairEq
+    exact ⟨transition.1, (congrArg Prod.fst pairEq).symm, afterEq.symm.trans transition.2.2⟩
 
 theorem relation_validates : Circuit.validate (evaluationCapabilities context) boundedRelation = .ok () := by
   with_unfolding_all rfl
@@ -153,9 +309,57 @@ theorem bounded_relation_private_outputs (left right : Inputs) (leftOutputs righ
     rightRightBound rightRun
   rw [leftResult.2, rightResult.2, samePublic]
 
+theorem successful_apply_run_from_acceptance (input : Inputs) (total : Nat)
+    (outputs : EvalEnv) (after : LedgerState) (totalBound : total ≤ 510)
+    (expectedBound : input.expected ≤ 510) (leftBound : input.left ≤ 255)
+    (rightBound : input.right ≤ 255)
+    (success : applyEntry.run context (inputEnvironment input) (state total) =
+      .ok (outputs, after)) :
+    input.expected = input.left + input.right ∧ total = 0 ∧
+      outputs = [("result", .uint 510 input.expected)] ∧ after = state input.expected := by
+  have originalSuccess := success
+  unfold Entrypoint.run at success
+  rw [apply_disclosure] at success
+  cases circuitRun : applyEntry.circuit.run context (inputEnvironment input) with
+  | error message => simp [circuitRun, Except.bind, Bind.bind] at success
+  | ok circuitOutputs =>
+    have actualCircuit : Circuit.run context boundedRelation (inputEnvironment input) =
+        .ok circuitOutputs := by
+      simpa [applyEntry, BoundedScalars] using circuitRun
+    have accepted := bounded_relation_accepts input circuitOutputs expectedBound
+      leftBound rightBound actualCircuit
+    have exactCircuit : Circuit.run context boundedRelation (inputEnvironment input) =
+        .ok [("result", .uint 510 input.expected)] := by
+      rw [accepted.2] at actualCircuit
+      exact actualCircuit
+    exact ⟨accepted.1, successful_apply_run input total outputs after totalBound
+      expectedBound exactCircuit originalSuccess⟩
+
+theorem successful_apply_private_observation (left right : Inputs) (total : Nat)
+    (leftOutputs rightOutputs : EvalEnv) (leftAfter rightAfter : LedgerState)
+    (samePublic : left.expected = right.expected) (totalBound : total ≤ 510)
+    (leftExpectedBound : left.expected ≤ 510) (rightExpectedBound : right.expected ≤ 510)
+    (leftBound : left.left ≤ 255) (leftRightBound : left.right ≤ 255)
+    (rightBound : right.left ≤ 255) (rightRightBound : right.right ≤ 255)
+    (leftRun : applyEntry.run context (inputEnvironment left) (state total) =
+      .ok (leftOutputs, leftAfter))
+    (rightRun : applyEntry.run context (inputEnvironment right) (state total) =
+      .ok (rightOutputs, rightAfter)) :
+    (leftOutputs, leftAfter) = (rightOutputs, rightAfter) := by
+  have leftResult := successful_apply_run_from_acceptance left total leftOutputs leftAfter
+    totalBound leftExpectedBound leftBound leftRightBound leftRun
+  have rightResult := successful_apply_run_from_acceptance right total rightOutputs rightAfter
+    totalBound rightExpectedBound rightBound rightRightBound rightRun
+  rw [leftResult.2.2.1, leftResult.2.2.2, rightResult.2.2.1, rightResult.2.2.2, samePublic]
+
 theorem sample_circuit_run :
     Circuit.run context boundedRelation (inputEnvironment ⟨5, 2, 3⟩) =
       .ok [("result", .uint 510 5)] := by
+  with_unfolding_all rfl
+
+theorem sample_apply_run :
+    applyEntry.run context (inputEnvironment ⟨5, 2, 3⟩) (state 0) =
+      .ok ([("result", .uint 510 5)], state 5) := by
   with_unfolding_all rfl
 
 end Noctium.BoundedScalarsVerification
