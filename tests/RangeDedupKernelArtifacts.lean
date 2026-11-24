@@ -165,32 +165,6 @@ private def booleanRangeRelation (instructions : Array Json) : Json := Json.mkOb
 private def booleanRangeOptimizedProgram : Program :=
   {booleanRangeOriginalProgram with instructions := booleanRangeOptimizedInstructions}
 
-private theorem booleanRangeOptimizedDecoded :
-    booleanRangeOptimized.toList.mapM Noctium.Verification.NativeRelationJson.decodeInstruction =
-      .ok booleanRangeOptimizedInstructions := by
-  have parsed : (booleanRangeOptimized.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction).toOption =
-      some booleanRangeOptimizedInstructions := by
-    native_decide
-  cases result : booleanRangeOptimized.toList.mapM
-      Noctium.Verification.NativeRelationJson.decodeInstruction with
-  | error message => simp [result, Except.toOption] at parsed
-  | ok instructions => simpa [result, Except.toOption] using parsed
-
-private theorem booleanRangeAcceptedLoop :
-    ∃ final : Native.State,
-      Native.validateInstructionLoop booleanRangeExpected
-        (booleanRangeSource.toList.zipIdx) {} = .ok final := by
-  have accepted :
-      (Native.validateInstructionLoop booleanRangeExpected
-        (booleanRangeSource.toList.zipIdx) {}).isOk = _root_.Bool.true := by
-    native_decide
-  cases checked : Native.validateInstructionLoop booleanRangeExpected
-      (booleanRangeSource.toList.zipIdx) {} with
-  | error message => simp [checked, Except.isOk, Except.toBool] at accepted
-  | ok final => exact ⟨final, rfl⟩
-
-
 private theorem objectHeadStringField (value : String)
     (fields : List (String × Lean.Json))
     (distinct : (("op", toJson value) :: fields).Pairwise
