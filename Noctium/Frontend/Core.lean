@@ -2648,6 +2648,7 @@ private structure EntryEffects where
   nominalUIntBindings : CircuitNominalEnv := []
   nominalFieldBindings : List (String × Option NominalFieldType) := []
   nominalUIntCells : List (String × NominalUIntType) := []
+  nominalFieldCells : List (String × NominalFieldType) := []
   nominalUIntLists : List (String × NominalUIntType) := []
   nominalUIntCollections : List (String × CollectionNominals) := []
   contractRefBindings : List (String × Name) := []
@@ -2843,7 +2844,7 @@ private def effectGuardTerm (state : EntryEffects) (parent : Option (TSyntax `te
   let explicit ← match explicitEffectGuard effect with
     | none => pure none
     | some condition => pure (some (← checkedSourceValue state.env state.nominalUIntBindings
-        state.contractRefBindings condition {type := .bool}))
+        state.contractRefBindings condition {type := .bool} state.nominalFieldBindings))
   match parent, explicit with
   | none, none => `(none)
   | none, some condition => `(some $condition)
@@ -3744,9 +3745,13 @@ private def elaborateNamedPathRead (schema : List (String × StateKind))
       let updated := {updated with terms := updated.terms.push term}
       let updated ← bindReadName updated destination.getId.toString readName ty
       let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
+      let nominalField := state.nominalFieldCells.lookup storage.getId.toString
       let contractRef := state.contractRefState.lookup storage.getId.toString
       pure {updated with
         nominalUIntBindings := bindCircuitNominal updated.nominalUIntBindings destination.getId.toString nominalUInt
+        nominalFieldBindings := match nominalField with
+        | none => updated.nominalFieldBindings
+        | some field => (destination.getId.toString, some field) :: updated.nominalFieldBindings
         contractRefBindings := bindContractRef updated.contractRefBindings destination.getId.toString contractRef}
     | some (.map keyTy valueTy) => do
       let [key] := sourceKeys | throwErrorAt path "map reads require exactly one key"
@@ -4585,9 +4590,10 @@ private def elaborateEffect (schema : List (String × StateKind))
     let some (.cell ty) := schema.lookup storage.getId.toString
       | throwErrorAt storage "write requires a declared state cell"
     let nominalUInt := state.nominalUIntCells.lookup storage.getId.toString
+    let nominalField := state.nominalFieldCells.lookup storage.getId.toString
     let contractRef := state.contractRefState.lookup storage.getId.toString
     let loweredValue ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings value
-      {type := ty, nominalUInt, contractRef}
+      {type := ty, nominalUInt, nominalField, contractRef} state.nominalFieldBindings
     let term ← `(Noctium.Effect.writeCell
       $(stringTerm storage.getId.toString) $(← tyTerm ty) $loweredValue)
     state := {state with terms := state.terms.push term}
@@ -4762,15 +4768,19 @@ private partial def elaborateStatements (schema : List (String × StateKind))
     CommandElabM EntryEffects := do
   let mut state := initial
   for statement in statements do
-    if hasCircuitNominalFieldReference state.nominalFieldBindings statement.raw then
-      throwErrorAt statement "nominal Field circuit values are only supported in scalar contract returns"
     match statement with
     | `(nlstatement| $effect:nleffect) =>
+      match effect with
+      | `(nleffect| write $_:ident := $_:nlexpr)
+      | `(nleffect| when $_:nlexpr write $_:ident := $_:nlexpr) => pure ()
+      | _ =>
+        if hasCircuitNominalFieldReference state.nominalFieldBindings effect.raw then
+          throwErrorAt effect "nominal Field effects require a direct scalar Cell write"
       state ← elaborateEffect schema parent depth state effect
     | `(nlstatement| if $condition:nlexpr then { $thenStatements:nlstatement* }
         else { $elseStatements:nlstatement* }) => do
       let condition ← checkedSourceValue state.env state.nominalUIntBindings state.contractRefBindings condition
-        {type := .bool}
+        {type := .bool} state.nominalFieldBindings
       let parentExpression ← match parent with
         | some expression => pure expression
         | none => `(Noctium.Expr.bool Bool.true)
@@ -4783,6 +4793,7 @@ private partial def elaborateStatements (schema : List (String × StateKind))
           $parentExpression $negated))
       let branchEnv := state.env
       let branchNominalUIntBindings := state.nominalUIntBindings
+      let branchNominalFieldBindings := state.nominalFieldBindings
       let branchContractRefs := state.contractRefBindings
       let branchNominalBytes32Bindings := state.nominalBytes32Bindings
       let branchOptionalRecordHeads := state.optionalRecordHeads
@@ -4791,12 +4802,14 @@ private partial def elaborateStatements (schema : List (String × StateKind))
         {afterThen with
           env := branchEnv
           nominalUIntBindings := branchNominalUIntBindings
+          nominalFieldBindings := branchNominalFieldBindings
           contractRefBindings := branchContractRefs
           nominalBytes32Bindings := branchNominalBytes32Bindings
           optionalRecordHeads := branchOptionalRecordHeads}
       state := {afterElse with
         env := branchEnv
         nominalUIntBindings := branchNominalUIntBindings
+        nominalFieldBindings := branchNominalFieldBindings
         contractRefBindings := branchContractRefs
         nominalBytes32Bindings := branchNominalBytes32Bindings
         optionalRecordHeads := branchOptionalRecordHeads}
@@ -5287,6 +5300,7 @@ set_option maxHeartbeats 1000000 in
 private def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
     (nominalUIntCells : List (String × NominalUIntType))
+    (nominalFieldCells : List (String × NominalFieldType))
     (nominalUIntLists : List (String × NominalUIntType))
     (nominalUIntCollections : List (String × CollectionNominals))
     (contractRefState : List (String × Name))
@@ -5301,6 +5315,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut parameterTerms : Array (TSyntax `term) := #[]
   let mut scalarBindings : Bindings := []
   let mut nominalUIntBindings : CircuitNominalEnv := []
+  let mut nominalFieldBindings : List (String × Option NominalFieldType) := []
   let mut contractRefs : List (String × Name) := []
   let mut opaqueParameters : List String := []
   let mut parameterNames : List String := []
@@ -5324,9 +5339,11 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)), some (length, pattern))
       | `(nlconstructorparam| $id:ident : $sourceTy:nltype) => do
         let name := id.getId.toString
-        let sourceType ← readCircuitSourceType sourceTy
+        let sourceType ← readCircuitSourceType sourceTy _root_.Bool.true
         let ty := sourceType.type
         nominalUIntBindings := bindCircuitNominal nominalUIntBindings name sourceType.nominalUInt
+        if sourceType.nominalField.isSome then
+          nominalFieldBindings := (name, sourceType.nominalField) :: nominalFieldBindings
         contractRefs := bindContractRef contractRefs name sourceType.contractRef
         if ty == .opaqueString then
           pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString), none)
@@ -5366,6 +5383,11 @@ private def elaborateConstructor (source : TSyntax `nlstate)
     recordFieldTypes := recordFieldTypes
   }
   for initializer in initializers do
+    match initializer with
+    | `(nlconstructorinit| initialize $_:ident := $_:nlexpr) => pure ()
+    | _ =>
+      if hasCircuitNominalFieldReference nominalFieldBindings initializer.raw then
+        throwErrorAt initializer "nominal Field constructor values require a direct scalar Cell initializer"
     match initializer with
     | `(nlconstructorinit| initialize $stateName:ident := $payload:nlleaves) => do
       if orderedActionTerms.size + counterIncrementTerms.size + listPushTerms.size +
@@ -5701,9 +5723,10 @@ private def elaborateConstructor (source : TSyntax `nlstate)
             | _ => throwErrorAt value "OpaqueString initializer must reference an OpaqueString parameter or literal"
           | some (_, .cell ty) => do
             let nominalUInt := nominalUIntCells.lookup destination
+            let nominalField := nominalFieldCells.lookup destination
             let contractRef := contractRefState.lookup destination
             let expression ← checkedSourceValue scalarBindings nominalUIntBindings contractRefs value
-              {type := ty, nominalUInt, contractRef}
+              {type := ty, nominalUInt, nominalField, contractRef} nominalFieldBindings
             let typeTerm ← `(Noctium.ConstructorType.scalar $(← tyTerm ty))
             let valueTerm ← `(Noctium.ConstructorValue.scalar $expression)
             pure (destination, ConstructorType.scalar ty, (typeTerm, valueTerm))
@@ -5882,6 +5905,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
     let mut stateTerms : Array (TSyntax `term) := #[]
     let mut schema : List (String × StateKind) := []
     let mut nominalUIntCells : List (String × NominalUIntType) := []
+    let mut nominalFieldCells : List (String × NominalFieldType) := []
     let mut nominalUIntLists : List (String × NominalUIntType) := []
     let mut nominalUIntCollections : List (String × CollectionNominals) := []
     let mut contractRefState : List (String × Name) := []
@@ -5987,10 +6011,12 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
           let valueTerm ← `(Noctium.LedgerValueType.composite $environmentTerm $compositeTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
         | `(nlstate| sealed cell $id:ident : $ty:nltype) => do
-          let sourceType ← readCircuitSourceType ty
+          let sourceType ← readCircuitSourceType ty _root_.Bool.true
           let t := sourceType.type
           if let some nominalUInt := sourceType.nominalUInt then
             nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
+          if let some nominalField := sourceType.nominalField then
+            nominalFieldCells := (id.getId.toString, nominalField) :: nominalFieldCells
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           if t == .opaqueString then
@@ -6006,10 +6032,12 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
         | `(nlstate| cell $id:ident : $ty:nltype) => do
-          let sourceType ← readCircuitSourceType ty
+          let sourceType ← readCircuitSourceType ty _root_.Bool.true
           let t := sourceType.type
           if let some nominalUInt := sourceType.nominalUInt then
             nominalUIntCells := nominalUIntCells ++ [(id.getId.toString, nominalUInt)]
+          if let some nominalField := sourceType.nominalField then
+            nominalFieldCells := (id.getId.toString, nominalField) :: nominalFieldCells
           if let some interface := sourceType.contractRef then
             contractRefState := (id.getId.toString, interface) :: contractRefState
           pure (id, StateKind.cell t, ← `(Noctium.StateKind.cell $(← tyTerm t)))
@@ -6421,7 +6449,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
     let constructorTerm ← match constructorSyntax? with
       | none => `(none)
       | some ctor =>
-        elaborateConstructor ctor schema nominalUIntCells nominalUIntLists nominalUIntCollections
+        elaborateConstructor ctor schema nominalUIntCells nominalFieldCells nominalUIntLists nominalUIntCollections
           contractRefState recordFieldTypes
     let mut entryTerms : Array (TSyntax `term) := #[]
     let mut entryNames : List Name := []
@@ -6468,6 +6496,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
             (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
           nominalUIntCells := nominalUIntCells
+          nominalFieldCells := nominalFieldCells
           nominalUIntLists := nominalUIntLists
           nominalUIntCollections := nominalUIntCollections
           contractRefBindings := info.contractRefBindings
@@ -6517,6 +6546,7 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
             (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
             (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
           nominalUIntCells := nominalUIntCells
+          nominalFieldCells := nominalFieldCells
           nominalUIntLists := nominalUIntLists
           nominalUIntCollections := nominalUIntCollections
           contractRefBindings := info.contractRefBindings
@@ -6555,6 +6585,8 @@ private def checkedRootNativeVectorKeyLayout (length : Nat) (source : TSyntax `n
         for effect in value.effects do
           match effect with
           | .readCell storage _ _ | .writeCell storage _ _ =>
+            if (nominalFieldCells.lookup storage).isSome then
+              throwErrorAt entryStx "structured helpers do not support nominal Field Cells"
             if (contractRefState.lookup storage).isSome then
               throwErrorAt entryStx "structured helpers do not support typed contract reference cells"
           | .readPath storage .. | .memberPath storage .. | .mapIsEmpty storage .. |
