@@ -184,6 +184,8 @@ scoped syntax "none(" "Payload" ident ")" : nlexpr
 scoped syntax "none(" nltype ")" : nlexpr
 scoped syntax "none(" ident ")" : nlexpr
 scoped syntax "either(" nlexpr "," nlexpr "," nlexpr ")" : nlexpr
+scoped syntax (name := readableEitherLeft) "left(" "Payload" ident "," nlexpr ")" : nlexpr
+scoped syntax "right(" "Payload" ident "," nlexpr ")" : nlexpr
 scoped syntax "field(" nlexpr "," ident ")" : nlexpr
 scoped syntax "elementAt(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax (name := readableSequenceSlice) "slice(" nlexpr "," num "," num ")" : nlexpr
@@ -929,6 +931,10 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
   | `(nlexpr| decode($codec:ident, $value)) => s!"decode({codec.getId}, {renderExpr value})"
   | `(nlexpr| deserialize(Payload $codec:ident, $value)) =>
     s!"deserialize(Payload {codec.getId}, {renderExpr value})"
+  | `(nlexpr| left(Payload $codec:ident, $value)) =>
+    s!"left(Payload {codec.getId}, {renderExpr value})"
+  | `(nlexpr| right(Payload $codec:ident, $value)) =>
+    s!"right(Payload {codec.getId}, {renderExpr value})"
   | `(nlexpr| default(Payload $codec:ident)) => s!"default(Payload {codec.getId})"
   | `(nlexpr| default($type:nltype)) => s!"default({renderType type})"
   | `(nlexpr| record(Payload $codec:ident, { $fields,* })) =>
@@ -1128,6 +1134,8 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| reverseBytes($value)) => disclosedValues value
   | `(nlexpr| either($tag, $left, $right)) =>
     disclosedValues tag ++ disclosedValues left ++ disclosedValues right
+  | `(nlexpr| left(Payload $_:ident, $value))
+  | `(nlexpr| right(Payload $_:ident, $value)) => disclosedValues value
   | `(nlexpr| sliceBytes($value, $_:num, $_:num)) => disclosedValues value
   | `(nlexpr| concatBytes($left, $right)) => disclosedValues left ++ disclosedValues right
   | `(nlexpr| byteAt($value, $_:num)) => disclosedValues value
@@ -1232,6 +1240,8 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| reverseBytes($value)) => inlineAssertions value
   | `(nlexpr| either($tag, $left, $right)) =>
     inlineAssertions tag ++ inlineAssertions left ++ inlineAssertions right
+  | `(nlexpr| left(Payload $_:ident, $value))
+  | `(nlexpr| right(Payload $_:ident, $value)) => inlineAssertions value
   | `(nlexpr| sliceBytes($value, $_:num, $_:num)) => inlineAssertions value
   | `(nlexpr| concatBytes($left, $right)) => inlineAssertions left ++ inlineAssertions right
   | `(nlexpr| byteAt($value, $_:num)) => inlineAssertions value
@@ -1755,6 +1765,43 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {type := .scalar .native, term := .native n.getNat}
   | `(nlexpr| true) => pure {type := .scalar .bool, term := .bool _root_.Bool.true}
   | `(nlexpr| false) => pure {type := .scalar .bool, term := .bool _root_.Bool.false}
+  | `(nlexpr| left(Payload $name:ident, $source))
+  | `(nlexpr| right(Payload $name:ident, $source)) => do
+    let isLeft := stx.raw.getKind == ``readableEitherLeft
+    let (codec, _) ← selectedCodec name
+    let .structure id := codec.payload | throwErrorAt name "expected a checked Either Payload"
+    let compiled ← checkedPayloadLayout name codec.payload
+    let some declaration := compiled.environment.structures.find? (·.id == id)
+      | throwErrorAt name "expected a checked Either Payload"
+    let [(tag, tagType), (leftName, leftType), (rightName, rightType)] :=
+        declaration.fields.map fun field => (field.name, field.type)
+      | throwErrorAt name "expected a checked Either Payload"
+    unless tag == "is_left" && tagType == .scalar .bool &&
+        leftName == "left" && rightName == "right" do
+      throwErrorAt name "expected a checked Either Payload"
+    let activeType := if isLeft then leftType else rightType
+    let inactiveType := if isLeft then rightType else leftType
+    let expected := Helpers.resultTypeOfComposite activeType
+    let value ← lowerExpr programName callPrefix env source (some expected)
+    let value ← match activeType with
+      | .scalar target => coerce source value target
+      | _ => do
+        unless value.layoutType == activeType do
+          throwErrorAt source "Either branch does not match the declared arm type"
+        pure value
+    let span ← liftM (spanValue stx)
+    let (before, references, _) ← stageIterationValues callPrefix env span [value]
+    let [reference] := references | throwErrorAt source "Either branch staging failed"
+    let activeLayout ← checkedPayloadLayout source activeType
+    let activeLeaves ← match Helpers.Iteration.flattenResult span value.type
+        activeLayout.checked.value reference with
+      | .ok leaves => pure leaves
+      | .error diagnostic => throwErrorAt source diagnostic.message
+    let inactiveLeaves ← zeroPayloadLeaves name (← checkedPayloadLayout name inactiveType)
+    let leaves := if isLeft then activeLeaves ++ inactiveLeaves else inactiveLeaves ++ activeLeaves
+    let result := mergeLowered (.composite codec.payload)
+      (.composite codec.payload (.bool isLeft :: leaves)) [value]
+    pure {result with before}
   | `(nlexpr| either($tagSource, $leftSource, $rightSource)) => do
     let tag ← lowerExpr programName callPrefix env tagSource
     unless tag.type == .scalar .bool do
