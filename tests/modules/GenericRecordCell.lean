@@ -97,7 +97,7 @@ def genericRecordCellModule : Definition := {
       circuit := .localMember 2
       callInputs := ["enabled"]
       effects := [{
-        effect := .writeRecordCellInput (.localMember 0) "next" (disclosed := Bool.true)
+        effect := .writeCellInput (.localMember 0) "next" (disclosed := Bool.true)
         guard := some (.disclose {} (.ref "enabled" : Expr .bool))
       }]
       cellReturns := [{name := "result", state := .localMember 0}]

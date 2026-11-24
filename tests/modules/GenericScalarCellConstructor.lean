@@ -16,6 +16,25 @@ def genericScalarCellReadProgram : Program := {
   exports := [{name := "read", target := ⟨0, 0⟩}]
 }
 
+def genericScalarCellUpdateProgram : Program := {
+  declarations := [{
+    id := ⟨0, 0⟩
+    name := "update"
+    parameters := [⟨"T", .type⟩]
+    values := [("enabled", .bool), ("next", .parameter "T")]
+    result := .unit
+    body := [.return]
+  }]
+  exports := [{
+    name := "update"
+    target := ⟨0, 0⟩
+    inputs := [
+      {name := "enabled", type := .bool, visibility := .private},
+      {name := "next", type := .parameter "T", visibility := .private}
+    ]
+  }]
+}
+
 def genericScalarCellModule : Definition := {
   parameters := [⟨"T", .type⟩]
   members := [
@@ -30,17 +49,37 @@ def genericScalarCellModule : Definition := {
       program := `genericScalarCellReadProgram
       exportName := "read"
     }},
-    {id := 2, name := "read", kind := .entrypoint, visibility := .«public»}
+    {id := 2, name := "read", kind := .entrypoint, visibility := .«public»},
+    {id := 3, name := "updateCircuit", kind := .circuit, sourceExport? := some {
+      program := `genericScalarCellUpdateProgram
+      exportName := "update"
+      arguments := [.typeParameter "T"]
+    }},
+    {id := 4, name := "update", kind := .entrypoint, visibility := .«public»}
   ]
-  entrypoints := [{
-    «member» := 2
-    name := "read"
-    circuit := .localMember 1
-    cellReturns := [{name := "result", state := .localMember 0}]
-  }]
+  entrypoints := [
+    {
+      «member» := 2
+      name := "read"
+      circuit := .localMember 1
+      cellReturns := [{name := "result", state := .localMember 0}]
+    },
+    {
+      «member» := 4
+      name := "update"
+      circuit := .localMember 3
+      callInputs := ["enabled"]
+      effects := [{
+        effect := .writeCellInput (.localMember 0) "next" (disclosed := Bool.true)
+        guard := some (.disclose {} (.ref "enabled" : Expr .bool))
+      }]
+      cellReturns := [{name := "result", state := .localMember 0}]
+    }
+  ]
   exports := [
     {name := "cell", target := .localMember 0},
-    {name := "read", target := .localMember 2}
+    {name := "read", target := .localMember 2},
+    {name := "update", target := .localMember 4}
   ]
 }
 
@@ -54,7 +93,8 @@ def genericScalarCellRoot : Definition := {
       arguments := [.typeValue (.scalar .native)]
       selections := [
         {sourceName := "cell", localName := "cell"},
-        {sourceName := "read", localName := "read"}
+        {sourceName := "read", localName := "read"},
+        {sourceName := "update", localName := "update"}
       ]
     },
     {
@@ -63,7 +103,8 @@ def genericScalarCellRoot : Definition := {
       arguments := [.typeValue (.scalar .bool)]
       selections := [
         {sourceName := "cell", localName := "cell"},
-        {sourceName := "read", localName := "read"}
+        {sourceName := "read", localName := "read"},
+        {sourceName := "update", localName := "update"}
       ]
     },
     {
@@ -72,7 +113,8 @@ def genericScalarCellRoot : Definition := {
       arguments := [.typeValue (.scalar (.uint 65535))]
       selections := [
         {sourceName := "cell", localName := "cell"},
-        {sourceName := "read", localName := "read"}
+        {sourceName := "read", localName := "read"},
+        {sourceName := "update", localName := "update"}
       ]
     }
   ]
@@ -82,7 +124,10 @@ def genericScalarCellRoot : Definition := {
     {name := "countCell", target := .importedMember "count" "cell"},
     {name := "readField", target := .importedMember "field" "read"},
     {name := "readFlag", target := .importedMember "flag" "read"},
-    {name := "readCount", target := .importedMember "count" "read"}
+    {name := "readCount", target := .importedMember "count" "read"},
+    {name := "updateField", target := .importedMember "field" "update"},
+    {name := "updateFlag", target := .importedMember "flag" "update"},
+    {name := "updateCount", target := .importedMember "count" "update"}
   ]
 }
 
@@ -124,7 +169,22 @@ private def genericScalarCellReturnType (entryName : String) (ty : Ty) : _root_.
 
 #guard genericScalarCellReturnType "readField" .native &&
   genericScalarCellReturnType "readFlag" .bool &&
-  genericScalarCellReturnType "readCount" (.uint 65535)
+  genericScalarCellReturnType "readCount" (.uint 65535) &&
+  genericScalarCellReturnType "updateField" .native &&
+  genericScalarCellReturnType "updateFlag" .bool &&
+  genericScalarCellReturnType "updateCount" (.uint 65535)
+
+private def genericScalarCellUpdateHeader (entryName : String) (ty : Ty) : _root_.Bool :=
+  match GenericScalarCellConstructor.entrypoints.find? (·.name == entryName) with
+  | some operation =>
+    operation.callInputViews.isEmpty &&
+      operation.callArguments.map (fun argument => (argument.name, argument.ty)) ==
+        [("enabled", .bool), ("next", ty)]
+  | none => Bool.false
+
+#guard genericScalarCellUpdateHeader "updateField" .native &&
+  genericScalarCellUpdateHeader "updateFlag" .bool &&
+  genericScalarCellUpdateHeader "updateCount" (.uint 65535)
 
 private def genericScalarCellRegistry : Registry := {
   modules := [
@@ -147,4 +207,25 @@ private def genericScalarCellPlanFor (request : Request) : Except Diagnostic Mod
 #guard match genericScalarCellPlanFor genericScalarCellDuplicateRequest with
   | .error diagnostic =>
     diagnostic.message.contains "duplicate module constructor initializer"
+  | .ok _ => Bool.false
+
+private def wrongScalarCellSetterRegistry : Registry := {
+  modules := genericScalarCellRegistry.modules.map fun registered =>
+    if registered.sourceName == `genericScalarCellModule then
+      let members := registered.definition.members.map fun item =>
+        if item.id == 3 then
+          {item with sourceExport? := item.sourceExport?.map fun source =>
+            {source with arguments := [.typeValue (.scalar (.uint 255))]}}
+        else item
+      {registered with definition := {registered.definition with members}}
+    else registered
+}
+
+#guard match Modules.specializeRequestWithSources {} {} wrongScalarCellSetterRegistry
+    genericScalarCellRequest [
+      (`genericScalarCellReadProgram, genericScalarCellReadProgram),
+      (`genericScalarCellUpdateProgram, genericScalarCellUpdateProgram)
+    ] with
+  | .error diagnostic =>
+    diagnostic.message.contains "module scalar Cell input 'next' does not match the checked Cell type"
   | .ok _ => Bool.false
