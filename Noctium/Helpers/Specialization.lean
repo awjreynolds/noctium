@@ -1228,7 +1228,7 @@ private partial def collectWitnessTerms (providers : List Helpers.WitnessSignatu
   | .call _ values | .composite _ values | .curve _ values | .bytes _ values =>
     values.foldl (fun acc value => collectWitnessTerms providers value acc) result
   | .unit | .native _ | .bool _ | .uint _ _ | .ref _ | .bytes32Literal _
-  | .foreignConstant .. => result
+  | .foreignConstant .. | .opaqueBytesEmpty | .opaqueStringEmpty => result
 
 private partial def collectWitnessStatements (providers : List Helpers.WitnessSignature) :
     List Helpers.Statement → Array SignatureValue → Array SignatureValue

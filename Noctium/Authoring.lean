@@ -456,6 +456,7 @@ private def readScalarTy (stx : TSyntax `nltype) : CommandElabM Ty := do
       throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
     pure (.bytes length.getNat)
   | `(nltype| OpaqueBytes) => pure .opaqueBytes
+  | `(nltype| OpaqueString) => pure .opaqueString
   | `(nltype| JubjubScalar) => pure .jubjubScalar
   | `(nltype| JubjubPoint) => pure .jubjubPoint
   | `(nltype| Secp256k1Base) => pure (.foreign (.base .secp256k1))
@@ -1490,6 +1491,8 @@ private def zeroScalarTerm (site : Syntax) (type : Ty) : ExprM Helpers.Term := d
   | .native | .bool | .uint _ => zeroSourceLeaf site type
   | .bytes 32 => pure (.bytes32Literal (List.replicate 32 0))
   | .bytes length => pure (.bytes (.bytesLiteral length (List.replicate length 0)) [])
+  | .opaqueBytes => pure .opaqueBytesEmpty
+  | .opaqueString => pure .opaqueStringEmpty
   | .jubjubScalar => pure (.curve .scalarFromNative [.native 0])
   | .jubjubPoint => pure (.curve .fromCoordinates [.native 0, .native 1])
   | .foreign kind =>
@@ -1500,7 +1503,6 @@ private def zeroScalarTerm (site : Syntax) (type : Ty) : ExprM Helpers.Term := d
         | .error message => throwErrorAt site message
       pure (.foreignConstant kind encoding)
     | .point curve => pure (.foreignConstant kind (Foreign.identityEncoding curve))
-  | _ => throwErrorAt site s!"readable scalar default does not support type '{typeName type}'"
 
 private def zeroPayloadLeaves (site : Syntax) (compiled : Types.CompiledType) :
     ExprM (List Helpers.Term) :=
@@ -3402,6 +3404,8 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
     let value ← if value then `(Bool.true) else `(Bool.false)
     `(Noctium.Helpers.Term.bool $value)
   | .uint maximum value => `(Noctium.Helpers.Term.uint $(natTerm maximum) $(natTerm value))
+  | .opaqueBytesEmpty => `(Noctium.Helpers.Term.opaqueBytesEmpty)
+  | .opaqueStringEmpty => `(Noctium.Helpers.Term.opaqueStringEmpty)
   | .ref name => `(Noctium.Helpers.Term.ref $(stringTerm name))
   | .binary op left right => do
     let op ← match op with

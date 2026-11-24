@@ -23,3 +23,18 @@ end
        | _ => Bool.false) &&
       (Backend.Zkir.lowerEntrypoint OpaqueDefaults.state defaults).isOk
   | _ => Bool.false
+
+noctium_witness_circuit readableOpaqueDefaults where
+  output textValue : OpaqueString := default(OpaqueString)
+  output bytesValue : OpaqueBytes := default(OpaqueBytes)
+end
+
+noctium_contract ReadableOpaqueDefaults where
+  entry defaults uses readableOpaqueDefaults where
+    return textValue : OpaqueString := textValue
+    return bytesValue : OpaqueBytes := bytesValue
+  end
+end
+
+#guard ReadableOpaqueDefaults.entrypoints.all fun operation =>
+  (Backend.Zkir.lowerEntrypoint ReadableOpaqueDefaults.state operation).isOk

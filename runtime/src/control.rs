@@ -1238,6 +1238,15 @@ impl Parser<'_> {
                 let x = Value::Native(canonical_field(text(v, "value")?)?);
                 (Type::Scalar(x.scalar_type()), ExprKind::Literal(x))
             }
+            "opaqueDefault" => {
+                shape(v, &["tag", "type"], true)?;
+                let value = match ScalarType::parse(text(v, "type")?)? {
+                    ScalarType::OpaqueBytes => Value::OpaqueBytes(Vec::new()),
+                    ScalarType::OpaqueString => Value::OpaqueString(String::new()),
+                    _ => bail!("opaque default requires an opaque source type"),
+                };
+                (Type::Scalar(value.scalar_type()), ExprKind::Literal(value))
+            }
             #[cfg(feature = "zkir-321")]
             "foreignConstant" => {
                 ensure!(self.schema_version == 2, "foreign values require v2 plan");

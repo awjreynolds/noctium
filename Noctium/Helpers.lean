@@ -307,6 +307,8 @@ inductive Term where
   | native (number : Nat)
   | bool (value : Bool)
   | uint (maximum number : Nat)
+  | opaqueBytesEmpty
+  | opaqueStringEmpty
   | ref (name : String)
   | binary (op : ScalarPolicy.Binary) (left right : Term)
   | boolAnd (left right : Term)
@@ -1611,6 +1613,8 @@ private def inferPartialTerm (fuel : Nat) (program : Program) (scope : Nat)
       unless number < Field.modulus do fail span "noncanonical helper native constant"
       pure {ty := some (.scalar .native)}
     | .bool _ => pure {ty := some (.scalar .bool)}
+    | .opaqueBytesEmpty => pure {ty := some (.scalar .opaqueBytes)}
+    | .opaqueStringEmpty => pure {ty := some (.scalar .opaqueString)}
     | .uint maximum number =>
       liftError span (ScalarPolicy.validate (.uint maximum))
       unless number ≤ maximum do fail span "helper unsigned constant exceeds declared bound"
@@ -2893,6 +2897,8 @@ mutual
     | .native n => pure (scalarValue (.native n))
     | .bool b => pure (scalarValue (.bool b))
     | .uint m n => pure (scalarValue (.uint m n))
+    | .opaqueBytesEmpty => pure (scalarValue .opaqueBytesEmpty)
+    | .opaqueStringEmpty => pure (scalarValue .opaqueStringEmpty)
     | .ref name =>
       let some value := env.lookup name | liftD (fail span s!"unbound helper value '{name}'")
       pure value
@@ -3950,6 +3956,8 @@ mutual
     | .native n => pure (some ⟨.native, n⟩)
     | .bool b => pure (some ⟨.bool, if b then 1 else 0⟩)
     | .uint m n => pure (some ⟨.uint m, n⟩)
+    | .opaqueBytesEmpty | .opaqueStringEmpty =>
+      liftM (fail span "opaque helper evaluation requires the native control runtime")
     | .foreignConstant .. => liftM (fail span "foreign helper evaluation requires the native control runtime")
     | .ref name =>
       let some value := env.lookup name | liftM (fail span "unbound helper trace value")

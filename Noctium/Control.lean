@@ -89,6 +89,8 @@ mutual
     | .native n => pure {ty := .scalar .native, literal := some ⟨.native, n⟩}
     | .bool b => pure {ty := .scalar .bool, literal := some ⟨.bool, if b then 1 else 0⟩}
     | .uint m n => pure {ty := .scalar (.uint m), literal := some ⟨.uint m, n⟩}
+    | .opaqueBytesEmpty => pure {ty := .scalar .opaqueBytes}
+    | .opaqueStringEmpty => pure {ty := .scalar .opaqueString}
     | .foreignConstant kind _ => pure {ty := .scalar (.foreign kind)}
     | .ref name =>
       let some value := env.lookup name | liftD (fail span "unknown control origin reference")
@@ -431,6 +433,8 @@ mutual
     | .native n => pure (node span "constant" [("value", toJson (toString n))])
     | .bool value => pure (node span "bool" [("value", toJson value)])
     | .uint maximum value => pure (node span "uint" [("maximum", toJson (toString maximum)), ("value", toJson (toString value))])
+    | .opaqueBytesEmpty => pure (node span "opaqueDefault" [("type", toJson ("OpaqueBytes" : String))])
+    | .opaqueStringEmpty => pure (node span "opaqueDefault" [("type", toJson ("OpaqueString" : String))])
     | .ref name => do
       emitLift (portableName span name)
       chargeBytes (6 * name.utf8ByteSize)
