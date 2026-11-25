@@ -1,0 +1,25 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger payloads: Map<Bytes<32>, List<Opaque<"Uint8Array">>>;
+
+export circuit clear(owner: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  if (!payloads.member(ownerKey)) {
+    payloads.insertDefault(ownerKey);
+  } else {
+    payloads.lookup(ownerKey).resetToDefault();
+  }
+}
+
+export circuit push(owner: Bytes<32>, bytes: Opaque<"Uint8Array">): [] {
+  payloads.lookup(disclose(owner)).pushFront(disclose(bytes));
+}
+
+export circuit inspect(owner: Bytes<32>): Maybe<Opaque<"Uint8Array">> {
+  return payloads.lookup(disclose(owner)).head();
+}
+
+export circuit pop(owner: Bytes<32>): [] {
+  payloads.lookup(disclose(owner)).popFront();
+}
