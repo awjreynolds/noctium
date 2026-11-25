@@ -1,4 +1,5 @@
 import Noctium.Verification.GenericStateAdmissionPrefix
+import Noctium.Verification.GuardedEffectPrefix
 
 namespace Noctium.Verification.GenericStateCheckedReadTrace
 open Backend
@@ -42,6 +43,19 @@ inductive ScalarReadEffect : Effect → Prop where
 
 def ScalarReadEffects (effects : List Effect) : Prop :=
   ∀ effect ∈ effects, ScalarReadEffect effect
+
+inductive GuardedScalarReadEffect : Option (Expr .bool) → Effect → Prop where
+  | unguarded {effect : Effect} (scope : ScalarReadEffect effect) :
+      GuardedScalarReadEffect none effect
+  | readCell (condition : Expr .bool) (name destination : String) (ty : Ty) :
+      GuardedScalarReadEffect (some condition) (.readCell name destination ty)
+
+/-- Tie the guard to each indexed effect from the production fold. Guard
+metadata is handled for cell reads. The decoder checks their types separately. -/
+def GuardedScalarReadEffects (guards : List (Option (Expr .bool)))
+    (items : List (Effect × Nat)) : Prop :=
+  ∀ item ∈ items,
+    GuardedScalarReadEffect (guards[item.2]?.getD none) item.1
 
 private theorem appendEffectWithActivity_none_shape (state : List StateDecl)
     (effect : Effect) (scope : ScalarReadEffect effect) (before : Impact.Plan) :
@@ -108,10 +122,28 @@ private theorem appendEffectWithActivity_read_chunk (state : List StateDecl)
   rw [sameReads]
   exact appendEffect_read_chunk state effect scope before middle lower
 
-private theorem trace_read_metadata (state : List StateDecl)
-    (items : List (Effect × Nat)) (initial result : Impact.Plan) (offsets : List Nat)
-    (scope : ScalarReadEffects (items.map Prod.fst))
-    (trace : Impact.GuardedEffectTrace state [] items initial result offsets) :
+theorem appendEffectWithActivity_guarded_read_chunk (state : List StateDecl)
+    (effect : Effect) (guard : Option (Expr .bool))
+    (scope : GuardedScalarReadEffect guard effect) (before after : Impact.Plan)
+    (accepted : Impact.appendEffectWithActivity state effect guard before = .ok after) :
+    planReadMetadata after =
+      planReadMetadata before ++ effectReadChunk effect before.reads.length := by
+  cases scope with
+  | unguarded scope =>
+    exact appendEffectWithActivity_read_chunk state effect scope before after accepted
+  | readCell condition name destination ty =>
+    obtain ⟨_, _, read, readName, readTy, _, reads, _, _⟩ :=
+      GuardedEffectPrefix.appendEffectWithActivity_readCell_provenance
+        state name destination ty condition before after accepted
+    change after.reads.map readMetadata = _
+    rw [reads]
+    simp [planReadMetadata, readMetadata, effectReadChunk, readName, readTy]
+
+private theorem trace_guarded_read_metadata (state : List StateDecl)
+    (guards : List (Option (Expr .bool))) (items : List (Effect × Nat))
+    (initial result : Impact.Plan) (offsets : List Nat)
+    (scope : GuardedScalarReadEffects guards items)
+    (trace : Impact.GuardedEffectTrace state guards items initial result offsets) :
     planReadMetadata result = planReadMetadata initial ++
       (readChunks (items.map Prod.fst) initial.reads.length).flatten := by
   induction items generalizing initial result offsets with
@@ -122,18 +154,16 @@ private theorem trace_read_metadata (state : List StateDecl)
     cases trace with
     | cons step tail =>
       rename_i middle offsets
-      have headScope : ScalarReadEffect item.1 := by
+      have headScope : GuardedScalarReadEffect
+          (guards[item.2]?.getD none) item.1 := by
         apply scope
         simp
-      have tailScope : ScalarReadEffects (rest.map Prod.fst) := by
-        intro effect member
-        apply scope effect
+      have tailScope : GuardedScalarReadEffects guards rest := by
+        intro next member
+        apply scope next
         simp [member]
-      have unguardedStep :
-          Impact.appendEffectWithActivity state item.1 none initial = .ok middle := by
-        simpa using step
-      have resultReads := appendEffectWithActivity_read_chunk
-        state item.1 headScope initial middle unguardedStep
+      have resultReads := appendEffectWithActivity_guarded_read_chunk
+        state item.1 (guards[item.2]?.getD none) headScope initial middle step
       have tailResult := ih middle result offsets tailScope tail
       have ordinal : middle.reads.length = initial.reads.length +
           (effectReadChunk item.1 initial.reads.length).length := by
@@ -142,11 +172,13 @@ private theorem trace_read_metadata (state : List StateDecl)
       rw [tailResult, resultReads, ordinal]
       simp [readChunks, List.flatten_cons, List.append_assoc]
 
-theorem lowerWithEffectBoundaries_read_metadata (state : List StateDecl)
+/-- The production guarded effect trace preserves projected read metadata for
+the supported guarded scalar fragment. A guarded cell read keeps its source
+name and type while its ordinal follows the preceding emitted reads. -/
+theorem lowerWithEffectBoundaries_guarded_read_metadata (state : List StateDecl)
     (entry : Entrypoint) (plan : Impact.Plan) (boundaries : List Nat)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
-    (unguarded : entry.effectGuards = [])
-    (scope : ScalarReadEffects entry.effects) :
+    (scope : GuardedScalarReadEffects entry.effectGuards (entry.effects.zipIdx)) :
     ∃ inputPlan, Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
       planReadMetadata plan = planReadMetadata inputPlan ++
         (readChunks entry.effects inputPlan.reads.length).flatten := by
@@ -156,15 +188,27 @@ theorem lowerWithEffectBoundaries_read_metadata (state : List StateDecl)
     rfl
   obtain ⟨_, inputPlan, _, prefixAccepted, trace⟩ :=
     GenericStateAdmissionPrefix.lower_guarded_effect_trace state entry plan lowered
-  rw [unguarded] at trace
   have zippedEffects : (entry.effects.zipIdx).map Prod.fst = entry.effects := by
     induction entry.effects with
     | nil => rfl
     | cons effect rest ih => simp
-  have zippedScope : ScalarReadEffects ((entry.effects.zipIdx).map Prod.fst) := by
-    simpa [zippedEffects] using scope
   exact ⟨inputPlan, prefixAccepted, by
-    simpa [zippedEffects] using trace_read_metadata state entry.effects.zipIdx
-      inputPlan plan _ zippedScope trace⟩
+    simpa [zippedEffects] using trace_guarded_read_metadata state entry.effectGuards
+      entry.effects.zipIdx inputPlan plan _ scope trace⟩
+
+theorem lowerWithEffectBoundaries_read_metadata (state : List StateDecl)
+    (entry : Entrypoint) (plan : Impact.Plan) (boundaries : List Nat)
+    (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
+    (unguarded : entry.effectGuards = [])
+    (scope : ScalarReadEffects entry.effects) :
+    ∃ inputPlan, Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
+      planReadMetadata plan = planReadMetadata inputPlan ++
+        (readChunks entry.effects inputPlan.reads.length).flatten := by
+  apply lowerWithEffectBoundaries_guarded_read_metadata state entry plan boundaries accepted
+  rw [unguarded]
+  intro item member
+  have mapped : item.1 ∈ (entry.effects.zipIdx).map Prod.fst :=
+    List.mem_map.mpr ⟨item, member, rfl⟩
+  exact .unguarded (scope item.1 (by simpa using mapped))
 
 end Noctium.Verification.GenericStateCheckedReadTrace
