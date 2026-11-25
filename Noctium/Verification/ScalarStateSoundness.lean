@@ -2,6 +2,7 @@ import Noctium.Verification.ScalarSourceFrame
 import Noctium.Verification.GenericStateEffectFold
 import Noctium.Verification.ScalarEffectReadFacts
 import Noctium.Verification.ScalarReadNames
+import Noctium.Verification.ScalarImpactOperationMeaning
 
 namespace Noctium.Verification.ScalarStateSoundness
 open Backend NativeRelation ScalarNormalization
@@ -117,6 +118,8 @@ private theorem actual_read_name_scope (state : List StateDecl) (entry : Entrypo
 /-- A satisfying emitted scalar relation and checked execution of its exact
 Impact plan authenticate the reads and determine the ordered source successor.
 The guard schedule may be empty or explicitly mark every effect unguarded.
+For admitted normalized fields and unguarded native input requirements, the
+public groups are exactly the fields consumed by the checked VM operations.
 The final equation retains the original source return checks. -/
 theorem lowerEntrypoint_checked_state
     (state : List StateDecl) (entry : Entrypoint) (rewrites : Zkir.Rewrites)
@@ -165,6 +168,14 @@ theorem lowerEntrypoint_checked_state
       final = ⟨[.vector finalSlots], finalReads⟩ ∧
       GenericStatePrefixEnvironment.AgreesOnTypes finalTypes finalEnv
         ((outputs ++ values) ++ readValues) ∧
+      ((∀ expected,
+        Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+          ∀ input ∈ expected.inputs, input.activityGuard = none) →
+        (∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation ∧
+          ∀ field ∈ operation.fields, ScalarExpression field ∧
+            field.validate Capabilities.scalarFragment
+              (plan.typeEnvironment (Passes.pruneEntrypoint entry)) = .ok ()) →
+        groups = NativeState.groups native) ∧
       entry.run ctx values initial = (do
         let returned ← Entrypoint.evalReturns ctx entry finalEnv
         pure (outputs ++ returned, next)) := by
@@ -173,7 +184,7 @@ theorem lowerEntrypoint_checked_state
     unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []}
   obtain ⟨distinctReads, separateReads⟩ :=
     actual_read_name_scope state ep plan planAccepted unguarded effectScope
-  obtain ⟨frame, outputs, readValues, source, readDecoded, base, _, readBounds, guards, readFresh⟩ :=
+  obtain ⟨frame, outputs, readValues, source, readDecoded, base, typedPlan, readBounds, guards, readFresh, frameAccepted⟩ :=
     ScalarSourceFrame.lowerEntrypoint_sourceFrame_and_guards
       state entry rewrites ctx hash implementation values witness streams groups json call rows
       plan lowered decoded rowsParsed profile satisfies planAccepted inputSchema inputs circuitScope
@@ -206,11 +217,41 @@ theorem lowerEntrypoint_checked_state
     rw [← Passes.pruneEntrypoint_disclosure]
     exact lower_disclosure state ep plan planAccepted
   refine ⟨outputs, readValues, finalEnv, finalTypes, next, finalSlots, finalReads, source,
-    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_⟩
-  unfold Entrypoint.run
-  simp only [disclosure, source, Bind.bind, Except.bind, Pure.pure, Except.pure]
-  rw [show runEffectsWithGuardsAndEnv ctx entry.effects entry.effectGuards (outputs ++ values)
-        {initial with unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []} =
-      .ok (finalEnv, next) from sourceEffects]
+    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_, ?_⟩
+  · intro inputGuards fields
+    obtain ⟨_, expected, _, expectedAccepted, payloads⟩ :=
+      RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_impactPayloads
+        rewrites lowered decoded rowsParsed profile inputSchema inputGuards
+    obtain ⟨requirementsExpected, acceptedRequirements, requirements⟩ :=
+      RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_sourceRequirements
+        rewrites lowered decoded rowsParsed profile inputSchema
+    have sameExpected := Except.ok.inj (acceptedRequirements.symm.trans expectedAccepted)
+    subst requirementsExpected
+    obtain ⟨assertions, bounds, _⟩ := requirements satisfies
+    have scalarReads := ScalarSourceFrame.plain_scalar_read_scope ep plan (fun read member =>
+      ⟨(plainReads read member).1, (plainReads read member).2.1⟩)
+    obtain ⟨collectedFrame, collectedBounds, collectedAssertions, normalized, collected,
+      boundMembers, assertionMembers⟩ := GenericStateCircuitParts.expectedEntrypoint_operations
+        state ep expected plan planAccepted expectedAccepted scalarReads
+    have sameFrame := Except.ok.inj (normalized.symm.trans frameAccepted)
+    subst collectedFrame
+    have nativeGroups := ScalarImpactOperationMeaning.collectOperations_scalar_fields
+      ctx hash implementation witness frame.1 ((outputs ++ values) ++ readValues)
+      (plan.typeEnvironment ep) typedPlan ep.span plan.operations native frame.2.1
+      expected.groups collectedBounds collectedAssertions
+      (fun operation member => (fields operation member).1)
+      (fun operation member expression present => (fields operation member).2 expression present |>.1)
+      (fun operation member expression present => (fields operation member).2 expression present |>.2)
+      (fun bound member => bounds bound (boundMembers bound member))
+      (fun term member => assertions term (assertionMembers term member)) collected planEvaluated
+    have exactPayloads := (payloads satisfies).symm.trans nativeGroups
+    have values := congrArg (List.map (List.map (fun value : Option Scalar => value.getD zero)))
+      exactPayloads
+    simpa [List.map_map, Function.comp_def] using values
+  · unfold Entrypoint.run
+    simp only [disclosure, source, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    rw [show runEffectsWithGuardsAndEnv ctx entry.effects entry.effectGuards (outputs ++ values)
+          {initial with unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []} =
+        .ok (finalEnv, next) from sourceEffects]
 
 end Noctium.Verification.ScalarStateSoundness

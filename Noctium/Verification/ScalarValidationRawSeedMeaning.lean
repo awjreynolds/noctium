@@ -1,6 +1,7 @@
 import Noctium.Backend.NativeProducer
 import Noctium.Verification.ScalarValidationMeaning
 import Noctium.Verification.ScalarValidationNativeLoop
+import Noctium.Verification.ScalarValidationNativeDefinitions
 
 namespace Noctium.Verification.ScalarValidationRawSeedMeaning
 
@@ -108,6 +109,29 @@ theorem seedRawInputs_assertionCount {expected : Expected} {rawInputs : Array Js
     calc
       next.assertionCount = state.assertionCount := countPreserved
       _ = 0 := stateCount
+  · exact loopAccepted
+
+/-- An accepted native-only raw header seed leaves the ordered Impact cursor
+at its initial zero value. -/
+theorem seedRawInputs_groupCount {expected : Expected} {rawInputs : Array Json}
+    {seed : State}
+    (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
+    (accepted : seedRawInputs expected rawInputs = .ok seed) :
+    seed.groupCount = 0 := by
+  unfold seedRawInputs at accepted
+  simp only [Noctium.Verification.ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨loopState, loopAccepted, result⟩
+  cases result
+  apply forIn_preserves (initial := ({} : State))
+    (fun state => state.groupCount = 0) rfl
+  · intro item state next stateGroupCount stepAccepted
+    obtain ⟨required, _, _, _, defined⟩ :=
+      seedRawInput_native_parts nativeOnly stepAccepted
+    have countPreserved :=
+      Noctium.Verification.ScalarValidationNativeDefinitions.define_groupCount defined
+    calc
+      next.groupCount = state.groupCount := countPreserved
+      _ = 0 := stateGroupCount
   · exact loopAccepted
 
 end Noctium.Verification.ScalarValidationRawSeedMeaning

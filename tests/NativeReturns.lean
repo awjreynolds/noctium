@@ -75,7 +75,8 @@ private def advance := nativeReturnsEntry "advance"
 #guard (Zkir.lowerEntrypoint NativeReturns.state advance).isOk
 
 /-- The actual advance call seeds the ledger validator with its source amount
-before any transcript instruction. The witness uses the same argument. -/
+before any transcript instruction. The witness uses the same argument, and
+raw header seeding leaves the Impact group cursor at zero. -/
 theorem acceptedAdvanceSeedMeaning
     {hash : Hash} {inputs assignment : Assignment} {program : Lean.Json}
     (lowered : Zkir.lowerEntrypoint NativeReturns.state advance = .ok program)
@@ -85,6 +86,7 @@ theorem acceptedAdvanceSeedMeaning
         .ok expected ∧
       expected.rawInputs = [{identifier := "%input_amount", visibility := .private, ty := .native}] ∧
       NativeValidationDriverFacts expected program instructions rawInputs seed final ∧
+      seed.groupCount = 0 ∧
       StateMeaning hash inputs assignment seed ∧ NativeDefinitions seed := by
   obtain ⟨_, expected, _, schedule, validated, _⟩ :=
     Zkir.lowerEntrypoint_validation_and_instructions NativeReturns.state advance program lowered
@@ -93,17 +95,19 @@ theorem acceptedAdvanceSeedMeaning
     GenericStateCircuitParts.expectedEntrypoint_rawInputs NativeReturns.state
       (Passes.pruneEntrypoint advance) expected schedule
   obtain ⟨instructions, rawInputs, seed, final, driver⟩ := validate_driver_result validated
-  refine ⟨expected, instructions, rawInputs, seed, final, schedule, ordered, driver, ?_⟩
-  apply ScalarValidationRawSeedMeaning.seedRawInputs_meaning_and_nativeDefinitions
-    _ _ driver.seededRawInputs
-  · intro requirement inHeader
+  have nativeHeader : ∀ requirement ∈ expected.rawInputs, requirement.ty.isForeign = Bool.false := by
+    intro requirement inHeader
     rw [ordered] at inHeader
     rw [List.mem_singleton.mp inHeader]
     rfl
-  · intro requirement inHeader
-    rw [ordered] at inHeader
-    rw [List.mem_singleton.mp inHeader]
-    exact amountAgrees
+  refine ⟨expected, instructions, rawInputs, seed, final, schedule, ordered, driver,
+    ScalarValidationRawSeedMeaning.seedRawInputs_groupCount nativeHeader driver.seededRawInputs, ?_⟩
+  apply ScalarValidationRawSeedMeaning.seedRawInputs_meaning_and_nativeDefinitions
+    nativeHeader _ driver.seededRawInputs
+  intro requirement inHeader
+  rw [ordered] at inHeader
+  rw [List.mem_singleton.mp inHeader]
+  exact amountAgrees
 
 /-- An accepted decoded call for the actual advance entrypoint carries its
 source-declared raw input names in order. -/
@@ -160,7 +164,7 @@ theorem acceptedAdvanceTraceMeaning
     ∃ expected rows rawInputs seed final,
       NativeValidationDriverFacts expected program rows rawInputs seed final ∧
       StateMeaning hash inputs assignment final ∧ NativeDefinitions final := by
-  obtain ⟨expected, exactRows, rawInputs, seed, final, schedule, _, driver, initialMeaning,
+  obtain ⟨expected, exactRows, rawInputs, seed, final, schedule, _, driver, _, initialMeaning,
     initialDefinitions⟩ := acceptedAdvanceSeedMeaning (hash := hash) lowered amountAgrees
   obtain ⟨_, _, rows, _, _, _, parsed, _, decodedRows⟩ :=
     ScalarCallInstructionProjection.lowerEntrypoint_decodeScalarCall_instructionProjection

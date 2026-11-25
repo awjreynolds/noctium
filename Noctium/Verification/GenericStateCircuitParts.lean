@@ -540,6 +540,42 @@ theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
   exact ⟨outputFrame, guards, outputsAccepted, normalizedGuards,
     assertionMembers, boundMembers⟩
 
+/-- The checked Impact group schedule comes from normalizing each operation
+of the exact accepted plan. The same output frame supplies the scalar aliases
+and the expected relation retains all operation bounds and assertions. -/
+theorem expectedEntrypoint_operations (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty) :
+    ∃ (outputFrame : OutputFrame) (bounds : List (Term × Nat)) (assertions : List Term),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      collectOperations entry.span outputFrame.1 plan.operations outputFrame.2.1 =
+        .ok (expected.groups, bounds, assertions) ∧
+      (∀ bound ∈ bounds, bound ∈ expected.bounds) ∧
+      (∀ assertion ∈ assertions, assertion ∈ expected.assertions) := by
+  obtain ⟨actualPlan, outputFrame, aliases, _, _, _, _, _, operationFrame, _, _,
+    planAccepted, outputsAccepted, aliasesAccepted, _, _, _, _, _, operationAccepted, _, _,
+    _, groupsShape, _, _, _, _, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst actualPlan
+  have aliasesEq :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
+  refine ⟨outputFrame, operationFrame.2.1, operationFrame.2.2, outputsAccepted, ?_, ?_, ?_⟩
+  · rw [groupsShape, ← aliasesEq]
+    exact operationAccepted
+  · intro bound member
+    rw [boundsShape]
+    simp [member]
+  · intro assertion member
+    rw [assertionsShape]
+    simp [member]
+
 /-- The accepted expected constructor retains the actual normalized source
 circuit outputs and constraints. Supported post-public scalar read aliases
 leave the output frame's aliases unchanged. Output bounds enter expected

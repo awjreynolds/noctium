@@ -123,6 +123,21 @@ private theorem validated_scalarSourceRequirements
     exact driver.inputBound finalMeaning member nonforeign ordinary
   exact ⟨assertions, bounds, inputBounds⟩
 
+private theorem scalarCall_decoded_rows
+    {state : List StateDecl} {entry : Entrypoint} (rewrites : Zkir.Rewrites)
+    {json : Json} {call : ScalarCall} {rows : Array Json}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : NativeRelationJson.decodeScalarCall json = .ok call)
+    (rowsParsed : Native.arrayField json "instructions" = .ok rows) :
+    rows.toList.mapM NativeRelationJson.decodeInstruction = .ok call.body.instructions := by
+  obtain ⟨fields, fieldsParsed, fieldsWF⟩ :=
+    ScalarCallInstructionProjection.lowerEntrypoint_root_fields_wf rewrites lowered
+  obtain ⟨decodedRows, parsedRows, bodyRows⟩ :=
+    ScalarCallInstructionProjection.decodeScalarCall_instructionProjection_of_wf
+      decoded fields fieldsParsed fieldsWF
+  have rowsEq : decodedRows = rows := Except.ok.inj (parsedRows.symm.trans rowsParsed)
+  simpa only [rowsEq] using bodyRows
+
 /-- A decoded scalar call exposes source assertions, checked source ranges,
 and ordinary scalar input bounds for any satisfying body witness. Rewrites
 may deduplicate assertions, so the result refers to the original expected
@@ -153,13 +168,7 @@ theorem lowerEntrypoint_scalarCall_sourceRequirements
   obtain ⟨_, expected, _, expectedAccepted, accepted, _⟩ :=
     Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites
       state entry rewrites json lowered
-  obtain ⟨fields, fieldsParsed, fieldsWF⟩ :=
-    ScalarCallInstructionProjection.lowerEntrypoint_root_fields_wf rewrites lowered
-  obtain ⟨decodedRows, parsedRows, bodyRows⟩ :=
-    ScalarCallInstructionProjection.decodeScalarCall_instructionProjection_of_wf
-      decoded fields fieldsParsed fieldsWF
-  have rowsEq : decodedRows = rows := Except.ok.inj (parsedRows.symm.trans rowsParsed)
-  cases rowsEq
+  have bodyRows := scalarCall_decoded_rows rewrites lowered decoded rowsParsed
   let optimized := Zkir.optimizedExpected rewrites expected
   have inputsUnchanged : optimized.inputs = expected.inputs := by
     cases rewrites <;> rfl
@@ -203,6 +212,89 @@ theorem lowerEntrypoint_scalarCall_sourceRequirements
     · exact nonforeign
     · exact ordinary
   exact ⟨assertions, bounds, inputBounds⟩
+
+private theorem validated_scalarCall_impactPayloads
+    {expected : Expected} {json : Json} {program : Program} {rows : Array Json}
+    {hash : Hash} {streams : InputStreams} {witness : Assignment} {groups : List (List Scalar)}
+    (accepted : Native.validate expected json = .ok ())
+    (rowsParsed : Native.arrayField json "instructions" = .ok rows)
+    (decodedRows : rows.toList.mapM NativeRelationJson.decodeInstruction = .ok program.instructions)
+    (profile : checkedScalarOpcodeProfile rows.toList.zipIdx program.instructions = true)
+    (schema : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      requirement.ty.isForeign = false)
+    (inputGuards : ∀ requirement ∈ expected.inputs, requirement.activityGuard = none)
+    (satisfies : CircuitSatisfies hash program streams witness groups) :
+    expected.groups.map (List.map (interpret hash witness)) = groups.map (List.map some) := by
+  obtain ⟨instructions, _, seed, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result accepted
+  have sameRows : instructions = rows :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)
+  subst instructions
+  have indexedDecoded :
+      ((rows.toList.zipIdx).map Prod.fst).mapM NativeRelationJson.decodeInstruction =
+        .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRows
+  have instructionsTrace := NativeDefinitionTrace.ofDecodedCheckedProfile indexedDecoded profile
+  have rawSchema : ∀ requirement ∈ expected.rawInputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema requirement (List.mem_append_left _ member)
+  have inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema requirement (List.mem_append_right _ member)
+  obtain ⟨seedMeaning, seedDefinitions⟩ :=
+    seedRawInputs_meaning_and_nativeDefinitions (hash := hash) (inputs := witness)
+      (witness := witness) rawSchema (fun _ _ => rfl) driver.seededRawInputs
+  have seedCount := seedRawInputs_groupCount rawSchema driver.seededRawInputs
+  have ordered := acceptedProfileOrderedImpactPayloads instructionsTrace seedMeaning
+    seedDefinitions inputSchema inputGuards (fun _ _ => rfl)
+    satisfies.instructions driver.instructionTrace
+  rw [driver.groupCount, seedCount] at ordered
+  have sameGroups : (Program.mk program.instructions 0 false).groups witness =
+      groups := satisfies.groups
+  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append,
+    sameGroups] using ordered
+
+/-- The exact emitted scalar call preserves the ordered payloads of the
+accepted Impact schedule, including native raw call arguments and all current
+rewrite modes. The scalar circuit model requires active Impact rows.
+The result concerns payloads in that model, with VM execution checked separately. -/
+theorem lowerEntrypoint_scalarCall_impactPayloads
+    {state : List StateDecl} {entry : Entrypoint} (rewrites : Zkir.Rewrites)
+    {json : Json} {call : ScalarCall} {rows : Array Json}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : NativeRelationJson.decodeScalarCall json = .ok call)
+    (rowsParsed : Native.arrayField json "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile rows.toList.zipIdx call.body.instructions = true)
+    (schema : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false)
+    (inputGuards : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+        ∀ requirement ∈ expected.inputs, requirement.activityGuard = none) :
+    ∃ plan expected,
+      Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      ∀ {hash streams witness groups},
+        CircuitSatisfies hash call.body streams witness groups →
+        expected.groups.map (List.map (interpret hash witness)) = groups.map (List.map some) := by
+  obtain ⟨plan, expected, impactAccepted, expectedAccepted, accepted, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites
+      state entry rewrites json lowered
+  have bodyRows := scalarCall_decoded_rows rewrites lowered decoded rowsParsed
+  let optimized := Zkir.optimizedExpected rewrites expected
+  have inputsUnchanged : optimized.inputs = expected.inputs := by cases rewrites <;> rfl
+  have rawInputsUnchanged : optimized.rawInputs = expected.rawInputs := by cases rewrites <;> rfl
+  have groupsUnchanged : optimized.groups = expected.groups := by cases rewrites <;> rfl
+  have schemaOptimized : ∀ requirement ∈ optimized.rawInputs ++ optimized.inputs,
+      requirement.ty.isForeign = false := by
+    simpa only [inputsUnchanged, rawInputsUnchanged] using schema expected expectedAccepted
+  have guardsOptimized : ∀ requirement ∈ optimized.inputs,
+      requirement.activityGuard = none := by
+    simpa only [inputsUnchanged] using inputGuards expected expectedAccepted
+  refine ⟨plan, expected, impactAccepted, expectedAccepted, ?_⟩
+  intro hash streams witness groups satisfies
+  rw [← groupsUnchanged]
+  exact validated_scalarCall_impactPayloads
+    (expected := optimized) accepted rowsParsed bodyRows profile schemaOptimized guardsOptimized
+    satisfies
 
 /-- The comparison rewrite preserves arbitrary-witness satisfaction for the
 two actual emitted ledger relations in the checked scalar opcode profile.
