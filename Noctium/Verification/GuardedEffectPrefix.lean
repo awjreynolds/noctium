@@ -130,6 +130,68 @@ theorem appendEffect_writeMap_operation_suffix (state : List StateDecl)
   cases resultAccepted
   exact ⟨slot, _, stored, rfl⟩
 
+private theorem appendEffectWithActivity_none_operations
+    (state : List StateDecl) (effect : Effect) (before after : Impact.Plan)
+    (accepted : Impact.appendEffectWithActivity state effect none before = .ok after) :
+    ∃ result, Impact.appendEffect state effect before = .ok result ∧
+      after.operations = result.operations := by
+  have shape : Impact.appendEffectWithActivity state effect none before = (do
+      let result ← Impact.appendEffect state effect before
+      if before.activityGuards.isEmpty then
+        pure result
+      else
+        let guards := before.activityGuards ++
+          List.replicate (result.operations.length - before.operations.length) none
+        pure ({result with activityGuards := guards} : Impact.Plan)) := by
+    cases effect <;> rfl
+  rw [shape, bind_ok] at accepted
+  obtain ⟨result, appended, finished⟩ := accepted
+  refine ⟨result, appended, ?_⟩
+  split at finished <;>
+    exact (congrArg Impact.Plan.operations (Except.ok.inj finished)).symm
+
+/-- An unguarded production Cell write appends exactly its empty-plan
+operations, following the actual operations already emitted. -/
+theorem appendEffectWithActivity_unguarded_writeCell_chunk
+    (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)
+    (before after : Impact.Plan)
+    (accepted : Impact.appendEffectWithActivity state (.writeCell name ty value)
+      none before = .ok after) :
+    ∃ base, Impact.appendEffect state (.writeCell name ty value) {} = .ok base ∧
+      after.operations = before.operations ++ base.operations := by
+  obtain ⟨result, appended, operations⟩ := appendEffectWithActivity_none_operations
+    state (.writeCell name ty value) before after accepted
+  simp only [Impact.appendEffect, bind_ok] at appended
+  obtain ⟨slot, slotAccepted, stored, storeAccepted, finished⟩ := appended
+  cases finished
+  let base : Impact.Plan :=
+    {operations := [.push (.field (.native slot)), stored, .insert 1]}
+  refine ⟨base, ?_, operations⟩
+  simp only [Impact.appendEffect, bind_ok]
+  exact ⟨slot, slotAccepted, stored, storeAccepted, rfl⟩
+
+/-- An unguarded production Map write appends its exact key, value and
+insertion operations, independently of the previous transcript length. -/
+theorem appendEffectWithActivity_unguarded_writeMap_chunk
+    (state : List StateDecl) (name : String) (keyTy valueTy : Ty)
+    (key : Expr keyTy) (value : Expr valueTy) (before after : Impact.Plan)
+    (accepted : Impact.appendEffectWithActivity state (.writeMap name keyTy valueTy key value)
+      none before = .ok after) :
+    ∃ base, Impact.appendEffect state (.writeMap name keyTy valueTy key value) {} = .ok base ∧
+      after.operations = before.operations ++ base.operations := by
+  obtain ⟨result, appended, operations⟩ := appendEffectWithActivity_none_operations
+    state (.writeMap name keyTy valueTy key value) before after accepted
+  simp only [Impact.appendEffect, bind_ok] at appended
+  obtain ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, finished⟩ := appended
+  let base : Impact.Plan := {operations := result.operations.drop before.operations.length}
+  have exactResult := Except.ok.inj finished
+  refine ⟨base, ?_, ?_⟩
+  · simp only [Impact.appendEffect, bind_ok]
+    refine ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, ?_⟩
+    simp [base, ← exactResult, Pure.pure, Except.pure]
+  · rw [operations, ← exactResult]
+    simp [base, ← exactResult]
+
 theorem appendEffectWithActivity_readCell_operation_suffix
     (state : List StateDecl) (name destination : String) (ty : Ty)
     (condition : Expr .bool) (before after : Impact.Plan)

@@ -1,4 +1,4 @@
-import Noctium.Verification.GenericStateOps
+import Noctium.Verification.GenericStateWriteEvaluation
 import Noctium.Verification.GenericStateSchemaSpans
 
 namespace Noctium.Verification.GenericStateAbsenceAuthentication
@@ -22,8 +22,36 @@ theorem absence_guard_candidate_false (ctx : EvalContext)
     change (Except.ok false : Except String Bool) = .ok true at guard
     cases guard
 
-/-- The actual absence operation segment uses the same slot as Impact's
-source-name lookup, with no independent slot-agreement premise. -/
+/-- The production absence chunk pushes the selected scalar key at the exact
+Impact slot, then checks and records false membership. -/
+theorem requireAbsent_scalar_chunk (state : List StateDecl)
+    (name : String) (keyTy : Ty) (keyExpr : Expr keyTy) (base : Impact.Plan)
+    (support : ScalarType keyTy)
+    (compiled : Impact.appendEffect state (.requireAbsent name keyTy keyExpr) {} = .ok base) :
+    ∃ slot, state.findIdx? (·.name == name) = some slot ∧
+      base.operations = [.dup, .index slot,
+        .push (.field (GenericStateWriteEvaluation.scalarProjection support keyExpr)) false,
+        .member, .popeq (.bit false)] := by
+  simp only [Impact.appendEffect, bind_ok] at compiled
+  obtain ⟨slot, found, aligned, alignment, result⟩ := compiled
+  have located : state.findIdx? (·.name == name) = some slot := by
+    change (match state.findIdx? (·.name == name) with
+      | some index => (pure index : Except String Nat)
+      | none => throw s!"unknown ledger state '{name}'") = .ok slot at found
+    cases index : state.findIdx? (·.name == name) with
+    | none => simp [index] at found
+    | some actual =>
+      simp [index] at found
+      cases found
+      rfl
+  have alignedKey : aligned = .field (GenericStateWriteEvaluation.scalarProjection support keyExpr) := by
+    cases support <;> exact (Except.ok.inj alignment).symm
+  subst aligned
+  cases result
+  exact ⟨slot, located, rfl⟩
+
+/-- A canonical key evaluates to exactly the field value checked by the
+production absence chunk at the selected slot. -/
 theorem requireAbsent_candidate_eval (state : List StateDecl)
     (name : String) (keyTy : Ty) (keyExpr : Expr keyTy)
     (base : Impact.Plan) (ctx : EvalContext) (env : EvalEnv)
@@ -37,43 +65,13 @@ theorem requireAbsent_candidate_eval (state : List StateDecl)
       base.operations.mapM (GenericStateOps.evalOp ctx env) =
         .ok (GenericStateVM.requireAbsentOps slot
           (scalar (GenericStateEncoding.number keyTy key))) := by
-  simp only [Impact.appendEffect, bind_ok] at compiled
-  obtain ⟨slot, found, aligned, alignment, result⟩ := compiled
-  have located : state.findIdx? (·.name == name) = some slot := by
-    change (match state.findIdx? (·.name == name) with
-      | some index => (pure index : Except String Nat)
-      | none => throw s!"unknown ledger state '{name}'") = .ok slot at found
-    cases index : state.findIdx? (·.name == name) with
-    | none => simp [index] at found
-    | some actual =>
-      simp [index] at found
-      cases found
-      rfl
-  have keyField : ∃ nativeKey : Expr .native,
-      aligned = .field nativeKey ∧
-      nativeKey.eval ctx env = .ok (GenericStateEncoding.number keyTy key) := by
-    cases keyTy with
-    | native =>
-      exact ⟨keyExpr, (Except.ok.inj alignment).symm, keyEval⟩
-    | bool =>
-      refine ⟨.select keyExpr (.native 1) (.native 0),
-        (Except.ok.inj alignment).symm, ?_⟩
-      cases key <;>
-        simp [Expr.eval, keyEval, modulus, Field.modulus, GenericStateEncoding.number,
-          bind, Except.bind, pure, Except.pure]
-    | uint maximum =>
-      refine ⟨.cast .native keyExpr, (Except.ok.inj alignment).symm, ?_⟩
-      have bound : key < Field.modulus := canonical.1
-      rw [eval_cast_scalar ctx env keyExpr (.uint maximum) .native key keyEval]
-      simp [scalarCast, modulus, number, GenericStateEncoding.number, bound]
-    | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
-      simp [Canonical, sourceNumber?] at canonical
-  obtain ⟨nativeKey, rfl, keyNative⟩ := keyField
-  have equal := Except.ok.inj result
-  subst base
+  obtain ⟨support⟩ := GenericStateWriteEvaluation.scalarType_of_canonical canonical
+  obtain ⟨slot, located, operations⟩ :=
+    requireAbsent_scalar_chunk state name keyTy keyExpr base support compiled
+  have keyNative := GenericStateWriteEvaluation.scalarProjection_eval
+    support ctx env keyExpr key modulus keyEval canonical
   refine ⟨slot, located, ?_⟩
-  change [Impact.Op.dup, .index slot, .push (.field nativeKey) false, .member,
-    .popeq (.bit false)].mapM (GenericStateOps.evalOp ctx env) = _
+  rw [operations]
   simp [GenericStateVM.requireAbsentOps, GenericStateOps.evalOp, GenericStateOps.evalAligned,
     keyNative, List.mapM_cons, bind, Except.bind, pure, Except.pure]
 

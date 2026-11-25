@@ -46,27 +46,6 @@ private def scalarCellTypeOfCanonical {ty : Ty} {value : ty.Denote}
   | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
     simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
 
-private theorem source_find_matches_slot (state : List StateDecl) (name : String)
-    (declaration : StateDecl)
-    (sourceFound : state.find? (·.name == name) = some declaration)
-    (slot : Nat) (impactFound : state.findIdx? (·.name == name) = some slot) :
-    state[slot]? = some declaration := by
-  rw [List.find?_eq_bind_findIdx?_getElem?, impactFound] at sourceFound
-  exact sourceFound
-
-private theorem find_declaration_slot (state : List StateDecl) (name : String)
-    (declaration : StateDecl)
-    (sourceFound : state.find? (·.name == name) = some declaration) :
-    ∃ slot, state.findIdx? (·.name == name) = some slot ∧
-      state[slot]? = some declaration := by
-  cases located : state.findIdx? (·.name == name) with
-  | none =>
-    rw [List.find?_eq_bind_findIdx?_getElem?, located] at sourceFound
-    simp at sourceFound
-  | some slot =>
-    exact ⟨slot, rfl,
-      source_find_matches_slot state name declaration sourceFound slot located⟩
-
 private theorem encodeDeclaration_cell_result (state : LedgerState)
     (declaration : StateDecl) (ty : Ty) (slot : NativeState.Slot)
     (kind : declaration.kind = .cell ty)
@@ -142,7 +121,7 @@ theorem source_readCell_native (ctx : EvalContext)
   obtain ⟨raw, value, sourceLookup, sourceTyped⟩ :=
     source_readCell_step_value ctx sourceEnv current name destination ty sourceStep
   obtain ⟨sourceSlot, sourceLocated, declarationAt⟩ :=
-    find_declaration_slot state name sourceDeclaration declared
+    GenericStateSchemaSpans.find_declaration_slot state name sourceDeclaration declared
   have sourceSlotBound : sourceSlot < state.length :=
     (List.getElem?_eq_some_iff.mp declarationAt).1
   have slotBound : sourceSlot < slots.length := by

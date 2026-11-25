@@ -1001,6 +1001,62 @@ theorem sourceMap_absent (keyTy valueTy : Ty)
             headMissing
         simpa only [List.any_cons, nativeMissing, Bool.false_or] using ih remaining later tailMissing
 
+/-- The ordered encoding preserves the first exact lookup result, including
+missing keys. This connects a successful native index to a source map value. -/
+theorem sourceMap_lookup (keyTy valueTy : Ty)
+    (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
+    (key : keyTy.Denote) (canonical : Canonical keyTy key)
+    (mapped : entries.mapM (encodeMapEntry keyTy valueTy) = some encoded) :
+    (entries.lookup (Value.pack keyTy key)).bind
+        (fun raw => (encodeValue valueTy raw).map Cell.value) =
+      encoded.lookup (scalar (number keyTy key)) := by
+  induction entries generalizing encoded with
+  | nil =>
+    simp only [List.mapM_nil] at mapped
+    cases mapped
+    rfl
+  | cons entry rest ih =>
+    simp only [List.mapM_cons] at mapped
+    cases first : encodeMapEntry keyTy valueTy entry with
+    | none => simp [first] at mapped
+    | some pair =>
+      cases later : rest.mapM (encodeMapEntry keyTy valueTy) with
+      | none => simp [first, later] at mapped
+      | some remaining =>
+        simp [first, later] at mapped
+        cases mapped
+        have keyMatch := encodeMapEntry_key_match keyTy valueTy entry pair key canonical first
+        have sourceForward : (Value.pack keyTy key == entry.1) =
+            (entry.1 == Value.pack keyTy key) := by
+          by_cases equal : Value.pack keyTy key = entry.1
+          · rw [equal]
+          · cases left : (Value.pack keyTy key == entry.1) with
+            | true => exact False.elim (equal (value_beq_eq _ _ left))
+            | false =>
+              cases right : (entry.1 == Value.pack keyTy key) with
+              | true => exact False.elim (equal (value_beq_eq _ _ right).symm)
+              | false => rfl
+        have nativeForward : (pair.1 == scalar (number keyTy key)) =
+            (scalar (number keyTy key) == pair.1) :=
+          Bool.eq_iff_iff.mpr (beq_iff_eq.trans (eq_comm.trans beq_iff_eq.symm))
+        rcases entry with ⟨entryKey, entryValue⟩
+        rcases pair with ⟨encodedKey, encodedValue⟩
+        simp only [List.lookup_cons]
+        rw [sourceForward.trans (keyMatch.trans nativeForward)]
+        cases checked : (scalar (number keyTy key) == encodedKey) with
+        | false => exact ih remaining later
+        | true =>
+          unfold encodeMapEntry at first
+          cases keyEncoded : encodeValue keyTy entryKey with
+          | none => simp [keyEncoded] at first
+          | some keyCell =>
+            cases valueEncoded : encodeValue valueTy entryValue with
+            | none => simp [keyEncoded, valueEncoded] at first
+            | some valueCell =>
+              simp [keyEncoded, valueEncoded] at first
+              simpa only [Option.bind_some, valueEncoded, Option.map_some] using
+                congrArg some first.2
+
 theorem encodeMapEntries_filter_key (keyTy valueTy : Ty)
     (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
     (key : keyTy.Denote) (canonical : Canonical keyTy key)

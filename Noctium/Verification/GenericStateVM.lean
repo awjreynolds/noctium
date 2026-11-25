@@ -7,6 +7,9 @@ open NativeRelation NativeState GenericStateEncoding
 def readCellOps (slot : Nat) (expected : Cell) : List Op :=
   [.dup, .index slot false, .popeq expected]
 
+def readMapOps (slot : Nat) (key value : Scalar) : List Op :=
+  [.dup, .mapIndex slot (field key), .popeq (field value)]
+
 def requireAbsentOps (slot : Nat) (key : Scalar) : List Op :=
   [.dup, .index slot false, .push (field key) false, .member,
     .popeq (boolean false)]
@@ -121,6 +124,61 @@ theorem readCell_sound_prefix (items : List Slot) (slot : Nat) (expected : Cell)
         cases accepted
         exact ⟨rfl, rfl⟩
       · simp [readCellOps, run, step, Slot.toNode, found, same] at accepted
+
+/-- Matching slot and key evidence gives the exact successful map-read result
+for any current read transcript. -/
+theorem readMap_exact (items : List Slot) (slot : Nat)
+    (entries : List (Scalar × Scalar)) (key value : Scalar)
+    (reads : List Cell)
+    (foundMap : items[slot]? = some (.map entries))
+    (foundKey : entries.lookup key = some value) :
+    run (readMapOps slot key value) ⟨[.vector items], reads⟩ =
+      some ⟨[.vector items], reads ++ [field value]⟩ := by
+  simp only [readMapOps]
+  rw [run_dup, run_mapIndex_vector items slot entries key value
+    [.popeq (field value)] [.vector items] reads foundMap foundKey]
+  simp [run_popeq, run_nil]
+
+/-- A successful field-keyed map read selects the exact current map slot and
+records its looked-up field value while leaving the root vector unchanged. -/
+theorem readMap_sound (items : List Slot) (slot : Nat) (key value : Scalar)
+    (reads : List Cell) (after : Machine)
+    (accepted : run (readMapOps slot key value) ⟨[.vector items], reads⟩ = some after) :
+    ∃ entries,
+      items[slot]? = some (.map entries) ∧
+      entries.lookup key = some value ∧
+      after = ⟨[.vector items], reads ++ [field value]⟩ := by
+  cases found : items[slot]? with
+  | none =>
+    simp only [readMapOps] at accepted
+    rw [run_dup] at accepted
+    simp [run, step, field, found] at accepted
+  | some child =>
+    cases child with
+    | cell actual =>
+      simp only [readMapOps] at accepted
+      rw [run_dup] at accepted
+      rw [run_mapIndex_vector_wrongContainer items slot actual key
+        [.popeq (field value)] [.vector items] reads found] at accepted
+      simp at accepted
+    | map entries =>
+      cases foundKey : entries.lookup key with
+      | none =>
+        simp only [readMapOps] at accepted
+        rw [run_dup] at accepted
+        rw [run_mapIndex_vector_missing items slot entries key
+          [.popeq (field value)] [.vector items] reads found foundKey] at accepted
+        simp at accepted
+      | some actual =>
+        by_cases same : actual = value
+        · subst actual
+          rw [readMap_exact items slot entries key value reads found foundKey] at accepted
+          cases accepted
+          exact ⟨entries, rfl, foundKey, rfl⟩
+        · simp only [readMapOps] at accepted
+          rw [run_dup, run_mapIndex_vector items slot entries key actual
+            [.popeq (field value)] [.vector items] reads found foundKey] at accepted
+          simp [run_popeq, same] at accepted
 
 /-- A checked native read of a declared cell identifies the original source
 ledger value at that slot, including after any earlier state transition whose
