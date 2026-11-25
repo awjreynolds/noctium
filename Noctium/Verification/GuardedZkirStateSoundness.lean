@@ -1,6 +1,7 @@
 import Noctium.Verification.GuardedZkirPlanSoundness
 import Noctium.Verification.GuardedStateEffectFold
 import Noctium.Verification.GuardedStatementConsumption
+import Noctium.Verification.GuardedSourceActivity
 import Noctium.Verification.ImpactNativeStatementFixture
 import Noctium.Verification.ImpactPlanStatementAgreement
 
@@ -12,10 +13,10 @@ open GenericStateEffectStep
 open GuardedImpactTranscript
 
 /-- Checked guarded ZKIR consumes the public streams of the same modeled VM
-run whose operation order and activity are checked against the Impact bytes.
-The instance fields, including inactive padding, are compared with a native
-statement fixture. Native header authentication and the assignment's ordinary
-circuit constraints remain explicit premises. -/
+run whose operation order and activity agree with the Impact bytes. Inactive
+group widths follow from the validated source plan. The instance fields are
+compared with a native statement fixture. Native header authentication and the
+assignment's ordinary circuit constraints remain explicit premises. -/
 theorem lowerEntrypoint_checked_guarded_state
     (state : List StateDecl) (sourceEntry : Entrypoint) (rewrites : Zkir.Rewrites)
     (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
@@ -76,8 +77,6 @@ theorem lowerEntrypoint_checked_guarded_state
     (profile : TargetProfile) (contractName : Name) (ctor : Option Constructor)
     (standaloneFile : _root_.Bool) (impactBytes : ArtifactBytes.Bytes) (budget : Nat)
     (keyWidth : Nat → Option Nat)
-    (environmentChecked : ImpactTypedEnvironment.check
-      (plan.typeEnvironment (Passes.pruneEntrypoint sourceEntry)) (base ++ decoded) = Bool.true)
     (statementAdmitted : ImpactPlanStatementAgreement.admitsScalarPlan keyWidth plan = Bool.true)
     (statementMatched : ImpactPlanStatementAgreement.matchesBytes budget impactBytes
       (Compiler.nativePlanJson profile contractName state ctor (Passes.pruneEntrypoint sourceEntry)
@@ -96,17 +95,17 @@ theorem lowerEntrypoint_checked_guarded_state
     (∃ minimum, ∀ fuel, minimum ≤ fuel → ∃ raw,
       ArtifactBytes.parse impactBytes = .ok raw ∧
       ImpactPlanAgreement.evaluatePlan fuel ctx (base ++ decoded) raw = some native ∧
+      ImpactTranscriptSchedule.evaluateSchedule fuel ctx (base ++ decoded) keyWidth raw =
+        some projection.activity ∧
+      ((plan.operations.zipIdx.mapM
+        (ImpactTranscriptSchedule.sourceGroups ctx (base ++ decoded) plan)).map List.flatten) =
+        some projection.activity ∧
       ∀ fixture : ImpactNativeStatementFixture.NativeStatementFixture,
         ImpactNativeStatementFixture.checkBytes fixture fuel ctx (base ++ decoded) keyWidth
           impactBytes = .ok () →
         fixture.fields = projection.fields →
-        ImpactTranscriptSchedule.evaluateSchedule fuel ctx (base ++ decoded) keyWidth raw =
-          some projection.activity →
         ImpactPlanStatementAgreement.fromEntrypoint ctx (base ++ decoded) state
-          (Passes.pruneEntrypoint sourceEntry) fixture.inputs = some projection.fields ∧
-        ((plan.operations.zipIdx.mapM
-          (ImpactTranscriptSchedule.sourceGroups ctx (base ++ decoded) plan)).map List.flatten) =
-          some projection.activity) ∧
+          (Passes.pruneEntrypoint sourceEntry) fixture.inputs = some projection.fields) ∧
     ∃ finalTypes finalEnv finalState finalSlots finalReads,
       runEffectsWithGuardsAndEnv ctx sourceEntry.effects sourceEntry.effectGuards base initial =
           .ok (finalEnv, finalState) ∧
@@ -129,6 +128,59 @@ theorem lowerEntrypoint_checked_guarded_state
   have sameDecoded : values = decoded :=
     Except.ok.inj (readDecoded.symm.trans decodedReads)
   subst values
+  obtain ⟨view, decodedView, _, projected⟩ := GuardedStatementConsumption.fromArtifact_sound
+    zkirBytes assignment header _ projection consumed
+  have viewRows : view.rows = rows := by
+    rw [decodedView] at exactRows
+    exact Except.ok.inj exactRows
+  rw [viewRows] at projected
+  obtain ⟨observations, emitted, impactStream, readStream, readDefaults, fields, activity⟩ :=
+    (GuardedStatementConsumption.fromRows_iff assignment rows header _ projection).mp projected
+  obtain ⟨_, instructions, parsedInstructions, decodedInstructions⟩ :=
+    GuardedZkirArtifact.check_sound artifactChecked
+  have schema : ∀ specimen, Native.expectedEntrypoint state ep = .ok specimen →
+      ∀ requirement ∈ specimen.rawInputs ++ specimen.inputs, requirement.ty.isForeign = Bool.false := by
+    intro specimen accepted
+    have same := Except.ok.inj (accepted.symm.trans expectedAccepted)
+    subst specimen
+    exact inputSchema
+  obtain ⟨guardExpected, expectedGuardAccepted, requirements⟩ :=
+    GuardedZkirRequirements.lowerEntrypoint_guardedRows_sourceRequirements rewrites lowered
+      parsedInstructions decodedInstructions schema
+  have sameExpected := Except.ok.inj (expectedGuardAccepted.symm.trans expectedAccepted)
+  subst guardExpected
+  obtain ⟨checkedAssertions, checkedBounds, _⟩ := requirements holds
+  obtain ⟨_, observedExpected, _, _, observedExpectedAccepted, _, observed⟩ :=
+    GuardedImpactTranscript.lowerEntrypoint_guardedImpactTranscript rewrites lowered
+      parsedInstructions decodedInstructions schema
+  have sameExpected := Except.ok.inj (observedExpectedAccepted.symm.trans expectedAccepted)
+  subst observedExpected
+  obtain ⟨expectedObservations, emittedExpected, observedSource, _⟩ := observed holds
+  have sameObservations := Option.some.inj (emittedExpected.symm.trans emitted)
+  subst expectedObservations
+  have sourceActivity : ((plan.operations.zipIdx.mapM
+      (ImpactTranscriptSchedule.sourceGroups ctx (base ++ decoded) plan)).map List.flatten) =
+      some projection.activity := by
+    rw [activity]
+    apply GuardedSourceActivity.lower_observations_activity state ep ctx hash assignment
+      (base ++ decoded) implementation plan expected frame observations planAccepted
+      expectedAccepted frameAccepted environment ?_ ?_
+      (ImpactPlanStatementAgreement.admitsScalarPlan_single_groups statementAdmitted)
+      checkedAssertions checkedBounds observedSource
+    · change ∀ readSpec ∈ (plan.reads.drop
+        (Impact.publicInputReadCount sourceEntry.circuit.inputs)).flatMap Impact.Read.scalarReads,
+        scalarAliasReadType readSpec.ty
+      rw [ScalarPlanGuardSoundness.plain_reads_scalarReads _
+        (fun readSpec inside => (readAdmitted readSpec inside).1)]
+      exact fun readSpec inside =>
+        ScalarPlanGuardSoundness.scalarType_shape readSpec.ty (readAdmitted readSpec inside).2.1
+    · intro guard inside
+      have checkedGuards := (Bool.and_eq_true_iff.mp statementAdmitted).2
+      have checked := List.all_eq_true.mp checkedGuards (some guard) inside
+      change (ScalarExpressionAdmission.certify guard).isSome = Bool.true at checked
+      cases certified : ScalarExpressionAdmission.certify guard with
+      | none => simp [certified] at checked
+      | some supported => exact supported.down
   have initialAgreement := GenericStatePrefixEnvironment.initial_from_typed hash assignment
     frame.1 (GenericStateEffectValidation.initialEffectTypeEnv ep) base decoded baseEnvironment
   obtain ⟨finalTypes, finalEnv, finalState, finalSlots, finalReads, sourceRun,
@@ -139,23 +191,17 @@ theorem lowerEntrypoint_checked_guarded_state
       distinct stateBound implementation.modulus evaluated checked
   refine ⟨exactRows, ?_, ?_, finalTypes, finalEnv, finalState, finalSlots, finalReads, sourceRun,
     finalEncoded, layout, agreement, validated, returns⟩
-  · obtain ⟨view, decodedView, _, projected⟩ := GuardedStatementConsumption.fromArtifact_sound
-      zkirBytes assignment header _ projection consumed
-    have viewRows : view.rows = rows := by
-      rw [decodedView] at exactRows
-      exact Except.ok.inj exactRows
-    rw [viewRows] at projected
-    obtain ⟨observations, emitted, impactStream, readStream, readDefaults, fields, activity⟩ :=
-      (GuardedStatementConsumption.fromRows_iff assignment rows header _ projection).mp projected
-    exact ⟨observations, emitted, impactStream, readStream, readDefaults, fields, activity⟩
+  · exact ⟨observations, emitted, impactStream, readStream, readDefaults, fields, activity⟩
   · obtain ⟨minimum, agrees⟩ := ImpactPlanStatementAgreement.evaluations_fromBytes_agree
       profile contractName state ctor ep plan standaloneFile ctx implementation.modulus
-      environmentChecked keyWidth statementAdmitted budget impactBytes planAccepted statementMatched
+      (ImpactTypedEnvironment.of_normalization environment)
+      keyWidth statementAdmitted budget impactBytes planAccepted statementMatched
     refine ⟨minimum, ?_⟩
     intro fuel enough
     obtain ⟨raw, parsed, operationEq, activityEq⟩ := agrees fuel enough
-    refine ⟨raw, parsed, operationEq.trans (by rw [evaluated]; rfl), ?_⟩
-    intro fixture fixtureChecked fieldsMatch activityMatch
+    refine ⟨raw, parsed, operationEq.trans (by rw [evaluated]; rfl),
+      activityEq.trans sourceActivity, sourceActivity, ?_⟩
+    intro fixture fixtureChecked fieldsMatch
     have sourceEq := ImpactPlanStatementAgreement.fromEntrypoint_eq_fromSource
       ctx (base ++ decoded) state ep plan fixture.inputs planAccepted
     have byteEq : ImpactPlanStatement.fromBytes fuel ctx (base ++ decoded) keyWidth impactBytes
@@ -168,7 +214,6 @@ theorem lowerEntrypoint_checked_guarded_state
       rfl
     have fixtureFields := ImpactNativeStatementFixture.checkBytes_sound fixture fuel ctx
       (base ++ decoded) keyWidth impactBytes fixtureChecked
-    exact ⟨sourceEq.trans (byteEq.symm.trans (fixtureFields.trans (congrArg some fieldsMatch))),
-      activityEq.symm.trans activityMatch⟩
+    exact sourceEq.trans (byteEq.symm.trans (fixtureFields.trans (congrArg some fieldsMatch)))
 
 end Noctium.Verification.GuardedZkirStateSoundness

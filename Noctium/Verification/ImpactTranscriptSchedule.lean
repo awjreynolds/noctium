@@ -3,6 +3,7 @@ import Noctium.Verification.ImpactPlanAgreement
 import Noctium.Verification.ImpactScheduleTraversal
 import Noctium.Verification.ImpactScheduledAgreement
 import Noctium.Verification.ImpactTranscriptWidth
+import Noctium.Verification.GenericStateCircuitParts
 
 namespace Noctium.Verification.ImpactTranscriptSchedule
 
@@ -33,6 +34,141 @@ def sourceGroups (ctx : EvalContext) (env : EvalEnv) (plan : Impact.Plan)
     (plan.activityGuards[item.2]?.getD none)).toOption.map fun activity =>
     item.1.fieldGroups.map fun fields =>
       if activity.getD Bool.true then none else some fields.length
+
+
+private theorem indexed_guards (ops : List Impact.Op) (guards : List (Option (Expr .bool)))
+    (aligned : guards.length = ops.length) :
+    ops.zipIdx.map (fun item => (item.1, guards[item.2]?.getD none)) = ops.zip guards := by
+  apply List.ext_getElem?
+  intro i
+  by_cases inside : i < ops.length
+  · have present : i < guards.length := by simpa [aligned] using inside
+    simp [List.getElem?_map, List.getElem?_zipIdx, List.zip,
+      List.getElem?_zipWith, List.getElem?_eq_getElem inside, List.getElem?_eq_getElem present]
+  · simp [List.getElem?_map, List.getElem?_zipIdx, List.zip,
+      List.getElem?_zipWith, List.getElem?_eq_none (Nat.le_of_not_gt inside)]
+
+private theorem flatten_singletons (items : List α) (f : α → Option β) :
+    (items.mapM (fun item => (f item).map List.singleton)).map List.flatten = items.mapM f := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    simp only [List.mapM_cons, Bind.bind]
+    rw [← ih]
+    cases head : f item <;> cases tail : rest.mapM (fun item => (f item).map List.singleton) <;>
+      simp [Option.bind, List.singleton]
+
+private theorem flatMap_eq_map {items : List α} {f : α → List β} {g : α → β}
+    (pointwise : ∀ item ∈ items, f item = [g item]) : items.flatMap f = items.map g := by
+  calc
+    items.flatMap f = items.flatMap (fun item => [g item]) :=
+      congrArg List.flatten (List.map_congr_left pointwise)
+    _ = items.map g := by
+      rw [← List.flatMap_map (f := g) (g := fun value => [value]), List.flatMap_singleton']
+
+private theorem mapM_eq_of_members {items : List α} {f g : α → Option β}
+    (pointwise : ∀ item ∈ items, f item = g item) : items.mapM f = items.mapM g := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    simp only [List.mapM_cons, pointwise item (by simp),
+      ih (fun value inside => pointwise value (List.mem_cons_of_mem _ inside))]
+
+private theorem source_shapes (plan : Impact.Plan)
+    (shape : plan.activityGuards.isEmpty = Bool.true ∨
+      plan.activityGuards.length = plan.operations.length)
+    (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields]) :
+    let guards := GuardedPlanActivity.operationGuards plan
+    guards.length = plan.operations.length ∧
+    (∀ i : Nat, guards[i]?.getD none = plan.activityGuards[i]?.getD none) ∧
+    GenericStateCircuitParts.activityGuardSources plan = guards ∧
+    plan.operations.flatMap (fun op => op.fieldGroups.map List.length) =
+      plan.operations.map (fun op => op.fields.length) := by
+  have widths :
+      plan.operations.flatMap (fun op => op.fieldGroups.map List.length) =
+        plan.operations.map (fun op => op.fields.length) := by
+    apply flatMap_eq_map
+    intro op inside
+    rw [single op inside]
+    rfl
+  dsimp only
+  refine ⟨?_, ?_, ?_, widths⟩
+  · unfold GuardedPlanActivity.operationGuards
+    split
+    · simp
+    · exact shape.resolve_left (by assumption)
+  · intro i
+    unfold GuardedPlanActivity.operationGuards
+    split
+    · rename_i empty
+      have nil := List.isEmpty_iff.mp empty
+      rw [nil]
+      by_cases inside : i < plan.operations.length <;> simp [inside]
+    · rfl
+  · unfold GenericStateCircuitParts.activityGuardSources GuardedPlanActivity.operationGuards
+    split
+    · rw [← List.map_const']
+      apply flatMap_eq_map
+      intro op inside
+      simp [single op inside]
+    · rename_i notEmpty
+      have aligned := shape.resolve_left notEmpty
+      calc
+        _ = (plan.operations.zip plan.activityGuards).map Prod.snd := by
+          apply flatMap_eq_map
+          intro pair inside
+          simp [single pair.1 (List.of_mem_zip inside).1]
+        _ = plan.activityGuards := List.map_snd_zip (Nat.le_of_eq aligned)
+
+/-- Scalar operations contribute one group each. The guard and skip width
+come from the same source ordinal as the operation. -/
+theorem sourceGroups_flatten
+    (ctx : EvalContext) (env : EvalEnv) (plan : Impact.Plan)
+    (shape : plan.activityGuards.isEmpty = Bool.true ∨
+      plan.activityGuards.length = plan.operations.length)
+    (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields]) :
+    (plan.operations.zipIdx.mapM (sourceGroups ctx env plan)).map List.flatten =
+      ((GenericStateCircuitParts.activityGuardSources plan).zip
+        (plan.operations.flatMap fun op => op.fieldGroups.map List.length)).mapM
+        (fun (guard, width) =>
+          (GuardedPlanExecution.evalActivity ctx env guard).toOption.map fun activity =>
+            if activity.getD Bool.true then none else some width) := by
+  obtain ⟨aligned, guardAt, guards, widths⟩ := source_shapes plan shape single
+  let effective := GuardedPlanActivity.operationGuards plan
+  let eval (item : Impact.Op × Option (Expr .bool)) : Option (Option Nat) :=
+    (GuardedPlanExecution.evalActivity ctx env item.2).toOption.map fun activity =>
+      if activity.getD Bool.true then none else some item.1.fields.length
+  let selected (item : Impact.Op × Nat) := (item.1, effective[item.2]?.getD none)
+  have pointwise : ∀ item ∈ plan.operations.zipIdx,
+      sourceGroups ctx env plan item = (eval (selected item)).map List.singleton := by
+    intro item inside
+    have singleton := single item.1 (List.fst_mem_of_mem_zipIdx inside)
+    simp only [sourceGroups, selected, eval, singleton, List.map_cons, List.map_nil,
+      Option.map_map, Function.comp_def, List.singleton]
+    rw [show effective[item.2]?.getD none = plan.activityGuards[item.2]?.getD none from guardAt item.2]
+  rw [mapM_eq_of_members pointwise, flatten_singletons]
+  change plan.operations.zipIdx.mapM (eval ∘ selected) = _
+  rw [← List.mapM_map]
+  have zipped := indexed_guards plan.operations effective aligned
+  change (plan.operations.zipIdx.map selected).mapM eval = _
+  rw [zipped, guards, widths]
+  change (plan.operations.zip effective).mapM eval =
+    (effective.zip (plan.operations.map (fun op => op.fields.length))).mapM _
+  rw [List.zip_map_right]
+  have swap : (effective.zip plan.operations).map Prod.swap = plan.operations.zip effective := by
+    rw [List.map_zip_eq_zipWith, List.zipWith_comm]
+    rfl
+  rw [← swap, List.mapM_map, List.mapM_map]
+  rfl
+
+theorem sourceGroupGuards_length (plan : Impact.Plan)
+    (shape : plan.activityGuards.isEmpty = Bool.true ∨
+      plan.activityGuards.length = plan.operations.length)
+    (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields]) :
+    (GenericStateCircuitParts.activityGuardSources plan).length =
+      (plan.operations.flatMap fun op => op.fieldGroups.map List.length).length := by
+  obtain ⟨length, _, guards, widths⟩ := source_shapes plan shape single
+  simpa [guards, widths] using length
 
 private theorem evaluateGroups_agrees (ctx : EvalContext)
     (modulus : ctx.modulus = Field.modulus)
