@@ -70,6 +70,16 @@ private theorem define_inputCount {state next : State} {name : String} {fact : F
   cases result
   rfl
 
+private theorem define_assertionCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  unfold define at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  cases result
+  rfl
+
 theorem defineResult_counters {state next : State} {raw : Json} {fact : Fact}
     (accepted : defineResult state raw fact = .ok next) :
     next.groupCount = state.groupCount ∧ next.inputCount = state.inputCount := by
@@ -77,6 +87,14 @@ theorem defineResult_counters {state next : State} {raw : Json} {fact : Fact}
   simp only [bind_ok] at accepted
   rcases accepted with ⟨_, _, defined⟩
   exact ⟨define_groupCount defined, define_inputCount defined⟩
+
+theorem defineResult_assertionCount {state next : State} {raw : Json} {fact : Fact}
+    (accepted : defineResult state raw fact = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  unfold defineResult at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, defined⟩
+  exact define_assertionCount defined
 
 theorem refine_groupCount {state next : State} {text : String} {maximum : Nat}
     (accepted : refine state text maximum = .ok next) :
@@ -113,6 +131,24 @@ theorem refine_counters {state next : State} {text : String} {maximum : Nat}
     have stateEq := Except.ok.inj result
     subst next
     exact ⟨rfl, rfl⟩
+
+theorem refine_assertionCount {state next : State} {text : String} {maximum : Nat}
+    (accepted : refine state text maximum = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  unfold refine at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, accepted⟩
+  split at accepted
+  · rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    rfl
+  · simp only [bind_ok] at accepted
+    rcases accepted with ⟨_, _, accepted⟩
+    rcases accepted with ⟨_, _, result⟩
+    have stateEq := Except.ok.inj result
+    subst next
+    rfl
 
 theorem accepted_copy_nativeDefinitions {expected : Expected} {state next : State} {raw : Json}
     (nativeDefinitions : NativeDefinitions state)
