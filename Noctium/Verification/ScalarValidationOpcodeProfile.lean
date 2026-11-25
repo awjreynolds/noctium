@@ -44,7 +44,7 @@ def supportedScalarOpcodeProfile (raw : Json) : Instruction → Bool
   | .lessThan _ _ _ _ => rawHasOpcode raw "less_than"
   | .assert _ => rawHasOpcode raw "assert"
   | .testEq _ _ _ => rawHasOpcode raw "test_eq"
-  | .equal (.reference _) (.reference _) =>
+  | .equal _ (.reference _) =>
       rawHasOpcode raw "copy" || rawHasOpcode raw "constrain_eq"
   | .equal _ _ => rawHasOpcode raw "constrain_eq"
   | .impact _ _ => rawHasOpcode raw "impact"
@@ -91,28 +91,18 @@ theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction
     change rawHasOpcode raw "test_eq" = true at checked
     exact .testEq a b output (rawHasOpcode_eq checked)
   | equal left right =>
-    cases left with
-    | immediate leftValue =>
-      cases right with
-      | immediate rightValue =>
-        change rawHasOpcode raw "constrain_eq" = true at checked
+    cases right with
+    | immediate rightValue =>
+      change rawHasOpcode raw "constrain_eq" = true at checked
+      exact .constrainEq _ _ (rawHasOpcode_eq checked)
+    | reference rightName =>
+      change rawHasOpcode raw "copy" || rawHasOpcode raw "constrain_eq" = true at checked
+      cases copy : rawHasOpcode raw "copy" with
+      | false =>
+        simp [copy] at checked
         exact .constrainEq _ _ (rawHasOpcode_eq checked)
-      | reference rightName =>
-        change rawHasOpcode raw "constrain_eq" = true at checked
-        exact .constrainEq _ _ (rawHasOpcode_eq checked)
-    | reference leftName =>
-      cases right with
-      | immediate rightValue =>
-        change rawHasOpcode raw "constrain_eq" = true at checked
-        exact .constrainEq _ _ (rawHasOpcode_eq checked)
-      | reference rightName =>
-        change rawHasOpcode raw "copy" || rawHasOpcode raw "constrain_eq" = true at checked
-        cases copy : rawHasOpcode raw "copy" with
-        | false =>
-          simp [copy] at checked
-          exact .constrainEq _ _ (rawHasOpcode_eq checked)
-        | true =>
-          exact .copy leftName rightName (rawHasOpcode_eq copy)
+      | true =>
+        exact .copy left rightName (rawHasOpcode_eq copy)
   | impact guard inputs =>
     change rawHasOpcode raw "impact" = true at checked
     exact .impact guard inputs (rawHasOpcode_eq checked)
@@ -185,19 +175,14 @@ theorem profile_of_supportedScalarOpcode {raw : Json} {instruction : Instruction
     change rawHasOpcode raw "cond_select" = true
     exact rawHasOpcode_of_eq opcode
   | constrainEq a b opcode =>
-    cases a with
+    cases b with
     | immediate _ =>
       change rawHasOpcode raw "constrain_eq" = true
       exact rawHasOpcode_of_eq opcode
     | reference _ =>
-      cases b with
-      | immediate _ =>
-        change rawHasOpcode raw "constrain_eq" = true
-        exact rawHasOpcode_of_eq opcode
-      | reference _ =>
-        change rawHasOpcode raw "copy" || rawHasOpcode raw "constrain_eq" = true
-        rw [rawHasOpcode_of_eq opcode]
-        simp
+      change rawHasOpcode raw "copy" || rawHasOpcode raw "constrain_eq" = true
+      rw [rawHasOpcode_of_eq opcode]
+      simp
 
 /-- Every item and decoded instruction must pass the executable opcode-shape
 gate, and the lists must have equal length. -/

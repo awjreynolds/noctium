@@ -166,7 +166,11 @@ def CacheCorresponds (key : ExpressionKey) (output : String) : Instruction → P
         decodeOperand (toJson domainText) = .ok (.immediate (scalar domain)) ∧
         decodeOperand (toJson a) = .ok left ∧ decodeOperand (toJson b) = .ok right ∧
         validIdentifier destination = true
-  | .input .. | .boolean .. | .bits .. | .lessThan .. | .equal .. | .assert .. | .impact .. | .output .. => False
+  | .equal source target =>
+      ∃ destination text, key = ("copy", [text], none) ∧
+        target = .reference destination ∧ output = destination ∧
+        validIdentifier destination = true ∧ decodeOperand (toJson text) = .ok source
+  | .input .. | .boolean .. | .bits .. | .lessThan .. | .assert .. | .impact .. | .output .. => False
 
 structure LowerStateMeaning (hash : Hash) (witness : Assignment)
     (state : Zkir.LowerState) : Prop where

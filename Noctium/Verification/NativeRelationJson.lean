@@ -159,11 +159,10 @@ def decodeOperandField (value : Json) (name : String) : Except String Operand :=
 
 private def decodeCopy (value : Json) : Except String Instruction := do
   exactFields value ["op", "val", "output"]
-  let source ← stringField value "val"
-  ensure (validIdentifier source) "invalid native SSA reference"
+  let source ← decodeOperandField value "val"
   let output ← stringField value "output"
   ensure (validIdentifier output) "invalid native SSA definition"
-  return .equal (.reference source) (.reference output)
+  return .equal source (.reference output)
 
 def decodeInstruction (value : Json) : Except String Instruction := do
   let opcode ← stringField value "op"
@@ -260,32 +259,31 @@ def decodeInstruction (value : Json) : Except String Instruction := do
     return .output (← decodeOperands (← value.getObjVal? "vals"))
   | _ => throw s!"unsupported native instruction '{opcode}'"
 
-/-- The exact Copy object emitted for a reused comparison decodes to the field
-equality between its source and destination references. Copy's `val` and
-`output` are SSA bindings, so immediate sources are rejected. Freshness remains
-the native producer's admission check. -/
-private theorem decode_comparisonCopyJson (source destination : String)
-    (sourceValid : validIdentifier source = true)
+/-- ZKIR 3.2.1 accepts either a variable or an immediate as the Copy operand.
+The destination is an SSA reference whose freshness the producer checks. -/
+theorem decodeInstruction_copyOperandJson (sourceText : String) (source : Operand)
+    (destination : String)
+    (sourceDecoded : decodeOperand (toJson sourceText) = .ok source)
     (destinationValid : validIdentifier destination = true) :
-    decodeCopy (Json.mkObj [
-      ("op", toJson ("copy" : String)), ("val", toJson source),
+    decodeInstruction (Json.mkObj [
+      ("op", toJson ("copy" : String)), ("val", toJson sourceText),
       ("output", toJson destination)]) =
-        .ok (.equal (.reference source) (.reference destination)) := by
+        .ok (.equal source (.reference destination)) := by
   let copyJson := Json.mkObj [
-    ("op", toJson ("copy" : String)), ("val", toJson source),
+    ("op", toJson ("copy" : String)), ("val", toJson sourceText),
     ("output", toJson destination)]
-  have fields : exactFields copyJson ["op", "val", "output"] = .ok () := by
-    rfl
-  have sourceField : stringField copyJson "val" = .ok source := by
-    rfl
-  have outputField : stringField copyJson "output" = .ok destination := by
-    rfl
-  change decodeCopy copyJson = .ok (.equal (.reference source) (.reference destination))
-  unfold decodeCopy
-  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, fields, sourceField, ensure, sourceValid,
-    outputField, destinationValid]
+  have opcode : stringField copyJson "op" = .ok "copy" := rfl
+  have fields : exactFields copyJson ["op", "val", "output"] = .ok () := rfl
+  have operand : copyJson.getObjVal? "val" = .ok (toJson sourceText) := rfl
+  have outputField : stringField copyJson "output" = .ok destination := rfl
+  change decodeInstruction copyJson = _
+  unfold decodeInstruction
+  rw [opcode]
+  change decodeCopy copyJson = _
+  simp [decodeCopy, fields, decodeOperandField, operand, sourceDecoded,
+    outputField, ensure, destinationValid, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
-/-- The parser dispatches a Copy object to the strict Copy decoder. -/
+/-- Concrete specialization used by comparison reuse, which copies an SSA binding. -/
 theorem decodeInstruction_copyJson (source destination : String)
     (sourceValid : validIdentifier source = true)
     (destinationValid : validIdentifier destination = true) :
@@ -293,57 +291,32 @@ theorem decodeInstruction_copyJson (source destination : String)
       ("op", toJson ("copy" : String)), ("val", toJson source),
       ("output", toJson destination)]) =
         .ok (.equal (.reference source) (.reference destination)) := by
-  let copyJson := Json.mkObj [
-    ("op", toJson ("copy" : String)), ("val", toJson source),
-    ("output", toJson destination)]
-  have opcode : stringField copyJson "op" = .ok "copy" := by
-    rfl
-  have decoded : decodeCopy copyJson = .ok (.equal (.reference source) (.reference destination)) := by
-    exact decode_comparisonCopyJson source destination sourceValid destinationValid
-  change decodeInstruction copyJson = .ok (.equal (.reference source) (.reference destination))
-  unfold decodeInstruction
-  rw [opcode]
-  simpa only [Bind.bind, Except.bind] using decoded
+  apply decodeInstruction_copyOperandJson source (.reference source) destination _ destinationValid
+  have percent := (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp sourceValid).1).1
+  have noHex := reference_not_immediate percent
+  unfold decodeOperand
+  have text : (toJson source).getStr? = .ok source := rfl
+  simp [text, noHex, sourceValid, ensure, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
-/-- Any successfully decoded Copy exposes the same source and destination
-strings in its raw fields. -/
-theorem decodeInstruction_copyFields {raw : Json} {source destination : String}
+/-- A decoded Copy exposes the same source operand and destination binding
+in its raw fields. -/
+theorem decodeInstruction_copyOperandFields {raw : Json} {source : Operand} {destination : String}
     (opcode : stringField raw "op" = .ok "copy")
-    (decoded : decodeInstruction raw =
-      .ok (.equal (.reference source) (.reference destination))) :
-    stringField raw "val" = .ok source ∧
-      stringField raw "output" = .ok destination ∧
-      validIdentifier source = true := by
+    (decoded : decodeInstruction raw = .ok (.equal source (.reference destination))) :
+    decodeOperandField raw "val" = .ok source ∧ stringField raw "output" = .ok destination := by
   unfold decodeInstruction at decoded
+  rw [opcode] at decoded
+  change decodeCopy raw = _ at decoded
+  unfold decodeCopy at decoded
   simp only [bind_ok] at decoded
-  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
-  have opcodeEq : opcodeName = "copy" := Except.ok.inj (opcodeParsed.symm.trans opcode)
-  subst opcodeName
-  unfold decodeCopy at body
-  simp only [bind_ok] at body
-  rcases body with ⟨_, _, sourceName, sourceParsed, _, sourceValid, _, outputParsed, result⟩
-  rcases result with ⟨_, rest⟩
-  rcases rest with ⟨_, pureResult⟩
-  simp only [Pure.pure, Except.pure] at pureResult
-  have resultEq := Except.ok.inj pureResult
+  rcases decoded with ⟨_, _, sourceValue, sourceParsed, outputName, outputParsed, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
   injection resultEq with sourceEq destinationEq
-  injection sourceEq with sourceTextEq
-  injection destinationEq with destinationTextEq
-  have sourceValidBool : validIdentifier sourceName = true := by
-    unfold ensure at sourceValid
-    by_cases valid : validIdentifier sourceName
-    · exact valid
-    · simp [valid] at sourceValid
-  have sourceIdentifierValid : validIdentifier source = true := by
-    rw [← sourceTextEq]
-    exact sourceValidBool
-  constructor
-  · rw [← sourceTextEq]
-    exact sourceParsed
-  constructor
-  · rw [← destinationTextEq]
-    exact outputParsed
-  · exact sourceIdentifierValid
+  injection destinationEq with nameEq
+  subst source
+  subst destination
+  exact ⟨sourceParsed, outputParsed⟩
 
 /-- A decoded transient hash exposes the exact decoded input payload and the
 producer's output name. -/

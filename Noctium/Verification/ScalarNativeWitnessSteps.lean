@@ -62,13 +62,17 @@ theorem cached_text_scope (hash : Hash) (witness : NativeRelation.Assignment)
     cases instruction <;> simp_all [CacheCorresponds] <;> grind
   have outputMember : output ∈ instructionIdentifiers instruction := by
     cases instruction <;> simp_all [CacheCorresponds, instructionIdentifiers]
+    case equal source destination =>
+      obtain ⟨_, _, _, rfl, rfl, _, _⟩ := correspondence
+      exact Or.inr (by simp [operandIdentifiers])
   refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
   intro name names
   have equal : name = output := by simpa only [operandIdentifiers, List.mem_singleton] using names
   subst name
   exact invariant.scope instructions decoded instruction member output outputMember
 
-private theorem cached_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
+/-- Reuse a previously checked instruction result and keep the entire witness frame. -/
+theorem cached_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (operation : StateM Zkir.LowerState String) (term : Native.Term)
     (key : ExpressionKey) (output : String)
     (stateMeaning : LowerStateMeaning hash witness state)
@@ -94,7 +98,8 @@ private theorem cached_step (hash : Hash) (inputs witness : NativeRelation.Assig
   · intro name _
     rfl
 
-private theorem fresh_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
+/-- Extend the scoped assignment for one emitted and decoded cached result. -/
+theorem fresh_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (operation : StateM Zkir.LowerState String) (term : Native.Term)
     (raw : Json) (key : ExpressionKey) (instruction : Instruction) (value : Scalar)
     (stateMeaning : LowerStateMeaning hash witness state)
