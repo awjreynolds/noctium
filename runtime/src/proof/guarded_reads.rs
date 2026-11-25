@@ -5,6 +5,8 @@ use serde_json::json;
 use std::{env, fs, path::PathBuf};
 
 #[cfg(feature = "localnet")]
+mod archive;
+#[cfg(feature = "localnet")]
 mod localnet;
 
 fn freshly_emitted(suffix: &str) -> Vec<u8> {

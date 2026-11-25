@@ -161,6 +161,24 @@ pub(super) async fn finalize(
         "fetched final state differs from the checked receipt"
     );
     let state: ContractState<Db> = crate::proof::decode(&observed.bytes)?;
+    let (marker, balance) = state_fields(&state)?;
+    ensure!(
+        marker == Fr::from(23u64) && balance == Fr::from(99u64),
+        "finalized marker or balance differs from the source result"
+    );
+    let (runtime_code_hash, metadata_sha256) = context.node.runtime_fingerprint();
+    Ok(json!({
+        "chain": called.chain,
+        "runtimeCodeHash": runtime_code_hash,
+        "metadataSha256": metadata_sha256,
+        "contractAddress": called.contract_address,
+        "deployment": public_receipt(&deployed),
+        "call": public_receipt(&called),
+        "observedState": {"blockHash": observed.block_hash, "height": observed.height, "marker": "23", "balances": {"7": "99"}},
+    }))
+}
+
+pub(super) fn state_fields(state: &ContractState<Db>) -> Result<(Fr, Fr)> {
     let StateValue::Array(slots) = state.data.get_ref() else {
         anyhow::bail!("expected guarded-read state array");
     };
@@ -182,18 +200,8 @@ pub(super) async fn finalize(
     marker.value_only_field_repr(&mut marker_fields);
     let mut balance_fields = Vec::new();
     value.value_only_field_repr(&mut balance_fields);
-    ensure!(
-        marker_fields == [Fr::from(23u64)] && balance_fields == [Fr::from(99u64)],
-        "finalized marker or balance differs from the source result"
-    );
-    let (runtime_code_hash, metadata_sha256) = context.node.runtime_fingerprint();
-    Ok(json!({
-        "chain": called.chain,
-        "runtimeCodeHash": runtime_code_hash,
-        "metadataSha256": metadata_sha256,
-        "contractAddress": called.contract_address,
-        "deployment": public_receipt(&deployed),
-        "call": public_receipt(&called),
-        "observedState": {"blockHash": observed.block_hash, "height": observed.height, "marker": "23", "balances": {"7": "99"}},
-    }))
+    let ([marker], [balance]) = (marker_fields.as_slice(), balance_fields.as_slice()) else {
+        anyhow::bail!("expected a scalar marker and balance");
+    };
+    Ok((*marker, *balance))
 }
