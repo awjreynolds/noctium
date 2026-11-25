@@ -1,6 +1,7 @@
 import Noctium.GuardedExpression
 import Noctium.Backend.Impact
 import Noctium.Verification.GenericStateEvaluationCanonical
+import Noctium.Verification.GuardedScalarExpressionScope
 import Noctium.Verification.ScalarNormalization
 
 namespace Noctium.Verification.GuardedScalarTotalization
@@ -256,5 +257,27 @@ theorem eval_totalize_active {ty : Ty} (expression : Expr ty)
       (Noctium.Backend.Impact.expressionNames right) noShadow
     simp [GuardedExpression.totalize, Expr.eval,
       ihLeft env childrenNo.1 guardEval, ihRight env childrenNo.2 guardEval]
+
+/-- An activity let evaluates like its source expression when the guard is
+active and the generated binder is fresh. -/
+theorem eval_active_value {ty : Ty} (ctx : EvalContext) (env : EvalEnv)
+    (expression : Expr ty) (admitted : ScalarExpression expression)
+    (guard : Expr .bool) (binder : String)
+    (fresh : binder ∉ Noctium.Backend.Impact.expressionNames expression)
+    (active : guard.eval ctx env = .ok true)
+    (modulus : ctx.modulus = Field.modulus) :
+    (Expr.letE binder guard
+      (GuardedExpression.totalize (.ref binder) expression)).eval ctx env =
+      expression.eval ctx env := by
+  let extended : EvalEnv := (binder, Value.pack .bool true) :: env
+  have guardRef : (Expr.ref binder : Expr .bool).eval ctx extended = .ok true := by
+    simp [Expr.eval, extended, Value.pack, Value.as, canonical_eq,
+      Pure.pure, Except.pure]
+  have body := eval_totalize_active expression admitted ctx extended binder
+    modulus fresh guardRef
+  have source := GuardedScalarExpressionScope.eval_fresh_cons ctx expression
+    admitted env binder (Value.pack .bool true) fresh
+  simp only [Expr.eval, active, Bind.bind, Except.bind]
+  exact body.trans source
 
 end Noctium.Verification.GuardedScalarTotalization
