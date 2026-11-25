@@ -81,12 +81,12 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
         .ok (.select condition yes no output))
       (holds : Instruction.Holds hash witness (.select condition yes no output)) :
       AcceptedMeaningStep hash witness raw
-  | copy {source destination : String}
+  | copy {source : Operand} {destination : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "copy")
       (decoded : NativeRelationJson.decodeInstruction raw =
-        .ok (.equal (.reference source) (.reference destination)))
+        .ok (.equal source (.reference destination)))
       (holds : Instruction.Holds hash witness
-        (.equal (.reference source) (.reference destination))) :
+        (.equal source (.reference destination))) :
       AcceptedMeaningStep hash witness raw
   | impact {guard : Operand} {values : List Operand}
       (opcode : Backend.Native.stringField raw "op" = .ok "impact")
@@ -435,14 +435,9 @@ theorem acceptedMeaningStep_preserves
     obtain ⟨sourceFact, sourceAccepted, sourceNative, defined⟩ :=
       accepted_copy_components definitions opcode accepted
     have typed := defineResult_nativeDefinitions definitions sourceNative defined
-    have fields := NativeRelationJson.decodeInstruction_copyFields opcode decoded
-    have sourceDecoded : NativeRelationJson.decodeOperandField raw "val" =
-        .ok (.reference source) := by
-      exact NativeRelationJson.decodeOperandField_reference_of_stringField fields.1 fields.2.2
-    have sourceMeaning := argument_decoded_meaning meaning sourceAccepted sourceDecoded
-    have sourceDestinationEqual : witness source = witness destination := by
-      change Operand.read witness (.reference source) =
-        Operand.read witness (.reference destination)
+    have fields := NativeRelationJson.decodeInstruction_copyOperandFields opcode decoded
+    have sourceMeaning := argument_decoded_meaning meaning sourceAccepted fields.1
+    have sourceDestinationEqual : source.read witness = witness destination := by
       exact holds
     have destinationMeaning : FactMeaning hash inputs witness sourceFact (witness destination) := by
       refine ⟨?_, ?_, ?_⟩
@@ -452,14 +447,14 @@ theorem acceptedMeaningStep_preserves
         exact sourceMeaning.bound
       · intro identifier exclusive asserted nonzero
         apply sourceMeaning.comparison identifier exclusive asserted
-        change witness source ≠ zero
+        change source.read witness ≠ zero
         rw [sourceDestinationEqual]
         exact nonzero
     have outputMeaning : ∀ identifier,
         Backend.Native.stringField raw "output" = .ok identifier →
         FactMeaning hash inputs witness sourceFact (witness identifier) := by
       intro identifier parsed
-      have same : identifier = destination := Except.ok.inj (parsed.symm.trans fields.2.1)
+      have same : identifier = destination := Except.ok.inj (parsed.symm.trans fields.2)
       subst identifier
       exact destinationMeaning
     exact ⟨defineResult_meaning meaning outputMeaning defined, typed,

@@ -684,9 +684,9 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | testEq (a b : Operand) (output : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "test_eq") :
       SupportedScalarOpcode raw (.testEq a b output)
-  | copy (source destination : String)
+  | copy (source : Operand) (destination : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "copy") :
-      SupportedScalarOpcode raw (.equal (.reference source) (.reference destination))
+      SupportedScalarOpcode raw (.equal source (.reference destination))
   | impact (guard : Operand) (inputs : List Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "impact") :
       SupportedScalarOpcode raw (.impact guard inputs)

@@ -680,6 +680,10 @@ jobs:
             Noctium.Verification.ScalarStateExtensions \
             Noctium.Verification.ScalarExpressionNativeTree \
             Noctium.Verification.ScalarCircuitWitness \
+            Noctium.Verification.ScalarExpressionAssert \
+            Noctium.Verification.ScalarExpressionCopy \
+            Noctium.Verification.ScalarExpressionEquality \
+            Noctium.Verification.ScalarExpressionLet \
             Noctium.Verification.ScalarRangeLowering \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
