@@ -26,6 +26,42 @@ inductive GuardedEffectOperationChunks (state : List StateDecl)
       GuardedEffectOperationChunks state guards (item :: rest) before result
         (next.operations.length :: offsets) (chunk :: chunks)
 
+/-- All-none guard metadata makes every indexed guard lookup unguarded,
+including indexes beyond the end of the list. -/
+theorem all_none_guard_at (guards : List (Option (Expr .bool)))
+    (allNone : guards.all Option.isNone = true) (index : Nat) :
+    guards[index]?.getD none = none := by
+  induction guards generalizing index with
+  | nil => simp
+  | cons guard rest ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at allNone
+    cases index with
+    | zero =>
+      have headNone := allNone.1
+      cases guard with
+      | none => rfl
+      | some value => simp [Option.isNone] at headNone
+    | succ index =>
+      simpa using ih allNone.2 index
+
+/-- Replace all-none guarded source chunks with the equivalent unguarded
+chunks while preserving their exact offsets and operation lists. -/
+theorem unguarded_chunks_of_all_none {state : List StateDecl}
+    {guards : List (Option (Expr .bool))}
+    {items : List (Effect × Nat)} {initial result : Impact.Plan}
+    {offsets : List Nat} {chunks : List (List Impact.Op)}
+    (allNone : guards.all Option.isNone = true)
+    (chunksShape : GuardedEffectOperationChunks state guards items
+      initial result offsets chunks) :
+    GuardedEffectOperationChunks state [] items initial result offsets chunks := by
+  induction chunksShape with
+  | nil before => exact .nil before
+  | @cons item rest before next result offsets chunk chunks step operationPrefix tail ih =>
+    have guardNone := all_none_guard_at guards allNone item.2
+    have unguardedStep : Impact.appendEffectWithActivity state item.1 none before = .ok next := by
+      simpa only [guardNone] using step
+    exact .cons unguardedStep operationPrefix ih
+
 /-- A well-formed guarded trace plus an explicit per-step operation-prefix
 fact yields one exact operation chunk for every source effect. -/
 theorem guarded_trace_operation_chunks {state : List StateDecl}

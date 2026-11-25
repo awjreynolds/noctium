@@ -73,7 +73,7 @@ private theorem scalar_source_names_clear (state : List StateDecl) (entry : Entr
 
 private theorem actual_read_name_scope (state : List StateDecl) (entry : Entrypoint)
     (plan : Impact.Plan) (accepted : Impact.lower state entry = .ok plan)
-    (unguarded : entry.effectGuards = []) (scalar : ScalarStateEffects entry.effects) :
+    (unguarded : entry.effectGuards.all Option.isNone = true) (scalar : ScalarStateEffects entry.effects) :
     let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
     reads.Pairwise (fun left right => left.name ≠ right.name) ∧
       ∀ read ∈ reads,
@@ -83,7 +83,7 @@ private theorem actual_read_name_scope (state : List StateDecl) (entry : Entrypo
   have clear := scalar_source_names_clear state entry plan accepted
   obtain ⟨distinctDestinations, freshDestinations⟩ :=
     GenericStateEffectValidation.lower_scalar_read_destinations_fresh_unique
-      state entry plan accepted unguarded scalar
+      state entry plan accepted scalar
   have destinationsClear : ∀ name ∈ scalarReadDestinations entry.effects,
       name.startsWith "_noctium_" = false := by
     intro name member
@@ -116,6 +116,7 @@ private theorem actual_read_name_scope (state : List StateDecl) (entry : Entrypo
 
 /-- A satisfying emitted scalar relation and checked execution of its exact
 Impact plan authenticate the reads and determine the ordered source successor.
+The guard schedule may be empty or explicitly mark every effect unguarded.
 The final equation retains the original source return checks. -/
 theorem lowerEntrypoint_checked_state
     (state : List StateDecl) (entry : Entrypoint) (rewrites : Zkir.Rewrites)
@@ -137,7 +138,7 @@ theorem lowerEntrypoint_checked_state
         ∀ required ∈ expected.rawInputs ++ expected.inputs, required.ty.isForeign = false)
     (inputs : CanonicalInputs entry.circuit values witness)
     (circuitScope : ScalarCircuitAdmission entry.circuit)
-    (unguarded : entry.effectGuards = [])
+    (unguarded : entry.effectGuards.all Option.isNone = true)
     (effectScope : ScalarStateEffects entry.effects)
     (operands : ∀ effect ∈ entry.effects, ScalarOperands effect)
     (plainReads : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
