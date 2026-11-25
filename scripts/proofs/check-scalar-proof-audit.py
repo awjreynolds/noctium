@@ -11,8 +11,8 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-SOUNDNESS = "Noctium.Verification.ScalarTranslation.lowerCircuit_sound"
-COMPLETENESS = "Noctium.Verification.ScalarTranslation.lowerCircuit_complete"
+SOUNDNESS = "Noctium.Verification.ScalarTranslationSoundness.lowerCircuit_sound"
+COMPLETENESS = "Noctium.Verification.ScalarWitnessConstruction.lowerCircuit_complete"
 FIXTURE = "ScalarAuditFixtures"
 
 
@@ -33,14 +33,14 @@ def main() -> int:
         parser.error("external model and digest must be supplied together")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    run(["lake", "build", "Noctium.Verification.ScalarTranslation", "Noctium.Verification.ScalarExportAudit"])
+    run(["lake", "build", "Noctium.Verification.ScalarCircuitWitness", "Noctium.Verification.ScalarExportAudit"])
     with tempfile.TemporaryDirectory(prefix="noctium-scalar-role-tests-") as directory:
         scratch = Path(directory)
         source = scratch / "source" / "ScalarAuditFixtures.lean"
         imports = scratch / "imports"
         source.parent.mkdir(parents=True)
         imports.mkdir()
-        source.write_text(f'''import Noctium.Verification.ScalarTranslation
+        source.write_text(f'''import Noctium.Verification.ScalarCircuitWitness
 import Lean
 namespace {FIXTURE}
 open Lean Elab Command in
@@ -72,7 +72,7 @@ end {FIXTURE}
             return path
 
         baseline = export("baseline-model.ndjson", [SOUNDNESS, COMPLETENESS,
-            "propext", "Classical.choice", "Quot.sound"], "Noctium.Verification.ScalarTranslation")
+            "propext", "Classical.choice", "Quot.sound"], "Noctium.Verification.ScalarCircuitWitness")
         trusted = output / "trusted-model.ndjson"
         trusted.write_bytes(args.trusted_model_export.read_bytes() if args.trusted_model_export else baseline.read_bytes())
         pin = args.trusted_model_sha256 or hashlib.sha256(trusted.read_bytes()).hexdigest()
@@ -107,13 +107,13 @@ end {FIXTURE}
         reports["wrongPin"] = audit(positive, expected_error="model_pin_mismatch", digest="0" * 64)
         oversized = scratch / "oversized.ndjson"
         with oversized.open("wb") as handle:
-            handle.truncate(128 * 1024 * 1024)
+            handle.truncate(161 * 1024 * 1024)
         reports["oversized"] = audit(oversized, expected_error="export_limit")
         fifo = scratch / "candidate.fifo"
         os.mkfifo(fifo)
         reports["fifo"] = audit(fifo, expected_error="export_not_regular_file")
         run(["lake", "env", "leanchecker", "--from-export", str(positive)])
-        summary = {"status": "passed", "scope": "generic scalar library proof roles and transitive axiom policy",
+        summary = {"status": "passed", "scope": "scalar circuit lowering proof roles and transitive axiom policy",
             "externalReviewedModelProvided": bool(args.trusted_model_export),
             "trustedModelSha256": pin, "soundnessRole": SOUNDNESS, "completenessRole": COMPLETENESS,
             "rejections": ["swapped", "missing", "weakened", "forbiddenAxiom", "wrongPin", "oversized", "fifo"],

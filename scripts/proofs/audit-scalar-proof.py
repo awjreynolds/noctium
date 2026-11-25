@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay generic scalar proof exports against independently pinned role types."""
+"""Replay scalar circuit proof exports against independently pinned role types."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-MAX_EXPORT_BYTES = 96 * 1024 * 1024
+MAX_EXPORT_BYTES = 160 * 1024 * 1024
 
 
 def retained_file(path: Path) -> bytes:
