@@ -459,7 +459,7 @@ private theorem effectBindings_validated (state : List StateDecl)
 
 private theorem effectStep_validated (state : List StateDecl) (ep : Entrypoint)
     (effect : Effect) (index : Nat) (env : TypeEnv) (step : ForInStep TypeEnv)
-    (_unguarded : ep.effectGuards = []) (scope : ScalarStateEffect effect)
+    (scope : ScalarStateEffect effect)
     (success : Entrypoint.validateEffectStep stateEffectCaps state ep effect index env =
       .ok step) :
     ∃ after, step = .yield after ∧ EffectValidation state env effect after := by
@@ -525,7 +525,7 @@ private theorem effectStep_validated (state : List StateDecl) (ep : Entrypoint)
 
 private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entrypoint)
     (effects : List Effect) (offset : Nat) (initial final : TypeEnv)
-    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects effects)
+    (scalar : ScalarStateEffects effects)
     (success : forIn (effects.zipIdx offset) initial
       (fun item env => Entrypoint.validateEffectStep stateEffectCaps state ep
         item.1 item.2 env) = .ok final) :
@@ -546,7 +546,7 @@ private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entryp
         cases success
       | ok step =>
         obtain ⟨middle, shape, validated⟩ := effectStep_validated state ep effect
-          offset initial step unguarded head checked
+          offset initial step head checked
         simp only [checked, bind, Except.bind] at success
         rw [shape] at success
         have restValid := ih (offset + 1) middle tail success
@@ -604,6 +604,23 @@ private theorem validateEffectPrechecks_circuit_valid (state : List StateDecl)
   obtain ⟨_, circuitAccepted, _⟩ := accepted
   exact circuitAccepted
 
+private theorem validateEffectPrechecks_guard_metadata_valid (state : List StateDecl)
+    (ep : Entrypoint)
+    (accepted : Entrypoint.validateEffectPrechecks stateEffectCaps state ep = .ok ()) :
+    (ep.effectGuards.isEmpty || ep.effectGuards.length == ep.effects.length) = true := by
+  unfold Entrypoint.validateEffectPrechecks at accepted
+  simp only [bind_ok] at accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  split at accepted
+  · rcases bind_ok.mp accepted with ⟨_, _, final⟩
+    cases metadata : (ep.effectGuards.isEmpty ||
+        ep.effectGuards.length == ep.effects.length) with
+    | true => rfl
+    | false => simp [metadata, throw, throwThe] at final
+  · simp [throw, throwThe, Bind.bind, Except.bind] at accepted ⊢
+
 private theorem validateEffectPrefix_circuit_valid (state : List StateDecl)
     (ep : Entrypoint) (initial : TypeEnv)
     (accepted : Entrypoint.validateEffectPrefix stateEffectCaps state ep = .ok initial) :
@@ -611,6 +628,14 @@ private theorem validateEffectPrefix_circuit_valid (state : List StateDecl)
   unfold Entrypoint.validateEffectPrefix at accepted
   rcases bind_ok.mp accepted with ⟨_, prechecksAccepted, _⟩
   exact validateEffectPrechecks_circuit_valid state ep prechecksAccepted
+
+private theorem validateEffectPrefix_guard_metadata_valid (state : List StateDecl)
+    (ep : Entrypoint) (initial : TypeEnv)
+    (accepted : Entrypoint.validateEffectPrefix stateEffectCaps state ep = .ok initial) :
+    (ep.effectGuards.isEmpty || ep.effectGuards.length == ep.effects.length) = true := by
+  unfold Entrypoint.validateEffectPrefix at accepted
+  rcases bind_ok.mp accepted with ⟨_, prechecksAccepted, _⟩
+  exact validateEffectPrechecks_guard_metadata_valid state ep prechecksAccepted
 
 /-- Accepted production lowering preserves source-circuit validation under
 the canonical source capability set. -/
@@ -624,10 +649,10 @@ theorem lower_circuit_validated_source (state : List StateDecl) (ep : Entrypoint
   simpa [stateEffectCaps, Capabilities.source] using circuitAccepted
 
 /-- Accepted production lowering carries the exact ordered typed effect
-chain on the explicit unguarded scalar state-effect scope. -/
+chain on the supported scalar state-effect scope. -/
 theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
     (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
-    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects ep.effects) :
+    (scalar : ScalarStateEffects ep.effects) :
     ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final := by
   have source := lower_source_validated state ep plan accepted
   obtain ⟨initial, final, prefixAccepted, effectsAccepted⟩ :=
@@ -635,7 +660,7 @@ theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
   have initialShape := effectPrefix_env_shape state ep initial prefixAccepted
   subst initial
   exact ⟨final, forIn_validated_effects_at state ep ep.effects 0
-    (initialEffectTypeEnv ep) final unguarded scalar (by
+    (initialEffectTypeEnv ep) final scalar (by
       simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)⟩
 
 /-- Successful lowering validates scalar source read destinations against the
@@ -643,12 +668,21 @@ initial bindings and keeps distinct destinations across the effect sequence. -/
 theorem lower_scalar_read_destinations_fresh_unique (state : List StateDecl)
     (ep : Entrypoint) (plan : Impact.Plan)
     (accepted : Impact.lower state ep = .ok plan)
-    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects ep.effects) :
+    (scalar : ScalarStateEffects ep.effects) :
     (scalarReadDestinations ep.effects).Nodup ∧
       ∀ name ∈ scalarReadDestinations ep.effects,
         name ∉ (initialEffectTypeEnv ep).map Prod.fst := by
   obtain ⟨final, validated⟩ :=
-    lower_validated_effects state ep plan accepted unguarded scalar
+    lower_validated_effects state ep plan accepted scalar
   exact ValidatedEffects.scalarReadDestinations_fresh_unique validated
+
+/-- Accepted production lowering rejects malformed effect-guard schedules. -/
+theorem lower_guard_metadata_valid (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan) :
+    (ep.effectGuards.isEmpty || ep.effectGuards.length == ep.effects.length) = true := by
+  have source := lower_source_validated state ep plan accepted
+  obtain ⟨initial, _, prefixAccepted, _⟩ :=
+    Entrypoint.validate_effect_loop_of_success stateEffectCaps state ep source
+  exact validateEffectPrefix_guard_metadata_valid state ep initial prefixAccepted
 
 end Noctium.Verification.GenericStateEffectValidation

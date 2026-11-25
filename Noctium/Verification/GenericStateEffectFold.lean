@@ -84,11 +84,11 @@ private theorem scalar_read_scope {effects : List Effect} (admitted : ScalarStat
     · cases head <;> constructor
     · exact ih found inTail
 
-theorem unguarded_read_scope (entry : Entrypoint) (unguarded : entry.effectGuards = [])
+theorem unguarded_read_scope (entry : Entrypoint) (unguarded : entry.effectGuards.all Option.isNone = true)
     (admitted : ScalarStateEffects entry.effects) :
     GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx := by
-  rw [unguarded]
   intro item member
+  rw [GuardedEffectEvaluation.all_none_guard_at entry.effectGuards unguarded item.2]
   apply GuardedScalarReadEffect.unguarded
   apply scalar_read_scope admitted item.1
   have projected : item.1 ∈ entry.effects.zipIdx.map Prod.fst := List.mem_map_of_mem member
@@ -103,7 +103,7 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
     (initial : LedgerState) (slots : List NativeState.Slot)
     (native : List NativeState.Op) (final : NativeState.Machine)
     (lowered : Impact.lower state entry = .ok plan)
-    (unguarded : entry.effectGuards = []) (admitted : ScalarStateEffects entry.effects)
+    (unguarded : entry.effectGuards.all Option.isNone = true) (admitted : ScalarStateEffects entry.effects)
     (operands : ∀ effect ∈ entry.effects, ScalarOperands effect)
     (publicCompatible : ∀ input ∈ entry.circuit.inputs, Impact.publicInputScalarCompatible input)
     (decodedReads : decodeReads (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs))
@@ -131,7 +131,7 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
       final = ⟨[.vector finalSlots], finalReads⟩ ∧
       AgreesOnTypes finalTypes finalEnv (base ++ decoded) := by
   have scope := unguarded_read_scope entry unguarded admitted
-  obtain ⟨finalTypes, validated⟩ := lower_validated_effects state entry plan lowered unguarded admitted
+  obtain ⟨finalTypes, validated⟩ := lower_validated_effects state entry plan lowered admitted
   obtain ⟨offsets, inputPlan, chunks, publicNative, segments, _, publicAccepted,
     chunkTrace, _, publicEvaluated, effectEvaluated, sequence⟩ :=
     GuardedPlanActivity.lower_scoped_guarded_evaluation state entry plan ctx (base ++ decoded)
@@ -145,7 +145,8 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
   have typedTrace : ValidatedEffects state (initialEffectTypeEnv entry)
       (entry.effects.zipIdx.map Prod.fst) finalTypes := by rwa [orderedEffects]
   have compiled : GuardedEffectEvaluation.GuardedEffectOperationChunks state [] entry.effects.zipIdx
-      inputPlan plan offsets chunks := by simpa [unguarded] using chunkTrace
+      inputPlan plan offsets chunks :=
+    GuardedEffectEvaluation.unguarded_chunks_of_all_none unguarded chunkTrace
   have candidates : ∀ effect ∈ entry.effects, ReadCandidate effect (base ++ decoded) := by
     intro effect present
     have facts := readFacts effect present
@@ -170,7 +171,8 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
       change effect = Effect.require condition at same
       subst effect
       exact guardValues condition (GuardedPlanAssertions.lower_unguarded_require_assertion
-        state entry plan condition index lowered scope occurrence (by simp [unguarded]))
+        state entry plan condition index lowered scope occurrence
+        (GuardedEffectEvaluation.all_none_guard_at entry.effectGuards unguarded index))
   obtain ⟨finalEnv, finalState, finalSlots, finalReads, folded, finalEncoded, layout, agreement⟩ :=
     checked_effects_fold ctx state entry.effects.zipIdx (initialEffectTypeEnv entry) finalTypes
       base (base ++ decoded) initial slots publicReads inputPlan plan offsets chunks segments final
@@ -179,8 +181,8 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
       stateBound modulus
   refine ⟨finalTypes, finalEnv, finalState, finalSlots, finalReads, validated, ?_, finalEncoded,
     layout, agreement⟩
-  rw [unguarded]
-  change SourceEffects.fold ctx entry.effects (base, initial) = .ok (finalEnv, finalState)
-  simpa only [orderedEffects] using folded
+  have guardLength := lower_guard_metadata_valid state entry plan lowered
+  simpa [runEffectsWithGuardsAndEnv, guardLength, unguarded,
+    SourceEffects.runEffectsWithEnv_eq_fold, orderedEffects] using folded
 
 end Noctium.Verification.GenericStateEffectFold
