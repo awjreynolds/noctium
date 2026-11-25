@@ -21,8 +21,9 @@ Give your agent this prompt. Add an issue URL to resume work already assigned to
 
 ```text
 Read CONTRIBUTING.md and AGENTS.md. Resume the issue I supplied if I own it.
-If I supplied no issue, take the first eligible issue in the shared ready
-queue, in listed order. Claim it under my GitHub account before editing.
+If I supplied no issue, follow the shared ready queue and take the first
+eligible Compact parity issue. If none is eligible, take the first eligible
+issue from the full queue. Claim it under my GitHub account before editing.
 Report an empty queue, an ownership conflict or a failed claim before editing.
 Check current main, the issue's acceptance criteria and active PRs for overlap.
 Use one orchestrator and up to six bounded subagents. Implement the slice in
@@ -79,7 +80,7 @@ Before editing or resuming, follow the [issue claim and worktree workflow](docs/
 
 Noctium keeps contract authoring, typed IR, reference semantics and native lowering in Lean. It emits Midnight ZKIR constraints and Impact ledger plans. Rust owns native witness, proof and transaction execution and the shared runtime used by SDKs. The release goal is for an author to prove properties of the actual Lean contract and give an auditor evidence linking those properties to the exact operation on Midnight, with the remaining assumptions stated.
 
-1. Take the next eligible deliverable from the [shared ready queue](docs/agents/issue-tracker.md#review-and-claim-implementation-issues). Use its parent and the [public issue map](https://github.com/awjreynolds/noctium/issues/1) to understand where the work fits.
+1. Follow the [shared ready queue](docs/agents/issue-tracker.md#review-and-claim-implementation-issues), with Compact parity first. Use the issue's parent and the [public issue map](https://github.com/awjreynolds/noctium/issues/1) to understand where the work fits. An open prerequisite keeps a reviewed issue out of the queue until it closes.
 2. For the medium and long term, read the [one-year assurance roadmap](https://github.com/awjreynolds/noctium/issues/94) and [native capability goal](docs/compatibility/GOAL.md). The roadmap progresses from proof reports and a coverage baseline to reusable Lean checks, integrated contract pilots and independent release review.
 3. Before implementation, read the relevant design and follow its references to code and checks. Use the issue and the current source for details that have changed since the design was written.
 
