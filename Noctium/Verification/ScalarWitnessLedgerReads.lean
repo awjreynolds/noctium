@@ -131,4 +131,31 @@ theorem completes_lowerLedgerReads_plain (hash : Hash) (inputs : NativeRelation.
   rw [loweringEq]
   exact loop
 
+/-- Extend the source environment with plain ledger reads. Earlier bindings
+keep precedence. Both lowerers resolve new read names to the input frame. -/
+theorem LowerAliasAgreement.appendReadValues (hash : Hash)
+    (inputs witness : NativeRelation.Assignment)
+    (normalAliases : Native.AliasEnvironment) (lowerAliases : List (String × String))
+    (values readValues : EvalEnv)
+    (agreement : LowerAliasAgreement hash inputs witness normalAliases lowerAliases values)
+    (reads : ∀ pair ∈ readValues,
+      normalAliases.lookup pair.1 = some (.input ("%input_" ++ pair.1)) ∧
+      lowerAliases.lookup pair.1 = none ∧ validIdentifier ("%input_" ++ pair.1) = true)
+    (frame : InputFrame inputs witness) :
+    LowerAliasAgreement hash inputs witness normalAliases lowerAliases (values ++ readValues) := by
+  intro name ty raw value lookup typed
+  rw [List.lookup_append] at lookup
+  cases found : values.lookup name with
+  | some first =>
+    simp only [found, Option.some_or] at lookup
+    exact agreement name ty raw value (found.trans lookup) typed
+  | none =>
+    simp only [found, Option.none_or] at lookup
+    obtain ⟨before, after, eq, _⟩ := List.lookup_eq_some_iff.mp lookup
+    have member : (name, raw) ∈ readValues := by rw [eq]; simp
+    obtain ⟨normalized, absent, valid⟩ := reads (name, raw) member
+    refine ⟨.input ("%input_" ++ name), normalized, ?_⟩
+    simpa [absent] using OperandMeaning.reference hash inputs witness _ valid
+      (.input ("%input_" ++ name)) (by simpa only [interpret_input, Option.some.injEq] using (frame name).symm)
+
 end Noctium.Verification.ScalarWitnessConstruction

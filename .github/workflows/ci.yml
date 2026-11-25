@@ -681,6 +681,8 @@ jobs:
             Noctium.Verification.ScalarExpressionNativeTree \
             Noctium.Verification.ScalarCircuitWitness \
             Noctium.Verification.ScalarLedgerWitnessPreflight \
+            Noctium.Verification.ScalarLedgerWitnessSource \
+            Noctium.Verification.ScalarLedgerWitnessComposition \
             Noctium.Verification.ScalarWitnessEntrypointPrelude \
             Noctium.Verification.ScalarWitnessLedgerReads \
             Noctium.Verification.ScalarExpressionAssert \
