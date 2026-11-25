@@ -3215,7 +3215,7 @@
       "layer": "language-ledger",
       "surface": "Map.isEmpty",
       "noctiumStatus": "subset",
-      "notes": "Binds native Boolean emptiness for a direct or nested Map path. The matched Set fixture also checks the empty and populated outer Native-keyed Map. Inactive queries bind false without accessing the path. Root record-key Maps with scalar or record values also match the pinned Compact observation and finalized empty, populated, and reset states on the funded development ledger. The host ledger method remains unqualified.",
+      "notes": "Binds native Boolean emptiness for a direct or nested Map path. The matched Set fixture also checks the empty and populated outer Native-keyed Map. Inactive queries bind false without accessing the path. Root record-key Maps with scalar or record values also match the pinned Compact observation and finalized empty, populated, and reset states on the funded development ledger. The root Field/Bool host replay derives emptiness from the canonical UInt64 size and matches Compact through empty, insertion, overwrite and last removal. It verifies the false value remains stored after overwrite and rejects a truncated tagged snapshot. Wider host paths remain unqualified.",
       "source": [
         "adt"
       ],
@@ -3225,6 +3225,10 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/compact/MapIsEmptyParity.compact",
+        "tests/compact/map-is-empty-parity.mjs",
+        "runtime/tests/collection_reads.rs",
+        "docs/development/native-client-abi.md",
         "docs/development/record-map-collections-localnet-receipt.json",
         "runtime/src/localnet.rs",
         "tests/RecordMapCollections.lean",
