@@ -1,6 +1,9 @@
 import Noctium.Verification.GenericStateCheckedReadTrace
 import Noctium.Verification.GenericStateCandidateDecode
 import Noctium.Verification.GenericStateCircuitParts
+import Noctium.Verification.NativeRelationInstructionProjection
+import Noctium.Verification.RangeDedupAcceptedArray
+import Noctium.Verification.ScalarValidationNativeDefinitions
 import Noctium.Verification.ScalarValidationProjection
 
 namespace Noctium.Verification.GenericStateCheckedReadDecode
@@ -57,6 +60,76 @@ theorem accepted_scalarRead_inputBound
   have bound := driver.inputBound meaning
     (List.mem_append_right expected.rawInputs requirementPresent) nonforeign ordinary
   simpa [identifier, requirementTy] using bound
+
+/-- The accepted default lowerer and checked scalar opcode profile provide the
+final Native state meaning needed to bound every identity-preserving singleton
+scalar read in the accepted post-public Impact suffix. -/
+theorem accepted_scalarRead_inputBounds_of_checkedProfile
+    (state : List StateDecl) (entry : Entrypoint)
+    (json : Lean.Json) (relation : NativeRelation.Program)
+    (hash : Hash) (witness : Assignment) (streams : InputStreams)
+    (publicGroups : List (List Scalar))
+    (lowered : Backend.Zkir.lowerEntrypoint state entry = .ok json)
+    (decoded : NativeRelationJson.decode json = .ok relation)
+    (satisfies : CircuitSatisfies hash relation streams witness publicGroups)
+    (inputSchema : ∀ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (profile : ∃ instructions : Array Lean.Json,
+      Backend.Native.arrayField json "instructions" = .ok instructions ∧
+      ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile
+        (instructions.toList.zipIdx) relation.instructions = true) :
+    ∃ plan, Backend.Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      ∀ read ∈ plan.reads.drop
+        (Backend.Impact.publicInputReadCount
+          (Passes.pruneEntrypoint entry).circuit.inputs),
+        read.bindings = [(read.name, read.ty)] →
+        (scalarType? read.ty).isSome = true →
+        (witness ("%input_" ++ read.name)).val ≤
+          Backend.Native.sourceMaximum read.ty := by
+  let ep := Passes.pruneEntrypoint entry
+  obtain ⟨plan, expected, _, planAccepted, expectedAccepted, validated, _, _, _⟩ :=
+    NativeRelationInstructionProjection.lowerEntrypoint_instructionProjection
+      state entry json relation lowered decoded
+  obtain ⟨decodedRows, inputHeader, decodedRowsParsed, decodedInstructions⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  obtain ⟨instructions, instructionsParsed, profileAccepted⟩ := profile
+  obtain ⟨_, driverInstructions, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result_empty_header validated inputHeader
+  have decodedRowsEq : decodedRows = instructions :=
+    Except.ok.inj (decodedRowsParsed.symm.trans instructionsParsed)
+  subst decodedRows
+  have driverInstructionsEq : driverInstructions = instructions :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans instructionsParsed)
+  subst driverInstructions
+  have indexedDecoded :
+      ((instructions.toList.zipIdx).map Prod.fst).mapM
+        NativeRelationJson.decodeInstruction = .ok relation.instructions := by
+    rw [List.zipIdx_map_fst]
+    exact decodedInstructions
+  have acceptedSteps := RangeDedupAcceptedArray.checkedScalarOpcodeProfile_acceptedMeaningSteps
+    indexedDecoded profileAccepted satisfies.instructions
+  obtain ⟨meaning, _, _⟩ := RangeDedupAcceptedArray.accepted_loop_meaning_at_steps
+    (ScalarValidationMeaning.empty_meaning hash witness witness)
+    ScalarValidationNativeDefinitions.empty_nativeDefinitions
+    (inputSchema expected expectedAccepted) (by intro _ _; rfl) acceptedSteps
+    driver.instructionTrace
+  refine ⟨plan, planAccepted, ?_⟩
+  intro read postPublic singleton supported
+  have supportedTy : read.ty = .native ∨ read.ty = .bool ∨
+      ∃ width, read.ty = .uint width := by
+    cases readTy : read.ty with
+    | native => exact Or.inl rfl
+    | bool => exact Or.inr (Or.inl rfl)
+    | uint width => exact Or.inr (Or.inr ⟨width, rfl⟩)
+    | bytes _ => rw [readTy] at supported; simp [scalarType?] at supported
+    | opaqueBytes => rw [readTy] at supported; simp [scalarType?] at supported
+    | opaqueString => rw [readTy] at supported; simp [scalarType?] at supported
+    | jubjubScalar => rw [readTy] at supported; simp [scalarType?] at supported
+    | jubjubPoint => rw [readTy] at supported; simp [scalarType?] at supported
+    | foreign _ => rw [readTy] at supported; simp [scalarType?] at supported
+  exact accepted_scalarRead_inputBound state ep expected expectedAccepted
+    plan planAccepted read read.name read.ty postPublic singleton supportedTy driver meaning
 
 private theorem read_suffix_metadata (state : List StateDecl) (entry : Entrypoint)
     (plan inputPlan : Impact.Plan) (boundaries : List Nat)
