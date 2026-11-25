@@ -160,8 +160,8 @@ def CacheCorresponds (key : ExpressionKey) (output : String) : Instruction → P
         decodeOperand (toJson c) = .ok condition ∧ decodeOperand (toJson a) = .ok yes ∧
         decodeOperand (toJson b) = .ok no ∧ validIdentifier destination = true
   | .hash values destination =>
-      output = destination ∧ ∃ (domain : Nat) (a b domainText : String) (left right : Operand),
-        key = ("transient_hash", [a, b], some domain) ∧
+      output = destination ∧ ∃ (domain : Nat) (domainText a b : String) (left right : Operand),
+        key = ("transient_hash", [domainText, a, b], none) ∧
         values = [.immediate (scalar domain), left, right] ∧
         decodeOperand (toJson domainText) = .ok (.immediate (scalar domain)) ∧
         decodeOperand (toJson a) = .ok left ∧ decodeOperand (toJson b) = .ok right ∧

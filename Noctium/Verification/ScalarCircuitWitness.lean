@@ -1,3 +1,4 @@
+import Noctium.Verification.ScalarExpressionLowering
 import Noctium.Verification.ScalarTranslationSoundness
 import Noctium.Verification.ScalarWitnessCircuitInputs
 import Noctium.Verification.ScalarWitnessCircuitConstraints
@@ -34,7 +35,7 @@ private theorem returnSuffix_capacity (circuit : Circuit)
     · exact Zkir.emit_preservesOutputCapacityFrame _ _
 
 /-- Construct an extension satisfying every instruction of the exact default
-standalone lowering. Expression completeness applies to the actual source
+standalone lowering. Scalar admission supplies expression witnesses for its
 constraints and outputs. The circuit proof supplies the preflight, projection,
 instruction ordering and final output binding. -/
 theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
@@ -42,8 +43,6 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
     (inputs : NativeRelation.Assignment) (json : Json) (relation : Program)
     (admitted : CanonicalInputs circuit values inputs)
     (scalarAdmission : ScalarCircuitAdmission circuit)
-    (conditionComplete : ∀ condition ∈ circuit.constraints, ExprComplete condition)
-    (outputComplete : ∀ output ∈ circuit.outputs, ExprComplete output.value)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
     (profile : checkedScalarOpcodeProfile
@@ -57,8 +56,12 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
     ⟨admitted.unique, admitted.declared, admitted.complete, admitted.binding⟩
   have prunedConditions : ∀ condition ∈ pruned.constraints, ExprComplete condition := by
     intro condition present
-    exact conditionComplete condition (pruneTrue_subset circuit.constraints condition present)
-  have prunedOutputs : ∀ output ∈ pruned.outputs, ExprComplete output.value := outputComplete
+    exact ScalarExpressionLowering.lowerExpr_complete condition
+      (prunedAdmission.constraints condition present)
+  have prunedOutputs : ∀ output ∈ pruned.outputs, ExprComplete output.value := by
+    intro output present
+    obtain ⟨_, supported⟩ := prunedAdmission.outputs output present
+    exact ScalarExpressionLowering.lowerExpr_complete output.value supported
   have prunedSuccess : pruned.run ctx values = .ok result := by
     rw [Passes.pruneCircuit_run]
     exact success
@@ -101,8 +104,6 @@ theorem lowerCircuit_complete (ctx : EvalContext) (hash : Hash)
     (inputs : NativeRelation.Assignment) (json : Json) (relation : Program)
     (admitted : CanonicalInputs circuit values inputs)
     (scalarAdmission : ScalarCircuitAdmission circuit)
-    (conditionComplete : ∀ condition ∈ circuit.constraints, ExprComplete condition)
-    (outputComplete : ∀ output ∈ circuit.outputs, ExprComplete output.value)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
     (profile : checkedScalarOpcodeProfile
@@ -120,7 +121,7 @@ theorem lowerCircuit_complete (ctx : EvalContext) (hash : Hash)
           (if result.isEmpty then [] else [result.map (fun pair => scalar (valueNumber pair.2))]))
         (result.map (fun pair => scalar (valueNumber pair.2))) := by
   obtain ⟨witness, frame, holds⟩ := lowerCircuit_construct_witness ctx hash implementation
-    circuit values result inputs json relation admitted scalarAdmission conditionComplete outputComplete
+    circuit values result inputs json relation admitted scalarAdmission
     lowered decoded profile success
   exact ⟨witness, frame, ScalarTranslationSoundness.lowerCircuit_complete_of_witness
     ctx hash implementation circuit values result json relation inputs witness admitted scalarAdmission
