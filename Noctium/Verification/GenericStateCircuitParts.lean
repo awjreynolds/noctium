@@ -31,16 +31,23 @@ def inputRequirements (entry : Entrypoint) (plan : Backend.Impact.Plan) : List I
 
 private abbrev InputState := List InputRequirement × List Term × List (Term × Nat) × Nat
 
-/-- Normalize the read's inactive defaults and accumulate their assertions. -/
-private def inactiveDefaultResults (entry : Entrypoint) (aliases : AliasEnvironment)
-    (read : Backend.Impact.Read) (initial : List Term × List (Term × Nat)) :
+/-- Normalize a list of inactive defaults and accumulate their assertions. -/
+private def inactiveDefaultResultsFor (entry : Entrypoint) (aliases : AliasEnvironment)
+    (conditions : List (Expr .bool)) (initial : List Term × List (Term × Nat)) :
     Except Diagnostic (List Term × List (Term × Nat)) :=
-  forIn (Backend.Impact.Read.inactiveDefaultConstraints read) initial
+  forIn conditions initial
     fun condition state => do
       let result ← (normalize aliases condition).mapError
         (fun message => {span := entry.span, message})
       pure (ForInStep.yield
         (state.1 ++ result.assertions ++ [result.term], state.2 ++ result.bounds))
+
+/-- Normalize the read's inactive defaults and accumulate their assertions. -/
+private def inactiveDefaultResults (entry : Entrypoint) (aliases : AliasEnvironment)
+    (read : Backend.Impact.Read) (initial : List Term × List (Term × Nat)) :
+    Except Diagnostic (List Term × List (Term × Nat)) :=
+  inactiveDefaultResultsFor entry aliases
+    (Backend.Impact.Read.inactiveDefaultConstraints read) initial
 
 /-- One iteration of the expected constructor's public-read descriptor fold.
 Guarded reads update only the activity guard on the assigned input slots. -/
@@ -490,6 +497,313 @@ private theorem readAliasFold_preserves_outputFrame (entry : Entrypoint)
       exact readAliasStep_preserves_scalar entry read current supported result stepAccepted)
     accepted
 
+private theorem inactiveDefaultResultsFor_preserves (entry : Entrypoint)
+    (aliases : AliasEnvironment) (conditions : List (Expr .bool))
+    (initial final : List Term × List (Term × Nat))
+    (accepted : inactiveDefaultResultsFor entry aliases conditions initial = .ok final) :
+    (∀ term ∈ initial.1, term ∈ final.1) ∧
+    (∀ bound ∈ initial.2, bound ∈ final.2) := by
+  induction conditions generalizing initial final with
+  | nil =>
+    simp [inactiveDefaultResultsFor] at accepted
+    cases accepted
+    exact ⟨by intro term member; exact member, by intro bound member; exact member⟩
+  | cons condition rest ih =>
+    unfold inactiveDefaultResultsFor at accepted
+    rw [List.forIn_cons] at accepted
+    cases normalized : (normalize aliases condition).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic) ) with
+    | error message => simp [normalized, Bind.bind, Except.bind] at accepted
+    | ok value =>
+      simp only [normalized, Bind.bind, Except.bind] at accepted
+      have restAccepted := accepted
+      obtain ⟨assertionsPreserved, boundsPreserved⟩ :=
+        ih (initial := (initial.1 ++ value.assertions ++ [value.term],
+          initial.2 ++ value.bounds)) (final := final) restAccepted
+      constructor
+      · intro term member
+        exact assertionsPreserved term (List.mem_append_left _
+          (List.mem_append_left _ member))
+      · intro bound member
+        exact boundsPreserved bound (List.mem_append_left _ member)
+
+private theorem inactiveDefaultResultsFor_selected_exists (entry : Entrypoint)
+    (aliases : AliasEnvironment) (conditions : List (Expr .bool))
+    (initial final : List Term × List (Term × Nat)) (condition : Expr .bool)
+    (conditionMember : condition ∈ conditions)
+    (accepted : inactiveDefaultResultsFor entry aliases conditions initial = .ok final) :
+    ∃ result, normalize aliases condition = .ok result ∧
+      (∀ bound ∈ result.bounds, bound ∈ final.2) ∧
+      (∀ term ∈ result.assertions ++ [result.term], term ∈ final.1) := by
+  induction conditions generalizing initial final with
+  | nil => simp at conditionMember
+  | cons head rest ih =>
+    unfold inactiveDefaultResultsFor at accepted
+    rw [List.forIn_cons] at accepted
+    cases headNormalized : (normalize aliases head).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [headNormalized, Bind.bind, Except.bind] at accepted
+    | ok headResult =>
+      simp only [headNormalized, Bind.bind, Except.bind] at accepted
+      rcases List.mem_cons.mp conditionMember with same | later
+      · have conditionEq : head = condition := same.symm
+        subst head
+        have normalized : normalize aliases condition = .ok headResult := by
+          cases raw : normalize aliases condition with
+          | error message => simp [raw, Except.mapError] at headNormalized
+          | ok value =>
+            have valueEq : value = headResult := by
+              simpa [raw, Except.mapError] using headNormalized
+            exact congrArg (fun item : Normalized =>
+              (Except.ok item : Except String Normalized)) valueEq
+        have boundsMember : ∀ bound ∈ headResult.bounds,
+            bound ∈ (initial.2 ++ headResult.bounds) := by
+          intro bound member
+          exact List.mem_append_right _ member
+        have assertionMembers : ∀ term ∈ headResult.assertions ++ [headResult.term],
+            term ∈ (initial.1 ++ headResult.assertions ++ [headResult.term]) := by
+          intro term member
+          simp only [List.mem_append, List.mem_singleton] at member
+          rcases member with assertionMember | termEq
+          · exact List.mem_append_left _ (List.mem_append_right _ assertionMember)
+          · subst term
+            exact List.mem_append_right _ (by simp)
+        have restPreserved := inactiveDefaultResultsFor_preserves entry aliases rest
+          (initial.1 ++ headResult.assertions ++ [headResult.term],
+            initial.2 ++ headResult.bounds) final accepted
+        have boundsInFinal : ∀ bound ∈ headResult.bounds, bound ∈ final.2 := by
+          intro bound member
+          exact restPreserved.2 bound (boundsMember bound member)
+        have assertionsInFinal : ∀ term ∈ headResult.assertions ++ [headResult.term],
+            term ∈ final.1 := by
+          intro term member
+          exact restPreserved.1 term (assertionMembers term member)
+        exact ⟨headResult, normalized, boundsInFinal, assertionsInFinal⟩
+      · exact ih (initial := (initial.1 ++ headResult.assertions ++ [headResult.term],
+          initial.2 ++ headResult.bounds)) (final := final) (conditionMember := later)
+          (accepted := accepted)
+
+private theorem inactiveDefaultResults_selected_exists (entry : Entrypoint)
+    (aliases : AliasEnvironment) (read : Backend.Impact.Read)
+    (initial final : List Term × List (Term × Nat)) (condition : Expr .bool)
+    (conditionMember : condition ∈
+      Backend.Impact.Read.inactiveDefaultConstraints read)
+    (accepted : inactiveDefaultResults entry aliases read initial = .ok final) :
+    ∃ result, normalize aliases condition = .ok result ∧
+      (∀ bound ∈ result.bounds, bound ∈ final.2) ∧
+      (∀ term ∈ result.assertions ++ [result.term], term ∈ final.1) := by
+  exact inactiveDefaultResultsFor_selected_exists entry aliases
+    (Backend.Impact.Read.inactiveDefaultConstraints read) initial final condition
+    conditionMember (by simpa [inactiveDefaultResults] using accepted)
+
+private theorem inputStateStep_yields (entry : Entrypoint) (aliases : AliasEnvironment)
+    (read : Backend.Impact.Read) (current : InputState) (step : ForInStep InputState)
+    (accepted : inputStateStep entry aliases read current = .ok step) :
+    ∃ next, step = .yield next := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      refine ⟨(current.1, values.1, values.2,
+        current.2.2.2 + (Backend.Impact.Read.bindings read).length), ?_⟩
+      exact (Except.ok.inj accepted).symm
+  | some guard =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases normalizedEq : (normalize aliases guard).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [normalizedEq] at accepted
+    | ok normalizedValue =>
+      simp only [normalizedEq] at accepted
+      cases defaultsEq : inactiveDefaultResults entry aliases read
+          (current.2.1 ++ normalizedValue.assertions,
+            current.2.2.1 ++ normalizedValue.bounds) with
+      | error message => simp [defaultsEq] at accepted
+      | ok values =>
+        simp only [defaultsEq] at accepted
+        refine ⟨(current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+          if current.2.2.2 ≤ position && position < current.2.2.2 +
+              (Backend.Impact.Read.bindings read).length then
+            {input with activityGuard := some normalizedValue.term} else input,
+          values.1, values.2, current.2.2.2 +
+            (Backend.Impact.Read.bindings read).length), ?_⟩
+        exact (Except.ok.inj accepted).symm
+
+private theorem inputStateStep_preserves (entry : Entrypoint) (aliases : AliasEnvironment)
+    (read : Backend.Impact.Read) (current next : InputState)
+    (accepted : inputStateStep entry aliases read current = .ok (.yield next)) :
+    (∀ term ∈ current.2.1, term ∈ next.2.1) ∧
+    (∀ bound ∈ current.2.2.1, bound ∈ next.2.2.1) := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      have nextEq : (current.1, values.1, values.2,
+          current.2.2.2 + (Backend.Impact.Read.bindings read).length) = next := by
+        injection (Except.ok.inj accepted)
+      subst next
+      have preserved := inactiveDefaultResultsFor_preserves entry aliases
+        (Backend.Impact.Read.inactiveDefaultConstraints read)
+        (current.2.1, current.2.2.1) values (by
+          simpa [inactiveDefaultResults] using defaultsEq)
+      exact preserved
+  | some guard =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases normalizedEq : (normalize aliases guard).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [normalizedEq] at accepted
+    | ok normalizedValue =>
+      simp only [normalizedEq] at accepted
+      cases defaultsEq : inactiveDefaultResults entry aliases read
+          (current.2.1 ++ normalizedValue.assertions,
+            current.2.2.1 ++ normalizedValue.bounds) with
+      | error message => simp [defaultsEq] at accepted
+      | ok values =>
+        simp only [defaultsEq] at accepted
+        have nextEq : (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+            if current.2.2.2 ≤ position && position < current.2.2.2 +
+                (Backend.Impact.Read.bindings read).length then
+              {input with activityGuard := some normalizedValue.term} else input,
+            values.1, values.2, current.2.2.2 +
+              (Backend.Impact.Read.bindings read).length) = next := by
+          injection (Except.ok.inj accepted)
+        subst next
+        have preserved := inactiveDefaultResultsFor_preserves entry aliases
+          (Backend.Impact.Read.inactiveDefaultConstraints read)
+          (current.2.1 ++ normalizedValue.assertions,
+            current.2.2.1 ++ normalizedValue.bounds) values (by
+              simpa [inactiveDefaultResults] using defaultsEq)
+        constructor
+        · intro term member
+          exact preserved.1 term (List.mem_append_left _ member)
+        · intro bound member
+          exact preserved.2 bound (List.mem_append_left _ member)
+
+private theorem inputStateStep_selected_exists (entry : Entrypoint) (aliases : AliasEnvironment)
+    (read : Backend.Impact.Read) (current next : InputState) (condition : Expr .bool)
+    (conditionMember : condition ∈
+      Backend.Impact.Read.inactiveDefaultConstraints read)
+    (accepted : inputStateStep entry aliases read current = .ok (.yield next)) :
+    ∃ result, normalize aliases condition = .ok result ∧
+      (∀ bound ∈ result.bounds, bound ∈ next.2.2.1) ∧
+      (∀ term ∈ result.assertions ++ [result.term], term ∈ next.2.1) := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      have nextEq : (current.1, values.1, values.2,
+          current.2.2.2 + (Backend.Impact.Read.bindings read).length) = next := by
+        injection (Except.ok.inj accepted)
+      subst next
+      obtain ⟨result, normalized, boundsMember, assertionMembers⟩ :=
+        inactiveDefaultResults_selected_exists entry aliases read
+          (current.2.1, current.2.2.1) values condition conditionMember
+          (by simpa [inactiveDefaultResults] using defaultsEq)
+      exact ⟨result, normalized, boundsMember, assertionMembers⟩
+  | some guard =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases normalizedGuardEq : (normalize aliases guard).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [normalizedGuardEq] at accepted
+    | ok normalizedGuard =>
+      simp only [normalizedGuardEq] at accepted
+      cases defaultsEq : inactiveDefaultResults entry aliases read
+          (current.2.1 ++ normalizedGuard.assertions,
+            current.2.2.1 ++ normalizedGuard.bounds) with
+      | error message => simp [defaultsEq] at accepted
+      | ok values =>
+        simp only [defaultsEq] at accepted
+        have nextEq : (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+            if current.2.2.2 ≤ position && position < current.2.2.2 +
+                (Backend.Impact.Read.bindings read).length then
+              {input with activityGuard := some normalizedGuard.term} else input,
+            values.1, values.2, current.2.2.2 +
+              (Backend.Impact.Read.bindings read).length) = next := by
+          injection (Except.ok.inj accepted)
+        subst next
+        obtain ⟨result, normalized, boundsMember, assertionMembers⟩ :=
+          inactiveDefaultResults_selected_exists entry aliases read
+            (current.2.1 ++ normalizedGuard.assertions,
+              current.2.2.1 ++ normalizedGuard.bounds) values condition conditionMember
+            (by simpa [inactiveDefaultResults] using defaultsEq)
+        exact ⟨result, normalized, boundsMember, assertionMembers⟩
+
+private theorem inputStateFold_preserves (entry : Entrypoint) (aliases : AliasEnvironment)
+    (reads : List Backend.Impact.Read) (initial final : InputState)
+    (accepted : forIn reads initial (inputStateStep entry aliases) = .ok final) :
+    (∀ term ∈ initial.2.1, term ∈ final.2.1) ∧
+    (∀ bound ∈ initial.2.2.1, bound ∈ final.2.2.1) := by
+  induction reads generalizing initial final with
+  | nil =>
+    simp [List.forIn_nil] at accepted
+    cases accepted
+    exact ⟨by intro term member; exact member, by intro bound member; exact member⟩
+  | cons read rest ih =>
+    rw [List.forIn_cons] at accepted
+    cases stepAccepted : inputStateStep entry aliases read initial with
+    | error message => simp [stepAccepted, Bind.bind, Except.bind] at accepted
+    | ok step =>
+      simp only [stepAccepted, Bind.bind, Except.bind] at accepted
+      obtain ⟨next, stepEq⟩ := inputStateStep_yields entry aliases read initial step stepAccepted
+      subst step
+      have nextAccepted : forIn rest next (inputStateStep entry aliases) = .ok final := accepted
+      obtain ⟨assertionsPreserved, boundsPreserved⟩ := inputStateStep_preserves
+        entry aliases read initial next stepAccepted
+      obtain ⟨assertionsInFinal, boundsInFinal⟩ :=
+        ih (initial := next) (final := final) nextAccepted
+      constructor
+      · intro term member
+        exact assertionsInFinal term (assertionsPreserved term member)
+      · intro bound member
+        exact boundsInFinal bound (boundsPreserved bound member)
+
+private theorem inputStateFold_selected_exists (entry : Entrypoint)
+    (aliases : AliasEnvironment) (reads : List Backend.Impact.Read)
+    (initial final : InputState) (read : Backend.Impact.Read) (condition : Expr .bool)
+    (readMember : read ∈ reads)
+    (conditionMember : condition ∈ Backend.Impact.Read.inactiveDefaultConstraints read)
+    (accepted : forIn reads initial (inputStateStep entry aliases) = .ok final) :
+    ∃ result, normalize aliases condition = .ok result ∧
+      (∀ bound ∈ result.bounds, bound ∈ final.2.2.1) ∧
+      (∀ term ∈ result.assertions ++ [result.term], term ∈ final.2.1) := by
+  induction reads generalizing initial final with
+  | nil => simp at readMember
+  | cons head rest ih =>
+    rw [List.forIn_cons] at accepted
+    cases stepAccepted : inputStateStep entry aliases head initial with
+    | error message => simp [stepAccepted, Bind.bind, Except.bind] at accepted
+    | ok step =>
+      simp only [stepAccepted, Bind.bind, Except.bind] at accepted
+      obtain ⟨next, stepEq⟩ := inputStateStep_yields entry aliases head initial step stepAccepted
+      subst step
+      rcases List.mem_cons.mp readMember with same | later
+      · have readEq : head = read := same.symm
+        subst head
+        obtain ⟨result, normalized, boundsMember, assertionMembers⟩ :=
+          inputStateStep_selected_exists entry aliases read initial next condition
+            conditionMember stepAccepted
+        obtain ⟨assertionsPreserved, boundsPreserved⟩ :=
+          inputStateFold_preserves entry aliases rest next final accepted
+        exact ⟨result, normalized,
+          (fun bound member => boundsPreserved bound (boundsMember bound member)),
+          (fun term member => assertionsPreserved term (assertionMembers term member))⟩
+      · exact ih (initial := next) (final := final) (readMember := later)
+          (accepted := accepted)
+
 /-- A checked expected entrypoint retains normalized plan guards in its
 assertions and bounds. For Native, Bool, and UInt read scalars, the post-read
 alias fold leaves the normalized output frame unchanged. -/
@@ -543,6 +857,75 @@ theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
     simp [List.mem_append, member]
   exact ⟨outputFrame, guards, outputsAccepted, normalizedGuards,
     assertionMembers, boundMembers⟩
+
+/-- A checked expected entrypoint retains every normalized inactive default
+from a selected post-public read in its assertions and bounds. -/
+theorem expectedEntrypoint_inactiveDefault (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty)
+    (read : Backend.Impact.Read) (condition : Expr .bool)
+    (readMember : read ∈
+      plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs))
+    (conditionMember : condition ∈ Backend.Impact.Read.inactiveDefaultConstraints read) :
+    ∃ (outputFrame : OutputFrame) (result : Normalized),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      normalize outputFrame.1 condition = .ok result ∧
+      (∀ bound ∈ result.bounds, bound ∈ expected.bounds) ∧
+      (∀ term ∈ result.assertions ++ [result.term], term ∈ expected.assertions) := by
+  obtain ⟨partsPlan, outputFrame, aliases, inputState, conditions, guards,
+      constraintCollection, guardCollection, operationFrame, returns, activity,
+      planAccepted, outputsAccepted, aliasesAccepted, inputStateAccepted,
+      conditionsAccepted, guardsAccepted, constraintCollectionAccepted,
+      guardCollectionAccepted, operationAccepted, returnsAccepted, activityAccepted,
+      inputsShape, groupsShape, returnsShape, modeShape, rawInputsShape,
+      groupGuardsShape, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : partsPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst partsPlan
+  have aliasesEq : aliases = outputFrame.1 :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
+  let postReads := plan.reads.drop
+    (Backend.Impact.publicInputReadCount entry.circuit.inputs)
+  let initialInputs := (entry.circuit.inputs.filter fun input =>
+    !entry.callInputs.contains input.name).flatMap Input.requirements
+  let readRequirements := postReads.flatMap fun (read : Backend.Impact.Read) =>
+    read.bindings.map fun (name, ty) =>
+      (match ty with
+      | Ty.jubjubScalar =>
+        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native,
+          canonicalJubjubScalar := true} : InputRequirement)
+      | Ty.opaqueBytes | Ty.opaqueString =>
+        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native} : InputRequirement)
+      | _ => ({identifier := "%input_" ++ name, visibility := .«public», ty} : InputRequirement))
+  let initialState : InputState :=
+    (initialInputs ++ readRequirements, [], [], initialInputs.length)
+  have loopAccepted : forIn postReads initialState (inputStateStep entry aliases) =
+      .ok inputState := by
+    change forIn postReads initialState (inputStateStep entry aliases) = .ok inputState
+      at inputStateAccepted
+    exact inputStateAccepted
+  obtain ⟨result, normalized, boundMembers, assertionMembers⟩ :=
+    inputStateFold_selected_exists entry aliases postReads initialState inputState
+      read condition readMember conditionMember loopAccepted
+  have normalizedFrame : normalize outputFrame.1 condition = .ok result := by
+    simpa only [← aliasesEq] using normalized
+  have expectedBoundMembers : ∀ bound ∈ result.bounds, bound ∈ expected.bounds := by
+    intro bound member
+    rw [boundsShape]
+    simp [List.mem_append, boundMembers bound member]
+  have expectedAssertionMembers :
+      ∀ term ∈ result.assertions ++ [result.term], term ∈ expected.assertions := by
+    intro term member
+    rw [assertionsShape]
+    simp [List.mem_append, assertionMembers term member]
+  exact ⟨outputFrame, result, outputsAccepted, normalizedFrame,
+    expectedBoundMembers, expectedAssertionMembers⟩
 
 /-- The checked Impact group schedule comes from normalizing each operation
 of the exact accepted plan. The same output frame supplies the scalar aliases

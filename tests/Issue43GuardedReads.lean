@@ -631,3 +631,34 @@ private def issue43WholePublicReadTranscript (rewrites : Backend.Zkir.Rewrites) 
 
 #guard (issue43WholePublicReadTranscript .disabled).toOption == some Bool.true
 #guard (issue43WholePublicReadTranscript .includingComparisons).toOption == some Bool.true
+
+/-- The inactive read contributes an assertion for its own witness lane.
+An active read retains its nonzero value. -/
+private def skippedCellDefaultAssertion : Except String _root_.Bool := do
+  let ep := Passes.pruneEntrypoint issue43GuardedEntry
+  let state := Issue43GuardedReads.state
+  let plan ← (Backend.Impact.lower state ep).mapError (·.message)
+  let expected ← (Backend.Native.expectedEntrypoint state ep).mapError (·.message)
+  let some descriptor := plan.reads.find? (·.name == "skippedCell")
+    | throw "missing skipped Cell descriptor"
+  let [condition] := descriptor.inactiveDefaultConstraints
+    | throw "expected a singleton default assertion"
+  let frame ← (Verification.GenericStateCircuitParts.normalizeOutputs
+    (Verification.GenericStateCircuitParts.entrypointSeedAliases ep plan) ep.circuit.outputs)
+    |>.mapError (·.message)
+  let assertion ← Backend.Native.normalize frame.1 condition
+  let hash : Verification.NativeRelation.Hash := fun _ => Verification.NativeRelation.zero
+  let assignment (active : Verification.NativeRelation.Scalar)
+      (value : Verification.NativeRelation.Scalar) : Verification.NativeRelation.Assignment :=
+    fun name => if name == "%input_existed" then active
+      else if name == "%input_skippedCell" then value else Verification.NativeRelation.zero
+  let zero := Verification.NativeRelation.zero
+  let one := Verification.NativeRelation.one
+  let value := Verification.NativeRelation.scalar 23
+  let interpret activity lane :=
+    Verification.ScalarNormalization.interpret hash (assignment activity lane) assertion.term
+  return expected.assertions.contains assertion.term &&
+    interpret zero zero == some one && interpret zero value == some zero &&
+    interpret one value == some one
+
+#guard skippedCellDefaultAssertion.toOption == some Bool.true
