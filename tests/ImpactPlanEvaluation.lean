@@ -1,4 +1,4 @@
-import Noctium.Verification.ImpactCallStatement
+import Noctium.Verification.ImpactPreviewBinding
 import Noctium.Verification.ImpactStatementScalar
 import Noctium.Verification.ImpactPlanAgreement
 import Noctium.Verification.ImpactTranscriptSchedule
@@ -42,7 +42,19 @@ def main (args : List String) : IO Unit := do
   unless transcript enabled == some (List.replicate 15 none) &&
       transcript disabled == some skipped do
     throw (IO.userError "decoded activity schedule differs from the guarded scalar fixture")
-  let header : ImpactCallStatement.Header := ⟨NativeRelation.scalar 4, NativeRelation.scalar 5⟩
+  -- The fixture supplies test bytes at the effects and parent commitment boundaries.
+  let metadata : ImpactPreviewBinding.Metadata := {
+    address := ByteArray.mk (Array.replicate 32 0)
+    entryPoint := "update".toUTF8
+    guaranteed := some ⟨1, 2, 3, ByteArray.mk #[13, 14]⟩
+    fallible := none
+    parentPedersen := ByteArray.mk (#[1] ++ Array.replicate 31 0)
+  }
+  let commitment := NativeRelation.scalar 5
+  let inactiveBinding := NativeRelation.scalar
+    28275337270660864951591803471226560440628912649504939734825220606033283957
+  let activeBinding :=
+    376973846635362786591406240642568956494276904876123793983990665364314846599
   let preview := fun program activity => ImpactCallPreview.previewCall
     {noopConstant := 3, noopCoefficient := 2}
     {guaranteed := some ⟨program, 7⟩, fallible := none} activity
@@ -52,8 +64,10 @@ def main (args : List String) : IO Unit := do
     preview program activity
   match inactivePreview with
   | some call =>
+      let some header := ImpactPreviewBinding.header metadata call commitment |
+        throw (IO.userError "inactive binding serialization rejected")
       unless decide (ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call =
-          some ([header.bindingInput, header.communicationsCommitment] ++
+          some ([inactiveBinding, commitment] ++
             List.replicate 55 NativeRelation.zero)) do
         throw (IO.userError "inactive statement differs in header or skipped fields")
       match call with
@@ -64,12 +78,13 @@ def main (args : List String) : IO Unit := do
     let activity ← transcript enabled
     let program ← ImpactPlanAgreement.evaluatePlan 64 context enabled raw
     let call ← preview program activity
+    let header ← ImpactPreviewBinding.header metadata call commitment
     ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
   let expected : List Nat := [1, 3, 7, 1, 3]
   let writeFields : List Nat := expected.zipIdx.flatMap fun (value, index) =>
     [0x10, 1, 1, Field.modulus - 2, index,
       0x11, 1, 1, Field.modulus - 2, value, 0x91]
-  unless decide (activeStatement = some (([4, 5] ++ writeFields).map NativeRelation.scalar)) do
+  unless decide (activeStatement = some (([activeBinding, 5] ++ writeFields).map NativeRelation.scalar)) do
     throw (IO.userError "active statement differs in the ordered native write fields")
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
