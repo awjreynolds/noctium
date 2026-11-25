@@ -278,7 +278,7 @@ theorem entrypoint_success_from_checked_steps
     (noReturns : selected.returns = []) :
     selected.run ctx env state = .ok (outputs, next) := by
   have disclosed := except_unit_eq_ok_of_isOk (Disclosure.entrypoint selected) disclosureIsOk
-  unfold Entrypoint.run
+  unfold Entrypoint.run Entrypoint.evalReturns
   rw [disclosed]
   simp only [Except.bind, Bind.bind, Except.map, Functor.map]
   rw [circuitResult]

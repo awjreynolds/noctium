@@ -2337,6 +2337,14 @@ def runEffectsWithGuards (ctx : EvalContext) (effects : List Effect)
   let (_, next) ← runEffectsWithGuardsAndEnv ctx effects guards env state
   pure next
 
+/-- Evaluate the source returns in order using the final effect environment. -/
+def Entrypoint.evalReturns (ctx : EvalContext) (entry : Entrypoint)
+    (finalEnv : EvalEnv) : Except String EvalEnv :=
+  entry.returns.mapM fun output => do
+    let value ← output.value.eval ctx finalEnv
+    if !canonical ctx output.ty value then throw s!"noncanonical entrypoint return '{output.name}'"
+    pure (output.name, Value.pack output.ty value)
+
 /-- This is a specification evaluator, not a substitute for ledger proof checks. -/
 def Entrypoint.run (ctx : EvalContext) (entry : Entrypoint) (env : EvalEnv)
     (state : LedgerState) : Except String (EvalEnv × LedgerState) := do
@@ -2350,10 +2358,7 @@ def Entrypoint.run (ctx : EvalContext) (entry : Entrypoint) (env : EvalEnv)
     unshieldedSpendClaims := []}
   let (finalEnv, next) ←
     runEffectsWithGuardsAndEnv ctx entry.effects entry.effectGuards (outputs ++ env) state
-  let returned ← entry.returns.mapM fun output => do
-    let value ← output.value.eval ctx finalEnv
-    if !canonical ctx output.ty value then throw s!"noncanonical entrypoint return '{output.name}'"
-    pure (output.name, Value.pack output.ty value)
+  let returned ← Entrypoint.evalReturns ctx entry finalEnv
   pure (outputs ++ returned, next)
 
 /-- A small optimization whose correctness does not depend on the backend or hash. -/

@@ -3798,6 +3798,26 @@ def finishPlan (entry : Entrypoint) (result : Except String Plan) : Except Diagn
     | .error message => throw {span := entry.span, message}
   | .error message => throw {span := entry.span, message}
 
+/-- Source names checked against the prefix reserved for transcript bindings. -/
+def sourceNames (entry : Entrypoint) : List String :=
+  entry.circuit.inputs.map (·.name) ++ entry.circuit.outputs.map (·.name) ++
+  entry.effects.flatMap (fun effect => match effect with
+    | .readCell _ destination _ | .readMap _ destination .. |
+        .readMember _ destination .. | .readPath _ destination .. |
+        .memberPath _ destination .. | .counterRead _ destination .. |
+        .counterLessThan _ destination .. |
+        .mapSize _ destination .. |
+        .readContractAddress destination | .readTokenBalance destination .. |
+        .mapIsEmpty _ destination .. | .listLength _ destination .. |
+        .merkleTreeIsFull _ destination | .merkleTreeCheckRoot _ _ destination |
+        .merkleTreeIsFullAt _ _ destination | .merkleTreeCheckRootAt _ _ _ destination => [destination]
+    | .readCaller destinations => destinations.types.map Prod.fst
+    | .readCompositePath _ _ _ _ destinations => destinations.map Prod.fst
+    | .readRecordMapComposite _ destination _ _ destinations _ =>
+      destination :: destinations.map Prod.fst
+    | .listHead _ _ _ _ destinations => destinations.map Prod.fst
+    | _ => [])
+
 /-- Lower a typed entrypoint and return the exclusive operation end after each
 source effect. Public-input operations precede the first boundary. -/
 def lowerWithEffectBoundaries (state : List StateDecl) (entry : Entrypoint) :
@@ -3806,24 +3826,7 @@ def lowerWithEffectBoundaries (state : List StateDecl) (entry : Entrypoint) :
   Disclosure.entrypoint entry
   let result : Except String (Plan × List Nat) := do
     let mut plan : Plan := {}
-    let sourceNames := entry.circuit.inputs.map (·.name) ++ entry.circuit.outputs.map (·.name) ++
-      entry.effects.flatMap (fun effect => match effect with
-        | .readCell _ destination _ | .readMap _ destination .. |
-            .readMember _ destination .. | .readPath _ destination .. |
-            .memberPath _ destination .. | .counterRead _ destination .. |
-            .counterLessThan _ destination .. |
-            .mapSize _ destination .. |
-            .readContractAddress destination | .readTokenBalance destination .. |
-            .mapIsEmpty _ destination .. | .listLength _ destination .. |
-            .merkleTreeIsFull _ destination | .merkleTreeCheckRoot _ _ destination |
-            .merkleTreeIsFullAt _ _ destination | .merkleTreeCheckRootAt _ _ _ destination => [destination]
-        | .readCaller destinations => destinations.types.map Prod.fst
-        | .readCompositePath _ _ _ _ destinations => destinations.map Prod.fst
-        | .readRecordMapComposite _ destination _ _ destinations _ =>
-          destination :: destinations.map Prod.fst
-        | .listHead _ _ _ _ destinations => destinations.map Prod.fst
-        | _ => [])
-    if sourceNames.any (·.startsWith "_noctium_") then
+    if (sourceNames entry).any (·.startsWith "_noctium_") then
       throw "source names beginning '_noctium_' are reserved by the native transcript producer"
     -- Public parameters must appear among Popeq reads consumed by public_input.
     plan ← publicInputPlan entry.circuit.inputs plan
@@ -3835,6 +3838,22 @@ private theorem exceptMapErrorOk {α ε δ : Type} (mapError : ε → δ)
     (source : Except ε α) (value : α) :
     source.mapError mapError = .ok value ↔ source = .ok value := by
   cases source <;> simp [Except.mapError]
+
+/-- Successful lowering excludes user names with the generated transcript
+prefix before it appends any public-input or effect operation. -/
+theorem lowerWithEffectBoundaries_sourceNamesChecked (state : List StateDecl)
+    (entry : Entrypoint) (plan : Plan) (boundaries : List Nat)
+    (accepted : lowerWithEffectBoundaries state entry = .ok (plan, boundaries)) :
+    (sourceNames entry).any (·.startsWith "_noctium_") = false := by
+  unfold lowerWithEffectBoundaries at accepted
+  simp only [exceptBindOk] at accepted
+  obtain ⟨_, _, _, _, result, raw, _⟩ := accepted
+  rw [exceptMapErrorOk] at raw
+  cases reserved : (sourceNames entry).any (·.startsWith "_noctium_") with
+  | false => rfl
+  | true =>
+    simp only [reserved, ite_true] at raw
+    cases raw
 
 theorem lowerWithEffectBoundaries_inputPrefix (state : List StateDecl)
     (entry : Entrypoint) (plan : Plan) (boundaries : List Nat)

@@ -131,5 +131,6 @@ theorem pruneEntrypoint_run (ctx : EvalContext) (env : EvalEnv)
   rw [pruneEntrypoint_disclosure]
   dsimp only [pruneEntrypoint]
   rw [pruneCircuit_run]
+  rfl
 
 end Noctium.Passes

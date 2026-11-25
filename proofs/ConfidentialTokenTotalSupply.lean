@@ -113,7 +113,7 @@ theorem totalSupply_run (state : LedgerState) (supply : Nat)
         Field.modulus ≤ supply) := by
     intro canonical
     exact fieldNotLe (canonical maxFitsPolicy supplyBound)
-  simp only [Entrypoint.run, totalSupply_disclosure_valid, sourceContext]
+  simp only [Entrypoint.run, Entrypoint.evalReturns, totalSupply_disclosure_valid, sourceContext]
   rw [totalSupply_entry_circuit, noViewInputs_run]
   rw [totalSupply_entry_shape.1, totalSupply_entry_shape.2.1, totalSupply_entry_shape.2.2]
   simp! [totalSupplyEntry, totalSupplyRead, totalSupplyReturn,

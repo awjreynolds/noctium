@@ -142,7 +142,8 @@ theorem lowerEntrypoint_sourceFrame_and_guards
         (plan.typeEnvironment (Passes.pruneEntrypoint entry)) ∧
       (∀ read ∈ reads,
         (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty) ∧
-      (∀ guard ∈ plan.guards, guard.eval ctx ((result ++ values) ++ readValues) = .ok true) := by
+      (∀ guard ∈ plan.guards, guard.eval ctx ((result ++ values) ++ readValues) = .ok true) ∧
+      (∀ read ∈ reads, (result ++ values).lookup read.name = none) := by
   let ep := Passes.pruneEntrypoint entry
   let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
   have scalarReads : ∀ read ∈ reads.flatMap Impact.Read.scalarReads,
@@ -193,6 +194,7 @@ theorem lowerEntrypoint_sourceFrame_and_guards
       plan expected frame (result ++ values) lowered decoded rowsParsed profile satisfies
       planAccepted expectedAccepted (inputSchema _ expectedAccepted) frameAccepted base
       plainReads readFresh distinctReads readAliases guardAdmission
-  exact ⟨frame, result, readValues, source, readDecoded, base, environment, bounds, guards⟩
+  exact ⟨frame, result, readValues, source, readDecoded, base, environment, bounds, guards,
+    fun read member => (readFresh read member).1⟩
 
 end Noctium.Verification.ScalarSourceFrame
