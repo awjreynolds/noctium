@@ -3585,6 +3585,95 @@
         "runtime/tests/fixtures/native-map-list/321/NativeMapList.inspect.zkir",
         "runtime/tests/fixtures/native-map-list/321/NativeMapList.inspect.impact.json"
       ],
+      "conformanceContexts": [
+        "root-ledger-entrypoint"
+      ],
+      "conformanceCases": [
+        {
+          "id": "LIST-HEAD-UINT8-EMPTY",
+          "context": "root-ledger-entrypoint",
+          "input": "Call head() on an empty root ledger List<Uint<8>> values.",
+          "expected": "Return Maybe<Uint<8>> with is_some=false and value=0. The Compact Runtime 0.21.0 byte encoding is [[], []], with the Bool tag before the Uint8 payload.",
+          "result": "Compact 0.36.1 with Runtime 0.21.0 matches the Noctium source result. The Noctium native checker observes typed Bool/UInt8 fields in tag-first order with a canonical zero payload.",
+          "status": "executed-pinned-compact-and-noctium",
+          "scope": "Root List<Uint<8>> head returned by a ledger entrypoint. This case records the empty value and tag-first encoding.",
+          "oracle": {
+            "outcome": "executed",
+            "compiler": "0.36.1",
+            "runtime": "0.21.0"
+          },
+          "requiredEvidence": [
+            "SEM",
+            "ZK"
+          ],
+          "evidenceByKind": {
+            "SEM": [
+              "tests/compact/ListHeadMaybe.compact",
+              "tests/compact/list-head-maybe.mjs",
+              "tests/NativeScalarListMaybe.lean"
+            ],
+            "ZK": [
+              "runtime/tests/scalar_list_maybe.rs"
+            ]
+          }
+        },
+        {
+          "id": "LIST-HEAD-UINT8-POPULATED",
+          "context": "root-ledger-entrypoint",
+          "input": "Push Uint8(37) to an empty root ledger List<Uint<8>> values, then call head().",
+          "expected": "Return Maybe<Uint<8>> with is_some=true and value=37. The Compact Runtime 0.21.0 byte encoding is [[1], [37]], with the Bool tag before the Uint8 payload.",
+          "result": "Compact 0.36.1 with Runtime 0.21.0 matches the Noctium source result. The Noctium native checker observes typed Bool/UInt8 fields in tag-first order with value 37.",
+          "status": "executed-pinned-compact-and-noctium",
+          "scope": "Root List<Uint<8>> push and head returned by ledger entrypoints. The checked result preserves tag-first Maybe layout.",
+          "oracle": {
+            "outcome": "executed",
+            "compiler": "0.36.1",
+            "runtime": "0.21.0"
+          },
+          "requiredEvidence": [
+            "SEM",
+            "ZK"
+          ],
+          "evidenceByKind": {
+            "SEM": [
+              "tests/compact/ListHeadMaybe.compact",
+              "tests/compact/list-head-maybe.mjs",
+              "tests/NativeScalarListMaybe.lean"
+            ],
+            "ZK": [
+              "runtime/tests/scalar_list_maybe.rs"
+            ]
+          }
+        },
+        {
+          "id": "LIST-HEAD-SECP256K1-SCALAR",
+          "context": "root-ledger-entrypoint",
+          "input": "Read head() from a root List<Secp256k1Scalar> when empty, after pushing scalar 7, and after popping the sole value.",
+          "expected": "Return a typed Maybe<Secp256k1Scalar>: absence carries canonical two-limb scalar zero, presence carries scalar 7, and popping the sole value restores absence. The native relation rejects a changed low return limb.",
+          "result": "Compact 0.36.1 (7fa3a117c) compiles the List<Secp256k1Scalar> push control. The matching head(): Maybe<Secp256k1Scalar> probe exits 254 with `failed assertion cannot-happen at line 518, char 18 of compiler/zkir-v3-passes/reduce-to-zkir.ss`. Noctium's root ZKIR 3.2.1 checker accepts empty, present scalar 7, and post-pop absent heads, and rejects a changed low return limb.",
+          "status": "open-upstream-compiler-assertion",
+          "scope": "Root Secp256k1Scalar List entrypoints push, head, and pop. Compact has no head runtime observation because lowering asserts; rerun the full head probe when an upstream compiler fix changes the pinned reduce-to-zkir.ss failure.",
+          "oracle": {
+            "outcome": "compiler-assertion",
+            "compiler": "0.36.1"
+          },
+          "requiredEvidence": [
+            "SEM",
+            "ZK"
+          ],
+          "evidenceByKind": {
+            "SEM": [
+              "tests/compact/ForeignScalarListMaybe.compact",
+              "tests/compact/foreign-scalar-list-maybe.mjs",
+              "docs/development/native-lists.md"
+            ],
+            "ZK": [
+              "tests/ForeignScalarListMaybe.lean",
+              "runtime/tests/foreign_scalar_list_maybe.rs"
+            ]
+          }
+        }
+      ],
       "equivalence": "unverified"
     },
     {
