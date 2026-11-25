@@ -6,6 +6,7 @@ import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.GuardedInputTranscript
 import Noctium.Verification.GuardedPlanExecution
 import Noctium.Verification.GuardedScalarInput
+import Noctium.Verification.GuardedZkirArtifact
 import Noctium.Verification.GenericStateEncoding
 import Noctium.Verification.ImpactNativeStatementFixture
 import Noctium.Verification.ImpactPlanAgreement
@@ -672,18 +673,25 @@ private def skippedCellDefaultAssertion : Except String _root_.Bool := do
 private def issue43KeyWidth (slot : Nat) : Option Nat :=
   if slot == 1 then some 3 else none
 
-/-- Check a fresh Impact artifact against the same source fixture and the
-native statement emitted by the pinned proof run. This checks the artifact
-bytes directly, the compiled plan's guard schedule, and the ordered VM reads. -/
-private def checkIssue43NativeProof (impactPath statementPath : String) : IO Unit := do
+/-- Check fresh Impact and ZKIR artifacts against the source fixture and the
+native statement emitted by the pinned proof run. This checks artifact bytes,
+the compiled plan's guard schedule, the statement header, and ordered VM reads. -/
+private def checkIssue43NativeProof (impactPath zkirPath statementPath : String) : IO Unit := do
   let bytes := (← IO.FS.readBinFile impactPath).data.toList
   let raw ← IO.ofExcept (ArtifactBytes.parse bytes)
+  let zkirBytes := (← IO.FS.readBinFile zkirPath).data.toList
   let statementJson ← IO.FS.readFile statementPath
   let fixture ← IO.ofExcept
     (Lean.Json.parse statementJson >>= ImpactNativeStatementFixture.decode)
 
   let state := Issue43GuardedReads.state
   let pruned := Passes.pruneEntrypoint issue43GuardedEntry
+  unless fixture.entryPoint == issue43GuardedEntry.name.toUTF8 do
+    throw (IO.userError "native statement entrypoint differs from the source entrypoint")
+  let expectedZkir ← IO.ofExcept ((Backend.Zkir.lowerEntrypoint state issue43GuardedEntry
+    Backend.Zkir.Rewrites.rangeAndAssertions).mapError (·.message))
+  discard <| IO.ofExcept (Verification.GuardedZkirArtifact.check zkirBytes expectedZkir)
+
   let plan ← IO.ofExcept ((Backend.Impact.lower state pruned).mapError (·.message))
   let expected := Compiler.nativePlanJson TargetProfile.selected321 `Issue43GuardedReads
     state Issue43GuardedReads.constructor pruned plan Bool.false
@@ -718,6 +726,11 @@ private def checkIssue43NativeProof (impactPath statementPath : String) : IO Uni
     throw (IO.userError "Impact byte schedule rejected")
   unless schedule.any Option.isSome && schedule.any Option.isNone do
     throw (IO.userError "fixture did not exercise both skipped and active schedule entries")
+  let some statementHeader := ImpactPlanStatement.headerFor fixture.inputs sourceOps schedule |
+    throw (IO.userError "native fixture inputs cannot form the computed statement header")
+  unless fixture.fields.take 2 == [statementHeader.bindingInput,
+      statementHeader.communicationsCommitment] do
+    throw (IO.userError "native statement header differs from the computed source header")
 
   let some initialSlots := Verification.GenericStateEncoding.encodeState state issue43GuardedState |
     throw (IO.userError "source fixture initial state does not encode")
@@ -741,6 +754,7 @@ private def checkIssue43NativeProof (impactPath statementPath : String) : IO Uni
 
 def main (args : List String) : IO Unit := do
   match args with
-  | [impactPath, statementPath] => checkIssue43NativeProof impactPath statementPath
+  | [impactPath, zkirPath, statementPath] =>
+      checkIssue43NativeProof impactPath zkirPath statementPath
   | _ => throw (IO.userError
-      "expected an Impact artifact file and a native statement JSON file")
+      "expected an Impact artifact, ZKIR artifact, and native statement JSON file")

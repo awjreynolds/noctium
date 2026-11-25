@@ -128,12 +128,38 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         .public_inputs(proved.native().binding_commitment.into())
         .expect("attached V3 call exposes its exact public fields");
     assert_eq!(attached_fields, prepared.statement);
+    assert_eq!(
+        attached_call.communication_commitment,
+        prepared.statement[1],
+        "attached ledger header retains the frozen communication commitment"
+    );
+    assert_eq!(
+        prepared
+            .preimage()
+            .expect("frozen call retains its proof preimage")
+            .communications_commitment
+            .map(|(commitment, _)| commitment),
+        Some(attached_call.communication_commitment),
+        "attached ledger header commitment matches the frozen proof preimage"
+    );
 
     let response = encode(&ProofVersioned::V2(attached_proof.clone()))
         .expect("preserved proof serializes in the native service format");
     prepared
         .verify_response(&parameters, &response, MAX_RESPONSE)
         .expect("preserved proof verifies against its frozen public fields");
+
+    let original_statement = prepared.statement.clone();
+    for (index, field_name) in [(0, "binding input"), (1, "communication commitment")] {
+        prepared.statement[index] = prepared.statement[index] + Fr::from(1u64);
+        assert_eq!(
+            prepared.verify_response(&parameters, &response, MAX_RESPONSE),
+            Err(Error::InvalidProof),
+            "changing the {field_name} invalidates the exact same native proof"
+        );
+        prepared.statement.clone_from(&original_statement);
+        assert_eq!(prepared.statement, original_statement);
+    }
 
     let marker_fields = prepared
         .statement
@@ -150,6 +176,8 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         Err(Error::InvalidProof),
         "changing the active marker read field invalidates the preserved proof"
     );
+    prepared.statement.clone_from(&original_statement);
+    assert_eq!(prepared.statement, original_statement);
     let active_reads = prepared
         .preimage()
         .expect("frozen call retains its proof preimage")
@@ -186,6 +214,14 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
             .filter(|entry| entry.is_some())
             .count(),
         attached_proof.0.len(),
+    );
+    eprintln!(
+        "guarded-read artifact SHA-256: impact={}, zkir={}, verifier_key={}, proof={}, srs={}",
+        crate::artifacts::digest(&impact),
+        crate::artifacts::digest(&prepared.material.native.ir_source),
+        crate::artifacts::digest(&prepared.material.native.verifier_key),
+        crate::artifacts::digest(&attached_proof.0),
+        parameters.sha256(),
     );
 
     #[cfg(feature = "localnet")]

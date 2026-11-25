@@ -81,4 +81,6 @@ jobs:
               --no-default-features --features zkir-321 --lib proof::guarded_reads \
               -- --ignored --nocapture
           lake env lean --run tests/Issue43GuardedReads.lean \
-            "$scratch/artifacts/Issue43GuardedReads.update.impact.json" "$scratch/statement.json"
+            "$scratch/artifacts/Issue43GuardedReads.update.impact.json" \
+            "$scratch/artifacts/Issue43GuardedReads.update.zkir" \
+            "$scratch/statement.json"

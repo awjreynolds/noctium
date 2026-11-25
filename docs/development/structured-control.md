@@ -99,9 +99,10 @@ its default. The selected-321 checks live in
 The [native proof smoke](../../.github/workflows/zkir321-proof-smoke.yml)
 compiles the guarded-read example and generates matching keys in memory.
 The SDK verifies and attaches a Midnight V3 proof for the mixed active and
-inactive reads. The verifier rejects the same proof after changing the active
-marker field. Lean checks the final state and read order in its VM model and
-matches all 107 public fields against the attached call.
+inactive reads. The verifier rejects the same proof after separate changes
+to the binding input, the communication commitment, and the active marker
+field. Lean checks both emitted artifacts against the source, then matches all
+107 public fields and checks the final state and read order in its VM model.
 
 The same fixture has an opt-in path for the funded development genesis. Use the
 freshly compiled 3.2.1 artifacts, the official k=8 SRS and the verified Dust
@@ -126,6 +127,7 @@ cargo test --manifest-path runtime/Cargo.toml --locked \
   -- --ignored --nocapture
 lake env lean --run tests/Issue43GuardedReads.lean \
   /path/to/fresh/ledger/artifacts/Issue43GuardedReads.update.impact.json \
+  /path/to/fresh/ledger/artifacts/Issue43GuardedReads.update.zkir \
   /path/to/guarded-read-statement.json
 ```
 
