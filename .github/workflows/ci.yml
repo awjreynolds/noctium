@@ -367,7 +367,8 @@ jobs:
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-partials"
           lake env lean --run tests/Issue43GuardedPartialWrites.lean \
-            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json"
+            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json" \
+            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.zkir"
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"

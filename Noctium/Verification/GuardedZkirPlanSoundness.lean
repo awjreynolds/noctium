@@ -5,6 +5,9 @@ import Noctium.Verification.GuardedReadDefaultSemantics
 import Noctium.Verification.GuardedReadDescriptorTrace
 import Noctium.Verification.GuardedZkirRequirements
 import Noctium.Verification.GuardedImpactTranscript
+import Noctium.Verification.GuardedRequireActivity
+import Noctium.Verification.ScalarExpressionAdmission
+import Noctium.Verification.GuardedZkirArtifact
 
 namespace Noctium.Verification.GuardedZkirPlanSoundness
 open Lean Backend NativeRelation ScalarNormalization
@@ -185,5 +188,96 @@ theorem lowerEntrypoint_guardedPlanRequirements
       GuardedReadDescriptorTrace.lower_readMap_descriptor state ep plan index condition
         name destination keyTy ty key planAccepted scope member selected
     simpa only [nameEq] using zeroRead read descriptor condition activity inactive
+
+/-- A checked artifact ties the ordinary guarded rows used by plan soundness
+to the supplied ZKIR bytes and JSON. Guard admission follows from the checked
+plan guard expressions themselves. -/
+theorem lowerEntrypoint_guardedArtifactRequirements
+    (state : List StateDecl) (entry : Entrypoint) (rewrites : Zkir.Rewrites)
+    (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
+    (witness : Assignment) (bytes : ArtifactBytes.Bytes) (json : Json)
+    (rows : List GuardedScalarRows.Row) (plan : Impact.Plan) (expected : Native.Expected)
+    (frame : OutputFrame) (base : EvalEnv) (ledger : LedgerState)
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (artifactChecked : GuardedZkirArtifact.check bytes json = .ok rows)
+    (holds : ∀ row ∈ rows, ordinaryHolds hash witness row)
+    (planAccepted : Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan)
+    (expectedAccepted : Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected)
+    (inputSchema : ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false)
+    (frameAccepted : normalizeOutputs (entrypointSeedAliases (Passes.pruneEntrypoint entry) plan)
+      (Passes.pruneEntrypoint entry).circuit.outputs = .ok frame)
+    (baseEnvironment : TypedEnvironment hash witness frame.1 base
+      (GenericStateEffectValidation.initialEffectTypeEnv (Passes.pruneEntrypoint entry)))
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
+    (readAdmitted : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      read.components = [] ∧ (scalarType? read.ty).isSome = true ∧
+        read.ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ())
+    (readFresh : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      base.lookup read.name = none ∧
+        (GenericStateEffectValidation.initialEffectTypeEnv
+          (Passes.pruneEntrypoint entry)).lookup read.name = none)
+    (readDistinct : (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)).Pairwise
+      (fun left right => left.name ≠ right.name))
+    (readAliases : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      frame.1.lookup read.name = some (.input ("%input_" ++ read.name)))
+    (readGuards : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      ∀ guard, read.guard = some guard → ScalarExpression guard)
+    (guardAdmission : plan.guards.all
+      (fun guard => (ScalarExpressionAdmission.certify guard).isSome) = Bool.true) :
+    (GuardedZkirArtifact.decodeBytes bytes).map GuardedZkirArtifact.View.rows = .ok rows ∧
+    ∃ values, decodeReads (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs))
+        witness = .ok values ∧
+      TypedEnvironment hash witness frame.1 (base ++ values)
+        (plan.typeEnvironment (Passes.pruneEntrypoint entry)) ∧
+      (∀ effect ∈ entry.effects, match effect with
+        | .readCell _ destination ty | .readMap _ destination _ ty _ =>
+          base.lookup destination = none ∧
+          ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok () ∧
+          (witness ("%input_" ++ destination)).val ≤ Native.sourceMaximum ty
+        | _ => True) ∧
+      (∀ expression ∈ plan.guards, expression.eval ctx (base ++ values) = .ok true) ∧
+      (∀ item ∈ entry.effects.zipIdx, ∀ condition, entry.effectGuardAt item.2 = some condition →
+        condition.eval ctx (base ++ values) = .ok false → match item.1 with
+        | .readCell _ destination _ | .readMap _ destination _ _ _ =>
+          witness ("%input_" ++ destination) = zero
+        | _ => True) ∧
+      ∀ item ∈ (Passes.pruneEntrypoint entry).effects.zipIdx, ∀ condition guard,
+        item.1 = .require condition →
+        (Passes.pruneEntrypoint entry).effectGuardAt item.2 = some guard →
+        ScalarExpression condition →
+        runEffectsWithGuardsAndEnv ctx [.require condition] [some guard] (base ++ values) ledger =
+          .ok (base ++ values, ledger) := by
+  have guardAdmitted : ∀ guard ∈ plan.guards, ScalarExpression guard := by
+    intro guard member
+    have checked := List.all_eq_true.mp guardAdmission guard member
+    change (ScalarExpressionAdmission.certify guard).isSome = Bool.true at checked
+    cases result : ScalarExpressionAdmission.certify guard with
+    | none => simp [result] at checked
+    | some proof => exact proof.down
+  obtain ⟨exactRows, instructions, parsed, decoded⟩ :=
+    GuardedZkirArtifact.check_sound artifactChecked
+  refine ⟨exactRows, ?_⟩
+  obtain ⟨values, readDecoded, environment, readFacts, planAssertions, inactiveReads⟩ :=
+    lowerEntrypoint_guardedPlanRequirements state entry rewrites ctx hash implementation
+    witness json instructions rows plan expected frame base lowered parsed decoded holds
+    planAccepted expectedAccepted inputSchema frameAccepted baseEnvironment scope readAdmitted
+    readFresh readDistinct readAliases readGuards guardAdmitted
+  refine ⟨values, readDecoded, environment, readFacts, planAssertions, inactiveReads, ?_⟩
+  let ep := Passes.pruneEntrypoint entry
+  have prunedScope : GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx := by
+    simpa [ep, Passes.pruneEntrypoint] using scope
+  intro item member condition guard effectEq selected admitted
+  rcases item with ⟨effect, index⟩
+  have itemMember : (effect, index) ∈ ep.effects.zipIdx := by
+    simpa [ep, Passes.pruneEntrypoint] using member
+  have effectEq' : effect = Effect.require condition := by simpa using effectEq
+  have occurrence : (Effect.require condition, index) ∈ ep.effects.zipIdx := by
+    rw [effectEq'] at itemMember
+    exact itemMember
+  have selectedIndex : ep.effectGuards[index]?.getD none = some guard := by
+    simpa [Entrypoint.effectGuardAt] using selected
+  exact GuardedRequireActivity.lower_guarded_require_step_of_assertions state ep plan ctx
+    (base ++ values) ledger condition guard index planAccepted prunedScope occurrence
+    selectedIndex admitted implementation.modulus planAssertions
 
 end Noctium.Verification.GuardedZkirPlanSoundness
