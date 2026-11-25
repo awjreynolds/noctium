@@ -1,5 +1,6 @@
 import Noctium.Verification.NativeRelationInstructionProjection
 import Noctium.Verification.RangeDedupAcceptedArray
+import Noctium.Verification.ScalarCallHeaderProjection
 import Noctium.Verification.ScalarCallInstructionProjection
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationRawSeedMeaning
@@ -471,5 +472,61 @@ theorem lowerEntrypoint_comparison_preserves_scalar_kernel
     definitions (inputSchema expected schedule)
     (supportsMeaning_of_checkedScalarOpcodeProfile rows sourceDecoded profile)
     sourceDecoded runDecoded trace
+
+/-- The production comparison rewrite preserves the caller's ordered scalar
+arguments and satisfiability of the emitted body for every witness. The
+producer seeds the prefix from the checked call header, so the proof includes
+nonempty headers and uses the same raw argument assignment in both modes. -/
+theorem lowerEntrypoint_comparison_preserves_scalarCall_kernel
+    {state : List StateDecl} {entry : Entrypoint}
+    {rangeJson comparisonJson : Json} {rangeCall comparisonCall : ScalarCall}
+    {rows : Array Json}
+    (rangeAccepted : Zkir.lowerEntrypoint state entry .rangeAndAssertions = .ok rangeJson)
+    (comparisonAccepted :
+      Zkir.lowerEntrypoint state entry .includingComparisons = .ok comparisonJson)
+    (rangeDecoded : NativeRelationJson.decodeScalarCall rangeJson = .ok rangeCall)
+    (comparisonDecoded : NativeRelationJson.decodeScalarCall comparisonJson = .ok comparisonCall)
+    (rowsParsed : Native.arrayField rangeJson "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile rows.toList.zipIdx rangeCall.body.instructions = true)
+    (schema : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false) :
+    rangeCall.arguments = comparisonCall.arguments ∧
+      ∀ hash streams witness groups returns,
+        Satisfies hash rangeCall.body streams witness groups returns ↔
+          Satisfies hash comparisonCall.body streams witness groups returns := by
+  obtain ⟨_, expected, emittedRows, _, schedule, rangeValid, comparisonValid,
+      sourceArray, rewrittenArray⟩ :=
+    Zkir.lowerEntrypoint_comparison_instructions_reuse_range_instructions state entry
+      rangeJson comparisonJson rangeAccepted comparisonAccepted
+  have emittedEq := Except.ok.inj (sourceArray.symm.trans rowsParsed)
+  subst emittedRows
+  have rangeNames :=
+    ScalarCallHeaderProjection.validate_decodeScalarCall_header_names rangeValid rangeDecoded
+  have comparisonNames :=
+    ScalarCallHeaderProjection.validate_decodeScalarCall_header_names
+      comparisonValid comparisonDecoded
+  refine ⟨rangeNames.trans comparisonNames.symm, ?_⟩
+  have sourceDecoded := scalarCall_decoded_rows .rangeAndAssertions
+    rangeAccepted rangeDecoded rowsParsed
+  have runDecoded := scalarCall_decoded_rows .includingComparisons
+    comparisonAccepted comparisonDecoded rewrittenArray
+  obtain ⟨driverRows, _, seed, _, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result rangeValid
+  have driverEq := Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)
+  subst driverRows
+  have rawSchema : ∀ requirement ∈ expected.rawInputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema expected schedule requirement (List.mem_append_left _ member)
+  have inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema expected schedule requirement (List.mem_append_right _ member)
+  have seedMeaning (hash : Hash) (witness : Assignment) :
+      StateMeaning hash witness witness seed ∧ NativeDefinitions seed :=
+    seedRawInputs_meaning_and_nativeDefinitions rawSchema (fun _ _ => rfl) driver.seededRawInputs
+  exact acceptedArrayReusePreservesKernel
+    (expected := {expected with assertions := expected.assertions.eraseDups})
+    (fun hash witness => (seedMeaning hash witness).1)
+    (seedMeaning (fun _ => zero) (fun _ => zero)).2 inputSchema
+    (supportsMeaning_of_checkedScalarOpcodeProfile rows sourceDecoded profile)
+    sourceDecoded runDecoded driver.instructionTrace
 
 end Noctium.Verification.RangeDedupAcceptedEntrypoint
