@@ -163,6 +163,33 @@ theorem appendEffectWithActivity_none_result
   refine ⟨result, appended, ?_⟩
   split at finished <;> cases finished <;> exact ⟨rfl, rfl⟩
 
+/-- The actual unguarded Cell read appends an empty-plan read's exact
+operation chunk, independent of the previous operations and reads. -/
+theorem appendEffectWithActivity_unguarded_readCell_chunk
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (before after : Impact.Plan)
+    (accepted : Impact.appendEffectWithActivity state (.readCell name destination ty)
+      none before = .ok after) :
+    ∃ base, Impact.appendEffect state (.readCell name destination ty) {} = .ok base ∧
+      after.operations = before.operations ++ base.operations := by
+  obtain ⟨raw, appended, wrappedOperations, _⟩ :=
+    appendEffectWithActivity_none_result state (.readCell name destination ty) before after accepted
+  simp only [Impact.appendEffect, bind_ok] at appended
+  obtain ⟨slot, chosenSlot, value, storedValue, result⟩ := appended
+  let base : Impact.Plan :=
+    {raw with
+      operations := raw.operations.drop before.operations.length
+      activityGuards := []
+      reads := raw.reads.drop before.reads.length
+      guards := []}
+  have exactRaw := Except.ok.inj result
+  refine ⟨base, ?_, ?_⟩
+  · simp only [Impact.appendEffect, bind_ok]
+    refine ⟨slot, chosenSlot, value, storedValue, ?_⟩
+    simp [base, ← exactRaw, Pure.pure, Except.pure]
+  · rw [wrappedOperations, ← exactRaw]
+    simp [base, ← exactRaw]
+
 /-- A raw write appends the same operations as its accepted empty-plan step. -/
 theorem appendEffect_writeCell_chunk
     (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)
