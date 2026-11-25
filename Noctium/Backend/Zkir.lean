@@ -715,6 +715,44 @@ private theorem cachedScalarOutput_preservesOutputCapacityFrame
     rw [show Native.outputDefinitionsInInstruction emitted = 1 from outputCount output]
     omega
 
+private theorem cachedScalarOutput_match_preservesOutputCapacityFrame
+    (key : ExpressionKey) (opcode : String) (fields : String → List (String × Json))
+    (outputCount : ∀ output,
+      Native.outputDefinitionsInInstruction (instruction opcode (fields output)) = 1) :
+    PreservesOutputCapacityFrame (do
+      match (← get).expressions.lookup key with
+      | some existing => pure existing
+      | none => do
+        let output ← fresh
+        emit opcode (fields output)
+        modify fun state => {state with expressions := (key, output) :: state.expressions}
+        pure output) := by
+  intro state
+  have frame := cachedScalarOutput_preservesOutputCapacityFrame key opcode fields outputCount state
+  cases hit : state.expressions.lookup key with
+  | some existing => simpa [hit, StateT.run_bind, StateT.run_get, StateT.run_pure] using frame
+  | none => simpa [hit, StateT.run_bind, StateT.run_get, StateT.run_pure] using frame
+
+private theorem cachedScalarOutput_match_bind_preservesOutputCapacityFrame
+    (key : ExpressionKey) (opcode : String) (fields : String → List (String × Json))
+    (outputCount : ∀ output,
+      Native.outputDefinitionsInInstruction (instruction opcode (fields output)) = 1)
+    (next : String → LowerM α) (nextFrame : ∀ output, PreservesOutputCapacityFrame (next output)) :
+    PreservesOutputCapacityFrame (do
+      let value ← match (← get).expressions.lookup key with
+        | some existing => pure existing
+        | none => do
+          let output ← fresh
+          emit opcode (fields output)
+          modify fun state => {state with expressions := (key, output) :: state.expressions}
+          pure output
+      next value) := by
+  intro state
+  have frame := bind_preservesOutputCapacityFrame _ next
+    (cachedScalarOutput_match_preservesOutputCapacityFrame key opcode fields outputCount) nextFrame state
+  cases hit : state.expressions.lookup key <;>
+    simpa [hit, StateT.run_bind, StateT.run_get, StateT.run_pure] using frame
+
 theorem ordinaryBinary_preservesOutputCapacityFrame (opcode left right : String)
     (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
       opcode ≠ "into_coordinates") :
@@ -1838,6 +1876,225 @@ private def lowerReversedBytes32ByteAt (index : Nat) (value : ByteOperands) : Lo
     return "0x00"
   lowerFixedByteAt 32 (31 - index) value
 
+private theorem lowerFixedBytesFromChunks_preservesOutputCapacityFrame
+    (length : Nat) (chunks : List String) :
+    PreservesOutputCapacityFrame (lowerFixedBytesFromChunks length chunks) := by
+  unfold lowerFixedBytesFromChunks
+  split
+  · exact rejectThenPure_preservesOutputCapacityFrame _ _
+  · apply cachedScalarOutput_preservesOutputCapacityFrame
+    intro output
+    exact instruction_scalarOutputDefinitions "bytes_from_natives"
+      [("inputs", toJson chunks), ("len", toJson length), ("output", toJson output)]
+      (by rfl) ⟨by decide, by decide, by decide⟩ (by
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+        rfl)
+
+private theorem encodeByte_preservesOutputCapacityFrame (byte : String) :
+    PreservesOutputCapacityFrame (encodeByte byte) := by
+  unfold encodeByte
+  refine cachedScalarOutput_preservesOutputCapacityFrame
+    ("encode_byte", [byte], none) "encode"
+    (fun output => [("input", toJson byte), ("outputs", toJson [output])]) ?_
+  intro output
+  exact encodeInstruction_outputDefinitions byte [output]
+
+private theorem lowerFixedReverse_preservesOutputCapacityFrame (length : Nat)
+    (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerFixedReverse length value) := by
+  intro state
+  unfold lowerFixedReverse
+  split
+  · exact pure_preservesOutputCapacityFrame _ state
+  · apply bind_preservesOutputCapacityFrame _ _ (byteChunks_preservesOutputCapacityFrame length value)
+    intro chunks
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+    intro input
+    let key : ExpressionKey := ("reverse", [input], none)
+    exact cachedScalarOutput_match_bind_preservesOutputCapacityFrame key "reverse"
+      (fun output => [("bytes", toJson input), ("output", toJson output)])
+      (by
+        intro output
+        exact instruction_scalarOutputDefinitions "reverse"
+          [("bytes", toJson input), ("output", toJson output)] (by rfl)
+          ⟨by decide, by decide, by decide⟩ (by
+            simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+              Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+              Lean.ToJson.toJson]
+            rfl))
+      (fun output => encodeFixedBytes length output)
+      (by intro output; exact encodeFixedBytes_preservesOutputCapacityFrame length output)
+
+private theorem lowerFixedSlice_preservesOutputCapacityFrame
+    (length start end_ : Nat) (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerFixedSlice length start end_ value) := by
+  intro state
+  unfold lowerFixedSlice
+  split
+  · exact rejectThenPure_preservesOutputCapacityFrame _ _ state
+  · split
+    · exact pure_preservesOutputCapacityFrame _ state
+    · split
+      · split
+        · exact rejectThenPure_preservesOutputCapacityFrame _ _ state
+        · exact pure_preservesOutputCapacityFrame _ state
+      · apply bind_preservesOutputCapacityFrame _ _ (byteChunks_preservesOutputCapacityFrame length value)
+        intro chunks
+        apply bind_preservesOutputCapacityFrame _ _
+          (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+        intro input
+        let key : ExpressionKey := ("slice:" ++ toString start, [input], some (end_ - start))
+        exact cachedScalarOutput_match_bind_preservesOutputCapacityFrame key "slice"
+          (fun output => [("bytes", toJson input), ("start", toJson start),
+            ("len", toJson (end_ - start)), ("output", toJson output)])
+          (by
+            intro output
+            exact instruction_scalarOutputDefinitions "slice"
+              [("bytes", toJson input), ("start", toJson start),
+                ("len", toJson (end_ - start)), ("output", toJson output)] (by rfl)
+              ⟨by decide, by decide, by decide⟩ (by
+                simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+                  Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+                  Lean.ToJson.toJson]
+                rfl))
+          (fun output => encodeFixedBytes (end_ - start) output)
+          (by intro output; exact encodeFixedBytes_preservesOutputCapacityFrame (end_ - start) output)
+
+private theorem lowerFixedConcat_preservesOutputCapacityFrame
+    (leftLength rightLength : Nat) (left right : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerFixedConcat leftLength rightLength left right) := by
+  unfold lowerFixedConcat
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  split
+  · split
+    · exact rejectThenPure_preservesOutputCapacityFrame _ _
+    · exact pure_preservesOutputCapacityFrame _
+  split
+  · apply bind_preservesOutputCapacityFrame _ _
+      (byteChunks_preservesOutputCapacityFrame leftLength left)
+    intro leftChunks
+    apply bind_preservesOutputCapacityFrame _ _
+      (byteChunks_preservesOutputCapacityFrame rightLength right)
+    intro rightChunks
+    exact pure_preservesOutputCapacityFrame _
+  · apply bind_preservesOutputCapacityFrame _ _
+      (byteChunks_preservesOutputCapacityFrame leftLength left)
+    intro leftChunks
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerFixedBytesFromChunks_preservesOutputCapacityFrame leftLength leftChunks)
+    intro leftBytes
+    apply bind_preservesOutputCapacityFrame _ _
+      (byteChunks_preservesOutputCapacityFrame rightLength right)
+    intro rightChunks
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerFixedBytesFromChunks_preservesOutputCapacityFrame rightLength rightChunks)
+    intro rightBytes
+    apply cachedScalarOutput_match_bind_preservesOutputCapacityFrame
+      ("concat", [leftBytes, rightBytes], none) "concat"
+      (fun output => [("inputs", toJson [leftBytes, rightBytes]), ("output", toJson output)])
+      ?_ (fun output => encodeFixedBytes (leftLength + rightLength) output)
+      (fun output => encodeFixedBytes_preservesOutputCapacityFrame (leftLength + rightLength) output)
+    intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+        Lean.ToJson.toJson]
+      rfl
+
+private theorem lowerByteAtFromBytes_preservesOutputCapacityFrame
+    (index : Nat) (bytes : String) :
+    PreservesOutputCapacityFrame (lowerByteAtFromBytes index bytes) := by
+  unfold lowerByteAtFromBytes
+  exact cachedScalarOutput_match_bind_preservesOutputCapacityFrame
+    ("nth", [bytes], some index) "nth"
+    (fun output => [
+      ("bytes", toJson bytes),
+      ("index", toJson index),
+      ("output", toJson output)])
+    (by
+      intro output
+      exact instruction_scalarOutputDefinitions "nth"
+        [("bytes", toJson bytes), ("index", toJson index), ("output", toJson output)]
+        (by rfl) ⟨by decide, by decide, by decide⟩ (by
+          simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+            Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+            Lean.ToJson.toJson]
+          rfl))
+    encodeByte encodeByte_preservesOutputCapacityFrame
+
+private theorem lowerFixedByteAt_preservesOutputCapacityFrame
+    (length index : Nat) (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerFixedByteAt length index value) := by
+  intro state
+  by_cases inRange : index < length
+  · by_cases packed : value.packed
+    · have pipeline : PreservesOutputCapacityFrame (do
+        let chunks ← byteChunks length value
+        let input ← lowerFixedBytesFromChunks length chunks
+        lowerByteAtFromBytes index input) := by
+        apply bind_preservesOutputCapacityFrame _ _
+          (byteChunks_preservesOutputCapacityFrame length value)
+        intro chunks
+        apply bind_preservesOutputCapacityFrame _ _
+          (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+        intro input
+        exact lowerByteAtFromBytes_preservesOutputCapacityFrame index input
+      simpa [lowerFixedByteAt, Nat.not_le_of_lt inRange, packed] using pipeline state
+    · by_cases count : value.values.length = length
+      · simpa [lowerFixedByteAt, Nat.not_le_of_lt inRange, packed, count] using
+          (pure_preservesOutputCapacityFrame (value.values[index]! : String) state)
+      · simpa [lowerFixedByteAt, Nat.not_le_of_lt inRange, packed, count] using
+          (rejectThenPure_preservesOutputCapacityFrame "byte leaf count mismatch"
+            ("0x00" : String) state)
+  · simpa [lowerFixedByteAt, Nat.le_of_not_gt inRange] using
+      (rejectThenPure_preservesOutputCapacityFrame "byte index is out of range"
+        ("0x00" : String) state)
+
+private theorem lowerRawFixedByteAt_preservesOutputCapacityFrame
+    (length index : Nat) (bytes : String) :
+    PreservesOutputCapacityFrame (lowerRawFixedByteAt length index bytes) := by
+  intro state
+  by_cases inRange : index < length
+  · simpa [lowerRawFixedByteAt, Nat.not_le_of_lt inRange] using
+      (lowerByteAtFromBytes_preservesOutputCapacityFrame index bytes state)
+  · simpa [lowerRawFixedByteAt, Nat.le_of_not_gt inRange] using
+      (rejectThenPure_preservesOutputCapacityFrame "byte index is out of range"
+        ("0x00" : String) state)
+
+private theorem lowerReversedBytes32ByteAt_preservesOutputCapacityFrame
+    (index : Nat) (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerReversedBytes32ByteAt index value) := by
+  intro state
+  by_cases inRange : index < 32
+  · simpa [lowerReversedBytes32ByteAt, Nat.not_le_of_lt inRange] using
+      (lowerFixedByteAt_preservesOutputCapacityFrame 32 (31 - index) value state)
+  · simpa [lowerReversedBytes32ByteAt, Nat.le_of_not_gt inRange] using
+      (rejectThenPure_preservesOutputCapacityFrame "byte index is out of range"
+        ("0x00" : String) state)
+
+private theorem lowerForeignToBytes_preservesOutputCapacityFrame
+    (kind : Foreign.Kind) (value : String) :
+    PreservesOutputCapacityFrame (lowerForeignToBytes kind value) := by
+  unfold lowerForeignToBytes
+  apply cachedScalarOutput_match_bind_preservesOutputCapacityFrame _ "to_bytes"
+    (fun output => [("input", toJson value), ("output", toJson output)])
+  · intro output
+    exact instruction_scalarOutputDefinitions "to_bytes"
+      [("input", toJson value), ("output", toJson output)]
+      (by rfl) ⟨by decide, by decide, by decide⟩ (by
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+          Lean.ToJson.toJson]
+        rfl)
+  · intro output
+    exact encodeFixedBytes_preservesOutputCapacityFrame kind.byteLength output
+
 private def nativeTypeName : Ty → String
   | .native => "Scalar<BLS12-381>"
   | .jubjubScalar => "Scalar<Jubjub>"
@@ -1896,6 +2153,105 @@ private def lowerFromBytes (target : Ty) (length : Nat) (value : ByteOperands) :
     | _ => do
       rejectLowering "fromBytes supports only Native and JubjubScalar"
       pure "0x00"
+
+private theorem lowerToBytes32Bytes_preservesOutputCapacityFrame (value : String) :
+    PreservesOutputCapacityFrame (lowerToBytes32Bytes value) := by
+  unfold lowerToBytes32Bytes
+  refine cachedScalarOutput_match_preservesOutputCapacityFrame ("to_bytes", [value], none) "to_bytes"
+    (fun output => [("input", toJson value), ("output", toJson output)]) ?_
+  intro output
+  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+private theorem lowerToBytes32_preservesOutputCapacityFrame (value : String) :
+    PreservesOutputCapacityFrame (lowerToBytes32 value) := by
+  unfold lowerToBytes32
+  exact bind_preservesOutputCapacityFrame _ _ (lowerToBytes32Bytes_preservesOutputCapacityFrame value)
+    encodeBytes32_preservesOutputCapacityFrame
+
+private theorem bytes32Chunks_preservesOutputCapacityFrame (values : List String) :
+    PreservesOutputCapacityFrame (bytes32Chunks values) := by
+  unfold bytes32Chunks
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  · apply bind_preservesOutputCapacityFrame _ _ (packBytes_preservesOutputCapacityFrame _)
+    intro _
+    exact pure_preservesOutputCapacityFrame _
+  · exact rejectThenPure_preservesOutputCapacityFrame _ _
+
+private theorem lowerBytesFromChunks_preservesOutputCapacityFrame (low31 highByte : String) :
+    PreservesOutputCapacityFrame (lowerBytesFromChunks low31 highByte) := by
+  exact lowerFixedBytesFromChunks_preservesOutputCapacityFrame 32 [low31, highByte]
+
+private theorem fromBytes_outputDefinitions (typeName bytes output : String) :
+    Native.outputDefinitionsInInstruction (instruction "from_bytes"
+      [("bytes", toJson bytes), ("type", toJson typeName), ("output", toJson output)]) = 1 := by
+  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+private theorem lowerFromBytes32_preservesOutputCapacityFrame (target : Ty) (values : List String) :
+    PreservesOutputCapacityFrame (lowerFromBytes32 target values) := by
+  unfold lowerFromBytes32
+  apply bind_preservesOutputCapacityFrame _ _ (bytes32Chunks_preservesOutputCapacityFrame values)
+  rintro ⟨low31, highByte⟩
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerBytesFromChunks_preservesOutputCapacityFrame low31 highByte)
+  intro bytes
+  let typeName := nativeTypeName target
+  refine cachedScalarOutput_match_bind_preservesOutputCapacityFrame
+    ("from_bytes:" ++ typeName, [bytes], none) "from_bytes"
+    (fun output => [("bytes", toJson bytes), ("type", toJson typeName),
+      ("output", toJson output)]) (fromBytes_outputDefinitions typeName bytes) _ ?_
+  intro output
+  split
+  · apply bind_preservesOutputCapacityFrame _ _ (lowerToBytes32_preservesOutputCapacityFrame output)
+    rintro ⟨roundtripLow, roundtripHigh⟩
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryBinary_preservesOutputCapacityFrame "test_eq" highByte roundtripHigh
+        ⟨by decide, by decide, by decide⟩)
+    intro highEq
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame "assert" _)
+    intro _
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryBinary_preservesOutputCapacityFrame "test_eq" low31 roundtripLow
+        ⟨by decide, by decide, by decide⟩)
+    intro lowEq
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame "assert" _)
+    intro _
+    exact pure_preservesOutputCapacityFrame output
+  · exact pure_preservesOutputCapacityFrame output
+
+private theorem lowerFromBytes_preservesOutputCapacityFrame
+    (target : Ty) (length : Nat) (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerFromBytes target length value) := by
+  have parsedFrame (bytes typeName : String) :=
+    cachedScalarOutput_match_preservesOutputCapacityFrame
+      ("from_bytes:" ++ typeName, [bytes], none) "from_bytes"
+      (fun output => [("bytes", toJson bytes), ("type", toJson typeName),
+        ("output", toJson output)]) (fromBytes_outputDefinitions typeName bytes)
+  unfold lowerFromBytes
+  apply bind_preservesOutputCapacityFrame _ _ (byteChunks_preservesOutputCapacityFrame length value)
+  intro chunks
+  split
+  · split
+    · exact pure_preservesOutputCapacityFrame _
+    · exact lowerJubjubScalarFromNative_preservesOutputCapacityFrame _
+    · exact rejectThenPure_preservesOutputCapacityFrame _ _
+  · split
+    all_goals try exact rejectThenPure_preservesOutputCapacityFrame _ _
+    all_goals
+      apply bind_preservesOutputCapacityFrame _ _
+        (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+      intro bytes
+      first
+      | exact parsedFrame bytes (nativeTypeName .native)
+      | exact parsedFrame bytes (nativeTypeName .jubjubScalar)
 
 private def alignedBytes32Fields (values : List String) : LowerM (String × String) := do
   match values.length with
@@ -2757,6 +3113,170 @@ end
 
 /-- SHA-512 allocates from the actual digest and packed outputs, for any
 fixed-width preimage whose lowering has an output capacity frame. -/
+theorem lowerBytes_reverse_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.reverseBytes value)) := by
+  simp only [lowerBytes]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerFixedReverse_preservesOutputCapacityFrame length)
+
+theorem lowerBytes_reverse32_preservesOutputCapacityFrame (value : Expr (.bytes 32))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.reverseBytes32 value)) := by
+  simp only [lowerBytes]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerFixedReverse_preservesOutputCapacityFrame 32)
+
+theorem lowerBytes_slice_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length)) (start stop : Nat)
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.sliceBytes value start stop)) := by
+  simp only [lowerBytes]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerFixedSlice_preservesOutputCapacityFrame length start stop)
+
+theorem lowerBytes_concat_preservesOutputCapacityFrame {leftLength rightLength : Nat}
+    (left : Expr (.bytes leftLength)) (right : Expr (.bytes rightLength))
+    (leftFrame : PreservesOutputCapacityFrame (lowerBytes left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerBytes right)) :
+    PreservesOutputCapacityFrame (lowerBytes (.concatBytes left right)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro leftBytes
+  exact bind_preservesOutputCapacityFrame _ _ rightFrame
+    (lowerFixedConcat_preservesOutputCapacityFrame leftLength rightLength leftBytes)
+
+theorem lowerBytes_toBytes32_preservesOutputCapacityFrame (value : Expr ty)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.toBytes32 value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro input
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  · apply bind_preservesOutputCapacityFrame _ _ (lowerToBytes32_preservesOutputCapacityFrame input)
+    intro _
+    exact pure_preservesOutputCapacityFrame _
+
+theorem lowerExpr_fromBytes32_preservesOutputCapacityFrame (target : Ty)
+    (value : Expr (.bytes 32))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.fromBytes32 (target := target) value)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  exact lowerFromBytes32_preservesOutputCapacityFrame target operands.values
+
+theorem lowerExpr_fromBytes_preservesOutputCapacityFrame (target : Ty) {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.fromBytes (target := target) value)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerFromBytes_preservesOutputCapacityFrame target length)
+
+theorem lowerExpr_toBytes32At_preservesOutputCapacityFrame (value : Expr ty) (index : Nat)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.bytesAt (.toBytes32 value) index)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro input
+  split
+  · exact lowerFixedByteAt_preservesOutputCapacityFrame 32 index _
+  · exact bind_preservesOutputCapacityFrame _ _ (lowerToBytes32Bytes_preservesOutputCapacityFrame input)
+      (lowerRawFixedByteAt_preservesOutputCapacityFrame 32 index)
+
+theorem lowerExpr_reverseBytes32At_preservesOutputCapacityFrame
+    (value : Expr (.bytes 32)) (index : Nat)
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.bytesAt (.reverseBytes32 value) index)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerReversedBytes32ByteAt_preservesOutputCapacityFrame index)
+
+theorem lowerBytes_foreignToBytes_preservesOutputCapacityFrame {kind : Foreign.Kind}
+    (value : Expr (.foreign kind))
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.foreignToBytes value)) := by
+  simp only [lowerBytes]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerForeignToBytes_preservesOutputCapacityFrame kind)
+
+theorem lowerNativeVectorFields_preservesOutputCapacityFrame
+    (values : List (Expr .native))
+    (memberFrame : ∀ value ∈ values,
+      PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerNativeVectorFields values) := by
+  induction values with
+  | nil =>
+    simp only [lowerNativeVectorFields]
+    exact pure_preservesOutputCapacityFrame []
+  | cons value rest ih =>
+    simp only [lowerNativeVectorFields]
+    apply bind_preservesOutputCapacityFrame _ _ (memberFrame value (by simp))
+    intro first
+    apply bind_preservesOutputCapacityFrame _ _
+    · apply ih
+      intro item itemMem
+      exact memberFrame item (List.mem_cons_of_mem value itemMem)
+    · intro tail
+      exact pure_preservesOutputCapacityFrame (first :: tail)
+
+theorem lowerBytes32VectorFields_preservesOutputCapacityFrame
+    (values : List (Expr (.bytes 32)))
+    (memberFrame : ∀ value ∈ values,
+      PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes32VectorFields values) := by
+  induction values with
+  | nil =>
+    simp only [lowerBytes32VectorFields]
+    exact pure_preservesOutputCapacityFrame []
+  | cons value rest ih =>
+    simp only [lowerBytes32VectorFields]
+    apply bind_preservesOutputCapacityFrame _ _ (memberFrame value (by simp))
+    intro operands
+    apply bind_preservesOutputCapacityFrame _ _
+      (alignedBytes32Value_preservesOutputCapacityFrame value operands.values)
+    intro chunks
+    rcases chunks with ⟨highByte, low31⟩
+    apply bind_preservesOutputCapacityFrame _ _
+    · apply ih
+      intro item itemMem
+      exact memberFrame item (List.mem_cons_of_mem value itemMem)
+    · intro tail
+      exact pure_preservesOutputCapacityFrame ([highByte, low31] ++ tail)
+
+theorem lowerBytes_persistentHashVector32_preservesOutputCapacityFrame
+    (values : List (Expr (.bytes 32)))
+    (members : ∀ value ∈ values, PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.persistentHashVector32 values)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerBytes32VectorFields_preservesOutputCapacityFrame values members)
+  intro operands
+  split
+  all_goals
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPersistentHash_preservesOutputCapacityFrame _ _ _)
+    intro _
+    exact pure_preservesOutputCapacityFrame _
+
+theorem lowerBytes_persistentHashNativeVector_preservesOutputCapacityFrame
+    (values : List (Expr .native))
+    (members : ∀ value ∈ values, PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.persistentHashNativeVector values)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerNativeVectorFields_preservesOutputCapacityFrame values members)
+  intro operands
+  split
+  all_goals
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPersistentHash_preservesOutputCapacityFrame _ _ _)
+    intro _
+    exact pure_preservesOutputCapacityFrame _
+
 theorem lowerBytes_sha512_preservesOutputCapacityFrame {length : Nat}
     (value : Expr (.bytes length))
     (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
