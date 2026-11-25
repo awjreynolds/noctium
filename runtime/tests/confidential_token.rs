@@ -684,6 +684,20 @@ fn decrypt_owner_memo(memo: Memo, owner_secret: EmbeddedFr, maximum: u64) -> u64
         .expect("test escrow memo stays in the bounded search range")
 }
 
+fn decrypt_credit_memo(memo: Memo, recipient_secret: EmbeddedFr, maximum: u64) -> u64 {
+    let shared = memo.ephemeral * recipient_secret;
+    let shared_digest = hash(&[
+        &shared.x().unwrap().as_le_bytes(),
+        &shared.y().unwrap().as_le_bytes(),
+    ]);
+    let mask_digest = hash(&[&shared_digest, &tag("OZ_CFT_ecdh_memo_v1")]);
+    let mask = Fr::from_le_bytes(&mask_digest[..31]).unwrap();
+    let plaintext = memo.amount - mask;
+    (0..=maximum)
+        .find(|candidate| Fr::from(*candidate) == plaintext)
+        .expect("test credit memo stays in the bounded search range")
+}
+
 fn decrypt_small(ciphertext: Ciphertext, secret: EmbeddedFr, maximum: u64) -> u64 {
     let negative_secret = EmbeddedFr::from(0u64) - secret;
     let message = ciphertext.c2 + ciphertext.c1 * negative_secret;
@@ -829,6 +843,23 @@ fn ciphertext_from_fields(fields: &[Fr], offset: usize) -> Ciphertext {
     Ciphertext {
         c1: point_from_coordinates(fields[offset], fields[offset + 1]),
         c2: point_from_coordinates(fields[offset + 2], fields[offset + 3]),
+    }
+}
+
+fn insert_ciphertext_inputs(
+    values: &mut BTreeMap<String, Json>,
+    prefix: &str,
+    ciphertext: Ciphertext,
+) {
+    for (name, value) in ["C1X", "C1Y", "C2X", "C2Y"]
+        .into_iter()
+        .zip(
+            coordinates(ciphertext.c1)
+                .into_iter()
+                .chain(coordinates(ciphertext.c2)),
+        )
+    {
+        values.insert(format!("{prefix}{name}"), json!(field_decimal(value)));
     }
 }
 
@@ -990,6 +1021,29 @@ fn collect_native_inputs(
     decrypt_balance: Option<Ciphertext>,
     attempt_number: u64,
 ) -> BTreeMap<String, Json> {
+    collect_native_inputs_result(
+        entry,
+        control_plan,
+        values,
+        account_secret,
+        encryption_secret,
+        seeds,
+        decrypt_balance,
+        attempt_number,
+    )
+    .unwrap_or_else(|error| panic!("{entry}: {error}"))
+}
+
+fn collect_native_inputs_result(
+    entry: &str,
+    control_plan: &Json,
+    values: BTreeMap<String, Json>,
+    account_secret: &[u8; 32],
+    encryption_secret: &[u8; 32],
+    seeds: &[[u8; 32]],
+    decrypt_balance: Option<Ciphertext>,
+    attempt_number: u64,
+) -> Result<BTreeMap<String, Json>, String> {
     let source_inputs = source_inputs(control_plan, values);
     let attempt_id = attempt(attempt_number);
     let binding: Json = serde_json::from_str(control_plan["binding"].as_str().unwrap()).unwrap();
@@ -1014,7 +1068,9 @@ fn collect_native_inputs(
     loop {
         let status = session.advance().unwrap();
         if status["status"] != "need_host" {
-            assert_eq!(status["status"], "completed", "{entry}: {status}");
+            if status["status"] != "completed" {
+                return Err(status.to_string());
+            }
             break;
         }
         let request = &status["request"];
@@ -1071,8 +1127,10 @@ fn collect_native_inputs(
     };
     assert_eq!(callbacks, expected_callbacks, "{entry} callbacks");
     let relation = binding["nativeRelation"].clone();
-    let completion = session.private_completion(&relation).unwrap();
-    serde_json::from_value(completion["inputs"].clone()).unwrap()
+    let completion = session
+        .private_completion(&relation)
+        .map_err(|error| error.to_string())?;
+    serde_json::from_value(completion["inputs"].clone()).map_err(|error| error.to_string())
 }
 
 fn initial_state(plan: &Plan) -> ChargedState<Db> {
@@ -3095,6 +3153,292 @@ fn confidential_token_sweep_native_observation() -> anyhow::Result<()> {
     let output = serde_json::to_string(&result)?;
     println!("{output}");
     if let Some(path) = std::env::var_os("NOCTIUM_SWEEP_RESULT") {
+        let path = std::path::PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh ConfidentialToken artifacts in NOCTIUM_TRANSFER_ARTIFACTS"]
+fn confidential_token_transfer_native_observation() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_TRANSFER_ARTIFACTS")
+            .expect("set the directory containing fresh ConfidentialToken artifacts"),
+    );
+    let alice_account_secret = [17u8; 32];
+    let alice_encryption_secret = [7u8; 32];
+    let bob_account_secret = [18u8; 32];
+    let bob_encryption_secret = [8u8; 32];
+    let alice = account_id(&alice_account_secret);
+    let bob = account_id(&bob_account_secret);
+    let alice_scalar = encryption_scalar(&alice_encryption_secret);
+    let bob_scalar = encryption_scalar(&bob_encryption_secret);
+    let generator = EmbeddedGroupAffine::generator();
+    let alice_key = generator * alice_scalar;
+    let bob_key = generator * bob_scalar;
+
+    let register_plan = generated_plan(&directory, "registerWithKey");
+    let mint_plan = generated_plan(&directory, "mint");
+    let sweep_plan = generated_plan(&directory, "sweep");
+    let transfer_plan = generated_plan(&directory, "transfer");
+    let transfer_control = generated_control(&directory, "transfer");
+    assert_eq!(transfer_plan.entrypoint, "transfer");
+    assert_eq!(
+        transfer_plan.target_profile.as_ref().unwrap()["ledger"],
+        "9.1.0.1"
+    );
+    assert_eq!(
+        transfer_plan.target_profile.as_ref().unwrap()["zkir"],
+        "3.2.1"
+    );
+
+    let mut state = initial_state(&register_plan);
+    for (sequence, account, account_secret, encryption_secret, public_key) in [
+        (
+            1,
+            alice,
+            &alice_account_secret,
+            &alice_encryption_secret,
+            alice_key,
+        ),
+        (2, bob, &bob_account_secret, &bob_encryption_secret, bob_key),
+    ] {
+        state = run_generated_entry(
+            &directory,
+            "registerWithKey",
+            BTreeMap::from([
+                ("accountId".into(), bytes(&account)),
+                ("pk".into(), point_json(public_key)),
+            ]),
+            account_secret,
+            encryption_secret,
+            &[],
+            sequence,
+            &state,
+        )
+        .map_err(anyhow::Error::msg)?
+        .0;
+    }
+
+    let mint_values = |prior_state: &ChargedState<Db>,
+                       recipient: &[u8; 32],
+                       amount: u64,
+                       recipient_key: EmbeddedGroupAffine| {
+        let previous_pending = map_record(&mint_plan, prior_state, "pending", recipient);
+        let mut values = BTreeMap::from([
+            ("recipient".into(), bytes(recipient)),
+            ("value".into(), json!(amount.to_string())),
+            ("recipientPk".into(), point_json(recipient_key)),
+            ("epoch".into(), json!("1")),
+        ]);
+        for (name, value) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
+            .into_iter()
+            .zip(previous_pending)
+        {
+            values.insert(name.into(), json!(field_decimal(value)));
+        }
+        values
+    };
+    state = run_generated_entry(
+        &directory,
+        "mint",
+        mint_values(&state, &alice, 12, alice_key),
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[[0x31u8; 32]],
+        3,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+    state = run_generated_entry(
+        &directory,
+        "mint",
+        mint_values(&state, &bob, 7, bob_key),
+        &bob_account_secret,
+        &bob_encryption_secret,
+        &[[0x32u8; 32]],
+        4,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+
+    let alice_balance_before =
+        ciphertext_from_fields(&map_record(&sweep_plan, &state, "balances", &alice), 0);
+    let alice_pending_before =
+        ciphertext_from_fields(&map_record(&sweep_plan, &state, "pending", &alice), 0);
+    let mut sweep_values = BTreeMap::from([("accountId".into(), bytes(&alice))]);
+    insert_ciphertext_inputs(&mut sweep_values, "balance", alice_balance_before);
+    insert_ciphertext_inputs(&mut sweep_values, "pending", alice_pending_before);
+    state = run_generated_entry(
+        &directory,
+        "sweep",
+        sweep_values,
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[],
+        5,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+
+    let alice_balance_before =
+        ciphertext_from_fields(&map_record(&sweep_plan, &state, "balances", &alice), 0);
+    let plaintext = |snapshot: &ChargedState<Db>, account: &[u8; 32], name: &str, key: EmbeddedFr| {
+        decrypt_small(
+            ciphertext_from_fields(&map_record(&transfer_plan, snapshot, name, account), 0),
+            key,
+            64,
+        )
+    };
+    let total_supply = |snapshot: &ChargedState<Db>| {
+        let StateValue::Cell(cell) = state_slot(&transfer_plan, snapshot, "totalSupply") else {
+            panic!("expected totalSupply cell")
+        };
+        let mut fields = Vec::new();
+        cell.value_only_field_repr(&mut fields);
+        field_decimal(fields[0])
+    };
+    let observe = |snapshot: &ChargedState<Db>| {
+        json!({
+            "aliceBalance": plaintext(snapshot, &alice, "balances", alice_scalar).to_string(),
+            "alicePending": plaintext(snapshot, &alice, "pending", alice_scalar).to_string(),
+            "bobBalance": plaintext(snapshot, &bob, "balances", bob_scalar).to_string(),
+            "bobPending": plaintext(snapshot, &bob, "pending", bob_scalar).to_string(),
+            "totalSupply": total_supply(snapshot)
+        })
+    };
+    let before = observe(&state);
+    assert_eq!(
+        before,
+        json!({
+            "aliceBalance": "12",
+            "alicePending": "0",
+            "bobBalance": "0",
+            "bobPending": "7",
+            "totalSupply": "19"
+        })
+    );
+    let bob_memos_before = memo_records(&transfer_plan, &state, &bob);
+    assert_eq!(bob_memos_before.0, 1);
+    let alice_history_before = (
+        memo_records(&transfer_plan, &state, &alice),
+        map_record(&transfer_plan, &state, "creditEpochs", &alice),
+    );
+    let bob_balance_before = map_record(&transfer_plan, &state, "balances", &bob);
+    let bob_epoch_before = map_record(&transfer_plan, &state, "creditEpochs", &bob);
+    assert_eq!(bob_epoch_before, vec![Fr::from(1u64)]);
+
+    let recipient_pending_before =
+        ciphertext_from_fields(&map_record(&transfer_plan, &state, "pending", &bob), 0);
+    let mut transfer_values = BTreeMap::from([
+        ("accountId".into(), bytes(&alice)),
+        ("recipient".into(), bytes(&bob)),
+        ("recipientPk".into(), point_json(bob_key)),
+        ("epoch".into(), json!("2")),
+    ]);
+    insert_ciphertext_inputs(&mut transfer_values, "balance", alice_balance_before);
+    insert_ciphertext_inputs(&mut transfer_values, "pending", recipient_pending_before);
+    let transfer_seed = [0x41u8; 32];
+    let transfer_inputs = |amount: &str| {
+        let mut values = transfer_values.clone();
+        values.insert("value".into(), json!(amount));
+        collect_native_inputs_result(
+            "transfer",
+            &transfer_control,
+            values,
+            &alice_account_secret,
+            &alice_encryption_secret,
+            &[transfer_seed],
+            Some(alice_balance_before),
+            6,
+        )
+    };
+    let execution = prepare(
+        &transfer_plan,
+        &transfer_inputs("5").map_err(anyhow::Error::msg)?,
+        &state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    assert_eq!(
+        check(&execution, &generated_circuit(&directory, "transfer"))?,
+        execution.activity_schedule
+    );
+    assert_eq!(execution.returns_json()["caller"], bytes(&alice));
+    let after_transfer = &execution.after.state;
+    assert_eq!(
+        map_record(&transfer_plan, after_transfer, "balances", &bob),
+        bob_balance_before
+    );
+    assert_eq!(
+        (
+            memo_records(&transfer_plan, after_transfer, &alice),
+            map_record(&transfer_plan, after_transfer, "creditEpochs", &alice),
+        ),
+        alice_history_before,
+        "transfer preserves Alice's memo history and credit epoch"
+    );
+    let bob_memos_after = memo_records(&transfer_plan, after_transfer, &bob);
+    assert_eq!(bob_memos_after.0, 2);
+    let transfer_memo = Memo {
+        ephemeral: point_from_coordinates(bob_memos_after.1[0][0], bob_memos_after.1[0][1]),
+        amount: bob_memos_after.1[0][2],
+    };
+    let delivered = decrypt_credit_memo(transfer_memo, bob_scalar, 64);
+    assert_eq!(delivered, 5);
+    assert_eq!(bob_memos_after.1[1], bob_memos_before.1[0]);
+    let bob_epoch_after = map_record(&transfer_plan, after_transfer, "creditEpochs", &bob);
+    assert_eq!(bob_epoch_after, vec![Fr::from(2u64)]);
+
+    let after = observe(after_transfer);
+    assert_eq!(
+        after,
+        json!({
+            "aliceBalance": "7",
+            "alicePending": "0",
+            "bobBalance": "0",
+            "bobPending": "12",
+            "totalSupply": "19"
+        })
+    );
+
+    let state_before_overspend = state.clone();
+    let overspend_rejection = transfer_inputs("13")
+        .expect_err("transfer of 13 must fail against Alice's 12-token snapshot");
+    let overspend_status: Json = serde_json::from_str(&overspend_rejection)?;
+    assert_eq!(overspend_status["status"], "failed");
+    assert_eq!(overspend_status["error"]["code"], "execution_rejected");
+    let overspend_state_unchanged = state == state_before_overspend;
+    assert!(overspend_state_unchanged);
+
+    let result = json!({
+        "observation": {
+            "before": before,
+            "after": after,
+            "returnedCaller": hex::encode(alice),
+            "memo": {
+                "bobCountBefore": bob_memos_before.0,
+                "bobCountAfter": bob_memos_after.0,
+                "transferredAmount": delivered.to_string(),
+            }
+        },
+        "rejection": {
+            "value": "13",
+            "rejected": true,
+            "error": overspend_status,
+            "stateUnchanged": overspend_state_unchanged
+        }
+    });
+    let output = serde_json::to_string(&result)?;
+    println!("{output}");
+    if let Some(path) = std::env::var_os("NOCTIUM_TRANSFER_RESULT") {
         let path = std::path::PathBuf::from(path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
