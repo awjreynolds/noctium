@@ -129,3 +129,48 @@ fn zero_sum_replay_then_positive_write_and_state_rejection_match_native_321() {
         })
     );
 }
+
+#[test]
+#[ignore = "requires freshly emitted BoundedScalars.apply Impact and ZKIR in NOCTIUM_BOUNDED_SCALARS_REPLAY_DIR"]
+fn bounded_scalar_255_plus_255_is_checked_and_wrong_public_sum_is_rejected() {
+    let (plan, circuit) = fixture();
+    let initial = create_state(&plan, &BTreeMap::from([("total".into(), json!("0"))])).unwrap();
+    total(&initial, 0);
+
+    let accepted = checked_call(&plan, &circuit, &initial, 510, 255, 255);
+    total(&accepted.after.state, 510);
+
+    // Use the same fresh state so the state guard passes. Only the public sum
+    // differs, and the native checker must reject the false value.
+    let execution = prepare(
+        &plan,
+        &inputs(509, 255, 255),
+        &initial,
+        &INITIAL_PARAMETERS,
+        ContractAddress::default(),
+    )
+    .expect("the mismatched public sum must reach the native checker");
+    assert!(execution.returns().is_empty());
+    assert!(execution.returns_json().is_empty());
+    let error = check(&execution, &circuit)
+        .expect_err("native checker must reject expected 509 for the sum 510");
+    assert_eq!(
+        error.to_string(),
+        "native circuit assertion or preimage check failed"
+    );
+    total(&initial, 0);
+
+    println!(
+        "{}",
+        json!({
+            "nativeRelease": noctium_runtime::profile::RELEASE,
+            "acceptedVector": {"expected": "510", "left": "255", "right": "255"},
+            "acceptedDecodedStateTotal": "510",
+            "committedCallReturns": [],
+            "wrongExpectedVector": {"expected": "509", "left": "255", "right": "255"},
+            "wrongExpectedRejectedAt": "checker",
+            "wrongExpectedCheckerError": error.to_string(),
+            "originalTotalAfterRejection": "0"
+        })
+    );
+}
