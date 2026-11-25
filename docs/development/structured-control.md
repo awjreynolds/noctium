@@ -127,12 +127,29 @@ NOCTIUM_GUARDED_READS_PARAMETER_CACHE=/path/to/verified/parameter-cache \
 NOCTIUM_GUARDED_READS_STATEMENT_FILE=/path/to/guarded-read-statement.json \
 NOCTIUM_GUARDED_READS_LOCALNET_RECEIPT=/path/to/guarded-read-receipt.json \
 cargo test --manifest-path runtime/Cargo.toml --locked \
-  --no-default-features --features zkir-321,localnet --lib proof::guarded_reads \
+  --no-default-features --features zkir-321,localnet \
+  --lib proof::guarded_reads::guarded_reads_generate_and_bind_a_native_v3_proof \
   -- --ignored --nocapture
 lake env lean --run tests/Issue43GuardedReads.lean \
   /path/to/fresh/ledger/artifacts/Issue43GuardedReads.update.impact.json \
   /path/to/fresh/ledger/artifacts/Issue43GuardedReads.update.zkir \
   /path/to/guarded-read-statement.json
+```
+
+The read-only receipt audit uses the retained development chain's finalized
+history. It decodes the exact deployment and call, checks their receipt
+identities and state bytes, and regenerates the verifier from the rebuilt ZKIR
+and checked SRS. The regenerated key must match the installed key at both
+blocks. The installed verifier checks the archived proof over all 107 ordered
+public fields extracted from the sealed call, then rejects a changed field.
+
+```sh
+NOCTIUM_GUARDED_READS_DIR=/path/to/fresh/ledger/artifacts \
+NOCTIUM_GUARDED_READS_SRS=/path/to/verified/bls_midnight_2p8 \
+NOCTIUM_GUARDED_READS_NODE=http://127.0.0.1:19944 \
+cargo test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib proof::guarded_reads::archive \
+  -- --ignored --nocapture
 ```
 
 Guarded writes and `require` also support partial scalar expressions. Inactive

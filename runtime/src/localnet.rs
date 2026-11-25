@@ -607,7 +607,7 @@ impl Node {
             max_replay_blocks,
         })
     }
-    fn check_runtime(&self, at: &str) -> Result<()> {
+    pub(crate) fn check_runtime(&self, at: &str) -> Result<()> {
         let code = hash_text(&self.rpc.call(
             "state_getStorageHash",
             json!(["0x3a636f6465", format!("0x{at}")]),
