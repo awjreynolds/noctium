@@ -73,6 +73,7 @@ theorem run_no_returns_all_none (ctx : EvalContext) (entry : Entrypoint)
         unshieldedOutputs := [],
         unshieldedSpendClaims := []} = .ok (orderedEnv, next) := by
     simp [runEffectsWithGuardsAndEnv, guardLength, guardsNone, orderedEffects]
-  simp [Entrypoint.run, disclosure, circuitRun, noReturns, effectsResult, bind_ok]
+  simp [Entrypoint.run, Entrypoint.evalReturns, disclosure, circuitRun, noReturns,
+    effectsResult, bind_ok]
 
 end Noctium.Verification.SourceReplayBoundary

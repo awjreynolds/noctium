@@ -272,6 +272,66 @@ def initialEffectTypeEnv (ep : Entrypoint) : TypeEnv :=
   ep.circuit.inputs.map (fun input => (input.name, input.ty)) ++
     ep.circuit.outputs.map (fun output => (output.name, output.ty))
 
+/-- Destination names introduced by scalar source state reads. -/
+def scalarReadDestinations (effects : List Effect) : List String :=
+  effects.filterMap fun effect => match effect with
+    | .readCell _ destination _ | .readMap _ destination .. => some destination
+    | _ => none
+
+private theorem lookup_none_fresh (env : TypeEnv) (name : String)
+    (absent : env.lookup name = none) : name ∉ env.map Prod.fst := by
+  intro member
+  obtain ⟨pair, present, same⟩ := List.mem_map.mp member
+  have different := List.lookup_eq_none_iff.mp absent pair present
+  simp [same] at different
+
+private theorem ValidatedEffects.scalarReadDestinations_fresh_unique
+    {state : List StateDecl} {initial final : TypeEnv} {effects : List Effect}
+    (chain : ValidatedEffects state initial effects final) :
+    (scalarReadDestinations effects).Nodup ∧
+      ∀ name ∈ scalarReadDestinations effects, name ∉ initial.map Prod.fst := by
+  induction chain with
+  | nil => simp [scalarReadDestinations]
+  | @readCell env final rest stateName destination ty declared fresh tail ih =>
+      have headNotInRest : destination ∉ scalarReadDestinations rest := by
+        intro member
+        exact ih.2 destination member (by simp)
+      constructor
+      · change (destination :: scalarReadDestinations rest).Nodup
+        exact List.nodup_cons.mpr ⟨headNotInRest, ih.1⟩
+      · intro name member
+        change name ∈ destination :: scalarReadDestinations rest at member
+        rcases List.mem_cons.mp member with same | restMember
+        · cases same
+          exact lookup_none_fresh _ _ fresh
+        · intro present
+          exact ih.2 name restMember (by simp [present])
+  | @readMap env final rest stateName destination keyTy valueTy key
+      declared keyValid fresh tail ih =>
+      have headNotInRest : destination ∉ scalarReadDestinations rest := by
+        intro member
+        exact ih.2 destination member (by simp)
+      constructor
+      · change (destination :: scalarReadDestinations rest).Nodup
+        exact List.nodup_cons.mpr ⟨headNotInRest, ih.1⟩
+      · intro name member
+        change name ∈ destination :: scalarReadDestinations rest at member
+        rcases List.mem_cons.mp member with same | restMember
+        · cases same
+          exact lookup_none_fresh _ _ fresh
+        · intro present
+          exact ih.2 name restMember (by simp [present])
+  | @require env final rest condition conditionValid tail ih =>
+      simpa [scalarReadDestinations] using ih
+  | @writeCell env final rest stateName ty value declared valueValid tail ih =>
+      simpa [scalarReadDestinations] using ih
+  | @writeMap env final rest stateName keyTy valueTy key value
+      declared keyValid valueValid tail ih =>
+      simpa [scalarReadDestinations] using ih
+  | @requireAbsent env final rest stateName keyTy valueTy key
+      declared keyValid tail ih =>
+      simpa [scalarReadDestinations] using ih
+
 private theorem effectBindings_validated (state : List StateDecl)
     (effect : Effect) (env : TypeEnv) (bindings : List (String × Ty))
     (scope : ScalarStateEffect effect)
@@ -577,5 +637,18 @@ theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
   exact ⟨final, forIn_validated_effects_at state ep ep.effects 0
     (initialEffectTypeEnv ep) final unguarded scalar (by
       simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)⟩
+
+/-- Successful lowering validates scalar source read destinations against the
+initial bindings and keeps distinct destinations across the effect sequence. -/
+theorem lower_scalar_read_destinations_fresh_unique (state : List StateDecl)
+    (ep : Entrypoint) (plan : Impact.Plan)
+    (accepted : Impact.lower state ep = .ok plan)
+    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects ep.effects) :
+    (scalarReadDestinations ep.effects).Nodup ∧
+      ∀ name ∈ scalarReadDestinations ep.effects,
+        name ∉ (initialEffectTypeEnv ep).map Prod.fst := by
+  obtain ⟨final, validated⟩ :=
+    lower_validated_effects state ep plan accepted unguarded scalar
+  exact ValidatedEffects.scalarReadDestinations_fresh_unique validated
 
 end Noctium.Verification.GenericStateEffectValidation

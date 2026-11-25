@@ -84,7 +84,7 @@ private theorem scalar_read_scope {effects : List Effect} (admitted : ScalarStat
     · cases head <;> constructor
     · exact ih found inTail
 
-private theorem unguarded_scope (entry : Entrypoint) (unguarded : entry.effectGuards = [])
+theorem unguarded_read_scope (entry : Entrypoint) (unguarded : entry.effectGuards = [])
     (admitted : ScalarStateEffects entry.effects) :
     GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx := by
   rw [unguarded]
@@ -130,7 +130,7 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
       GenericStateEncoding.encodeState state finalState = some finalSlots ∧
       final = ⟨[.vector finalSlots], finalReads⟩ ∧
       AgreesOnTypes finalTypes finalEnv (base ++ decoded) := by
-  have scope := unguarded_scope entry unguarded admitted
+  have scope := unguarded_read_scope entry unguarded admitted
   obtain ⟨finalTypes, validated⟩ := lower_validated_effects state entry plan lowered unguarded admitted
   obtain ⟨offsets, inputPlan, chunks, publicNative, segments, _, publicAccepted,
     chunkTrace, _, publicEvaluated, effectEvaluated, sequence⟩ :=

@@ -484,7 +484,7 @@ theorem apply_runs_when_enabled (input : Inputs)
   simp only [Except.bind, Bind.bind]
   simp only [state]
   rw [effectsSuccess']
-  simp [applyEntry, BoundedScalars, state, pure, Except.pure]
+  simp [Entrypoint.evalReturns, applyEntry, BoundedScalars, state, pure, Except.pure]
 
 theorem apply_success_iff (input : Inputs) (total : Nat) (outputs : EvalEnv)
     (after : LedgerState) (totalBound : total ≤ 510) (expectedBound : input.expected ≤ 510)
