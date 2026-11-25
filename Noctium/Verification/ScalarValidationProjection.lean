@@ -209,6 +209,7 @@ instruction proof from the state the producer actually built. -/
 structure NativeValidationDriverFacts (expected : Expected) (program : Json)
     (instructions rawInputs : Array Json) (seed final : State) : Prop where
   instructionsParsed : arrayField program "instructions" = .ok instructions
+  instructionCount : instructions.size ≤ maxInstructions
   rawInputsParsed : arrayField program "inputs" = .ok rawInputs
   rawInputCount : rawInputs.size = expected.rawInputs.length
   seededRawInputs : seedRawInputs expected rawInputs = .ok seed
@@ -274,9 +275,12 @@ theorem validate_driver_result {expected : Expected} {program : Json}
   have seedInputCount : seedState.inputCount = 0 := by
     change seedRawInputs expected rawInputs = .ok seedState at seedStateParsed
     exact seedRawInputs_inputCount seedStateParsed
+  have acceptedResources := ensure_ok.mp resourceParsed
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at acceptedResources
   refine ⟨instructions, rawInputs, seedState, finalState, ?_⟩
-  refine ⟨parsedInstructions, rawInputsParsed, ?_, ?_, ?_, ?_, finalOutputParsed, instructionTrace,
+  refine ⟨parsedInstructions, ?_, rawInputsParsed, ?_, ?_, ?_, ?_, finalOutputParsed, instructionTrace,
     ?_, ?_, ?_, ?_, ?_⟩
+  · exact acceptedResources.1.1.1.1
   · exact eq_of_beq (ensure_ok.mp rawInputCountParsed)
   · exact seedStateParsed
   · exact seedInputCount
