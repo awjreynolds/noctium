@@ -155,11 +155,9 @@ pub(super) fn native_statement<P: ledger::structure::ProofKind<Db>>(
     call: &ContractCall<P, Db>,
     parent_pedersen: Pedersen,
     fields: &[Fr],
+    cost_model: &onchain_runtime::cost_model::CostModel,
 ) -> Json {
     let parent_pedersen_bytes = serialized(&parent_pedersen);
-    let cost_model = &ledger::structure::INITIAL_PARAMETERS
-        .cost_model
-        .runtime_cost_model;
 
     json!({
         "address": call.address.0.0.to_vec(),
@@ -273,6 +271,7 @@ fn check_native_statement(
         source_call,
         intent.binding_commitment.into(),
         &preview.statement,
+        cost_model,
     );
     fs::write(
         path,

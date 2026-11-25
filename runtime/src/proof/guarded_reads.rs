@@ -4,6 +4,9 @@ use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
 use std::{env, fs, path::PathBuf};
 
+#[cfg(feature = "localnet")]
+mod localnet;
+
 fn freshly_emitted(suffix: &str) -> Vec<u8> {
     let directory = env::var_os("NOCTIUM_GUARDED_READS_DIR")
         .expect("set NOCTIUM_GUARDED_READS_DIR to freshly emitted Issue43 artifacts");
@@ -28,6 +31,31 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
     let k = circuit.k();
     eprintln!("guarded-read generated circuit k={k}");
 
+    #[cfg(feature = "localnet")]
+    let localnet_context = env::var_os("NOCTIUM_GUARDED_READS_NODE").map(|endpoint| {
+        futures::executor::block_on(localnet::connect(
+            endpoint.to_str().expect("node URL is UTF-8"),
+        ))
+        .expect("connect to the pinned funded localnet and read its proof cache")
+    });
+    let setup = (
+        &ledger::structure::INITIAL_PARAMETERS,
+        1_800_000_000,
+        None,
+        StdRng::from_seed([7; 32]),
+    );
+    #[cfg(feature = "localnet")]
+    let setup = match &localnet_context {
+        Some(context) => (
+            &*context.snapshot.state.parameters,
+            context.snapshot.block.tblock.to_secs() + 600,
+            Some(&context.snapshot.block),
+            StdRng::from_entropy(),
+        ),
+        None => setup,
+    };
+    let (ledger_parameters, ttl, block, mut rng) = setup;
+
     let srs_path = env::var_os("NOCTIUM_GUARDED_READS_SRS")
         .expect("set NOCTIUM_GUARDED_READS_SRS to the official SRS for this circuit k");
     let srs = fs::read(srs_path).expect("read official circuit SRS");
@@ -47,7 +75,7 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         prover,
         circuit,
         verifier,
-        parameters: ledger::structure::INITIAL_PARAMETERS.clone(),
+        parameters: ledger_parameters.clone(),
         entrypoint: plan.entrypoint.clone(),
     };
     let config = Config {
@@ -64,15 +92,14 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
     let (deployment, intent) = crate::assembly::prepare_call(
         &plan,
         &config,
-        &ledger::structure::INITIAL_PARAMETERS,
+        ledger_parameters,
         material.verifier.clone(),
         &material.circuit,
-        1_800_000_000,
-        None,
-        &mut StdRng::from_seed([7; 32]),
+        ttl,
+        block,
+        &mut rng,
     )
     .expect("native call uses account=7, enabled=true, marker=23 and no balances");
-    drop(deployment);
 
     let source_call = match intent.actions.iter_deref().next() {
         Some(ContractAction::Call(call)) => call.clone(),
@@ -135,6 +162,7 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
             &source_call,
             source_binding,
             &attached_fields,
+            &prepared.material.parameters.cost_model.runtime_cost_model,
         );
         fs::write(
             path,
@@ -159,4 +187,24 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
             .count(),
         attached_proof.0.len(),
     );
+
+    #[cfg(feature = "localnet")]
+    if let Some(context) = &localnet_context {
+        let mut receipt =
+            futures::executor::block_on(localnet::finalize(context, &deployment, proved.native()))
+                .expect("guarded-read proof finalizes on the pinned localnet");
+        receipt["impactSha256"] = json!(crate::artifacts::digest(&impact));
+        receipt["zkirSha256"] = json!(crate::artifacts::digest(
+            &prepared.material.native.ir_source
+        ));
+        if let Some(path) = env::var_os("NOCTIUM_GUARDED_READS_LOCALNET_RECEIPT") {
+            fs::write(
+                path,
+                serde_json::to_vec_pretty(&receipt).expect("receipt serializes"),
+            )
+            .expect("write public localnet evidence");
+        }
+        eprintln!("guarded-read localnet receipt: {receipt}");
+    }
+    drop(deployment);
 }
