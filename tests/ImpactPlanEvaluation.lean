@@ -75,12 +75,27 @@ def main (args : List String) : IO Unit := do
     28275337270660864951591803471226560440628912649504939734825220606033283957
   let activeBinding :=
     376973846635362786591406240642568956494276904876123793983990665364314846599
+  let some inactiveOperations := ImpactPlanAgreement.evaluatePlan 64 context disabled raw |
+    throw (IO.userError "inactive Impact plan rejected")
+  let some inactiveHeader := ImpactPlanStatement.headerFor inactiveInputs
+      inactiveOperations inactiveActivity |
+    throw (IO.userError "inactive call metadata cannot form a header")
+  unless inactiveHeader.bindingInput == inactiveBinding &&
+      inactiveHeader.communicationsCommitment == inactiveInputs.communication do
+    throw (IO.userError "derived inactive header differs from the pinned fields")
+  unless (ImpactPlanStatement.headerFor statementInputs inactiveOperations inactiveActivity).isNone do
+    throw (IO.userError "header accepted a stale native operation count")
   unless decide (statement disabled inactiveInputs =
       some ([inactiveBinding, inactiveInputs.communication] ++
         List.replicate 55 NativeRelation.zero)) do
     throw (IO.userError "inactive statement differs in header or skipped fields")
   let some activeOperations := ImpactPlanAgreement.evaluatePlan 64 context enabled raw |
     throw (IO.userError "active Impact plan rejected")
+  let some activeHeader := ImpactPlanStatement.headerFor statementInputs activeOperations activeActivity |
+    throw (IO.userError "active call metadata cannot form a header")
+  unless activeHeader.bindingInput == NativeRelation.scalar activeBinding &&
+      activeHeader.communicationsCommitment == statementInputs.communication do
+    throw (IO.userError "derived active header differs from the pinned fields")
   let expected : List Nat := [1, 3, 7, 1, 3]
   let writeFields : List Nat := expected.zipIdx.flatMap fun (value, index) =>
     [0x10, 1, 1, Field.modulus - 2, index,
@@ -105,16 +120,15 @@ def main (args : List String) : IO Unit := do
   if let some (circuit, active, inactive) := nativeStatements then
     discard <| checkNative active enabled bytes
     let fixture ← checkNative inactive disabled bytes
-    let some binding := fixture.fields.head? |
-      throw (IO.userError "inactive statement lacks its binding input")
-    let some operations := ImpactPlanAgreement.evaluatePlan 64 context disabled raw |
-      throw (IO.userError "inactive Impact plan rejected")
-    let some final := NativeState.run operations initial |
+    let some header := ImpactPlanStatement.headerFor fixture.inputs inactiveOperations inactiveActivity |
+      throw (IO.userError "inactive native call metadata cannot form a header")
+    let some final := NativeState.run inactiveOperations initial |
       throw (IO.userError "inactive Impact VM run rejected")
     let circuitBytes := (← IO.FS.readBinFile circuit).data.toList
     let some projection := GuardedStatementConsumption.fromArtifact circuitBytes
-        (fun _ => NativeRelation.zero) ⟨binding, fixture.communication⟩
-        ⟨operations.flatMap ImpactStatementScalar.opFields, final.reads.map NativeState.Cell.value⟩ |
+        (fun _ => NativeRelation.zero) header
+        ⟨inactiveOperations.flatMap ImpactStatementScalar.opFields,
+          final.reads.map NativeState.Cell.value⟩ |
       throw (IO.userError "inactive ZKIR rejected the modeled VM transcript streams")
     unless decide (projection.fields = fixture.fields ∧ projection.activity = inactiveActivity) do
       throw (IO.userError "inactive ZKIR differs from the native statement or Impact activity")
