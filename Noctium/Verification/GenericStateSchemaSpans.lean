@@ -1,4 +1,5 @@
 import Noctium.Verification.GenericStateVM
+import Noctium.Verification.GenericStateEvaluationCanonical
 
 namespace Noctium.Verification.GenericStateSchemaSpans
 open GenericStateEncoding NativeState
@@ -234,6 +235,108 @@ theorem readMap_source_step (ctx : EvalContext) (env : EvalEnv)
           pure, Except.pure]
       | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
         simp [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] at canonical
+
+private theorem source_readMap_step_result (ctx : EvalContext) (env : EvalEnv)
+    (state : LedgerState) (name destination : String)
+    (keyTy valueTy : Ty) (keyExpr : Expr keyTy)
+    (sourceAfter : SourceEffects.Frame)
+    (sourceStep : SourceEffects.step ctx (.readMap name destination keyTy valueTy keyExpr)
+      (env, state) = .ok sourceAfter) :
+    ∃ key entries raw value,
+      keyExpr.eval ctx env = .ok key ∧
+      state.maps.lookup name = some entries ∧
+      entries.lookup (Value.pack keyTy key) = some raw ∧
+      raw.as valueTy = some value ∧
+      sourceAfter = ((destination, Value.pack valueTy value) :: env, state) := by
+  cases keyEval : keyExpr.eval ctx env with
+  | error message =>
+    simp [SourceEffects.step, runEffectWithEnv, keyEval, bind, Bind.bind,
+      Except.bind] at sourceStep
+  | ok key =>
+    cases mapFound : state.maps.lookup name with
+    | none =>
+      simp [SourceEffects.step, runEffectWithEnv, keyEval, mapFound, bind,
+        Bind.bind, Except.bind, pure, Pure.pure, Except.pure, throw, throwThe] at sourceStep
+    | some entries =>
+      cases mapLookup : entries.lookup (Value.pack keyTy key) with
+      | none =>
+        simp [SourceEffects.step, runEffectWithEnv, keyEval, mapFound, mapLookup, bind,
+          Bind.bind, Except.bind, pure, Pure.pure, Except.pure, throw, throwThe] at sourceStep
+      | some raw =>
+        cases typed : raw.as valueTy with
+        | none =>
+          simp [SourceEffects.step, runEffectWithEnv, keyEval, mapFound,
+            mapLookup, typed, bind, Bind.bind, Except.bind, pure, Pure.pure,
+            Except.pure, throw, throwThe] at sourceStep
+        | some value =>
+          have reduced := sourceStep
+          simp only [SourceEffects.step, runEffectWithEnv, keyEval, mapFound,
+            mapLookup, typed, bind, Bind.bind, Except.bind, pure, Pure.pure,
+            Except.pure, throw, throwThe] at reduced
+          split at reduced
+          · simp at reduced
+          ·
+            have frame : sourceAfter =
+                ((destination, Value.pack valueTy value) :: env, state) := by
+              exact (Except.ok.inj reduced).symm
+            exact ⟨key, entries, raw, value, rfl, rfl, mapLookup, typed, frame⟩
+
+/-- A successful source map read determines the scalar key and stored value
+and constructs the exact native read over the same encoded root. -/
+theorem readMap_source_native (ctx : EvalContext) (env : EvalEnv)
+    (declarations : List StateDecl) (state : LedgerState)
+    (items : List Slot) (slot : Nat) (declaration : StateDecl)
+    (name destination : String) (keyTy valueTy : Ty) (keyExpr : Expr keyTy)
+    (sourceAfter : SourceEffects.Frame) (reads : List Cell)
+    (found : declarations[slot]? = some declaration)
+    (named : declaration.name = name)
+    (kind : declaration.kind = .map keyTy valueTy)
+    (encoded : encodeState declarations state = some items)
+    (keyAdmission : ScalarNormalization.ScalarExpression keyExpr)
+    (modulus : ctx.modulus = Field.modulus)
+    (sourceStep : SourceEffects.step ctx
+      (.readMap name destination keyTy valueTy keyExpr) (env, state) = .ok sourceAfter) :
+    ∃ key value,
+      keyExpr.eval ctx env = .ok key ∧
+      ScalarNormalization.Canonical keyTy key ∧
+      ScalarNormalization.Canonical valueTy value ∧
+      sourceAfter = ((destination, Value.pack valueTy value) :: env, state) ∧
+      run (GenericStateVM.readMapOps slot
+        (NativeRelation.scalar (number keyTy key))
+        (NativeRelation.scalar (number valueTy value)))
+        ⟨[.vector items], reads⟩ =
+          some ⟨[.vector items], reads ++
+            [field (NativeRelation.scalar (number valueTy value))]⟩ := by
+  obtain ⟨key, sourceEntries, raw, sourceValue, keyEval, sourceMap, sourceLookup,
+      sourceTyped, sourceFrame⟩ :=
+    source_readMap_step_result ctx env state name destination keyTy valueTy keyExpr
+      sourceAfter sourceStep
+  have keyCanonical :=
+    GenericStateEvaluationCanonical.expression_eval_canonical ctx env keyExpr
+      keyAdmission key modulus keyEval
+  obtain ⟨nativeEntries, mapped, nativeSlot⟩ := encoded_map_slot declarations
+    state items slot declaration name keyTy valueTy sourceEntries found named kind encoded sourceMap
+  obtain ⟨valueCell, valueEncoding⟩ := GenericStateEncoding.encodedMap_lookup_value
+    keyTy valueTy sourceEntries nativeEntries (Value.pack keyTy key) raw
+    mapped sourceLookup
+  obtain ⟨encodedValue, encodedTyped, valueCanonical, valueShape⟩ :=
+    encodeValue_source valueTy raw valueCell valueEncoding
+  have sameValue : sourceValue = encodedValue :=
+    Option.some.inj (sourceTyped.symm.trans encodedTyped)
+  subst sourceValue
+  have valueScalar : valueCell.value = NativeRelation.scalar (number valueTy encodedValue) :=
+    congrArg Cell.value valueShape
+  have mapLookup := sourceMap_lookup keyTy valueTy sourceEntries nativeEntries
+    key keyCanonical mapped
+  rw [sourceLookup] at mapLookup
+  simp only [Option.bind_some, valueEncoding, Option.map_some, valueScalar] at mapLookup
+  have nativeLookup : nativeEntries.lookup
+      (NativeRelation.scalar (number keyTy key)) =
+        some (NativeRelation.scalar (number valueTy encodedValue)) := mapLookup.symm
+  have read := GenericStateVM.readMap_exact items slot nativeEntries
+    (NativeRelation.scalar (number keyTy key))
+    (NativeRelation.scalar (number valueTy encodedValue)) reads nativeSlot nativeLookup
+  exact ⟨key, encodedValue, keyEval, keyCanonical, valueCanonical, sourceFrame, read⟩
 
 /-- A source absence check has the same checked native result for arbitrary
 declaration source spans. -/

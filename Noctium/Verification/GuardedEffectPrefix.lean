@@ -116,6 +116,18 @@ theorem appendEffect_readMap_operation_suffix (state : List StateDecl)
   cases resultAccepted
   exact ⟨slot, alignedKey, stored, rfl⟩
 
+/-- Plain Map reads append one descriptor for the actual destination. -/
+theorem appendEffect_readMap_read_suffix (state : List StateDecl)
+    (name destination : String) (keyTy valueTy : Ty) (key : Expr keyTy)
+    (before after : Impact.Plan)
+    (step : Impact.appendEffect state (.readMap name destination keyTy valueTy key)
+      before = .ok after) :
+    after.reads = before.reads ++ [{name := destination, ty := valueTy}] := by
+  simp only [Impact.appendEffect, bind_ok] at step
+  obtain ⟨_, _, _, _, _, _, result⟩ := step
+  cases result
+  rfl
+
 theorem appendEffect_writeMap_operation_suffix (state : List StateDecl)
     (name : String) (keyTy valueTy : Ty) (key : Expr keyTy)
     (value : Expr valueTy) (before after : Impact.Plan)
@@ -130,11 +142,13 @@ theorem appendEffect_writeMap_operation_suffix (state : List StateDecl)
   cases resultAccepted
   exact ⟨slot, _, stored, rfl⟩
 
-private theorem appendEffectWithActivity_none_operations
+/-- Without a guard, the wrapper retains the exact operations and reads
+from the source effect, including when an earlier effect had a guard. -/
+theorem appendEffectWithActivity_none_result
     (state : List StateDecl) (effect : Effect) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state effect none before = .ok after) :
     ∃ result, Impact.appendEffect state effect before = .ok result ∧
-      after.operations = result.operations := by
+      after.operations = result.operations ∧ after.reads = result.reads := by
   have shape : Impact.appendEffectWithActivity state effect none before = (do
       let result ← Impact.appendEffect state effect before
       if before.activityGuards.isEmpty then
@@ -147,8 +161,7 @@ private theorem appendEffectWithActivity_none_operations
   rw [shape, bind_ok] at accepted
   obtain ⟨result, appended, finished⟩ := accepted
   refine ⟨result, appended, ?_⟩
-  split at finished <;>
-    exact (congrArg Impact.Plan.operations (Except.ok.inj finished)).symm
+  split at finished <;> cases finished <;> exact ⟨rfl, rfl⟩
 
 /-- An unguarded production Cell write appends exactly its empty-plan
 operations, following the actual operations already emitted. -/
@@ -159,7 +172,7 @@ theorem appendEffectWithActivity_unguarded_writeCell_chunk
       none before = .ok after) :
     ∃ base, Impact.appendEffect state (.writeCell name ty value) {} = .ok base ∧
       after.operations = before.operations ++ base.operations := by
-  obtain ⟨result, appended, operations⟩ := appendEffectWithActivity_none_operations
+  obtain ⟨result, appended, operations, _⟩ := appendEffectWithActivity_none_result
     state (.writeCell name ty value) before after accepted
   simp only [Impact.appendEffect, bind_ok] at appended
   obtain ⟨slot, slotAccepted, stored, storeAccepted, finished⟩ := appended
@@ -179,7 +192,7 @@ theorem appendEffectWithActivity_unguarded_writeMap_chunk
       none before = .ok after) :
     ∃ base, Impact.appendEffect state (.writeMap name keyTy valueTy key value) {} = .ok base ∧
       after.operations = before.operations ++ base.operations := by
-  obtain ⟨result, appended, operations⟩ := appendEffectWithActivity_none_operations
+  obtain ⟨result, appended, operations, _⟩ := appendEffectWithActivity_none_result
     state (.writeMap name keyTy valueTy key value) before after accepted
   simp only [Impact.appendEffect, bind_ok] at appended
   obtain ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, finished⟩ := appended
@@ -376,6 +389,34 @@ theorem appendEffectWithActivity_readMap_operation_suffix
       exact (Except.ok.inj projected).symm
   exact ⟨slot, alignedKey, stored, wrappedOperations.trans operationsShape⟩
 
+/-- A guarded plain Map read keeps the actual destination and type after
+the lowering totalizes its key. The wrapper attaches the source condition. -/
+theorem appendEffectWithActivity_readMap_read_suffix
+    (state : List StateDecl) (name destination : String)
+    (keyTy valueTy : Ty) (key : Expr keyTy) (condition : Expr .bool)
+    (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state
+      (.readMap name destination keyTy valueTy key) (some condition) before = .ok after) :
+    after.reads = before.reads ++ [{name := destination, ty := valueTy, guard := some condition}] := by
+  unfold Impact.appendEffectWithActivity at step
+  simp only [bind_ok] at step
+  obtain ⟨lowered, lowerAccepted, raw, appendAccepted, wrapperAccepted⟩ := step
+  have loweredShape : ∃ guardedKey : Expr keyTy,
+      lowered = .readMap name destination keyTy valueTy guardedKey := by
+    simp only [Pure.pure, Except.pure] at lowerAccepted
+    cases lowerAccepted
+    exact ⟨_, rfl⟩
+  obtain ⟨guardedKey, rfl⟩ := loweredShape
+  have reads := appendEffect_readMap_read_suffix state name destination keyTy valueTy
+    guardedKey before raw appendAccepted
+  have readFound : raw.reads[before.reads.length]? = some {name := destination, ty := valueTy} := by
+    rw [reads]
+    simp
+  have projected := congrArg (Except.map Impact.Plan.reads) wrapperAccepted
+  simp only [readFound, Pure.pure, Except.pure, Except.map] at projected
+  rw [← Except.ok.inj projected]
+  simp [reads]
+
 theorem appendEffectWithActivity_writeMap_operation_suffix
     (state : List StateDecl) (name : String) (keyTy valueTy : Ty)
     (key : Expr keyTy) (value : Expr valueTy) (condition : Expr .bool)
@@ -404,5 +445,86 @@ theorem appendEffectWithActivity_writeMap_operation_suffix
     exact (Except.ok.inj projected).symm
   exact ⟨slot, keyPush, stored,
     wrappedOperations.trans operationsShape⟩
+
+/-- A guarded production Cell write changes operations and activity guards,
+but does not append a read descriptor. -/
+theorem appendEffectWithActivity_guarded_writeCell_no_reads
+    (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)
+    (condition : Expr .bool) (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state (.writeCell name ty value)
+      (some condition) before = .ok after) :
+    after.reads = before.reads := by
+  unfold Impact.appendEffectWithActivity at step
+  simp only [bind_ok] at step
+  rcases step with ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩
+  have effectShape : ∃ guardedValue,
+      lowered = .writeCell name ty guardedValue := by
+    simp only [Pure.pure, Except.pure] at loweredAccepted
+    cases loweredAccepted
+    exact ⟨_, rfl⟩
+  obtain ⟨guardedValue, rfl⟩ := effectShape
+  simp only [Impact.appendEffect, bind_ok] at appendAccepted
+  rcases appendAccepted with ⟨slot, slotAccepted, stored, storedAccepted, resultAccepted⟩
+  simp only [Pure.pure, Except.pure] at resultAccepted
+  have resultReads : result.reads = before.reads := by
+    have resultShape := Except.ok.inj resultAccepted
+    rw [← resultShape]
+  have projected := congrArg (Except.map Impact.Plan.reads) wrapperAccepted
+  simp only [Pure.pure, Except.pure, Except.map] at projected
+  exact (Except.ok.inj projected).symm.trans resultReads
+
+/-- A guarded production Map write changes operations and activity guards,
+but does not append a read descriptor. -/
+theorem appendEffectWithActivity_guarded_writeMap_no_reads
+    (state : List StateDecl) (name : String) (keyTy valueTy : Ty)
+    (key : Expr keyTy) (value : Expr valueTy) (condition : Expr .bool)
+    (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state
+      (.writeMap name keyTy valueTy key value) (some condition) before = .ok after) :
+    after.reads = before.reads := by
+  unfold Impact.appendEffectWithActivity at step
+  simp only [bind_ok] at step
+  rcases step with ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩
+  have effectShape : ∃ guardedKey : Expr keyTy, ∃ guardedValue : Expr valueTy,
+      lowered = .writeMap name keyTy valueTy guardedKey guardedValue := by
+    simp only [Pure.pure, Except.pure] at loweredAccepted
+    cases loweredAccepted
+    exact ⟨_, _, rfl⟩
+  obtain ⟨guardedKey, guardedValue, rfl⟩ := effectShape
+  simp only [Impact.appendEffect, bind_ok] at appendAccepted
+  rcases appendAccepted with
+    ⟨slot, slotAccepted, alignedKey, keyAccepted, stored, storedAccepted, resultAccepted⟩
+  simp only [Pure.pure, Except.pure] at resultAccepted
+  have resultReads : result.reads = before.reads := by
+    have resultShape := Except.ok.inj resultAccepted
+    rw [← resultShape]
+  have projected := congrArg (Except.map Impact.Plan.reads) wrapperAccepted
+  simp only [Pure.pure, Except.pure, Except.map] at projected
+  exact (Except.ok.inj projected).symm.trans resultReads
+
+/-- A guarded requirement becomes an assertion and preserves the existing
+read descriptors. -/
+theorem appendEffectWithActivity_guarded_require_no_reads
+    (state : List StateDecl) (condition required : Expr .bool)
+    (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state (.require required)
+      (some condition) before = .ok after) :
+    after.reads = before.reads := by
+  unfold Impact.appendEffectWithActivity at step
+  simp only [bind_ok] at step
+  rcases step with ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩
+  have effectShape : ∃ guardedRequired : Expr .bool,
+      lowered = .require guardedRequired := by
+    simp only [Pure.pure, Except.pure] at loweredAccepted
+    cases loweredAccepted
+    exact ⟨_, rfl⟩
+  obtain ⟨guardedRequired, rfl⟩ := effectShape
+  simp only [Impact.appendEffect] at appendAccepted
+  have resultAccepted := Except.ok.inj appendAccepted
+  have resultReads : result.reads = before.reads := by
+    rw [← resultAccepted]
+  have projected := congrArg (Except.map Impact.Plan.reads) wrapperAccepted
+  simp only [Pure.pure, Except.pure, Except.map] at projected
+  exact (Except.ok.inj projected).symm.trans resultReads
 
 end Noctium.Verification.GuardedEffectPrefix

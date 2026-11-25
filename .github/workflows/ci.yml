@@ -663,6 +663,7 @@ jobs:
             Noctium.Verification.GenericStateReadCandidates \
             Noctium.Verification.GenericStateEvaluationCanonical \
             Noctium.Verification.GenericStateReadAuthentication \
+            Noctium.Verification.GenericStateMapReadAuthentication \
             Noctium.Verification.GenericStateConverseRead \
             Noctium.Verification.GenericStateConverseAbsence \
             Noctium.Verification.GenericStateWriteSourceTrace \

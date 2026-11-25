@@ -23,14 +23,6 @@ private theorem sourceCanonical (ctx : EvalContext) (ty : Ty)
       maximumBound, valueBound]
   | _ => simp [Canonical, sourceNumber?] at canonical
 
-private theorem scalarCellType_of_canonical {ty : Ty} {value : ty.Denote}
-    (canonical : Canonical ty value) : Nonempty (ScalarCellType ty) := by
-  cases ty with
-  | native => exact ⟨.native⟩
-  | bool => exact ⟨.bool⟩
-  | uint maximum => exact ⟨.uint maximum canonical.2.1⟩
-  | _ => simp [Canonical, sourceNumber?] at canonical
-
 /-- A checked production cell-read segment authenticates the typed relation
 candidate against the current source ledger slot. Earlier writes are allowed,
 since the premise encodes the current tentative source state. -/
@@ -58,7 +50,7 @@ theorem readCell_candidate_source_step (ctx : EvalContext)
       .ok ((destination, Value.pack ty candidate) :: sourceEnv, current) ∧
     after = ⟨[.vector slots], reads ++
       [NativeState.field (scalar (GenericStateEncoding.number ty candidate))]⟩ := by
-  obtain ⟨scalarType⟩ := scalarCellType_of_canonical canonical
+  let scalarType := GenericStateReadCellEvaluation.scalarCellTypeOfCanonical canonical
   have alignment := GenericStateSchemaSpans.encoded_cell_alignment_none state current slots
     slot declaration ty declarationAt kind encoded
   have sourceFound : state.find? (·.name == name) = some declaration := by
@@ -106,11 +98,6 @@ private theorem append_readCell_readIdentity (state : List StateDecl)
   subst base
   exact ⟨_, rfl, rfl, rfl⟩
 
-private theorem sourceScalar_eq_field {ty : Ty} (scalarType : ScalarType ty)
-    (value : ty.Denote) :
-    sourceScalar? ty value = some (scalar (GenericStateEncoding.number ty value)) := by
-  cases scalarType <;> rfl
-
 /-- The read segment authenticates the exact witness scalar decoded from its
 sole produced read descriptor. The VM consumes the current ledger encoding,
 so this result also applies after an earlier source effect changes the cell. -/
@@ -144,14 +131,8 @@ theorem readCell_decoded_source_step (ctx : EvalContext)
   subst destination
   subst ty
   rw [singleton] at decoded
-  obtain ⟨first, tail, headDecoded, tailDecoded, environment⟩ :=
-    decodeReads_cons_success read [] witness candidateEnv decoded
-  have tailEmpty : tail = [] := by
-    change Except.ok [] = .ok tail at tailDecoded
-    exact (Except.ok.inj tailDecoded).symm
-  subst tail
-  obtain ⟨scalarType, firstValue⟩ := decodeRead_success read witness first headDecoded
-  subst first
+  obtain ⟨scalarType, environment⟩ :=
+    decodeReads_singleton_success read witness candidateEnv decoded
   let input := witness ("%input_" ++ read.name)
   let candidate := sourceValue scalarType input
   have lookup : candidateEnv.lookup read.name = some (Value.pack read.ty candidate) := by
@@ -162,7 +143,7 @@ theorem readCell_decoded_source_step (ctx : EvalContext)
     current slots name read.name read.ty base segment slot candidate reads after compiled
     found declaration declarationAt named kind encoded lookup canonical modulus evaluated checked
   have numberMatches := Option.some.inj
-    ((sourceScalar_eq_field scalarType candidate).symm.trans exactValue)
+    ((GenericStateEncoding.sourceScalar_eq_field scalarType candidate).symm.trans exactValue)
   exact ⟨candidate, sourceStep, exactValue, by rw [final, numberMatches]⟩
 
 /-- Authenticate the candidate decoded from the actual guarded read suffix.

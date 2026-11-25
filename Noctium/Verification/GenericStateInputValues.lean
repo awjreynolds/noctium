@@ -13,6 +13,10 @@ def scalarType? : (ty : Ty) → Option (ScalarType ty)
   | .uint maximum => some (.uint maximum)
   | .bytes _ | .opaqueBytes | .opaqueString | .jubjubScalar | .jubjubPoint | .foreign _ => none
 
+theorem scalarType?_supported {ty : Ty} (support : ScalarType ty) :
+    scalarType? ty = some support := by
+  cases support <;> rfl
+
 /-- Decode a relation scalar only when its source type has a scalar witness. -/
 def sourceValue {ty : Ty} : ScalarType ty → Scalar → ty.Denote
   | .native, number => number.val
@@ -129,6 +133,20 @@ theorem initialAliases_readAliases (entry : Entrypoint)
       readAliases (plan.reads.drop
         ((entry.circuit.inputs.filter (·.visibility == .«public»)).length)) := by
   simpa only [readAliases] using GenericStateAliases.initialAliases_eq entry plan
+
+/-- Decoding one existing descriptor supplies exactly its typed binding. -/
+theorem decodeReads_singleton_success (read : Backend.Impact.Read) (witness : Assignment)
+    (values : EvalEnv) (success : decodeReads [read] witness = .ok values) :
+    ∃ supported : ScalarType read.ty,
+      values = [(read.name, Value.pack read.ty
+        (sourceValue supported (witness ("%input_" ++ read.name))))] := by
+  obtain ⟨first, tail, headDecoded, tailDecoded, environment⟩ :=
+    decodeReads_cons_success read [] witness values success
+  have empty : tail = [] := by
+    change Except.ok [] = .ok tail at tailDecoded
+    exact (Except.ok.inj tailDecoded).symm
+  obtain ⟨support, firstValue⟩ := decodeRead_success read witness first headDecoded
+  exact ⟨support, by rw [environment, firstValue, empty]⟩
 
 theorem decodeReads_lookup (reads : List Backend.Impact.Read)
     (witness : Assignment) (values : EvalEnv)
