@@ -332,7 +332,7 @@ jobs:
           lake env lean tests/Issue43MapMembership.lean
           lake env lean tests/Issue43GuardedPartialWrites.lean
           lake build Noctium.Verification.GuardedScalarInput Noctium.Verification.GuardedImpactObservation \
-            Noctium.Verification.GuardedInputTranscript
+            Noctium.Verification.GuardedInputTranscript Noctium.Verification.GuardedZkirPlanSoundness
           lake env lean tests/Issue43GuardedReads.lean
           lake env lean tests/NativeCheckpoint.lean
           lake env lean tests/NativeCheckpointPartial.lean
