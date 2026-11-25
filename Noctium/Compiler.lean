@@ -357,11 +357,13 @@ private def operationJsonBare : Backend.Impact.Op → Json
   | .claimShielded kind digest => Json.mkObj [
       ("op", toJson ("claimShielded" : String)), ("kind", toJson kind.name),
       ("digest", nativeExpressionJson digest)]
-  | .receiveShieldedToMap slot nonce color amount commitment => Json.mkObj [
+  | .receiveShieldedToMap slot nonce color amount commitment keys => Json.mkObj ([
       ("op", toJson ("receiveShieldedToMap" : String)), ("slot", toJson slot),
       ("nonce", nativeExpressionJson nonce), ("color", nativeExpressionJson color),
       ("amount", nativeExpressionJson amount),
-      ("commitment", nativeExpressionJson commitment)]
+      ("commitment", nativeExpressionJson commitment)] ++
+      (if keys.isEmpty then [] else
+        [("keys", toJson (keys.map fun key => Json.mkObj (alignedJson key)))]))
   | .insertShieldedCoinMap slot key nonce color amount isContract recipient commitment keys => Json.mkObj ([
       ("op", toJson ("insertShieldedCoinMap" : String)), ("slot", toJson slot),
       ("key", nativeExpressionJson key), ("nonce", nativeExpressionJson nonce),
@@ -520,10 +522,13 @@ private def effectJson : Effect → Json
   | .claimShielded kind digest => Json.mkObj [
       ("op", toJson ("claimShielded" : String)), ("kind", toJson kind.name),
       ("digest", expressionJson digest)]
-  | .receiveShieldedToMap state nonce color amount selfAddress => Json.mkObj [
+  | .receiveShieldedToMap state nonce color amount selfAddress keys => Json.mkObj ([
       ("op", toJson ("receiveShieldedToMap" : String)), ("state", toJson state),
       ("nonce", expressionJson nonce), ("color", expressionJson color),
-      ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)]
+      ("amount", expressionJson amount), ("selfAddress", expressionJson selfAddress)] ++
+      (if keys.isEmpty then [] else
+        [("keys", toJson (keys.map fun key => match key with
+          | .mk _ value => expressionJson value))]))
   | .insertShieldedCoinMap state key nonce color amount isContract recipient keys => Json.mkObj ([
       ("op", toJson ("insertShieldedCoinMap" : String)), ("state", toJson state),
       ("key", expressionJson key), ("nonce", expressionJson nonce), ("color", expressionJson color),

@@ -213,6 +213,7 @@ jobs:
           lake env lean tests/FixedBytesRecordCell.lean
           lake env lean tests/NativeStandaloneMints.lean
           lake env lean tests/ShieldedReceive.lean
+          lake env lean tests/NestedShieldedReceive.lean
           lake env lean tests/FundedShieldedReceive.lean
           lake env lean tests/ShieldedWalletMint.lean
           lake env lean tests/ShieldedSpend.lean

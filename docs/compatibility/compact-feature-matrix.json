@@ -6758,7 +6758,7 @@
       "layer": "standard-library",
       "surface": "receiveShielded",
       "noctiumStatus": "related-subset",
-      "notes": "The unguarded native receive finalizes on Ledger 9.1.0.1 for a same-call mint or one equal-value wallet-owned input. The wallet test rejects unequal value and replay. Additional settlement shapes remain open.",
+      "notes": "The unguarded native receive finalizes on Ledger 9.1.0.1 for a same-call mint or one equal-value wallet-owned input. The wallet test rejects unequal value and replay. Fresh Ledger 9 and ZKIR 3.2.1 artifacts receive directly into the coin Map under one Bytes32 parent. The native check verifies the exact booked index, preserves sibling coins and owners, and rejects an absent parent, duplicate nonce, or missing or wrong booking. Funded evidence covers the root receive. Additional settlement shapes remain open.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6774,6 +6774,8 @@
       "observedEvidence": [
         "docs/development/wallet-shielded-receive-localnet-receipt.json",
         "docs/development/shielded-receive-localnet-receipt.json",
+        "tests/NestedShieldedReceive.lean",
+        "runtime/tests/nested_shielded_receive.rs",
         "tests/ShieldedReceive.lean",
         "runtime/tests/shielded_receive.rs",
         "docs/development/compact-shielded-coin-map.md"

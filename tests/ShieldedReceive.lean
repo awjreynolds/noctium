@@ -35,7 +35,7 @@ private def shieldedReceiveEntry : Entrypoint :=
   shieldedReceiveEntry.effectGuards.all Option.isNone
 #guard match shieldedReceiveEntry.effects with
   | [.memberPath "pot" _ [_], .require _, .readContractAddress _,
-      .receiveShieldedToMap "pot" _ _ _ _] => Bool.true
+      .receiveShieldedToMap "pot" _ _ _ _ []] => Bool.true
   | _ => Bool.false
 #guard (Disclosure.entrypoint shieldedReceiveEntry).isOk
 #guard (shieldedReceiveEntry.validate Capabilities.source ShieldedReceive.state).isOk
@@ -86,8 +86,8 @@ private def hasCompactReceiveIndex (operation : Backend.Impact.Op) : _root_.Bool
 private def shieldedReceiveUndisclosed : Entrypoint :=
   {shieldedReceiveEntry with effects := shieldedReceiveEntry.effects.map fun effect =>
     match effect with
-    | .receiveShieldedToMap state _ _ amount selfAddress =>
-        .receiveShieldedToMap state (.ref "nonce") (.ref "color") amount selfAddress
+    | .receiveShieldedToMap state _ _ amount selfAddress keys =>
+        .receiveShieldedToMap state (.ref "nonce") (.ref "color") amount selfAddress keys
     | other => other}
 
 #guard match Disclosure.entrypoint shieldedReceiveUndisclosed with

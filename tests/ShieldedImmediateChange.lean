@@ -50,7 +50,7 @@ private def isDisclosedPathReference (key : PathKey) (name : String) : _root_.Bo
 
 private def receivesMintedCoin (effect : Effect) : _root_.Bool :=
   match effect with
-  | .receiveShieldedToMap state nonce color amount address =>
+  | .receiveShieldedToMap state nonce color amount address _ =>
       state == "pot" &&
       isDisclosedReference nonce "nonce" &&
       isDisclosedReference color "color" &&
@@ -74,7 +74,7 @@ private def sendsRecordedCoin (effect : Effect) : _root_.Bool :=
 
 private def receivesBookedChange (effect : Effect) : _root_.Bool :=
   match effect with
-  | .receiveShieldedToMap state _ color _ address =>
+  | .receiveShieldedToMap state _ color _ address _ =>
       state == "pot" &&
       isReference color "noctium_send_coin_5_color" &&
       isReference address "noctium_send_address_7"
