@@ -1762,6 +1762,8 @@ def LedgerValueType.validate (caps : Capabilities) (schema : LedgerValueType) : 
   | .map (.bytes 32) (.scalar .opaqueString) => Ty.validate caps .opaqueString
   | .map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString)) =>
     Ty.validate caps .opaqueString
+  | .map (.bytes 32) (.map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString))) =>
+    Ty.validate caps .opaqueString
   | .map (.bytes 32) (.list _ (.scalar .opaqueString)) => Ty.validate caps .opaqueString
   | _ => nested 0 schema
 where

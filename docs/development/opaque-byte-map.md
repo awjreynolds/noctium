@@ -171,6 +171,52 @@ input type and checks both Bytes32 keys and the matching insertion
 depth. This evidence covers the in-process native relation and state
 transition. [Lean fixture](../../tests/NestedOpaqueMap.lean) · [Compact oracle](../../tests/compact/nested-opaque-map.mjs) · [Native checker](../../runtime/tests/nested_opaque_map.rs)
 
+### Opaque strings below two Bytes32 parents
+
+`tree deepStringBuckets : Bytes32 => Bytes32 => Bytes32 => OpaqueString`
+uses the first two keys to find the parent Maps and the last key to find
+the string. The store initializes each missing parent and overwrites only
+the selected leaf. Both replays use key `0x44` repeated 32 times across
+three paths. Owner and group keys repeat the indicated byte 32 times.
+
+| Owner | Group | Observed value |
+| --- | --- | --- |
+| `0x11` | `0x77` | `A\0λ雪`, then `overwritten\0é` |
+| `0x11` | `0x88` | `group🌙` |
+| `0x22` | `0x77` | `owner🦊` |
+
+`\0` denotes an embedded NUL. Both replays preserve the sibling group and
+owner after the overwrite. Strict reads reject a missing leaf, group or
+owner. Noctium stores the exact UTF-8 bytes in a single FAB Compress atom
+and checks the public Compress field against its emitted ZKIR relation.
+This is an in-process ledger state and circuit check for the listed paths.
+
+Use Compact 0.36.1 (`7fa3a117c`) and Compact Runtime 0.21.0 for the reference,
+and Ledger 9.1.0.1 / ZKIR 3.2.1 for Noctium. The same run includes the
+existing one-parent string and byte cases.
+[Compact release](https://github.com/LFDT-Minokawa/compact/releases/tag/compactc-v0.36.1) ·
+[Lean fixture](../../tests/NestedOpaqueMap.lean) ·
+[Compact reference](../../tests/compact/nested-opaque-map.mjs) ·
+[Native check](../../runtime/tests/nested_opaque_map.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/nested-opaque-map.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/nested-opaque-map.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/NestedOpaqueMap.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_NESTED_OPAQUE_MAP_DIR="$scratch/native" \
+NOCTIUM_NESTED_OPAQUE_MAP_COMPACT_JSON="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test nested_opaque_map \
+  nested_opaque_maps_match_compact_and_bind_exact_compress_payloads -- --ignored --exact
+```
+
 ### Opaque Maybe values
 
 Readable witness circuits accept `some(value)` and `none(OpaqueString)` or
