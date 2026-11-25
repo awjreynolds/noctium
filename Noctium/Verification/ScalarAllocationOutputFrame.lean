@@ -629,7 +629,7 @@ private theorem scalarOutput_nativeReturnFields (output : Output)
     | uint maximum => exact ⟨.cast .native value, rfl,
         ScalarNormalization.ScalarExpression.cast value (.uint maximum) .native admitted⟩
 
-private theorem scalarReturnPreflight_preservesOutputCapacityFrame
+theorem scalarReturnPreflight_preservesOutputCapacityFrame
     (output : Output) (scalarType : ScalarNormalization.ScalarType output.ty) :
     Zkir.PreservesOutputCapacityFrame (Zkir.lowerReturnPreflight output) := by
   cases output with
@@ -637,7 +637,7 @@ private theorem scalarReturnPreflight_preservesOutputCapacityFrame
     cases scalarType <;>
       simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
 
-private theorem scalarReturnFields_preservesOutputCapacityFrame
+theorem scalarReturnFields_preservesOutputCapacityFrame
     (output : Output) (scalarType : ScalarNormalization.ScalarType output.ty)
     (expressionAdmission : ScalarNormalization.ScalarExpression output.value) :
     ∀ projections, output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
