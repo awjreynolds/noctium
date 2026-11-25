@@ -103,6 +103,32 @@ inactive reads. The verifier rejects the same proof after changing the active
 marker field. Lean checks the final state and read order in its VM model and
 matches all 107 public fields against the attached call.
 
+The same fixture has an opt-in path for the funded development genesis. Use the
+freshly compiled 3.2.1 artifacts, the official k=8 SRS and the verified Dust
+parameter cache. The SDK proves, funds and submits from Rust and checks the
+deployment and call receipts against the predicted native state bytes.
+The statement fixture records Noop costs from the node snapshot used to
+prepare the proof. Ledger 9 localnet finalized the deployment at block 150
+and the call at block 153. The finalized state kept marker 23 and stored 99
+for account 7. Lean matched all 107 public fields from the same call.
+[Localnet receipt](native-guarded-read-localnet-receipt.json)
+
+```sh
+NOCTIUM_GUARDED_READS_DIR=/path/to/fresh/ledger/artifacts \
+NOCTIUM_GUARDED_READS_SRS=/path/to/verified/bls_midnight_2p8 \
+NOCTIUM_GUARDED_READS_SRS_SHA256=909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933 \
+NOCTIUM_GUARDED_READS_NODE=http://127.0.0.1:19944 \
+NOCTIUM_GUARDED_READS_PARAMETER_CACHE=/path/to/verified/parameter-cache \
+NOCTIUM_GUARDED_READS_STATEMENT_FILE=/path/to/guarded-read-statement.json \
+NOCTIUM_GUARDED_READS_LOCALNET_RECEIPT=/path/to/guarded-read-receipt.json \
+cargo test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib proof::guarded_reads \
+  -- --ignored --nocapture
+lake env lean --run tests/Issue43GuardedReads.lean \
+  /path/to/fresh/ledger/artifacts/Issue43GuardedReads.update.impact.json \
+  /path/to/guarded-read-statement.json
+```
+
 Guarded writes and `require` also support partial scalar expressions. Inactive
 unsigned subtraction, narrowing casts and inline `assertThen` use safe native
 defaults. Active expressions retain their original rejection behavior. The

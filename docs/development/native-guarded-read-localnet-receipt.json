@@ -1,0 +1,36 @@
+{
+  "call": {
+    "blockHash": "bfdf59eac795033f866106c94e0a56bb61d9f42fdb0045a96677822679d64257",
+    "event": "Call",
+    "extrinsicHash": "9725013cd2264a15df76439493e6ba92ee852b0e00e1378d914e29ca4835bec5",
+    "height": 153,
+    "stateSha256": "f57d19a576471b946b88e07390b8057b400e945b0765a038d89755da069a9b75",
+    "transactionId": "ee45a9311f6550204924731f387568f334dfb61d61459c295f9c429be7199347"
+  },
+  "chain": {
+    "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+    "networkId": "undeployed",
+    "profile": "midnight-ledger-9-zkir-3.2.1",
+    "specVersion": 2001100,
+    "transactionVersion": 4
+  },
+  "contractAddress": "cfefc529700f010162d5fc6376f0fda56eb0fbd652078e700caa6dbd83df046a",
+  "deployment": {
+    "blockHash": "6881b8d66ff3205b22c2cd0ae3b4012183d45878aa1a29bf5da411583dcb5363",
+    "event": "Deploy",
+    "extrinsicHash": "46f08e0feea0557637b002177fe2efa3332e69d5bc932e0b90064a96c598887f",
+    "height": 150,
+    "stateSha256": "44e657ed76a3dbe6e8f933d9cd021a4471bcd36e0cfad9c1b4d617fada31d97a",
+    "transactionId": "8bc3c261a8b1698e76b6ccdff4881043736cfff054475300e67bced7ccd760ff"
+  },
+  "impactSha256": "54d7d3ba8648abad66a440a9fa4b3105c5a50bbc7a650eba4bbbc22078d43fd3",
+  "observedState": {
+    "balances": {
+      "7": "99"
+    },
+    "blockHash": "bfdf59eac795033f866106c94e0a56bb61d9f42fdb0045a96677822679d64257",
+    "height": 153,
+    "marker": "23"
+  },
+  "zkirSha256": "1b46ec41d61456418779c91a63a3d85096d2dc769d31362980f6f9df511fff4c"
+}
