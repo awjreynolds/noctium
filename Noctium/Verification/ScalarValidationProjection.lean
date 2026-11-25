@@ -322,23 +322,35 @@ theorem checked_scalar_input_bound {state : State} {requirement : InputRequireme
     obtain ⟨_, boundChecked, _⟩ := bind_ok.mp tail
     simpa [shape] using boundChecked
 
-/-- Read the bound from the definition whose source term is the accepted
-input. The partial scalar interpreter represents that term by its input. -/
+/-- A checked source range has a scalar meaning and satisfies its bound.
+For a nonliteral term the producer must have checked a matching definition. -/
+theorem checked_bound_meaning {hash : Hash} {inputs witness : Assignment}
+    {state : State} {source : Backend.Native.Term} {maximum : Nat}
+    (meaning : StateMeaning hash inputs witness state)
+    (checked : checkBound state source maximum = .ok ()) :
+    ∃ value, interpret hash inputs source = some value ∧ value.val ≤ maximum := by
+  have bounded := ensure_ok.mp checked
+  cases source
+  next literal =>
+    exact ⟨scalar literal, interpret_constant hash inputs literal,
+      Nat.le_trans (ScalarValidationMeaning.scalar_le literal) (of_decide_eq_true bounded)⟩
+  all_goals
+    obtain ⟨⟨identifier, fact⟩, present, fields⟩ := List.any_eq_true.mp bounded
+    have ⟨term, bound⟩ := Bool.and_eq_true_iff.mp fields
+    have factMeaning := meaning identifier fact present
+    have sameTerm := eq_of_beq term
+    exact ⟨witness identifier, sameTerm ▸ factMeaning.term,
+      Nat.le_trans factMeaning.bound (of_decide_eq_true bound)⟩
+
+/-- The partial scalar interpreter represents an accepted input term by its input. -/
 theorem input_bound_of_state_meaning {hash : Hash} {inputs witness : Assignment}
     {state : State} {name : String} {maximum : Nat}
     (meaning : StateMeaning hash inputs witness state)
     (checked : checkBound state (.input name) maximum = .ok ()) :
     (inputs name).val ≤ maximum := by
-  unfold checkBound at checked
-  obtain ⟨⟨identifier, fact⟩, present, foundFields⟩ :=
-    List.any_eq_true.mp (ensure_ok.mp checked)
-  have ⟨term, bound⟩ := Bool.and_eq_true_iff.mp foundFields
-  have factMeaning := meaning identifier fact present
-  have sameValue : inputs name = witness identifier := by
-    have sameTerm : fact.term = .input name := eq_of_beq term
-    simpa [sameTerm, interpret_input] using factMeaning.term
-  rw [sameValue]
-  exact Nat.le_trans factMeaning.bound (of_decide_eq_true bound)
+  obtain ⟨value, term, bound⟩ := checked_bound_meaning meaning checked
+  have sameValue : inputs name = value := by simpa only [interpret_input, Option.some.injEq] using term
+  simpa only [sameValue] using bound
 
 /-- Recover a source scalar bound from an accepted program and the meaning of
 its final producer state. The requirement may come from either input domain. -/
@@ -354,6 +366,18 @@ theorem NativeValidationDriverFacts.inputBound
     (inputs requirement.identifier).val ≤ sourceMaximum requirement.ty :=
   input_bound_of_state_meaning meaning
     (checked_scalar_input_bound (driver.inputChecks requirement present) nonforeign ordinary)
+
+/-- Every source range requirement checked by the native driver is satisfied
+by the scalar interpretation of its accepted final state. -/
+theorem NativeValidationDriverFacts.rangeRequirements
+    {expected : Expected} {program : Json} {instructions rawInputs : Array Json}
+    {seed final : State} {hash : Hash} {inputs witness : Assignment}
+    (driver : NativeValidationDriverFacts expected program instructions rawInputs seed final)
+    (meaning : StateMeaning hash inputs witness final) :
+    ∀ requirement ∈ expected.bounds,
+      ∃ value, interpret hash inputs requirement.1 = some value ∧ value.val ≤ requirement.2 := by
+  intro requirement present
+  exact checked_bound_meaning meaning (driver.bounds requirement present)
 
 /-- The old empty-state consumer is valid precisely when the actual validator
 has no raw call inputs to seed. -/
