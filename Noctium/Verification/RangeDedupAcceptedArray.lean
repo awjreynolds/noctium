@@ -5,6 +5,7 @@ import Noctium.Verification.RangeDedupAssertMeaning
 import Noctium.Verification.RangeDedupWholeTrace
 import Noctium.Verification.RangeDedupKernel
 import Noctium.Verification.ScalarValidationNativeDefinitions
+import Noctium.Verification.ScalarValidationHashMeaning
 import Noctium.Verification.ScalarValidationOutputMeaning
 import Noctium.Verification.ScalarValidationProjectionComparison
 import Noctium.Verification.ScalarValidationOpcodeProfile
@@ -21,6 +22,7 @@ open Noctium.Verification.ScalarValidationMeaning
 open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeLoop
 open Noctium.Verification.ScalarValidationNativeDefinitions
+open Noctium.Verification.ScalarValidationHashMeaning
 open Noctium.Verification.ScalarValidationOutputMeaning
 open Noctium.Verification.ScalarValidationProjection
 open Noctium.Verification.ScalarValidationProjectionComparison
@@ -67,6 +69,11 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (opcode : Backend.Native.stringField raw "op" = .ok "not")
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.not value output))
       (holds : Instruction.Holds hash witness (.not value output)) :
+      AcceptedMeaningStep hash witness raw
+  | transientHash {values : List Operand} {output : String}
+      (opcode : Backend.Native.stringField raw "op" = .ok "transient_hash")
+      (decoded : NativeRelationJson.decodeInstruction raw = .ok (.hash values output))
+      (holds : Instruction.Holds hash witness (.hash values output)) :
       AcceptedMeaningStep hash witness raw
   | nativeSelect {condition yes no : Operand} {output : String}
       (opcode : Backend.Native.stringField raw "op" = .ok "cond_select")
@@ -613,6 +620,11 @@ private theorem acceptedMeaningStep_preserves
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
     exact ⟨meaningNext, definitionsNext, preservePrefix (defineResult_assertionCount defined)⟩
+  | transientHash opcode decoded holds =>
+    obtain ⟨nextMeaning, nextDefinitions⟩ :=
+      accepted_hash_step_meaning meaning definitions opcode decoded holds accepted
+    obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+    exact ⟨nextMeaning, nextDefinitions, preservePrefix (defineResult_assertionCount defined)⟩
   | @nativeSelect condition yes no output opcode decoded holds =>
     obtain ⟨conditionFact, yesFact, noFact, fact, conditionAccepted,
       yesAccepted, noAccepted, _conditionNative, _yesNative, _noNative, _conditionBound,
@@ -758,6 +770,10 @@ theorem acceptedMeaningStep_groupCount_step
   | @logicalNot _ _ opcode _ _ =>
     obtain ⟨_, _, _, _, _, _, defined⟩ :=
       accepted_not_components definitions opcode accepted
+    rw [defineResult_groupCount defined]
+    simp [impactOpcodeRow, opcode]
+  | transientHash opcode _ _ =>
+    obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
     rw [defineResult_groupCount defined]
     simp [impactOpcodeRow, opcode]
   | @nativeSelect _ _ _ _ opcode _ _ =>
@@ -1163,6 +1179,7 @@ theorem nativeDefinitionStep_supportsMeaning {raw : Json} {instruction : Instruc
       exact .lessThan opcode decoded (holds _ decoded)
     | assertion condition opcode => exact .assertion opcode decoded (holds _ decoded)
     | testEq a b output opcode => exact .testEq opcode decoded (holds _ decoded)
+    | hash values output opcode => exact .transientHash opcode decoded (holds _ decoded)
     | copy source destination opcode => exact .copy opcode decoded (holds _ decoded)
     | impact guard inputs opcode => exact .impact opcode decoded
     | output values opcode => exact .output opcode decoded

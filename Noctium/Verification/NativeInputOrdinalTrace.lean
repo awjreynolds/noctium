@@ -9,6 +9,7 @@ namespace Noctium.Verification.NativeInputOrdinalTrace
 open Lean Backend.Native NativeRelation NativeRelationJson
 open Noctium.Verification.NativeInputOrdinal
 open Noctium.Verification.ScalarValidationArithmeticLoop
+open Noctium.Verification.ScalarValidationHashMeaning
 open Noctium.Verification.ScalarValidationNativeDefinitions
 open Noctium.Verification.ScalarValidationNativeLoop
 open Noctium.Verification.ScalarValidationOpcodeProfile
@@ -97,6 +98,11 @@ theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expect
       simp [strictInstructionInputDescriptors]
     | impact _ _ opcode =>
       have unchanged := accepted_impact_inputCount opcode accepted
+      rw [unchanged]
+      simp [strictInstructionInputDescriptors]
+    | hash _ _ opcode =>
+      obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+      have unchanged := (defineResult_counters defined).2
       rw [unchanged]
       simp [strictInstructionInputDescriptors]
     | output _ opcode =>

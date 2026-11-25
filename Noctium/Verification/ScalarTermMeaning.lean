@@ -11,6 +11,12 @@ unknown operations have no scalar interpretation. -/
 def interpret? (hash : Hash) (inputs : Assignment) : Term → Option Scalar
   | .constant value => some (scalar value)
   | .input name => some (inputs name)
+  | .unary "transient_hash_conditional_swap" (.select condition left right) => do
+    let condition ← interpret? hash inputs condition
+    let left ← interpret? hash inputs left
+    let right ← interpret? hash inputs right
+    if condition = one then some (hash [left, right])
+    else some (hash [right, left])
   | .unary opcode value => do
     let value ← interpret? hash inputs value
     if opcode == "neg" then some (scalar (Field.modulus - value.val))
@@ -32,6 +38,36 @@ def interpret? (hash : Hash) (inputs : Assignment) : Term → Option Scalar
     let values ← values.mapM (interpret? hash inputs)
     some (hash values)
   | _ => none
+
+/-- A recognized conditional-swap marker has the same scalar meaning as the
+two mirrored select terms inside the hash. Both arms are interpreted before
+the condition chooses their hash order. -/
+theorem interpret?_conditionalSwapHash (hash : Hash) (inputs : Assignment)
+    {terms : List Term} {result : Term}
+    (recognized : Backend.Native.conditionalSwapHash? terms = some result) :
+    interpret? hash inputs result = interpret? hash inputs (.hash terms) := by
+  obtain ⟨condition, left, right, termsEq, resultEq⟩ :=
+    Backend.Native.conditionalSwapHash_shape terms result recognized
+  subst terms
+  subst result
+  cases conditionEval : interpret? hash inputs condition with
+  | none => simp [interpret?, conditionEval]
+  | some conditionValue =>
+    by_cases conditionIsOne : conditionValue = one
+    · cases leftEval : interpret? hash inputs left with
+      | none => simp [interpret?, conditionEval, conditionIsOne, leftEval]
+      | some leftValue =>
+        cases rightEval : interpret? hash inputs right with
+        | none => simp [interpret?, conditionEval, conditionIsOne, leftEval, rightEval]
+        | some rightValue =>
+          simp [interpret?, conditionEval, conditionIsOne, leftEval, rightEval]
+    · cases leftEval : interpret? hash inputs left with
+      | none => simp [interpret?, conditionEval, conditionIsOne, leftEval]
+      | some leftValue =>
+        cases rightEval : interpret? hash inputs right with
+        | none => simp [interpret?, conditionEval, conditionIsOne, leftEval, rightEval]
+        | some rightValue =>
+          simp [interpret?, conditionEval, conditionIsOne, leftEval, rightEval]
 
 /-- Folding a select with equal arms preserves its scalar meaning. -/
 theorem interpret_selectTerm (hash : Hash) (inputs : Assignment)
