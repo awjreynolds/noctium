@@ -13,17 +13,17 @@ git clone https://github.com/awjreynolds/noctium.git
 cd noctium
 ```
 
+For HTTPS pushes, run `gh auth setup-git --hostname github.com` to use your GitHub CLI credentials with Git.
+
 If you contribute through a fork, replace `git clone` with `gh repo fork awjreynolds/noctium --clone`. Your fork is `origin` and Noctium is `upstream`. Ask a maintainer to assign your issue if you lack permission to claim it. [Set up your agent](#set-up-your-agent), then open it from the repository root.
 
-Give your agent this prompt. Add an issue URL if you already have one.
+Give your agent this prompt. Add an issue URL to resume work already assigned to you.
 
 ```text
-Read CONTRIBUTING.md and AGENTS.md. Use the ticket workflow to start or
-resume one issue I own. If I supplied no issue, pick an unclaimed, unblocked
-slice from the ready queue and claim it under my GitHub account before editing.
-If the queue is empty, review the active roadmap for an independent slice
-using the readiness rules. If no slice is ready, report the missing decision
-or dependency before editing.
+Read CONTRIBUTING.md and AGENTS.md. Resume the issue I supplied if I own it.
+If I supplied no issue, take the first eligible issue in the shared ready
+queue, in listed order. Claim it under my GitHub account before editing.
+Report an empty queue, an ownership conflict or a failed claim before editing.
 Check current main, the issue's acceptance criteria and active PRs for overlap.
 Use one orchestrator and up to six bounded subagents. Implement the slice in
 its own worktree, run the required checks, and leave a linked draft PR with
@@ -50,7 +50,7 @@ PONYTAIL_DEFAULT_MODE=full codex -m gpt-6.2-sol -c 'model_reasoning_effort="high
   -c agents.enabled=true -c agents.max_concurrent_threads_per_session=6
 ```
 
-In the app, choose GPT-6.2 Sol with High reasoning and use the starter prompt to bound delegation. The six [Codex subagent slots](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings) exclude the orchestrator. If your model picker offers another model, use an available high-reasoning model for the same role.
+In the app, choose GPT-6.2 Sol with High reasoning and use the session prompt to bound delegation. The six [Codex subagent slots](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings) exclude the orchestrator. If Sol is unavailable, use an available high-reasoning model for the same role.
 
 ### Claude Code
 
@@ -61,7 +61,7 @@ claude plugin install ponytail@ponytail
 PONYTAIL_DEFAULT_MODE=full claude --model sonnet --effort high
 ```
 
-[Claude Code loads the shared repo rules through `CLAUDE.md`](CLAUDE.md). Use the same starter prompt and six-worker limit with [Claude Code subagents](https://code.claude.com/docs/en/sub-agents).
+[Claude Code loads the shared repo rules through `CLAUDE.md`](CLAUDE.md). Use the same session prompt and six-worker limit with [Claude Code subagents](https://code.claude.com/docs/en/sub-agents).
 
 ### Skills for a ticket
 
@@ -79,7 +79,7 @@ Before editing or resuming, follow the [issue claim and worktree workflow](docs/
 
 Noctium keeps contract authoring, typed IR, reference semantics and native lowering in Lean. It emits Midnight ZKIR constraints and Impact ledger plans. Rust owns native witness, proof and transaction execution and the shared runtime used by SDKs. The release goal is for an author to prove properties of the actual Lean contract and give an auditor evidence linking those properties to the exact operation on Midnight, with the remaining assumptions stated.
 
-1. For the next deliverable, read the [public issue map](https://github.com/awjreynolds/noctium/issues/1), the ticket's parent and blockers, and the [ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked). Confirm the current status against `main` and any active PRs.
+1. Take the next eligible deliverable from the [shared ready queue](docs/agents/issue-tracker.md#review-and-claim-implementation-issues). Use its parent and the [public issue map](https://github.com/awjreynolds/noctium/issues/1) to understand where the work fits.
 2. For the medium and long term, read the [one-year assurance roadmap](https://github.com/awjreynolds/noctium/issues/94) and [native capability goal](docs/compatibility/GOAL.md). The roadmap progresses from proof reports and a coverage baseline to reusable Lean checks, integrated contract pilots and independent release review.
 3. Before implementation, read the relevant design and follow its references to code and checks. Use the issue and the current source for details that have changed since the design was written.
 
@@ -151,6 +151,8 @@ the CLI version rebuilt the affected targets in 2.40 seconds and produced the
 updated version string.
 
 ## What a useful change includes
+
+Before requesting review, the human contributor reviews the diff and confirms the PR's evidence matches what ran. Review issue and PR comments as context. Use the repository's documented commands and public fixtures, and keep secrets and private inputs out of agent prompts and PR evidence.
 
 - A bounded problem and an explanation of the resulting behavior.
 - Tests at the affected boundary, including invalid inputs and failure behavior where relevant.
