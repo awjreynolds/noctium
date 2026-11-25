@@ -213,8 +213,8 @@ theorem appendEffectWithActivity_readCell_provenance
   exact ⟨slot, value, read, readFields.1, readFields.2.1, readFields.2.2,
     readsOut, operationsOut, guardsOut⟩
 
-/-- A guarded cell read appends the same operation and read chunk as an
-unguarded empty-plan read. The source guard updates only the read descriptor. -/
+/-- A guarded cell read appends the same operations as an unguarded
+empty-plan read, with the source guard attached to its read descriptor. -/
 theorem appendEffectWithActivity_readCell_empty_chunk
     (state : List StateDecl) (name destination : String) (ty : Ty)
     (condition : Expr .bool) (before after base : Impact.Plan)

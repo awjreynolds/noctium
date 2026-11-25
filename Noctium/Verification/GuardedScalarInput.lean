@@ -145,6 +145,49 @@ theorem consume_accepted_public_read
     exact ⟨meaning, by cases stream <;> simp [consume]⟩
 
 open ScalarNormalization in
+/-- The Boolean value of an admitted source guard determines whether the
+accepted public read consumes a scalar. The selected expected input must
+carry the normalized term of this source guard. -/
+theorem consume_accepted_public_read_source
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {state next : Backend.Native.State} {raw : Lean.Json}
+    {requirement : Backend.Native.InputRequirement} {guard : Operand}
+    (ctx : EvalContext) (types : TypeEnv) (aliases : Backend.Native.AliasEnvironment)
+    (values : EvalEnv) (condition : Expr .bool) (normalized : Backend.Native.Normalized)
+    (stream : List Scalar)
+    (implementation : HashAgreement ctx hash)
+    (environment : TypedEnvironment hash inputs aliases values types)
+    (admission : ScalarExpression condition)
+    (valid : condition.validate Capabilities.scalarFragment types = .ok ())
+    (normal : Backend.Native.normalize aliases condition = .ok normalized)
+    (requirements : Requirements hash inputs normalized)
+    (invariant : ScalarValidationMeaning.StateMeaning hash inputs witness state)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some normalized.term)
+    (opcode : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
+    (decoded : NativeRelationJson.decodeOperandField raw "guard" = .ok guard) :
+    ∃ active : Bool, condition.eval ctx values = .ok active ∧
+      guard.read witness = bit active ∧
+      consume (guard.read witness) stream =
+        if active then
+          match stream with
+          | value :: rest => some (value, rest)
+          | [] => none
+        else some (zero, stream) := by
+  obtain ⟨active, evaluated, _, _, meaning⟩ := normalize_sound ctx hash implementation inputs
+    types aliases values environment condition admission normalized valid normal requirements
+  obtain ⟨guardMeaning, _⟩ := NativeInputOrdinal.accepted_guarded_public_input_guard_meaning
+    invariant selected nonforeignInput guarded opcode accepted decoded
+  have encoded : sourceScalar? .bool active = some (bit active) := by
+    cases active <;> simp [sourceScalar?, bit]
+  have same := Option.some.inj (guardMeaning.symm.trans (meaning.trans encoded))
+  refine ⟨active, evaluated, same, ?_⟩
+  rw [same]
+  cases active <;> cases stream <;> simp [bit, consume, zero_ne_one]
+
+open ScalarNormalization in
 /-- An active scalar cell read executes the same source transition as an
 unconditional read, including when the cell is missing or malformed. -/
 theorem run_active_scalarCell_read (ctx : EvalContext) (env : EvalEnv)
