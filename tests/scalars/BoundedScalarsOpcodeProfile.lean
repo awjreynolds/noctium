@@ -1,4 +1,5 @@
 import Lean
+import Noctium.Verification.GenericStateCheckedReadDecode
 import examples.BoundedScalars
 import Noctium.Verification.NativeInputOrdinalTrace
 import Noctium.Verification.NativeRelationInstructionProjection
@@ -256,10 +257,50 @@ theorem boundedApply_checkedAssertions {hash : Hash} {assignment : Assignment}
       boundedApply_instructionsParsed boundedApply_checkedScalarOpcodeProfile schema
   exact ⟨expected, schedule, assertions satisfies⟩
 
+private def isOldPlanRead (slotRead : Impact.Read) : _root_.Bool :=
+  slotRead.name == "old" && decide (slotRead.ty = .uint 510) &&
+    decide (slotRead.bindings = [(slotRead.name, slotRead.ty)])
+
+private theorem boundedApply_oldPlanRead_exists :
+    List.any (boundedApplyImpactPlan.reads.drop
+      (Impact.publicInputReadCount (Passes.pruneEntrypoint selectedEntrypoint).circuit.inputs))
+      isOldPlanRead = Bool.true := by
+  decide +kernel
+
+/-- The exact accepted plan bounds the old counter read for any satisfying
+assignment of the emitted BoundedScalars.apply relation. -/
 theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
     (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
-    (assignment "%input_old").val ≤ 510 :=
-  (boundedApply_checkedRanges holds).1
+    (assignment "%input_old").val ≤ 510 := by
+  let streams : InputStreams := ⟨decodedProgram.inputValues .«public» assignment,
+    decodedProgram.inputValues .private assignment⟩
+  have satisfies : CircuitSatisfies hash decodedProgram streams assignment
+      (decodedProgram.groups assignment) := ⟨holds, rfl, rfl, rfl⟩
+  have schema : ∀ expected,
+      Native.expectedEntrypoint BoundedScalars.state
+        (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false := by
+    intro expected schedule requirement present
+    have checked := boundedApplyScalarInputs_checked
+    simp only [boundedApplyScalarInputs, schedule, Bool.and_eq_true] at checked
+    simpa using List.all_eq_true.mp checked.1.2 requirement present
+  obtain ⟨plan, lowered, bounds⟩ :=
+    Noctium.Verification.GenericStateCheckedReadDecode.accepted_scalarRead_inputBounds_of_checkedProfile
+      BoundedScalars.state selectedEntrypoint emittedProgram decodedProgram hash assignment streams
+      (decodedProgram.groups assignment) boundedApply_lowered boundedApply_decoded satisfies schema
+      ⟨emittedInstructions, boundedApply_instructionsParsed, boundedApply_checkedScalarOpcodeProfile⟩
+  have actual : plan = boundedApplyImpactPlan := by
+    rw [boundedApplyImpactPlan, lowered]
+    rfl
+  subst plan
+  obtain ⟨slotRead, present, checked⟩ := List.any_eq_true.mp boundedApply_oldPlanRead_exists
+  simp only [isOldPlanRead, Bool.and_eq_true, decide_eq_true_eq] at checked
+  obtain ⟨⟨name, ty⟩, binding⟩ := checked
+  have supported : (Noctium.Verification.GenericStateInputValues.scalarType? slotRead.ty).isSome =
+      Bool.true := by
+    rw [ty]
+    rfl
+  simpa [eq_of_beq name, ty, Native.sourceMaximum] using bounds slotRead present binding supported
 
 /-- The decoded input rows of the accepted fixture preserve source visibility,
 names and order for the strict scalar input fragment. Its empty producer seed
