@@ -1,3 +1,4 @@
+import Noctium.Verification.ImpactNativeStatementFixture
 import Noctium.Verification.ImpactPreviewBinding
 import Noctium.Verification.ImpactStatementScalar
 import Noctium.Verification.ImpactPlanAgreement
@@ -30,7 +31,10 @@ private def machine (values : List Nat) : NativeState.Machine :=
   | _ => Bool.false
 
 def main (args : List String) : IO Unit := do
-  let [artifact] := args | throw (IO.userError "expected the guarded partial-write Impact plan")
+  let (artifact, nativeStatement) ← match args with
+    | [artifact] => pure (artifact, none)
+    | [artifact, statement] => pure (artifact, some statement)
+    | _ => throw (IO.userError "expected the guarded partial-write plan and an optional native statement")
   let bytes := (← IO.FS.readBinFile artifact).data.toList
   let raw ← IO.ofExcept (ArtifactBytes.parse bytes)
   let initial := machine [0, 0, 0, 0, 0]
@@ -74,10 +78,11 @@ def main (args : List String) : IO Unit := do
       | ⟨some ⟨[.noop 55], 120⟩, none⟩ => pure ()
       | _ => throw (IO.userError "inactive preview differs in skipped width or compute time")
   | none => throw (IO.userError "inactive preview rejected")
+  let some activeOperations := ImpactPlanAgreement.evaluatePlan 64 context enabled raw |
+    throw (IO.userError "active Impact plan rejected")
   let activeStatement : Option (List NativeRelation.Scalar) := do
     let activity ← transcript enabled
-    let program ← ImpactPlanAgreement.evaluatePlan 64 context enabled raw
-    let call ← preview program activity
+    let call ← preview activeOperations activity
     let header ← ImpactPreviewBinding.header metadata call commitment
     ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
   let expected : List Nat := [1, 3, 7, 1, 3]
@@ -88,7 +93,7 @@ def main (args : List String) : IO Unit := do
     throw (IO.userError "active statement differs in the ordered native write fields")
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
-  unless decide (ImpactPlanAgreement.evaluatePlan 64 context enabled raw = some operations) do
+  unless decide (activeOperations = operations) do
     throw (IO.userError "decoded operation order differs from the guarded scalar fixture")
   unless decide (runWith enabled = some (machine expected)) &&
       decide (runWith disabled = some initial) do
@@ -97,3 +102,7 @@ def main (args : List String) : IO Unit := do
       (runWith (inputs Bool.true 3 2 8 Bool.true)).isNone &&
       (runWith (inputs Bool.true 3 2 3 Bool.false)).isNone do
     throw (IO.userError "decoded schedule accepted a partial scalar failure")
+  if let some path := nativeStatement then
+    let fixture ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile path) >>=
+      ImpactNativeStatementFixture.decode)
+    IO.ofExcept (ImpactNativeStatementFixture.check fixture activeOperations)

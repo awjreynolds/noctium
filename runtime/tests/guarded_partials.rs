@@ -1,13 +1,17 @@
 #![cfg(feature = "zkir-321")]
 
+use ledger::structure::{ContractCall, PedersenDowngradeable};
 use noctium_runtime::{
-    Db, Expr, Instruction, Plan, check, create_state, field_decimal, prepare, zkir::IrSource,
+    Db, Execution, Expr, Instruction, Plan, check, create_state, field_decimal, prepare,
+    zkir::IrSource,
 };
 use onchain_runtime::state::{ChargedState, StateValue};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde_json::{Value as Json, json};
 use serialize::Serializable;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, env, fs};
 use transient_crypto::fab::AlignedValueExt;
+use transient_crypto::commitment::PedersenRandomness;
 
 const PLAN: &str = include_str!(
     "fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.impact.json"
@@ -133,6 +137,74 @@ fn serialized<T: Serializable>(value: &T) -> Vec<u8> {
     bytes
 }
 
+fn transcript_statement(transcript: Option<&onchain_runtime::transcript::Transcript<Db>>) -> Json {
+    let Some(transcript) = transcript else {
+        return Json::Null;
+    };
+    json!({
+        "operationCount": u64::try_from(transcript.program.len()).expect("program length fits u64"),
+        "readTime": transcript.gas.read_time.into_picoseconds(),
+        "computeTime": transcript.gas.compute_time.into_picoseconds(),
+        "bytesWritten": transcript.gas.bytes_written,
+        "bytesDeleted": transcript.gas.bytes_deleted,
+        "effects": serialized(&transcript.effects),
+    })
+}
+
+fn export_native_statement_if_requested(plan: &Plan, execution: &Execution) {
+    let Some(path) = env::var_os("NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE") else {
+        return;
+    };
+
+    let address = coin_structure::contract::ContractAddress::default();
+    let address_bytes = address.0.0.to_vec();
+    let entry_point = onchain_runtime::state::EntryPointBuf(plan.entrypoint.as_bytes().to_vec());
+    let communication = execution
+        .preimage
+        .communications_commitment
+        .expect("successful active execution has its preimage communication commitment")
+        .0;
+    let call: ContractCall<(), Db> = ContractCall {
+        address,
+        entry_point: entry_point.clone(),
+        guaranteed_transcript: execution
+            .guaranteed
+            .as_ref()
+            .cloned()
+            .map(storage::arena::Sp::new),
+        fallible_transcript: execution
+            .fallible
+            .as_ref()
+            .cloned()
+            .map(storage::arena::Sp::new),
+        communication_commitment: communication,
+        proof: (),
+    };
+
+    let mut rng = StdRng::from_seed([7; 32]);
+    let parent_randomness: PedersenRandomness = rng.r#gen();
+    let parent_pedersen =
+        <PedersenRandomness as PedersenDowngradeable<Db>>::downgrade(&parent_randomness);
+    let parent_pedersen_bytes = serialized(&parent_pedersen);
+    let fields = call
+        .public_inputs(parent_pedersen)
+        .expect("pinned ledger computes the native call public inputs");
+    let statement = json!({
+        "address": address_bytes,
+        "entryPoint": entry_point.0,
+        "parentPedersen": parent_pedersen_bytes,
+        "communication": field_decimal(communication),
+        "guaranteed": transcript_statement(call.guaranteed_transcript.as_deref()),
+        "fallible": transcript_statement(call.fallible_transcript.as_deref()),
+        "fields": fields.into_iter().map(field_decimal).collect::<Vec<_>>(),
+    });
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&statement).expect("native call statement serializes as JSON"),
+    )
+    .expect("write native call statement to requested path");
+}
+
 #[test]
 fn binding_serialization_matches_pinned_midnight_vectors() {
     let uint_vectors: &[(u64, &[u8])] = &[
@@ -225,13 +297,26 @@ fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
 
     let active = prepare_case(&plan, &initial, inputs(true, true, 3, 2, 3, true))
         .expect("active partial expressions with valid operands preserve source behavior");
+    let active_schedule = check(&active, &circuit).expect("active activity schedule checks");
+    assert_eq!(active_schedule, vec![None; 15]);
+    let checked_active_operations = active_schedule
+        .iter()
+        .filter(|activity| activity.is_none())
+        .count();
+    let partitioned_operations = active
+        .guaranteed
+        .iter()
+        .chain(active.fallible.iter())
+        .map(|transcript| transcript.program.len())
+        .sum::<usize>();
     assert_eq!(
-        check(&active, &circuit).expect("active activity schedule checks"),
-        vec![None; 15]
+        partitioned_operations, checked_active_operations,
+        "active transcript partitions account for all checked operations"
     );
     assert_eq!(cell(&active.after.state, 0), "1");
     assert_eq!(cell(&active.after.state, 1), "3");
     assert_eq!(cell(&active.after.state, 2), "7");
     assert_eq!(cell(&active.after.state, 3), "1");
     assert_eq!(cell(&active.after.state, 4), "3");
+    export_native_statement_if_requested(&plan, &active);
 }

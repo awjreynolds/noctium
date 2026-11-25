@@ -331,8 +331,7 @@ jobs:
             Noctium.Verification.ImpactPlanAgreement \
             Noctium.Verification.ImpactTranscriptSchedule \
             Noctium.Verification.ImpactCallStatement \
-            Noctium.Verification.ImpactStatementScalar \
-            Noctium.Verification.ImpactPreviewBinding \
+            Noctium.Verification.ImpactNativeStatementFixture \
             Noctium.Verification.ArtifactBytes
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
@@ -367,8 +366,6 @@ jobs:
           .lake/build/bin/noctium compile tests/Issue43GuardedPartialWrites.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-partials"
-          lake env lean --run tests/ImpactPlanEvaluation.lean \
-            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json"
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
@@ -546,11 +543,15 @@ jobs:
             --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             NOCTIUM_GUARDED_PARTIALS_DIR="$artifacts/guarded-partials" \
+            NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE="$artifacts/guarded-partials/statement.json" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
               --test guarded_partials \
               --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi \
               --test constructor_actions
+          lake env lean --run tests/ImpactPlanEvaluation.lean \
+            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json" \
+            "$artifacts/guarded-partials/statement.json"
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \
