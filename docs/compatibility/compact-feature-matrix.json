@@ -1874,7 +1874,7 @@
       "layer": "artifact-runtime",
       "surface": "Portable execution and value ABI",
       "noctiumStatus": "subset",
-      "notes": "Qualified Rust, C/C++, Swift and Kotlin Android proof/client subsets run without Node. Kotlin proved and finalized both the original K9 claim and the typed K7 witness, and recovered and committed private state for the typed witness on an arm64 Android emulator. TypeScript/WASM authenticates bundles and generates and verifies K7 typed-witness call proofs in Chrome. Physical-device execution, browser transactions and recovery, and full ABI equivalence remain open.",
+      "notes": "Qualified Rust, C/C++, Swift and Kotlin Android proof/client subsets run without Node. Kotlin proved and finalized both the original K9 claim and the typed K7 witness, and recovered and committed private state for the typed witness on an arm64 Android emulator. TypeScript/WASM authenticates bundles and generates and verifies K7 typed-witness call proofs in Chrome. Physical-device execution, browser transactions and recovery, and full ABI equivalence remain open. A checked nested Either argument flattens the ordered discriminant, Bool arm, Maybe tag and UInt8 leaf. The host rejects a non-Bool nested tag and UInt8 overflow before native preparation, including in inactive payloads.",
       "source": [
         "reference"
       ],
@@ -1884,6 +1884,10 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/CompositeEitherInput.lean",
+        "tests/compact/composite-either-input.mjs",
+        "tests/compact/composite-either-nested-maybe-cases.json",
+        "runtime/tests/composite_either_input.rs",
         "scripts/zkir/native-runtime.mjs",
         "scripts/zkir/native-contract.mjs",
         "docs/development/typed-witnesses.md",
@@ -4552,7 +4556,7 @@
       "layer": "standard-library",
       "surface": "Either",
       "noctiumStatus": "subset",
-      "notes": "Lean returnEither emits a typed Native, Bool or bounded UInt sum return in is_left, left, right order. A matched Compact and native UInt8/UInt16 fixture checks both tags and zero inactive operands. Readable witness either accepts checked composite arms and returns the same ordered fields. The pinned Compact and native session fixtures match both tags for a UInt8/Bool/Bytes4 record and a two-Boolean vector, including exact defaults for the inactive arm. The source fixture rejects implicit disclosure of a private payload. Readable Either input codecs preserve the supplied tag and both payloads. The paired Compact and Rust fixtures return both exact payloads and write the tag to a Bool cell for each branch. The paired opaque Either fixture selects an OpaqueString left arm and an OpaqueBytes right arm, preserves exact payloads and typed empty defaults, and rejects altered active returns and implicit private tag or payload disclosure. Broader nested sum and source-position coverage remains open.",
+      "notes": "Lean returnEither emits a typed Native, Bool or bounded UInt sum return in is_left, left, right order. A matched Compact and native UInt8/UInt16 fixture checks both tags and zero inactive operands. Readable witness either accepts checked composite arms and returns the same ordered fields. The pinned Compact and native session fixtures match both tags for a UInt8/Bool/Bytes4 record and a two-Boolean vector, including exact defaults for the inactive arm. The source fixture rejects implicit disclosure of a private payload. Readable Either input codecs preserve the supplied tag and both payloads. The paired Compact and Rust fixtures return both exact payloads and write the tag to a Bool cell for each branch. The paired opaque Either fixture selects an OpaqueString left arm and an OpaqueBytes right arm, preserves exact payloads and typed empty defaults, and rejects altered active returns and implicit private tag or payload disclosure. Broader nested sum and source-position coverage remains open. A paired Either<Bool, Maybe<UInt8>> argument preserves all four supplied fields, including the inactive arm and a nonzero payload under a false Maybe tag. The typed echo retains the nested layout and matches the Bool ledger update.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4566,6 +4570,8 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/compact/composite-either-nested-maybe-cases.json",
+        "docs/development/typed-witnesses.md",
         "tests/NativeScalarEitherReturns.lean",
         "runtime/tests/scalar_either_returns.rs",
         "tests/compact/scalar-either-returns.mjs",

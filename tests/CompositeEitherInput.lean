@@ -28,6 +28,22 @@ private def boolVectorWire : Helpers.Wire.Codec := {
 private def eitherWire : Helpers.Wire.Codec := Helpers.Wire.either
   "CompositeEitherInput.LimitsOrBoolPair" limitsWire boolVectorWire
 
+private def boolWire : Helpers.Wire.Codec := {
+  payload := .scalar .bool
+  frameBytes := 1
+}
+
+private def uint8Wire : Helpers.Wire.Codec := {
+  payload := .scalar (.uint 255)
+  frameBytes := 1
+}
+
+private def maybeUInt8Wire : Helpers.Wire.Codec := Helpers.Wire.maybe
+  "CompositeEitherInput.MaybeUInt8" uint8Wire
+
+private def nestedEitherWire : Helpers.Wire.Codec := Helpers.Wire.either
+  "CompositeEitherInput.BoolOrMaybeUInt8" boolWire maybeUInt8Wire
+
 #guard eitherWire.payload == .structure "CompositeEitherInput.LimitsOrBoolPair"
 #guard eitherWire.frameBytes == 9
 #guard match eitherWire.composites.structures.find?
@@ -39,6 +55,21 @@ private def eitherWire : Helpers.Wire.Codec := Helpers.Wire.either
   | none => Bool.false
 #guard eitherWire.composites.structures.any
   (·.id == "CompositeEitherInput.Limits")
+
+#guard nestedEitherWire.payload == .structure "CompositeEitherInput.BoolOrMaybeUInt8"
+#guard nestedEitherWire.frameBytes == 4
+#guard match nestedEitherWire.composites.structures.find?
+    (·.id == "CompositeEitherInput.BoolOrMaybeUInt8") with
+  | some declaration => declaration.fields.map (fun field => (field.name, field.type)) == [
+      ("is_left", .scalar .bool),
+      ("left", .scalar .bool),
+      ("right", .structure "CompositeEitherInput.MaybeUInt8")]
+  | none => Bool.false
+#guard match nestedEitherWire.composites.structures.find?
+    (·.id == "CompositeEitherInput.MaybeUInt8") with
+  | some declaration => declaration.fields.map (fun field => (field.name, field.type)) == [
+      ("is_some", .scalar .bool), ("value", .scalar (.uint 255))]
+  | none => Bool.false
 
 private def codecDeclarations (codec : Helpers.Wire.Codec) :
     Except String (List Helpers.Declaration) := do
@@ -68,6 +99,11 @@ noctium_witness_circuit echo using limitsWire, boolVectorWire, eitherWire where
   output echoed := value
 end
 
+noctium_witness_circuit echoNested using nestedEitherWire where
+  public value : Payload nestedEitherWire
+  output echoed := value
+end
+
 private def compiledEcho := Noctium.Witness.compile echo.__program
   "noctium.witness-circuit.CompositeEitherInput.echo.v1"
 
@@ -82,6 +118,29 @@ private def compiledEcho := Noctium.Witness.compile echo.__program
         "result.left.memo.0", "result.left.memo.1", "result.left.memo.2",
         "result.left.memo.3", "result.right.0", "result.right.1"]
   | .error _ => Bool.false
+
+private def compiledEchoNested := Noctium.Witness.compile echoNested.__program
+  "noctium.witness-circuit.CompositeEitherInput.echoNested.v1"
+
+#guard match compiledEchoNested with
+  | .ok compiled =>
+      compiled.circuit.inputs.map (·.name) == [
+        "value.is_left", "value.left", "value.right.is_some", "value.right.value"] &&
+      compiled.circuit.outputs.map (·.name) == [
+        "result.is_left", "result.left", "result.right.is_some", "result.right.value"]
+  | .error _ => Bool.false
+
+#guard echoNested.__program.composites.structures.any fun declaration =>
+  declaration.id == "CompositeEitherInput.BoolOrMaybeUInt8" &&
+  declaration.fields.map (fun field => (field.name, field.type)) == [
+    ("is_left", .scalar .bool),
+    ("left", .scalar .bool),
+    ("right", .structure "CompositeEitherInput.MaybeUInt8")]
+
+#guard echoNested.__program.composites.structures.any fun declaration =>
+  declaration.id == "CompositeEitherInput.MaybeUInt8" &&
+  declaration.fields.map (fun field => (field.name, field.type)) == [
+    ("is_some", .scalar .bool), ("value", .scalar (.uint 255))]
 
 #guard echo.__program.composites.structures.any fun declaration =>
   declaration.id == "CompositeEitherInput.LimitsOrBoolPair" &&
@@ -117,6 +176,30 @@ private def echoOutputs (isLeft : Nat) : List (String × Value) := [
   | .ok outputs => outputs == echoOutputs 0
   | .error _ => Bool.false
 
+private def echoNestedInputs (isLeft left isSome value : Nat) : List (String × Value) := [
+  ("value.is_left", .native isLeft),
+  ("value.left", .native left),
+  ("value.right.is_some", .native isSome),
+  ("value.right.value", .native value)]
+
+private def echoNestedOutputs (isLeft left isSome value : Nat) : List (String × Value) := [
+  ("result.is_left", .native isLeft),
+  ("result.left", .native left),
+  ("result.right.is_some", .native isSome),
+  ("result.right.value", .native value)]
+
+#guard match echoNested.run echoContext (echoNestedInputs 1 0 1 255) with
+  | .ok outputs => outputs == echoNestedOutputs 1 0 1 255
+  | .error _ => Bool.false
+
+#guard match echoNested.run echoContext (echoNestedInputs 0 1 0 17) with
+  | .ok outputs => outputs == echoNestedOutputs 0 1 0 17
+  | .error _ => Bool.false
+
+#guard match echoNested.run echoContext (echoNestedInputs 0 1 1 0) with
+  | .ok outputs => outputs == echoNestedOutputs 0 1 1 0
+  | .error _ => Bool.false
+
 end CompositeEitherInput
 
 noctium_contract CompositeEitherInput where
@@ -125,4 +208,35 @@ noctium_contract CompositeEitherInput where
     write seen := disclose(eq(result.is_left, 1))
     return echoed
   end
+  entry echoNested uses CompositeEitherInput.echoNested where
+    write seen := disclose(eq(result.is_left, 1))
+    return echoed
+  end
 end
+
+namespace CompositeEitherInput
+
+private def echoNestedEntry : Entrypoint :=
+  (_root_.CompositeEitherInput.entrypoints.find? (·.name == "echoNested")).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+private def structureFields? (environment : CompositeEnv) (id : String) :
+    Option (List (String × CompositeType)) := do
+  let declaration ← environment.structures.find? (·.id == id)
+  pure (declaration.fields.map fun field => (field.name, field.type))
+
+#guard match echoNestedEntry.returnViews with
+  | [view] =>
+      view.name == "echoed" &&
+      match view.type with
+      | .structure eitherId =>
+          structureFields? view.environment eitherId == some [
+            ("is_left", .scalar .bool),
+            ("left", .scalar .bool),
+            ("right", .structure "CompositeEitherInput.MaybeUInt8")] &&
+          structureFields? view.environment "CompositeEitherInput.MaybeUInt8" == some [
+            ("is_some", .scalar .bool), ("value", .scalar (.uint 255))]
+      | _ => Bool.false
+  | _ => Bool.false
+
+end CompositeEitherInput
