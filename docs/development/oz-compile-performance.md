@@ -421,6 +421,79 @@ emits `cellAlignment: "u128"` and stores one 16-byte FAB atom. The aligned
 strict and optimized Impact plans match byte for byte. The Compact comparison
 above uses the default Noctium field layout.
 
+## Matched totalSupply on the 16-byte supply cell
+
+| Artifact | K | Synthesis rows |
+| --- | ---: | ---: |
+| Noctium aligned cell and read-bound export | 6 | 34 |
+| Pinned OpenZeppelin Compact wrapper | 6 | 34 |
+
+Both generated interfaces take zero user inputs and return a UInt128. The
+read returned 0 after initialization and 10 after registration and a mint of
+10. The supply cells use one 16-byte FAB atom. The runtime checks verified
+each read preserves its full state frame. Both ZKIR relations expose one
+BLS12-381 scalar output. [Matched observations and executable hashes](oz-total-supply-comparison.json)
+
+The one-line Noctium source variant uses `alignedBytes` and the existing
+`--ledger-read-bound` export. The historical table above measures the
+original field-aligned port. The two contracts place supply in different
+state slots and take different mint arguments. Compact presents a bigint
+and minimal little-endian atom bytes. The native ABI presents a decimal
+string and the observation pads the atom to 16 bytes. The rejection checks
+cover an extra Compact read argument and a native mint amount of 2^128.
+
+The same ZKIR 3.2.1 revision sized both relations. These are in-process
+conformance and keyless synthesis measurements for this one read.
+[Compact pin](https://github.com/LFDT-Minokawa/compact/releases/tag/compactc-v0.36.1) ·
+[ZKIR source](https://github.com/midnightntwrk/midnight-zkir/tree/7a51b3385bbf4bce3604df87a7c70867c9ab43c0)
+
+## Matched totalSupply reproduction
+
+Use the pinned OpenZeppelin checkout and Compact 0.36.1 reference from the
+reproduction notes. Set `COMPACTC_0361` to the compiler executable,
+`COMPACT_RUNTIME_0210` to the Compact Runtime 0.21.0 package directory,
+`OZ_SOURCE` to the OpenZeppelin checkout at
+`f85f1a23685c6bbedfc8c2589ae3aa128aff7c46`, and `ZKIR_321` to the
+selected ZKIR 3.2.1 sizing executable.
+
+```sh
+set -eu
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+LAKE_ARTIFACT_CACHE=true LAKE_RESTORE_ARTIFACTS=true lake build noctium
+sed 's/^  cell totalSupply : UInt 128$/  cell totalSupply : UInt 128 alignedBytes/' \
+  examples/openzeppelin/ConfidentialToken.lean > "$scratch/ConfidentialToken.lean"
+.lake/build/bin/noctium compile "$scratch/ConfidentialToken.lean" \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness \
+  --ledger-read-bound OpenZeppelinPort.ConfidentialToken.totalSupply \
+  --output "$scratch/native"
+
+NOCTIUM_TOTAL_SUPPLY_ARTIFACTS="$scratch/native" \
+NOCTIUM_TOTAL_SUPPLY_RESULT="$scratch/native.json" \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+    --no-default-features --features zkir-321 --test confidential_token \
+    confidential_token_total_supply_native_observation -- --exact --ignored
+node tests/compact/confidential-token-total-supply.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" "$OZ_SOURCE" "$scratch/compact" \
+  > "$scratch/compact.json"
+
+# Compare the read ABI and observed cases before sizing.
+python3 - "$scratch/native.json" "$scratch/compact.json" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+native, compact = [json.loads(Path(name).read_bytes()) for name in sys.argv[1:]]
+assert (native["abi"], native["cases"]) == (compact["abi"], compact["cases"])
+state = compact["compact"]["stateMapping"]
+atoms = [state[key] for key in ["cellEncodingAtZero", "cellEncodingAtTen"]]
+assert [atom["value"][0]["$bytes"] for atom in atoms] == native["native"]["ledgerValueAtomHex"]
+PYTHON
+
+"$ZKIR_321" mock-compile "$scratch/native/OpenZeppelinPort.ConfidentialToken.totalSupply.zkir"
+"$ZKIR_321" mock-compile "$scratch/compact/zkir/totalSupply.zkir"
+```
+
 ## Reproduction and limits
 
 ```sh
