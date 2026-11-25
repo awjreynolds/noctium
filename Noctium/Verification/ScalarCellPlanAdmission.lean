@@ -5,6 +5,7 @@ import Noctium.Verification.ScalarAllocationOutputFrame
 import Noctium.Verification.ScalarCellOperationAdmission
 import Noctium.Verification.ScalarCellPlanScope
 import Noctium.Verification.ScalarCellPublicAdmission
+import Noctium.Verification.ScalarLedgerPlanValidation
 
 namespace Noctium.Verification.ScalarCellPlanAdmission
 
@@ -136,5 +137,19 @@ theorem lower_admission (state : List StateDecl) (entry : Entrypoint)
     have present : some guard ∈ plan.activityGuards := List.mem_of_getElem? selected
     have noneSelected := (List.all_eq_true.mp activity) (some guard) present
     exact False.elim (by simp at noneSelected)
+
+/-- Project the exact grouped lowering obligations to the fields consumed by
+the VM evaluator, retaining the original operation order. -/
+theorem admitted_operation_fields {entry : Entrypoint} {plan : Impact.Plan}
+    (admitted : ScalarEntrypointPlanAdmission entry plan) :
+    ∀ operation ∈ plan.operations, ∀ field ∈ operation.fields, ScalarExpression field := by
+  intro operation operationMember field fieldMember
+  have indexed : operation ∈ plan.operations.zipIdx.map Prod.fst := by
+    simpa only [List.zipIdx_map_fst] using operationMember
+  obtain ⟨item, itemMember, equal⟩ := List.mem_map.mp indexed
+  rw [← Op.fieldGroups_flatten_eq_fields operation] at fieldMember
+  obtain ⟨group, groupMember, fieldMember⟩ := List.mem_flatten.mp fieldMember
+  exact admitted.operationFields item itemMember group (by rw [equal]; exact groupMember)
+    field fieldMember
 
 end Noctium.Verification.ScalarCellPlanAdmission

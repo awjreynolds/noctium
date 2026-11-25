@@ -1295,6 +1295,76 @@ theorem expectedEntrypoint_inputRequirementCoreMap (state : List StateDecl)
         expectedInputRequirementSources, sourceInitialInputRequirements,
         sourcePostReadRequirements] using corePreserved
 
+private theorem inputStateStep_preserves_inputList (entry : Entrypoint)
+    (aliases : AliasEnvironment) (read : Backend.Impact.Read)
+    (current next : InputState)
+    (unguarded : read.guard = none)
+    (accepted : inputStateStep entry aliases read current = .ok (.yield next)) :
+    next.1 = current.1 := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      have stateEq : (current.1, values.1, values.2,
+          current.2.2.2 + (Backend.Impact.Read.bindings read).length) = next := by
+        injection accepted with yieldEq
+        injection yieldEq with stateEq
+      exact (congrArg Prod.fst stateEq).symm
+  | some guard =>
+    simp [guardEq] at unguarded
+
+private theorem inputStateFold_preserves_inputList (entry : Entrypoint)
+    (aliases : AliasEnvironment) (reads : List Backend.Impact.Read)
+    (initial final : InputState)
+    (unguarded : ∀ read ∈ reads, read.guard = none)
+    (accepted : forIn reads initial (inputStateStep entry aliases) = .ok final) :
+    final.1 = initial.1 := by
+  refine list_forIn_preserves_projection_supported
+    (supported := fun read : Backend.Impact.Read => read.guard = none)
+    (project := fun state : InputState => state.1)
+    (step := inputStateStep entry aliases)
+    unguarded
+    (by
+      intro read plain current result stepAccepted
+      obtain ⟨next, rfl⟩ := inputStateStep_yields entry aliases read current result stepAccepted
+      exact inputStateStep_preserves_inputList entry aliases read current next plain stepAccepted)
+    accepted
+
+/-- With no activity guard on any post-public read, the accepted expected
+input list is exactly the source input descriptors followed by read bindings.
+No generated activity guard is attached to those inputs. -/
+theorem expectedEntrypoint_inputs_of_unguarded_reads (state : List StateDecl)
+    (entry : Entrypoint) (expected : Expected) (plan : Backend.Impact.Plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (planAccepted : Backend.Impact.lower state entry = .ok plan)
+    (unguarded : ∀ read ∈
+      plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs),
+      read.guard = none) :
+    expected.inputs = expectedInputRequirementSources entry plan := by
+  obtain ⟨actualPlan, _, aliases, inputState, _, _, _, _, _, _, _,
+      lowerAccepted, _, _, inputStateAccepted, _, _, _, _, _, _, _, inputShape, _, _, _, _, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : actualPlan = plan := Except.ok.inj (lowerAccepted.symm.trans planAccepted)
+  subst actualPlan
+  let initialInputs := sourceInitialInputRequirements entry
+  let readInputs := sourcePostReadRequirements entry plan
+  let initial : InputState := (initialInputs ++ readInputs, [], [], initialInputs.length)
+  have inputFold : forIn (plan.reads.drop
+      (Backend.Impact.publicInputReadCount entry.circuit.inputs)) initial
+      (inputStateStep entry aliases) = .ok inputState := by
+    simpa [initial, initialInputs, readInputs, sourceInitialInputRequirements,
+      sourcePostReadRequirements, Backend.Native.readInputRequirements_eq,
+      List.length_flatMap] using inputStateAccepted
+  have inputShapeExact : inputState.1 = initial.1 :=
+    inputStateFold_preserves_inputList entry aliases _ initial inputState unguarded inputFold
+  rw [inputShape, inputShapeExact]
+  rfl
+
 /-- Every unmodified circuit-input requirement remains represented in the
 accepted expected input list. The descriptor projection forgets only the
 activity guard added while normalizing post-public reads. -/
