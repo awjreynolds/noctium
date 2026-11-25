@@ -307,6 +307,28 @@ JNIEXPORT void JNICALL Java_org_noctium_sdk_Native_proofClose(JNIEnv *env, jobje
     if (status != NOCTIUM_NATIVE_OK) fail(env, status);
 }
 
+JNIEXPORT jbyteArray JNICALL Java_org_noctium_sdk_Native_collectionPage(
+        JNIEnv *env, jobject self, jbyteArray request, jbyteArray plan, jbyteArray snapshot) {
+    (void)self;
+    Input inputs[] = {
+        {.array = request, .limit = 64 * 1024},
+        {.array = plan, .limit = CONTROL_BYTES},
+        {.array = snapshot, .limit = CONTROL_BYTES},
+    };
+    if (!borrow_inputs(env, inputs, 3)) return NULL;
+    uint64_t result = 0;
+    int32_t status = noctium_ledger_collection_page(
+        (const uint8_t *)inputs[0].bytes, (size_t)inputs[0].length,
+        (const uint8_t *)inputs[1].bytes, (size_t)inputs[1].length,
+        (const uint8_t *)inputs[2].bytes, (size_t)inputs[2].length, &result);
+    release_inputs(env, inputs, 3);
+    if (status != NOCTIUM_NATIVE_OK) {
+        fail(env, status);
+        return NULL;
+    }
+    return take_result(env, result, &native_result);
+}
+
 #ifdef NOCTIUM_LOCALNET
 enum { RECOVERY_CONTEXT_BYTES = 1200000 };
 

@@ -47,6 +47,23 @@ The application supplies `runCallbacksUntilCompleted`. Successful preparation co
 
 For an entrypoint supplied with explicit inputs, use `NativeProof.open(descriptor, configuration, srs)`. The descriptor includes the bundle's canonical path, manifest and parameter digests, profile, K, TTL, proof capability and maximum response size. The private configuration contains the declared inputs and initial state. [Native proof descriptor](../../runtime/include/noctium_native.h)
 
+## Read a ledger collection page
+
+Pass the native ABI's UTF-8 page request, original Impact plan bytes and
+tagged state snapshot to the Kotlin binding.
+
+```kotlin
+import org.noctium.sdk.LedgerSnapshot
+
+val pageJson = LedgerSnapshot.collectionPage(request, impactPlan, taggedSnapshot)
+```
+
+Set `planSha256` and `stateSha256` from trusted metadata. For a root
+List use an empty `keys` array and start at `offset: 0`. Follow the
+returned `nextOffset` until the result returns `null`. The SDK returns an
+owned UTF-8 JSON byte array and reports native failures through
+`NoctiumFailure.status`. [Collection request and response format](../../runtime/include/noctium_native.h)
+
 ## Fund and submit on the development localnet
 
 Build with `bash sdk/android/package.sh --localnet build/noctium-android-localnet.aar` to include the development adapter. The adapter authenticates the pinned development genesis and accepts a loopback endpoint. Use the native header's configuration, transaction descriptor and deployment setup. Supply a funded public development seed to fund a transaction. [Development stack](../../scripts/localnet/README.md) · [Native client interface](../../runtime/include/noctium_native.h)
@@ -95,6 +112,34 @@ adb -s EMULATOR_SERIAL shell am instrument -w -r org.noctium.sdk.tests/.Developm
 ```
 
 Use the test's loopback endpoint on port 19944 and run funded tests sharing the same development seed serially. Check for instrumentation code `-1` and the transaction and private recovery result.
+
+## Replay the Compact-matched List fixture
+
+Build the default ARM64 AAR and package the smoke APK on the same SDK as
+the witness smoke test. If your SDK uses a different installed Build Tools
+version, set `ANDROID_BUILD_TOOLS_VERSION` for the smoke APK build.
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/android-list-pages.XXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+bash sdk/android/package.sh "$scratch/noctium-android.aar"
+bash sdk/android/tests/package-smoke.sh --collection-pages \
+  "$scratch/noctium-android.aar" "$scratch/noctium-collection-pages.apk"
+adb -s "$EMULATOR_SERIAL" install "$scratch/noctium-collection-pages.apk"
+adb -s "$EMULATOR_SERIAL" shell am instrument -w -r \
+  org.noctium.sdk.tests/.CollectionPagesSmoke
+```
+
+Expect instrumentation code `-1` and the marker
+`NOCTIUM_ANDROID_COLLECTION_PAGES_PASS`. The test uses the retained plan
+and empty and populated snapshots. It checks the empty List, `[11, 22]`
+at offset zero, and `[33]` at the returned offset two. The last page
+returns `null` for `nextOffset`. A request with an altered state digest
+must fail with status `1` (`NOCTIUM_NATIVE_INVALID_ARGUMENT`).
+[Fixture manifest and trusted digests](../../tests/fixtures/native-collection-pages/manifest.json) ·
+[Compact and native fixture reproduction](native-client-abi.md#replay-the-scalar-collection-fixture)
 
 ## Reproduce the original one-time claim
 

@@ -68,4 +68,5 @@ internal object Native {
     external fun proofAttach(proof: Long, metadata: ByteArray, response: ByteArray): ByteArray
     external fun proofCancel(proof: Long)
     external fun proofClose(proof: Long)
+    external fun collectionPage(request: ByteArray, plan: ByteArray, snapshot: ByteArray): ByteArray
 }

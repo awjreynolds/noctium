@@ -32,7 +32,7 @@ mkdir -p "$(dirname "$output")"
 stage="$(mktemp -d "$(dirname "$output")/.noctium-android.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/aar/jni/arm64-v8a"
-sources=("$sdk/WitnessSession.kt" "$sdk/NativeWitness.kt")
+sources=("$sdk/WitnessSession.kt" "$sdk/NativeWitness.kt" "$sdk/LedgerSnapshot.kt")
 cflags=()
 if [[ $features == *,localnet ]]; then
   cflags+=(-DNOCTIUM_LOCALNET)
