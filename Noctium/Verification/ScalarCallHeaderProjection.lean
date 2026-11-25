@@ -84,6 +84,55 @@ theorem decodeScalarCall_header_names {json : Json} {call : ScalarCall}
   · simpa only [NativeRelationJson.arrayField, Backend.Native.arrayField] using inputsParsed
   · simpa only [NativeRelationJson.stringField, Backend.Native.stringField] using namesParsed
 
+private theorem decodedArgument_valid {json : Json} {name : String}
+    (decoded : decodeScalarCallArgument json = .ok name) :
+    validIdentifier name = true := by
+  unfold decodeScalarCallArgument at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨_, _, _, _, _, _, parsed, _, _, checked, result⟩
+  have same : parsed = name := Except.ok.inj result
+  subst parsed
+  unfold NativeRelationJson.ensure at checked
+  split at checked
+  · assumption
+  · cases checked
+
+private theorem decodedArguments_valid {items : List Json} {names : List String}
+    (decoded : items.mapM decodeScalarCallArgument = .ok names) :
+    ∀ name ∈ names, validIdentifier name = true := by
+  induction items generalizing names with
+  | nil =>
+    simp only [List.mapM_nil, Pure.pure, Except.pure, Except.ok.injEq] at decoded
+    subst names
+    simp
+  | cons item items ih =>
+    simp only [List.mapM_cons, bind_ok] at decoded
+    obtain ⟨head, headDecoded, tail, tailDecoded, result⟩ := decoded
+    have same : head :: tail = names := Except.ok.inj result
+    subst names
+    intro name member
+    rcases List.mem_cons.mp member with rfl | member
+    · exact decodedArgument_valid headDecoded
+    · exact ih tailDecoded name member
+
+/-- Raw call inputs use valid SSA names even though no instruction reads them
+from the public or private transcript. -/
+theorem decodeScalarCall_argument_identifiers {json : Json} {call : ScalarCall}
+    (decoded : decodeScalarCall json = .ok call) :
+    ∀ name ∈ call.arguments, validIdentifier name = true := by
+  unfold decodeScalarCall at decoded
+  simp only [bind_ok] at decoded
+  obtain ⟨_, _, header, headerDecoded, body, _, same⟩ := decoded
+  have callEq : ({arguments := header.2, body} : ScalarCall) = call :=
+    Except.ok.inj same
+  subst call
+  unfold decodeScalarCallHeader at headerDecoded
+  simp only [bind_ok] at headerDecoded
+  obtain ⟨_, _, arguments, argumentsDecoded, _, _, result⟩ := headerDecoded
+  have headerEq : (_, arguments) = header := Except.ok.inj result
+  rw [← headerEq]
+  exact decodedArguments_valid argumentsDecoded
+
 /-- Successful native validation and scalar-call decoding agree on the exact
 ordered raw caller input names. -/
 theorem validate_decodeScalarCall_header_names {expected : Expected} {json : Json}
