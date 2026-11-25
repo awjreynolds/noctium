@@ -1,21 +1,21 @@
 import Noctium.Verification.SourceEffects
-import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.GenericStateEncoding
 import Noctium.Verification.GenericStateEvaluationCanonical
 
 namespace Noctium.Verification.GenericStateSourceTrace
 
 open ScalarNormalization
 
-theorem canonicalValue_sound (ctx : EvalContext) (ty : Ty)
-    (value : ty.Denote) (modulus : ctx.modulus = Field.modulus)
+theorem canonicalValue_sound {ty : Ty} (scalarType : ScalarType ty)
+    (ctx : EvalContext) (value : ty.Denote) (modulus : ctx.modulus = Field.modulus)
     (checked : SourceEffects.canonicalValue ctx ty value = true) :
     Canonical ty value := by
-  cases ty with
+  cases scalarType with
   | native =>
     exact ⟨by simpa [SourceEffects.canonicalValue, modulus, number] using checked,
       trivial⟩
   | bool =>
-    cases value <;> simp [Canonical, number, Field.modulus]
+    cases value <;> simp [Canonical, Field.modulus]
   | uint maximum =>
     simp only [SourceEffects.canonicalValue, Bool.and_eq_true,
       decide_eq_true_eq] at checked
@@ -23,55 +23,99 @@ theorem canonicalValue_sound (ctx : EvalContext) (ty : Ty)
     exact ⟨by simpa [modulus, number] using fieldBound,
       maximumBound, valueBound⟩
 
-/-- Successful original cell reads expose the typed canonical value bound
-for the later relation input assignment. -/
-theorem readCell_step_value (ctx : EvalContext) (env : EvalEnv)
-    (state : LedgerState) (name destination : String) (ty : Ty)
-    (after : SourceEffects.Frame) (modulus : ctx.modulus = Field.modulus)
+/-- Recover the unique packed value for a scalar type from a successful `as`. -/
+theorem typed_value_eq_pack {ty : Ty} (scalarType : ScalarType ty)
+    (raw : Value) (value : ty.Denote) (typed : raw.as ty = some value) :
+    raw = Value.pack ty value := by
+  cases scalarType with
+  | native => cases raw <;> simp_all [Value.as, Value.pack]
+  | bool => cases raw <;> simp_all [Value.as, Value.pack]
+  | uint maximum => cases raw <;> simp_all [Value.as, Value.pack]
+
+/-- A successful scalar cell read exposes its typed value and exact source frame. -/
+private theorem readCell_step_shape {ty : Ty} (scalarType : ScalarType ty)
+    (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
+    (name destination : String) (after : SourceEffects.Frame)
+    (success : SourceEffects.step ctx (.readCell name destination ty)
+      (env, state) = .ok after) :
+    ∃ (raw : Value) (value : ty.Denote),
+      state.cells.lookup name = some raw ∧
+      raw.as ty = some value ∧
+      SourceEffects.canonicalValue ctx ty value = true ∧
+      after = ((destination, Value.pack ty value) :: env, state) := by
+  cases found : state.cells.lookup name with
+  | none =>
+    simp [SourceEffects.step, runEffectWithEnv, found, bind, Except.bind,
+      throw, pure, Except.pure] at success
+  | some raw =>
+    cases typed : raw.as ty with
+    | none =>
+      simp [SourceEffects.step, runEffectWithEnv, found, typed, bind,
+        Except.bind, throw, pure, Except.pure] at success
+    | some value =>
+      have checkedStep : SourceEffects.step ctx (.readCell name destination ty) (env, state) =
+          if !SourceEffects.canonicalValue ctx ty value then
+            .error s!"noncanonical state cell '{name}'"
+          else .ok ((destination, Value.pack ty value) :: env, state) := by
+        cases scalarType <;>
+          simp [SourceEffects.step, runEffectWithEnv, found, typed, canonical_eq,
+            SourceEffects.canonicalValue, bind, Except.bind, throw, throwThe,
+            pure, Except.pure] <;> rfl
+      rw [checkedStep] at success
+      cases canonical : SourceEffects.canonicalValue ctx ty value with
+      | false => simp [canonical] at success
+      | true =>
+        simp only [canonical, Bool.not_true, Bool.false_eq_true, ite_false] at success
+        exact ⟨raw, value, rfl, typed, canonical, (Except.ok.inj success).symm⟩
+
+/-- Scalar cell reads add the canonicality needed for a native relation input. -/
+theorem readCell_step_value {ty : Ty} (scalarType : ScalarType ty)
+    (ctx : EvalContext) (env : EvalEnv) (state : LedgerState)
+    (name destination : String) (after : SourceEffects.Frame)
+    (modulus : ctx.modulus = Field.modulus)
     (success : SourceEffects.step ctx (.readCell name destination ty)
       (env, state) = .ok after) :
     ∃ value : ty.Denote,
       state.cells.lookup name = some (Value.pack ty value) ∧
       Canonical ty value ∧
       after = ((destination, Value.pack ty value) :: env, state) := by
-  cases found : state.cells.lookup name with
+  obtain ⟨raw, value, lookup, typed, checked, frame⟩ :=
+    readCell_step_shape scalarType ctx env state name destination after success
+  have packed := typed_value_eq_pack scalarType raw value typed
+  have canonical := canonicalValue_sound scalarType ctx value modulus checked
+  refine ⟨value, ?_, canonical, frame⟩
+  rw [packed] at lookup
+  exact lookup
+
+/-- Carry the checked initial ledger's schema to an actual later scalar read,
+including a read after tentative writes in the same entrypoint. -/
+theorem readCell_step_value_of_admitted (ctx : EvalContext) (env : EvalEnv)
+    (declarations : List StateDecl) (initial current : LedgerState) (slots : List NativeState.Slot)
+    (admitted : GenericStateEncoding.AdmittedState declarations initial slots)
+    (name destination : String) (ty : Ty) (declaration : StateDecl)
+    (found : declarations.find? (·.name == name) = some declaration)
+    (kind : declaration.kind = .cell ty) (after : SourceEffects.Frame)
+    (modulus : ctx.modulus = Field.modulus)
+    (success : SourceEffects.step ctx (.readCell name destination ty)
+      (env, current) = .ok after) :
+    ∃ value : ty.Denote,
+      current.cells.lookup name = some (Value.pack ty value) ∧
+      Canonical ty value ∧
+      after = ((destination, Value.pack ty value) :: env, current) := by
+  have supported := (admitted.cellType name declaration ty found kind).2
+  cases support : GenericStateEncoding.scalarType? ty with
   | none =>
-    simp only [SourceEffects.step, found] at success
-    change (Except.error s!"missing state cell '{name}'" :
-      Except String SourceEffects.Frame) = .ok after at success
-    cases success
-  | some raw =>
-    cases typed : raw.as ty with
-    | none =>
-      simp only [SourceEffects.step, found, typed] at success
-      change (Except.error s!"state cell type mismatch '{name}'" :
-        Except String SourceEffects.Frame) = .ok after at success
-      cases success
-    | some value =>
-      cases canonical : SourceEffects.canonicalValue ctx ty value with
-      | false =>
-        simp only [SourceEffects.step, found, typed, canonical] at success
-        change (Except.error s!"noncanonical state cell '{name}'" :
-          Except String SourceEffects.Frame) = .ok after at success
-        cases success
-      | true =>
-        have rawTyped : raw = Value.pack ty value := by
-          cases raw <;> cases ty <;> simp_all [Value.as, Value.pack]
-        subst raw
-        have stepShape : SourceEffects.step ctx (.readCell name destination ty)
-            (env, state) = .ok (((destination, Value.pack ty value) :: env), state) := by
-          simp [SourceEffects.step, found, typed, canonical, pure, Except.pure]
-        have final : after = ((destination, Value.pack ty value) :: env, state) := by
-          rw [stepShape] at success
-          exact (Except.ok.inj success).symm
-        exact ⟨value, rfl, canonicalValue_sound ctx ty value modulus canonical,
-          final⟩
+    rw [support] at supported
+    cases supported
+  | some scalarType =>
+    exact readCell_step_value scalarType ctx env current name destination after modulus success
 
 /-- An accepted source absence effect yields the key evaluation and the
 current map's missing-key fact used to build its false native read. -/
 theorem requireAbsent_step_key (ctx : EvalContext) (env : EvalEnv)
     (state : LedgerState) (name : String) (keyTy : Ty)
-    (keyExpr : Expr keyTy) (after : SourceEffects.Frame)
+    (keyExpr : Expr keyTy) (admission : ScalarExpression keyExpr)
+    (after : SourceEffects.Frame)
     (modulus : ctx.modulus = Field.modulus)
     (success : SourceEffects.step ctx (.requireAbsent name keyTy keyExpr)
       (env, state) = .ok after) :
@@ -83,27 +127,27 @@ theorem requireAbsent_step_key (ctx : EvalContext) (env : EvalEnv)
       after = (env, state) := by
   cases keyEval : keyExpr.eval ctx env with
   | error message =>
-    simp [SourceEffects.step, keyEval, bind, Except.bind] at success
+    simp [SourceEffects.step, runEffectWithEnv, keyEval, bind, Except.bind] at success
   | ok key =>
     cases mapLookup : state.maps.lookup name with
     | none =>
-      simp [SourceEffects.step, keyEval, mapLookup, bind, Except.bind,
-        throw, throwThe] at success
+      simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, bind,
+        Except.bind, throw, throwThe] at success
     | some entries =>
       cases found : entries.lookup (Value.pack keyTy key) with
       | some raw =>
-        simp [SourceEffects.step, keyEval, mapLookup, found,
+        simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, found,
           bind, Except.bind, throw, throwThe] at success
       | none =>
         have stepShape : SourceEffects.step ctx (.requireAbsent name keyTy keyExpr)
             (env, state) = .ok (env, state) := by
-          simp [SourceEffects.step, keyEval, mapLookup, found,
+          simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, found,
             bind, Except.bind, pure, Except.pure]
         rw [stepShape] at success
         cases success
         exact ⟨key, entries, rfl,
           GenericStateEvaluationCanonical.expression_eval_canonical ctx env
-            keyExpr key modulus keyEval,
+            keyExpr admission key modulus keyEval,
           rfl, found, rfl⟩
 
 /-- The successful original source evaluator exposes an ordered frame after

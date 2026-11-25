@@ -1,5 +1,5 @@
-import Noctium.Verification.GenericStateGuardSoundness
-import Noctium.Verification.GenericStateReadAuthentication
+import Noctium.Verification.GenericStateOps
+import Noctium.Verification.GenericStateSchemaSpans
 
 namespace Noctium.Verification.GenericStateAbsenceAuthentication
 open Backend NativeRelation ScalarNormalization NativeState
@@ -35,32 +35,47 @@ theorem requireAbsent_candidate_eval (state : List StateDecl)
     (canonical : Canonical keyTy key) :
     ∃ slot, state.findIdx? (·.name == name) = some slot ∧
       base.operations.mapM (GenericStateOps.evalOp ctx env) =
-        .ok (GenericStateVM.requireAbsentOps slot (scalar (number keyTy key))) := by
-  obtain ⟨slot, nativeKey, shape, _, _, meaning⟩ :=
-    GenericStateAdmission.requireAbsent_chunk state name keyTy keyExpr
-      base ctx env key compiled
+        .ok (GenericStateVM.requireAbsentOps slot
+          (scalar (GenericStateEncoding.number keyTy key))) := by
   simp only [Impact.appendEffect, bind_ok] at compiled
-  obtain ⟨actualSlot, found, equal⟩ := compiled
-  cases equal
-  have located : state.findIdx? (·.name == name) = some actualSlot := by
+  obtain ⟨slot, found, aligned, alignment, result⟩ := compiled
+  have located : state.findIdx? (·.name == name) = some slot := by
     change (match state.findIdx? (·.name == name) with
       | some index => (pure index : Except String Nat)
-      | none => throw s!"unknown ledger state '{name}'") = .ok actualSlot at found
+      | none => throw s!"unknown ledger state '{name}'") = .ok slot at found
     cases index : state.findIdx? (·.name == name) with
     | none => simp [index] at found
     | some actual =>
       simp [index] at found
       cases found
       rfl
-  have same : slot = actualSlot := by
-    have indexShape := (List.cons.inj (List.cons.inj shape).2).1
-    exact (Impact.Op.index.inj indexShape).1.symm
-  subst slot
-  refine ⟨actualSlot, located, ?_⟩
-  rw [shape]
-  have keyNative := meaning modulus keyEval canonical
-  simp [GenericStateVM.requireAbsentOps, GenericStateOps.evalOp,
-    GenericStateOps.evalAligned, keyNative, Except.map, Functor.map] <;> rfl
+  have keyField : ∃ nativeKey : Expr .native,
+      aligned = .field nativeKey ∧
+      nativeKey.eval ctx env = .ok (GenericStateEncoding.number keyTy key) := by
+    cases keyTy with
+    | native =>
+      exact ⟨keyExpr, (Except.ok.inj alignment).symm, keyEval⟩
+    | bool =>
+      refine ⟨.select keyExpr (.native 1) (.native 0),
+        (Except.ok.inj alignment).symm, ?_⟩
+      cases key <;>
+        simp [Expr.eval, keyEval, modulus, Field.modulus, GenericStateEncoding.number,
+          bind, Except.bind, pure, Except.pure]
+    | uint maximum =>
+      refine ⟨.cast .native keyExpr, (Except.ok.inj alignment).symm, ?_⟩
+      have bound : key < Field.modulus := canonical.1
+      rw [eval_cast_scalar ctx env keyExpr (.uint maximum) .native key keyEval]
+      simp [scalarCast, modulus, number, GenericStateEncoding.number, bound]
+    | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+      simp [Canonical, sourceNumber?] at canonical
+  obtain ⟨nativeKey, rfl, keyNative⟩ := keyField
+  have equal := Except.ok.inj result
+  subst base
+  refine ⟨slot, located, ?_⟩
+  change [Impact.Op.dup, .index slot, .push (.field nativeKey) false, .member,
+    .popeq (.bit false)].mapM (GenericStateOps.evalOp ctx env) = _
+  simp [GenericStateVM.requireAbsentOps, GenericStateOps.evalOp, GenericStateOps.evalAligned,
+    keyNative, List.mapM_cons, bind, Except.bind, pure, Except.pure]
 
 /-- The checked production absence segment enforces the original source
 absence transition on the current encoded map slot. -/
@@ -91,8 +106,9 @@ theorem requireAbsent_candidate_source_step (ctx : EvalContext)
   obtain ⟨slot, found, actualEval⟩ := requireAbsent_candidate_eval
     state name keyTy keyExpr base ctx candidateEnv key compiled
     modulus candidateEval canonical
-  have declarationAt := GenericStateAdmission.source_find_matches_slot state name
-    slot declaration sourceFound found
+  have declarationAt : state[slot]? = some declaration := by
+    rw [List.find?_eq_bind_findIdx?_getElem?, found] at sourceFound
+    exact sourceFound
   rw [actualEval] at evaluated
   cases evaluated
   exact GenericStateSchemaSpans.requireAbsent_source_step ctx sourceEnv state current
