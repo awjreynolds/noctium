@@ -1,12 +1,12 @@
 #![cfg(feature = "zkir-321")]
 
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
-use noctium_runtime::{check, create_state, prepare, zkir::IrSource, Db, Execution, Expr, Plan};
+use noctium_runtime::{Db, Execution, Expr, Plan, check, create_state, prepare, zkir::IrSource};
 use onchain_runtime::{
     context::QueryContext,
     state::{ChargedState, StateValue},
 };
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -14,8 +14,8 @@ use std::{
 };
 use transient_crypto::{curve::Fr, fab::AlignedValueExt};
 
-fn fixture(directory: &Path, entry: &str) -> (Plan, IrSource) {
-    let stem = format!("OpaqueLists.{entry}");
+fn fixture(directory: &Path, contract: &str, entry: &str) -> (Plan, IrSource) {
+    let stem = format!("{contract}.{entry}");
     let plan = serde_json::from_slice(
         &std::fs::read(directory.join(format!("{stem}.impact.json"))).unwrap(),
     )
@@ -97,18 +97,20 @@ fn opaque_lists_match_typed_heads_and_lifo_state() {
     let oracle_path = std::env::var_os("NOCTIUM_OPAQUE_LISTS_COMPACT")
         .expect("set Compact output in NOCTIUM_OPAQUE_LISTS_COMPACT");
     let oracle: Json = serde_json::from_slice(&std::fs::read(oracle_path).unwrap()).unwrap();
-    assert!(oracle["compact"]
-        .as_str()
-        .unwrap()
-        .starts_with("0.36.1 (7fa3a117c"));
+    assert!(
+        oracle["compact"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
     assert_eq!(oracle["runtime"], "0.21.0");
     let decode = |row: &Json, key: &str, index: usize| {
         hex::decode(row[key][index].as_str().unwrap()).unwrap()
     };
 
-    let (push, push_circuit) = fixture(&artifacts, "push");
-    let (inspect, inspect_circuit) = fixture(&artifacts, "inspect");
-    let (pop, pop_circuit) = fixture(&artifacts, "pop");
+    let (push, push_circuit) = fixture(&artifacts, "OpaqueLists", "push");
+    let (inspect, inspect_circuit) = fixture(&artifacts, "OpaqueLists", "inspect");
+    let (pop, pop_circuit) = fixture(&artifacts, "OpaqueLists", "pop");
     let parameters = &ledger::structure::INITIAL_PARAMETERS;
     let address = coin_structure::contract::ContractAddress::default();
     let state = create_state(
@@ -229,22 +231,157 @@ fn opaque_lists_match_typed_heads_and_lifo_state() {
     assert_eq!(oracle["afterEmptyPop"], json!(["null", "null"]));
     assert!(matches!(root.get(0), Some(StateValue::Null)));
     assert!(matches!(root.get(1), Some(StateValue::Null)));
-    assert!(prepare(
-        &inspect,
-        &BTreeMap::new(),
-        &result.context.state,
-        parameters,
-        address,
-    )
-    .is_err());
+    assert!(
+        prepare(
+            &inspect,
+            &BTreeMap::new(),
+            &result.context.state,
+            parameters,
+            address,
+        )
+        .is_err()
+    );
 
     assert!(prepare(&push, &inputs("bad\0", &bytes), &state, parameters, address).is_err());
-    assert!(prepare(
+    assert!(
+        prepare(
+            &push,
+            &inputs(&text, &[0x41, 0x00]),
+            &state,
+            parameters,
+            address
+        )
+        .is_err()
+    );
+}
+
+#[test]
+#[ignore = "requires fresh NestedOpaqueBytesList artifacts and the pinned Compact oracle"]
+fn nested_opaque_bytes_list_distinguishes_absence_from_present_empty() {
+    let artifacts = PathBuf::from(
+        std::env::var_os("NOCTIUM_NESTED_OPAQUE_BYTES_LIST_DIR").expect(
+            "set fresh NestedOpaqueBytesList artifacts in NOCTIUM_NESTED_OPAQUE_BYTES_LIST_DIR",
+        ),
+    );
+    let oracle_path = std::env::var_os("NOCTIUM_NESTED_OPAQUE_BYTES_LIST_COMPACT")
+        .expect("set Compact output in NOCTIUM_NESTED_OPAQUE_BYTES_LIST_COMPACT");
+    let oracle: Json = serde_json::from_slice(&std::fs::read(oracle_path).unwrap()).unwrap();
+    assert!(
+        oracle["compact"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
+    assert_eq!(oracle["runtime"], "0.21.0");
+    for (name, byte) in [("owner", 0x11), ("sibling", 0x22), ("missingOwner", 0x33)] {
+        assert_eq!(
+            oracle[name].as_str(),
+            Some(hex::encode([byte; 32]).as_str())
+        );
+    }
+    assert_eq!(oracle["siblingValue"], json!([0x80, 0, 0xfe]));
+    assert_eq!(oracle["missingOwnerRejected"], json!(true));
+
+    let (clear, clear_circuit) = fixture(&artifacts, "NestedOpaqueBytesList", "clear");
+    let (push, push_circuit) = fixture(&artifacts, "NestedOpaqueBytesList", "push");
+    let (inspect, inspect_circuit) = fixture(&artifacts, "NestedOpaqueBytesList", "inspect");
+    let (pop, pop_circuit) = fixture(&artifacts, "NestedOpaqueBytesList", "pop");
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let initial = create_state(&clear, &BTreeMap::from([("byteArrays".into(), json!([]))]))
+        .expect("nested opaque byte List state creates");
+    let at_owner = |owner: u8, bytes: Option<&[u8]>| {
+        let key = [owner; 32];
+        let mut values = BTreeMap::from([("owner".into(), json!({"kind":"bytes", "values":key}))]);
+        if let Some(bytes) = bytes {
+            values.insert(
+                "bytes".into(),
+                json!({"kind":"opaqueBytes", "values": bytes}),
+            );
+        }
+        values
+    };
+    let run = |plan, circuit, state, owner, bytes| {
+        let execution = prepare(plan, &at_owner(owner, bytes), state, parameters, address)
+            .expect("native List operation prepares");
+        check(&execution, circuit).expect("native List relation checks");
+        execution
+    };
+    assert!(
+        prepare(
+            &inspect,
+            &at_owner(0x33, None),
+            &initial,
+            parameters,
+            address
+        )
+        .is_err()
+    );
+
+    let owner_clear = run(&clear, &clear_circuit, &initial, 0x11, None);
+    let sibling_clear = run(&clear, &clear_circuit, &owner_clear.after.state, 0x22, None);
+    let seeded = run(
         &push,
-        &inputs(&text, &[0x41, 0x00]),
-        &state,
-        parameters,
-        address
-    )
-    .is_err());
+        &push_circuit,
+        &sibling_clear.after.state,
+        0x22,
+        Some(&[0x80, 0, 0xfe]),
+    );
+    let empty = run(&push, &push_circuit, &seeded.after.state, 0x11, Some(&[]));
+    let binary = run(
+        &push,
+        &push_circuit,
+        &empty.after.state,
+        0x11,
+        Some(&[0, 0xff]),
+    );
+    let first_pop = run(&pop, &pop_circuit, &binary.after.state, 0x11, None);
+    let final_pop = run(&pop, &pop_circuit, &first_pop.after.state, 0x11, None);
+
+    let list_for = |state: &ChargedState<Db>, owner: u8| {
+        let StateValue::Array(root) = state.get_ref() else {
+            panic!("expected native state slots");
+        };
+        let StateValue::Map(buckets) = root.get(0).expect("byteArrays Map slot") else {
+            panic!("expected native owner Map");
+        };
+        let key = AlignedValue::from([owner; 32]);
+        (*buckets.get(&key).expect("owner List exists")).clone()
+    };
+    let sibling_state = list_for(&seeded.after.state, 0x22);
+    for (stage, state) in [
+        ("afterClear", &seeded.after.state),
+        ("afterEmptyPush", &empty.after.state),
+        ("afterBinaryPush", &binary.after.state),
+        ("afterFirstPop", &first_pop.after.state),
+        ("afterFinalPop", &final_pop.after.state),
+    ] {
+        assert_eq!(list_for(state, 0x22), sibling_state);
+        for (name, owner) in [("owner", 0x11), ("sibling", 0x22)] {
+            let expected = &oracle[stage][name];
+            let present = expected["is_some"].as_bool().expect("Compact Maybe tag");
+            let bytes: Vec<u8> = serde_json::from_value(expected["value"].clone()).unwrap();
+            let head = run(&inspect, &inspect_circuit, state, owner, None);
+            assert_eq!(head.after.state.get_ref(), state.get_ref());
+            assert_eq!(
+                head.returns_json()["bytesHead"],
+                json!({
+                    "kind": "struct",
+                    "id": "NestedOpaqueBytesList.MaybeOpaqueBytes",
+                    "fields": [
+                        {"name": "is_some", "value": {"kind": "bool", "value": present}},
+                        {"name": "value", "value": {"kind": "opaqueBytes", "values": bytes}},
+                    ]
+                })
+            );
+            let StateValue::Array(ref list) = list_for(state, owner) else {
+                panic!("expected a native List node");
+            };
+            match (present, list.get(0)) {
+                (false, Some(StateValue::Null)) => assert!(bytes.is_empty()),
+                (true, Some(StateValue::Cell(cell))) => assert_eq!(**cell, compressed(&bytes)),
+                _ => panic!("expected a native List head matching the Compact Maybe tag"),
+            }
+        }
+    }
 }

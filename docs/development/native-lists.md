@@ -238,6 +238,42 @@ NOCTIUM_NESTED_OPAQUE_LISTS_COMPACT="$scratch/compact.json" \
   nested_opaque_string_lists_match_compact_and_preserve_map_siblings -- --ignored --exact
 ```
 
+### Opaque byte arrays below one Bytes32 parent
+
+`tree byteArrays : Bytes32 => List OpaqueBytes` uses the scalar List
+lowering. The paired fixture distinguishes `None` with an empty default
+from `Some([])`. After initializing the owner List, it pushes `[]` and
+then `[0x00, 0xff]`. After the first pop, the next head is the present
+empty array. The second pop restores the absent head. The sibling retains
+`[0x80, 0x00, 0xfe]` throughout, and reading through a missing owner rejects. Keys
+repeat `0x11` for the owner, `0x22` for the sibling and `0x33` for the
+missing owner, each 32 times.
+
+The Compact 0.36.1 (`7fa3a117c`) reference uses Runtime 0.21.0 and
+`--skip-zk`. The native Ledger 9.1.0.1 / ZKIR 3.2.1 replay checks the
+emitted relation, the exact FAB Compress payload and the sibling's
+full List state. [Lean fixture](../../tests/NestedOpaqueBytesList.lean) ·
+[Compact reference](../../tests/compact/nested-opaque-bytes-list.mjs) ·
+[Native check](../../runtime/tests/opaque_lists.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/nested-opaque-bytes-list.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/nested-opaque-bytes-list.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/NestedOpaqueBytesList.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_NESTED_OPAQUE_BYTES_LIST_DIR="$scratch/native" \
+NOCTIUM_NESTED_OPAQUE_BYTES_LIST_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test opaque_lists \
+  nested_opaque_bytes_list_distinguishes_absence_from_present_empty -- --ignored --exact
+```
+
 ## Check emptiness for zero-width and nested record Lists
 
 The paired fixture compares an empty `List<Bytes<0>>` with a List containing

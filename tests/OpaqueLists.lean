@@ -47,8 +47,8 @@ private def opaqueListEntry (name : String) : Entrypoint :=
 
 #guard match LedgerValueType.validate Capabilities.source
     (.map (.bytes 32) (.list {} (.scalar .opaqueString))) with
-  | .error message => message == "OpaqueString is only supported as a root Bytes32 tree Map value"
-  | .ok _ => Bool.false
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
 
 #guard match OpaqueLists.validate Capabilities.source with
   | .ok _ => Bool.true
