@@ -234,5 +234,131 @@ theorem lowerEntrypoint_inputDescriptors_of_checkedScalarProfile
     exact validatedDescriptors
   exact ⟨expected, expectedAccepted, expectedRawInputsEmpty, exactDescriptors⟩
 
+private theorem validate_decoded_input_trace_of_checkedScalarProfile
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    {rows : Array Lean.Json}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program)
+    (rowsParsed : Backend.Native.arrayField json "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile (rows.toList.zipIdx) program.instructions = true) :
+    ∃ final : State,
+      NativeDefinitionTrace (rows.toList.zipIdx) program.instructions ∧
+      validateInstructionLoop expected (rows.toList.zipIdx) {} = .ok final ∧
+      final.inputCount = expected.inputs.length := by
+  obtain ⟨headerInstructions, rawInputsHeader, headerInstructionsParsed,
+    decodedRows⟩ := NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  have rowsEq : headerInstructions = rows :=
+    Except.ok.inj (headerInstructionsParsed.symm.trans rowsParsed)
+  obtain ⟨_, producerInstructions, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result_empty_header
+      (expected := expected) nativeAccepted rawInputsHeader
+  have driverRowsEq : producerInstructions = rows :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)
+  have decodedRowsOnRows : rows.toList.mapM NativeRelationJson.decodeInstruction =
+      .ok program.instructions := by
+    rw [← rowsEq]
+    exact decodedRows
+  have decodedItems : ((rows.toList.zipIdx).map Prod.fst).mapM
+      NativeRelationJson.decodeInstruction = .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRowsOnRows
+  have trace : NativeDefinitionTrace (rows.toList.zipIdx) program.instructions :=
+    NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems profile
+  have driverTrace : validateInstructionLoop expected (rows.toList.zipIdx) {} = .ok final := by
+    have actualTrace := driver.instructionTrace
+    rw [driverRowsEq] at actualTrace
+    exact actualTrace
+  exact ⟨final, trace, driverTrace, driver.inputCount⟩
+
+/-- An accepted native validation and strict decode expose exactly the checked
+input descriptors in the expected schema. The raw rows are the same array
+consumed by the producer, and the checked profile binds each decoded row to
+its producer opcode. -/
+theorem validate_decoded_input_descriptors_of_checkedScalarProfile
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    {rows : Array Lean.Json}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program)
+    (rowsParsed : Backend.Native.arrayField json "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile (rows.toList.zipIdx) program.instructions = true)
+    (schema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false) :
+    program.instructions.flatMap strictInstructionInputDescriptors =
+      expected.inputs.map expectedInputDescriptor := by
+  obtain ⟨final, trace, accepted, finalCount⟩ :=
+    validate_decoded_input_trace_of_checkedScalarProfile
+      nativeAccepted decoded rowsParsed profile
+  have descriptors := validateInstructionLoop_input_descriptors_of_trace
+    schema empty_nativeDefinitions trace accepted
+  rw [finalCount, (show ({} : State).inputCount = 0 from rfl)] at descriptors
+  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
+    using descriptors.symm
+
+private theorem input_descriptor_identifiers_valid_of_trace
+    {items : List (Lean.Json × Nat)} {instructions : List Instruction}
+    (trace : NativeDefinitionTrace items instructions) :
+    ∀ descriptor ∈ instructions.flatMap strictInstructionInputDescriptors,
+      NativeRelationJson.validIdentifier descriptor.2 = true := by
+  induction trace with
+  | nil => simp
+  | @cons raw index instruction tailItems tailInstructions head tail ih =>
+    intro descriptor member
+    simp only [List.flatMap_cons, List.mem_append] at member
+    rcases member with headMember | tailMember
+    · cases head.supported with
+      | publicInput output opcode =>
+        have descriptorEq : descriptor = (.public, output) := by
+          simpa [strictInstructionInputDescriptors] using headMember
+        subst descriptor
+        exact strict_decoded_input_identifier_valid
+          (by simpa [inputOpcode] using opcode) head.decoded
+      | privateInput output opcode =>
+        have descriptorEq : descriptor = (.private, output) := by
+          simpa [strictInstructionInputDescriptors] using headMember
+        subst descriptor
+        exact strict_decoded_input_identifier_valid
+          (by simpa [inputOpcode] using opcode) head.decoded
+      | add _ _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | mul _ _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | neg _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | bits _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | boolean _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | lessThan _ _ _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | assertion _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | testEq _ _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | copy _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | impact _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | output _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | hash _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | not _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | select _ _ _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+      | constrainEq _ _ _ => simp [strictInstructionInputDescriptors] at headMember
+    · exact ih descriptor tailMember
+
+/-- Every input name in an accepted producer program is valid in the strict
+relation representation. This connects the actual validator's ordered input
+trace to the strict decoder's own identifier check. -/
+theorem validate_decoded_input_identifiers_of_checkedScalarProfile
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    {rows : Array Lean.Json}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program)
+    (rowsParsed : Backend.Native.arrayField json "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile (rows.toList.zipIdx) program.instructions = true)
+    (schema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false) :
+    ∀ requirement ∈ expected.inputs,
+      NativeRelationJson.validIdentifier requirement.identifier = true := by
+  have descriptors := validate_decoded_input_descriptors_of_checkedScalarProfile
+    nativeAccepted decoded rowsParsed profile schema
+  obtain ⟨_, trace, _, _⟩ := validate_decoded_input_trace_of_checkedScalarProfile
+    nativeAccepted decoded rowsParsed profile
+  have validDescriptors := input_descriptor_identifiers_valid_of_trace trace
+  intro requirement member
+  have descriptorMember : expectedInputDescriptor requirement ∈
+      program.instructions.flatMap strictInstructionInputDescriptors := by
+    rw [descriptors]
+    exact List.mem_map.mpr ⟨requirement, member, rfl⟩
+  change NativeRelationJson.validIdentifier
+    (expectedInputDescriptor requirement).2 = true
+  exact validDescriptors _ descriptorMember
+
 
 end Noctium.Verification.NativeInputOrdinalTrace

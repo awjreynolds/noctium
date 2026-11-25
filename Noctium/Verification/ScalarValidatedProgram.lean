@@ -277,23 +277,13 @@ theorem validate_sound {expected : Expected} {json : Json} {program : Program}
     Sound hash witness expected program streams groups := by
   obtain ⟨decodedRows, header, rowsEq, decoding⟩ := decode_headerAndInstructions decoded
   cases Except.ok.inj (rowsEq.symm.trans rowsParsed)
-  obtain ⟨noRaw, driverRows, _, driver⟩ :=
+  obtain ⟨noRaw, _, _, _⟩ :=
     ScalarValidationProjection.validate_driver_result_empty_header accepted header
-  have rowsMatch := Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)
-  subst driverRows
   have schema : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
       requirement.ty.isForeign = false := by
     simpa only [noRaw, List.nil_append] using inputSchema
-  have indexed : ((rows.toList.zipIdx).map Prod.fst).mapM NativeRelationJson.decodeInstruction =
-      .ok program.instructions := by simpa only [List.zipIdx_map_fst] using decoding
-  have trace := NativeDefinitionTrace.ofDecodedCheckedProfile indexed profile
-  have inputTrace := validateInstructionLoop_input_descriptors_of_trace
-    inputSchema ScalarValidationNativeDefinitions.empty_nativeDefinitions trace
-    driver.instructionTrace
-  have descriptors : program.instructions.flatMap strictInstructionInputDescriptors =
-      expected.inputs.map expectedInputDescriptor := by
-    rw [driver.inputCount] at inputTrace
-    simpa using inputTrace.symm
+  have descriptors := validate_decoded_input_descriptors_of_checkedScalarProfile
+    accepted decoded rowsParsed profile inputSchema
   obtain ⟨assertions, bounds, inputBounds⟩ :=
     sourceRequirements accepted rowsParsed decoding profile schema satisfies
   exact {

@@ -677,6 +677,8 @@ jobs:
             Noctium.Verification.NativeInputOrdinalTrace \
             Noctium.Verification.RangeDedupAcceptedEntrypoint \
             Noctium.Verification.ScalarTranslationSoundness \
+            Noctium.Verification.ScalarStateExtensions \
+            Noctium.Verification.ScalarRangeLowering \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
             Noctium.Verification.ScalarValidationProjectionComparison \
@@ -706,6 +708,7 @@ jobs:
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/RangeDedupRawCall.lean
           lake env lean tests/ScalarValidatedProgram.lean
+          lake env lean tests/ScalarWitnessCapacity.lean
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
           lake env lean tests/GuardedScalarCellAdmission.lean

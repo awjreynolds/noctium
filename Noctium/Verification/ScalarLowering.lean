@@ -1,9 +1,8 @@
 import Noctium.Backend.Zkir
 import Noctium.Verification.ScalarImmediate
 import Noctium.Verification.ScalarInstructionEncoding
-import Noctium.Verification.ScalarValidation
+import Noctium.Verification.ScalarValidationOutputMeaning
 import Noctium.Verification.ScalarNormalizationSoundness
-import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarWitness
 import Std.Data.String.ToNat
 
@@ -17,6 +16,7 @@ open Noctium.Verification.NativeRelationJson
 open Noctium.Verification.ScalarWitness
 open Noctium.Verification.ScalarNormalization
 open Noctium.Verification.ScalarInstructionEncoding
+open Noctium.Verification.ScalarValidationMeaning
 
 abbrev Assignment := Noctium.Verification.NativeRelation.Assignment
 abbrev ExpressionKey := Noctium.Backend.Zkir.ExpressionKey
@@ -91,7 +91,7 @@ def appendFreshState (state : Zkir.LowerState) (raw : Json)
 def OperandMeaning (hash : Hash) (inputs witness : Assignment) (text : String)
     (term : Backend.Native.Term) : Prop :=
   ∃ operand, decodeOperand (toJson text) = .ok operand ∧
-    operand.read witness = interpret hash inputs term
+    interpret hash inputs term = some (operand.read witness)
 
 def LowerAliasAgreement (hash : Hash) (inputs witness : Assignment)
     (normalAliases : Backend.Native.AliasEnvironment) (lowerAliases : List (String × String))
@@ -112,7 +112,8 @@ theorem OperandMeaning.assignFresh (hash : Hash) (inputs witness : Assignment)
   subst scopedOperand
   refine ⟨operand, parsed, ?_⟩
   rw [Operand.read_assign witness (freshName next) value operand
-    (Operand.independent_of_scope next operand identifiers), valueMeaning]
+    (Operand.independent_of_scope next operand identifiers)]
+  exact valueMeaning
 
 theorem LowerAliasAgreement.cons (hash : Hash) (inputs witness : Assignment)
     (normalAliases : Backend.Native.AliasEnvironment) (lowerAliases : List (String × String))
@@ -213,7 +214,7 @@ structure ExprStepResult (hash : Hash) (inputs initialWitness : Assignment)
   operandMeaning : OperandMeaning hash inputs finalWitness text normalized.term
   textScope : TextScope finalState.next text
   stateMeaning : LowerStateMeaning hash finalWitness finalState
-  budget : finalState.next ≤ Native.maxInstructions
+  budget : finalState.next ≤ Native.maxInstructions * Native.maxVectorLength
   aliasAgreement : LowerAliasAgreement hash inputs finalWitness normalAliases finalState.aliases values
   aliasesPreserved : finalState.aliases = initialState.aliases
   frame : ∀ name, InScope initialState.next name → finalWitness name = initialWitness name
@@ -230,15 +231,9 @@ def ExprComplete (expression : Expr ty) : Prop :=
     AliasAgreement hash inputs normalAliases values →
     LowerAliasAgreement hash inputs witness normalAliases state.aliases values →
     LowerStateMeaning hash witness state →
-    ((Zkir.lowerExpr expression).run state).2.next ≤ Native.maxInstructions →
+    ((Zkir.lowerExpr expression).run state).2.next ≤
+      Native.maxInstructions * Native.maxVectorLength →
     Nonempty (ExprStepResult hash inputs witness state normalAliases values expression value)
-
-private theorem lookup_member {key : α} {value : β} {entries : List (α × β)}
-    [BEq α] [LawfulBEq α]
-    (lookup : entries.lookup key = some value) : (key, value) ∈ entries := by
-  obtain ⟨before, after, equal, _⟩ := List.lookup_eq_some_iff.mp lookup
-  rw [equal]
-  simp
 
 theorem TextScope.fieldImmediate (next number : Nat) (canonical : number < Field.modulus) :
     TextScope next (Zkir.fieldImmediate number) := by
@@ -249,7 +244,7 @@ theorem OperandMeaning.fieldImmediate (hash : Hash) (inputs witness : Assignment
     (number : Nat) (canonical : number < Field.modulus) :
     OperandMeaning hash inputs witness (Zkir.fieldImmediate number) (.constant number) := by
   refine ⟨.immediate (scalar number), ScalarImmediate.decodeOperand_fieldImmediate_exact number canonical, ?_⟩
-  simp [Operand.read]
+  simp [Operand.read, interpret]
 
 theorem TextScope.validReference (next : Nat) (name : String)
     (valid : validIdentifier name = true) (nameScope : InScope next name) :
@@ -259,10 +254,10 @@ theorem TextScope.validReference (next : Nat) (name : String)
 
 theorem OperandMeaning.reference (hash : Hash) (inputs witness : Assignment)
     (name : String) (valid : validIdentifier name = true) (term : Backend.Native.Term)
-    (meaning : witness name = interpret hash inputs term) :
+    (meaning : interpret hash inputs term = some (witness name)) :
     OperandMeaning hash inputs witness name term := by
   refine ⟨.reference name, (OperandEncoding.reference name valid).decode, ?_⟩
-  exact meaning
+  simpa [Operand.read] using meaning
 
 theorem LowerAliasAgreement.assignFresh (hash : Hash) (inputs witness : Assignment)
     (normalAliases : Backend.Native.AliasEnvironment) (lowerAliases : List (String × String))
@@ -292,10 +287,10 @@ theorem LowerAliasAgreement.assignFresh (hash : Hash) (inputs witness : Assignme
           simp only [operandIdentifiers, List.mem_singleton] at member
           subst identifier
           have startsPercent : ("%input_" ++ name).startsWith "%" = true := by simp
-          have starts := ScalarValidation.reference_not_immediate startsPercent
+          have starts := NativeRelationJson.reference_not_immediate startsPercent
           have parsedFallback' := parsedFallback
           unfold decodeOperand at parsedFallback'
-          simp only [ScalarValidation.bind_ok] at parsedFallback'
+          simp only [ScalarValidationMeaning.bind_ok] at parsedFallback'
           rcases parsedFallback' with ⟨found, foundParsed, decoded⟩
           change Except.ok ("%input_" ++ name) = Except.ok found at foundParsed
           have foundEq : found = "%input_" ++ name := (Except.ok.inj foundParsed).symm
@@ -344,8 +339,7 @@ theorem cached_add_meaning (hash : Hash) (inputs witness : Assignment)
       (rightMeaningOperand.read witness).val) at holds
     refine ⟨.reference output, ?_, ?_⟩
     · exact OperandEncoding.reference output outputValid |>.decode
-    · simp only [Operand.read]
-      rw [holds, interpret_add, leftValue, rightValue]
+    · simp [Operand.read, interpret_add, leftValue, rightValue, holds]
   | mul leftOperand rightOperand output => simp [CacheCorresponds] at correspondence
   | neg value output => simp [CacheCorresponds] at correspondence
   | testEq leftOperand rightOperand output => simp [CacheCorresponds] at correspondence
@@ -389,8 +383,7 @@ theorem cached_mul_meaning (hash : Hash) (inputs witness : Assignment)
     change witness output = scalar ((leftMeaningOperand.read witness).val *
       (rightMeaningOperand.read witness).val) at holds
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
-    simp only [Operand.read]
-    rw [holds, interpret_mul, leftValue, rightValue]
+    simp [Operand.read, interpret_mul, leftValue, rightValue, holds]
   | add leftOperand rightOperand output => simp [CacheCorresponds] at correspondence
   | neg value output => simp [CacheCorresponds] at correspondence
   | testEq leftOperand rightOperand output => simp [CacheCorresponds] at correspondence
@@ -586,11 +579,11 @@ theorem lowerExpr_bool_run (state : Zkir.LowerState) (value : Bool) :
   simp [Zkir.lowerExpr]
   rfl
 
-theorem lowerExpr_ref_run (state : Zkir.LowerState) (ty : Ty) (name : String) :
+theorem lowerExpr_ref_run (state : Zkir.LowerState) (ty : Ty)
+    (supported : ScalarType ty) (name : String) :
     (Zkir.lowerExpr (ty := ty) (.ref (ty := ty) name)).run state =
       (state.aliases.lookup name |>.getD ("%input_" ++ name), state) := by
-  simp [Zkir.lowerExpr]
-  rfl
+  cases supported <;> simp [Zkir.lowerExpr] <;> rfl
 
 theorem binary_cache_hit (state : Zkir.LowerState) (opcode left right result : String)
     (hit : state.expressions.lookup (opcode, [left, right], none) = some result) :
