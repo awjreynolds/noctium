@@ -58,10 +58,6 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
     intro condition present
     exact ScalarExpressionLowering.lowerExpr_complete condition
       (prunedAdmission.constraints condition present)
-  have prunedOutputs : ∀ output ∈ pruned.outputs, ExprComplete output.value := by
-    intro output present
-    obtain ⟨_, supported⟩ := prunedAdmission.outputs output present
-    exact ScalarExpressionLowering.lowerExpr_complete output.value supported
   have prunedSuccess : pruned.run ctx values = .ok result := by
     rw [Passes.pruneCircuit_run]
     exact success
@@ -75,7 +71,7 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
   have constraintCompletion := completes_circuit_constraints ctx hash implementation pruned values inputs
     prunedInputs names prunedAdmission prunedConditions validation.1 steps.1
   have outputCompletion := completes_circuit_outputs ctx hash implementation pruned values inputs
-    prunedInputs names prunedAdmission (complete_scalar_return_fields pruned prunedAdmission prunedOutputs)
+    prunedInputs names prunedAdmission
     validation.2 ⟨result, steps.2⟩
   have constraintCapacity := Zkir.lowerConstraints_preservesOutputCapacityFrame pruned.constraints
     (fun condition present => lowerExpr_admitted_preservesOutputCapacityFrame condition

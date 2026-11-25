@@ -2015,7 +2015,7 @@ def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit := do
     read output
     constrainType input.ty output
 
-private theorem lowerByteInput_preservesOutputCapacityFrame (input : Input) (raw : Bool) :
+theorem lowerByteInput_preservesOutputCapacityFrame (input : Input) (raw : Bool) :
     PreservesOutputCapacityFrame (lowerByteInput input raw) := by
   cases input with
   | mk name ty visibility span =>
@@ -3275,7 +3275,7 @@ theorem lowerEntrypointAliases_preservesOutputCapacityFrame (entry : Entrypoint)
       intro lowered <;>
       exact modify_preservesOutputCapacityFrame _ (fun _ => rfl) (fun _ => rfl)
 
-private def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
+def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
   for scalarRead in Impact.Read.scalarReads read do
     let activity ← (match scalarRead.guard with
       | none => pure none
@@ -3328,7 +3328,7 @@ private def lowerLedgerRead (read : Impact.Read) : LowerM Unit := do
       modify fun state => {state with aliases := (scalarRead.name, point) :: state.aliases}
   lowerConstraints read.inactiveDefaultConstraints
 
-private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read)
+theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read)
     (guards : ∀ scalarRead ∈ read.scalarReads, ∀ guard,
       scalarRead.guard = some guard → PreservesOutputCapacityFrame (lowerExpr guard))
     (defaults : ∀ condition ∈ read.inactiveDefaultConstraints,
@@ -3429,13 +3429,13 @@ private theorem lowerLedgerRead_preservesOutputCapacityFrame (read : Impact.Read
   · intro _
     exact lowerConstraints_preservesOutputCapacityFrame _ defaults
 
-private def lowerLedgerReads (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
+def lowerLedgerReads (entry : Entrypoint) (plan : Impact.Plan) : LowerM Unit := do
   -- Public call parameters have already been read in declaration order.
   let publicCount := Impact.publicInputReadCount entry.circuit.inputs
   for read in plan.reads.drop publicCount do
     lowerLedgerRead read
 
-private theorem lowerLedgerReads_preservesOutputCapacityFrame (entry : Entrypoint)
+theorem lowerLedgerReads_preservesOutputCapacityFrame (entry : Entrypoint)
     (plan : Impact.Plan)
     (guards : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
       ∀ scalarRead ∈ read.scalarReads, ∀ guard, scalarRead.guard = some guard →
@@ -3451,7 +3451,7 @@ private theorem lowerLedgerReads_preservesOutputCapacityFrame (entry : Entrypoin
   intro _
   exact pure_preservesOutputCapacityFrame _
 
-private def lowerLedgerOperations (plan : Impact.Plan) : LowerM Unit := do
+def lowerLedgerOperations (plan : Impact.Plan) : LowerM Unit := do
   -- The ledger consumes one activity entry per VM opcode. Compound Impact
   -- operations split their field vectors at each native opcode.
   for (operation, index) in plan.operations.zipIdx do
@@ -3459,7 +3459,7 @@ private def lowerLedgerOperations (plan : Impact.Plan) : LowerM Unit := do
     for fields in operation.fieldGroups do
       bindPublicGuarded guard (← fields.mapM lowerExpr)
 
-private theorem lowerLedgerOperations_preservesOutputCapacityFrame (plan : Impact.Plan)
+theorem lowerLedgerOperations_preservesOutputCapacityFrame (plan : Impact.Plan)
     (fieldsFrame : ∀ item ∈ plan.operations.zipIdx, ∀ fields ∈ item.1.fieldGroups,
       ∀ field ∈ fields, PreservesOutputCapacityFrame (lowerExpr field))
     (guardsFrame : ∀ item ∈ plan.operations.zipIdx, PreservesOutputCapacityFrame

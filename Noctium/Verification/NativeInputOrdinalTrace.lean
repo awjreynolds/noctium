@@ -292,7 +292,7 @@ theorem validate_decoded_input_descriptors_of_checkedScalarProfile
   simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
     using descriptors.symm
 
-private theorem input_descriptor_identifiers_valid_of_trace
+theorem input_descriptor_identifiers_valid_of_trace
     {items : List (Lean.Json × Nat)} {instructions : List Instruction}
     (trace : NativeDefinitionTrace items instructions) :
     ∀ descriptor ∈ instructions.flatMap strictInstructionInputDescriptors,

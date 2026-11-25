@@ -95,23 +95,30 @@ structure PrefixExtension (hash : Hash) (beforeWitness : NativeRelation.Assignme
 def InputFrame (inputs witness : NativeRelation.Assignment) : Prop :=
   ∀ name, witness ("%input_" ++ name) = inputs ("%input_" ++ name)
 
+/-- Compose witness extensions through stages that preserve lowered aliases.
+Standalone circuits start with no aliases. Ledger stages may begin after
+output aliases have been installed. -/
 def Completes (hash : Hash) (inputs : NativeRelation.Assignment)
-    (operation : StateM Zkir.LowerState α) : Prop :=
-  ∀ witness state, LowerStateMeaning hash witness state → InputFrame inputs witness → state.aliases = [] →
+    (operation : StateM Zkir.LowerState α)
+    (aliasRequirement : List (String × String) → Prop := fun aliases => aliases = []) : Prop :=
+  ∀ witness state, LowerStateMeaning hash witness state → InputFrame inputs witness →
+    aliasRequirement state.aliases →
     (operation.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength →
     Nonempty (PrefixExtension hash witness state (operation.run state).2)
 
-theorem completes_pure (hash : Hash) (inputs : NativeRelation.Assignment) (value : α) :
-    Completes hash inputs (pure value) := by
+theorem completes_pure (hash : Hash) (inputs : NativeRelation.Assignment) (value : α)
+    {aliasRequirement : List (String × String) → Prop} :
+    Completes hash inputs (pure value) aliasRequirement := by
   intro witness state meaning inputFrame aliases budget
   exact ⟨{witness, meaning, aliases := rfl, frame := by intro name _; rfl}⟩
 
 theorem completes_emit_input (hash : Hash) (inputs : NativeRelation.Assignment) (input : Input)
-    (valid : validIdentifier ("%input_" ++ input.name) = true) :
+    (valid : validIdentifier ("%input_" ++ input.name) = true)
+    {aliasRequirement : List (String × String) → Prop} :
     Completes hash inputs
       (Zkir.emit (if input.visibility == .«public» then "public_input" else "private_input")
         [("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),
-          ("output", toJson ("%input_" ++ input.name))]) := by
+          ("output", toJson ("%input_" ++ input.name))]) aliasRequirement := by
   intro witness state meaning inputFrame aliases budget
   exact ⟨{witness, meaning := emit_input hash witness state meaning input valid, aliases := rfl, frame := by intro name _; rfl}⟩
 
@@ -119,9 +126,10 @@ theorem completes_bind (hash : Hash) (inputs : NativeRelation.Assignment)
     (first : StateM Zkir.LowerState α) (next : α → StateM Zkir.LowerState β)
     (firstFrame : Zkir.PreservesOutputCapacityFrame first)
     (nextFrame : ∀ value, Zkir.PreservesOutputCapacityFrame (next value))
-    (firstComplete : Completes hash inputs first)
-    (nextComplete : ∀ value, Completes hash inputs (next value)) :
-    Completes hash inputs (first >>= next) := by
+    {aliasRequirement : List (String × String) → Prop}
+    (firstComplete : Completes hash inputs first aliasRequirement)
+    (nextComplete : ∀ value, Completes hash inputs (next value) aliasRequirement) :
+    Completes hash inputs (first >>= next) aliasRequirement := by
   intro witness state meaning inputFrame aliases budget
   have runBudget : ((next (first.run state).1).run (first.run state).2).2.next ≤
       Native.maxInstructions * Native.maxVectorLength := budget
@@ -130,8 +138,10 @@ theorem completes_bind (hash : Hash) (inputs : NativeRelation.Assignment)
   obtain ⟨left⟩ := firstComplete witness state meaning inputFrame aliases middleBudget
   have nextInput : InputFrame inputs left.witness := fun name =>
     (left.frame _ (Or.inl ⟨name, rfl⟩)).trans (inputFrame name)
-  obtain ⟨right⟩ := nextComplete _ left.witness _ left.meaning nextInput
-    (left.aliases.trans aliases) runBudget
+  have nextAliases : aliasRequirement (first.run state).2.aliases := by
+    rw [left.aliases]
+    exact aliases
+  obtain ⟨right⟩ := nextComplete _ left.witness _ left.meaning nextInput nextAliases runBudget
   refine ⟨{witness := right.witness, meaning := right.meaning, aliases := right.aliases.trans left.aliases, frame := ?_}⟩
   intro name scope
   exact (right.frame name (InScope.mono (firstFrame state).next scope)).trans
@@ -140,9 +150,10 @@ theorem completes_bind (hash : Hash) (inputs : NativeRelation.Assignment)
 theorem completes_forIn (hash : Hash) (inputs : NativeRelation.Assignment) (items : List α)
     (initial : β) (body : α → StateM Zkir.LowerState Unit)
     (frames : ∀ item ∈ items, Zkir.PreservesOutputCapacityFrame (body item))
-    (complete : ∀ item ∈ items, Completes hash inputs (body item)) :
+    {aliasRequirement : List (String × String) → Prop}
+    (complete : ∀ item ∈ items, Completes hash inputs (body item) aliasRequirement) :
     Completes hash inputs
-      (forIn items initial (fun item _ => do body item; pure (.yield initial))) := by
+      (forIn items initial (fun item _ => do body item; pure (.yield initial))) aliasRequirement := by
   induction items with
   | nil => exact completes_pure hash inputs initial
   | cons item items ih =>
@@ -150,6 +161,7 @@ theorem completes_forIn (hash : Hash) (inputs : NativeRelation.Assignment) (item
     simp only [bind_assoc, pure_bind]
     change Completes hash inputs
       (body item >>= fun _ => forIn items initial (fun item _ => do body item; pure (.yield initial)))
+      aliasRequirement
     apply completes_bind hash inputs _ _ (frames item (by simp))
     · intro value
       exact Zkir.forIn_preservesOutputCapacityFrame_of_mem items initial _

@@ -6,7 +6,7 @@ namespace Noctium.Verification.ScalarWitnessConstruction
 open Lean Backend NativeRelation NativeRelationJson ScalarWitness ScalarNormalization
 open ScalarLowering ScalarInstructionEncoding
 
-private def scalarTypeOfCanonicalInput {ty : Ty} {value : ty.Denote}
+def scalarTypeOfCanonicalInput {ty : Ty} {value : ty.Denote}
     (canonical : Canonical ty value) : ScalarType ty := by
   cases ty with
   | native => exact .native
@@ -69,8 +69,10 @@ private theorem completes_constrain_unsigned (hash : Hash)
     (inputs : NativeRelation.Assignment) (maximum : Nat) (name : String) (value : Nat)
     (canonical : value < Field.modulus ∧ maximum ≤ ScalarPolicy.maxUint ∧ value ≤ maximum)
     (binding : inputs ("%input_" ++ name) = scalar value)
-    (valid : validIdentifier ("%input_" ++ name) = true) :
-    Completes hash inputs (Zkir.constrainUnsigned maximum ("%input_" ++ name)) := by
+    (valid : validIdentifier ("%input_" ++ name) = true)
+    {aliasRequirement : List (String × String) → Prop} :
+    Completes hash inputs (Zkir.constrainUnsigned maximum ("%input_" ++ name))
+      aliasRequirement := by
   intro witness state meaning inputFrame aliases budget
   let text := "%input_" ++ name
   let operand : Operand := .reference text
@@ -190,13 +192,14 @@ private theorem completes_constrain_unsigned (hash : Hash)
   intro name inScope
   exact frameOld name inScope
 
-private theorem completes_scalar_constraint (hash : Hash)
+theorem completes_scalar_constraint (hash : Hash)
     (inputs : NativeRelation.Assignment) (name : String) (value : ty.Denote)
     (scalarType : ScalarType ty)
     (canonical : Canonical ty value)
     (binding : inputs ("%input_" ++ name) = scalar (number scalarType value))
-    (valid : validIdentifier ("%input_" ++ name) = true) :
-    Completes hash inputs (Zkir.constrainType ty ("%input_" ++ name)) := by
+    (valid : validIdentifier ("%input_" ++ name) = true)
+    {aliasRequirement : List (String × String) → Prop} :
+    Completes hash inputs (Zkir.constrainType ty ("%input_" ++ name)) aliasRequirement := by
   let text := "%input_" ++ name
   cases scalarType with
   | native => exact completes_pure hash inputs ()
@@ -226,7 +229,7 @@ private theorem completes_scalar_constraint (hash : Hash)
     have canonicalParts : value < Field.modulus ∧
         maximum ≤ ScalarPolicy.maxUint ∧ value ≤ maximum := by
       simpa [Canonical, sourceNumber?] using canonical
-    have bounded : Completes hash inputs (Zkir.constrainUnsigned maximum text) :=
+    have bounded : Completes hash inputs (Zkir.constrainUnsigned maximum text) aliasRequirement :=
       completes_constrain_unsigned hash inputs maximum name value canonicalParts
         (by simpa only [number] using binding) valid
     simpa only [Zkir.constrainType] using bounded
@@ -266,7 +269,11 @@ private theorem completes_scalar_input (hash : Hash)
     (binding : inputs ("%input_" ++ input.name) = scalar (number scalarType value))
     (valid : validIdentifier ("%input_" ++ input.name) = true) :
     Completes hash inputs (Zkir.lowerCircuitInput input) := by
-  have inputComplete := completes_emit_input hash inputs input valid
+  have inputComplete : Completes hash inputs
+      (Zkir.emit (if input.visibility == .«public» then "public_input" else "private_input")
+        [("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),
+          ("output", toJson ("%input_" ++ input.name))]) :=
+    completes_emit_input hash inputs input valid
   have typeComplete : Completes hash inputs
       (Zkir.constrainType input.ty ("%input_" ++ input.name)) :=
     completes_scalar_constraint hash inputs input.name value scalarType
