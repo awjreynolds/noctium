@@ -4,6 +4,7 @@ import Noctium.Verification.ScalarExpressionAssert
 import Noctium.Verification.ScalarExpressionCopy
 import Noctium.Verification.ScalarExpressionEquality
 import Noctium.Verification.ScalarExpressionNativeTree
+import Noctium.Verification.ScalarExpressionUIntAdd
 
 open Lean Noctium Noctium.Backend Noctium.Verification
 open NativeRelation NativeRelationJson ScalarNormalization ScalarLowering ScalarWitnessConstruction
@@ -20,7 +21,7 @@ noctium_circuit scalarCircuitWitnessExample where
   private right : Native
   assert eq(enabled, copyValue(true))
   output total : Native := disclose(copyValue(add(add(0, left), right)))
-  output amountEcho : UIntRange 201 := disclose(assertThen(enabled, amount))
+  output amountPlus : UIntRange 202 := disclose(assertThen(enabled, add(amount, uint(1))))
 end
 
 end Source
@@ -32,7 +33,7 @@ private def runExample (enabled : _root_.Bool) :=
      ("left", .native 17), ("right", .native 25)]
 
 #guard match runExample Bool.true with
-  | .ok values => values.map Prod.snd == [.native 42, .uint 200 200]
+  | .ok values => values.map Prod.snd == [.native 42, .uint 201 201]
   | .error _ => Bool.false
 
 #guard !(runExample Bool.false).isOk
@@ -62,8 +63,8 @@ private theorem exampleAdmission : ScalarCircuitAdmission scalarCircuitWitnessEx
     rcases present with rfl | rfl
     · exact ⟨.native, .disclose _ _ (.copyValue _
         (nativeArithmeticTree_complete (.add (.add (.literal 0) (.ref "left")) (.ref "right"))).1)⟩
-    · exact ⟨.uint 200, .disclose _ _ (.assertE _ _ (.ref "enabled" .bool)
-        (.ref "amount" (.uint 200)))⟩
+    · exact ⟨.uint 201, .disclose _ _ (.assertE _ _ (.ref "enabled" .bool)
+        (.uadd _ _ (.ref "amount" (.uint 200)) (.uint 1 1)))⟩
 
 private theorem exampleConditions : ∀ condition ∈ scalarCircuitWitnessExample.constraints,
     ExprComplete condition := by
@@ -82,9 +83,13 @@ private theorem exampleReturns : ∀ returned ∈ scalarCircuitWitnessExample.ou
   · have arithmetic := nativeArithmeticTree_complete
       (.add (.add (.literal 0) (.ref "left")) (.ref "right"))
     exact complete_disclose _ _ (complete_copyValue _ arithmetic.1 arithmetic.2)
-  · exact complete_disclose _ _ (exprComplete_assertE _ _ (.ref "enabled" .bool)
-      (.ref "amount" (.uint 200)) (complete_ref .bool .bool "enabled")
-      (complete_ref (.uint 200) (.uint 200) "amount"))
+  · have amount : ScalarExpression (.ref (ty := .uint 200) "amount") :=
+      .ref "amount" (.uint 200)
+    have literalSupported : ScalarExpression (.uint 1 1) := .uint 1 1
+    have sum := complete_uadd _ _ amount literalSupported
+      (complete_ref (.uint 200) (.uint 200) "amount") (complete_uint 1 1)
+    exact complete_disclose _ _ (exprComplete_assertE _ _ (.ref "enabled" .bool)
+      (.uadd _ _ amount literalSupported) (complete_ref .bool .bool "enabled") sum)
 
 /-- Every successful run of this mixed scalar source circuit has an assignment
 for the checked emitted relation, including both observed return fields. -/

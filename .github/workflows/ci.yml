@@ -684,6 +684,7 @@ jobs:
             Noctium.Verification.ScalarExpressionCopy \
             Noctium.Verification.ScalarExpressionEquality \
             Noctium.Verification.ScalarExpressionLet \
+            Noctium.Verification.ScalarExpressionUIntAdd \
             Noctium.Verification.ScalarRangeLowering \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
