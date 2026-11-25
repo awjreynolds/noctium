@@ -1898,6 +1898,8 @@ pub enum Instruction {
     #[serde(rename = "receiveShieldedToMap", rename_all = "camelCase")]
     ReceiveShieldedToMap {
         slot: u32,
+        #[serde(default)]
+        keys: Vec<PathPart>,
         nonce: Expr,
         color: Expr,
         amount: Expr,
@@ -2336,7 +2338,9 @@ fn impact_field_counts(instruction: &Instruction, plan: &Plan) -> Result<Vec<usi
             validate_map_size_path(plan, *slot, keys.len())?;
             vec![1, path_field_count(plan, *slot, keys)?, 1, 5, 1, 4]
         }
-        Instruction::ReceiveShieldedToMap { .. } => RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS.to_vec(),
+        Instruction::ReceiveShieldedToMap { slot, keys, .. } => {
+            shielded_receive_to_map_field_counts(plan, *slot, keys)?
+        }
         Instruction::InsertShieldedCoinMap { slot, keys, .. } => {
             let path_field_count = validate_shielded_coin_map_path(plan, *slot, keys)?;
             if keys.len() <= 5 {
@@ -3237,6 +3241,29 @@ fn validate_shielded_coin_map(plan: &Plan, slot: u32) -> Result<()> {
     validate_shielded_coin_map_path(plan, slot, &[]).map(|_| ())
 }
 
+fn validate_shielded_receive_to_map_path(
+    plan: &Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<usize> {
+    ensure!(
+        keys.len() <= 1,
+        "shielded receive supports at most one parent Map"
+    );
+    validate_shielded_coin_map_path(plan, slot, keys)
+}
+
+fn shielded_receive_to_map_field_counts(
+    plan: &Plan,
+    slot: u32,
+    keys: &[PathPart],
+) -> Result<Vec<usize>> {
+    let path_fields = validate_shielded_receive_to_map_path(plan, slot, keys)?;
+    let mut counts = RECEIVE_SHIELDED_TO_MAP_FIELD_COUNTS.to_vec();
+    counts[6] = path_fields;
+    Ok(counts)
+}
+
 fn validate_shielded_coin_map_path(plan: &Plan, slot: u32, keys: &[PathPart]) -> Result<usize> {
     ensure!(
         slot < 16 && (slot as usize) < plan.state.len(),
@@ -4115,6 +4142,7 @@ fn validate_shielded_merge_layout(
     ensure!(receive_guard.is_none(), "shielded merge output receive must be unguarded");
     let Instruction::ReceiveShieldedToMap {
         slot: receive_slot,
+        keys: receive_keys,
         nonce: receive_nonce,
         color: receive_color,
         amount: receive_amount,
@@ -4125,6 +4153,7 @@ fn validate_shielded_merge_layout(
     };
     ensure!(
         *receive_slot == *slot_a
+            && receive_keys.is_empty()
             && receive_nonce == output_nonce
             && receive_color == output_color
             && receive_amount == output_amount
@@ -4169,6 +4198,7 @@ fn validate_shielded_send_layout(
     );
     let Instruction::ReceiveShieldedToMap {
         slot: receive_slot,
+        keys: receive_keys,
         color: receive_color,
         commitment: receive_commitment,
         ..
@@ -4177,7 +4207,7 @@ fn validate_shielded_send_layout(
         bail!("shielded send must be followed by change receive")
     };
     ensure!(
-        *receive_slot == slot,
+        *receive_slot == slot && receive_keys.is_empty(),
         "shielded change receive uses a different Map"
     );
     validate_shielded_coin_map(plan, *receive_slot)?;
@@ -4590,6 +4620,10 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                     }
                     _ => bail!("record read has no indexed path"),
                 }
+            }
+            Instruction::ReceiveShieldedToMap { slot, keys, .. } => {
+                ensure!(guard.is_none(), "shielded receive must be unguarded");
+                validate_shielded_receive_to_map_path(plan, *slot, keys)?;
             }
             Instruction::SpendShieldedFromMap {
                 nonce,
@@ -7769,13 +7803,25 @@ fn probe_instruction(
             deferred_outputs,
         ),
         Instruction::ReceiveShieldedToMap {
+            keys,
             nonce,
             color,
             amount,
             commitment,
             ..
+        } => {
+            if let Some(input) = probe_paths(keys, plan, env, deferred_outputs)? {
+                Ok(Some(input))
+            } else {
+                probe_expressions(
+                    [nonce, color, amount, commitment],
+                    plan,
+                    env,
+                    deferred_outputs,
+                )
+            }
         }
-        | Instruction::WriteShieldedCoinCell {
+        Instruction::WriteShieldedCoinCell {
             nonce,
             color,
             amount,
@@ -10268,12 +10314,13 @@ impl PreparationCursor {
             }
             Instruction::ReceiveShieldedToMap {
                 slot,
+                keys,
                 nonce,
                 color,
                 amount,
                 commitment,
             } => {
-                validate_shielded_coin_map(plan, *slot)?;
+                validate_shielded_receive_to_map_path(plan, *slot, keys)?;
                 let coin = ShieldedCoinInfo {
                     nonce: Nonce(claim_hash_output(
                         evaluate(nonce, &env)?,
@@ -10311,9 +10358,10 @@ impl PreparationCursor {
                 } else {
                     &context
                 };
-                let coin_state = read_state_value(read_context, *slot, &[])?;
+                let (_, parent_keys) = native_index(plan, *slot, keys, false, &env)?;
+                let coin_state = read_state_value(read_context, *slot, &parent_keys)?;
                 let StateValue::Map(coins) = &coin_state else {
-                    bail!("shielded receive state is not a Map")
+                    bail!("shielded receive parent is not a Map")
                 };
                 let key = AlignedValue::from(coin.nonce);
                 ensure!(
@@ -10321,11 +10369,19 @@ impl PreparationCursor {
                     "shielded receive nonce already exists"
                 );
 
-                let path = vec![Key::Value(
+                let mut path = vec![Key::Value(
                     AlignedValue::from(u8::try_from(*slot)?)
                         .try_into()
                         .map_err(|_| anyhow!("invalid shielded receive Map slot"))?,
                 )];
+                for parent_key in &parent_keys {
+                    path.push(Key::Value(
+                        parent_key
+                            .clone()
+                            .try_into()
+                            .map_err(|_| anyhow!("invalid shielded receive parent key"))?,
+                    ));
+                }
                 let mut map_ops = onchain_runtime::program_fragments::Map_insert_coin!(
                     path,
                     false,
@@ -10335,7 +10391,17 @@ impl PreparationCursor {
                     coin,
                     recipient
                 );
-                map_ops[2] = Op::Dup { n: 5 };
+                ensure!(
+                    map_ops.len() == 10,
+                    "shielded receive Map fragment operation count changed"
+                );
+                map_ops[2] = Op::Dup {
+                    n: u8::try_from(5 + 2 * keys.len())?,
+                };
+                ensure!(
+                    matches!(map_ops.get(9), Some(Op::Ins { cached: true, n }) if usize::from(*n) == keys.len() + 1),
+                    "shielded receive insertion depth changed"
+                );
                 let insert_final = map_ops[9].clone();
                 program.extend(
                     onchain_runtime::program_fragments::kernel_claim_zswap_coin_receive!(

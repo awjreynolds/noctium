@@ -70,7 +70,7 @@ private def sendsRecordedCoin (effect : Effect) : _root_.Bool :=
 
 private def receivesUsingSendAddress (effect : Effect) : _root_.Bool :=
   match effect with
-  | .receiveShieldedToMap state _ _ _ address =>
+  | .receiveShieldedToMap state _ _ _ address _ =>
       state == "pot" && isReference address "noctium_send_address_2"
   | _ => _root_.Bool.false
 

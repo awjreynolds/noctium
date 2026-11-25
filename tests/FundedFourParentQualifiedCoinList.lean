@@ -120,7 +120,7 @@ private def fundedFourParentQualifiedCoinListPathNames (keys : List PathKey) : L
 #guard match ((fundedFourParentQualifiedCoinListEntry "tip").effects.filterMap
     fun (effect : Effect) =>
     match effect with
-    | .receiveShieldedToMap "pot" nonce color amount _ => some (nonce, color, amount)
+    | .receiveShieldedToMap "pot" nonce color amount _ _ => some (nonce, color, amount)
     | _ => none) with
   | [(.disclose _ (.ref "nonce"), .disclose _ (.ref "color"), .uint _ 5)] => Bool.true
   | _ => Bool.false

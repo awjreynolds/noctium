@@ -1178,11 +1178,12 @@ inductive Effect where
   /-- Claim one raw Zswap digest using the ledger's fixed claim slot. -/
   | claimShielded (kind : ShieldedClaimKind) (digest : Expr (.bytes 32))
   | mintShielded (domain : Expr (.bytes 32)) (amount : Expr (.uint (2 ^ 64 - 1)))
-  /-- Receive an already-funded shielded coin into a typed Bytes32-keyed tree map.
-  The backend computes its commitment from the disclosed coin data and the
-  contract address read from ledger context. -/
+  /-- Receive an already-funded shielded coin into a typed Bytes32-keyed tree Map,
+  at its root or below one Bytes32 parent. The backend computes its commitment
+  from the disclosed coin data and the contract address read from ledger context. -/
   | receiveShieldedToMap (state : String) (nonce color : Expr (.bytes 32))
       (amount : Expr (.uint (2 ^ 128 - 1))) (selfAddress : Expr (.bytes 32))
+      (keys : List PathKey)
   /-- Insert a coin whose self-recipient commitment is already booked in the
   current transaction into a root qualified-record Set or one selected under
   up to fourteen Bytes32-keyed Map parents. The runtime gets its index from context. -/
@@ -2514,14 +2515,22 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         domain.validate caps env
         amount.validate caps env
         pure []
-      | .receiveShieldedToMap state nonce color amount selfAddress => do
+      | .receiveShieldedToMap state nonce color amount selfAddress keys => do
         if !caps.stateMaps then throw "target lacks state maps"
         let some declaration := decls.find? (·.name == state)
           | throw s!"unknown shielded coin map '{state}'"
-        let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
-          | throw s!"shielded coin receive requires a root Bytes32-keyed tree Map '{state}'"
+        unless keys.length ≤ 1 do
+          throw "shielded coin receive supports at most one Bytes32 parent Map key"
+        unless keys.all (fun parent => parent.ty == .bytes 32) do
+          throw "shielded coin Map parent keys must be Bytes32"
+        let .tree treeSchema := declaration.kind
+          | throw s!"shielded coin receive requires a typed Bytes32-keyed tree Map '{state}'"
+        let selected ← treeSchema.resolvePath keys
+        let .map keyTy (.composite compositeEnv recordType) := selected
+          | throw s!"shielded coin receive path must select a Bytes32-keyed coin Map '{state}'"
         unless keyTy == .bytes 32 do
           throw "shielded coin map key must be Bytes32"
+        for key in keys do key.validate caps env
         discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
         nonce.validate caps env
         color.validate caps env
