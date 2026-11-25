@@ -627,6 +627,148 @@ private theorem acceptedMeaningStep_preserves
     rw [outputMeaning.1]
     exact ⟨meaning, definitions⟩
 
+def impactOpcodeRow (raw : Json) : Bool :=
+  match Backend.Native.stringField raw "op" with
+  | .ok opcode => opcode == "impact"
+  | .error _ => false
+
+/-- Count Impact opcodes in a producer prefix. This count is tied to the
+accepted raw rows by `accepted_loop_groupCount_at_steps` below. -/
+def impactOpcodeCount : List Json → Nat
+  | [] => 0
+  | raw :: rest => (if impactOpcodeRow raw then 1 else 0) + impactOpcodeCount rest
+
+theorem impactOpcodeCount_append (left right : List Json) :
+    impactOpcodeCount (left ++ right) = impactOpcodeCount left + impactOpcodeCount right := by
+  induction left with
+  | nil => simp [impactOpcodeCount]
+  | cons raw rest ih =>
+    simp [impactOpcodeCount, ih, Nat.add_assoc]
+
+/-- Each row in the accepted mixed meaning class changes the Impact group
+ordinal exactly when its producer opcode is `impact`. Public guarded reads
+use the active source-bound input validator fact, and selects use the native
+definition insertion fact. -/
+theorem acceptedMeaningStep_groupCount_step
+    {hash : Hash} {witness : Assignment} {expected : Backend.Native.Expected}
+    {state next : Backend.Native.State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (step : AcceptedMeaningStep hash witness raw)
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount + (if impactOpcodeRow raw then 1 else 0) := by
+  cases step with
+  | native nativeStep =>
+    cases nativeStep with
+    | publicInput opcode =>
+      obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+        (visibility := .«public») (by simpa [inputOpcode] using opcode) accepted
+      have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+      have nonforeign := inputSchema requirement member
+      cases guarded : requirement.activityGuard with
+      | none =>
+        rw [accepted_input_groupCount (visibility := .«public») selected nonforeign guarded
+          (by simpa [inputOpcode] using opcode) accepted]
+        simp [impactOpcodeRow, opcode]
+      | some guardTerm =>
+        rw [accepted_guarded_public_input_groupCount selected nonforeign guarded
+          (by simpa [inputOpcode] using opcode) accepted]
+        simp [impactOpcodeRow, opcode]
+    | privateInput opcode =>
+      obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+        (visibility := .private) (by simpa [inputOpcode] using opcode) accepted
+      have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+      have nonforeign := inputSchema requirement member
+      have unguarded := accepted_private_input_unguarded selected
+        (by simpa [inputOpcode] using opcode) accepted
+      rw [accepted_input_groupCount (visibility := .private) selected nonforeign unguarded
+        (by simpa [inputOpcode] using opcode) accepted]
+      simp [impactOpcodeRow, opcode]
+    | arithmetic arithmeticStep =>
+      cases arithmeticStep with
+      | add _ _ _ opcode _ _ =>
+        rw [(accepted_add_counters definitions opcode accepted).1]
+        simp [impactOpcodeRow, opcode]
+      | mul _ _ _ opcode _ _ =>
+        rw [(accepted_mul_counters definitions opcode accepted).1]
+        simp [impactOpcodeRow, opcode]
+      | neg _ _ opcode _ _ =>
+        rw [(accepted_neg_counters definitions opcode accepted).1]
+        simp [impactOpcodeRow, opcode]
+  | @boolean _ opcode _ _ =>
+    rw [(accepted_constrainBoolean_counters opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @bits _ _ opcode _ _ =>
+    rw [(accepted_constrainBits_counters opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @lessThan _ _ _ _ opcode _ _ =>
+    rw [(accepted_lessThan_counters opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @assertion _ opcode _ _ =>
+    rw [(accepted_assert_counters opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @constrainEq _ _ opcode _ _ =>
+    rw [(accepted_constrainEq_counters definitions opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @testEq _ _ _ opcode _ _ =>
+    rw [(accepted_testEq_counters definitions opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+  | @logicalNot _ _ opcode _ _ =>
+    obtain ⟨_, _, _, _, _, _, defined⟩ :=
+      accepted_not_components definitions opcode accepted
+    rw [defineResult_groupCount defined]
+    simp [impactOpcodeRow, opcode]
+  | @nativeSelect _ _ _ _ opcode _ _ =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+      accepted_native_select_components definitions opcode accepted
+    rw [defineResult_groupCount defined]
+    simp [impactOpcodeRow, opcode]
+  | @copy _ _ opcode _ _ =>
+    rw [accepted_copy_groupCount definitions opcode accepted]
+    simp [impactOpcodeRow, opcode]
+  | @impact _ _ opcode _ =>
+    rw [accepted_impact_state opcode accepted]
+    simp [impactOpcodeRow, opcode]
+  | @output _ opcode _ =>
+    rw [(accepted_output_counters opcode accepted).1]
+    simp [impactOpcodeRow, opcode]
+
+/-- The active producer fold's group cursor equals its incoming ordinal plus
+the number of accepted Impact rows in the prefix. -/
+theorem accepted_loop_groupCount_at_steps
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {initial final : Backend.Native.State}
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (steps : ∀ item ∈ items, AcceptedMeaningStep hash witness item.1)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
+    final.groupCount = initial.groupCount + impactOpcodeCount (items.map Prod.fst) := by
+  induction items generalizing initial final with
+  | nil =>
+    have initialEq : initial = final := by injection accepted
+    subst final
+    simp [impactOpcodeCount]
+  | cons head tail ih =>
+    rw [Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial head.1 with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have countStep := acceptedMeaningStep_groupCount_step initialDefinitions inputSchema
+        (steps head (by simp)) checked
+      have after := acceptedMeaningStep_preserves initialMeaning initialDefinitions
+        inputSchema inputAgreement (steps head (by simp)) checked
+      have tailCount := ih after.1 after.2
+        (fun item member => steps item (List.mem_cons_of_mem _ member)) accepted
+      rw [tailCount, countStep]
+      simp [impactOpcodeCount]
+      omega
+
 /-- Thread producer meaning through any accepted indexed trace in the declared
 step class and retain the invariant at every instruction pre-state. This lets
 separate comparisons use their actual checked prefix definitions even when
