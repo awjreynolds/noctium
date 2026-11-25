@@ -31,7 +31,8 @@ fixture_directory="$repo/tests/fixtures/native-collection-pages"
 fixture_resources="$stage/package/Tests/NoctiumTests/Fixtures"
 mkdir -p "$fixture_resources"
 cp "$fixture_directory/manifest.json" "$fixture_directory/plan.impact.json" \
-  "$fixture_directory/empty.state" "$fixture_directory/populated.state" "$fixture_resources/"
+  "$fixture_directory/empty.state" "$fixture_directory/populated.state" \
+  "$fixture_directory/removed.state" "$fixture_resources/"
 if [[ $features == *,localnet ]]; then
   sed -i '' 's/let localnet = false/let localnet = true/' "$stage/package/Package.swift"
 fi

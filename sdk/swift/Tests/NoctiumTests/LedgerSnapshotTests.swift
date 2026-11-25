@@ -27,9 +27,14 @@ final class LedgerSnapshotTests: XCTestCase {
         let populatedDigest = try string("sha256", in: populatedEntry)
         let populated = try resource(string("file", in: populatedEntry), in: root)
         XCTAssertEqual(sha256(populated), populatedDigest)
+        let removedEntry = try dictionary(snapshotEntries["removed"])
+        let removedDigest = try string("sha256", in: removedEntry)
+        let removed = try resource(string("file", in: removedEntry), in: root)
+        XCTAssertEqual(sha256(removed), removedDigest)
 
         let cases = try XCTUnwrap(manifest["cases"] as? [[String: Any]])
         let emptyCase = try pageCase(in: cases, snapshot: "empty", offset: 0)
+        let emptyMembersCase = try pageCase(in: cases, snapshot: "empty", offset: 0, name: "members")
         let firstCase = try pageCase(in: cases, snapshot: "populated", offset: 0)
         let continuationCase = try pageCase(in: cases, snapshot: "populated", offset: 2)
 
@@ -37,6 +42,13 @@ final class LedgerSnapshotTests: XCTestCase {
             plan: plan, planDigest: planDigest, snapshot: empty, stateDigest: emptyDigest, fixtureCase: emptyCase
         )
         try assertPage(emptyPage, matches: emptyCase)
+
+        let emptyMembers = try page(
+            plan: plan, planDigest: planDigest, snapshot: empty, stateDigest: emptyDigest,
+            fixtureCase: emptyMembersCase, name: "members"
+        )
+        let emptyMembersPage = try setPage(emptyMembers)
+        try assertSetPage(emptyMembersPage, matches: emptyMembersCase)
 
         let firstPage = try page(
             plan: plan, planDigest: planDigest, snapshot: populated,
@@ -54,6 +66,42 @@ final class LedgerSnapshotTests: XCTestCase {
             stateDigest: populatedDigest, fixtureCase: continuationCase, offset: returnedOffset
         )
         try assertPage(continuation, matches: continuationCase)
+
+        let firstMembersCase = try pageCase(in: cases, snapshot: "populated", offset: 0, name: "members")
+        let membersContinuationCase = try pageCase(in: cases, snapshot: "populated", offset: 2, name: "members")
+        let firstMembers = try page(
+            plan: plan, planDigest: planDigest, snapshot: populated, stateDigest: populatedDigest,
+            fixtureCase: firstMembersCase, name: "members"
+        )
+        let firstMembersPage = try setPage(firstMembers)
+        try assertSetPage(firstMembersPage, matches: firstMembersCase)
+        let membersContinuationOffset = try XCTUnwrap(firstMembersPage.nextOffset)
+        XCTAssertEqual(membersContinuationOffset, try integer("offset", in: membersContinuationCase))
+
+        let membersContinuation = try page(
+            plan: plan, planDigest: planDigest, snapshot: populated, stateDigest: populatedDigest,
+            fixtureCase: membersContinuationCase, offset: membersContinuationOffset, name: "members"
+        )
+        let membersContinuationPage = try setPage(membersContinuation)
+        try assertSetPage(membersContinuationPage, matches: membersContinuationCase)
+
+        let joinedMembers = firstMembersPage.entries + membersContinuationPage.entries
+        let compactMembers = try [firstMembersCase, membersContinuationCase].flatMap { fixtureCase in
+            try setPage(fixtureCase).entries.map(\.values)
+        }
+        XCTAssertEqual(joinedMembers.map(\.values), compactMembers)
+
+        let removedMembersCase = try pageCase(in: cases, snapshot: "removed", offset: 0, name: "members")
+        let removedMembers = try page(
+            plan: plan, planDigest: planDigest, snapshot: removed, stateDigest: removedDigest,
+            fixtureCase: removedMembersCase, name: "members"
+        )
+        let removedMembersPage = try setPage(removedMembers)
+        try assertSetPage(removedMembersPage, matches: removedMembersCase)
+        XCTAssertEqual(
+            removedMembersPage.entries.map(\.values),
+            [[UInt8](repeating: 1, count: 32), [UInt8](repeating: 9, count: 32)]
+        )
 
         let firstFlagsCase = try pageCase(in: cases, snapshot: "populated", offset: 0, name: "flags")
         let firstFlagsPage = try LedgerSnapshot.fieldBoolMapPage(
@@ -145,6 +193,22 @@ final class LedgerSnapshotTests: XCTestCase {
         )) {
             XCTAssertEqual($0 as? WitnessSession.Failure, .nativeStatus(1))
         }
+
+        let malformedSnapshot = Data(populated.prefix(8))
+        XCTAssertEqual(malformedSnapshot.count, 8)
+        XCTAssertThrowsError(try LedgerSnapshot.collectionPage(
+            request: request(
+                planSHA256: planDigest,
+                stateSHA256: sha256(malformedSnapshot),
+                offset: 0,
+                limit: 2,
+                name: "members"
+            ),
+            plan: plan,
+            snapshot: malformedSnapshot
+        )) {
+            XCTAssertEqual($0 as? WitnessSession.Failure, .nativeStatus(1))
+        }
     }
 
     private func page(
@@ -153,7 +217,8 @@ final class LedgerSnapshotTests: XCTestCase {
         snapshot: Data,
         stateDigest: String,
         fixtureCase: [String: Any],
-        offset: Int? = nil
+        offset: Int? = nil,
+        name: String = "values"
     ) throws -> Data {
         let pageOffset = try offset ?? integer("offset", in: fixtureCase)
         let limit = try integer("limit", in: fixtureCase)
@@ -162,7 +227,8 @@ final class LedgerSnapshotTests: XCTestCase {
                 planSHA256: planDigest,
                 stateSHA256: stateDigest,
                 offset: pageOffset,
-                limit: limit
+                limit: limit,
+                name: name
             ),
             plan: plan,
             snapshot: snapshot
@@ -202,6 +268,33 @@ final class LedgerSnapshotTests: XCTestCase {
         )
     }
 
+    private func assertSetPage(
+        _ actual: SetPage,
+        matches fixtureCase: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let expected = try setPage(fixtureCase)
+        XCTAssertEqual(actual.abiVersion, expected.abiVersion, file: file, line: line)
+        XCTAssertEqual(actual.kind, expected.kind, file: file, line: line)
+        XCTAssertEqual(actual.nextOffset, expected.nextOffset, file: file, line: line)
+        XCTAssertEqual(actual.entries.count, expected.entries.count, file: file, line: line)
+        XCTAssertEqual(actual.kind, "set", file: file, line: line)
+        XCTAssertEqual(actual.entries.map(\.kind), Array(repeating: "bytes", count: expected.entries.count), file: file, line: line)
+        XCTAssertEqual(actual.entries.map(\.values), expected.entries.map(\.values), file: file, line: line)
+        XCTAssertTrue(actual.entries.allSatisfy { $0.values.count == 32 }, file: file, line: line)
+    }
+
+    private func setPage(_ data: Data) throws -> SetPage {
+        try JSONDecoder().decode(SetPage.self, from: data)
+    }
+
+    private func setPage(_ fixtureCase: [String: Any]) throws -> SetPage {
+        let expected = try dictionary(fixtureCase["expected"])
+        let data = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
+        return try setPage(data)
+    }
+
     private func pageCase(
         in cases: [[String: Any]],
         snapshot: String,
@@ -212,6 +305,18 @@ final class LedgerSnapshotTests: XCTestCase {
             $0["snapshot"] as? String == snapshot && $0["name"] as? String == name &&
                 (($0["offset"] as? NSNumber)?.intValue == offset)
         })
+    }
+
+    private struct SetPage: Decodable {
+        struct Entry: Decodable {
+            let kind: String
+            let values: [UInt8]
+        }
+
+        let abiVersion: Int
+        let kind: String
+        let entries: [Entry]
+        let nextOffset: Int?
     }
 
     private func jsonObject(_ data: Data) throws -> [String: Any] {

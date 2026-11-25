@@ -135,6 +135,25 @@ digest with native status `1`.
 [Compact overwrite case](../../tests/compact/native-collection-pages.mjs) ·
 [Pinned fixture rows](../../tests/fixtures/native-collection-pages/manifest.json)
 
+### Read a Bytes32 Set
+
+Use `collectionPage` with a request for the Set. Each entry has
+`kind: "bytes"` and a `values` array containing the exact 32 octets. The
+native reader sorts the complete byte arrays lexicographically. Follow
+the reported `nextOffset` to join pages.
+
+The macOS package test uses the same `LedgerSnapshotTests` command and
+the pinned `members` rows. The empty snapshot has no members. The
+Compact oracle inserts members filled with bytes 9, 1, and 4, then
+inserts the member filled with 1 again. The packaged Swift replay reads
+the corresponding native snapshot. Members 1 and 4 fill page one, and
+offset `2` returns member 9 and ends the Set. After removal of member 4,
+the replay returns exactly members 1 and 9. The test truncates the
+populated snapshot to eight bytes and hashes those bytes for the test
+request. The native snapshot parser rejects the malformed input with
+status `1`. [Compact insertion and removal trace](../../tests/compact/native-collection-pages.mjs) ·
+[Pinned fixture rows](../../tests/fixtures/native-collection-pages/manifest.json)
+
 ## Qualification
 
 ```sh
