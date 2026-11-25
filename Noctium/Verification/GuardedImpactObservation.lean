@@ -71,6 +71,47 @@ theorem consume_active_iff (payload transcript remaining : List Scalar) :
   · rintro rfl
     simp [consume]
 
+/-- An inactive observation contributes no consumed transcript fields. -/
+def activePayload (observation : Observation) : List Scalar :=
+  if observation.active then observation.payload else []
+
+/-- Concatenate the payloads consumed by active observations in order. -/
+def activePayloads (observations : List Observation) : List Scalar :=
+  observations.flatMap activePayload
+
+/-- Consume one ordered observation at a time. Inactive observations leave the
+transcript cursor unchanged. -/
+def consumeTranscript : List Observation → List Scalar → Option (List Scalar)
+  | [], transcript => some transcript
+  | observation :: rest, transcript =>
+      (consume observation transcript).bind (consumeTranscript rest)
+
+/-- A transcript passes the whole observation sequence exactly when it starts
+with the ordered active payloads. Inactive observations consume no fields. -/
+theorem consumeTranscript_iff (observations : List Observation)
+    (transcript remaining : List Scalar) :
+    consumeTranscript observations transcript = some remaining ↔
+      transcript = activePayloads observations ++ remaining := by
+  induction observations generalizing transcript with
+  | nil => simp [consumeTranscript, activePayloads]
+  | cons observation rest ih =>
+    cases observation with
+    | mk active payload =>
+      cases active with
+      | false =>
+        simpa [consumeTranscript, activePayloads, activePayload, consume_inactive] using
+          (ih transcript)
+      | true =>
+        simp only [consumeTranscript, Option.bind_eq_some_iff, consume_active_iff, ih]
+        have payloads : activePayloads (⟨true, payload⟩ :: rest) =
+            payload ++ activePayloads rest := by simp [activePayloads, activePayload]
+        rw [payloads, List.append_assoc]
+        constructor
+        · rintro ⟨suffix, headMatches, tailMatches⟩
+          rw [headMatches, tailMatches]
+        · intro transcriptEq
+          exact ⟨activePayloads rest ++ remaining, transcriptEq, rfl⟩
+
 /-- A successful row observation preserves the input payload width. -/
 theorem observeImpact_preserves_width (guard : Scalar) (values : List Scalar)
     (observation : Observation)

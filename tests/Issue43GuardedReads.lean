@@ -3,7 +3,7 @@ import Noctium.Backend.NativeExpected
 import Noctium.Backend.Zkir
 import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
-import Noctium.Verification.GuardedImpactObservation
+import Noctium.Verification.GuardedImpactTranscript
 import Noctium.Verification.GuardedScalarInput
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationProjection
@@ -574,3 +574,28 @@ private def emittedGuardedImpactMatches : Except String _root_.Bool := do
       stepObservation observed (Verification.NativeRelation.zero :: payload.drop 1) = none)
 
 #guard emittedGuardedImpactMatches.toOption == some Bool.true
+
+
+/-- Decode the complete mixed trace of the existing guarded-read workload. -/
+private def issue43WholeGuardedTranscript (rewrites : Backend.Zkir.Rewrites) :
+    Except String _root_.Bool := do
+  let json ← (Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state
+    issue43GuardedEntry rewrites).mapError (·.message)
+  let raw ← Backend.Native.arrayField json "instructions"
+  let rows ← raw.toList.mapM Verification.GuardedScalarRows.decodeRow
+  let expected ← (Backend.Native.expectedEntrypoint Issue43GuardedReads.state
+    (Passes.pruneEntrypoint issue43GuardedEntry)).mapError (·.message)
+  let some observations := Verification.GuardedImpactTranscript.emittedObservations
+      (fun _ => Verification.NativeRelation.zero) rows
+    | throw "guarded Impact observation failed"
+  let active := Verification.GuardedImpactObservation.activePayloads observations
+  return rows.any (fun row => match row with
+      | .publicInput _ (some (.reference _)) => Bool.true
+      | _ => Bool.false) &&
+    observations.length == expected.groups.length &&
+    observations.any (·.active) && observations.any (!·.active) &&
+    decide (Verification.GuardedImpactObservation.consumeTranscript observations active = some [] ∧
+      Verification.GuardedImpactObservation.consumeTranscript observations active.dropLast = none)
+
+#guard (issue43WholeGuardedTranscript .disabled).toOption == some Bool.true
+#guard (issue43WholeGuardedTranscript .includingComparisons).toOption == some Bool.true
