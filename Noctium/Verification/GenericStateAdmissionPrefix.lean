@@ -46,6 +46,45 @@ theorem publicInputPlan_pairs (inputs : List Input) (plan : Impact.Plan)
   rw [publicInputScalarOperations_pairs] at scalarShape
   exact ⟨publicInputScalarValues inputs, by simpa using scalarShape⟩
 
+private theorem publicInputReadCount_length (inputs : List Input) :
+    Impact.publicInputReadCount inputs = (inputs.flatMap Impact.publicInputReads).length := by
+  have step (count : Nat) (input : Input) :
+      (if input.visibility != .«public» then count else
+        count + match input.ty with
+          | .bytes 0 => 0
+          | .bytes _ => 1
+          | .jubjubPoint => 2
+          | .foreign kind => kind.encodedFieldCount
+          | _ => 1) = count + (Impact.publicInputReads input).length := by
+    cases input with
+    | mk name ty visibility span =>
+      cases visibility <;> cases ty <;> try rfl
+      case public.bytes length => cases length <;> rfl
+      case public.foreign kind =>
+        change count + kind.encodedFieldCount = count + (List.map _
+          (List.range kind.encodedFieldCount)).length
+        simp
+  have fold (count : Nat) :
+      inputs.foldl (fun total input => total + (Impact.publicInputReads input).length)
+        count = count + (inputs.flatMap Impact.publicInputReads).length := by
+    induction inputs generalizing count with
+    | nil => simp
+    | cons input rest ih => simp [List.flatMap_cons, ih, Nat.add_assoc]
+  unfold Impact.publicInputReadCount
+  calc
+    _ = inputs.foldl (fun total input => total + (Impact.publicInputReads input).length) 0 := by
+      congr 1
+      exact funext fun count => funext fun input => step count input
+    _ = _ := by simpa only [Nat.zero_add] using fold 0
+
+/-- The decoder's public-input cutoff is the actual number of reads emitted
+by the successful prefix, including projected inputs and zero-width bytes. -/
+theorem publicInputPlan_readCount (inputs : List Input) (plan : Impact.Plan)
+    (accepted : Impact.publicInputPlan inputs {} = .ok plan) :
+    plan.reads.length = Impact.publicInputReadCount inputs := by
+  rw [Impact.publicInputPlan_reads_order inputs {} plan accepted, publicInputReadCount_length]
+  rfl
+
 /-- Successful production lowering retains the exact public-input fold as
 the plan prefix before guarded source effects are appended. -/
 theorem lower_input_prefix (state : List StateDecl) (entry : Entrypoint)

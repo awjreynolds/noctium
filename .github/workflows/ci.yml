@@ -660,7 +660,8 @@ jobs:
             Noctium.Verification.GuardedEffectEvaluation \
             Noctium.Verification.GuardedEffectPrefix \
             Noctium.Verification.GenericStateAdmissionBridge \
-            Noctium.Verification.GenericStateCheckedReadDecode \
+            Noctium.Verification.GenericStateReadCandidates \
+            Noctium.Verification.GenericStateEvaluationCanonical \
             Noctium.Verification.GenericStateReadAuthentication \
             Noctium.Verification.GenericStateConverseRead \
             Noctium.Verification.GenericStatePrefixEnvironment \

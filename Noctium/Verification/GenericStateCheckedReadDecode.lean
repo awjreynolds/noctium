@@ -131,16 +131,67 @@ theorem accepted_scalarRead_inputBounds_of_checkedProfile
   exact accepted_scalarRead_inputBound state ep expected expectedAccepted
     plan planAccepted read read.name read.ty postPublic singleton supportedTy driver meaning
 
+private theorem supported_plain_read_bindings (read : Impact.Read)
+    (plain : read.components = []) (supported : (scalarType? read.ty).isSome = true) :
+    read.bindings = [(read.name, read.ty)] := by
+  cases read with
+  | mk name ty components schema guard rootCellRead =>
+    change components = [] at plain
+    subst components
+    cases ty <;> first | rfl | cases supported
+
+/-- The actual decoded scalar relation supplies all bounds needed to decode
+the admitted post-public reads of its own Impact plan and type their aliases.
+The caller supplies scalar descriptor and type admission. The checked ledger
+execution must still authenticate these candidate bindings against state. -/
+theorem accepted_scalarRead_environment
+    (state : List StateDecl) (entry : Entrypoint) (plan : Impact.Plan)
+    (json : Lean.Json) (relation : NativeRelation.Program)
+    (hash : Hash) (witness : Assignment) (streams : InputStreams)
+    (publicGroups : List (List Scalar))
+    (lowered : Backend.Zkir.lowerEntrypoint state entry = .ok json)
+    (decoded : NativeRelationJson.decode json = .ok relation)
+    (satisfies : CircuitSatisfies hash relation streams witness publicGroups)
+    (planAccepted : Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan)
+    (inputSchema : ∀ expected,
+      Backend.Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (profile : ∃ instructions : Array Lean.Json,
+      Backend.Native.arrayField json "instructions" = .ok instructions ∧
+      ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile
+        (instructions.toList.zipIdx) relation.instructions = true)
+    (admitted : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      read.components = [] ∧ (scalarType? read.ty).isSome = true ∧
+      read.ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ()) :
+    let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
+    ∃ values, decodeReads reads witness = .ok values ∧
+      TypedEnvironment hash witness (readAliases reads) values (readTypes reads) ∧
+      ∀ read ∈ reads, (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty := by
+  let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
+  obtain ⟨actualPlan, actualAccepted, bounds⟩ :=
+    accepted_scalarRead_inputBounds_of_checkedProfile state entry json relation
+      hash witness streams publicGroups lowered decoded satisfies inputSchema profile
+  have exactPlan := Except.ok.inj (actualAccepted.symm.trans planAccepted)
+  subst actualPlan
+  have bounded : ∀ read ∈ reads,
+      (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty := by
+    intro read member
+    obtain ⟨plain, supported, _⟩ := admitted read member
+    exact bounds read member (supported_plain_read_bindings read plain supported) supported
+  obtain ⟨values, success⟩ := GenericStateCandidateDecode.decodeReads_supported_success
+    reads witness (fun read member => (admitted read member).2.1)
+  exact ⟨values, success, decodedReads_typedEnvironment reads hash witness values success
+    (fun read member => (admitted read member).2.2) bounded, bounded⟩
+
 private theorem read_suffix_metadata (state : List StateDecl) (entry : Entrypoint)
     (plan inputPlan : Impact.Plan) (boundaries : List Nat)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
-    (unguarded : entry.effectGuards = [])
-    (scope : ScalarReadEffects entry.effects)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
     (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan) :
     (plan.reads.drop inputPlan.reads.length).map readMetadata =
       (readChunks entry.effects inputPlan.reads.length).flatten := by
   obtain ⟨actualPrefix, prefixLowered, metadata⟩ :=
-    lowerWithEffectBoundaries_read_metadata state entry plan boundaries accepted unguarded scope
+    lowerWithEffectBoundaries_guarded_read_metadata state entry plan boundaries accepted scope
   have prefixEq := Except.ok.inj (prefixLowered.symm.trans prefixAccepted)
   subst actualPrefix
   rw [List.map_drop]
@@ -155,8 +206,7 @@ theorem lowerWithEffectBoundaries_decodeReads (state : List StateDecl)
     (entry : Entrypoint) (plan : Impact.Plan) (boundaries : List Nat)
     (inputPlan : Impact.Plan) (witness : Assignment)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
-    (unguarded : entry.effectGuards = [])
-    (scope : ScalarReadEffects entry.effects)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
     (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan)
     (supported : ∀ read ∈ plan.reads.drop inputPlan.reads.length,
       (scalarType? read.ty).isSome = true)
@@ -183,7 +233,7 @@ theorem lowerWithEffectBoundaries_decodeReads (state : List StateDecl)
     GenericStateCandidateDecode.decodeReads_candidate_meaning
       (plan.reads.drop inputPlan.reads.length) witness supported distinct typed bounded
   exact ⟨decodedValues, decoded,
-    read_suffix_metadata state entry plan inputPlan boundaries accepted unguarded scope
+    read_suffix_metadata state entry plan inputPlan boundaries accepted scope
       prefixAccepted, meaning⟩
 
 /-- The same value looked up for a source read has the canonical encoding of
@@ -193,8 +243,7 @@ theorem lowerWithEffectBoundaries_read_candidate (state : List StateDecl)
     (entry : Entrypoint) (plan inputPlan : Impact.Plan) (boundaries : List Nat)
     (witness : Assignment) (base decodedValues : EvalEnv) (name : String) (ty : Ty)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
-    (unguarded : entry.effectGuards = [])
-    (scope : ScalarReadEffects entry.effects)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
     (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan)
     (sourceRead : (name, ty) ∈ (readChunks entry.effects inputPlan.reads.length).flatten)
     (decoded : decodeReads (plan.reads.drop inputPlan.reads.length) witness = .ok decodedValues)
@@ -206,7 +255,7 @@ theorem lowerWithEffectBoundaries_read_candidate (state : List StateDecl)
     ∃ candidate : ty.Denote,
       (base ++ decodedValues).lookup name = some (Value.pack ty candidate) ∧
       Canonical ty candidate ∧ sourceScalar? ty candidate = some (witness ("%input_" ++ name)) := by
-  rw [← read_suffix_metadata state entry plan inputPlan boundaries accepted unguarded scope
+  rw [← read_suffix_metadata state entry plan inputPlan boundaries accepted scope
     prefixAccepted] at sourceRead
   obtain ⟨read, member, same⟩ := List.mem_map.mp sourceRead
   have nameEq : read.name = name := congrArg Prod.fst same
@@ -233,15 +282,14 @@ theorem lowerWithEffectBoundaries_unsupported_head_fails (state : List StateDecl
     (inputPlan : Impact.Plan) (witness : Assignment)
     (read : Impact.Read) (rest : List Impact.Read)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))
-    (unguarded : entry.effectGuards = [])
-    (scope : ScalarReadEffects entry.effects)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
     (prefixAccepted : Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan)
     (head : plan.reads.drop inputPlan.reads.length = read :: rest)
     (unsupported : scalarType? read.ty = none) :
     decodeReads (plan.reads.drop inputPlan.reads.length) witness =
       .error "unsupported non-scalar read type" := by
-  have metadata := lowerWithEffectBoundaries_read_metadata state entry plan
-    boundaries accepted unguarded scope
+  have metadata := lowerWithEffectBoundaries_guarded_read_metadata state entry plan
+    boundaries accepted scope
   obtain ⟨acceptedPrefix, prefixSame, _⟩ := metadata
   have samePrefix : acceptedPrefix = inputPlan :=
     Except.ok.inj (prefixSame.symm.trans prefixAccepted)

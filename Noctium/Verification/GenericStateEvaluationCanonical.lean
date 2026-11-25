@@ -4,24 +4,12 @@ namespace Noctium.Verification.GenericStateEvaluationCanonical
 
 open ScalarNormalization
 
-private def scalarCastView (ctx : EvalContext) (target : Ty) (number : Nat) :
-    Except String target.Denote :=
-  match target with
-  | .native =>
-    if number < ctx.modulus then .ok number
-    else .error "noncanonical scalar conversion"
-  | .bool => .ok (number != 0)
-  | .uint maximum =>
-    if maximum ≤ ScalarPolicy.maxUint && number ≤ maximum && number < ctx.modulus then
-      .ok number
-    else .error "scalar conversion exceeds unsigned bound"
-
-private theorem scalarCastView_canonical (ctx : EvalContext) (target : Ty)
-    (number : Nat) (value : target.Denote)
-    (modulus : ctx.modulus = Field.modulus)
-    (evaluated : scalarCastView ctx target number = .ok value) :
+private theorem scalarCast_canonical (ctx : EvalContext)
+    {target : Ty} (targetType : ScalarType target) (number : Nat)
+    (value : target.Denote) (modulus : ctx.modulus = Field.modulus)
+    (evaluated : scalarCast ctx target targetType number = .ok value) :
     Canonical target value := by
-  cases target with
+  cases targetType with
   | native =>
     change (if number < ctx.modulus then (Except.ok number : Except String Nat)
       else (Except.error "noncanonical scalar conversion" : Except String Nat)) =
@@ -62,18 +50,23 @@ private theorem scalarCastView_canonical (ctx : EvalContext) (target : Ty)
     exact ⟨by simpa [ScalarNormalization.number, modulus] using fieldBound,
       maximumBound, valueBound⟩
 
+private theorem scalarType_supported {ty : Ty} (scalarType : ScalarType ty) :
+    ty.isBytes = false ∧ ty.isJubjub = false ∧ ty.isForeign = false := by
+  cases scalarType <;> simp [Ty.isBytes, Ty.isJubjub, Ty.isForeign]
+
 private theorem canonical_native_of_bound (value : Nat) (bound : value < Field.modulus) :
     Canonical .native value := by
   exact ⟨by simpa [ScalarNormalization.number] using bound, trivial⟩
 
-/-- Successful expression evaluation under the production field modulus always
-returns a value in the source type's canonical range. -/
+/-- Successful evaluation returns a canonical value for expressions admitted
+by the scalar fragment. The admission excludes opaque, byte, curve and foreign
+results whose source values do not have scalar canonicality. -/
 theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
-    (expression : Expr ty) (value : ty.Denote)
-    (modulus : ctx.modulus = Field.modulus)
+    (expression : Expr ty) (admission : ScalarExpression expression)
+    (value : ty.Denote) (modulus : ctx.modulus = Field.modulus)
     (evaluated : expression.eval ctx env = .ok value) :
     Canonical ty value := by
-  induction expression generalizing env with
+  induction admission generalizing env with
   | native number =>
     simp only [Expr.eval] at evaluated
     change (if number < ctx.modulus then (Except.ok number : Except String Nat)
@@ -88,9 +81,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
       exact evaluated.symm
     subst value
     exact canonical_native_of_bound number (by simpa [modulus] using bound)
-  | bool value =>
-    have equality := Except.ok.inj evaluated
-    subst value
+  | bool boolean =>
     cases value <;> simp [Canonical, ScalarNormalization.number, Field.modulus]
   | uint maximum number =>
     simp only [Expr.eval, canonical_eq] at evaluated
@@ -112,8 +103,8 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
     subst value
     exact ⟨by simpa [ScalarNormalization.number, modulus] using fieldBound,
       maximumBound, valueBound⟩
-  | @ref refTy name =>
-    cases refTy with
+  | @ref refTy name scalarType =>
+    cases scalarType with
     | native =>
       simp only [Expr.eval, canonical_eq] at evaluated
       cases lookup : env.lookup name with
@@ -125,10 +116,9 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           have bound : found < ctx.modulus := by
             by_cases bound : found < ctx.modulus
             · exact bound
-            · simp [lookup, typed, bound] at evaluated
-              cases evaluated
+            · simp [Expr.eval, lookup, typed, canonical_eq, bound, bind, Except.bind] at evaluated
           have equality : value = found := by
-            simp [lookup, typed, bound] at evaluated
+            simp [Expr.eval, lookup, typed, canonical_eq, bound, bind, Except.bind] at evaluated
             change (Except.ok found : Except String Nat) = .ok value at evaluated
             exact (Except.ok.inj evaluated).symm
           subst value
@@ -165,7 +155,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           subst value
           exact ⟨by simpa [ScalarNormalization.number, modulus] using fieldBound,
             maximumBound, valueBound⟩
-  | add left right ihLeft ihRight =>
+  | add left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, modulus, Field.modulus,
@@ -184,7 +174,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           Except.ok.inj evaluated
         subst value
         exact canonical_native_of_bound _ (Nat.mod_lt _ (by decide))
-  | mul left right ihLeft ihRight =>
+  | mul left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, modulus, Field.modulus,
@@ -203,7 +193,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           Except.ok.inj evaluated
         subst value
         exact canonical_native_of_bound _ (Nat.mod_lt _ (by decide))
-  | sub left right ihLeft ihRight =>
+  | sub left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, modulus, Field.modulus,
@@ -222,8 +212,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           Except.ok.inj evaluated
         subst value
         exact canonical_native_of_bound _ (Nat.mod_lt _ (by decide))
-  | uadd left right ihLeft ihRight =>
-    rename_i leftMaximum rightMaximum
+  | @uadd leftMaximum rightMaximum left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, bind, Bind.bind, Except.bind] at evaluated
@@ -233,12 +222,11 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
         simp [Expr.eval, leftEval, rightEval, bind, Bind.bind, Except.bind] at evaluated
       | ok rightValue =>
         simp only [Expr.eval, leftEval, rightEval, bind, Bind.bind, Except.bind] at evaluated
-        change scalarCastView ctx (.uint (leftMaximum + rightMaximum))
+        change scalarCast ctx _ (.uint (leftMaximum + rightMaximum))
           (leftValue + rightValue) = .ok value at evaluated
-        exact scalarCastView_canonical ctx (.uint (leftMaximum + rightMaximum))
+        exact scalarCast_canonical ctx (.uint (leftMaximum + rightMaximum))
           (leftValue + rightValue) value modulus evaluated
-  | usub left right ihLeft ihRight =>
-    rename_i leftMaximum rightMaximum
+  | @usub leftMaximum rightMaximum left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, bind, Bind.bind, Except.bind] at evaluated
@@ -254,12 +242,11 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           · exact underflow
         simp only [Expr.eval, leftEval, rightEval, noUnderflow, bind, Bind.bind,
           Except.bind] at evaluated
-        change scalarCastView ctx (.uint leftMaximum) (leftValue - rightValue) =
+        change scalarCast ctx _ (.uint leftMaximum) (leftValue - rightValue) =
           .ok value at evaluated
-        exact scalarCastView_canonical ctx (.uint leftMaximum)
+        exact scalarCast_canonical ctx (.uint leftMaximum)
           (leftValue - rightValue) value modulus evaluated
-  | umul left right ihLeft ihRight =>
-    rename_i leftMaximum rightMaximum
+  | @umul leftMaximum rightMaximum left right leftSupported rightSupported ihLeft ihRight =>
     cases leftEval : left.eval ctx env with
     | error message =>
       simp [Expr.eval, leftEval, bind, Bind.bind, Except.bind] at evaluated
@@ -269,30 +256,34 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
         simp [Expr.eval, leftEval, rightEval, bind, Bind.bind, Except.bind] at evaluated
       | ok rightValue =>
         simp only [Expr.eval, leftEval, rightEval, bind, Bind.bind, Except.bind] at evaluated
-        change scalarCastView ctx (.uint (leftMaximum * rightMaximum))
+        change scalarCast ctx _ (.uint (leftMaximum * rightMaximum))
           (leftValue * rightValue) = .ok value at evaluated
-        exact scalarCastView_canonical ctx (.uint (leftMaximum * rightMaximum))
+        exact scalarCast_canonical ctx (.uint (leftMaximum * rightMaximum))
           (leftValue * rightValue) value modulus evaluated
-  | cast target source ihSource =>
-    rename_i sourceTy
+  | @cast sourceTy target source sourceType targetType sourceSupported ihSource =>
     cases sourceEval : source.eval ctx env with
     | error message =>
-      simp [Expr.eval, sourceEval, bind, Bind.bind, Except.bind] at evaluated
+      have sourceKinds := scalarType_supported sourceType
+      have targetKinds := scalarType_supported targetType
+      simp [Expr.eval, sourceEval, sourceKinds.1, sourceKinds.2.1,
+        sourceKinds.2.2, targetKinds.1, targetKinds.2.1, targetKinds.2.2,
+        bind, Bind.bind, Except.bind] at evaluated
     | ok sourceValue =>
-      simp only [Expr.eval, sourceEval, bind, Bind.bind, Except.bind] at evaluated
-      change scalarCastView ctx target (ScalarNormalization.number sourceTy sourceValue) =
-        .ok value at evaluated
-      exact scalarCastView_canonical ctx target
-        (ScalarNormalization.number sourceTy sourceValue) value modulus evaluated
-  | letE name bound body ihBound ihBody =>
-    rename_i sourceTy resultTy
+      have castEvaluation := ScalarNormalization.eval_cast_scalar ctx env source
+        sourceType targetType sourceValue sourceEval
+      rw [castEvaluation] at evaluated
+      exact scalarCast_canonical ctx targetType
+        (ScalarNormalization.number sourceType sourceValue) value modulus evaluated
+  | @letE sourceTy resultTy name bound body sourceScalar boundSupported bodySupported
+      ihBound ihBody =>
     cases boundEval : bound.eval ctx env with
     | error message =>
       simp [Expr.eval, boundEval, bind, Bind.bind, Except.bind] at evaluated
     | ok boundValue =>
       simp only [Expr.eval, boundEval, bind, Bind.bind, Except.bind] at evaluated
       exact ihBody ((name, Value.pack sourceTy boundValue) :: env) value evaluated
-  | assertE condition body ihCondition ihBody =>
+  | @assertE resultTy condition body conditionSupported bodySupported
+      ihCondition ihBody =>
     cases conditionEval : condition.eval ctx env with
     | error message =>
       simp [Expr.eval, conditionEval, bind, Bind.bind, Except.bind] at evaluated
@@ -303,12 +294,17 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
       | true =>
         simp only [Expr.eval, conditionEval, bind, Bind.bind, Except.bind] at evaluated
         exact ihBody env value evaluated
-  | disclose span source ihSource =>
+  | copyValue source sourceSupported ihSource =>
+    have sourceEval : source.eval ctx env = .ok value := by
+      simpa [Expr.eval] using evaluated
+    exact ihSource env value sourceEval
+  | disclose span source sourceSupported ihSource =>
     apply ihSource env value
     simpa [Expr.eval] using evaluated
-  | eq left right ihLeft ihRight =>
+  | eq left right scalarType leftSupported rightSupported ihLeft ihRight =>
     cases value <;> simp [Canonical, ScalarNormalization.number, Field.modulus]
-  | select condition yes no ihCondition ihYes ihNo =>
+  | select condition yes no scalarType conditionSupported yesSupported noSupported
+      ihCondition ihYes ihNo =>
     cases conditionEval : condition.eval ctx env with
     | error message =>
       simp [Expr.eval, conditionEval, bind, Bind.bind, Except.bind] at evaluated
@@ -335,7 +331,7 @@ theorem expression_eval_canonical (ctx : EvalContext) (env : EvalEnv)
           | true =>
             rw [← selectedEq]
             exact ihYes env yesValue yesEval
-  | poseidon2 domain left right ihLeft ihRight =>
+  | poseidon2 domain left right leftSupported rightSupported ihLeft ihRight =>
     have domainNotGe : ¬ ctx.modulus ≤ domain := by
       by_cases invalid : ctx.modulus ≤ domain
       · simp [Expr.eval, invalid, bind, Bind.bind, Except.bind] at evaluated
