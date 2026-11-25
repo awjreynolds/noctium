@@ -12,6 +12,7 @@ open ScalarNormalization (interpret)
 open RangeDedupAcceptedArray ScalarValidationMeaning ScalarValidationOpcodeProfile
 open ScalarValidationArithmeticLoop (NativeDefinitions)
 open ScalarValidationRawSeedMeaning
+open ScalarValidationNativeDefinitions (SupportedScalarOpcode NativeDefinitionTrace)
 
 open ScalarNormalization (interpret) in
 /-- The production lowerer and strict decoder identify the exact assertion
@@ -137,6 +138,135 @@ private theorem scalarCall_decoded_rows
       decoded fields fieldsParsed fieldsWF
   have rowsEq : decodedRows = rows := Except.ok.inj (parsedRows.symm.trans rowsParsed)
   simpa only [rowsEq] using bodyRows
+
+private def outputOperands : Instruction → Option (List Operand)
+  | .output values => some values
+  | _ => none
+
+private theorem raw_output_test {raw : Json} {instruction : Instruction}
+    (supported : SupportedScalarOpcode raw instruction) :
+    (Native.opcode raw == "output") = (outputOperands instruction).isSome := by
+  cases supported <;> rename_i opcodeParsed <;> simp [Native.opcode, Except.toOption, opcodeParsed, outputOperands]
+
+private theorem decoded_output_count {items : List (Json × Nat)} {instructions : List Instruction}
+    (trace : NativeDefinitionTrace items instructions) :
+    (items.map (Native.opcode ∘ Prod.fst)).count "output" =
+      (instructions.filterMap outputOperands).length := by
+  induction trace with
+  | nil => rfl
+  | @cons raw index instruction rest tail row trace ih =>
+    have test := raw_output_test row.supported
+    simp only [List.map_cons, Function.comp_apply, List.count_cons, List.filterMap_cons, test]
+    cases outputOperands instruction <;> simp [ih]
+
+private theorem decoded_output_member {items : List (Json × Nat)} {instructions : List Instruction}
+    (trace : NativeDefinitionTrace items instructions) {values : List Operand}
+    (member : values ∈ instructions.filterMap outputOperands) :
+    ∃ raw index, (raw, index) ∈ items ∧ Native.stringField raw "op" = .ok "output" ∧
+      NativeRelationJson.decodeInstruction raw = .ok (.output values) := by
+  induction trace with
+  | nil => simp at member
+  | @cons raw index instruction rest tail row trace ih =>
+    simp only [List.filterMap_cons] at member
+    cases out : outputOperands instruction with
+    | none =>
+      obtain ⟨source, offset, present, opcode, decoded⟩ := ih (by simpa [out] using member)
+      exact ⟨source, offset, List.mem_cons_of_mem _ present, opcode, decoded⟩
+    | some head =>
+      have occurs : values ∈ head :: tail.filterMap outputOperands := by simpa [out] using member
+      rcases List.mem_cons.mp occurs with rfl | later
+      · have output : instruction = .output values := by
+          cases instruction <;> simp_all [outputOperands]
+        subst instruction
+        exact ⟨raw, index, by simp, by cases row.supported; assumption, row.decoded⟩
+      · obtain ⟨source, offset, present, opcode, decoded⟩ := ih later
+        exact ⟨source, offset, List.mem_cons_of_mem _ present, opcode, decoded⟩
+
+private theorem program_returns_eq {program : Program} {witness : Assignment} :
+    program.returns witness =
+      (program.instructions.filterMap outputOperands).flatMap (List.map (·.read witness)) := by
+  unfold Program.returns
+  induction program.instructions with
+  | nil => rfl
+  | cons head tail ih => cases head <;> simp [List.filterMap_cons, outputOperands, ih]
+
+private theorem validated_scalarCall_returnValues
+    {expected : Expected} {json : Json} {program : Program} {rows : Array Json}
+    (accepted : Native.validate expected json = .ok ())
+    (rowsParsed : Native.arrayField json "instructions" = .ok rows)
+    (decodedRows : rows.toList.mapM NativeRelationJson.decodeInstruction =
+      .ok program.instructions)
+    (profile : checkedScalarOpcodeProfile rows.toList.zipIdx program.instructions = true)
+    (schema : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      requirement.ty.isForeign = false)
+    {hash : Hash} {streams : InputStreams} {witness : Assignment} {groups : List (List Scalar)}
+    (satisfies : CircuitSatisfies hash program streams witness groups) :
+    expected.returns.map (interpret hash witness) = (program.returns witness).map some := by
+  obtain ⟨instructions, _, seed, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result accepted
+  have sameRows : instructions = rows :=
+    Except.ok.inj (driver.instructionsParsed.symm.trans rowsParsed)
+  subst instructions
+  have indexedDecoded :
+      ((rows.toList.zipIdx).map Prod.fst).mapM NativeRelationJson.decodeInstruction =
+        .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRows
+  have trace := NativeDefinitionTrace.ofDecodedCheckedProfile indexedDecoded profile
+  have rawSchema : ∀ requirement ∈ expected.rawInputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema requirement (List.mem_append_left _ member)
+  have inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false :=
+    fun requirement member => schema requirement (List.mem_append_right _ member)
+  obtain ⟨seedMeaning, seedDefinitions⟩ :=
+    seedRawInputs_meaning_and_nativeDefinitions (hash := hash) (inputs := witness)
+      (witness := witness) rawSchema (fun _ _ => rfl) driver.seededRawInputs
+  have acceptedSteps := nativeDefinitionTrace_acceptedMeaningSteps trace satisfies.instructions
+  obtain ⟨_, _, visits⟩ := accepted_loop_meaning_at_steps seedMeaning seedDefinitions
+    inputSchema (fun _ _ => rfl) acceptedSteps driver.instructionTrace
+  have shape := (Native.final_output_required rows.toList).mp driver.finalOutput
+  simp only [Native.finalOutputShape, Bool.and_eq_true, beq_iff_eq] at shape
+  have rawCount : (rows.toList.map Native.opcode).count "output" = 1 := shape.1.2
+  have decodedCount := decoded_output_count trace
+  rw [← List.map_map, List.zipIdx_map_fst, rawCount] at decodedCount
+  obtain ⟨values, singleton⟩ := List.length_eq_one_iff.mp decodedCount.symm
+  obtain ⟨raw, index, member, opcode, decoded⟩ :=
+    decoded_output_member trace (values := values) (by rw [singleton]; simp)
+  obtain ⟨_, _, meaning, _, checked, _, _⟩ := visits raw index member
+  rw [program_returns_eq, singleton]
+  simpa using (ScalarValidationOutputMeaning.accepted_output_meaning meaning checked opcode decoded).2
+
+/-- The sole validated Output row observes the exact ordered return terms.
+This applies to native raw argument headers and every current compiler rewrite.
+Standalone Output has the host observation semantics of `Program.returns`. -/
+theorem lowerEntrypoint_scalarCall_returnValues
+    {state : List StateDecl} {entry : Entrypoint} (rewrites : Zkir.Rewrites)
+    {json : Json} {call : ScalarCall} {rows : Array Json}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : NativeRelationJson.decodeScalarCall json = .ok call)
+    (rowsParsed : Native.arrayField json "instructions" = .ok rows)
+    (profile : checkedScalarOpcodeProfile rows.toList.zipIdx call.body.instructions = true)
+    (schema : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false) :
+    ∃ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      ∀ {hash streams witness groups},
+        CircuitSatisfies hash call.body streams witness groups →
+        expected.returns.map (interpret hash witness) = (call.body.returns witness).map some := by
+  obtain ⟨_, expected, _, expectedAccepted, accepted, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites
+      state entry rewrites json lowered
+  let optimized := Zkir.optimizedExpected rewrites expected
+  have inputsUnchanged : optimized.rawInputs ++ optimized.inputs =
+      expected.rawInputs ++ expected.inputs := by cases rewrites <;> rfl
+  have returnsUnchanged : optimized.returns = expected.returns := by cases rewrites <;> rfl
+  have schemaOptimized : ∀ requirement ∈ optimized.rawInputs ++ optimized.inputs,
+      requirement.ty.isForeign = false := by
+    simpa only [inputsUnchanged] using schema expected expectedAccepted
+  refine ⟨expected, expectedAccepted, ?_⟩
+  intro hash streams witness groups satisfies
+  rw [← returnsUnchanged]
+  exact validated_scalarCall_returnValues (expected := optimized) accepted rowsParsed
+    (scalarCall_decoded_rows rewrites lowered decoded rowsParsed) profile schemaOptimized satisfies
 
 /-- A decoded scalar call exposes source assertions, checked source ranges,
 and ordinary scalar input bounds for any satisfying body witness. Rewrites

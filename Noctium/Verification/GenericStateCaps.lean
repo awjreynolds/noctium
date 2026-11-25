@@ -96,6 +96,10 @@ theorem circuit_validate_state_caps (circuit : Circuit) :
       circuit.validate {poseidon2 := true} :=
   circuit_validate_state_flags {poseidon2 := true} circuit
 
+theorem expr_validate_source_crypto (expression : Expr ty) (env : TypeEnv) :
+    expression.validate Capabilities.source env = expression.validate Capabilities.crypto env :=
+  expr_validate_state_caps Capabilities.crypto expression env
+
 theorem circuit_validate_source_crypto (circuit : Circuit) :
     circuit.validate Capabilities.source = circuit.validate Capabilities.crypto :=
   circuit_validate_state_flags Capabilities.crypto circuit

@@ -84,6 +84,69 @@ private theorem scalar_read_scope {effects : List Effect} (admitted : ScalarStat
     · cases head <;> constructor
     · exact ih found inTail
 
+private theorem validated_types_complete {state : List StateDecl}
+    {initial final : TypeEnv} {effects : List Effect} {complete : EvalEnv}
+    (validated : ValidatedEffects state initial effects final)
+    (initialComplete : ∀ name ty, initial.lookup name = some ty →
+      ∃ raw value, complete.lookup name = some raw ∧ raw.as ty = some value)
+    (candidates : ∀ effect ∈ effects, ReadCandidate effect complete) :
+    ∀ name ty, final.lookup name = some ty →
+      ∃ raw value, complete.lookup name = some raw ∧ raw.as ty = some value := by
+  induction validated with
+  | nil => exact initialComplete
+  | @readCell env final rest stateName destination ty declared fresh tail ih =>
+    have candidate := candidates (.readCell stateName destination ty) (by simp)
+    obtain ⟨value, found, canonical⟩ := candidate
+    have nextComplete : ∀ name foundTy, (env ++ [(destination, ty)]).lookup name = some foundTy →
+        ∃ raw value, complete.lookup name = some raw ∧ raw.as foundTy = some value := by
+      intro name foundTy typed
+      by_cases same : name = destination
+      · subst name
+        simp [List.lookup_append, fresh] at typed
+        subst foundTy
+        exact ⟨Value.pack ty value, value, found, number_pack_as ty value canonical⟩
+      · have unequal : (name == destination) = false := by simp [same]
+        simp only [List.lookup_append, List.lookup_cons, unequal,
+          List.lookup_nil, Option.or_none] at typed
+        exact initialComplete name foundTy typed
+    apply ih nextComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+  | @readMap env final rest stateName destination keyTy valueTy key declared keyValid fresh tail ih =>
+    have candidate := candidates (.readMap stateName destination keyTy valueTy key) (by simp)
+    obtain ⟨value, found, canonical⟩ := candidate
+    have nextComplete : ∀ name foundTy, (env ++ [(destination, valueTy)]).lookup name = some foundTy →
+        ∃ raw value, complete.lookup name = some raw ∧ raw.as foundTy = some value := by
+      intro name foundTy typed
+      by_cases same : name = destination
+      · subst name
+        simp [List.lookup_append, fresh] at typed
+        subst foundTy
+        exact ⟨Value.pack valueTy value, value, found, number_pack_as valueTy value canonical⟩
+      · have unequal : (name == destination) = false := by simp [same]
+        simp only [List.lookup_append, List.lookup_cons, unequal,
+          List.lookup_nil, Option.or_none] at typed
+        exact initialComplete name foundTy typed
+    apply ih nextComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+  | @require env final rest condition conditionValid tail ih =>
+    apply ih initialComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+  | @writeCell env final rest stateName ty value declared valueValid tail ih =>
+    apply ih initialComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+  | @writeMap env final rest stateName keyTy valueTy key value declared keyValid valueValid tail ih =>
+    apply ih initialComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+  | @requireAbsent env final rest stateName keyTy valueTy key declared keyValid tail ih =>
+    apply ih initialComplete
+    intro effect member
+    exact candidates effect (by simp [member])
+
 theorem unguarded_read_scope (entry : Entrypoint) (unguarded : entry.effectGuards.all Option.isNone = true)
     (admitted : ScalarStateEffects entry.effects) :
     GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx := by
@@ -129,7 +192,11 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
         .ok (finalEnv, finalState) ∧
       GenericStateEncoding.encodeState state finalState = some finalSlots ∧
       final = ⟨[.vector finalSlots], finalReads⟩ ∧
-      AgreesOnTypes finalTypes finalEnv (base ++ decoded) := by
+      AgreesOnTypes finalTypes finalEnv (base ++ decoded) ∧
+      ((∀ name ty, (initialEffectTypeEnv entry).lookup name = some ty →
+          ∃ raw value, (base ++ decoded).lookup name = some raw ∧ raw.as ty = some value) →
+        ∀ name ty, finalTypes.lookup name = some ty →
+          ∃ raw value, (base ++ decoded).lookup name = some raw ∧ raw.as ty = some value) := by
   have scope := unguarded_read_scope entry unguarded admitted
   obtain ⟨finalTypes, validated⟩ := lower_validated_effects state entry plan lowered admitted
   obtain ⟨offsets, inputPlan, chunks, publicNative, segments, _, publicAccepted,
@@ -180,9 +247,11 @@ theorem lower_checked_effects (ctx : EvalContext) (state : List StateDecl) (entr
       (by rwa [orderedEffects]) (by rwa [orderedEffects]) initialAgreement encoded distinct
       stateBound modulus
   refine ⟨finalTypes, finalEnv, finalState, finalSlots, finalReads, validated, ?_, finalEncoded,
-    layout, agreement⟩
+    layout, agreement, ?_⟩
   have guardLength := lower_guard_metadata_valid state entry plan lowered
   simpa [runEffectsWithGuardsAndEnv, guardLength, unguarded,
     SourceEffects.runEffectsWithEnv_eq_fold, orderedEffects] using folded
+  intro initialComplete
+  exact validated_types_complete validated initialComplete candidates
 
 end Noctium.Verification.GenericStateEffectFold
