@@ -190,6 +190,118 @@ fn view_artifacts(entry: &str) -> (&'static str, &'static [u8]) {
     }
 }
 
+fn generated_artifact(
+    directory: &std::path::Path,
+    entry: &str,
+    suffix: &str,
+) -> std::path::PathBuf {
+    let mut path = directory
+        .join(format!("OpenZeppelinPort.ConfidentialToken.{entry}"))
+        .into_os_string();
+    path.push(suffix);
+    path.into()
+}
+
+fn generated_plan(directory: &std::path::Path, entry: &str) -> Plan {
+    serde_json::from_slice(
+        &std::fs::read(generated_artifact(directory, entry, ".impact.json")).unwrap(),
+    )
+    .unwrap()
+}
+
+fn generated_circuit(directory: &std::path::Path, entry: &str) -> IrSource {
+    let bytes = std::fs::read(generated_artifact(directory, entry, ".zkir")).unwrap();
+    IrSource::load(bytes.as_slice()).unwrap()
+}
+
+fn generated_control(directory: &std::path::Path, entry: &str) -> Json {
+    serde_json::from_slice(
+        &std::fs::read(generated_artifact(
+            directory,
+            entry,
+            ".witness.control.json",
+        ))
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn run_generated_entry(
+    directory: &std::path::Path,
+    entry: &str,
+    values: BTreeMap<String, Json>,
+    account_secret: &[u8; 32],
+    encryption_secret: &[u8; 32],
+    seeds: &[[u8; 32]],
+    attempt_number: u64,
+    prior_state: &ChargedState<Db>,
+) -> Result<
+    (
+        ChargedState<Db>,
+        BTreeMap<String, Json>,
+        BTreeMap<String, Json>,
+    ),
+    String,
+> {
+    let control_plan = generated_control(directory, entry);
+    let native_plan = generated_plan(directory, entry);
+    let circuit = generated_circuit(directory, entry);
+    let expected_caller = values
+        .get("accountId")
+        .or_else(|| values.get("spenderId"))
+        .cloned();
+    let native_inputs = collect_native_inputs(
+        entry,
+        &control_plan,
+        values,
+        account_secret,
+        encryption_secret,
+        seeds,
+        None,
+        attempt_number,
+    );
+    let execution = prepare(
+        &native_plan,
+        &native_inputs,
+        prior_state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    check(&execution, &circuit).map_err(|error| error.to_string())?;
+    if matches!(entry, "registerWithKey") {
+        assert_eq!(
+            execution.returns_json()["caller"],
+            expected_caller.expect("caller return needs accountId")
+        );
+    }
+    Ok((
+        execution.after.state.clone(),
+        native_inputs,
+        execution.returns_json(),
+    ))
+}
+
+fn run_generated_view(
+    directory: &std::path::Path,
+    entry: &str,
+    inputs: BTreeMap<String, Json>,
+    state: &ChargedState<Db>,
+) -> Result<(BTreeMap<String, Json>, bool), String> {
+    let plan = generated_plan(directory, entry);
+    let circuit = generated_circuit(directory, entry);
+    let execution = prepare(
+        &plan,
+        &inputs,
+        state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    check(&execution, &circuit).map_err(|error| error.to_string())?;
+    Ok((execution.returns_json(), execution.after.state == *state))
+}
+
 fn signatures(plan: &Json) -> Vec<WitnessSignature> {
     plan["witnesses"]
         .as_array()
@@ -598,6 +710,34 @@ fn state_cell<'a>(plan: &Plan, state: &'a ChargedState<Db>, name: &str) -> &'a A
         panic!("expected {name} cell")
     };
     cell
+}
+
+fn assert_u128_state_cell(
+    plan: &Plan,
+    state: &ChargedState<Db>,
+    name: &str,
+    expected: u128,
+) -> ([u8; 16], Vec<u8>) {
+    let declaration = plan
+        .state
+        .iter()
+        .find(|field| field.name == name)
+        .expect("UInt128 state declaration");
+    assert_eq!(declaration.cell_alignment.as_deref(), Some("u128"));
+    let actual = state_cell(plan, state, name);
+    let expected_value = AlignedValue::from(expected);
+    assert_eq!(actual, &expected_value);
+    assert_eq!(actual.alignment, expected_value.alignment);
+    assert_eq!(actual.value.0.len(), 1, "one FAB atom");
+    assert!(actual.value.0[0].0.len() <= 16, "UInt128 atom width");
+    let mut bytes = [0u8; 16];
+    bytes[..actual.value.0[0].0.len()].copy_from_slice(&actual.value.0[0].0);
+    assert_eq!(
+        bytes,
+        expected.to_le_bytes(),
+        "canonical UInt128 little endian"
+    );
+    (bytes, actual.value.0[0].0.clone())
 }
 
 fn assert_token_metadata(plan: &Plan, state: &ChargedState<Db>) {
@@ -2380,6 +2520,202 @@ fn assert_rejects_spend_overspend(
             "overspending the escrow passed the native relation"
         ),
     }
+}
+
+#[test]
+#[ignore = "requires fresh ConfidentialToken entrypoints in NOCTIUM_TOTAL_SUPPLY_ARTIFACTS"]
+fn confidential_token_total_supply_native_observation() -> anyhow::Result<()> {
+    const UINT128_RANGE: &str = "UIntRange<340282366920938463463374607431768211456>";
+    const OUT_OF_RANGE_UINT128: &str = "340282366920938463463374607431768211456";
+
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_TOTAL_SUPPLY_ARTIFACTS")
+            .expect("set the directory containing fresh ConfidentialToken artifacts"),
+    );
+    let account_secret = [17u8; 32];
+    let encryption_secret = [7u8; 32];
+    let encryption_key = EmbeddedGroupAffine::generator() * encryption_scalar(&encryption_secret);
+
+    let register_plan = generated_plan(&directory, "registerWithKey");
+    let total_supply_plan = generated_plan(&directory, "totalSupply");
+    let mint_plan = generated_plan(&directory, "mint");
+    let mint_control = generated_control(&directory, "mint");
+    let mint_circuit = generated_circuit(&directory, "mint");
+    let total_supply_state = total_supply_plan
+        .state
+        .iter()
+        .find(|field| field.name == "totalSupply")
+        .expect("totalSupply state declaration");
+    assert_eq!(total_supply_state.kind["cell"], UINT128_RANGE);
+    assert_eq!(total_supply_state.cell_alignment.as_deref(), Some("u128"));
+    assert!(total_supply_plan.call_inputs.is_empty());
+    assert!(total_supply_plan.circuit.inputs.is_empty());
+    assert_eq!(total_supply_plan.returns.len(), 1);
+    assert_eq!(total_supply_plan.returns[0].name, "supply");
+    assert_eq!(total_supply_plan.returns[0].ty, UINT128_RANGE);
+    let total_supply_plan_json: Json = serde_json::from_slice(&std::fs::read(
+        generated_artifact(&directory, "totalSupply", ".impact.json"),
+    )?)?;
+    assert!(
+        total_supply_plan_json["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|operation| operation["op"] == "popeq" && operation["alignment"] == "u128")
+    );
+
+    let mut state = initial_state(&register_plan);
+    let (zero_atom, zero_value_atom) =
+        assert_u128_state_cell(&register_plan, &state, "totalSupply", 0);
+
+    let (computed_account, compute_unchanged) = run_generated_view(
+        &directory,
+        "computeAccountId",
+        BTreeMap::from([("secret".into(), bytes(&account_secret))]),
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?;
+    assert!(compute_unchanged, "computeAccountId changed contract state");
+    let account_bytes: Vec<u8> =
+        serde_json::from_value(computed_account["accountId"]["values"].clone())?;
+    let account: [u8; 32] = account_bytes
+        .try_into()
+        .expect("computed account id is 32 bytes");
+
+    let (zero_return, zero_unchanged) =
+        run_generated_view(&directory, "totalSupply", BTreeMap::new(), &state)
+            .map_err(anyhow::Error::msg)?;
+    assert_eq!(zero_return["supply"], "0");
+    assert!(
+        zero_unchanged,
+        "zero totalSupply read changed the state frame"
+    );
+
+    state = run_generated_entry(
+        &directory,
+        "registerWithKey",
+        BTreeMap::from([
+            ("accountId".into(), bytes(&account)),
+            ("pk".into(), point_json(encryption_key)),
+        ]),
+        &account_secret,
+        &encryption_secret,
+        &[],
+        1,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+    assert_u128_state_cell(&register_plan, &state, "totalSupply", 0);
+
+    let pending = map_record(&mint_plan, &state, "pending", &account);
+    let mut mint_values = BTreeMap::from([
+        ("recipient".into(), bytes(&account)),
+        ("value".into(), json!("10")),
+        ("recipientPk".into(), point_json(encryption_key)),
+        ("epoch".into(), json!("1")),
+    ]);
+    for (name, value) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
+        .into_iter()
+        .zip(pending)
+    {
+        mint_values.insert(name.into(), json!(field_decimal(value)));
+    }
+    let (minted_state, mint_native_inputs, _) = run_generated_entry(
+        &directory,
+        "mint",
+        mint_values,
+        &account_secret,
+        &encryption_secret,
+        &[[0x31u8; 32]],
+        2,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?;
+    state = minted_state;
+    let (ten_atom, ten_value_atom) = assert_u128_state_cell(&mint_plan, &state, "totalSupply", 10);
+
+    let (minted_return, minted_unchanged) =
+        run_generated_view(&directory, "totalSupply", BTreeMap::new(), &state)
+            .map_err(anyhow::Error::msg)?;
+    assert_eq!(minted_return["supply"], "10");
+    assert!(
+        minted_unchanged,
+        "minted totalSupply read changed the state frame"
+    );
+
+    let state_before_rejection = state.clone();
+    let mut malformed_mint_inputs = mint_native_inputs;
+    malformed_mint_inputs.insert("value".into(), json!(OUT_OF_RANGE_UINT128));
+    let rejected_by = match prepare(
+        &mint_plan,
+        &malformed_mint_inputs,
+        &state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    ) {
+        Err(_) => "prepare",
+        Ok(execution) => {
+            assert!(
+                check(&execution, &mint_circuit).is_err(),
+                "mint accepted a value equal to the UInt128 exclusive upper bound"
+            );
+            "check"
+        }
+    };
+    assert_eq!(state, state_before_rejection);
+
+    let mint_input_schema = mint_control["inputs"]
+        .as_array()
+        .expect("mint input schema")
+        .iter()
+        .map(|input| {
+            json!({
+                "name": input["name"],
+                "type": input["type"]
+            })
+        })
+        .collect::<Vec<_>>();
+    let observation = json!({
+        "abi": {"inputs": [], "returns": "UInt128"},
+        "cases": [
+            {"stateSupply": "0", "return": "0", "stateUnchanged": zero_unchanged},
+            {"stateSupply": "10", "return": "10", "stateUnchanged": minted_unchanged}
+        ],
+        "native": {
+            "entrypoint": total_supply_plan.entrypoint,
+            "callInputs": total_supply_plan.call_inputs,
+            "circuitInputs": total_supply_plan.circuit.inputs.iter().map(|input| {
+                json!({"name": input.name, "type": input.ty, "visibility": input.visibility})
+            }).collect::<Vec<_>>(),
+            "planReturn": {
+                "name": total_supply_plan.returns[0].name,
+                "type": total_supply_plan.returns[0].ty
+            },
+            "returnEncoding": "decimal string",
+            "ledgerAlignment": "u128",
+            "readAlignment": "u128",
+            "ledgerAtomWidthBytes": 16,
+            "ledgerAtomHex": [hex::encode(zero_atom), hex::encode(ten_atom)],
+            "ledgerValueAtomHex": [hex::encode(zero_value_atom), hex::encode(ten_value_atom)],
+            "computeAccountIdStateUnchanged": compute_unchanged,
+            "mintInputSchema": mint_input_schema,
+            "outOfRangeMintValue": {
+                "value": OUT_OF_RANGE_UINT128,
+                "rejectedBy": rejected_by
+            }
+        }
+    });
+    let output = serde_json::to_string(&observation)?;
+    println!("{output}");
+    if let Some(path) = std::env::var_os("NOCTIUM_TOTAL_SUPPLY_RESULT") {
+        let path = std::path::PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, output)?;
+    }
+    Ok(())
 }
 
 #[test]

@@ -1921,7 +1921,8 @@
       ],
       "observedEvidence": [
         "docs/development/native-localnet.md",
-        "docs/development/native-checkpoint-localnet-receipt.json"
+        "docs/development/native-checkpoint-localnet-receipt.json",
+        "docs/development/oz-total-supply-comparison.json"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-25",
+  "issue": "https://github.com/awjreynolds/noctium/issues/1381",
+  "scope": "In-process totalSupply read at initialized zero and after a successful mint of 10. Sizes are keyless mock-compile results for the two matched relations.",
+  "target": {
+    "name": "midnight-ledger-9-zkir-3.2.1",
+    "ledger": "9.1.0.1",
+    "zkir": "3.2.1",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
+  },
+  "abi": {
+    "inputs": [],
+    "returns": "UInt128"
+  },
+  "cases": [
+    {
+      "return": "0",
+      "stateSupply": "0",
+      "stateUnchanged": true
+    },
+    {
+      "return": "10",
+      "stateSupply": "10",
+      "stateUnchanged": true
+    }
+  ],
+  "zkirAbi": {
+    "inputs": [],
+    "outputs": [
+      "Scalar<BLS12-381>"
+    ]
+  },
+  "sizingTool": {
+    "repository": "https://github.com/midnightntwrk/midnight-zkir",
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "rust": "1.100.0",
+    "host": "darwin-arm64",
+    "requestedVersion": "3.2.1",
+    "releaseLabel": "3.2.1",
+    "expectedCliVersion": "3.2.0",
+    "version": "midnight-zkir 3.2.0",
+    "binarySha256": "ef1e3b9ad7adcea28e604d517236734c091bcba78151f2cc9d64c0198a7e8b7c",
+    "cargoLockSha256": "f6044eb43d4d8e6f2ed3dab33cb8f70fe1a59784fcc987e18aef4dab46a16c6b",
+    "command": "cargo +1.100.0 build --release --locked --package midnight-zkir --features binary"
+  },
+  "noctium": {
+    "compilerRevision": "85ece45e4f6c8eca43d0d61d5ecf7b44b86ae947",
+    "lean": "leanprover/lean4:v4.35.0",
+    "compilerSha256": "2d6656788e965d0ca31a2107f5f6921bd30258184c02af128a45473961270d14",
+    "originalSourceSha256": "f52ed8886d547e4b303a2a1d9c835314cce4b05d64f035439aeb8a42275ae367",
+    "alignedSourceSha256": "e479e146fcd23afc20cdc9d2a382a661599e9da83fe1edef7c0d3ed6824b78cc",
+    "sourceChange": "Add alignedBytes to the root totalSupply UInt 128 declaration.",
+    "compileOptions": [
+      "--emit",
+      "ledger",
+      "--emit",
+      "witness",
+      "--ledger-read-bound",
+      "OpenZeppelinPort.ConfidentialToken.totalSupply"
+    ],
+    "totalSupplyZkirSha256": "24641a6520e831f06ac242ba5e6779ccac7d71abe8e2cec37c3f1886a6ca3658",
+    "totalSupplyImpactSha256": "0c4adf63d8841e23db0086838b9156e4719eb4e95e7be3c3f359778ed28ab018",
+    "size": {
+      "k": 6,
+      "rows": 34
+    },
+    "observation": {
+      "callInputs": [],
+      "circuitInputs": [],
+      "computeAccountIdStateUnchanged": true,
+      "entrypoint": "totalSupply",
+      "ledgerAlignment": "u128",
+      "ledgerAtomHex": [
+        "00000000000000000000000000000000",
+        "0a000000000000000000000000000000"
+      ],
+      "ledgerAtomWidthBytes": 16,
+      "ledgerValueAtomHex": [
+        "",
+        "0a"
+      ],
+      "mintInputSchema": [
+        {
+          "name": "recipient",
+          "type": "Bytes<32>"
+        },
+        {
+          "name": "value",
+          "type": "UIntRange<340282366920938463463374607431768211456>"
+        },
+        {
+          "name": "recipientPk",
+          "type": "JubjubPoint"
+        },
+        {
+          "name": "previousC1X",
+          "type": "Native"
+        },
+        {
+          "name": "previousC1Y",
+          "type": "Native"
+        },
+        {
+          "name": "previousC2X",
+          "type": "Native"
+        },
+        {
+          "name": "previousC2Y",
+          "type": "Native"
+        },
+        {
+          "name": "epoch",
+          "type": "UIntRange<18446744073709551616>"
+        }
+      ],
+      "outOfRangeMintValue": {
+        "rejectedBy": "prepare",
+        "value": "340282366920938463463374607431768211456"
+      },
+      "planReturn": {
+        "name": "supply",
+        "type": "UIntRange<340282366920938463463374607431768211456>"
+      },
+      "readAlignment": "u128",
+      "returnEncoding": "decimal string"
+    }
+  },
+  "compact": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "compilerSha256": "15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537",
+    "compilerReleaseSha256": "96ee68a59d9e8b093f05c97479a4cf08c79760015dcc26ecc797ec0160ca27f9",
+    "runtime": "0.21.0",
+    "openZeppelinCommit": "f85f1a23685c6bbedfc8c2589ae3aa128aff7c46",
+    "wrapperSha256": "4f30d84cf9567529ca15cade71f22cab08512a6371b6277655352943efa836f9",
+    "compileOptions": [
+      "--skip-zk"
+    ],
+    "totalSupplyZkirSha256": "d556e7813f99d6e4cf13fc868dca2a1c208bd3c67deb4db1150998671a556113",
+    "generatedInterfaceSha256": "b72b0d8d5a36aef6ecdb293cd415d7e9bec963efc71e6704f58de6236fba8c9e",
+    "size": {
+      "k": 6,
+      "rows": 34
+    },
+    "stateMapping": {
+      "logicalState": "totalSupply",
+      "compactLedgerField": "Supply__totalSupply",
+      "topLevelStateArrayIndex": 11,
+      "compactType": "Uint<128>",
+      "cellAlignment": [
+        {
+          "tag": "atom",
+          "value": {
+            "tag": "bytes",
+            "length": 16
+          }
+        }
+      ],
+      "cellEncodingAtZero": {
+        "alignment": [
+          {
+            "tag": "atom",
+            "value": {
+              "length": 16,
+              "tag": "bytes"
+            }
+          }
+        ],
+        "value": [
+          {
+            "$bytes": ""
+          }
+        ]
+      },
+      "cellEncodingAtTen": {
+        "alignment": [
+          {
+            "tag": "atom",
+            "value": {
+              "length": 16,
+              "tag": "bytes"
+            }
+          }
+        ],
+        "value": [
+          {
+            "$bytes": "0a"
+          }
+        ]
+      },
+      "stateFrameEncoding": "Compact runtime StateValue.encode(), canonical JSON hashed with SHA-256 for the whole state; cell frames are emitted exactly"
+    },
+    "stateFrames": {
+      "zero": {
+        "wholeStateFrameSha256BeforeRead": "6d69195e2aa244ab37b96191a6e7d1c6ac034fb3159e0e8b1e6f93ddd44d432e",
+        "wholeStateFrameSha256AfterRead": "6d69195e2aa244ab37b96191a6e7d1c6ac034fb3159e0e8b1e6f93ddd44d432e",
+        "wholeStateUnchanged": true
+      },
+      "ten": {
+        "wholeStateFrameSha256BeforeRead": "735b791c402d198670f5b25bc527d460fbba2a3f79db87debf64eb31536cd6a4",
+        "wholeStateFrameSha256AfterRead": "735b791c402d198670f5b25bc527d460fbba2a3f79db87debf64eb31536cd6a4",
+        "wholeStateUnchanged": true
+      }
+    },
+    "nonzeroReachability": {
+      "circuits": [
+        "registerWithKey",
+        "mint"
+      ],
+      "mintAmount": "10",
+      "recipientAccountId": "synthetic account derived by Compact computeAccountId(secretKey)",
+      "unshieldedEffects": 0
+    },
+    "rejection": {
+      "boundary": "generated Compact TypeScript circuit API",
+      "circuit": "totalSupply",
+      "invalidCall": "one unexpected argument",
+      "rejected": true,
+      "stateUnchanged": true
+    }
+  },
+  "differences": [
+    "The source protocols use different state slots, mint inputs and host representation of UInt128.",
+    "Compact serializes the bytes16 atom with minimal little-endian value bytes. The native observation pads the same atom to its declared width.",
+    "The original Noctium port uses a field-aligned supply cell. The measured variant uses the documented alignedBytes layout and read-bound assumption."
+  ]
+}
