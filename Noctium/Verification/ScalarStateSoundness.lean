@@ -173,10 +173,7 @@ theorem lowerEntrypoint_checked_state
       ((∀ expected,
         Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
           ∀ input ∈ expected.inputs, input.activityGuard = none) →
-        (∀ operation ∈ plan.operations, GenericStateOps.FieldAdmitted operation ∧
-          ∀ field ∈ operation.fields, ScalarExpression field ∧
-            field.validate Capabilities.scalarFragment
-              (plan.typeEnvironment (Passes.pruneEntrypoint entry)) = .ok ()) →
+        (∀ operation ∈ plan.operations, ∀ field ∈ operation.fields, ScalarExpression field) →
         groups = NativeState.groups native) ∧
       entry.run ctx values initial = (do
         let returned ← Entrypoint.evalReturns ctx entry finalEnv
@@ -250,15 +247,17 @@ theorem lowerEntrypoint_checked_state
         state ep expected plan planAccepted expectedAccepted scalarReads
     have sameFrame := Except.ok.inj (normalized.symm.trans frameAccepted)
     subst collectedFrame
-    have nativeGroups := ScalarImpactOperationMeaning.collectOperations_scalar_fields
-      ctx hash implementation witness frame.1 ((outputs ++ values) ++ readValues)
-      (plan.typeEnvironment ep) typedPlan ep.span plan.operations native frame.2.1
-      expected.groups collectedBounds collectedAssertions
-      (fun operation member => (fields operation member).1)
-      (fun operation member expression present => (fields operation member).2 expression present |>.1)
-      (fun operation member expression present => (fields operation member).2 expression present |>.2)
-      (fun bound member => bounds bound (boundMembers bound member))
-      (fun term member => assertions term (assertionMembers term member)) collected planEvaluated
+    have supported := GenericStateOps.evalPlan_supported ctx
+      ((outputs ++ values) ++ readValues) plan native planEvaluated
+    obtain ⟨schedule, scheduleEvaluated, nativeGroups⟩ :=
+      ScalarImpactOperationMeaning.collectPlan_scalar_schedule
+        state ep plan planAccepted ctx hash implementation witness frame.1
+        ((outputs ++ values) ++ readValues) typedPlan
+        frame.2.1 expected.groups collectedBounds collectedAssertions supported fields
+        (fun bound member => bounds bound (boundMembers bound member))
+        (fun term member => assertions term (assertionMembers term member)) collected
+    have scheduleExact := Except.ok.inj (scheduleEvaluated.symm.trans planEvaluated)
+    subst schedule
     have exactPayloads := (payloads satisfies).symm.trans nativeGroups
     have values := congrArg (List.map (List.map (fun value : Option Scalar => value.getD zero)))
       exactPayloads

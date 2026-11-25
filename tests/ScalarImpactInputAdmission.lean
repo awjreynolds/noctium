@@ -1,4 +1,5 @@
 import Noctium.Frontend
+import Noctium.Backend.NativeExpected
 import Noctium.Verification.GenericStateScalarPrefix
 
 open scoped Noctium
@@ -97,6 +98,13 @@ private theorem scalarImpact_lowered_operations_supported :
 private def bytes32ImpactEnv : EvalEnv :=
   [("digest", .bytes 32 (List.range 32))]
 
+private theorem bytes32Operations_outside_scalar_fragment :
+    ¬ GenericStateOps.ScalarOperation
+        (.push (.bytes32 (.ref "digest"))) ∧
+      ¬ GenericStateOps.ScalarOperation
+        (.popeq (.bytes32 (.ref "digest"))) := by
+  simp [GenericStateOps.ScalarOperation, GenericStateOps.ScalarAligned]
+
 #guard match Backend.Impact.publicInputPlan bytes32ImpactEntry.circuit.inputs with
   | .ok _ => Bool.true
   | .error _ => Bool.false
@@ -106,4 +114,20 @@ private def bytes32ImpactEnv : EvalEnv :=
     match GenericStateOps.evalPlan scalarImpactContext bytes32ImpactEnv plan with
     | .error message => message == "unsupported Impact alignment in scalar state interpreter"
     | .ok _ => Bool.false
+  | .error _ => Bool.false
+
+-- Production field collection accepts the valid Bytes32 plan even though the
+-- scalar VM deliberately has no semantics for its aligned operations.
+#guard match Backend.Impact.lower [] bytes32ImpactEntry with
+  | .ok plan =>
+    match Backend.Native.collectOperations bytes32ImpactEntry.span
+      (Backend.Native.sourceInputAliases bytes32ImpactEntry.circuit.inputs)
+      plan.operations [] with
+    | .ok _ =>
+      match plan.operations with
+      | [ .push (.bytes32 (.ref "digest")) _,
+          .popeq (.bytes32 (.ref "digest")) ] =>
+        Bool.true
+      | _ => Bool.false
+    | .error _ => Bool.false
   | .error _ => Bool.false
