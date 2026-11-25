@@ -8,7 +8,9 @@ on:
       - 'runtime/Cargo.toml'
       - 'runtime/Cargo.lock'
       - 'runtime/src/profile.rs'
+      - 'runtime/src/proof/guarded_reads.rs'
       - 'runtime/tests/zkir321_proof_smoke.rs'
+      - 'tests/Issue43GuardedReads.lean'
       - 'tests/zkir321/jubjub-intermediate.zkir'
   workflow_dispatch:
 
@@ -48,3 +50,35 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 \
               --test zkir321_proof_smoke -- --ignored --nocapture
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: false
+          use-github-cache: false
+      - name: Verify a source-generated guarded-read proof
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d "${RUNNER_TEMP:-/tmp}/noctium-guarded-read-proof.XXXXXX")
+          trap 'rm -rf "$scratch"' EXIT
+          lake build Noctium.Cli Noctium.Verification.GuardedZkirStateSoundness
+          lake env lean --run Main.lean compile tests/Issue43GuardedReads.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$scratch/artifacts"
+          srs="$scratch/bls_midnight_2p8"
+          digest=909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933
+          curl --fail --location --retry 3 --retry-all-errors \
+            --silent --show-error \
+            https://srs.midnight.network/midnight-srs-2p8 --output "$srs"
+          printf '%s  %s\n' "$digest" "$srs" | sha256sum --check --status
+          NOCTIUM_GUARDED_READS_DIR="$scratch/artifacts" \
+            NOCTIUM_GUARDED_READS_SRS="$srs" \
+            NOCTIUM_GUARDED_READS_SRS_SHA256="$digest" \
+            NOCTIUM_GUARDED_READS_STATEMENT_FILE="$scratch/statement.json" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --lib proof::guarded_reads \
+              -- --ignored --nocapture
+          lake env lean --run tests/Issue43GuardedReads.lean \
+            "$scratch/artifacts/Issue43GuardedReads.update.impact.json" "$scratch/statement.json"

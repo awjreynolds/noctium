@@ -4,13 +4,19 @@ import Noctium.Backend.Zkir
 import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.GuardedInputTranscript
+import Noctium.Verification.GuardedPlanExecution
 import Noctium.Verification.GuardedScalarInput
+import Noctium.Verification.GenericStateEncoding
+import Noctium.Verification.ImpactNativeStatementFixture
+import Noctium.Verification.ImpactPlanAgreement
+import Noctium.Verification.ImpactPlanStatementAgreement
+import Noctium.Verification.ImpactTranscriptSchedule
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationOpcodeProfile
 
 open scoped Noctium
-open Lean Noctium
+open Lean Noctium Noctium.Verification
 
 noctium_circuit issue43GuardedReads where
   public account : Native
@@ -662,3 +668,79 @@ private def skippedCellDefaultAssertion : Except String _root_.Bool := do
     interpret one value == some one
 
 #guard skippedCellDefaultAssertion.toOption == some Bool.true
+
+private def issue43KeyWidth (slot : Nat) : Option Nat :=
+  if slot == 1 then some 3 else none
+
+/-- Check a fresh Impact artifact against the same source fixture and the
+native statement emitted by the pinned proof run. This checks the artifact
+bytes directly, the compiled plan's guard schedule, and the ordered VM reads. -/
+private def checkIssue43NativeProof (impactPath statementPath : String) : IO Unit := do
+  let bytes := (← IO.FS.readBinFile impactPath).data.toList
+  let raw ← IO.ofExcept (ArtifactBytes.parse bytes)
+  let statementJson ← IO.FS.readFile statementPath
+  let fixture ← IO.ofExcept
+    (Lean.Json.parse statementJson >>= ImpactNativeStatementFixture.decode)
+
+  let state := Issue43GuardedReads.state
+  let pruned := Passes.pruneEntrypoint issue43GuardedEntry
+  let plan ← IO.ofExcept ((Backend.Impact.lower state pruned).mapError (·.message))
+  let expected := Compiler.nativePlanJson TargetProfile.selected321 `Issue43GuardedReads
+    state Issue43GuardedReads.constructor pruned plan Bool.false
+  unless ImpactPlanStatementAgreement.admitsScalarPlan issue43KeyWidth plan &&
+      ImpactPlanStatementAgreement.matchesBytes 64 bytes expected do
+    throw (IO.userError "Impact bytes differ from the admitted guarded source schedule")
+  let (sourceEnv, sourceState) ← IO.ofExcept <|
+    runEffectsWithGuardsAndEnv issue43GuardedContext issue43GuardedEntry.effects
+      issue43GuardedEntry.effectGuards issue43GuardedInputs issue43GuardedState
+  unless sourceEnv.lookup "skippedCell" == some (.native 0) &&
+      sourceEnv.lookup "missingValue" == some (.native 0) do
+    throw (IO.userError "inactive guarded reads differ from the source fixture")
+  unless sourceEnv.lookup "currentValue" == some (.native 99) &&
+      sourceEnv.lookup "markerValue" == some (.native 23) do
+    throw (IO.userError "active guarded reads differ from the source fixture")
+
+  let sourceOps ← IO.ofExcept <|
+    Verification.GuardedPlanExecution.evalPlan issue43GuardedContext sourceEnv plan
+  let decodedOps := Verification.ImpactPlanAgreement.evaluatePlan 64 issue43GuardedContext
+    sourceEnv raw
+  unless decodedOps == some sourceOps do
+    throw (IO.userError "Impact bytes differ from the admitted source plan")
+
+  let byteSchedule := Verification.ImpactTranscriptSchedule.evaluateSchedule 64
+    issue43GuardedContext sourceEnv issue43KeyWidth raw
+  let sourceSchedule := (plan.operations.zipIdx.mapM
+    (Verification.ImpactTranscriptSchedule.sourceGroups issue43GuardedContext sourceEnv plan)).map
+      List.flatten
+  unless byteSchedule == sourceSchedule do
+    throw (IO.userError "Impact byte schedule differs from the guarded source plan")
+  let some schedule := byteSchedule |
+    throw (IO.userError "Impact byte schedule rejected")
+  unless schedule.any Option.isSome && schedule.any Option.isNone do
+    throw (IO.userError "fixture did not exercise both skipped and active schedule entries")
+
+  let some initialSlots := Verification.GenericStateEncoding.encodeState state issue43GuardedState |
+    throw (IO.userError "source fixture initial state does not encode")
+  let some finalSlots := Verification.GenericStateEncoding.encodeState state sourceState |
+    throw (IO.userError "source fixture final state does not encode")
+  let some machine := Verification.NativeState.run sourceOps
+      ⟨[.vector initialSlots], []⟩ |
+    throw (IO.userError "Impact VM rejected the active guarded-read schedule")
+  let expectedReads := [
+    Verification.NativeState.field (Verification.NativeRelation.scalar 7),
+    Verification.NativeState.field (Verification.NativeRelation.scalar 1),
+    Verification.NativeState.boolean Bool.false,
+    Verification.NativeState.boolean Bool.true,
+    Verification.NativeState.field (Verification.NativeRelation.scalar 99),
+    Verification.NativeState.field (Verification.NativeRelation.scalar 23)]
+  unless machine.stack == [.vector finalSlots] && machine.reads == expectedReads do
+    throw (IO.userError "Impact VM state or ordered active reads differ from the source fixture")
+
+  IO.ofExcept (ImpactNativeStatementFixture.checkBytes fixture 64 issue43GuardedContext
+    sourceEnv issue43KeyWidth bytes)
+
+def main (args : List String) : IO Unit := do
+  match args with
+  | [impactPath, statementPath] => checkIssue43NativeProof impactPath statementPath
+  | _ => throw (IO.userError
+      "expected an Impact artifact file and a native statement JSON file")
