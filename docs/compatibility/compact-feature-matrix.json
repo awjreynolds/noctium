@@ -1942,7 +1942,7 @@
       "layer": "artifact-ledger",
       "surface": "State/transcript/communication binding",
       "noctiumStatus": "subset",
-      "notes": "The native private-claim and guarded-checkpoint fixtures finalized with exact state matches. Checkpoint prefix-only receipts and broader transcript variations still require separate evidence.",
+      "notes": "The native private-claim and guarded-checkpoint fixtures finalized with exact state matches. The in-process confidential-token transfer replay matches Compact's tested caller return and logical state changes, including state preservation on overspend. The declared circuit inputs and ledger binding differ. Checkpoint prefix-only receipts and broader transcript variations still require separate evidence.",
       "source": [
         "ledger"
       ],
@@ -1954,7 +1954,8 @@
         "docs/development/native-localnet.md",
         "docs/development/native-checkpoint-localnet-receipt.json",
         "docs/development/oz-total-supply-comparison.json",
-        "docs/development/oz-sweep-comparison.json"
+        "docs/development/oz-sweep-comparison.json",
+        "docs/development/oz-transfer-comparison.json"
       ],
       "equivalence": "unverified",
       "implementationUpdate": {

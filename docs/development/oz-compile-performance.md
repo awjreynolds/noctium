@@ -386,7 +386,7 @@ generated the prover and verifier keys. Compact's bundled tool and the
 independent pinned 3.2.1 tool both sized the emitted relation at K6 and 36 rows.
 [Compact release](https://github.com/midnightntwrk/compact/releases/tag/compactc-v0.36.1)
 
-K and rows describe each circuit. The table uses Noctium's range-deduplicated export. Δ rows and Δ % use Compact as the baseline. Seven of the 15 paired circuits use fewer rows with Noctium, and eight use more. Noctium reaches a lower K on three and a higher K on one.
+K and rows describe each circuit. The table groups relations by entrypoint name and uses Noctium's range-deduplicated export. Δ rows and Δ % use Compact as the baseline. Noctium uses fewer rows for seven names and more for eight. Its K is lower for three and higher for one. The separate behavior checks below record where the artifact boundaries differ.
 
 | Entrypoint | Noctium K | Noctium rows | Compact K | Compact rows | Δ rows | Δ % |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -554,6 +554,71 @@ import sys
 native, compact = [json.loads(Path(name).read_bytes()) for name in sys.argv[1:]]
 for field in ["before", "after", "returnedCaller", "siblingUnchanged"]:
     assert native["observation"][field] == compact["observation"][field]
+PYTHON
+```
+
+## Paired transfer state observations
+
+The in-process replay starts after two synthetic registrations, pending
+mints of 12 for Alice and 7 for Bob, and Alice's sweep. Alice transfers 5
+to Bob. Both sides return Alice's Bytes32 account ID and settle the
+recipient credit in pending state. Bob's memo count grows from one to two,
+and the newest memo decrypts to 5. An independent attempt to send 13
+from the original snapshot fails on both sides and preserves that snapshot.
+[Observations and artifact hashes](oz-transfer-comparison.json)
+
+| Observed amount | Before | After |
+| --- | ---: | ---: |
+| Alice spendable | 12 | 7 |
+| Alice pending | 0 | 0 |
+| Bob spendable | 0 | 0 |
+| Bob pending | 7 | 12 |
+| Total supply | 19 | 19 |
+
+Compact takes a `Bytes<32>` recipient and a `Uint<128>` amount as
+circuit arguments, with three scalar lanes in the ZKIR input header.
+Noctium has an empty call-input header. Its witness control declares a
+public recipient and a private 128-bit amount, along with public
+candidates for the caller, recipient key, prior ciphertext coordinates
+and credit epoch. The native plan binds the state candidates to ledger
+reads. Compact reads the corresponding state in the circuit. The
+return and tested logical changes match. The different input and state
+bindings leave this case unqualified for paired K and row measurements.
+
+## Paired transfer reproduction
+
+Use the same Compact compiler, runtime and OpenZeppelin inputs as the sweep.
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/token-transfer.XXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+lake build Noctium.Compiler Noctium.Frontend Noctium.Cli
+lake env lean --run NoctiumMain.lean compile examples/openzeppelin/ConfidentialToken.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --dedup-range-checks --output "$scratch/native"
+NOCTIUM_TRANSFER_ARTIFACTS="$scratch/native" NOCTIUM_TRANSFER_RESULT="$scratch/native.json" \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+    --no-default-features --features zkir-321 --test confidential_token \
+    confidential_token_transfer_native_observation -- --exact --ignored
+node tests/compact/confidential-token-sweep.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" "$OZ_SOURCE" "$scratch/compact" transfer \
+  > "$scratch/compact.json"
+python3 - "$scratch/native.json" "$scratch/compact.json" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+native, compact = [json.loads(Path(name).read_bytes()) for name in sys.argv[1:]]
+for field in ["before", "after", "returnedCaller"]:
+    assert native["observation"][field] == compact["observation"][field], field
+native_memo, compact_memo = [result["observation"]["memo"] for result in [native, compact]]
+assert native_memo["bobCountBefore"] == compact_memo["bobMemoCountBefore"]
+assert native_memo["bobCountAfter"] == compact_memo["bobMemoCountAfter"]
+assert native_memo["transferredAmount"] == compact_memo["newestMemoDecryptsTo"]
+for result in [native, compact]:
+    assert result["rejection"]["rejected"] is True
+    assert result["rejection"]["stateUnchanged"] is True
 PYTHON
 ```
 

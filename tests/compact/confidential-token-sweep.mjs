@@ -12,9 +12,13 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const [compactc, runtimeDirectory, openZeppelinRoot, outputArgument] = process.argv.slice(2);
+const [compactc, runtimeDirectory, openZeppelinRoot, outputOrRoute, routeArgument] = process.argv.slice(2);
+const routeAsFourthArgument = routeArgument === undefined && ['sweep', 'transfer'].includes(outputOrRoute);
+const outputArgument = routeAsFourthArgument ? undefined : outputOrRoute;
+const route = routeArgument ?? (routeAsFourthArgument ? outputOrRoute : 'sweep');
 assert.ok(compactc && runtimeDirectory && openZeppelinRoot,
-  'usage: node tests/compact/confidential-token-sweep.mjs <compactc-0.36.1> <compact-runtime-0.21.0> <openzeppelin-contracts-compact-root> [compiled-output]');
+  'usage: node tests/compact/confidential-token-sweep.mjs <compactc-0.36.1> <compact-runtime-0.21.0> <openzeppelin-contracts-compact-root> [compiled-output] [sweep|transfer]');
+assert.ok(['sweep', 'transfer'].includes(route), `unsupported route ${route}`);
 
 const expectedCompactCommit = '7fa3a117c5e7efe9d2c51da04263e5f0b3509144';
 const expectedOpenZeppelinCommit = 'f85f1a23685c6bbedfc8c2589ae3aa128aff7c46';
@@ -47,10 +51,10 @@ const sourceHash = createHash('sha256').update(readFileSync(source)).digest('hex
 assert.equal(sourceHash, expectedWrapperHash,
   'expected the documented OpenZeppelin public-supply wrapper');
 
-const generated = resolve(outputArgument ?? join(
-  root,
-  'build/experiments/1382-compact-sweep/compiled',
-));
+const defaultOutput = route === 'transfer'
+  ? 'build/experiments/1383-compact/compiled'
+  : 'build/experiments/1382-compact-sweep/compiled';
+const generated = resolve(outputArgument ?? join(root, defaultOutput));
 const manifestPath = join(generated, 'compiler/contract-manifest.json');
 if (!existsSync(manifestPath)) {
   mkdirSync(dirname(generated), { recursive: true });
@@ -61,8 +65,8 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 assert.equal(manifest['compiler-version'], '0.36.1');
 assert.equal(manifest['compiler-commit'], expectedCompactCommit);
 assert.equal(manifest['runtime-version'], '0.21.0');
-const relationPath = join(generated, 'zkir/sweep.zkir');
-assert.ok(existsSync(relationPath), 'the pinned compile must retain sweep.zkir');
+const relationPath = join(generated, `zkir/${route}.zkir`);
+assert.ok(existsSync(relationPath), `the pinned compile must retain ${route}.zkir`);
 const relation = JSON.parse(readFileSync(relationPath, 'utf8'));
 
 const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
@@ -98,7 +102,7 @@ const wallet = '00'.repeat(32);
 const contract = new Contract({
   wit_ConfidentialTokenSK: context => [context.privateState, context.privateState.secretKey],
   wit_ConfidentialTokenEK: context => [context.privateState, context.privateState.encryptionKey],
-  wit_PlaintextBalance: context => [context.privateState, 0n],
+  wit_PlaintextBalance: context => [context.privateState, context.privateState.plaintextBalance ?? 0n],
   wit_RandomnessSeed: context => [context.privateState, context.privateState.randomnessSeed],
 });
 
@@ -145,17 +149,35 @@ const bobAccountId = pureCircuits.computeAccountId(bobPrivateState.secretKey);
 const unregisteredAccountId = pureCircuits.computeAccountId(unregisteredPrivateState.secretKey);
 const secretToScalarTag = new Uint8Array(32);
 secretToScalarTag.set(new TextEncoder().encode('ElGamal:secretToScalar'));
-const encryptionPublicKey = secret => {
-  const hashed = compactRuntime.persistentHash(
+const encryptionScalar = secret => compactRuntime.degradeToTransient(
+  compactRuntime.persistentHash(
     new compactRuntime.CompactTypeVector(2, new compactRuntime.CompactTypeBytes(32)),
     [secretToScalarTag, secret],
-  );
-  return compactRuntime.ecMulGenerator(compactRuntime.degradeToTransient(hashed));
-};
+  ),
+);
+const encryptionPublicKey = secret => compactRuntime.ecMulGenerator(encryptionScalar(secret));
 const alicePublicKey = encryptionPublicKey(alicePrivateState.encryptionKey);
 const bobPublicKey = encryptionPublicKey(bobPrivateState.encryptionKey);
 const identity = compactRuntime.ecMulGenerator(0n);
 const identityCiphertext = { c1: identity, c2: identity };
+const decryptBalancePoint = (ciphertext, secret) => compactRuntime.ecAdd(
+  ciphertext.c2,
+  compactRuntime.ecNeg(compactRuntime.ecMul(ciphertext.c1, encryptionScalar(secret))),
+);
+const assertEncryptedBalance = (ciphertext, secret, expected, message) => {
+  assert.deepEqual(decryptBalancePoint(ciphertext, secret), compactRuntime.ecMulGenerator(expected), message);
+};
+const memoDomain = new Uint8Array(32);
+memoDomain.set(new TextEncoder().encode('OZ_CFT_ecdh_memo_v1'));
+const decryptMemoAmount = (memo, secret) => {
+  const sharedPoint = compactRuntime.ecMul(memo.ephemeralPk, encryptionScalar(secret));
+  const sharedDigest = compactRuntime.persistentHash(compactRuntime.CompactTypeJubjubPoint, sharedPoint);
+  const mask = compactRuntime.degradeToTransient(compactRuntime.persistentHash(
+    new compactRuntime.CompactTypeVector(2, new compactRuntime.CompactTypeBytes(32)),
+    [sharedDigest, memoDomain],
+  ));
+  return compactRuntime.bigIntModFr(memo.ct - mask);
+};
 
 const call = async (circuitId, state, privateState, ...args) => {
   const context = makeContext(circuitId, state, privateState);
@@ -258,6 +280,184 @@ const unrelatedAccountState = observedState => {
   };
 };
 const unrelatedStateBefore = unrelatedAccountState(mintedState);
+
+const runTransferRoute = async () => {
+  const sweepContext = makeContext('sweep', mintedState, alicePrivateState);
+  const successfulSweep = await contract.circuits.sweep(sweepContext);
+  const transferBeforeState = successfulSweep.context.callContext.currentQueryContext.state;
+  assert.deepEqual(successfulSweep.result, aliceAccountId,
+    'the transfer route must sweep Alice and return her account id');
+
+  const beforeTransfer = await observe(transferBeforeState);
+  assertEncryptedBalance(beforeTransfer.aliceBalance, alicePrivateState.encryptionKey, 12n,
+    'Alice must have 12 spendable tokens before transfer');
+  assertEncryptedBalance(beforeTransfer.alicePending, alicePrivateState.encryptionKey, 0n,
+    'Alice must have no pending tokens after sweep');
+  assertEncryptedBalance(beforeTransfer.bobBalance, bobPrivateState.encryptionKey, 0n,
+    'Bob must have no spendable tokens before transfer');
+  assertEncryptedBalance(beforeTransfer.bobPending, bobPrivateState.encryptionKey, 7n,
+    'Bob must retain his 7 pending minted tokens before transfer');
+  assert.equal(beforeTransfer.totalSupply, 19n,
+    'the transfer route must start from public supply 19');
+
+  const bobBeforeTransfer = siblingProjection(transferBeforeState);
+  const unrelatedBeforeTransfer = unrelatedAccountState(transferBeforeState);
+  const aliceTransferPrivateState = { ...alicePrivateState, plaintextBalance: 12n };
+  const transferFrameBefore = stateFrame(transferBeforeState);
+  const transferContext = makeContext('transfer', transferBeforeState, aliceTransferPrivateState);
+  const successfulTransfer = await contract.circuits.transfer(transferContext, bobAccountId, 5n);
+  const transferredState = successfulTransfer.context.callContext.currentQueryContext.state;
+  assert.deepEqual(successfulTransfer.result, aliceAccountId,
+    'transfer must return the authenticated sender account id');
+
+  const afterTransfer = await observe(transferredState);
+  assertEncryptedBalance(afterTransfer.aliceBalance, alicePrivateState.encryptionKey, 7n,
+    'Alice must have 7 spendable tokens after transferring 5');
+  assertEncryptedBalance(afterTransfer.alicePending, alicePrivateState.encryptionKey, 0n,
+    'Alice pending balance must remain zero');
+  assertEncryptedBalance(afterTransfer.bobBalance, bobPrivateState.encryptionKey, 0n,
+    'Bob spendable balance must remain zero');
+  assertEncryptedBalance(afterTransfer.bobPending, bobPrivateState.encryptionKey, 12n,
+    'Bob pending balance must increase from 7 to 12');
+  assert.equal(afterTransfer.totalSupply, 19n,
+    'transfer must preserve public total supply');
+
+  const bobAfterTransfer = siblingProjection(transferredState);
+  assert.equal(bobAfterTransfer.memos.length, bobBeforeTransfer.memos.length + 1,
+    'transfer must prepend one memo to Bob’s existing memo list');
+  assert.deepEqual(bobAfterTransfer.memos.slice(1), bobBeforeTransfer.memos,
+    'transfer must preserve Bob’s older memos in order');
+  const deliveredMemoValue = decryptMemoAmount(bobAfterTransfer.memos[0], bobPrivateState.encryptionKey);
+  assert.equal(deliveredMemoValue, 5n,
+    'the new Bob memo must decrypt to the transferred amount');
+  assert.deepEqual(bobAfterTransfer.balance, bobBeforeTransfer.balance,
+    'transfer must preserve Bob’s spendable ciphertext');
+  assert.deepEqual(bobAfterTransfer.registeredKey, bobBeforeTransfer.registeredKey,
+    'transfer must preserve Bob’s registered encryption key');
+  assert.deepEqual(
+    ledger(transferredState).Token__encryptionKeys.lookup(aliceAccountId),
+    ledger(transferBeforeState).Token__encryptionKeys.lookup(aliceAccountId),
+    'transfer must preserve Alice’s registered encryption key',
+  );
+  assert.deepEqual(bobAfterTransfer.escrow, bobBeforeTransfer.escrow,
+    'transfer must preserve Bob’s escrow state');
+  const unrelatedAfterTransfer = unrelatedAccountState(transferredState);
+  assert.equal(unrelatedAfterTransfer.memoMapSize, unrelatedBeforeTransfer.memoMapSize,
+    'transfer must not add or remove memo-map accounts');
+  assert.deepEqual(unrelatedAfterTransfer.aliceMemos, unrelatedBeforeTransfer.aliceMemos,
+    'transfer must preserve Alice’s memo list');
+  assert.deepEqual(unrelatedAfterTransfer.aliceEscrow, unrelatedBeforeTransfer.aliceEscrow,
+    'transfer must preserve Alice’s escrow state');
+  assert.deepEqual(unrelatedAfterTransfer.bobEscrow, unrelatedBeforeTransfer.bobEscrow,
+    'transfer must preserve Bob’s escrow state');
+
+  const rejectionContext = makeContext('transfer', transferBeforeState, aliceTransferPrivateState);
+  const rejectionFrameBefore = stateFrame(rejectionContext.callContext.currentQueryContext.state);
+  let rejectionError;
+  try {
+    await contract.circuits.transfer(rejectionContext, bobAccountId, 13n);
+  } catch (error) {
+    rejectionError = error;
+  }
+  assert.ok(rejectionError, 'Alice must not transfer 13 from the same 12-token snapshot');
+  assert.match(rejectionError.message, /ConfidentialFungibleToken: insufficient balance/);
+  const rejectionFrameAfter = stateFrame(rejectionContext.callContext.currentQueryContext.state);
+  assert.equal(rejectionFrameBefore, rejectionFrameAfter,
+    'the rejected overspend must preserve the exact supplied Compact state frame');
+  assert.equal(stateFrame(transferBeforeState), rejectionFrameBefore,
+    'the rejected overspend must not mutate the shared before-transfer snapshot');
+
+  const transferSignature = circuitSignatures.transfer;
+  assert.deepEqual(transferSignature.argumentTypes, [
+    { tag: 'Bytes', length: 32 },
+    { tag: 'Uint', maxval: '340282366920938463463374607431768211455' },
+  ], 'generated transfer ABI must take (Bytes<32>, Uint<128>)');
+  assert.deepEqual(transferSignature.resultType, { tag: 'Bytes', length: 32 },
+    'generated transfer ABI must return Bytes<32>');
+  assert.equal(relation.inputs.length, 3,
+    'transfer ZKIR header must expose two Bytes<32> coordinates plus the Uint<128> value');
+  assert.equal(relation.outputs.length, 2,
+    'transfer ZKIR header must retain both Bytes<32> result limbs');
+  const relationHash = sha256(readFileSync(relationPath));
+  const transferFrameAfter = stateFrame(transferredState);
+  const stateEvidence = (beforeState, afterState) => ({
+    sha256Before: sha256(beforeState),
+    sha256After: sha256(afterState),
+    unchanged: beforeState === afterState,
+  });
+  return {
+    abi: {
+      circuit: 'transfer',
+      generatedArgumentTypes: transferSignature.argumentTypes,
+      generatedResultType: transferSignature.resultType,
+      inputs: ['Bytes<32>', 'Uint<128>'],
+      returns: 'Bytes<32>',
+    },
+    observation: {
+      before: {
+        aliceBalance: '12',
+        alicePending: '0',
+        bobBalance: '0',
+        bobPending: '7',
+        totalSupply: beforeTransfer.totalSupply.toString(),
+      },
+      after: {
+        aliceBalance: '7',
+        alicePending: '0',
+        bobBalance: '0',
+        bobPending: '12',
+        totalSupply: afterTransfer.totalSupply.toString(),
+      },
+      amountProvenance: 'synthetic ElGamal decryption checked against ecMulGenerator(amount)',
+      returnedCaller: hex(successfulTransfer.result),
+      aliceAccountId: hex(aliceAccountId),
+      bobAccountId: hex(bobAccountId),
+      totalSupplyUnchanged: beforeTransfer.totalSupply === afterTransfer.totalSupply,
+      memo: {
+        bobMemoCountBefore: bobBeforeTransfer.memos.length,
+        bobMemoCountAfter: bobAfterTransfer.memos.length,
+        newestMemoDecryptsTo: deliveredMemoValue.toString(),
+        priorMemosPreservedInOrder: true,
+      },
+      exactState: stateEvidence(transferFrameBefore, transferFrameAfter),
+      unchangedStateEvidence: {
+        alicePending: true,
+        bobSpendable: true,
+        aliceAndBobKeys: true,
+        aliceMemos: true,
+        escrow: true,
+      },
+    },
+    rejection: {
+      circuit: 'transfer',
+      callerAccountId: hex(aliceAccountId),
+      recipientAccountId: hex(bobAccountId),
+      attemptedValue: '13',
+      expected: 'ConfidentialFungibleToken: insufficient balance',
+      rejected: true,
+      errorName: rejectionError.name,
+      errorMessage: rejectionError.message,
+      stateUnchanged: rejectionFrameBefore === rejectionFrameAfter,
+      state: stateEvidence(rejectionFrameBefore, rejectionFrameAfter),
+    },
+    compact: {
+      compiler: compilerVersion,
+      runtime: runtimePackage.version,
+      openZeppelinCommit,
+      wrapperSha256: sourceHash,
+      zkir: {
+        rawFilePath: relationPath,
+        sha256: relationHash,
+        inputs: relation.inputs,
+        outputs: relation.outputs,
+      },
+    },
+  };
+};
+
+if (route === 'transfer') {
+  console.log(JSON.stringify(await runTransferRoute()));
+} else {
 const balancesBefore = entries(ledger(mintedState).Token__balances);
 const pendingBefore = entries(ledger(mintedState).Token__pending);
 
@@ -419,3 +619,4 @@ const result = {
 };
 
 console.log(JSON.stringify(result));
+}

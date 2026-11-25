@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-25",
+  "issue": "https://github.com/awjreynolds/noctium/issues/1383",
+  "scope": "One in-process transfer from Alice to Bob after synthetic pending mints of 12 and 7 and Alice's sweep. The successful amount is 5. The rejected amount is 13 from the same pre-transfer state.",
+  "target": {
+    "ledger": "9.1.0.1",
+    "zkir": "3.2.1",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
+  },
+  "observation": {
+    "before": {
+      "aliceBalance": "12",
+      "alicePending": "0",
+      "bobBalance": "0",
+      "bobPending": "7",
+      "totalSupply": "19"
+    },
+    "after": {
+      "aliceBalance": "7",
+      "alicePending": "0",
+      "bobBalance": "0",
+      "bobPending": "12",
+      "totalSupply": "19"
+    },
+    "returnedCaller": "02d449a31fbb267c8f352e9968a79e3e5fc95c1bbeaa502fd6454ebde5a4bedc",
+    "recipientMemo": {
+      "bobCountBefore": 1,
+      "bobCountAfter": 2,
+      "newestMemoAmount": "5"
+    }
+  },
+  "matchingScope": "Tested caller return, spendable and pending deltas, total supply preservation, recipient memo delivery, and independent overspend rejection with unchanged state.",
+  "sizing": {
+    "eligible": false,
+    "reason": "Compact declares three scalar input lanes for its recipient and amount arguments and reads the relevant state in the circuit. Noctium has no declared call-input lanes and binds hosted recipient, amount and prior ledger-state candidates in its relation and Impact plan."
+  },
+  "noctium": {
+    "compilerRevision": "bbddf72b92a5eeabde92572c2e506c22c5e4be1a",
+    "lean": "leanprover/lean4:v4.35.0",
+    "tokenSourceSha256": "f52ed8886d547e4b303a2a1d9c835314cce4b05d64f035439aeb8a42275ae367",
+    "transferImpactSha256": "b2952b78e68a0e078b8333a6bbefecb2a7a3da8ba4b3740358850601666d0680",
+    "transferWitnessControlSha256": "e364e1b5fe6c2d9313e39de4b0971e882ed231fcb92828ffe6845e1de829d84f",
+    "callInputs": [],
+    "return": {
+      "expression": {
+        "name": "accountId",
+        "tag": "reference"
+      },
+      "name": "caller",
+      "type": "Bytes<32>",
+      "visibility": "public"
+    },
+    "witnessInputs": [
+      {
+        "visibility": "public",
+        "type": "Bytes<32>",
+        "name": "accountId"
+      },
+      {
+        "visibility": "public",
+        "type": "Bytes<32>",
+        "name": "recipient"
+      },
+      {
+        "visibility": "private",
+        "type": "UIntRange<340282366920938463463374607431768211456>",
+        "name": "value"
+      },
+      {
+        "visibility": "public",
+        "type": "JubjubPoint",
+        "name": "recipientPk"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "balanceC1X"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "balanceC1Y"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "balanceC2X"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "balanceC2Y"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "pendingC1X"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "pendingC1Y"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "pendingC2X"
+      },
+      {
+        "visibility": "public",
+        "type": "Native",
+        "name": "pendingC2Y"
+      },
+      {
+        "visibility": "public",
+        "type": "UIntRange<18446744073709551616>",
+        "name": "epoch"
+      }
+    ],
+    "transferZkir": {
+      "sha256": "c537781229acb5a258fba67c4a9b8e23c8e1408539b4518a672e485b2123b1ac",
+      "formatVersion": {
+        "minor": 2,
+        "major": 3
+      },
+      "inputs": [],
+      "outputs": [
+        "Scalar<BLS12-381>",
+        "Scalar<BLS12-381>"
+      ],
+      "inputInstructions": {
+        "public_input": 33,
+        "private_input": 98
+      }
+    },
+    "overspend": {
+      "error": {
+        "abiVersion": 1,
+        "error": {
+          "code": "execution_rejected"
+        },
+        "status": "failed"
+      },
+      "rejected": true,
+      "stateUnchanged": true,
+      "value": "13"
+    }
+  },
+  "compact": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "compilerCommit": "7fa3a117c5e7efe9d2c51da04263e5f0b3509144",
+    "runtime": "0.21.0",
+    "openZeppelinCommit": "f85f1a23685c6bbedfc8c2589ae3aa128aff7c46",
+    "wrapperSha256": "4f30d84cf9567529ca15cade71f22cab08512a6371b6277655352943efa836f9",
+    "tokenSourceSha256": "670714014b91df7b1e4efcd71ce4c4ab376272f19ab39db19c8990ca939b0b71",
+    "transferABI": {
+      "name": "transfer",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "to",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        },
+        {
+          "name": "value",
+          "type": {
+            "type-name": "Uint",
+            "maxval": "340282366920938463463374607431768211455"
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    "transferZkir": {
+      "sha256": "d450c42bcfb5c0dabab24313acc3b4a5efb00aed5f12a6d8f19eeb22c1272924",
+      "formatVersion": {
+        "major": 3,
+        "minor": 1
+      },
+      "inputs": [
+        {
+          "name": "%to.0",
+          "type": "Scalar<BLS12-381>"
+        },
+        {
+          "name": "%to.1",
+          "type": "Scalar<BLS12-381>"
+        },
+        {
+          "name": "%value.2",
+          "type": "Scalar<BLS12-381>"
+        }
+      ],
+      "outputs": [
+        "Scalar<BLS12-381>",
+        "Scalar<BLS12-381>"
+      ],
+      "inputInstructions": {
+        "public_input": 14,
+        "private_input": 9
+      }
+    },
+    "overspend": {
+      "circuit": "transfer",
+      "callerAccountId": "02d449a31fbb267c8f352e9968a79e3e5fc95c1bbeaa502fd6454ebde5a4bedc",
+      "recipientAccountId": "b6acca81a0939a856c35e4c4188e95b91731aab1d4629a4cee79dd09ded4fc94",
+      "attemptedValue": "13",
+      "expected": "ConfidentialFungibleToken: insufficient balance",
+      "rejected": true,
+      "errorName": "CompactError",
+      "errorMessage": "failed assert: ConfidentialFungibleToken: insufficient balance",
+      "stateUnchanged": true,
+      "state": {
+        "sha256Before": "21c8423d973ca299347db6fbe048a44f0881645b3287b8f0e135fb2262ab587f",
+        "sha256After": "21c8423d973ca299347db6fbe048a44f0881645b3287b8f0e135fb2262ab587f",
+        "unchanged": true
+      }
+    }
+  }
+}
