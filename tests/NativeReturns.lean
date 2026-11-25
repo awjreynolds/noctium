@@ -2,6 +2,7 @@ import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarCallHeaderProjection
+import Noctium.Verification.ScalarCallInstructionProjection
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationRawSeedMeaning
 
@@ -121,40 +122,60 @@ theorem advanceCallHeaderArguments
     validated decoded
   simpa [ordered] using headerNames
 
+/-- The decoded scalar-call body uses the exact independently parsed rows
+from the accepted NativeReturns entrypoint artifact. -/
+theorem advanceCallBodyMatchesNativeRows
+    {program : Lean.Json} {call : NativeRelationJson.ScalarCall}
+    (lowered : Zkir.lowerEntrypoint NativeReturns.state advance = .ok program)
+    (decoded : NativeRelationJson.decodeScalarCall program = .ok call) :
+    ∃ plan instructions,
+      Impact.lower NativeReturns.state (Passes.pruneEntrypoint advance) = .ok plan ∧
+      Native.arrayField program "instructions" = .ok instructions ∧
+      instructions =
+        ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint advance) plan).run {}).2.instructions ∧
+      instructions.toList.mapM NativeRelationJson.decodeInstruction = .ok call.body.instructions := by
+  obtain ⟨plan, _, instructions, impactAccepted, _, _, parsed, bodyRows, decodedRows⟩ :=
+    ScalarCallInstructionProjection.lowerEntrypoint_decodeScalarCall_instructionProjection
+      lowered decoded
+  exact ⟨plan, instructions, impactAccepted, parsed, bodyRows, decodedRows⟩
+
 /-- Carry the actual seeded argument meaning through every accepted decoded
 instruction in the scalar profile, for any assignment satisfying those rows. -/
 theorem acceptedAdvanceTraceMeaning
     {hash : Hash} {inputs assignment : Assignment} {program : Lean.Json}
-    {rows : Array Lean.Json} {decodedRows : List Instruction}
+    {call : NativeRelationJson.ScalarCall}
     (lowered : Zkir.lowerEntrypoint NativeReturns.state advance = .ok program)
     (amountAgrees : assignment "%input_amount" = inputs "%input_amount")
-    (parsed : Native.arrayField program "instructions" = .ok rows)
-    (decoded : rows.toList.mapM NativeRelationJson.decodeInstruction = .ok decodedRows)
-    (profile : ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile rows.toList.zipIdx
-      decodedRows = Bool.true)
+    (decoded : NativeRelationJson.decodeScalarCall program = .ok call)
+    (profile : ∀ rows, Native.arrayField program "instructions" = .ok rows →
+      ScalarValidationOpcodeProfile.checkedScalarOpcodeProfile rows.toList.zipIdx
+        call.body.instructions = Bool.true)
     (nativeInputs : ∀ expected,
       Native.expectedEntrypoint NativeReturns.state (Passes.pruneEntrypoint advance) = .ok expected →
       ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false)
     (agreement : ∀ expected,
       Native.expectedEntrypoint NativeReturns.state (Passes.pruneEntrypoint advance) = .ok expected →
       ∀ requirement ∈ expected.inputs, assignment requirement.identifier = inputs requirement.identifier)
-    (holds : ∀ instruction ∈ decodedRows, Instruction.Holds hash assignment instruction) :
-    ∃ expected rawInputs seed final,
+    (holds : ∀ instruction ∈ call.body.instructions, Instruction.Holds hash assignment instruction) :
+    ∃ expected rows rawInputs seed final,
       NativeValidationDriverFacts expected program rows rawInputs seed final ∧
       StateMeaning hash inputs assignment final ∧ NativeDefinitions final := by
   obtain ⟨expected, exactRows, rawInputs, seed, final, schedule, _, driver, initialMeaning,
     initialDefinitions⟩ := acceptedAdvanceSeedMeaning (hash := hash) lowered amountAgrees
+  obtain ⟨_, _, rows, _, _, _, parsed, _, decodedRows⟩ :=
+    ScalarCallInstructionProjection.lowerEntrypoint_decodeScalarCall_instructionProjection
+      lowered decoded
   have sameRows := Except.ok.inj (driver.instructionsParsed.symm.trans parsed)
   subst exactRows
   have indexedDecoded : (rows.toList.zipIdx.map Prod.fst).mapM
-      NativeRelationJson.decodeInstruction = .ok decodedRows := by
-    simpa [List.zipIdx_map_fst] using decoded
+      NativeRelationJson.decodeInstruction = .ok call.body.instructions := by
+    simpa [List.zipIdx_map_fst] using decodedRows
   have steps := RangeDedupAcceptedArray.checkedScalarOpcodeProfile_acceptedMeaningSteps
-    indexedDecoded profile holds
+    indexedDecoded (profile rows parsed) holds
   obtain ⟨meaning, definitions, _⟩ :=
     RangeDedupAcceptedArray.accepted_loop_meaning_at_steps initialMeaning initialDefinitions
       (nativeInputs expected schedule) (agreement expected schedule) steps driver.instructionTrace
-  exact ⟨expected, rawInputs, seed, final, driver, meaning, definitions⟩
+  exact ⟨expected, rows, rawInputs, seed, final, driver, meaning, definitions⟩
 
 private def advanceCallChecksScalarProfile : Except String _root_.Bool := do
   let artifact ← (Zkir.lowerEntrypoint NativeReturns.state advance).mapError (·.message)
