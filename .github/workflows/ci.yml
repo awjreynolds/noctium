@@ -327,7 +327,7 @@ jobs:
           lake env lean tests/SealedRootCounterListConstructor.lean
           lake env lean tests/SealedRootSetConstructor.lean
           lake build Noctium.Verification.GuardedZkirStateSoundness \
-            Noctium.Verification.GuardedInputTranscript Noctium.Verification.ImpactWireSoundness
+            Noctium.Verification.GuardedInputTranscript Noctium.Verification.ImpactExpressionSchedule
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
           lake env lean tests/Issue43MapMembership.lean

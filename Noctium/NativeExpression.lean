@@ -322,4 +322,139 @@ end
 never an execution witness. Decimal field constants avoid JavaScript number truncation. -/
 def toJson {ty : Ty} (value : Expr ty) : Json := nativeExpressionJson value
 
+/-- Serialize one binding, flattening it when the body already starts with a binding. -/
+def letJson (name : String) (value body : Json) : Json := nativeLetJson name value body
+
+/-- A body with an opcode other than `let` or `lets` stays nested under one binding. -/
+theorem letJson_plain (name : String) (value raw : Json) (opcode : String)
+    (tag : (raw.getObjVal? "tag" >>= Json.getStr?) = .ok opcode)
+    (notLet : opcode ≠ "let") (notLets : opcode ≠ "lets") :
+    letJson name value raw = Json.mkObj [
+      ("tag", Lean.toJson ("let" : String)), ("name", Lean.toJson name),
+      ("value", value), ("body", raw)] := by
+  simp only [letJson, nativeLetJson, ← bind_assoc, tag]
+  simp only [Bind.bind, Except.bind]
+  rfl
+
+/-- A single binding in the body is flattened into a two-binding `lets` node. -/
+theorem letJson_single (name : String) (value : Json) (nextName : String)
+    (nextValue tail : Json) :
+    letJson name value (Json.mkObj [
+      ("tag", Lean.toJson ("let" : String)), ("name", Lean.toJson nextName),
+      ("value", nextValue), ("body", tail)]) = Json.mkObj [
+        ("tag", Lean.toJson ("lets" : String)),
+        ("bindings", Json.arr #[Json.arr #[Lean.toJson name, value],
+          Json.arr #[Lean.toJson nextName, nextValue]]),
+        ("body", tail)] := by
+  rfl
+
+/-- A `lets` body keeps its bindings and prepends the new binding. -/
+theorem letJson_multiple (name : String) (value : Json) (bindings : Array Json)
+    (tail : Json) :
+    letJson name value (Json.mkObj [
+      ("tag", Lean.toJson ("lets" : String)), ("bindings", Json.arr bindings),
+      ("body", tail)]) = Json.mkObj [
+        ("tag", Lean.toJson ("lets" : String)),
+        ("bindings", Json.arr (#[Json.arr #[Lean.toJson name, value]] ++ bindings)),
+        ("body", tail)] := by
+  rfl
+
+/-! These equations make the scalar-expression serializer available to verified
+  clients without exposing the private well-founded recursive definition. -/
+
+theorem toJson_native (value : Nat) :
+    toJson (Expr.native value) = Json.mkObj [
+      ("tag", Lean.toJson ("constant" : String)), ("value", Lean.toJson (toString value))] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_bool (value : Bool) :
+    toJson (Expr.bool value) = Json.mkObj [
+      ("tag", Lean.toJson ("bool" : String)), ("value", Lean.toJson value)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_uint (maximum value : Nat) :
+    toJson (Expr.uint maximum value) = Json.mkObj [
+      ("tag", Lean.toJson ("uint" : String)),
+      ("maximum", Lean.toJson (toString maximum)), ("value", Lean.toJson (toString value))] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_ref {ty : Ty} (name : String) :
+    toJson (Expr.ref (ty := ty) name) = Json.mkObj [
+      ("tag", Lean.toJson ("reference" : String)), ("name", Lean.toJson name)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_add (left right : Expr .native) :
+    toJson (Expr.add left right) = Json.mkObj [
+      ("tag", Lean.toJson ("add" : String)), ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, binaryJson]
+
+theorem toJson_mul (left right : Expr .native) :
+    toJson (Expr.mul left right) = Json.mkObj [
+      ("tag", Lean.toJson ("mul" : String)), ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, binaryJson]
+
+theorem toJson_sub (left right : Expr .native) :
+    toJson (Expr.sub left right) = Json.mkObj [
+      ("tag", Lean.toJson ("sub" : String)), ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, binaryJson]
+
+theorem toJson_uadd {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n)) :
+    toJson (Expr.uadd left right) = Json.mkObj [
+      ("tag", Lean.toJson ("uadd" : String)), ("maximum", Lean.toJson (toString (m + n))),
+      ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, unsignedJson]
+
+theorem toJson_usub {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n)) :
+    toJson (Expr.usub left right) = Json.mkObj [
+      ("tag", Lean.toJson ("usub" : String)), ("maximum", Lean.toJson (toString m)),
+      ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, unsignedJson]
+
+theorem toJson_umul {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n)) :
+    toJson (Expr.umul left right) = Json.mkObj [
+      ("tag", Lean.toJson ("umul" : String)), ("maximum", Lean.toJson (toString (m * n))),
+      ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, unsignedJson]
+
+theorem toJson_cast (target : Ty) (value : Expr source) :
+    toJson (Expr.cast target value) = Json.mkObj [
+      ("tag", Lean.toJson ("cast" : String)), ("type", Lean.toJson (typeName target)),
+      ("value", toJson value)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_assertE (condition : Expr .bool) (body : Expr ty) :
+    toJson (Expr.assertE condition body) = Json.mkObj [
+      ("tag", Lean.toJson ("assertThen" : String)),
+      ("condition", toJson condition), ("body", toJson body)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_copyValue (value : Expr ty) :
+    toJson (Expr.copyValue value) = toJson value := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_disclose (span : SourceSpan) (value : Expr ty) :
+    toJson (Expr.disclose span value) = toJson value := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_eq {ty : Ty} (left right : Expr ty) :
+    toJson (Expr.eq left right) = Json.mkObj [
+      ("tag", Lean.toJson ("eq" : String)), ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson, binaryJson]
+
+theorem toJson_select (condition : Expr .bool) (yes no : Expr ty) :
+    toJson (Expr.select condition yes no) = Json.mkObj [
+      ("tag", Lean.toJson ("select" : String)), ("condition", toJson condition),
+      ("yes", toJson yes), ("no", toJson no)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_poseidon2 (domain : Nat) (left right : Expr .native) :
+    toJson (Expr.poseidon2 domain left right) = Json.mkObj [
+      ("tag", Lean.toJson ("poseidon2" : String)), ("domain", Lean.toJson (toString domain)),
+      ("left", toJson left), ("right", toJson right)] := by
+  simp [toJson, nativeExpressionJson]
+
+theorem toJson_letE (name : String) (value : Expr source) (body : Expr ty) :
+    toJson (Expr.letE name value body) = letJson name (toJson value) (toJson body) := by
+  simp [toJson, letJson, nativeExpressionJson]
+
 end Noctium.NativeExpression
