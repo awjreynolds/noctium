@@ -551,6 +551,7 @@ jobs:
               --no-default-features --features zkir-321 --lib proof::guarded_partials
           lake env lean --run tests/ImpactPlanEvaluation.lean \
             "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json" \
+            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.zkir" \
             "$artifacts/guarded-partials/statement.json" \
             "$artifacts/guarded-partials/inactive-statement.json"
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \

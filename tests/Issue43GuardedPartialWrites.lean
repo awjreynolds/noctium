@@ -1,6 +1,7 @@
 import Noctium.Backend.Impact
 import Noctium.Backend.Zkir
 import Noctium.Frontend
+import Noctium.Verification.GuardedStatementConsumption
 import Noctium.Verification.GuardedZkirArtifact
 import Noctium.Verification.ImpactPlanStatementAgreement
 
@@ -108,6 +109,48 @@ private def issue43PartialRequirementResult (checkEnabled approved : _root_.Bool
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.true _root_.Bool.true
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.false _root_.Bool.false
 
+private def mixedReadImpactAssignment : Verification.NativeRelation.Assignment := fun name =>
+  match name with
+  | "read_guard" | "impact_guard" => Verification.NativeRelation.one
+  | "read_value" => Verification.NativeRelation.scalar 11
+  | "impact_first" => Verification.NativeRelation.scalar 19
+  | "impact_second" => Verification.NativeRelation.scalar 23
+  | _ => Verification.NativeRelation.zero
+
+private def mixedReadImpactRows : List Verification.GuardedScalarRows.Row := [
+  .publicInput "read_value" (some (.reference "read_guard")),
+  .impact (.reference "impact_guard") [.reference "impact_first", .reference "impact_second"],
+  .publicInput "inactive_read_value" (some (.reference "inactive_read_guard")),
+  .impact (.reference "inactive_impact_guard") [.reference "inactive_impact_value"]]
+
+private def mixedReadImpactHeader : Verification.ImpactCallStatement.Header :=
+  ⟨Verification.NativeRelation.scalar 31, Verification.NativeRelation.scalar 47⟩
+
+private def mixedReadImpactProjection (inputs : Verification.GuardedStatementConsumption.Inputs) :=
+  Verification.GuardedStatementConsumption.fromRows
+    mixedReadImpactAssignment mixedReadImpactRows mixedReadImpactHeader inputs
+
+private def mixedReadImpactStreams : Verification.GuardedStatementConsumption.Inputs :=
+  ⟨[19, 23].map Verification.NativeRelation.scalar, [Verification.NativeRelation.scalar 11]⟩
+
+#guard match mixedReadImpactProjection mixedReadImpactStreams with
+  | some projection =>
+      projection.fields == [31, 47, 19, 23, 0].map Verification.NativeRelation.scalar &&
+      projection.activity == [none, some 1]
+  | none => _root_.Bool.false
+
+#guard (mixedReadImpactProjection { mixedReadImpactStreams with
+    transcriptInputs := [19, 23, 29].map Verification.NativeRelation.scalar
+  }).isNone
+
+#guard (mixedReadImpactProjection { mixedReadImpactStreams with
+    transcriptOutputs := [11, 29].map Verification.NativeRelation.scalar
+  }).isNone
+
+#guard (mixedReadImpactProjection { mixedReadImpactStreams with
+    transcriptInputs := [19, 29].map Verification.NativeRelation.scalar
+  }).isNone
+
 private def checkGuardedRelation (circuitFile : String) (rewrites : Backend.Zkir.Rewrites) :
     IO Unit := do
   let expected ← IO.ofExcept ((Backend.Zkir.lowerEntrypoint Issue43GuardedPartialWrites.state
@@ -126,6 +169,10 @@ private def checkGuardedRelation (circuitFile : String) (rewrites : Backend.Zkir
     discard <| IO.ofExcept (Verification.GuardedZkirArtifact.decodeBytes changedBytes)
     if (Verification.GuardedZkirArtifact.check changedBytes expected).isOk then
       throw (IO.userError "the guarded ZKIR check accepted a changed assertion or call header")
+  let changedHeaderBytes := changedHeader.compress.toUTF8.data.toList
+  if (Verification.GuardedStatementConsumption.fromArtifact changedHeaderBytes
+      (fun _ => Verification.NativeRelation.zero) mixedReadImpactHeader ⟨[], []⟩).isSome then
+    throw (IO.userError "guarded projection accepted ZKIR without its communications commitment")
 
 def main (args : List String) : IO Unit := do
   let (artifact, circuit, rewrites) ← match args with
