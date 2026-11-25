@@ -151,7 +151,7 @@ fn transcript_statement(transcript: Option<&onchain_runtime::transcript::Transcr
     })
 }
 
-fn native_statement<P: ledger::structure::ProofKind<Db>>(
+pub(super) fn native_statement<P: ledger::structure::ProofKind<Db>>(
     call: &ContractCall<P, Db>,
     parent_pedersen: Pedersen,
     fields: &[Fr],

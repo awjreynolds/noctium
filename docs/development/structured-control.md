@@ -96,6 +96,13 @@ its default. The selected-321 checks live in
 `tests/Issue43MapMembership.lean` and `runtime/tests/map_membership.rs`, plus
 `tests/Issue43GuardedReads.lean` and `runtime/tests/guarded_reads.rs`.
 
+The [native proof smoke](../../.github/workflows/zkir321-proof-smoke.yml)
+compiles the guarded-read example and generates matching keys in memory.
+The SDK verifies and attaches a Midnight V3 proof for the mixed active and
+inactive reads. The verifier rejects the same proof after changing the active
+marker field. Lean checks the final state and read order in its VM model and
+matches all 107 public fields against the attached call.
+
 Guarded writes and `require` also support partial scalar expressions. Inactive
 unsigned subtraction, narrowing casts and inline `assertThen` use safe native
 defaults. Active expressions retain their original rejection behavior. The

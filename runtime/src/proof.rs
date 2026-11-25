@@ -46,6 +46,8 @@ pub use composition::{
 
 #[cfg(all(test, feature = "zkir-321"))]
 mod guarded_partials;
+#[cfg(all(test, feature = "zkir-321"))]
+mod guarded_reads;
 
 const MAX_RESPONSE: usize = 1_048_576;
 const MAX_PARAMETERS: usize = 134_217_728;
