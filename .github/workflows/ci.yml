@@ -658,6 +658,7 @@ jobs:
             Noctium.Verification.ScalarValidationProjection \
             Noctium.Verification.ScalarValidationProjectionComparison \
             Noctium.Verification.GuardedEffectEvaluation \
+            Noctium.Verification.GuardedPlanActivity \
             Noctium.Verification.GuardedEffectPrefix \
             Noctium.Verification.GenericStateAdmissionBridge \
             Noctium.Verification.GenericStateReadCandidates \
