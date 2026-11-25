@@ -89,7 +89,7 @@ Noctium keeps contract authoring, typed IR, reference semantics and native lower
 | Lean authoring and compiler | [Architecture and boundaries](docs/designs/architecture.md), [example contracts](examples/README.md) and the matching [language implementation guide](docs/README.md#language-and-capability-references) |
 | Runtime, SDKs and private state | [Portable runtime](docs/designs/portable-runtime.md), [private-state lifecycle](docs/designs/private-state-lifecycle.md) and [native client](docs/development/native-client.md) |
 | Proof and release evidence | [Proof chain and reproduction](docs/README.md#follow-the-proof-chain), [proof registration](docs/development/proof-registration.md) and [native deployment audit](docs/development/private-claim-deployment-audit.md) |
-| Native coverage and Compact conformance | [Capability register and target profiles](docs/compatibility/comparison.md) and [conformance work](https://github.com/awjreynolds/noctium/issues/35) |
+| Native coverage and Compact conformance | [Parity workstreams and acceptance](docs/compatibility/compact-parity.md), [capability register and target profiles](docs/compatibility/comparison.md) and [conformance work](https://github.com/awjreynolds/noctium/issues/35) |
 
 If a behavior or boundary is unspecified, capture the decision and proposed acceptance check in a linked Wayfinder issue. Once agreed, record the design in `docs/designs/` when later tickets will depend on it. Link the implementation issue and its focused evidence back to the design.
 
