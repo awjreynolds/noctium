@@ -92,6 +92,47 @@ def evalPlan (ctx : EvalContext) (complete : EvalEnv) (plan : Impact.Plan) :
     evalPlanBody ctx complete plan
   else .error "Impact operation activity guard count mismatch"
 
+/-- With an unconditional activity schedule, the guard-aware evaluator
+performs exactly the same ordered operations and errors as the scalar evaluator. -/
+theorem evalPlan_eq_scalar_of_unguarded (ctx : EvalContext) (complete : EvalEnv)
+    (plan : Impact.Plan)
+    (inactive : operationGuards plan = List.replicate plan.operations.length none) :
+    evalPlan ctx complete plan = GenericStateOps.evalPlan ctx complete plan := by
+  have aligned : (operationGuards plan).length = plan.operations.length := by
+    rw [inactive, List.length_replicate]
+  unfold evalPlan evalPlanBody GenericStateOps.evalPlan
+  rw [ite_eq_left aligned, inactive]
+  generalize plan.operations = operations
+  have activities (count : Nat) :
+      (List.replicate count none).mapM (evalActivity ctx complete) =
+        .ok (List.replicate count none) := by
+    induction count with
+    | zero => rfl
+    | succ count ih =>
+      simp [List.replicate_succ, evalActivity, List.mapM_cons, ih,
+        Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [activities]
+  dsimp only
+  induction operations with
+  | nil => rfl
+  | cons operation rest ih =>
+    simp only [List.length_cons, List.replicate_succ, List.zip_cons_cons, List.mapM_cons]
+    have head : evalOperation ctx complete none operation =
+        (GenericStateOps.evalOp ctx complete operation).map List.singleton := rfl
+    rw [head]
+    cases first : GenericStateOps.evalOp ctx complete operation with
+    | error message => rfl
+    | ok op =>
+      cases tail : (rest.zip (List.replicate rest.length none)).mapM
+          (fun (item, activity) => evalOperation ctx complete activity item) with
+      | error message =>
+        rw [tail] at ih
+        simp [Except.map, Bind.bind, Except.bind, ← ih]
+      | ok groups =>
+        rw [tail] at ih
+        simp [Except.map, Bind.bind, Except.bind, Pure.pure, Except.pure, ← ih]
+        rfl
+
 private theorem guardsFromZipIdx (plan : Impact.Plan)
     (aligned : (operationGuards plan).length = plan.operations.length) :
     operationGuards plan =

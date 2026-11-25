@@ -684,7 +684,7 @@ jobs:
             Noctium.Verification.ScalarLedgerWitnessSource \
             Noctium.Verification.ScalarLedgerWitnessComposition \
             Noctium.Verification.ScalarCellCallWitness \
-            Noctium.Verification.ScalarCellNativeTranscript \
+            Noctium.Verification.ScalarCellArtifactExecution \
             Noctium.Verification.ScalarLedgerSourceReturns \
             Noctium.Verification.ScalarLedgerReturnObservation \
             Noctium.Verification.ScalarWitnessEntrypointPrelude \

@@ -1,5 +1,5 @@
 import Noctium.Verification
-import Noctium.Verification.ScalarCellNativeTranscript
+import Noctium.Verification.ScalarCellArtifactExecution
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
 
@@ -8,7 +8,7 @@ open NativeRelation NativeRelationJson ScalarValidationOpcodeProfile
 
 private def declarations : List StateDecl := [{name := "counter", kind := .cell .native}]
 
-private def entry : Entrypoint := {
+private def fixtureEntry : Entrypoint := {
   name := "increase"
   circuit := {
     name := "increaseCircuit"
@@ -30,60 +30,73 @@ private def entry : Entrypoint := {
   returns := [{name := "result", ty := .native, value := .ref "after"}]
 }
 
-#guard match Zkir.lowerEntrypoint declarations entry with
-  | .error _ => false
+private def artifactBytes (json : Lean.Json) : ArtifactBytes.Bytes :=
+  (json.pretty ++ "\n").toUTF8.data.toList
+
+#guard match Zkir.lowerEntrypoint declarations fixtureEntry with
+  | .error _ => _root_.Bool.false
   | .ok json =>
-    match decodeScalarCall json, Native.arrayField json "instructions" with
+    let bytes := artifactBytes json
+    match ScalarCellZkirByteBinding.decodeScalarCallBytes bytes, Native.arrayField json "instructions" with
     | .ok call, .ok rows =>
-      call.arguments == ["%input_delta"] &&
+      (ArtifactBytes.parse bytes).toOption == some json &&
+        call.arguments == ["%input_delta"] &&
         call.body.instructions.flatMap NativeInputOrdinalTrace.strictInstructionInputDescriptors ==
           [(.public, "%input_enabled"), (.private, "%input_limit"),
            (.public, "%input_before"), (.public, "%input_after")] &&
         checkedScalarOpcodeProfile rows.toList.zipIdx call.body.instructions
-    | _, _ => false
+    | _, _ => _root_.Bool.false
 
 private def context : EvalContext :=
   {modulus := Field.modulus, poseidon2 := fun _ _ _ => .error "no hash in this fixture"}
 
-private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool true), ("limit", .uint 63 50)]
+private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool _root_.Bool.true), ("limit", .uint 63 50)]
 
 private def initial : LedgerState := {cells := [("counter", .native 17)]}
 
 private def fixtureWitness (program : Program) (seed : Assignment) : Option Assignment :=
-  program.instructions.foldlM (fun witness instruction => match instruction with
+  program.instructions.foldlM (fun assignment instruction => match instruction with
     | .add left right dest =>
-      some (ScalarWitness.assign witness dest (scalar ((left.read witness).val + (right.read witness).val)))
-    | .input .. | .boolean .. | .bits .. | .assert .. | .impact .. | .output .. => some witness
+      some (ScalarWitness.assign assignment dest (scalar ((left.read assignment).val + (right.read assignment).val)))
+    | .input .. | .boolean .. | .bits .. | .assert .. | .impact .. | .output .. => some assignment
     | _ => none) seed
 
 private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState)
-    (call : ScalarCall) (seed : Assignment) : Bool :=
+    (call : ScalarCall) (seed : Assignment) : _root_.Bool :=
   match GenericStateEncoding.encodeInitialState declarations initial,
       GenericStateEncoding.encodeState declarations next,
       GenericStateOps.evalPlan context complete plan, fixtureWitness call.body seed with
-  | some initialSlots, some finalSlots, .ok operations, some witness =>
-    let cell := fun value => NativeState.field (scalar value)
-    let expected : NativeState.Machine := ⟨[.vector finalSlots], [cell 1, cell 17, cell 42]⟩
-    decide (NativeState.run operations (GenericStateEncoding.initial initialSlots) = some expected) &&
-      decide (call.body.groups witness = NativeState.groups operations) &&
-      decide (call.body.returns witness = [scalar 42])
-  | _, _, _, _ => false
+  | some initialSlots, some finalSlots, .ok operations, some assignment =>
+    let fieldCell := fun value => NativeState.field (scalar value)
+    let expected : NativeState.Machine := ⟨[.vector finalSlots], [fieldCell 1, fieldCell 17, fieldCell 42]⟩
+    let planJson := Compiler.nativePlanJson TargetProfile.selected321 `ScalarLedgerFixture
+      declarations none (Passes.pruneEntrypoint fixtureEntry) plan _root_.Bool.false
+    let bytes := artifactBytes planJson
+    (ArtifactBytes.parse bytes).toOption == some planJson &&
+      ImpactPlanStatementAgreement.matchesBytes 64 bytes planJson &&
+      decide (ImpactPlanAgreement.evaluatePlan 64 context complete planJson = some operations) &&
+      decide (ImpactPlanAgreement.runPlanBytes 64 context complete bytes
+        (GenericStateEncoding.initial initialSlots) = some expected) &&
+      decide (call.body.groups assignment = NativeState.groups operations) &&
+      decide (call.body.returns assignment = [scalar 42])
+  | _, _, _, _ => _root_.Bool.false
 
-#guard match entry.run context values initial with
+#guard match fixtureEntry.run context values initial with
   | .ok (returned, next) =>
     returned == [("increment", .native 25), ("result", .native 42)] &&
       next.cells == [("counter", .native 42)]
-  | .error _ => false
+  | .error _ => _root_.Bool.false
 
-#guard match Impact.lower declarations entry,
-    ((Zkir.lowerEntrypoint declarations entry).mapError (·.message)).bind decodeScalarCall with
+#guard match Impact.lower declarations fixtureEntry,
+    ((Zkir.lowerEntrypoint declarations fixtureEntry).mapError (·.message)).bind
+      (ScalarCellZkirByteBinding.decodeScalarCallBytes ∘ artifactBytes) with
   | .ok plan, .ok call =>
-    let cutoff := Impact.publicInputReadCount entry.circuit.inputs
-    match entry.circuit.run context values with
-    | .error _ => false
+    let cutoff := Impact.publicInputReadCount fixtureEntry.circuit.inputs
+    match fixtureEntry.circuit.run context values with
+    | .error _ => _root_.Bool.false
     | .ok outputs =>
-      match ScalarCellSourceReads.sourceReadInputs context entry.effects cutoff (outputs ++ values, initial) with
-      | .error _ => false
+      match ScalarCellSourceReads.sourceReadInputs context fixtureEntry.effects cutoff (outputs ++ values, initial) with
+      | .error _ => _root_.Bool.false
       | .ok (entries, (_, next)) =>
         let seed := ScalarCellWitnessReadSeed.seedReadValues
           (fun
@@ -93,7 +106,7 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
             | _ => zero)
           entries
         let reads := plan.reads.drop cutoff
-        (entries.map fun (read, value) => (read.name, value.val)) == [("before", 17), ("after", 42)] &&
+        (entries.map fun (descriptor, value) => (descriptor.name, value.val)) == [("before", 17), ("after", 42)] &&
           reads.map (·.name) == entries.map (·.1.name) &&
           (seed "%input_delta").val == 24 &&
           match GenericStateInputValues.decodeReads reads seed with
@@ -103,11 +116,11 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
               plan.operations.all (fun operation => operation.fieldGroups.all
                 (fun fields => fields.all (fun field => (field.eval context complete).isOk))) &&
               nativeCallMatches plan complete next call seed &&
-              match entry.evalReturns context complete with
+              match fixtureEntry.evalReturns context complete with
               | .ok returned => returned == [("result", .native 42)]
-              | .error _ => false
-          | .error _ => false
-  | _, _ => false
+              | .error _ => _root_.Bool.false
+          | .error _ => _root_.Bool.false
+  | _, _ => _root_.Bool.false
 
 open Lean Elab Command in
 run_cmd do
@@ -125,6 +138,7 @@ run_cmd do
       `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_run_scalar_cell_native,
       `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_construct_scalar_cell_execution,
       `Noctium.Verification.ScalarCellNativeTranscript.lowerEntrypoint_checked_native_transcript,
+      `Noctium.Verification.ScalarCellArtifactExecution.lowerEntrypoint_checked_artifact_execution,
       `Noctium.Verification.ScalarLedgerSourceReturns.evalReturns_transport,
       `Noctium.Verification.ScalarLedgerReturnObservation.expected_returns_observe_source,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_returns] do
