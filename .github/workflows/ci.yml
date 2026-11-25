@@ -330,7 +330,9 @@ jobs:
             Noctium.Verification.GuardedInputTranscript \
             Noctium.Verification.ImpactPlanAgreement \
             Noctium.Verification.ImpactTranscriptSchedule \
-            Noctium.Verification.ImpactCallPreview \
+            Noctium.Verification.ImpactCallStatement \
+            Noctium.Verification.ImpactStatementScalar \
+            Noctium.Verification.ImpactBindingInput \
             Noctium.Verification.ArtifactBytes
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean

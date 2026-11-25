@@ -58,6 +58,10 @@ private def sha256 (input : Array Nat) : List Nat := Id.run do
     state := (state.zip work).map fun (x, y) => x + y
   return state.toList.flatMap (bigEndian 4 ·.toNat)
 
+/-- The 32 digest bytes in SHA-256 output order. -/
+def sha256Bytes (bytes : ByteArray) : List UInt8 :=
+  (sha256 (bytes.data.map UInt8.toNat)).map UInt8.ofNat
+
 def sha256Hex (bytes : ByteArray) : String :=
   let digits := "0123456789abcdef".toList.toArray
   String.ofList <| (sha256 (bytes.data.map UInt8.toNat)).flatMap fun byte =>

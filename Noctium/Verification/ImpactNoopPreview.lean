@@ -27,6 +27,12 @@ def activeProjection : List (PreviewEntry α) → List α
   | .active operation :: rest => operation :: activeProjection rest
   | .noop _ :: rest => activeProjection rest
 
+/-- Preserve the exact ordered activity represented by an unmerged preview. -/
+def rawActivity : List (PreviewEntry α) → List (Option Nat)
+  | [] => []
+  | .active _ :: rest => none :: rawActivity rest
+  | .noop count :: rest => some count :: rawActivity rest
+
 /-- Total width of the inserted Noop entries. -/
 def skippedWidth : List (PreviewEntry α) → Nat
   | [] => 0
@@ -106,13 +112,15 @@ private theorem expandProgramRaw_success
     (expanded : expandProgramRaw program activity = some output) :
     activeCount activity = program.length ∧
       activeProjection output = program ∧
-      skippedWidth output = activityWidth activity := by
+      skippedWidth output = activityWidth activity ∧
+      rawActivity output = activity := by
   induction activity generalizing program output with
   | nil =>
       cases program with
       | nil =>
           cases output with
-          | nil => simp [activeCount, activeProjection, skippedWidth, activityWidth]
+          | nil =>
+              simp [activeCount, activeProjection, skippedWidth, activityWidth, rawActivity]
           | cons entry rest => simp [expandProgramRaw] at expanded
       | cons operation program =>
           simp [expandProgramRaw] at expanded
@@ -127,13 +135,15 @@ private theorem expandProgramRaw_success
                 have outputEq : PreviewEntry.noop count :: tail = output := by
                   simpa [expandProgramRaw, countFits, tailExpansion] using expanded
                 subst output
-                obtain ⟨activeCountEq, activeProjectionEq, skippedWidthEq⟩ :=
+                obtain ⟨activeCountEq, activeProjectionEq, skippedWidthEq, rawActivityEq⟩ :=
                   ih tailExpansion
                 constructor
                 · simpa [activeCount] using activeCountEq
                 constructor
                 · simpa [activeProjection] using activeProjectionEq
+                constructor
                 · simp [skippedWidth, activityWidth, skippedWidthEq]
+                · simp [rawActivity, rawActivityEq]
           · simp [expandProgramRaw, countFits] at expanded
       | none =>
           cases program with
@@ -147,13 +157,15 @@ private theorem expandProgramRaw_success
                   have outputEq : PreviewEntry.active operation :: tail = output := by
                     simpa [expandProgramRaw, tailExpansion] using expanded
                   subst output
-                  obtain ⟨activeCountEq, activeProjectionEq, skippedWidthEq⟩ :=
+                  obtain ⟨activeCountEq, activeProjectionEq, skippedWidthEq, rawActivityEq⟩ :=
                     ih tailExpansion
                   constructor
                   · simpa [activeCount] using congrArg Nat.succ activeCountEq
                   constructor
                   · simp [activeProjection, activeProjectionEq]
+                  constructor
                   · simpa [skippedWidth, activityWidth] using skippedWidthEq
+                  · simp [rawActivity, rawActivityEq]
 
 private theorem expandProgramRaw_complete
     {program : List α} {activity : List (Option Nat)}
@@ -196,7 +208,8 @@ private theorem expandProgram_success
     (expanded : expandProgram program activity = some output) :
     activeCount activity = program.length ∧
       activeProjection output = program ∧
-      skippedWidth output = activityWidth activity := by
+      skippedWidth output = activityWidth activity ∧
+      rawActivity output = activity := by
   unfold expandProgram at expanded
   cases fits : skipRunsFit activity with
   | false => simp [fits] at expanded
@@ -222,7 +235,7 @@ private theorem expansion_rejects_active_count_mismatch
   cases expanded : expandProgram program activity with
   | none => rfl
   | some output =>
-      obtain ⟨countEq, _, _⟩ := expandProgram_success expanded
+      obtain ⟨countEq, _, _, _⟩ := expandProgram_success expanded
       exact False.elim (mismatch countEq)
 
 private def prependNoop (count : Nat) (rest : List (PreviewEntry α)) : List (PreviewEntry α) :=
@@ -290,9 +303,27 @@ theorem previewProgram_success
   | some expanded =>
       have matched : coalesceNoops expanded = entries := by simpa [expansion] using previewed
       subst entries
-      obtain ⟨count, order, width⟩ := expandProgram_success expansion
+      obtain ⟨count, order, width, _⟩ := expandProgram_success expansion
       exact ⟨count, (coalesceNoops_activeProjection expanded).trans order,
         (coalesceNoops_skippedWidth expanded).trans width⟩
+
+/-- A successful preview comes from this exact ordered, unmerged activity. -/
+theorem previewProgram_expansion
+    {program : List α} {activity : List (Option Nat)}
+    {entries : List (PreviewEntry α)}
+    (previewed : previewProgram program activity = some entries) :
+    ∃ expanded,
+      entries = coalesceNoops expanded ∧
+      activeProjection expanded = program ∧
+      rawActivity expanded = activity := by
+  unfold previewProgram at previewed
+  cases expansion : expandProgram program activity with
+  | none => simp [expansion] at previewed
+  | some expanded =>
+      have matched : coalesceNoops expanded = entries := by
+        simpa [expansion] using previewed
+      obtain ⟨_, order, _, activityEq⟩ := expandProgram_success expansion
+      exact ⟨expanded, matched.symm, order, activityEq⟩
 
 theorem previewProgram_preserves
     {program : List α} {activity : List (Option Nat)}

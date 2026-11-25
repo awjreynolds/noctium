@@ -49,6 +49,7 @@ def PartMatches (cost : CostModel) (before : Option (Transcript α))
   match before, after with
   | none, none => used = []
   | some before, some after =>
+      previewProgram before.program used = some after.program ∧
       activeCount used = before.program.length ∧
       activeProjection after.program = before.program ∧
       skippedWidth after.program = activityWidth used ∧
@@ -86,7 +87,7 @@ theorem previewPartition_sound (cost : CostModel) (before : Option (Transcript �
                       some time := by simpa only [checkedComputeTime_eq_computeTime] using charged
                   obtain ⟨total, bounded⟩ :=
                     (computeTime_success_iff cost before.computeTime entries time).mp sumTime
-                  exact ⟨used, whole, ⟨count, order, width, total, bounded⟩, fun _ => boundary⟩
+                  exact ⟨used, whole, ⟨previewed, count, order, width, total, bounded⟩, fun _ => boundary⟩
 
 /-- Successful call preview accounts for the entire schedule without moving
 activity across the boundary after a present guaranteed transcript. -/

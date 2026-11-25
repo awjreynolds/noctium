@@ -1,4 +1,5 @@
-import Noctium.Verification.ImpactCallPreview
+import Noctium.Verification.ImpactCallStatement
+import Noctium.Verification.ImpactStatementScalar
 import Noctium.Verification.ImpactPlanAgreement
 import Noctium.Verification.ImpactTranscriptSchedule
 
@@ -41,16 +42,35 @@ def main (args : List String) : IO Unit := do
   unless transcript enabled == some (List.replicate 15 none) &&
       transcript disabled == some skipped do
     throw (IO.userError "decoded activity schedule differs from the guarded scalar fixture")
+  let header : ImpactCallStatement.Header := ⟨NativeRelation.scalar 4, NativeRelation.scalar 5⟩
+  let preview := fun program activity => ImpactCallPreview.previewCall
+    {noopConstant := 3, noopCoefficient := 2}
+    {guaranteed := some ⟨program, 7⟩, fallible := none} activity
   let inactivePreview := do
     let activity ← transcript disabled
     let program ← ImpactPlanAgreement.evaluatePlan 64 context disabled raw
-    ImpactCallPreview.previewCall
-      {noopConstant := 3, noopCoefficient := 2}
-      {guaranteed := some ⟨program, 7⟩, fallible := none} activity
+    preview program activity
   match inactivePreview with
-  | some ⟨some ⟨[.noop 55], 120⟩, none⟩ => pure ()
-  | _ => throw (IO.userError "inactive preview differs in skipped width or compute time")
+  | some call =>
+      unless decide (ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call =
+          some ([header.bindingInput, header.communicationsCommitment] ++
+            List.replicate 55 NativeRelation.zero)) do
+        throw (IO.userError "inactive statement differs in header or skipped fields")
+      match call with
+      | ⟨some ⟨[.noop 55], 120⟩, none⟩ => pure ()
+      | _ => throw (IO.userError "inactive preview differs in skipped width or compute time")
+  | none => throw (IO.userError "inactive preview rejected")
+  let activeStatement : Option (List NativeRelation.Scalar) := do
+    let activity ← transcript enabled
+    let program ← ImpactPlanAgreement.evaluatePlan 64 context enabled raw
+    let call ← preview program activity
+    ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
   let expected : List Nat := [1, 3, 7, 1, 3]
+  let writeFields : List Nat := expected.zipIdx.flatMap fun (value, index) =>
+    [0x10, 1, 1, Field.modulus - 2, index,
+      0x11, 1, 1, Field.modulus - 2, value, 0x91]
+  unless decide (activeStatement = some (([4, 5] ++ writeFields).map NativeRelation.scalar)) do
+    throw (IO.userError "active statement differs in the ordered native write fields")
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
   unless decide (ImpactPlanAgreement.evaluatePlan 64 context enabled raw = some operations) do
