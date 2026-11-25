@@ -178,10 +178,13 @@ theorem lowerEntrypoint_checked_state
       entry.run ctx values initial = (do
         let returned ← Entrypoint.evalReturns ctx entry finalEnv
         pure (outputs ++ returned, next)) ∧
-      ((∀ output ∈ entry.returns, ∃ _ : ScalarType output.ty, ScalarExpression output.value) →
+      (((∀ output ∈ entry.returns, ∃ _ : ScalarType output.ty, ScalarExpression output.value) →
         ∃ returned, entry.run ctx values initial = .ok (outputs ++ returned, next) ∧
           call.body.returns witness =
-            returned.map (fun binding => scalar (valueNumber binding.2))) := by
+            returned.map (fun binding => scalar (valueNumber binding.2)))) ∧
+      (∃ aliases, ScalarNormalization.TypedEnvironment hash witness aliases
+        ((outputs ++ values) ++ readValues)
+        (plan.typeEnvironment (Passes.pruneEntrypoint entry))) := by
   let ep := Passes.pruneEntrypoint entry
   let reset := {initial with
     unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []}
@@ -235,7 +238,8 @@ theorem lowerEntrypoint_checked_state
   have scalarReads := ScalarSourceFrame.plain_scalar_read_scope ep plan (fun read member =>
     ⟨(plainReads read member).1, (plainReads read member).2.1⟩)
   refine ⟨outputs, readValues, finalEnv, finalTypes, next, finalSlots, finalReads, source,
-    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_, sourceRun, ?_⟩
+    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_, sourceRun, ?_,
+    ⟨frame.1, typedPlan⟩⟩
   · intro inputGuards fields
     obtain ⟨_, groupExpected, _, acceptedGroups, payloads⟩ :=
       RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_impactPayloads

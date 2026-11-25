@@ -72,7 +72,10 @@ theorem lowerEntrypoint_checked_native_transcript
       call.body.groups witness = NativeState.groups native ∧
       Entrypoint.evalReturns ctx entry finalEnv = .ok returned ∧
       result = outputs ++ returned ∧
-      call.body.returns witness = returned.map (fun binding => scalar (valueNumber binding.2)) := by
+      call.body.returns witness = returned.map (fun binding => scalar (valueNumber binding.2)) ∧
+      ∃ aliases, TypedEnvironment hash witness aliases
+        ((outputs ++ values) ++ readValues)
+        (plan.typeEnvironment (Passes.pruneEntrypoint entry)) := by
   have requirements (expected : Native.Expected)
       (accepted : Native.expectedEntrypoint declarations (Passes.pruneEntrypoint entry) =
         .ok expected) :=
@@ -128,7 +131,7 @@ theorem lowerEntrypoint_checked_native_transcript
   obtain ⟨stateOutputs, stateReads, stateFinalEnv, stateFinalTypes, stateNext,
       stateFinalSlots, stateFinalReads, stateCircuitRun, stateReadDecoded,
       effectsValidated, effectsEvaluated, _, _, agreement,
-      groupAndReturnExact⟩ :=
+      groupExact, sourceRun, returnExact, typedEnvironment⟩ :=
     ScalarStateSoundness.lowerEntrypoint_checked_state
       declarations entry .disabled ctx hash implementation values witness
       ⟨ScalarValidatedProgram.inputValues expected .public
@@ -144,7 +147,6 @@ theorem lowerEntrypoint_checked_native_transcript
   subst stateOutputs
   have sameReads : stateReads = readValues := Except.ok.inj (stateReadDecoded.symm.trans readDecoded)
   subst stateReads
-  obtain ⟨groupExact, sourceRun, returnExact⟩ := groupAndReturnExact
   have exactGroups : call.body.groups witness = NativeState.groups native :=
     groupExact (fun expected accepted => (requirements expected accepted).2)
       (ScalarCellPlanAdmission.admitted_operation_fields admittedPlan)
@@ -187,6 +189,6 @@ theorem lowerEntrypoint_checked_native_transcript
     satisfies, arguments,
     readDecoded, planEvaluated, nativeRun, effectsValidated, effectsEvaluated,
     agreement, stateEncoded, exactGroups, returnedEvaluation,
-    resultShape, returnedExact⟩
+    resultShape, returnedExact, typedEnvironment⟩
 
 end Noctium.Verification.ScalarCellNativeTranscript
