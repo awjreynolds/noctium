@@ -337,7 +337,6 @@ jobs:
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
           lake env lean tests/Issue43MapMembership.lean
-          lake env lean tests/Issue43GuardedPartialWrites.lean
           lake env lean tests/Issue43GuardedReads.lean
           lake env lean tests/NativeCheckpoint.lean
           lake env lean tests/NativeCheckpointPartial.lean
@@ -367,6 +366,8 @@ jobs:
           .lake/build/bin/noctium compile tests/Issue43GuardedPartialWrites.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-partials"
+          lake env lean --run tests/Issue43GuardedPartialWrites.lean \
+            "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json"
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"

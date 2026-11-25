@@ -1,4 +1,5 @@
 import Noctium.Verification.ImpactPlanStatement
+import Noctium.Verification.ImpactScheduleComparison
 
 namespace Noctium.Verification.ImpactPlanStatementAgreement
 
@@ -31,12 +32,17 @@ theorem fromEntrypoint_eq_fromSource
     fromEntrypoint ctx env state ep inputs = fromSource ctx env plan inputs := by
   simp [fromEntrypoint, lowered, Except.toOption, Bind.bind]
 
-/-- An exact byte artifact yields the same modeled statement as the lowered
-entrypoint when its decoded operation schedule matches the compiler's plan.
-The schedule retains every operation, operand, and activity guard. Equality
-includes rejection by the operation and activity evaluators and statement
-construction. Separate circuit assertions and native acceptance have their
-own proof obligations. -/
+/-- Check whether a supplied artifact has the compiler's scalar operation
+schedule, including all operands and activity guards. -/
+def matchesBytes (budget : Nat) (bytes : ArtifactBytes.Bytes) (expected : Json) : _root_.Bool :=
+  match ArtifactBytes.parse bytes with
+  | .ok raw => ImpactScheduleComparison.matches budget raw expected
+  | .error _ => Bool.false
+
+/-- Successful comparison of supplied bytes with the compiler's plan makes
+their modeled public statements agree. This covers rejection by the scoped
+evaluators and statement construction. Separate circuit assertions and
+native acceptance have their own proof obligations. -/
 theorem fromBytes_nativePlanJson_agrees
     (profile : TargetProfile) (contractName : Name) (state : List StateDecl)
     (ctor : Option Constructor) (ep : Entrypoint) (plan : Impact.Plan)
@@ -59,11 +65,10 @@ theorem fromBytes_nativePlanJson_agrees
     (keyWidth : Nat → Option Nat)
     (keys : ∀ op index, (op, index) ∈ plan.operations.zipIdx →
       ScalarKeyWidths keyWidth op)
-    (bytes : ArtifactBytes.Bytes) (raw : Json) (inputs : ImpactPlanStatement.Inputs)
+    (budget : Nat) (bytes : ArtifactBytes.Bytes) (inputs : ImpactPlanStatement.Inputs)
     (lowered : Impact.lower state ep = .ok plan)
-    (parsed : ArtifactBytes.parse bytes = .ok raw)
-    (scheduleMatches : decodePlanOperations raw = decodePlanOperations
-      (Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile)) :
+    (matched : matchesBytes budget bytes
+      (Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile) = Bool.true) :
     ∃ minimum, ∀ fuel, minimum ≤ fuel →
       fromBytes fuel ctx env keyWidth bytes inputs = fromEntrypoint ctx env state ep inputs := by
   let emitted := Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile
@@ -82,16 +87,14 @@ theorem fromBytes_nativePlanJson_agrees
     Nat.le_trans (Nat.le_max_left _ _) enough
   have activityFuel : activityMinimum ≤ fuel :=
     Nat.le_trans (Nat.le_max_right _ _) enough
-  have operationsMatch :
-      ImpactPlanAgreement.evaluatePlan fuel ctx env raw =
-        ImpactPlanAgreement.evaluatePlan fuel ctx env emitted := by
-    unfold ImpactPlanAgreement.evaluatePlan
-    rw [scheduleMatches]
-  have activityMatches :
-      evaluateSchedule fuel ctx env keyWidth raw =
-        evaluateSchedule fuel ctx env keyWidth emitted := by
-    unfold evaluateSchedule
-    rw [scheduleMatches]
+  have compared : ∃ raw, ArtifactBytes.parse bytes = .ok raw ∧
+      ImpactScheduleComparison.matches budget raw emitted = Bool.true := by
+    cases parsed : ArtifactBytes.parse bytes with
+    | error reason => simp [matchesBytes, parsed] at matched
+    | ok raw => exact ⟨raw, rfl, by simpa [matchesBytes, parsed, emitted] using matched⟩
+  obtain ⟨raw, parsed, scheduleMatches⟩ := compared
+  obtain ⟨operationsMatch, activityMatches⟩ :=
+    ImpactScheduleComparison.evaluations_eq_of_matches scheduleMatches fuel ctx env keyWidth
   unfold ImpactPlanStatement.fromBytes
   rw [parsed]
   simp only [Except.toOption, Bind.bind, Option.bind_some]

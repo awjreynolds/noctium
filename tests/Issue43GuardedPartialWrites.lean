@@ -1,6 +1,7 @@
 import Noctium.Backend.Impact
 import Noctium.Backend.Zkir
 import Noctium.Frontend
+import Noctium.Verification.ImpactPlanStatementAgreement
 
 open scoped Noctium
 open Noctium
@@ -105,3 +106,32 @@ private def issue43PartialRequirementResult (checkEnabled approved : _root_.Bool
 #guard issue43PartialRequirementResult _root_.Bool.false _root_.Bool.false _root_.Bool.true
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.true _root_.Bool.true
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.false _root_.Bool.false
+
+def main (args : List String) : IO Unit := do
+  let [artifact] := args | throw (IO.userError "expected the guarded partial-write Impact file")
+  let contract := Issue43GuardedPartialWrites
+  let selected := Passes.pruneEntrypoint issue43PartialEntry
+  let plan ← IO.ofExcept ((Backend.Impact.lower contract.state selected).mapError (·.message))
+  let expected := Compiler.nativePlanJson TargetProfile.selected321 `Issue43GuardedPartialWrites
+    contract.state contract.constructor selected plan Bool.false
+  let checkSchedule := fun bytes =>
+    Verification.ImpactPlanStatementAgreement.matchesBytes 64 bytes expected
+  let bytes := (← IO.FS.readBinFile artifact).data.toList
+  unless checkSchedule bytes do
+    throw (IO.userError "emitted Impact schedule disagrees with the lowered entrypoint")
+  let operations ← IO.ofExcept (expected.getObjVal? "operations" >>= Lean.Json.getArr?)
+  unless operations.size ≥ 2 do
+    throw (IO.userError "the fixture must contain more than one operation")
+  let reordered := operations.swapIfInBounds 0 1
+  let first := operations[0]!
+  let changedGuard := first.setObjVal! "guard"
+    (NativeExpression.toJson (.bool _root_.Bool.false))
+  let changedOperand := first.setObjVal! "operation" <|
+    (first.getObjValD "operation").setObjVal! "expression" (NativeExpression.toJson (.native 713))
+  for altered in [reordered, operations.set! 0 changedGuard, operations.set! 0 changedOperand] do
+    let planWithChanges := expected.setObjVal! "operations" (.arr altered)
+    let changedBytes := planWithChanges.compress.toUTF8.data.toList
+    discard <| IO.ofExcept (Verification.ArtifactBytes.parse changedBytes >>=
+      Verification.ImpactWireDecoder.decodePlanOperations)
+    if checkSchedule changedBytes then
+      throw (IO.userError "the schedule check accepted a changed operation, guard, or operand")
