@@ -582,7 +582,7 @@ private theorem acceptedMeaningStep_preserves
     have noMeaning := argument_decoded_meaning meaning noAccepted fields.2.2.1
     have conditionIsBoolean : condition.read witness = zero ∨ condition.read witness = one :=
       holds.1
-    have resultMeaning :
+    have selectedResultMeaning :
         interpret hash inputs (.select conditionFact.term yesFact.term noFact.term) =
           some (witness output) := by
       cases conditionIsBoolean with
@@ -595,6 +595,15 @@ private theorem acceptedMeaningStep_preserves
       | inr isOne =>
         simp [interpret, conditionMeaning.term, yesMeaning.term, noMeaning.term,
           isOne, holds.2]
+    have conditionSupported :
+        ∃ value, interpret hash inputs conditionFact.term = some value :=
+      ⟨condition.read witness, conditionMeaning.term⟩
+    have selectTermMeaning := ScalarTermMeaning.interpret_selectTerm hash inputs
+      conditionFact.term yesFact.term noFact.term conditionSupported
+    have resultMeaning :
+        interpret hash inputs (Backend.Native.selectTerm conditionFact.term yesFact.term noFact.term) =
+          some (witness output) := by
+      exact selectTermMeaning.trans selectedResultMeaning
     have resultBound : (witness output).val ≤ max yesFact.maximum noFact.maximum := by
       rw [holds.2]
       split

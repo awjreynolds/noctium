@@ -33,6 +33,19 @@ def interpret? (hash : Hash) (inputs : Assignment) : Term → Option Scalar
     some (hash values)
   | _ => none
 
+/-- Folding a select with equal arms preserves its scalar meaning. -/
+theorem interpret_selectTerm (hash : Hash) (inputs : Assignment)
+    (condition yes no : Term)
+    (conditionInterprets : ∃ value, interpret? hash inputs condition = some value) :
+    interpret? hash inputs (Backend.Native.selectTerm condition yes no) =
+      interpret? hash inputs (.select condition yes no) := by
+  rcases conditionInterprets with ⟨conditionValue, conditionMeaning⟩
+  by_cases equal : Term.equal yes no
+  · have armsEqual : yes = no := (Term.equal_iff yes no).mp equal
+    subst no
+    simp [Backend.Native.selectTerm, equal, interpret?, conditionMeaning]
+  · simp [Backend.Native.selectTerm, equal, interpret?, conditionMeaning]
+
 /-- A term belongs to the scalar meaning domain only when evaluation succeeds. -/
 def Supported (hash : Hash) (inputs : Assignment) (term : Term) : Prop :=
   ∃ value, interpret? hash inputs term = some value

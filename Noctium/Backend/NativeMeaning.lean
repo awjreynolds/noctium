@@ -149,6 +149,10 @@ def packByteTermsRec : List Term → Term := packByteTermsRecAux 0
 def packByteTerms (values : List Term) : Term :=
   if allLiteralZeroTerms values then .constant 0 else packByteTermsRec values
 
+/-- A selection with equal arms has the arm's exact source term. -/
+def selectTerm (condition yes no : Term) : Term :=
+  if Term.equal yes no then yes else .select condition yes no
+
 /-- Canonical typed source term for persistent_hash(Bytes32). The operands are
 the exact FAB-aligned fields: the high byte, then the packed low 31 bytes. -/
 def persistentHash32Term (highByte low31 : Term) : Term :=
@@ -321,7 +325,7 @@ private def splitBytes32Fields : Term → Except String (Term × Term)
   | .select condition yes no => do
     let (yesHigh, yesLow) ← splitBytes32Fields yes
     let (noHigh, noLow) ← splitBytes32Fields no
-    pure (.select condition yesHigh noHigh, .select condition yesLow noLow)
+    pure (selectTerm condition yesHigh noHigh, selectTerm condition yesLow noLow)
   | term =>
     if opaqueBytes32Value term then
       pure (encodedHashChunkTerm term 1, encodedHashChunkTerm term 0)
@@ -360,7 +364,7 @@ def bytesChunksTerm (length : Nat) : Term → Except String (List Term)
   | .select condition yes no => do
     let yes ← bytesChunksTerm length yes
     let no ← bytesChunksTerm length no
-    pure ((yes.zip no).map fun (a, b) => .select condition a b)
+    pure ((yes.zip no).map fun (a, b) => selectTerm condition a b)
   | .unary "bytes32_from_chunks" (.hash [low31, highByte]) => do
     unless length == 32 do throw "byte source term has wrong length"
     pure [low31, highByte]
@@ -962,7 +966,7 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     let condition ← normalize env condition
     let yes ← normalize env yes
     let no ← normalize env no
-    pure {requireSourceType ty (.select condition.term yes.term no.term)
+    pure {requireSourceType ty (selectTerm condition.term yes.term no.term)
       (condition.bounds ++ yes.bounds ++ no.bounds) with
       assertions := condition.assertions ++ yes.assertions ++ no.assertions}
   | .poseidon2 domain left right => do

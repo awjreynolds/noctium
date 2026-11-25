@@ -566,6 +566,7 @@ private def lowerTypedBoolConstant (value : Bool) : LowerM String := do
   pure output
 
 private def selectOperands (bit yes no : String) : LowerM String := do
+  if yes == no then return yes
   let key : ExpressionKey := ("cond_select", [bit, yes, no], none)
   if let some existing := (← get).expressions.lookup key then return existing
   let output ← fresh
@@ -841,6 +842,21 @@ private theorem freshList_length (items : List α) (state : LowerState) :
         {state with next := state.next + 1}).1).length = _
     rw [List.length_cons, ih]
     simp
+
+private theorem selectOperands_preservesOutputCapacityFrame (bit yes no : String) :
+    PreservesOutputCapacityFrame (selectOperands bit yes no) := by
+  by_cases equal : yes == no
+  · simp [selectOperands, equal]
+    exact pure_preservesOutputCapacityFrame yes
+  · simp only [selectOperands, equal, Bool.false_eq_true, ↓reduceIte]
+    apply cachedScalarOutput_preservesOutputCapacityFrame
+    intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+        Lean.ToJson.toJson]
+      rfl
 
 private theorem encodeFreshOutputs_preservesOutputCapacityFrame
     (op inputField value : String) (keys : List ExpressionKey)
@@ -2349,8 +2365,7 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
     let condition ← lowerExpr condition
     let yes ← byteChunks length (← lowerBytes yes)
     let no ← byteChunks length (← lowerBytes no)
-    let values ← (yes.zip no).mapM fun (yes, no) =>
-      selectOperands condition yes no
+    let values ← (yes.zip no).mapM fun (yes, no) => selectOperands condition yes no
     pure {values, packed := true}
   | @Expr.letE (.bytes _) _ name value body => do
     let values ← lowerBytes value
@@ -2805,16 +2820,7 @@ theorem lowerBytes_select_preservesOutputCapacityFrame {length : Nat}
     (fun pair => selectOperands bit pair.1 pair.2)
     (by
       intro pair
-      unfold selectOperands
-      apply cachedScalarOutput_preservesOutputCapacityFrame
-      intro output
-      apply instruction_scalarOutputDefinitions _ _ _
-        ⟨by decide, by decide, by decide⟩ _
-      all_goals
-        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
-          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
-          Lean.ToJson.toJson]
-        rfl)
+      exact selectOperands_preservesOutputCapacityFrame bit pair.1 pair.2)
 
 theorem lowerBytes_persistentHash32_preservesOutputCapacityFrame (value : Expr (.bytes 32))
     (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
@@ -2861,14 +2867,7 @@ theorem lowerExpr_select_preservesOutputCapacityFrame {ty : Ty}
   intro yesValue
   apply bind_preservesOutputCapacityFrame _ _ noFrame
   intro noValue
-  unfold selectOperands
-  apply cachedScalarOutput_preservesOutputCapacityFrame
-  intro output
-  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
-  all_goals
-    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
-      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
-    rfl
+  exact selectOperands_preservesOutputCapacityFrame bit yesValue noValue
 
 theorem lowerExpr_poseidon2_preservesOutputCapacityFrame (domain : Nat)
     (left right : Expr .native)
