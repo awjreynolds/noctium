@@ -78,7 +78,6 @@ theorem lowerEntrypoint_construct_scalar_cell_witness
     lowerEntrypoint_witness_preflight declarations entry plan lowered decoded planAccepted profile
       (fun expected accepted => ScalarLedgerScalarSchema.accepted_nonforeign_input_schema
         declarations ep plan expected planAccepted accepted scalarInputs scalarReadBindings)
-      circuitAdmission planAdmission
   obtain ⟨readValues, readSuccess, readValuesFacts⟩ := decode_seeded_scalar_reads reads seed facts
   have planEvaluation := lower_cell_plan_evaluation ctx declarations entry plan
     values outputs returned readValues inputs _ _ entries rfl planAccepted unguarded

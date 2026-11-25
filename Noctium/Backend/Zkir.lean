@@ -4487,6 +4487,671 @@ theorem lowerExpr_poseidon2_preservesOutputCapacityFrame (domain : Nat)
       Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
     rfl
 
+private theorem hashOperands_preservesOutputCapacityFrame
+    (opcode : String) (operands : List String)
+    (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
+      opcode ≠ "into_coordinates") :
+    PreservesOutputCapacityFrame (do
+      let key : ExpressionKey := (opcode, operands, none)
+      if let some existing := (← get).expressions.lookup key then return existing
+      let output ← fresh
+      emit opcode [("inputs", toJson operands), ("output", toJson output)]
+      modify fun state => {state with expressions := (key, output) :: state.expressions}
+      pure output) := by
+  apply cachedScalarOutput_preservesOutputCapacityFrame
+  intro output
+  apply instruction_scalarOutputDefinitions _ _ _ ordinary _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+private theorem rejectUnless_preservesOutputCapacityFrame
+    (condition : Prop) [Decidable condition] (message : String) (next : LowerM α)
+    (frame : PreservesOutputCapacityFrame next) :
+    PreservesOutputCapacityFrame
+      (if condition then next else do rejectLowering message; next) := by
+  split
+  · exact frame
+  · exact bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering" [("message", toJson message)])
+      (fun _ => frame)
+
+private theorem persistentCommitFields_preservesOutputCapacityFrame
+    (environment : Types.CompositeEnv) (type : Types.CompositeType) (opening : Expr (.bytes 32))
+    (fields : List (String × Types.Layout)) (values : List (Sigma Expr))
+    (openingFrame : PreservesOutputCapacityFrame (lowerBytes opening))
+    (fieldFrame : PreservesOutputCapacityFrame (lowerFabHashFields fields values)) :
+    PreservesOutputCapacityFrame (do
+      let openingBytes ← lowerBytes opening
+      let (openingHighByte, openingLow31) ← alignedBytes32Value opening openingBytes.values
+      let payloadOperands ← lowerFabHashFields fields values
+      let alignment := Json.arr (#[bytesAlignmentAtom 32] ++
+        (fields.flatMap (fun field => fabHashAlignmentAtoms field.2)).toArray)
+      let result ← lowerPersistentHash ("fab-commit:" ++ type.fingerprint environment) alignment
+        ([openingHighByte, openingLow31] ++ payloadOperands)
+      pure ({values := result, packed := true} : ByteOperands)) := by
+  apply bind_preservesOutputCapacityFrame _ _ openingFrame
+  intro openingBytes
+  apply bind_preservesOutputCapacityFrame _ _
+    (alignedBytes32Value_preservesOutputCapacityFrame opening openingBytes.values)
+  rintro ⟨highByte, low31⟩
+  apply bind_preservesOutputCapacityFrame _ _ fieldFrame
+  intro payloadOperands
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerPersistentHash_preservesOutputCapacityFrame _ _ _)
+  intro result
+  exact pure_preservesOutputCapacityFrame _
+
+private theorem lowerExpr_bytesAt_fallback_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length)) (index : Nat)
+    (notToBytes32 : ∀ (source : Ty) (inner : Expr source),
+      length = 32 → value ≍ inner.toBytes32 → False)
+    (notReverseBytes32 : ∀ (inner : Expr (.bytes 32)),
+      length = 32 → value ≍ inner.reverseBytes32 → False)
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.bytesAt value index)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerFixedByteAt_preservesOutputCapacityFrame length index)
+
+set_option maxHeartbeats 700000 in
+/-- Compose the allocation frames using production lowering's mutual recursion. -/
+private theorem lowering_preservesOutputCapacityFrame :
+    (∀ value : Expr .opaqueBytes, PreservesOutputCapacityFrame (lowerOpaqueBytes value)) ∧
+    (∀ {ty} (value : Expr ty), PreservesOutputCapacityFrame (lowerExpr value)) ∧
+    (∀ fields values, PreservesOutputCapacityFrame (lowerFabHashFields fields values)) ∧
+    (∀ layout value, PreservesOutputCapacityFrame (lowerFabHashField layout value)) ∧
+    (∀ {length} (value : Expr (.bytes length)), PreservesOutputCapacityFrame (lowerBytes value)) ∧
+    (∀ values, PreservesOutputCapacityFrame (lowerNativeVectorFields values)) ∧
+    (∀ values, PreservesOutputCapacityFrame (lowerBytes32VectorFields values)) ∧
+    (∀ value : Expr .opaqueString, PreservesOutputCapacityFrame (lowerOpaqueString value)) := by
+  apply lowerOpaqueBytes.mutual_induct
+    (motive1 := fun expression => PreservesOutputCapacityFrame (lowerOpaqueBytes expression))
+    (motive2 := fun _ expression => PreservesOutputCapacityFrame (lowerExpr expression))
+    (motive3 := fun fields values => PreservesOutputCapacityFrame (lowerFabHashFields fields values))
+    (motive4 := fun layout value => PreservesOutputCapacityFrame (lowerFabHashField layout value))
+    (motive5 := fun _ expression => PreservesOutputCapacityFrame (lowerBytes expression))
+    (motive6 := fun values => PreservesOutputCapacityFrame (lowerNativeVectorFields values))
+    (motive7 := fun values => PreservesOutputCapacityFrame (lowerBytes32VectorFields values))
+    (motive8 := fun expression => PreservesOutputCapacityFrame (lowerOpaqueString expression))
+  all_goals intros
+  case case10 =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame
+    · assumption
+    · exact copyVal_preservesOutputCapacityFrame
+  case case11 | case12 | case13 | case19 | case20 =>
+    simp only [lowerExpr]
+    exact pure_preservesOutputCapacityFrame _
+  case case14 =>
+    apply lowerExpr_foreignUnary_preservesOutputCapacityFrame <;> assumption
+  case case15 =>
+    apply lowerExpr_foreignBinary_preservesOutputCapacityFrame <;> assumption
+  case case16 =>
+    apply lowerExpr_foreignFromBytes_preservesOutputCapacityFrame <;> assumption
+  case case17 | case18 | case71 =>
+    simp only [lowerExpr]
+    assumption
+  case case21 | case22 | case23 =>
+    simp only [lowerExpr]
+    exact lowerForeignConstant_preservesOutputCapacityFrame _ _
+  case case24 =>
+    apply lowerExpr_foreignEncodedField_preservesOutputCapacityFrame <;> assumption
+  case case25 =>
+    apply lowerExpr_boolAnd_preservesOutputCapacityFrame <;> assumption
+  case case26 =>
+    apply lowerExpr_boolOr_preservesOutputCapacityFrame <;> assumption
+  case case27 =>
+    apply lowerExpr_boolXor_preservesOutputCapacityFrame <;> assumption
+  case case28 | case29 | case30 | case31 | case32 | case33 =>
+    apply lowerExpr_ref_preservesOutputCapacityFrame
+  case case34 =>
+    apply lowerExpr_bytesField_preservesOutputCapacityFrame <;> assumption
+  case case35 =>
+    apply lowerExpr_toBytes32At_preservesOutputCapacityFrame <;> assumption
+  case case36 =>
+    apply lowerExpr_reverseBytes32At_preservesOutputCapacityFrame <;> assumption
+  case case38 =>
+    apply lowerExpr_jubjubScalarFromNative_preservesOutputCapacityFrame <;> assumption
+  case case39 =>
+    apply lowerExpr_jubjubScalarToNative_preservesOutputCapacityFrame <;> assumption
+  case case41 | case45 | case47 =>
+    simp only [lowerExpr, *]
+    exact rejectThenPure_preservesOutputCapacityFrame _ _
+  case case50 =>
+    apply lowerExpr_jubjubMulGenerator_preservesOutputCapacityFrame <;> assumption
+  case case51 =>
+    apply lowerExpr_jubjubMul_preservesOutputCapacityFrame <;> assumption
+  case case52 =>
+    apply lowerExpr_jubjubAdd_preservesOutputCapacityFrame <;> assumption
+  case case53 =>
+    apply lowerExpr_jubjubNeg_preservesOutputCapacityFrame <;> assumption
+  case case54 =>
+    apply lowerExpr_jubjubCoordinate_preservesOutputCapacityFrame <;> assumption
+  case case55 =>
+    apply lowerExpr_jubjubFromCoordinates_preservesOutputCapacityFrame <;> assumption
+  case case56 =>
+    apply lowerExpr_fromBytes32_preservesOutputCapacityFrame <;> assumption
+  case case57 =>
+    apply lowerExpr_fromBytes_preservesOutputCapacityFrame <;> assumption
+  case case63 =>
+    apply lowerExpr_inv_preservesOutputCapacityFrame <;> assumption
+  case case65 =>
+    apply lowerExpr_cast_preservesOutputCapacityFrame <;> assumption
+  case case66 | case67 | case68 =>
+    apply lowerExpr_letE_preservesOutputCapacityFrame <;> assumption
+  case case69 =>
+    simp only [lowerExpr, *]
+    apply lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame <;> assumption
+  case case70 =>
+    apply lowerExpr_assertE_preservesOutputCapacityFrame <;> assumption
+  case case72 | case73 =>
+    apply lowerExpr_eq_preservesOutputCapacityFrame <;> assumption
+  case case75 =>
+    apply lowerExpr_select_preservesOutputCapacityFrame <;> assumption
+  case case76 =>
+    apply lowerExpr_poseidon2_preservesOutputCapacityFrame <;> assumption
+  case case77 | case78 | case79 | case80 | case81 | case82 | case83 | case84 | case85 | case86 | case87 | case88 | case89 | case90 | case91 | case92 | case93 | case94 | case95 | case96 =>
+    simp only [lowerExpr]
+    exact rejectThenPure_preservesOutputCapacityFrame _ _
+  case case97 =>
+    simp only [lowerFabHashFields]
+    exact pure_preservesOutputCapacityFrame _
+  case case99 =>
+    simp only [lowerFabHashFields, *]
+    exact rejectThenPure_preservesOutputCapacityFrame _ _
+  case case110 =>
+    apply lowerBytes_ref_preservesOutputCapacityFrame
+  case case111 =>
+    simp only [lowerBytes]
+    assumption
+  case case112 =>
+    apply lowerBytes_copyValue_preservesOutputCapacityFrame <;> assumption
+  case case113 =>
+    apply lowerBytes_literal32_preservesOutputCapacityFrame
+  case case114 =>
+    apply lowerBytes_literal_preservesOutputCapacityFrame
+  case case115 =>
+    apply lowerBytes_reverse_preservesOutputCapacityFrame <;> assumption
+  case case116 =>
+    apply lowerBytes_slice_preservesOutputCapacityFrame <;> assumption
+  case case117 =>
+    apply lowerBytes_concat_preservesOutputCapacityFrame <;> assumption
+  case case118 =>
+    apply lowerBytes_sha256_preservesOutputCapacityFrame <;> assumption
+  case case119 =>
+    apply lowerBytes_sha512_preservesOutputCapacityFrame <;> assumption
+  case case120 | case123 | case132 | case135 | case145 =>
+    simp only [lowerBytes, *]
+    exact rejectThenPure_preservesOutputCapacityFrame _ _
+  case case126 =>
+    apply lowerBytes_keccak256_preservesOutputCapacityFrame <;> assumption
+  case case127 =>
+    apply lowerBytes_keccak256Secp256k1Point_preservesOutputCapacityFrame <;> assumption
+  case case128 =>
+    apply lowerBytes_persistentHash32_preservesOutputCapacityFrame <;> assumption
+  case case130 =>
+    apply lowerBytes_persistentHashNative_preservesOutputCapacityFrame <;> assumption
+  case case138 =>
+    apply lowerBytes_foreignToBytes_preservesOutputCapacityFrame <;> assumption
+  case case139 =>
+    apply lowerBytes_toBytes32_preservesOutputCapacityFrame <;> assumption
+  case case140 =>
+    apply lowerBytes_reverse32_preservesOutputCapacityFrame <;> assumption
+  case case141 =>
+    apply lowerBytes_select_preservesOutputCapacityFrame <;> assumption
+  case case142 =>
+    apply lowerBytes_letE_preservesOutputCapacityFrame <;> assumption
+  case case143 =>
+    simp only [lowerBytes, *]
+    apply lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame <;> assumption
+  case case144 =>
+    apply lowerBytes_assertE_preservesOutputCapacityFrame <;> assumption
+  case case146 =>
+    simp only [lowerNativeVectorFields]
+    exact pure_preservesOutputCapacityFrame _
+  case case148 =>
+    simp only [lowerBytes32VectorFields]
+    exact pure_preservesOutputCapacityFrame _
+  case case98 field fields value rest fieldFrame fieldsFrame =>
+    simp only [lowerFabHashFields]
+    apply bind_preservesOutputCapacityFrame _ _ fieldFrame
+    intro aligned
+    apply bind_preservesOutputCapacityFrame _ _ fieldsFrame
+    intro remaining
+    exact pure_preservesOutputCapacityFrame (aligned ++ remaining)
+
+  case case100 layoutLength sourceLength expression bytesFrame =>
+    simp only [lowerFabHashField]
+    apply bind_preservesOutputCapacityFrame _ _ bytesFrame
+    intro bytes
+    split
+    · split
+      · apply bind_preservesOutputCapacityFrame _ _
+          (alignedBytes32Value_preservesOutputCapacityFrame _ bytes.values)
+        intro chunks
+        rcases chunks with ⟨highByte, low31⟩
+        exact pure_preservesOutputCapacityFrame [highByte, low31]
+      · apply bind_preservesOutputCapacityFrame _ _
+          (alignedBytes32Fields_preservesOutputCapacityFrame bytes.values)
+        intro chunks
+        rcases chunks with ⟨highByte, low31⟩
+        exact pure_preservesOutputCapacityFrame [highByte, low31]
+    · apply bind_preservesOutputCapacityFrame _ _
+        (byteChunks_preservesOutputCapacityFrame layoutLength bytes)
+      intro chunks
+      exact pure_preservesOutputCapacityFrame chunks.reverse
+
+  case case101 expression expressionFrame =>
+    simp only [lowerFabHashField]
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression expressionFrame
+  case case102 expression expressionFrame =>
+    simp only [lowerFabHashField]
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression expressionFrame
+  case case103 maximum expressionMaximum expression expressionFrame =>
+    simp only [lowerFabHashField]
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression expressionFrame
+  case case104 id maximum tagMaximum padding variants expressionMaximum expression expressionFrame =>
+    simp only [lowerFabHashField]
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression expressionFrame
+
+  case case105 expression expressionFrame =>
+    simp only [lowerFabHashField]
+    apply bind_preservesOutputCapacityFrame _ _ expressionFrame
+    intro scalar
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerJubjubScalarToNative_preservesOutputCapacityFrame scalar)
+    intro encoded
+    exact pure_preservesOutputCapacityFrame [encoded]
+  case case106 expression expressionFrame =>
+    simp only [lowerFabHashField]
+    apply bind_preservesOutputCapacityFrame _ _ expressionFrame
+    intro point
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPointCoordinates_preservesOutputCapacityFrame point)
+    intro coordinates
+    rcases coordinates with ⟨x, y⟩
+    exact pure_preservesOutputCapacityFrame [x, y]
+
+  case case107 expected actual expression equal expressionFrame =>
+    simp only [lowerFabHashField, equal]
+    change PreservesOutputCapacityFrame (do
+      let lowered ← lowerExpr expression
+      encodeForeign actual lowered)
+    apply bind_preservesOutputCapacityFrame _ _ expressionFrame
+    intro lowered
+    exact encodeForeign_preservesOutputCapacityFrame actual lowered
+
+  case case108 expected actual expression notEqual expressionFrame =>
+    simp only [lowerFabHashField, notEqual]
+    change PreservesOutputCapacityFrame (do
+      rejectLowering "mixed FAB curve type differs from its checked layout"
+      let lowered ← lowerExpr expression
+      encodeForeign actual lowered)
+    apply bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "mixed FAB curve type differs from its checked layout")])
+    intro ignored
+    apply bind_preservesOutputCapacityFrame _ _ expressionFrame
+    intro lowered
+    exact encodeForeign_preservesOutputCapacityFrame actual lowered
+
+  case case109 layout value incompatible =>
+    simp only [lowerFabHashField]
+    exact rejectThenPure_preservesOutputCapacityFrame
+      "mixed FAB field type differs from its checked layout" []
+  case case40 values vectorFrame =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply bind_preservesOutputCapacityFrame _ _ vectorFrame
+    intro operands
+    exact hashOperands_preservesOutputCapacityFrame "hash_to_curve" operands
+      ⟨by decide, by decide, by decide⟩
+
+  case case42 environment type values compiled layoutAccepted fields fieldsAccepted fieldFrames =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply rejectUnless_preservesOutputCapacityFrame
+    apply bind_preservesOutputCapacityFrame _ _ (fieldFrames fields)
+    intro operands
+    exact hashOperands_preservesOutputCapacityFrame "hash_to_curve" operands
+      ⟨by decide, by decide, by decide⟩
+
+  case case43 environment type values compiled layoutAccepted message fieldsFailed fieldFrames =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson message)])
+    intro _
+    apply rejectUnless_preservesOutputCapacityFrame
+    apply bind_preservesOutputCapacityFrame _ _ (fieldFrames [])
+    intro operands
+    exact hashOperands_preservesOutputCapacityFrame "hash_to_curve" operands
+      ⟨by decide, by decide, by decide⟩
+
+  case case44 values vectorFrame =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply bind_preservesOutputCapacityFrame _ _ vectorFrame
+    intro operands
+    exact hashOperands_preservesOutputCapacityFrame "transient_hash" operands
+      ⟨by decide, by decide, by decide⟩
+
+  case case46 environment type values fields validation fieldFrame =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply bind_preservesOutputCapacityFrame _ _ fieldFrame
+    intro operands
+    exact hashOperands_preservesOutputCapacityFrame "transient_hash" operands
+      ⟨by decide, by decide, by decide⟩
+
+  case case48 environment type opening values compiled layoutAccepted fields fieldsAccepted openingFrame fieldFrames =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply rejectUnless_preservesOutputCapacityFrame
+    apply bind_preservesOutputCapacityFrame _ _ openingFrame
+    intro loweredOpening
+    apply bind_preservesOutputCapacityFrame _ _ (fieldFrames fields)
+    intro payload
+    exact hashOperands_preservesOutputCapacityFrame "transient_hash" (loweredOpening :: payload)
+      ⟨by decide, by decide, by decide⟩
+
+  case case49 environment type opening values compiled layoutAccepted message fieldsFailed openingFrame fieldFrames =>
+    simp only [lowerExpr, *, bind_assoc, pure_bind]
+    apply bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson message)])
+    intro _
+    apply rejectUnless_preservesOutputCapacityFrame
+    apply bind_preservesOutputCapacityFrame _ _ openingFrame
+    intro loweredOpening
+    apply bind_preservesOutputCapacityFrame _ _ (fieldFrames [])
+    intro payload
+    exact hashOperands_preservesOutputCapacityFrame "transient_hash" (loweredOpening :: payload)
+      ⟨by decide, by decide, by decide⟩
+  case case121 environment type values compiled validation fields fieldsAccepted fieldsIH =>
+    simp only [lowerBytes, validation, fieldsAccepted, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH fields)
+    intro operands
+    exact lowerAlignedDigest_preservesOutputCapacityFrame _ _ _ _ _
+      ⟨by decide, by decide, by decide⟩
+
+  case case122 environment type values compiled validation message fieldsFailed fieldsIH =>
+    simp only [lowerBytes, validation, fieldsFailed, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+    intro _
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH [])
+    intro operands
+    exact lowerAlignedDigest_preservesOutputCapacityFrame _ _ _ _ _
+      ⟨by decide, by decide, by decide⟩
+
+  case case124 environment type values compiled validation fields fieldsAccepted fieldsIH =>
+    simp only [lowerBytes, validation, fieldsAccepted, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH fields)
+    intro operands
+    exact lowerAlignedDigest_preservesOutputCapacityFrame _ _ _ _ _
+      ⟨by decide, by decide, by decide⟩
+
+  case case125 environment type values compiled validation message fieldsFailed fieldsIH =>
+    simp only [lowerBytes, validation, fieldsFailed, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+    intro _
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH [])
+    intro operands
+    exact lowerAlignedDigest_preservesOutputCapacityFrame _ _ _ _ _
+      ⟨by decide, by decide, by decide⟩
+
+  case case133 environment type values compiled validation fields fieldsAccepted fieldsIH =>
+    simp only [lowerBytes, validation, fieldsAccepted, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH fields)
+    intro operands
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPersistentHash_preservesOutputCapacityFrame _ _ _)
+    intro result
+    exact pure_preservesOutputCapacityFrame _
+
+  case case134 environment type values compiled validation message fieldsFailed fieldsIH =>
+    simp only [lowerBytes, validation, fieldsFailed, pure_bind, bind_assoc, rejectLowering]
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+    intro _
+    apply bind_preservesOutputCapacityFrame _ _ (fieldsIH [])
+    intro operands
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPersistentHash_preservesOutputCapacityFrame _ _ _)
+    intro result
+    exact pure_preservesOutputCapacityFrame _
+
+  case case136 environment type opening values compiled validation fields fieldsAccepted openingIH fieldsIH =>
+    simp only [lowerBytes, validation, fieldsAccepted, pure_bind, bind_assoc]
+    apply rejectUnless_preservesOutputCapacityFrame
+    exact persistentCommitFields_preservesOutputCapacityFrame environment type opening fields values
+      openingIH (fieldsIH fields)
+
+  case case137 environment type opening values compiled validation message fieldsFailed openingIH fieldsIH =>
+    simp only [lowerBytes, validation, fieldsFailed, pure_bind, bind_assoc]
+    unfold rejectLowering
+    apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+    intro _
+    apply rejectUnless_preservesOutputCapacityFrame
+    exact persistentCommitFields_preservesOutputCapacityFrame environment type opening [] values
+      openingIH (fieldsIH [])
+
+  case case129 values vectorIH =>
+    simp only [lowerBytes]
+    apply bind_preservesOutputCapacityFrame _ _ vectorIH
+    intro operands
+    split
+    · apply bind_preservesOutputCapacityFrame _ _
+        (lowerPersistentHash_preservesOutputCapacityFrame
+          "bytes32" bytes32Alignment operands)
+      intro result
+      exact pure_preservesOutputCapacityFrame
+        ({values := result, packed := true} : ByteOperands)
+    · apply bind_preservesOutputCapacityFrame _ _
+        (lowerPersistentHash_preservesOutputCapacityFrame
+          ("bytes32-vector:" ++ toString values.length)
+          (bytes32VectorAlignment values.length) operands)
+      intro result
+      exact pure_preservesOutputCapacityFrame
+        ({values := result, packed := true} : ByteOperands)
+
+  case case131 values vectorIH =>
+    simp only [lowerBytes]
+    apply bind_preservesOutputCapacityFrame _ _ vectorIH
+    intro operands
+    split
+    · apply bind_preservesOutputCapacityFrame _ _
+        (lowerPersistentHash_preservesOutputCapacityFrame
+          "native-field" nativeFieldAlignment operands)
+      intro result
+      exact pure_preservesOutputCapacityFrame
+        ({values := result, packed := true} : ByteOperands)
+    · apply bind_preservesOutputCapacityFrame _ _
+        (lowerPersistentHash_preservesOutputCapacityFrame
+          ("native-field-vector:" ++ toString values.length)
+          (nativeFieldVectorAlignment values.length) operands)
+      intro result
+      exact pure_preservesOutputCapacityFrame
+        ({values := result, packed := true} : ByteOperands)
+  case case1 =>
+    simpa only [lowerOpaqueBytes] using pure_preservesOutputCapacityFrame "0x00"
+  case case2 =>
+    simp only [lowerOpaqueBytes]
+    have getFrame : PreservesOutputCapacityFrame
+        (get : StateM LowerState LowerState) := by
+      intro state
+      exact OutputCapacityFrame.refl state
+    apply bind_preservesOutputCapacityFrame _ _ getFrame
+    intro state
+    exact pure_preservesOutputCapacityFrame _
+  case case3 =>
+    simp only [lowerOpaqueBytes]
+    assumption
+  case case4 =>
+    simp only [lowerOpaqueBytes]
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro operand
+    exact copyVal_preservesOutputCapacityFrame operand
+  case case5 =>
+    simp only [lowerOpaqueBytes]
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro bit
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro yesText
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro noText
+    exact selectOperands_preservesOutputCapacityFrame bit yesText noText
+  case case6 =>
+    simpa only [lowerOpaqueBytes] using
+      lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame _ _ (by assumption) _ (by assumption)
+  case case7 =>
+    simpa only [lowerOpaqueBytes] using
+      lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame _ _ (by assumption) _ (by assumption)
+  case case8 =>
+    exact lowerOpaqueBytes_assertE_preservesOutputCapacityFrame _ _ (by assumption) (by assumption)
+  case case9 =>
+    simp only [lowerOpaqueBytes, *]
+    exact rejectThenPure_preservesOutputCapacityFrame
+      "unsupported OpaqueBytes expression in Compress projection" "0x00"
+  case case150 =>
+    simpa only [lowerOpaqueString] using pure_preservesOutputCapacityFrame "0x00"
+  case case151 =>
+    simp only [lowerOpaqueString]
+    have getFrame : PreservesOutputCapacityFrame
+        (get : StateM LowerState LowerState) := by
+      intro state
+      exact OutputCapacityFrame.refl state
+    apply bind_preservesOutputCapacityFrame _ _ getFrame
+    intro state
+    exact pure_preservesOutputCapacityFrame _
+  case case152 =>
+    simp only [lowerOpaqueString]
+    assumption
+  case case153 =>
+    simp only [lowerOpaqueString]
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro operand
+    exact copyVal_preservesOutputCapacityFrame operand
+  case case154 =>
+    simp only [lowerOpaqueString]
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro bit
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro yesText
+    apply bind_preservesOutputCapacityFrame _ _ (by assumption)
+    intro noText
+    exact selectOperands_preservesOutputCapacityFrame bit yesText noText
+  case case155 =>
+    simpa only [lowerOpaqueString] using
+      lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame _ _ (by assumption) _ (by assumption)
+  case case156 =>
+    simpa only [lowerOpaqueString] using
+      lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame _ _ (by assumption) _ (by assumption)
+  case case157 =>
+    exact lowerOpaqueString_assertE_preservesOutputCapacityFrame _ _ (by assumption) (by assumption)
+  case case158 =>
+    simp only [lowerOpaqueString, *]
+    exact rejectThenPure_preservesOutputCapacityFrame
+      "unsupported OpaqueString expression in Compress projection" "0x00"
+  case case58 a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    exact nativeAdd_preservesOutputCapacityFrame
+      (Native.isLiteralNativeZero a) (Native.isLiteralNativeZero b) left right
+
+  case case59 a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    exact ordinaryBinary_preservesOutputCapacityFrame "mul" left right
+      ⟨by decide, by decide, by decide⟩
+
+  case case60 a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryUnary_preservesOutputCapacityFrame "neg" right
+        ⟨by decide, by decide, by decide⟩)
+    intro negated
+    exact ordinaryBinary_preservesOutputCapacityFrame "add" left negated
+      ⟨by decide, by decide, by decide⟩
+
+  case case61 m n a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    exact nativeUIntAdd_preservesOutputCapacityFrame (m + n)
+      (Native.isLiteralUIntZero a) (Native.isLiteralUIntZero b) left right
+
+  case case62 m n a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryBinary_preservesOutputCapacityFrame "mul" left right
+        ⟨by decide, by decide, by decide⟩)
+    intro output
+    apply bind_preservesOutputCapacityFrame _ _ (constrainUnsigned_preservesOutputCapacityFrame (m * n) output)
+    intro _
+    exact pure_preservesOutputCapacityFrame output
+
+  case case64 m n a b leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro left
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro right
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryUnary_preservesOutputCapacityFrame "neg" right
+        ⟨by decide, by decide, by decide⟩)
+    intro negated
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryBinary_preservesOutputCapacityFrame "add" left negated
+        ⟨by decide, by decide, by decide⟩)
+    intro output
+    apply bind_preservesOutputCapacityFrame _ _ (constrainUnsigned_preservesOutputCapacityFrame m output)
+    intro _
+    exact pure_preservesOutputCapacityFrame output
+
+  case case74 ty a b notOpaqueBytes notOpaqueString leftFrame rightFrame =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+
+  case case147 value rest valueFrame restFrame =>
+    simp only [lowerNativeVectorFields]
+    apply bind_preservesOutputCapacityFrame _ _ valueFrame
+    intro first
+    apply bind_preservesOutputCapacityFrame _ _ restFrame
+    intro remaining
+    exact pure_preservesOutputCapacityFrame (first :: remaining)
+
+  case case149 value rest valueFrame restFrame =>
+    simp only [lowerBytes32VectorFields]
+    apply bind_preservesOutputCapacityFrame _ _ valueFrame
+    intro operands
+    apply bind_preservesOutputCapacityFrame _ _
+      (alignedBytes32Value_preservesOutputCapacityFrame value operands.values)
+    intro chunks
+    rcases chunks with ⟨highByte, low31⟩
+    apply bind_preservesOutputCapacityFrame _ _ restFrame
+    intro remaining
+    exact pure_preservesOutputCapacityFrame ([highByte, low31] ++ remaining)
+  case case37 =>
+    apply lowerExpr_bytesAt_fallback_preservesOutputCapacityFrame <;> assumption
+
 def bindPublic (values : List String) : LowerM Unit :=
   emit "impact" [("guard", toJson ("0x01" : String)), ("inputs", toJson values)]
 
@@ -5159,6 +5824,65 @@ theorem lowerEntrypointBody_preservesOutputCapacityFrame (entry : Entrypoint) (p
     (lowerReturnFields_preservesOutputCapacityFrame _ preflight returns)
   intro _
   exact emit_preservesOutputCapacityFrame _ _
+
+/-- Every expression lowering step preserves the capacity of its emitted SSA slots. -/
+theorem lowerExpr_preservesOutputCapacityFrame (value : Expr ty) :
+    PreservesOutputCapacityFrame (lowerExpr value) :=
+  lowering_preservesOutputCapacityFrame.2.1 value
+
+private theorem lowerBytes_preservesOutputCapacityFrame (value : Expr (.bytes length)) :
+    PreservesOutputCapacityFrame (lowerBytes value) :=
+  lowering_preservesOutputCapacityFrame.2.2.2.2.1 value
+
+private theorem lowerReturnPreflight_frame (output : Output) :
+    PreservesOutputCapacityFrame (lowerReturnPreflight output) := by
+  apply lowerReturnPreflight_preservesOutputCapacityFrame
+  cases output with
+  | mk name ty value span =>
+    cases ty <;> try exact True.intro
+    rename_i length
+    cases length
+    · exact lowerBytes_preservesOutputCapacityFrame value
+    · exact True.intro
+
+/-- The complete standalone body allocates against its actual output definitions. -/
+theorem lowerBody_outputCapacityFrame (circuit : Circuit) :
+    PreservesOutputCapacityFrame (lowerBody circuit) :=
+  lowerBody_preservesOutputCapacityFrame circuit
+    (fun condition _ => lowerExpr_preservesOutputCapacityFrame condition)
+    (fun output _ => lowerReturnPreflight_frame output)
+    (fun _ _ _ _ field _ => lowerExpr_preservesOutputCapacityFrame field)
+
+/-- The complete ledger body allocates against its actual output definitions. -/
+theorem lowerEntrypointBody_outputCapacityFrame (entry : Entrypoint) (plan : Impact.Plan) :
+    PreservesOutputCapacityFrame (lowerEntrypointBody entry plan) := by
+  apply lowerEntrypointBody_preservesOutputCapacityFrame
+  · intro condition _
+    exact lowerExpr_preservesOutputCapacityFrame condition
+  · apply lowerEntrypointAliases_preservesOutputCapacityFrame
+    intro output _
+    cases output with
+    | mk name ty value span =>
+      cases ty
+      all_goals first
+        | exact lowerBytes_preservesOutputCapacityFrame value
+        | exact lowering_preservesOutputCapacityFrame.1 value
+        | exact lowering_preservesOutputCapacityFrame.2.2.2.2.2.2.2 value
+        | exact lowerExpr_preservesOutputCapacityFrame value
+  · intro _ _ _ _ guard _
+    exact lowerExpr_preservesOutputCapacityFrame guard
+  · intro _ _ condition _
+    exact lowerExpr_preservesOutputCapacityFrame condition
+  · intro condition _
+    exact lowerExpr_preservesOutputCapacityFrame condition
+  · intro _ _ _ _ field _
+    exact lowerExpr_preservesOutputCapacityFrame field
+  · intro _ _
+    exact lowerExpr_preservesOutputCapacityFrame _
+  · intro output _
+    exact lowerReturnPreflight_frame output
+  · intro _ _ _ _ field _
+    exact lowerExpr_preservesOutputCapacityFrame field
 
 /-- Lower an already-pruned entrypoint and return its plan with the checked
 ledger relation. The producer check still derives its schedule from source. -/

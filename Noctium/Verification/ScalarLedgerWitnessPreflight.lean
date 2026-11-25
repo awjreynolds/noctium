@@ -81,9 +81,7 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
       (defaultEntrypointRows entry plan).toList.zipIdx call.body.instructions = true)
     (schema : ∀ expected,
       Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
-        ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false)
-    (circuitAdmission : ScalarCircuitAdmission entry.circuit)
-    (planAdmission : ScalarEntrypointPlanAdmission (Passes.pruneEntrypoint entry) plan) :
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false) :
     ∃ expected,
       Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
       Native.validate expected json = .ok () ∧
@@ -109,12 +107,7 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
     validate_scalarCall_input_schedule nativeAccepted decoded parsed decodedRows profile
       (schema expected expectedAccepted)
   obtain ⟨boundedPlan, boundedAccepted, budget, _⟩ :=
-    lowerEntrypoint_scalarAdmission_names_fit_outputCapacity state entry json lowered
-      circuitAdmission (by
-        intro found foundAccepted
-        have same := Except.ok.inj (foundAccepted.symm.trans planAccepted)
-        cases same
-        exact planAdmission)
+    lowerEntrypoint_names_fit_outputCapacity state entry json lowered
   have sameBounded := Except.ok.inj (boundedAccepted.symm.trans planAccepted)
   subst boundedPlan
   have instructionBudget :=
