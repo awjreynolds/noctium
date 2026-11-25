@@ -250,6 +250,7 @@ private theorem acceptedIssue43SkippedCellSuffix
         Verification.ScalarValidationMeaning.StateMeaning hash inputs assignment impactBefore ∧
         Verification.ScalarValidationOutputMeaning.sourceImpactGuard expected impactBefore =
           some guardTerm ∧
+        (expected.groupGuards.isEmpty ∨ expected.groupGuards[9]? = some guardTerm) ∧
         expected.groups[impactBefore.groupCount]? = some group ∧
         impactAfter = {impactBefore with groupCount := impactBefore.groupCount + 1} ∧
         Verification.GuardedImpactObservation.sourceObservation hash inputs guardTerm group =
@@ -388,10 +389,19 @@ private theorem acceptedIssue43SkippedCellSuffix
       sourceObservation, emittedObservation, width⟩ :=
     Verification.GuardedImpactObservation.accepted_impact_observation
       impactMeaning impactAccepted impactOpcode impactGuardDecoded impactPayloadDecoded
+  have sourceGuardAtOrdinal :
+      expected.groupGuards.isEmpty ∨ expected.groupGuards[9]? = some guardTerm := by
+    unfold Verification.ScalarValidationOutputMeaning.sourceImpactGuard at sourceGuard
+    by_cases empty : expected.groupGuards.isEmpty
+    · exact Or.inl empty
+    · simp only [empty] at sourceGuard
+      rw [impactOrdinal] at sourceGuard
+      exact Or.inr sourceGuard
   exact ⟨expected, before, after, requirement, rowAccepted, requirementId, guarded,
     beforeMeaning, beforeDefinitions, afterMeaning, afterDefinitions, transcript,
     ⟨impactBefore, impactAfter, guardTerm, group, observation, impactAccepted, impactMeaning,
-      sourceGuard, sourceGroup, impactNext, sourceObservation, emittedObservation, width,
+      sourceGuard, sourceGuardAtOrdinal, sourceGroup, impactNext, sourceObservation,
+      emittedObservation, width,
       impactOrdinal, by simpa [impactOrdinal] using sourceGroup⟩⟩
 
 /-- Continue meaning from the accepted guarded input across a mixed producer
