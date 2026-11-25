@@ -534,6 +534,35 @@ private theorem lower_source_validated (state : List StateDecl) (ep : Entrypoint
       rcases lowered with ⟨_, sourceValidated, _, _, _⟩
       exact sourceValidated
 
+private theorem validateEffectPrechecks_circuit_valid (state : List StateDecl)
+    (ep : Entrypoint)
+    (accepted : Entrypoint.validateEffectPrechecks stateEffectCaps state ep = .ok ()) :
+    ep.circuit.validate stateEffectCaps = .ok () := by
+  unfold Entrypoint.validateEffectPrechecks at accepted
+  simp only [bind_ok] at accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  obtain ⟨_, circuitAccepted, _⟩ := accepted
+  exact circuitAccepted
+
+private theorem validateEffectPrefix_circuit_valid (state : List StateDecl)
+    (ep : Entrypoint) (initial : TypeEnv)
+    (accepted : Entrypoint.validateEffectPrefix stateEffectCaps state ep = .ok initial) :
+    ep.circuit.validate stateEffectCaps = .ok () := by
+  unfold Entrypoint.validateEffectPrefix at accepted
+  rcases bind_ok.mp accepted with ⟨_, prechecksAccepted, _⟩
+  exact validateEffectPrechecks_circuit_valid state ep prechecksAccepted
+
+/-- Accepted production lowering preserves source-circuit validation under
+the canonical source capability set. -/
+theorem lower_circuit_validated_source (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan) :
+    ep.circuit.validate Capabilities.source = .ok () := by
+  have source := lower_source_validated state ep plan accepted
+  obtain ⟨initial, _, prefixAccepted, _⟩ :=
+    Entrypoint.validate_effect_loop_of_success stateEffectCaps state ep source
+  have circuitAccepted := validateEffectPrefix_circuit_valid state ep initial prefixAccepted
+  simpa [stateEffectCaps, Capabilities.source] using circuitAccepted
+
 /-- Accepted production lowering carries the exact ordered typed effect
 chain on the explicit unguarded scalar state-effect scope. -/
 theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
