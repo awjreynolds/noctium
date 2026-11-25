@@ -5,6 +5,7 @@ use noctium_runtime::{
 };
 use onchain_runtime::state::{ChargedState, StateValue};
 use serde_json::{Value as Json, json};
+use serialize::Serializable;
 use std::collections::BTreeMap;
 use transient_crypto::fab::AlignedValueExt;
 
@@ -122,6 +123,55 @@ fn inputs(
         ("wide".to_owned(), json!(wide.to_string())),
         ("approved".to_owned(), json!(approved)),
     ])
+}
+
+fn serialized<T: Serializable>(value: &T) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    value
+        .serialize(&mut bytes)
+        .expect("in-memory serialization succeeds");
+    bytes
+}
+
+#[test]
+fn binding_serialization_matches_pinned_midnight_vectors() {
+    let uint_vectors: &[(u64, &[u8])] = &[
+        (0, &[0x00]),
+        (1, &[0x04]),
+        (15, &[0x3c]),
+        (63, &[0xfc]),
+        (64, &[0x01, 0x01]),
+        (1 << 14, &[0x02, 0x00, 0x01, 0x00]),
+        (1 << 30, &[0x03, 0x00, 0x00, 0x00, 0x40]),
+        (
+            u64::MAX,
+            &[0x13, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        ),
+    ];
+    for (value, expected) in uint_vectors {
+        assert_eq!(
+            serialized(value).as_slice(),
+            *expected,
+            "u64 binding value {value}"
+        );
+    }
+
+    let entrypoint = onchain_runtime::state::EntryPointBuf(b"update".to_vec());
+    assert_eq!(
+        serialized(&entrypoint).as_slice(),
+        &[0x18, b'u', b'p', b'd', b'a', b't', b'e']
+    );
+
+    let address = coin_structure::contract::ContractAddress::default();
+    assert_eq!(serialized(&address), vec![0; 32]);
+
+    let cost = base_crypto::cost_model::RunningCost {
+        read_time: base_crypto::cost_model::CostDuration::from_picoseconds(1),
+        compute_time: base_crypto::cost_model::CostDuration::from_picoseconds(120),
+        bytes_written: 2,
+        bytes_deleted: 3,
+    };
+    assert_eq!(serialized(&cost).as_slice(), &[4, 225, 1, 8, 12]);
 }
 
 fn cell(state: &ChargedState<Db>, slot: usize) -> String {
