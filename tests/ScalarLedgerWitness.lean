@@ -145,3 +145,32 @@ run_cmd do
     match Noctium.Verification.Audit.axiomsIn environment proof with
     | .ok _ => pure ()
     | .error error => throwError "{proof}: {error}"
+
+private def repeatedHashEntry : Entrypoint :=
+  let digest : Expr (.bytes 32) :=
+    .persistentHash32 (.bytes32Literal (List.replicate 32 0))
+  { name := "repeatedBytes32Hash"
+    circuit := {name := "repeatedBytes32HashCircuit"}
+    returns := [
+      {name := "firstDigest", ty := .bytes 32, value := digest},
+      {name := "secondDigest", ty := .bytes 32, value := digest}] }
+
+private def repeatedHashBody (plan : Impact.Plan) : Zkir.LowerState :=
+  ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint repeatedHashEntry) plan).run {}).2
+
+-- Exercise the accepted ledger path and check the exact rows from its Impact plan.
+#guard match Impact.lower [] (Passes.pruneEntrypoint repeatedHashEntry),
+    Zkir.lowerEntrypoint [] repeatedHashEntry with
+  | .ok plan, .ok program =>
+    let body := repeatedHashBody plan
+    match Native.arrayField program "instructions" with
+    | .ok rows =>
+      rows == body.instructions &&
+        rows.toList.map Native.opcode == ["persistent_hash", "bytes_into_natives", "output"] &&
+        Native.outputDefinitionsInInstruction rows[1]! == 2 &&
+        body.next == 3 && body.outputDefinitions == 3
+    | .error _ => _root_.Bool.false
+  | _, _ => _root_.Bool.false
+
+example : Zkir.OutputCapacityFrame {} (repeatedHashBody {}) := by
+  constructor <;> decide +kernel
