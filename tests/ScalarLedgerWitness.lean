@@ -1,10 +1,10 @@
 import Noctium.Verification
-import Noctium.Verification.ScalarCellCallNativeRun
+import Noctium.Verification.ScalarCellNativeTranscript
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
 
 open Noctium Noctium.Backend Noctium.Verification
-open NativeRelationJson ScalarValidationOpcodeProfile
+open NativeRelation NativeRelationJson ScalarValidationOpcodeProfile
 
 private def declarations : List StateDecl := [{name := "counter", kind := .cell .native}]
 
@@ -49,15 +49,25 @@ private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool true),
 
 private def initial : LedgerState := {cells := [("counter", .native 17)]}
 
-private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState) : Bool :=
+private def fixtureWitness (program : Program) (seed : Assignment) : Option Assignment :=
+  program.instructions.foldlM (fun witness instruction => match instruction with
+    | .add left right dest =>
+      some (ScalarWitness.assign witness dest (scalar ((left.read witness).val + (right.read witness).val)))
+    | .input .. | .boolean .. | .bits .. | .assert .. | .impact .. | .output .. => some witness
+    | _ => none) seed
+
+private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState)
+    (call : ScalarCall) (seed : Assignment) : Bool :=
   match GenericStateEncoding.encodeInitialState declarations initial,
       GenericStateEncoding.encodeState declarations next,
-      GenericStateOps.evalPlan context complete plan with
-  | some initialSlots, some finalSlots, .ok operations =>
-    let cell := fun value => NativeState.field (NativeRelation.scalar value)
+      GenericStateOps.evalPlan context complete plan, fixtureWitness call.body seed with
+  | some initialSlots, some finalSlots, .ok operations, some witness =>
+    let cell := fun value => NativeState.field (scalar value)
     let expected : NativeState.Machine := ⟨[.vector finalSlots], [cell 1, cell 17, cell 42]⟩
-    decide (NativeState.run operations (GenericStateEncoding.initial initialSlots) = some expected)
-  | _, _, _ => false
+    decide (NativeState.run operations (GenericStateEncoding.initial initialSlots) = some expected) &&
+      decide (call.body.groups witness = NativeState.groups operations) &&
+      decide (call.body.returns witness = [scalar 42])
+  | _, _, _, _ => false
 
 #guard match entry.run context values initial with
   | .ok (returned, next) =>
@@ -65,9 +75,9 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
       next.cells == [("counter", .native 42)]
   | .error _ => false
 
-#guard match Impact.lower declarations entry with
-  | .error _ => false
-  | .ok plan =>
+#guard match Impact.lower declarations entry,
+    ((Zkir.lowerEntrypoint declarations entry).mapError (·.message)).bind decodeScalarCall with
+  | .ok plan, .ok call =>
     let cutoff := Impact.publicInputReadCount entry.circuit.inputs
     match entry.circuit.run context values with
     | .error _ => false
@@ -76,7 +86,11 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
       | .error _ => false
       | .ok (entries, (_, next)) =>
         let seed := ScalarCellWitnessReadSeed.seedReadValues
-          (fun name => if name == "%input_delta" then NativeRelation.scalar 24 else NativeRelation.zero)
+          (fun
+            | "%input_delta" => scalar 24
+            | "%input_enabled" => one
+            | "%input_limit" => scalar 50
+            | _ => zero)
           entries
         let reads := plan.reads.drop cutoff
         (entries.map fun (read, value) => (read.name, value.val)) == [("before", 17), ("after", 42)] &&
@@ -88,11 +102,12 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
             readValues == [("before", .native 17), ("after", .native 42)] &&
               plan.operations.all (fun operation => operation.fieldGroups.all
                 (fun fields => fields.all (fun field => (field.eval context complete).isOk))) &&
-              nativeCallMatches plan complete next &&
+              nativeCallMatches plan complete next call seed &&
               match entry.evalReturns context complete with
               | .ok returned => returned == [("result", .native 42)]
               | .error _ => false
           | .error _ => false
+  | _, _ => false
 
 open Lean Elab Command in
 run_cmd do
@@ -109,6 +124,7 @@ run_cmd do
       `Noctium.Verification.ScalarWitnessConstruction.lowerEntrypoint_construct_scalar_cell_witness,
       `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_run_scalar_cell_native,
       `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_construct_scalar_cell_execution,
+      `Noctium.Verification.ScalarCellNativeTranscript.lowerEntrypoint_checked_native_transcript,
       `Noctium.Verification.ScalarLedgerSourceReturns.evalReturns_transport,
       `Noctium.Verification.ScalarLedgerReturnObservation.expected_returns_observe_source,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_returns] do

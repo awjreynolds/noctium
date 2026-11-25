@@ -22,7 +22,7 @@ private theorem validateConstraints_members {caps : Capabilities} {types : TypeE
         exact checked
       · exact ih valid found member
 
-private theorem Op.fieldGroups_flatten_eq_fields (operation : Impact.Op) :
+theorem Op.fieldGroups_flatten_eq_fields (operation : Impact.Op) :
     operation.fieldGroups.flatten = operation.fields := by
   cases operation <;>
     simp [Impact.Op.fieldGroups, Impact.Op.fields] <;>
