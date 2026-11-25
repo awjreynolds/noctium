@@ -3005,6 +3005,63 @@ private theorem exceptBindOk {ε α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem folded_activity_guards {α : Type} (items : List α) (initial : Plan)
+    (step : Plan → α → Plan)
+    (preserves : ∀ plan item, (step plan item).activityGuards = plan.activityGuards) :
+    (items.foldl step initial).activityGuards = initial.activityGuards := by
+  induction items generalizing initial with
+  | nil => rfl
+  | cons head tail ih =>
+    rw [List.foldl_cons, ih, preserves]
+
+private theorem publicInputStep_activity_guards (input : Input) (before after : Plan)
+    (accepted : publicInputStep input before = .ok after) :
+    after.activityGuards = before.activityGuards := by
+  cases input with
+  | mk name ty visibility span =>
+    cases visibility <;> cases ty
+    case public.bytes length =>
+      by_cases is32 : length = 32
+      · subst length
+        simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
+        cases accepted
+        rfl
+      · by_cases isZero : length = 0
+        · subst length
+          simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
+          cases accepted
+          rfl
+        · simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
+          cases accepted
+          rfl
+    case public.foreign kind =>
+      simp [publicInputStep, Input.publicProjectionIdentifiers, visibilityNePublic,
+        visibilityEqPrivate] at accepted
+      cases accepted
+      apply folded_activity_guards
+      intro plan index
+      rfl
+    all_goals
+      simp [publicInputStep, nativeRead, visibilityNePublic, visibilityEqPrivate] at accepted <;>
+        cases accepted <;> rfl
+
+/-- Public input lowering leaves the stored activity guard list unchanged. An
+empty initial plan therefore starts the source effect trace unconditionally. -/
+theorem publicInputPlan_activity_guards (inputs : List Input) (before after : Plan)
+    (accepted : publicInputPlan inputs before = .ok after) :
+    after.activityGuards = before.activityGuards := by
+  induction inputs generalizing before with
+  | nil =>
+    simp [publicInputPlan] at accepted
+    cases accepted
+    rfl
+  | cons input rest ih =>
+    change (publicInputStep input before >>= fun next => publicInputPlan rest next) = .ok after
+      at accepted
+    rw [exceptBindOk] at accepted
+    obtain ⟨next, step, tail⟩ := accepted
+    exact (ih next tail).trans (publicInputStep_activity_guards input before next step)
+
 /-- An accepted guarded non-foreign Map read emits the operations of the
 exact rewritten key. Its activity binder is absent from the source key. -/
 theorem appendEffectWithActivity_readMap_key (state : List StateDecl)

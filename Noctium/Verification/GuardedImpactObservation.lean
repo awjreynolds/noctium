@@ -1,4 +1,5 @@
 import Noctium.Verification.ScalarValidationOutputMeaning
+import Noctium.Verification.ScalarNormalizationSoundness
 
 namespace Noctium.Verification.GuardedImpactObservation
 
@@ -160,5 +161,54 @@ theorem accepted_impact_transcript
   refine ⟨guardTerm, group, guardSelected, groupSelected, ?_⟩
   intro transcript
   rw [source, emitted]
+
+/-- The source Boolean for a scheduled field group is the activity bit in the
+accepted Impact row. An inactive row contributes zero payload and leaves the
+transcript in place. The checked schedule identifies the normalized condition. -/
+theorem accepted_impact_source_activity
+    {hash : Hash} {inputs witness : Assignment} {expected : Expected}
+    {state next : State} {raw : Json} {guard : Operand} {values : List Operand}
+    (ctx : EvalContext) (types : TypeEnv) (aliases : AliasEnvironment)
+    (env : EvalEnv) (condition : Expr .bool) (normalized : Normalized)
+    (implementation : HashAgreement ctx hash)
+    (environment : TypedEnvironment hash inputs aliases env types)
+    (admission : ScalarExpression condition)
+    (valid : condition.validate Capabilities.scalarFragment types = .ok ())
+    (normal : normalize aliases condition = .ok normalized)
+    (requirements : Requirements hash inputs normalized)
+    (selected : expected.groupGuards[state.groupCount]? = some normalized.term)
+    (invariant : StateMeaning hash inputs witness state)
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decodedGuard : decodeOperandField raw "guard" = .ok guard)
+    (decodedPayload : (do decodeOperands (← raw.getObjVal? "inputs")) = .ok values) :
+    ∃ active : Bool, condition.eval ctx env = .ok active ∧
+      guard.read witness = bit active ∧
+      observeImpact (guard.read witness) (values.map (·.read witness)) =
+        some ⟨active, if active then values.map (·.read witness)
+          else List.replicate values.length zero⟩ ∧
+      (active = false → ∀ transcript,
+        (observeImpact (guard.read witness) (values.map (·.read witness)) >>= (consume · transcript)) =
+          some transcript) := by
+  obtain ⟨active, evaluated, _, _, meaning⟩ := normalize_sound ctx hash implementation inputs
+    types aliases env environment condition admission normalized valid normal requirements
+  obtain ⟨term, _, guardSelected, _, _, guardMeaning, _, _⟩ :=
+    accepted_impact_guard_and_payload_meaning invariant accepted opcode decodedGuard decodedPayload
+  have nonempty : expected.groupGuards.isEmpty = false := by
+    cases schedule : expected.groupGuards with
+    | nil => simp [schedule] at selected
+    | cons head tail => rfl
+  have sameTerm : term = normalized.term := by
+    simpa [sourceImpactGuard, nonempty, selected] using guardSelected.symm
+  subst term
+  have encoded : sourceScalar? .bool active = some (bit active) := by
+    cases active <;> simp [sourceScalar?, bit]
+  have guardValue := Option.some.inj (guardMeaning.symm.trans (meaning.trans encoded))
+  refine ⟨active, evaluated, guardValue, ?_, ?_⟩
+  · rw [guardValue]
+    cases active <;> simp [bit, observeImpact_inactive, observeImpact_active]
+  · intro inactive transcript
+    subst active
+    simp [guardValue, bit, observeImpact_inactive, consume_inactive]
 
 end Noctium.Verification.GuardedImpactObservation
