@@ -1,6 +1,7 @@
 import Noctium.Backend.Impact
 import Noctium.Backend.Zkir
 import Noctium.Frontend
+import Noctium.Verification.GuardedZkirArtifact
 import Noctium.Verification.ImpactPlanStatementAgreement
 
 open scoped Noctium
@@ -107,8 +108,31 @@ private def issue43PartialRequirementResult (checkEnabled approved : _root_.Bool
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.true _root_.Bool.true
 #guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.false _root_.Bool.false
 
+private def checkGuardedRelation (circuitFile : String) (rewrites : Backend.Zkir.Rewrites) :
+    IO Unit := do
+  let expected ← IO.ofExcept ((Backend.Zkir.lowerEntrypoint Issue43GuardedPartialWrites.state
+    issue43PartialEntry rewrites).mapError (·.message))
+  let bytes := (← IO.FS.readBinFile circuitFile).data.toList
+  discard <| IO.ofExcept (Verification.GuardedZkirArtifact.check bytes expected)
+  let instructions ← IO.ofExcept (Backend.Native.arrayField expected "instructions")
+  let withoutAssertions := instructions.filter fun instruction =>
+    (instruction.getObjValD "op").getStr?.toOption != some "assert"
+  unless withoutAssertions.size < instructions.size do
+    throw (IO.userError "expected at least one guarded circuit assertion")
+  let dropped := expected.setObjVal! "instructions" (.arr withoutAssertions)
+  let changedHeader := expected.setObjVal! "do_communications_commitment" (.bool _root_.Bool.false)
+  for changed in [dropped, changedHeader] do
+    let changedBytes := changed.compress.toUTF8.data.toList
+    discard <| IO.ofExcept (Verification.GuardedZkirArtifact.decodeBytes changedBytes)
+    if (Verification.GuardedZkirArtifact.check changedBytes expected).isOk then
+      throw (IO.userError "the guarded ZKIR check accepted a changed assertion or call header")
+
 def main (args : List String) : IO Unit := do
-  let [artifact] := args | throw (IO.userError "expected the guarded partial-write Impact file")
+  let (artifact, circuit, rewrites) ← match args with
+    | [artifact, circuit] => pure (artifact, circuit, Backend.Zkir.Rewrites.rangeAndAssertions)
+    | [artifact, circuit, "dedup"] => pure (artifact, circuit, Backend.Zkir.Rewrites.includingComparisons)
+    | _ => throw (IO.userError "expected the guarded Impact and ZKIR files, with optional 'dedup'")
+  checkGuardedRelation circuit rewrites
   let contract := Issue43GuardedPartialWrites
   let selected := Passes.pruneEntrypoint issue43PartialEntry
   let plan ← IO.ofExcept ((Backend.Impact.lower contract.state selected).mapError (·.message))

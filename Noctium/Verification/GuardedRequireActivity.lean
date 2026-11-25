@@ -1,4 +1,5 @@
 import Noctium.Verification.GuardedPlanAssertions
+import Noctium.Verification.GuardedRequireSemantics
 
 namespace Noctium.Verification.GuardedRequireActivity
 
@@ -68,5 +69,33 @@ theorem lower_guarded_require_activity (state : List StateDecl)
   | error message =>
     simp [Expr.eval, guardResult, Bind.bind, Except.bind] at assertionEval
   | ok active => exact ⟨active, rfl⟩
+
+/-- Successful assertions from actual lowering make a guarded source require
+either pass when active or skip the required expression when inactive. -/
+theorem lower_guarded_require_step_of_assertions (state : List StateDecl)
+    (entry : Entrypoint) (plan : Impact.Plan) (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (condition guard : Expr .bool) (index : Nat)
+    (lowered : Impact.lower state entry = .ok plan)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
+    (occurrence : (Effect.require condition, index) ∈ entry.effects.zipIdx)
+    (selected : entry.effectGuards[index]?.getD none = some guard)
+    (admitted : ScalarNormalization.ScalarExpression condition)
+    (modulus : ctx.modulus = Field.modulus)
+    (asserts : ∀ assertion ∈ plan.guards, assertion.eval ctx env = .ok Bool.true) :
+    runEffectsWithGuardsAndEnv ctx [.require condition] [some guard] env ledger =
+      .ok (env, ledger) := by
+  obtain ⟨active, guardEval⟩ := lower_guarded_require_activity state entry plan ctx env
+    condition guard index lowered scope occurrence selected asserts
+  rw [GuardedRequireSemantics.run_guarded_require ctx env ledger guard condition active guardEval]
+  cases active with
+  | false => rfl
+  | true =>
+    have assertionMember := lower_guarded_require_assertion state entry plan
+      condition guard index lowered scope occurrence selected
+    have assertionEval := asserts _ assertionMember
+    have conditionEval := GuardedRequireSemantics.totalizeActivityCondition_active_eval
+      ctx env guard condition admitted modulus guardEval
+    rw [conditionEval] at assertionEval
+    exact GenericStateVM.require_source_step ctx env ledger condition assertionEval
 
 end Noctium.Verification.GuardedRequireActivity
