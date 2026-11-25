@@ -1,4 +1,5 @@
 import Noctium.Verification.ScalarCircuit
+import Noctium.Verification.GenericStateKeys
 import Noctium.Verification.GenericStateCircuitParts
 
 namespace Noctium.Verification.GenericStateAliases
@@ -53,13 +54,14 @@ theorem forIn_extract (body : α → PUnit → Except ε (ForInStep PUnit))
       · simpa [equal] using holds
       · exact ih success found member
 
-/-- Successful source circuit validation forbids an output from shadowing any
-declared input, including a value supplied in an input environment. -/
-theorem validated_outputs_unshadowed (circuit : Circuit)
-    (valid : circuit.validate {poseidon2 := true} = .ok ()) :
-    ∀ output ∈ circuit.outputs,
-      (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
-        output.name = none := by
+/-- Source validation admits distinct output names and prevents them from
+shadowing the original circuit inputs. -/
+theorem validated_output_scope (caps : Capabilities) (circuit : Circuit)
+    (valid : circuit.validate caps = .ok ()) :
+    (circuit.outputs.map (·.name)).Nodup ∧
+      ∀ output ∈ circuit.outputs,
+        (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
+          output.name = none := by
   cases inputNames : uniqueNames (circuit.inputs.map (·.name)) with
   | false => simp [Circuit.validate, inputNames, bind, bind_ok, throw_eq_error] at valid
   | true =>
@@ -87,7 +89,7 @@ theorem validated_outputs_unshadowed (circuit : Circuit)
               Bool.not_true, Bool.false_eq_true, ↓reduceIte] at valid
             simp only [bind, bind_ok] at valid
             rcases valid with ⟨_, _, afterInputs⟩
-            change Except.bind (validateConstraints {poseidon2 := true}
+            change Except.bind (validateConstraints caps
               (circuit.inputs.map (fun input => (input.name, input.ty)))
               circuit.span circuit.constraints) _ = .ok () at afterInputs
             obtain ⟨checked, constraintsValid, afterConstraints⟩ :=
@@ -96,18 +98,20 @@ theorem validated_outputs_unshadowed (circuit : Circuit)
             change ((fun _ : PUnit => ()) <$> (_ : Except _ PUnit)) =
               Except.ok () at afterConstraints
             obtain ⟨⟨⟩, outputChecks, _⟩ := (map_ok _ _ _).mp afterConstraints
+            refine ⟨GenericStateKeys.nodup_of_eraseDups_length_eq _
+              (eq_of_beq outputNames), ?_⟩
             refine forIn_extract _ (fun output =>
               (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
                 output.name = none) circuit.outputs ?_ outputChecks
             intro output step success
-            cases typeChecked : output.ty.validate {poseidon2 := true} with
+            cases typeChecked : output.ty.validate caps with
             | error message => simp [typeChecked, bind, Except.bind] at success
             | ok result =>
               simp only [typeChecked] at success
               split at success
               next shadow => cases success
               next unshadowed =>
-                cases expressionChecked : output.value.validate {poseidon2 := true}
+                cases expressionChecked : output.value.validate caps
                     (circuit.inputs.map (fun input => (input.name, input.ty))) with
                 | error message => simp [expressionChecked, bind, Except.bind] at success
                 | ok result =>
@@ -120,6 +124,13 @@ theorem validated_outputs_unshadowed (circuit : Circuit)
                     | none => rfl
                     | some ty => simp [found] at unshadowed
 
+theorem validated_outputs_unshadowed (circuit : Circuit)
+    (valid : circuit.validate {poseidon2 := true} = .ok ()) :
+    ∀ output ∈ circuit.outputs,
+      (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
+        output.name = none :=
+  (validated_output_scope _ circuit valid).2
+
 private theorem lookup_member (values : List (String × α))
     (name : String) (value : α)
     (found : values.lookup name = some value) : (name, value) ∈ values := by
@@ -127,13 +138,15 @@ private theorem lookup_member (values : List (String × α))
   rw [equal]
   simp
 
-theorem canonicalInputs_output_unused (circuit : Circuit)
+theorem canonicalInputs_output_unused_of_scope (circuit : Circuit)
     (values : EvalEnv) (inputs : Assignment)
     (admitted : CanonicalInputs circuit values inputs)
-    (valid : circuit.validate {poseidon2 := true} = .ok ()) :
+    (unshadowed : ∀ output ∈ circuit.outputs,
+      (circuit.inputs.map (fun input => (input.name, input.ty))).lookup
+        output.name = none) :
     ∀ output ∈ circuit.outputs, values.lookup output.name = none := by
   intro output member
-  have typeNone := validated_outputs_unshadowed circuit valid output member
+  have typeNone := unshadowed output member
   cases found : values.lookup output.name with
   | none => rfl
   | some raw =>
@@ -145,6 +158,14 @@ theorem canonicalInputs_output_unused (circuit : Circuit)
     have unmatched := (List.lookup_eq_none_iff.mp typeNone)
       (input.name, input.ty) mapped
     simp [inputName] at unmatched
+
+theorem canonicalInputs_output_unused (circuit : Circuit)
+    (values : EvalEnv) (inputs : Assignment)
+    (admitted : CanonicalInputs circuit values inputs)
+    (valid : circuit.validate {poseidon2 := true} = .ok ()) :
+    ∀ output ∈ circuit.outputs, values.lookup output.name = none :=
+  canonicalInputs_output_unused_of_scope circuit values inputs admitted
+    (validated_outputs_unshadowed circuit valid)
 
 /-- A normalized output alias whose name is absent from the input environment
 does not change the meaning of any existing input binding. -/

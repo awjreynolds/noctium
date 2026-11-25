@@ -466,6 +466,26 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
   · simp [produced]
   · simp [produced]
 
+/-- Supported post-public scalar reads leave the output frame aliases intact. -/
+private theorem readAliasFold_preserves_outputFrame (entry : Entrypoint)
+    (plan : Backend.Impact.Plan) (aliases : AliasEnvironment)
+    (outputFrame : OutputFrame)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty)
+    (accepted : forIn ((plan.reads.drop
+        (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads) outputFrame.1 (readAliasStep entry) = .ok aliases) :
+    aliases = outputFrame.1 := by
+  exact list_forIn_preserves_projection_supported
+    (supported := fun read : Backend.Impact.Read => scalarAliasReadType read.ty)
+    (project := id) (step := readAliasStep entry) scalarReads
+    (by
+      intro read supported current result stepAccepted
+      exact readAliasStep_preserves_scalar entry read current supported result stepAccepted)
+    accepted
+
 /-- A checked expected entrypoint retains normalized plan guards in its
 assertions and bounds. For Native, Bool, and UInt read scalars, the post-read
 alias fold leaves the normalized output frame unchanged. -/
@@ -494,14 +514,8 @@ theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
     expectedEntrypoint_parts state entry expected accepted
   have samePlan : partsPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
   subst partsPlan
-  have aliasesEq : aliases = outputFrame.1 := by
-    exact list_forIn_preserves_projection_supported
-      (supported := fun read : Backend.Impact.Read => scalarAliasReadType read.ty)
-      (project := id) (step := readAliasStep entry) scalarReads
-      (by
-        intro read supported current result stepAccepted
-        exact readAliasStep_preserves_scalar entry read current supported result stepAccepted)
-      aliasesAccepted
+  have aliasesEq : aliases = outputFrame.1 :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
   have normalizedGuards : plan.guards.mapM (normalize outputFrame.1) = .ok guards := by
     simpa only [← aliasesEq] using guardsAccepted
   have assertionMembers : ∀ term ∈ guards.flatMap
@@ -525,6 +539,89 @@ theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
     simp [List.mem_append, member]
   exact ⟨outputFrame, guards, outputsAccepted, normalizedGuards,
     assertionMembers, boundMembers⟩
+
+/-- The accepted expected constructor retains the actual normalized source
+circuit outputs and constraints. Supported post-public scalar read aliases
+leave the output frame's aliases unchanged. Output bounds enter expected
+bounds through the initial bound prefix passed to the production operation
+collector. -/
+theorem expectedEntrypoint_sourceCircuitRequirements
+    (state : List StateDecl) (entry : Entrypoint) (expected : Expected)
+    (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty) :
+    ∃ (outputFrame : OutputFrame) (conditions : List Normalized),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      entry.circuit.constraints.mapM (normalize outputFrame.1) = .ok conditions ∧
+      (∀ bound ∈ outputFrame.2.1, bound ∈ expected.bounds) ∧
+      (∀ assertion ∈ outputFrame.2.2, assertion ∈ expected.assertions) ∧
+      (∀ bound ∈ conditions.flatMap (·.bounds), bound ∈ expected.bounds) ∧
+      (∀ term ∈ conditions.flatMap (fun item => item.assertions ++ [item.term]),
+        term ∈ expected.assertions) := by
+  obtain ⟨partsPlan, outputFrame, aliases, inputState, conditions, guards,
+      constraintCollection, guardCollection, operationFrame, returns, activity,
+      planAccepted, outputsAccepted, aliasesAccepted, inputStateAccepted,
+      conditionsAccepted, guardsAccepted, constraintCollectionAccepted,
+      guardCollectionAccepted, operationAccepted, returnsAccepted, activityAccepted,
+      inputsShape, groupsShape, returnsShape, modeShape, rawInputsShape,
+      groupGuardsShape, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : partsPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst partsPlan
+  have aliasesEq : aliases = outputFrame.1 :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
+  have normalizedConditions :
+      entry.circuit.constraints.mapM (normalize outputFrame.1) = .ok conditions := by
+    simpa only [← aliasesEq] using conditionsAccepted
+  have constraintCollectionEq :
+      (conditions.map (·.term), conditions.flatMap (·.bounds),
+        conditions.flatMap (·.assertions)) = constraintCollection := by
+    have collected := constraintCollectionAccepted
+    simp only [conditionsAccepted, Bind.bind, Except.bind, Except.mapError] at collected
+    exact Except.ok.inj collected
+  have conditionBoundsEq :
+      constraintCollection.2.1 = conditions.flatMap (·.bounds) := by
+    exact (congrArg Prod.fst (congrArg Prod.snd constraintCollectionEq)).symm
+  have operationBoundsPrefix :
+      ∀ bound ∈ outputFrame.2.1, bound ∈ operationFrame.2.1 := by
+    unfold collectOperations at operationAccepted
+    simp only [bind_ok] at operationAccepted
+    obtain ⟨pieces, piecesAccepted, resultAccepted⟩ := operationAccepted
+    have resultEq := Except.ok.inj resultAccepted
+    have boundsEq :
+        outputFrame.2.1 ++ pieces.flatMap (fun piece => piece.2.1) = operationFrame.2.1 :=
+      congrArg Prod.fst (congrArg Prod.snd resultEq)
+    intro bound member
+    rw [← boundsEq]
+    exact List.mem_append_left _ member
+  have outputBoundMembers : ∀ bound ∈ outputFrame.2.1, bound ∈ expected.bounds := by
+    intro bound member
+    rw [boundsShape]
+    simp [List.mem_append, operationBoundsPrefix bound member]
+  have outputAssertionMembers : ∀ assertion ∈ outputFrame.2.2,
+      assertion ∈ expected.assertions := by
+    intro assertion member
+    rw [assertionsShape]
+    simp [List.mem_append, member]
+  have conditionBoundMembers : ∀ bound ∈ conditions.flatMap (·.bounds),
+      bound ∈ expected.bounds := by
+    intro bound member
+    rw [boundsShape, conditionBoundsEq]
+    simp [List.mem_append, member]
+  have conditionAssertionMembers :
+      ∀ term ∈ conditions.flatMap (fun item => item.assertions ++ [item.term]),
+        term ∈ expected.assertions := by
+    intro term member
+    rw [assertionsShape]
+    simp [List.mem_append, member]
+  exact ⟨outputFrame, conditions, outputsAccepted, normalizedConditions,
+    outputBoundMembers, outputAssertionMembers, conditionBoundMembers,
+    conditionAssertionMembers⟩
 
 /-- Every post-public Native, Bool, or UInt read descriptor appears in the
 accepted expected input list. The projection omits activityGuard because the
