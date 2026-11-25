@@ -1,4 +1,5 @@
 import Noctium.Verification.ImpactPlanAgreement
+import Noctium.Verification.ImpactTranscriptSchedule
 
 open Noctium Noctium.Verification
 
@@ -26,13 +27,26 @@ def main (args : List String) : IO Unit := do
   let initial := machine [0, 0, 0, 0, 0]
   let runWith := fun env => ImpactPlanAgreement.runPlanBytes 64 context env bytes initial
   let enabled := inputs Bool.true 3 2 3 Bool.true
+  let disabled := inputs Bool.false 1 2 8 Bool.false
+  let transcript := fun env => ImpactTranscriptSchedule.evaluateSchedule 64 context env (fun _ => none) raw
+  let skipped : List (Option Nat) := (List.replicate 5 [some 5, some 5, some 1]).flatten
+  unless transcript enabled == some (List.replicate 15 none) &&
+      transcript disabled == some skipped do
+    throw (IO.userError "decoded activity schedule differs from the guarded scalar fixture")
+  let inactivePreview := do
+    let activity ← transcript disabled
+    let program ← ImpactPlanAgreement.evaluatePlan 64 context disabled raw
+    ImpactNoopPreview.previewProgram program activity
+  match inactivePreview with
+  | some [.noop 55] => pure ()
+  | _ => throw (IO.userError "inactive preview does not coalesce all 55 skipped fields")
   let expected : List Nat := [1, 3, 7, 1, 3]
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
   unless decide (ImpactPlanAgreement.evaluatePlan 64 context enabled raw = some operations) do
     throw (IO.userError "decoded operation order differs from the guarded scalar fixture")
   unless decide (runWith enabled = some (machine expected)) &&
-      decide (runWith (inputs Bool.false 1 2 8 Bool.false) = some initial) do
+      decide (runWith disabled = some initial) do
     throw (IO.userError "decoded active or inactive state differs from the guarded scalar fixture")
   unless (runWith (inputs Bool.true 1 2 3 Bool.true)).isNone &&
       (runWith (inputs Bool.true 3 2 8 Bool.true)).isNone &&

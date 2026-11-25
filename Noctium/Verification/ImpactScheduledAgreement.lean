@@ -49,7 +49,8 @@ theorem evaluateActivityGuard_rejectsFailure (fuel : Nat) (ctx : EvalContext)
   unfold evaluateActivityGuard
   simp [rejected]
 
-private theorem evaluateActivityGuard_toJson (ctx : EvalContext)
+/-- Decode and evaluate the emitted optional guard in the typed environment. -/
+theorem evaluateActivityGuard_toJson (ctx : EvalContext)
     (modulus : ctx.modulus = Field.modulus) {types : TypeEnv} {env : EvalEnv}
     (guard : Option (Expr .bool))
     (supported : ∀ expression, guard = some expression → ScalarExpression expression)

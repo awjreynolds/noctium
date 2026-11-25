@@ -160,7 +160,10 @@ fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
     let inactive = prepare_case(&plan, &initial, inputs(false, false, 1, 2, 8, false))
         .expect("inactive underflow, narrowing, assertions, and shadowing are totalized");
     assert!(inactive.program.is_empty());
-    assert!(check(&inactive, &circuit).is_ok());
+    assert_eq!(
+        check(&inactive, &circuit).expect("inactive activity schedule checks"),
+        [Some(5), Some(5), Some(1)].repeat(5)
+    );
 
     assert!(prepare_case(&plan, &initial, inputs(true, false, 1, 2, 3, true)).is_err());
     assert!(prepare_case(&plan, &initial, inputs(true, false, 3, 2, 8, true)).is_err());
@@ -172,7 +175,10 @@ fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
 
     let active = prepare_case(&plan, &initial, inputs(true, true, 3, 2, 3, true))
         .expect("active partial expressions with valid operands preserve source behavior");
-    assert!(check(&active, &circuit).is_ok());
+    assert_eq!(
+        check(&active, &circuit).expect("active activity schedule checks"),
+        vec![None; 15]
+    );
     assert_eq!(cell(&active.after.state, 0), "1");
     assert_eq!(cell(&active.after.state, 1), "3");
     assert_eq!(cell(&active.after.state, 2), "7");
