@@ -8,6 +8,7 @@ import Noctium.Verification.ScalarValidationArithmeticLoop
 namespace Noctium.Verification.ScalarValidationProjection
 
 open Lean Backend.Native NativeRelation ScalarNormalization
+open ScalarValidationMeaning (StateMeaning)
 
 private theorem bind_ok {α β : Type} {value : Except String α} {next : α → Except String β}
     {result : β} : (value >>= next) = .ok result ↔
@@ -218,6 +219,8 @@ structure NativeValidationDriverFacts (expected : Expected) (program : Json)
   inputCount : final.inputCount = expected.inputs.length
   groupCount : final.groupCount = expected.groups.length
   assertionCount : final.assertionCount = expected.assertions.length
+  inputChecks : ∀ input ∈ expected.rawInputs ++ expected.inputs,
+    checkInputRequirement final input = .ok ()
   bounds : ∀ requirement ∈ expected.bounds,
     checkBound final requirement.1 requirement.2 = .ok ()
 
@@ -273,7 +276,7 @@ theorem validate_driver_result {expected : Expected} {program : Json}
     exact seedRawInputs_inputCount seedStateParsed
   refine ⟨instructions, rawInputs, seedState, finalState, ?_⟩
   refine ⟨parsedInstructions, rawInputsParsed, ?_, ?_, ?_, ?_, finalOutputParsed, instructionTrace,
-    ?_, ?_, ?_, ?_⟩
+    ?_, ?_, ?_, ?_, ?_⟩
   · exact eq_of_beq (ensure_ok.mp rawInputCountParsed)
   · exact seedStateParsed
   · exact seedInputCount
@@ -290,12 +293,67 @@ theorem validate_driver_result {expected : Expected} {program : Json}
   · exact eq_of_beq (ensure_ok.mp inputCountParsed)
   · exact eq_of_beq (ensure_ok.mp groupCountParsed)
   · exact eq_of_beq (ensure_ok.mp assertionCountParsed)
+  · have acceptedInputs : forIn (expected.rawInputs ++ expected.inputs) PUnit.unit
+        (fun (requirement : InputRequirement) (_ : PUnit) => do
+          checkInputRequirement finalState requirement
+          pure (.yield PUnit.unit)) = .ok PUnit.unit := by
+      simpa only [Bind.bind, Except.bind, Pure.pure, Except.pure] using inputChecksParsed
+    exact forIn_checks acceptedInputs
   · have acceptedBounds : forIn expected.bounds PUnit.unit
         (fun (requirement : Backend.Native.Term × Nat) (_ : PUnit) => do
           checkBound finalState requirement.1 requirement.2
           pure (.yield PUnit.unit)) = .ok PUnit.unit := by
       simpa only [Bind.bind, Except.bind, Pure.pure, Except.pure] using boundChecksParsed
     exact forIn_checks acceptedBounds
+
+/-- A checked scalar input's required source bound holds in the final
+producer state. Encoded foreign inputs use a separate producer check. -/
+theorem checked_scalar_input_bound {state : State} {requirement : InputRequirement}
+    (checked : checkInputRequirement state requirement = .ok ())
+    (nonforeign : requirement.ty.isForeign = false)
+    (ordinary : requirement.canonicalJubjubScalar = false) :
+    checkBound state (.input requirement.identifier) (sourceMaximum requirement.ty) = .ok () := by
+  unfold checkInputRequirement at checked
+  obtain ⟨_, _, tail⟩ := bind_ok.mp checked
+  cases shape : requirement.ty <;> try simp [Ty.isForeign, shape] at nonforeign
+  all_goals
+    rw [shape] at tail
+    simp only [ordinary, Bool.false_eq_true, ↓reduceIte] at tail
+    obtain ⟨_, boundChecked, _⟩ := bind_ok.mp tail
+    simpa [shape] using boundChecked
+
+/-- Read the bound from the definition whose source term is the accepted
+input. The partial scalar interpreter represents that term by its input. -/
+theorem input_bound_of_state_meaning {hash : Hash} {inputs witness : Assignment}
+    {state : State} {name : String} {maximum : Nat}
+    (meaning : StateMeaning hash inputs witness state)
+    (checked : checkBound state (.input name) maximum = .ok ()) :
+    (inputs name).val ≤ maximum := by
+  unfold checkBound at checked
+  obtain ⟨⟨identifier, fact⟩, present, foundFields⟩ :=
+    List.any_eq_true.mp (ensure_ok.mp checked)
+  have ⟨term, bound⟩ := Bool.and_eq_true_iff.mp foundFields
+  have factMeaning := meaning identifier fact present
+  have sameValue : inputs name = witness identifier := by
+    have sameTerm : fact.term = .input name := eq_of_beq term
+    simpa [sameTerm, interpret_input] using factMeaning.term
+  rw [sameValue]
+  exact Nat.le_trans factMeaning.bound (of_decide_eq_true bound)
+
+/-- Recover a source scalar bound from an accepted program and the meaning of
+its final producer state. The requirement may come from either input domain. -/
+theorem NativeValidationDriverFacts.inputBound
+    {expected : Expected} {program : Json} {instructions rawInputs : Array Json}
+    {seed final : State} {hash : Hash} {inputs witness : Assignment}
+    (driver : NativeValidationDriverFacts expected program instructions rawInputs seed final)
+    (meaning : StateMeaning hash inputs witness final)
+    {requirement : InputRequirement}
+    (present : requirement ∈ expected.rawInputs ++ expected.inputs)
+    (nonforeign : requirement.ty.isForeign = false)
+    (ordinary : requirement.canonicalJubjubScalar = false) :
+    (inputs requirement.identifier).val ≤ sourceMaximum requirement.ty :=
+  input_bound_of_state_meaning meaning
+    (checked_scalar_input_bound (driver.inputChecks requirement present) nonforeign ordinary)
 
 /-- The old empty-state consumer is valid precisely when the actual validator
 has no raw call inputs to seed. -/
