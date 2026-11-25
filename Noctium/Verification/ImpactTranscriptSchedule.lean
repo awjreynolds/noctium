@@ -74,7 +74,7 @@ private theorem mapM_eq_of_members {items : List α} {f g : α → Option β}
     simp only [List.mapM_cons, pointwise item (by simp),
       ih (fun value inside => pointwise value (List.mem_cons_of_mem _ inside))]
 
-private theorem source_shapes (plan : Impact.Plan)
+theorem scalar_source_shapes (plan : Impact.Plan)
     (shape : plan.activityGuards.isEmpty = Bool.true ∨
       plan.activityGuards.length = plan.operations.length)
     (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields]) :
@@ -133,7 +133,7 @@ theorem sourceGroups_flatten
         (fun (guard, width) =>
           (GuardedPlanExecution.evalActivity ctx env guard).toOption.map fun activity =>
             if activity.getD Bool.true then none else some width) := by
-  obtain ⟨aligned, guardAt, guards, widths⟩ := source_shapes plan shape single
+  obtain ⟨aligned, guardAt, guards, widths⟩ := scalar_source_shapes plan shape single
   let effective := GuardedPlanActivity.operationGuards plan
   let eval (item : Impact.Op × Option (Expr .bool)) : Option (Option Nat) :=
     (GuardedPlanExecution.evalActivity ctx env item.2).toOption.map fun activity =>
@@ -167,7 +167,7 @@ theorem sourceGroupGuards_length (plan : Impact.Plan)
     (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields]) :
     (GenericStateCircuitParts.activityGuardSources plan).length =
       (plan.operations.flatMap fun op => op.fieldGroups.map List.length).length := by
-  obtain ⟨length, _, guards, widths⟩ := source_shapes plan shape single
+  obtain ⟨length, _, guards, widths⟩ := scalar_source_shapes plan shape single
   simpa [guards, widths] using length
 
 private theorem evaluateGroups_agrees (ctx : EvalContext)

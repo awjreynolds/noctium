@@ -14,9 +14,9 @@ open GuardedImpactTranscript
 
 /-- Checked guarded ZKIR consumes the public streams of the same modeled VM
 run whose operation order and activity agree with the Impact bytes. Inactive
-group widths follow from the validated source plan. The instance fields are
-compared with a native statement fixture. Native header authentication and the
-assignment's ordinary circuit constraints remain explicit premises. -/
+and active group widths follow from the validated source plan. The guarded
+payload follows from the modeled VM transcript. The two native header fields
+and the assignment's ordinary circuit constraints remain explicit premises. -/
 theorem lowerEntrypoint_checked_guarded_state
     (state : List StateDecl) (sourceEntry : Entrypoint) (rewrites : Zkir.Rewrites)
     (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
@@ -103,7 +103,8 @@ theorem lowerEntrypoint_checked_guarded_state
       ∀ fixture : ImpactNativeStatementFixture.NativeStatementFixture,
         ImpactNativeStatementFixture.checkBytes fixture fuel ctx (base ++ decoded) keyWidth
           impactBytes = .ok () →
-        fixture.fields = projection.fields →
+        fixture.fields.take 2 = [header.bindingInput, header.communicationsCommitment] →
+        fixture.fields = projection.fields ∧
         ImpactPlanStatementAgreement.fromEntrypoint ctx (base ++ decoded) state
           (Passes.pruneEntrypoint sourceEntry) fixture.inputs = some projection.fields) ∧
     ∃ finalTypes finalEnv finalState finalSlots finalReads,
@@ -158,12 +159,15 @@ theorem lowerEntrypoint_checked_guarded_state
   obtain ⟨expectedObservations, emittedExpected, observedSource, _⟩ := observed holds
   have sameObservations := Option.some.inj (emittedExpected.symm.trans emitted)
   subst expectedObservations
-  have sourceActivity : ((plan.operations.zipIdx.mapM
-      (ImpactTranscriptSchedule.sourceGroups ctx (base ++ decoded) plan)).map List.flatten) =
-      some projection.activity := by
+  obtain ⟨sourceActivity, activeWidths⟩ :
+      ((plan.operations.zipIdx.mapM
+        (ImpactTranscriptSchedule.sourceGroups ctx (base ++ decoded) plan)).map List.flatten) =
+        some projection.activity ∧
+      native.map (fun op => (ImpactStatementScalar.opFields op).length) =
+        (observations.filter (·.active)).map (fun row => row.payload.length) := by
     rw [activity]
     apply GuardedSourceActivity.lower_observations_activity state ep ctx hash assignment
-      (base ++ decoded) implementation plan expected frame observations planAccepted
+      (base ++ decoded) implementation plan expected frame observations native evaluated planAccepted
       expectedAccepted frameAccepted environment ?_ ?_
       (ImpactPlanStatementAgreement.admitsScalarPlan_single_groups statementAdmitted)
       checkedAssertions checkedBounds observedSource
@@ -181,6 +185,14 @@ theorem lowerEntrypoint_checked_guarded_state
       cases certified : ScalarExpressionAdmission.certify guard with
       | none => simp [certified] at checked
       | some supported => exact supported.down
+  have scheduledPayload :
+      ImpactStatementPayload.scheduledPayload ImpactStatementScalar.opFields
+        native projection.activity =
+        some (GuardedStatementConsumption.observationFields observations) := by
+    rw [activity]
+    exact GuardedStatementConsumption.scheduledPayload_of_observations native observations
+      impactStream activeWidths
+      (GuardedStatementConsumption.emittedObservations_inactive_zero assignment rows emitted)
   have initialAgreement := GenericStatePrefixEnvironment.initial_from_typed hash assignment
     frame.1 (GenericStateEffectValidation.initialEffectTypeEnv ep) base decoded baseEnvironment
   obtain ⟨finalTypes, finalEnv, finalState, finalSlots, finalReads, sourceRun,
@@ -199,21 +211,35 @@ theorem lowerEntrypoint_checked_guarded_state
     refine ⟨minimum, ?_⟩
     intro fuel enough
     obtain ⟨raw, parsed, operationEq, activityEq⟩ := agrees fuel enough
-    refine ⟨raw, parsed, operationEq.trans (by rw [evaluated]; rfl),
-      activityEq.trans sourceActivity, sourceActivity, ?_⟩
-    intro fixture fixtureChecked fieldsMatch
-    have sourceEq := ImpactPlanStatementAgreement.fromEntrypoint_eq_fromSource
-      ctx (base ++ decoded) state ep plan fixture.inputs planAccepted
-    have byteEq : ImpactPlanStatement.fromBytes fuel ctx (base ++ decoded) keyWidth impactBytes
-        fixture.inputs = ImpactPlanStatementAgreement.fromSource ctx (base ++ decoded) plan
-          fixture.inputs := by
-      unfold ImpactPlanStatement.fromBytes ImpactPlanStatementAgreement.fromSource
-      rw [parsed]
-      simp only [Except.toOption, Bind.bind, Option.bind_some]
-      rw [operationEq, activityEq]
-      rfl
-    have fixtureFields := ImpactNativeStatementFixture.checkBytes_sound fixture fuel ctx
+    have decodedOperations : ImpactPlanAgreement.evaluatePlan fuel ctx (base ++ decoded) raw =
+        some native := operationEq.trans (by rw [evaluated]; rfl)
+    have decodedActivity := activityEq.trans sourceActivity
+    refine ⟨raw, parsed, decodedOperations, decodedActivity, sourceActivity, ?_⟩
+    intro fixture fixtureChecked headerMatch
+    have accepted := ImpactNativeStatementFixture.checkBytes_sound fixture fuel ctx
       (base ++ decoded) keyWidth impactBytes fixtureChecked
-    exact sourceEq.trans (byteEq.symm.trans (fixtureFields.trans (congrArg some fieldsMatch)))
+    have publicInputs : ImpactPlanStatement.publicInputs fixture.inputs native projection.activity =
+        some fixture.fields := by
+      unfold ImpactPlanStatement.fromBytes at accepted
+      rw [parsed] at accepted
+      simp only [Except.toOption, Bind.bind, Option.bind_some, decodedOperations,
+        decodedActivity] at accepted
+      exact accepted
+    obtain ⟨modeledHeader, payload, layout, reconstructed⟩ :=
+      ImpactPlanStatement.publicInputs_header_and_payload fixture.inputs native projection.activity
+        publicInputs
+    have samePayload := Option.some.inj (reconstructed.symm.trans scheduledPayload)
+    have modeledHeaderFields : fixture.fields.take 2 =
+        [modeledHeader.bindingInput, modeledHeader.communicationsCommitment] := by
+      rw [layout]
+      rfl
+    have fieldsMatch : fixture.fields = projection.fields := by
+      rw [layout, fields, samePayload, ← modeledHeaderFields, headerMatch]
+    refine ⟨fieldsMatch, ?_⟩
+    rw [ImpactPlanStatementAgreement.fromEntrypoint_eq_fromSource
+      ctx (base ++ decoded) state ep plan fixture.inputs planAccepted]
+    unfold ImpactPlanStatementAgreement.fromSource
+    rw [evaluated, sourceActivity]
+    simpa only [Except.toOption, Bind.bind, Option.bind_some, fieldsMatch] using publicInputs
 
 end Noctium.Verification.GuardedZkirStateSoundness
