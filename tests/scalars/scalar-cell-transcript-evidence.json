@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-25",
+  "scope": "ScalarCellTranscript.apply read, write, and read, with a committed UInt16 return",
+  "compiler": {
+    "commit": "1a1f3a9c4cec4596a2697af1cee3c79c377d8982",
+    "lean": "4.35.0",
+    "profile": "midnight-ledger-9-zkir-3.2.1",
+    "source": "examples/ScalarCellTranscript.lean",
+    "sourceSha256": "b2f2838fd320838360a87fcf2af150ec8163898c30dcf51490b3521301e1002c",
+    "circuitSha256": "405c22353a88bfb322e5950fc7a31ed3d977d37ade8a9822686cee01eb8cb0d5",
+    "impactSha256": "56fb883c38946ae321c1bcd9289ddf5eef7102c7147f893670c4c04100e94c2f",
+    "k": 7,
+    "rows": 94
+  },
+  "officialChecker": {
+    "release": "3.2.1",
+    "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+    "tarballSha256": "f2f4d6c1aaa85e2d9cec1c9f204f4f47ae5c7650ef170a68b1675441ea037133",
+    "ledgerNpmVersion": "1.0.2",
+    "initialTotal": 10,
+    "delta": 3,
+    "committedReturn": 13,
+    "activityGroups": 11,
+    "honestAccepted": true,
+    "rejectedCases": [
+      "changed-before",
+      "changed-after"
+    ]
+  },
+  "localnet": {
+    "ledgerRevision": "a2b30128ca4b660b73a068e29b56b48ede8c9a74",
+    "ledgerParametersSha256": "35b5fb3347ca9e3d42c5eb1213515c4bca8979612e60aaac90abb629e243eed0",
+    "srsK7Sha256": "e82ae890c080188355f37feaffe91372584cd810615082d9143d4dec0453fd9d",
+    "verifierSha256": "ea1d305c2af57dc9c5d5db49952be19fe19b510df95512c34025880a2bc58d22",
+    "initialTotal": 65522,
+    "delta": 13,
+    "leanReturn": 65535,
+    "leanSuccessor": 65535,
+    "observedTotal": 65535,
+    "sameInputRecheckRejected": true,
+    "signedReplaySubmitted": false,
+    "stateMatchesPrediction": true,
+    "initialStateSha256": "b94531d7102dad3cc2df16f9a0e987fb18d8180848598d564fa1cb7d6fa01d2d",
+    "finalStateSha256": "c5dab10053c27b101a6a4f3a4ecef23989e04434b7862d7e076c5361e884b16c",
+    "deployment": {
+      "outcome": "applied",
+      "network": "undeployed",
+      "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+      "finalizedAt": "0x81d73d8942a81d0830e3976c272379d09699bccd419b9c3b9a266b8d6230a641",
+      "blockHash": "0x81d73d8942a81d0830e3976c272379d09699bccd419b9c3b9a266b8d6230a641",
+      "height": "386",
+      "extrinsicIndex": 4,
+      "extrinsicHash": "0xb0cfc0fb0576ad65a7f82a51ed74f5e001b95d000139060efa6b825458d8423a",
+      "txHash": "0xcafe73e89655d9aa13ba74386b06c588af1affb550bcb42c650147ad18f56f39",
+      "contractAddress": "0x29342b0ede3c78a5e926c16220525d3db0bd8c8c7ba66590aca9b97b8e56b319",
+      "contractEvent": "ContractDeploy",
+      "ledgerEvent": "TxApplied"
+    },
+    "call": {
+      "outcome": "applied",
+      "network": "undeployed",
+      "genesis": "0x823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+      "finalizedAt": "0xdf9b88ce7c1c8d006c60c01fec105ed9b27345f470d915ef4edea0cc06c09622",
+      "blockHash": "0xdf9b88ce7c1c8d006c60c01fec105ed9b27345f470d915ef4edea0cc06c09622",
+      "height": "389",
+      "extrinsicIndex": 4,
+      "extrinsicHash": "0x57739a7e2ac6cd2d50af85654cca09a0e264b3b9aad34170fda3c0e4be8aa605",
+      "txHash": "0x05b49fcbe07468c3e2e9de2ed3d92c37ccf603834e1ffc24330ad725893a052a",
+      "contractAddress": "0x29342b0ede3c78a5e926c16220525d3db0bd8c8c7ba66590aca9b97b8e56b319",
+      "contractEvent": "ContractCall",
+      "ledgerEvent": "TxApplied"
+    }
+  }
+}
