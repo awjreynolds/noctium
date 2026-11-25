@@ -66,6 +66,32 @@ private theorem appendEffectWithActivity_readCell_wrapper_shape
     simp only [readFound, Pure.pure, Except.pure] at wrapperAccepted
     exact ⟨result, read, appendAccepted, readFound, Except.ok.inj wrapperAccepted⟩
 
+private theorem appendEffect_readCell_empty_plan_chunk
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (before after base : Impact.Plan)
+    (step : Impact.appendEffect state (.readCell name destination ty) before = .ok after)
+    (emptyStep : Impact.appendEffect state (.readCell name destination ty) {} = .ok base) :
+    ∃ slot value read,
+      after.operations = before.operations ++ [.dup, .index slot, value] ∧
+      base.operations = [.dup, .index slot, value] ∧
+      after.reads = before.reads ++ [read] ∧ base.reads = [read] := by
+  simp only [Impact.appendEffect, bind_ok] at step emptyStep
+  rcases step with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
+  rcases emptyStep with
+    ⟨emptySlot, emptySlotAccepted, emptyValue, emptyValueAccepted, emptyResultAccepted⟩
+  have slotEq : slot = emptySlot :=
+    Except.ok.inj (slotAccepted.symm.trans emptySlotAccepted)
+  subst emptySlot
+  have valueEq : value = emptyValue :=
+    Except.ok.inj (valueAccepted.symm.trans emptyValueAccepted)
+  subst emptyValue
+  simp only [Pure.pure, Except.pure] at resultAccepted emptyResultAccepted
+  have resultEq := Except.ok.inj resultAccepted
+  have emptyResultEq := Except.ok.inj emptyResultAccepted
+  cases resultEq
+  cases emptyResultEq
+  exact ⟨slot, value, _, rfl, by simp, rfl, by simp⟩
+
 theorem appendEffect_writeCell_operation_suffix (state : List StateDecl)
     (name : String) (ty : Ty) (value : Expr ty) (before after : Impact.Plan)
     (step : Impact.appendEffect state (.writeCell name ty value) before =
@@ -186,6 +212,52 @@ theorem appendEffectWithActivity_readCell_provenance
           List.replicate 3 (some condition) := by rw [appendedCount]
   exact ⟨slot, value, read, readFields.1, readFields.2.1, readFields.2.2,
     readsOut, operationsOut, guardsOut⟩
+
+/-- A guarded cell read appends the same operation and read chunk as an
+unguarded empty-plan read. The source guard updates only the read descriptor. -/
+theorem appendEffectWithActivity_readCell_empty_chunk
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (condition : Expr .bool) (before after base : Impact.Plan)
+    (guardedStep : Impact.appendEffectWithActivity state
+      (.readCell name destination ty) (some condition) before = .ok after)
+    (emptyStep : Impact.appendEffect state (.readCell name destination ty) {} = .ok base) :
+    after.operations = before.operations ++ base.operations ∧
+      after.reads = before.reads ++
+        base.reads.map (fun read => {read with guard := some condition}) := by
+  obtain ⟨result, wrapperRead, appendAccepted, wrapperReadAt, wrapperShape⟩ :=
+    appendEffectWithActivity_readCell_wrapper_shape state name destination ty condition
+      before after guardedStep
+  obtain ⟨slot, value, sourceRead, resultOperations, baseOperations,
+    resultReads, baseReads⟩ := appendEffect_readCell_empty_plan_chunk
+      state name destination ty before result base appendAccepted emptyStep
+  have sourceReadAt : result.reads[before.reads.length]? = some sourceRead := by
+    rw [resultReads]
+    simp
+  have wrapperReadEq : wrapperRead = sourceRead :=
+    Option.some.inj (wrapperReadAt.symm.trans sourceReadAt)
+  have operationsOut : after.operations = before.operations ++ base.operations := by
+    have projected := congrArg Impact.Plan.operations wrapperShape
+    calc
+      after.operations = result.operations := projected.symm
+      _ = before.operations ++ [.dup, .index slot, value] := resultOperations
+      _ = before.operations ++ base.operations := by rw [baseOperations]
+  have readsOut : after.reads = before.reads ++
+      base.reads.map (fun read => {read with guard := some condition}) := by
+    have projected := congrArg (fun plan : Impact.Plan => plan.reads) wrapperShape
+    have updatedReads :
+        result.reads.take before.reads.length ++
+          [{wrapperRead with guard := some condition}] =
+        before.reads ++ [{sourceRead with guard := some condition}] := by
+      rw [wrapperReadEq, resultReads]
+      simp
+    calc
+      after.reads = before.reads ++ [{sourceRead with guard := some condition}] :=
+        projected.symm.trans updatedReads
+      _ = before.reads ++ base.reads.map (fun read =>
+          {read with guard := some condition}) := by
+        rw [baseReads]
+        simp
+  exact ⟨operationsOut, readsOut⟩
 
 theorem appendEffectWithActivity_writeCell_operation_suffix
     (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)
