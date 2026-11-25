@@ -27,14 +27,14 @@ inductive ScalarCellEffect (state : List StateDecl) : Effect → Prop where
       ScalarCellType ty → ScalarCellDeclaration state name ty →
       ScalarCellEffect state (.writeCell name ty value)
 
-private def scalarCellReadExpression : {ty : Ty} → ScalarCellType ty →
+def scalarCellReadExpression : {ty : Ty} → ScalarCellType ty →
     String → Expr .native
   | _, .native, destination => .ref destination
   | _, .bool, destination => .cast .native (.ref destination : Expr .bool)
   | _, .uint maximum _, destination =>
       .cast .native (.ref destination : Expr (.uint maximum))
 
-private def scalarCellWriteExpression : {ty : Ty} → ScalarCellType ty →
+def scalarCellWriteExpression : {ty : Ty} → ScalarCellType ty →
     Expr ty → Expr .native
   | _, .native, value => value
   | _, .bool, value => .select value (.native 1) (.native 0)

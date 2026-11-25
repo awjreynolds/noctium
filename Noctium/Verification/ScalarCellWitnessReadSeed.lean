@@ -132,7 +132,7 @@ private theorem scalarNumber_eq_stateEncoding {ty : Ty}
     ScalarNormalization.number scalarType value = GenericStateEncoding.number ty value := by
   cases scalarType <;> rfl
 
-private theorem scalarStateEffects_of_cells (state : List StateDecl)
+theorem scalarStateEffects_of_cells (state : List StateDecl)
     (effects : List Effect)
     (cellScope : ScalarCellSourceReads.ScalarCellEffects state effects) :
     GenericStateEffectValidation.ScalarStateEffects effects := by

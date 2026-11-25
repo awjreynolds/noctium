@@ -93,7 +93,7 @@ private theorem evalOutput_ok (ctx : EvalContext) (values : EvalEnv)
   cases produced
   exact ⟨value, evaluated, rfl⟩
 
-private theorem evalOutputs_names (ctx : EvalContext) (values : EvalEnv)
+theorem evalOutputs_names (ctx : EvalContext) (values : EvalEnv)
     (outputs : List Output) (results : List (String × Value))
     (accepted : outputs.mapM (evalOutput ctx values) = .ok results) :
     results.map Prod.fst = outputs.map Output.name := by
