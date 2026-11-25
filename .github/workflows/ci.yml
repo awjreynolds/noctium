@@ -676,6 +676,7 @@ jobs:
             Noctium.Verification.GuardedPlanActivity \
             Noctium.Verification.GuardedEffectPrefix \
             Noctium.Verification.GenericStateAdmissionBridge \
+            Noctium.Verification.GenericStateScalarPrefix \
             Noctium.Verification.GenericStateReadCandidates \
             Noctium.Verification.GenericStateEvaluationCanonical \
             Noctium.Verification.GenericStateReadAuthentication \
