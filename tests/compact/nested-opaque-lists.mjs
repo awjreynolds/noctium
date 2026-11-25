@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -17,8 +17,7 @@ assert.equal(runtimePackage.version, '0.21.0');
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const experiments = resolve(sourceDirectory, '../../build/experiments');
 mkdirSync(experiments, { recursive: true });
-const scratch = join(experiments, '1237-nested-opaque-lists-compact');
-rmSync(scratch, { recursive: true, force: true });
+const scratch = mkdtempSync(join(experiments, 'nested-opaque-lists-compact.'));
 try {
   const generated = join(scratch, 'compact');
   execFileSync(compactc, ['--skip-zk', join(sourceDirectory, 'NestedOpaqueLists.compact'), generated]);
@@ -33,6 +32,11 @@ try {
   const walletKey = '00'.repeat(32);
   const owner = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
   const sibling = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
+  const deepOwner = new Uint8Array(32).fill(0x51);
+  const groupA = new Uint8Array(32).fill(0x52);
+  const groupB = new Uint8Array(32).fill(0x53);
+  const missingOwner = new Uint8Array(32).fill(0x54);
+  const missingGroup = new Uint8Array(32).fill(0x55);
   const address = dummyContractAddress();
   const initial = (await contract.initialState(createConstructorContext(null, walletKey))).currentContractState.data;
   const invoke = (entrypoint, state, ...args) => contract.circuits[entrypoint](createCircuitContext({
@@ -45,6 +49,9 @@ try {
   const first = 'A\0夜\0B';
   const second = 'second';
   const siblingValue = 'sibling';
+  const deepFirst = first;
+  const deepSecond = 'deep-second';
+  const deepSiblingValue = 'group-b';
 
   await assert.rejects(() => invoke('inspect', initial, owner));
   let state = nextState(await invoke('reset', initial, owner));
@@ -82,6 +89,48 @@ try {
     sibling: { is_some: true, value: siblingValue },
   });
 
+  let deepState = state;
+  const maybeDeep = async (ledgerState, ownerKey, groupKey) =>
+    (await invoke('inspectDeep', ledgerState, ownerKey, groupKey)).result;
+  await assert.rejects(() => maybeDeep(deepState, missingOwner, groupA));
+  deepState = nextState(await invoke('clearDeep', deepState, deepOwner, groupA));
+  const emptyAfterClear = await maybeDeep(deepState, deepOwner, groupA);
+  assert.deepEqual(emptyAfterClear, absence, 'clearing a new owner creates an empty group');
+  await assert.rejects(() => maybeDeep(deepState, deepOwner, missingGroup));
+  deepState = nextState(await invoke('clearDeep', deepState, deepOwner, groupB));
+
+  deepState = nextState(await invoke('pushDeep', deepState, deepOwner, groupA, deepFirst));
+  deepState = nextState(await invoke('pushDeep', deepState, deepOwner, groupB, deepSiblingValue));
+  deepState = nextState(await invoke('pushDeep', deepState, deepOwner, groupA, deepSecond));
+  const deepAfterPush = {
+    groupA: await maybeDeep(deepState, deepOwner, groupA),
+    groupB: await maybeDeep(deepState, deepOwner, groupB),
+  };
+  assert.deepEqual(deepAfterPush, {
+    groupA: { is_some: true, value: deepSecond },
+    groupB: { is_some: true, value: deepSiblingValue },
+  });
+
+  deepState = nextState(await invoke('popDeep', deepState, deepOwner, groupA));
+  const deepAfterPop = {
+    groupA: await maybeDeep(deepState, deepOwner, groupA),
+    groupB: await maybeDeep(deepState, deepOwner, groupB),
+  };
+  assert.deepEqual(deepAfterPop, {
+    groupA: { is_some: true, value: deepFirst },
+    groupB: { is_some: true, value: deepSiblingValue },
+  });
+
+  deepState = nextState(await invoke('popDeep', deepState, deepOwner, groupA));
+  const deepAfterFinalPop = {
+    groupA: await maybeDeep(deepState, deepOwner, groupA),
+    groupB: await maybeDeep(deepState, deepOwner, groupB),
+  };
+  assert.deepEqual(deepAfterFinalPop, {
+    groupA: absence,
+    groupB: { is_some: true, value: deepSiblingValue },
+  });
+
   console.log(JSON.stringify({
     compact: compilerVersion,
     runtime: runtimePackage.version,
@@ -94,6 +143,22 @@ try {
     afterPushes,
     afterPop,
     afterFinalPop,
+    deep: {
+      owner: Buffer.from(deepOwner).toString('hex'),
+      groupA: Buffer.from(groupA).toString('hex'),
+      groupB: Buffer.from(groupB).toString('hex'),
+      missingOwner: Buffer.from(missingOwner).toString('hex'),
+      missingGroup: Buffer.from(missingGroup).toString('hex'),
+      first: deepFirst,
+      second: deepSecond,
+      siblingValue: deepSiblingValue,
+      missingOwnerRejected: true,
+      missingGroupRejected: true,
+      emptyAfterClear,
+      afterPush: deepAfterPush,
+      afterPop: deepAfterPop,
+      afterFinalPop: deepAfterFinalPop,
+    },
   }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

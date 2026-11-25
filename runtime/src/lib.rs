@@ -3113,8 +3113,8 @@ fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> R
             ensure!(
                 ty != ScalarType::OpaqueString
                     || depth == 0
-                    || (depth == 1 && bytes32_parents),
-                "OpaqueString Lists require a root or Bytes32-keyed Map path"
+                    || (depth <= 2 && bytes32_parents),
+                "OpaqueString Lists require a root or up to two Bytes32 Map keys"
             );
             return Ok(());
         }
