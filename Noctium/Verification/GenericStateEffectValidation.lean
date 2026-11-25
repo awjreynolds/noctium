@@ -227,6 +227,17 @@ inductive ValidatedEffects (state : List StateDecl) :
       (tail : ValidatedEffects state env rest final) :
       ValidatedEffects state env (.requireAbsent stateName keyTy key :: rest) final
 
+inductive GuardValidatedEffects (state : List StateDecl) (entry : Entrypoint) :
+    TypeEnv → List (Effect × Nat) → TypeEnv → Prop where
+  | nil {types : TypeEnv} : GuardValidatedEffects state entry types [] types
+  | cons {types next final : TypeEnv} {item : Effect × Nat}
+      {rest : List (Effect × Nat)}
+      (effect : EffectValidation state types item.1 next)
+      (guard : ∀ condition, entry.effectGuardAt item.2 = some condition →
+        condition.validate stateEffectCaps types = .ok ())
+      (tail : GuardValidatedEffects state entry next rest final) :
+      GuardValidatedEffects state entry types (item :: rest) final
+
 theorem ValidatedEffects.uncons {state : List StateDecl} {types final : TypeEnv}
     {effect : Effect} {rest : List Effect}
     (chain : ValidatedEffects state types (effect :: rest) final) :
@@ -273,6 +284,23 @@ theorem ValidatedEffects.final_unique {state : List StateDecl} {initial : TypeEn
       declared keyValid tail ih =>
       cases right with
       | requireAbsent _ _ otherTail => exact ih otherTail
+
+theorem GuardValidatedEffects.effects {state : List StateDecl} {entry : Entrypoint}
+    {types final : TypeEnv} {items : List (Effect × Nat)}
+    (chain : GuardValidatedEffects state entry types items final) :
+    ValidatedEffects state types (items.map Prod.fst) final := by
+  induction chain with
+  | nil => exact .nil
+  | @cons types next final item rest effectValid _ tail ih =>
+    cases item with
+    | mk stateEffect index =>
+      cases effectValid with
+      | readCell declared fresh => exact .readCell declared fresh ih
+      | readMap declared keyValid fresh => exact .readMap declared keyValid fresh ih
+      | require conditionValid => exact .require conditionValid ih
+      | writeCell declared valueValid => exact .writeCell declared valueValid ih
+      | writeMap declared keyValid valueValid => exact .writeMap declared keyValid valueValid ih
+      | requireAbsent declared keyValid => exact .requireAbsent declared keyValid ih
 
 private theorem forIn_append_shape
     (body : α → TypeEnv → Except ε (ForInStep TypeEnv))
@@ -552,13 +580,29 @@ private theorem effectStep_validated (state : List StateDecl) (ep : Entrypoint)
       cases source.2 with
       | requireAbsent declared keyValid => exact .requireAbsent declared keyValid⟩
 
+private theorem effectGuard_validated (state : List StateDecl) (ep : Entrypoint)
+    (effect : Effect) (index : Nat) (env : TypeEnv) (step : ForInStep TypeEnv)
+    (success : Entrypoint.validateEffectStep stateEffectCaps state ep effect index env =
+      .ok step) :
+    ∀ condition, ep.effectGuardAt index = some condition →
+      condition.validate stateEffectCaps env = .ok () := by
+  unfold Entrypoint.validateEffectStep at success
+  rcases bind_ok.mp success with ⟨_, _, afterWriteGate⟩
+  rcases bind_ok.mp afterWriteGate with ⟨_, guardAccepted, _⟩
+  intro condition guardAt
+  unfold Entrypoint.validateEffectGuard at guardAccepted
+  rw [guardAt] at guardAccepted
+  cases valid : condition.validate stateEffectCaps env with
+  | error message => simp [valid, Bind.bind, Except.bind, throw, throwThe] at guardAccepted
+  | ok value => cases value; rfl
+
 private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entrypoint)
     (effects : List Effect) (offset : Nat) (initial final : TypeEnv)
     (scalar : ScalarStateEffects effects)
     (success : forIn (effects.zipIdx offset) initial
       (fun item env => Entrypoint.validateEffectStep stateEffectCaps state ep
         item.1 item.2 env) = .ok final) :
-    ValidatedEffects state initial effects final := by
+    GuardValidatedEffects state ep initial (effects.zipIdx offset) final := by
   induction effects generalizing offset initial with
   | nil =>
     change Except.ok initial = .ok final at success
@@ -567,7 +611,7 @@ private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entryp
   | cons effect rest ih =>
     cases scalar with
     | cons head tail =>
-      simp only [List.zipIdx_cons, List.forIn_cons] at success
+      simp only [List.zipIdx_cons, List.forIn_cons] at success ⊢
       cases checked : Entrypoint.validateEffectStep stateEffectCaps state ep
           effect offset initial with
       | error message =>
@@ -576,18 +620,12 @@ private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entryp
       | ok step =>
         obtain ⟨middle, shape, validated⟩ := effectStep_validated state ep effect
           offset initial step head checked
+        have guardValid := effectGuard_validated state ep effect offset initial
+          step checked
         simp only [checked, bind, Except.bind] at success
         rw [shape] at success
         have restValid := ih (offset + 1) middle tail success
-        cases validated with
-        | readCell declared fresh => exact .readCell declared fresh restValid
-        | readMap declared keyValid fresh => exact .readMap declared keyValid fresh restValid
-        | require conditionValid => exact .require conditionValid restValid
-        | writeCell declared valueValid => exact .writeCell declared valueValid restValid
-        | writeMap declared keyValid valueValid =>
-          exact .writeMap declared keyValid valueValid restValid
-        | requireAbsent declared keyValid =>
-          exact .requireAbsent declared keyValid restValid
+        exact .cons (item := (effect, offset)) validated guardValid restValid
 
 private theorem effectPrefix_env_shape (state : List StateDecl) (ep : Entrypoint)
     (env : TypeEnv)
@@ -748,12 +786,15 @@ theorem lower_circuit_validated_source (state : List StateDecl) (ep : Entrypoint
   have circuitAccepted := validateEffectPrefix_circuit_valid state ep initial prefixAccepted
   simpa [stateEffectCaps, Capabilities.source] using circuitAccepted
 
-/-- Accepted production lowering carries its ordered typed state effects and
-validates every physical return expression in the final source-effect environment. -/
-theorem lower_validated_effects_and_returns (state : List StateDecl) (ep : Entrypoint)
-    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
+/-- Accepted production lowering carries its ordered typed effects, validates each
+scheduled guard in the incoming type environment, and validates every physical
+return expression in the final source-effect environment. -/
+theorem lower_validated_guarded_effects_and_returns (state : List StateDecl)
+    (ep : Entrypoint) (plan : Impact.Plan)
+    (accepted : Impact.lower state ep = .ok plan)
     (scalar : ScalarStateEffects ep.effects) :
-    ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final ∧
+    ∃ final, GuardValidatedEffects state ep (initialEffectTypeEnv ep)
+        (ep.effects.zipIdx) final ∧
       ∀ output ∈ ep.returns,
         output.value.validate stateEffectCaps final = .ok () := by
   have source := lower_source_validated state ep plan accepted
@@ -767,6 +808,19 @@ theorem lower_validated_effects_and_returns (state : List StateDecl) (ep : Entry
       (initialEffectTypeEnv ep) final scalar (by
         simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)
   · exact validateEffectSuffix_returns_valid stateEffectCaps ep final suffixAccepted
+
+/-- Accepted production lowering carries its ordered typed state effects and
+validates every physical return expression in the final source-effect environment. -/
+theorem lower_validated_effects_and_returns (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
+    (scalar : ScalarStateEffects ep.effects) :
+    ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final ∧
+      ∀ output ∈ ep.returns,
+        output.value.validate stateEffectCaps final = .ok () := by
+  obtain ⟨final, guarded, returnsValid⟩ :=
+    lower_validated_guarded_effects_and_returns state ep plan accepted scalar
+  refine ⟨final, ?_, returnsValid⟩
+  simpa using GuardValidatedEffects.effects guarded
 
 /-- Accepted production lowering carries the exact ordered typed effect
 chain on the supported scalar state-effect scope. -/
