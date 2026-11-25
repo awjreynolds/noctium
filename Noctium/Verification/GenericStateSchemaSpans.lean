@@ -80,6 +80,17 @@ theorem erased_at_cell (declarations : List StateDecl) (slot : Nat)
     subst cellAlignment?
     rfl
 
+/-- Source lookup and Impact slot lookup select the same declaration. -/
+theorem find_declaration_slot (declarations : List StateDecl) (name : String)
+    (declaration : StateDecl)
+    (found : declarations.find? (·.name == name) = some declaration) :
+    ∃ slot, declarations.findIdx? (·.name == name) = some slot ∧
+      declarations[slot]? = some declaration := by
+  rw [List.find?_eq_bind_findIdx?_getElem?] at found
+  cases located : declarations.findIdx? (·.name == name) with
+  | none => simp [located] at found
+  | some slot => exact ⟨slot, rfl, by simpa [located] using found⟩
+
 theorem encoded_cell_alignment_none (declarations : List StateDecl)
     (state : LedgerState) (items : List Slot) (slot : Nat)
     (declaration : StateDecl) (ty : Ty)
@@ -107,6 +118,17 @@ theorem encoded_cell_alignment_none (declarations : List StateDecl)
       simpa [encodeDeclaration, kind, alignment] using slotEncoding
     exact False.elim ((Nat.not_le_of_gt itemRange)
       (List.getElem?_eq_none_iff.mp absent))
+
+/-- A successfully encoded source cell selected by name uses scalar alignment. -/
+theorem encoded_named_cell_alignment_none (declarations : List StateDecl)
+    (state : LedgerState) (items : List Slot) (name : String)
+    (declaration : StateDecl) (ty : Ty)
+    (found : declarations.find? (·.name == name) = some declaration)
+    (kind : declaration.kind = .cell ty)
+    (encoded : encodeState declarations state = some items) :
+    declaration.cellAlignment? = none := by
+  obtain ⟨slot, _, atSlot⟩ := find_declaration_slot declarations name declaration found
+  exact encoded_cell_alignment_none declarations state items slot declaration ty atSlot kind encoded
 
 theorem erased_at_map (declarations : List StateDecl) (slot : Nat)
     (declaration : StateDecl) (name : String) (keyTy valueTy : Ty)
@@ -146,6 +168,72 @@ theorem readCell_source_typed (declarations : List StateDecl)
     state items slot name ty expected reads after
     (erased_at_cell declarations slot declaration name ty found named kind alignment)
     (by rw [encodeState_eraseSpans]; exact encoded) accepted
+
+/-- A checked scalar map read authenticates its value against the current
+source map. The encoded root stays intact and the exact value enters the tape. -/
+theorem readMap_source_step (ctx : EvalContext) (env : EvalEnv)
+    (declarations : List StateDecl) (state : LedgerState)
+    (items : List Slot) (slot : Nat) (declaration : StateDecl)
+    (name destination : String) (keyTy valueTy : Ty) (keyExpr : Expr keyTy)
+    (key : keyTy.Denote) (expected : NativeRelation.Scalar) (reads : List Cell) (after : Machine)
+    (found : declarations[slot]? = some declaration)
+    (named : declaration.name = name)
+    (kind : declaration.kind = .map keyTy valueTy)
+    (encoded : encodeState declarations state = some items)
+    (modulus : ctx.modulus = Field.modulus)
+    (keyEval : keyExpr.eval ctx env = .ok key)
+    (keyCanonical : ScalarNormalization.Canonical keyTy key)
+    (accepted : run (GenericStateVM.readMapOps slot (NativeRelation.scalar (number keyTy key)) expected)
+      ⟨[.vector items], reads⟩ = some after) :
+    ∃ value : valueTy.Denote,
+      SourceEffects.step ctx (.readMap name destination keyTy valueTy keyExpr) (env, state) =
+        .ok ((destination, Value.pack valueTy value) :: env, state) ∧
+      ScalarNormalization.Canonical valueTy value ∧
+      expected = NativeRelation.scalar (number valueTy value) ∧
+      after = ⟨[.vector items], reads ++ [field expected]⟩ := by
+  obtain ⟨nativeEntries, nativeSlot, nativeLookup, nativeAfter⟩ :=
+    GenericStateVM.readMap_sound items slot (NativeRelation.scalar (number keyTy key))
+      expected reads after accepted
+  have slotEncoding := encodeState_slot declarations state items slot encoded
+  rw [found, nativeSlot] at slotEncoding
+  have encodedMap : encodeDeclaration state {name, kind := .map keyTy valueTy} =
+      some (.map nativeEntries) := by
+    simpa [encodeDeclaration, kind, named] using slotEncoding.symm
+  obtain ⟨entries, mapLookup, mapped⟩ := encoded_map_source
+    state name keyTy valueTy nativeEntries encodedMap
+  have matching := sourceMap_lookup keyTy valueTy entries nativeEntries key keyCanonical mapped
+  rw [nativeLookup] at matching
+  cases sourceLookup : entries.lookup (Value.pack keyTy key) with
+  | none => simp [sourceLookup] at matching
+  | some raw =>
+    cases valueEncoding : encodeValue valueTy raw with
+    | none => simp [sourceLookup, valueEncoding] at matching
+    | some cell =>
+      simp only [sourceLookup, Option.bind_some, valueEncoding, Option.map_some] at matching
+      obtain ⟨value, typed, canonical, cellShape⟩ := encodeValue_source valueTy raw cell valueEncoding
+      have valueMatches : expected = NativeRelation.scalar (number valueTy value) := by
+        exact (Option.some.inj matching).symm.trans (congrArg Cell.value cellShape)
+      refine ⟨value, ?_, canonical, valueMatches, nativeAfter⟩
+      cases valueTy with
+      | native =>
+        have bound : value < ctx.modulus := by
+          rw [modulus]
+          exact canonical.1
+        simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, sourceLookup,
+          typed, canonical_eq, bound, bind, Except.bind, pure, Except.pure]
+      | bool =>
+        simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, sourceLookup,
+          typed, canonical_eq, bind, Except.bind, pure, Except.pure]
+      | uint maximum =>
+        rcases canonical with ⟨bounded, maximumBound, valueBound⟩
+        have fieldBound : value < ctx.modulus := by
+          rw [modulus]
+          exact bounded
+        simp [SourceEffects.step, runEffectWithEnv, keyEval, mapLookup, sourceLookup,
+          typed, canonical_eq, maximumBound, valueBound, fieldBound, bind, Except.bind,
+          pure, Except.pure]
+      | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+        simp [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] at canonical
 
 /-- A source absence check has the same checked native result for arbitrary
 declaration source spans. -/

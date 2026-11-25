@@ -58,6 +58,16 @@ private theorem canonical_native_of_bound (value : Nat) (bound : value < Field.m
     Canonical .native value := by
   exact ⟨by simpa [ScalarNormalization.number] using bound, trivial⟩
 
+/-- Every admitted scalar expression has a supported result type. This
+evidence is available before either evaluator runs. -/
+theorem scalarExpression_type {ty : Ty} {expression : Expr ty}
+    (admission : ScalarExpression expression) : Nonempty (ScalarType ty) := by
+  induction admission
+  case ref _ supported => exact ⟨supported⟩
+  case cast _ _ supported _ _ => exact ⟨supported⟩
+  case select _ _ _ supported _ _ _ _ _ _ => exact ⟨supported⟩
+  all_goals first | exact ⟨.native⟩ | exact ⟨.bool⟩ | exact ⟨.uint _⟩ | assumption
+
 /-- Successful evaluation returns a canonical value for expressions admitted
 by the scalar fragment. The admission excludes opaque, byte, curve and foreign
 results whose source values do not have scalar canonicality. -/
