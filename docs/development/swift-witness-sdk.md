@@ -74,6 +74,45 @@ let publicIntent = try proof.proveLocally()
 
 For a development call, use `startDevelopmentCall(descriptor:setup:)` to supply the private journal setup explicitly. The original private one-time claim uses this path. [Native C ABI formats](../../runtime/include/noctium_native.h) · [Private claim source](../../examples/PrivateClaim.lean)
 
+## Read a ledger collection page
+
+Pass the native ABI's UTF-8 request, original Impact plan and tagged
+snapshot to the Swift binding.
+
+```swift
+import Noctium
+
+let page = try LedgerSnapshot.collectionPage(
+    request: requestData, plan: impactPlan, snapshot: taggedSnapshot
+)
+```
+
+Use trusted metadata for `planSha256` and `stateSha256`. For a root List,
+use an empty `keys` array and start at `offset: 0`. Follow `nextOffset`
+until the result returns `null`. The binding copies the JSON to owned
+`Data`, releases the native result token, and reports native errors as
+`WitnessSession.Failure.nativeStatus`. [Collection request and response](../../runtime/include/noctium_native.h)
+
+The macOS package test uses the retained public List fixture from
+Compact 0.36.1 and Runtime 0.21.0 on the selected Ledger 9.1.0.1 /
+ZKIR 3.2.1 profile. The empty List returns no entries. The populated
+List returns `["11", "22"]` at offset zero and `["33"]` at the returned
+offset two, then terminates. A mismatched or malformed state digest
+returns native status `1` (`NOCTIUM_NATIVE_INVALID_ARGUMENT`). The replay
+passed with a macOS ARM64 XCFramework built using Rust 1.100.0 and tested
+with Xcode 27.2 and Swift 6.4.2.
+[Fixture manifest and digests](../../tests/fixtures/native-collection-pages/manifest.json) ·
+[Compact and native fixture reproduction](native-client-abi.md#replay-the-scalar-collection-fixture)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/swift-list-pages.XXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+bash sdk/swift/package.sh "$scratch/package" aarch64-apple-darwin
+swift test --package-path "$scratch/package" --filter LedgerSnapshotTests
+```
+
 ## Qualification
 
 ```sh
