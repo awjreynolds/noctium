@@ -1,17 +1,18 @@
 #![cfg(feature = "zkir-321")]
 
-use ledger::structure::{ContractCall, PedersenDowngradeable};
+use ledger::structure::ContractCall;
 use noctium_runtime::{
     Db, Execution, Expr, Instruction, Plan, check, create_state, field_decimal, prepare,
     zkir::IrSource,
 };
+use onchain_runtime::context::QueryContext;
 use onchain_runtime::state::{ChargedState, StateValue};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
 use serde_json::{Value as Json, json};
 use serialize::Serializable;
 use std::{collections::BTreeMap, env, fs};
+use transient_crypto::commitment::Pedersen;
 use transient_crypto::fab::AlignedValueExt;
-use transient_crypto::commitment::PedersenRandomness;
 
 const PLAN: &str = include_str!(
     "fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.impact.json"
@@ -151,53 +152,89 @@ fn transcript_statement(transcript: Option<&onchain_runtime::transcript::Transcr
     })
 }
 
-fn export_native_statement_if_requested(plan: &Plan, execution: &Execution) {
-    let Some(path) = env::var_os("NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE") else {
-        return;
-    };
-
-    let address = coin_structure::contract::ContractAddress::default();
-    let address_bytes = address.0.0.to_vec();
-    let entry_point = onchain_runtime::state::EntryPointBuf(plan.entrypoint.as_bytes().to_vec());
-    let communication = execution
-        .preimage
-        .communications_commitment
-        .expect("successful active execution has its preimage communication commitment")
-        .0;
-    let call: ContractCall<(), Db> = ContractCall {
-        address,
-        entry_point: entry_point.clone(),
-        guaranteed_transcript: execution
-            .guaranteed
-            .as_ref()
-            .cloned()
-            .map(storage::arena::Sp::new),
-        fallible_transcript: execution
-            .fallible
-            .as_ref()
-            .cloned()
-            .map(storage::arena::Sp::new),
-        communication_commitment: communication,
-        proof: (),
-    };
-
-    let mut rng = StdRng::from_seed([7; 32]);
-    let parent_randomness: PedersenRandomness = rng.r#gen();
-    let parent_pedersen =
-        <PedersenRandomness as PedersenDowngradeable<Db>>::downgrade(&parent_randomness);
+fn native_statement<P: ledger::structure::ProofKind<Db>>(
+    call: &ContractCall<P, Db>,
+    parent_pedersen: Pedersen,
+    before_guaranteed: Option<&onchain_runtime::transcript::Transcript<Db>>,
+    before_fallible: Option<&onchain_runtime::transcript::Transcript<Db>>,
+) -> Json {
     let parent_pedersen_bytes = serialized(&parent_pedersen);
     let fields = call
         .public_inputs(parent_pedersen)
         .expect("pinned ledger computes the native call public inputs");
-    let statement = json!({
-        "address": address_bytes,
-        "entryPoint": entry_point.0,
+    let cost_model = &ledger::structure::INITIAL_PARAMETERS.cost_model.runtime_cost_model;
+
+    json!({
+        "address": call.address.0.0.to_vec(),
+        "entryPoint": &call.entry_point.0,
         "parentPedersen": parent_pedersen_bytes,
-        "communication": field_decimal(communication),
-        "guaranteed": transcript_statement(call.guaranteed_transcript.as_deref()),
-        "fallible": transcript_statement(call.fallible_transcript.as_deref()),
+        "communication": field_decimal(call.communication_commitment),
+        "noopConstant": cost_model.noop_constant.into_picoseconds(),
+        "noopCoefficient": cost_model.noop_coeff_arg.into_picoseconds(),
+        "guaranteed": transcript_statement(before_guaranteed),
+        "fallible": transcript_statement(before_fallible),
         "fields": fields.into_iter().map(field_decimal).collect::<Vec<_>>(),
-    });
+    })
+}
+
+fn export_native_statement_if_requested(
+    destination: &str,
+    plan: &Plan,
+    circuit: &IrSource,
+    execution: &Execution,
+    initial: &ChargedState<Db>,
+) {
+    let Some(path) = env::var_os(destination) else {
+        return;
+    };
+
+    let address = coin_structure::contract::ContractAddress::default();
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let context = QueryContext::new(initial.clone(), address);
+    let mut rng = StdRng::from_seed([7; 32]);
+    let intent = noctium_runtime::assembly::assemble_checked_calls(
+        &[noctium_runtime::assembly::CheckedNativeCall {
+            execution,
+            circuit,
+            initial_context: context.clone(),
+            entry_point: onchain_runtime::state::EntryPointBuf(plan.entrypoint.as_bytes().to_vec()),
+            communication_commitment_rand: transient_crypto::curve::Fr::from(1u64),
+        }],
+        parameters,
+        1_800_000_000,
+        &mut rng,
+    )
+    .expect("assemble the checked native call");
+    let ledger::structure::ContractAction::Call(source_call) =
+        intent.actions.iter_deref().next().expect("one call action")
+    else {
+        panic!("assembly emits a native contract call");
+    };
+    let before_guaranteed = source_call.guaranteed_transcript.as_deref();
+    let before_fallible = source_call.fallible_transcript.as_deref();
+    let mut call = (**source_call).clone();
+    if execution.program.is_empty() {
+        assert!(execution.guaranteed.is_none() && execution.fallible.is_none());
+        let before = before_guaranteed.expect("assembly adds the required empty partition");
+        assert!(before.program.is_empty() && before_fallible.is_none());
+        // The checked inactive schedule has one contiguous run of 55 skipped fields.
+        let program: noctium_runtime::Program = vec![onchain_runtime::ops::Op::Noop { n: 55 }];
+        let query = context
+            .query(&program, None, &parameters.cost_model.runtime_cost_model)
+            .expect("the native runtime executes and prices the single Noop");
+        let mut padded = before.clone();
+        padded.gas.compute_time = query.gas_cost.compute_time;
+        assert_eq!(padded.gas, query.gas_cost);
+        assert_eq!(padded.effects, query.context.effects);
+        padded.program = program.into();
+        call.guaranteed_transcript = Some(storage::arena::Sp::new(padded));
+    }
+    let statement = native_statement(
+        &call,
+        intent.binding_commitment.into(),
+        before_guaranteed,
+        before_fallible,
+    );
     fs::write(
         path,
         serde_json::to_vec_pretty(&statement).expect("native call statement serializes as JSON"),
@@ -318,5 +355,18 @@ fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
     assert_eq!(cell(&active.after.state, 2), "7");
     assert_eq!(cell(&active.after.state, 3), "1");
     assert_eq!(cell(&active.after.state, 4), "3");
-    export_native_statement_if_requested(&plan, &active);
+    export_native_statement_if_requested(
+        "NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE",
+        &plan,
+        &circuit,
+        &active,
+        &initial,
+    );
+    export_native_statement_if_requested(
+        "NOCTIUM_GUARDED_PARTIALS_INACTIVE_STATEMENT_FILE",
+        &plan,
+        &circuit,
+        &inactive,
+        &initial,
+    );
 }
