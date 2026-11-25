@@ -245,6 +245,35 @@ theorem ValidatedEffects.uncons {state : List StateDecl} {types final : TypeEnv}
   | requireAbsent declared keyValid tail =>
     exact ⟨_, .requireAbsent declared keyValid, tail⟩
 
+theorem ValidatedEffects.final_unique {state : List StateDecl} {initial : TypeEnv}
+    {effects : List Effect} {leftFinal rightFinal : TypeEnv}
+    (left : ValidatedEffects state initial effects leftFinal)
+    (right : ValidatedEffects state initial effects rightFinal) :
+    leftFinal = rightFinal := by
+  induction left with
+  | nil => cases right; rfl
+  | @readCell env final rest stateName destination ty declared fresh tail ih =>
+      cases right with
+      | readCell _ _ otherTail => exact ih otherTail
+  | @readMap env final rest stateName destination keyTy valueTy key
+      declared keyValid fresh tail ih =>
+      cases right with
+      | readMap _ _ _ otherTail => exact ih otherTail
+  | @require env final rest condition conditionValid tail ih =>
+      cases right with
+      | require _ otherTail => exact ih otherTail
+  | @writeCell env final rest stateName ty value declared valueValid tail ih =>
+      cases right with
+      | writeCell _ _ otherTail => exact ih otherTail
+  | @writeMap env final rest stateName keyTy valueTy key value
+      declared keyValid valueValid tail ih =>
+      cases right with
+      | writeMap _ _ _ otherTail => exact ih otherTail
+  | @requireAbsent env final rest stateName keyTy valueTy key
+      declared keyValid tail ih =>
+      cases right with
+      | requireAbsent _ _ otherTail => exact ih otherTail
+
 private theorem forIn_append_shape
     (body : α → TypeEnv → Except ε (ForInStep TypeEnv))
     (binding : α → String × Ty) (values : List α)
@@ -594,6 +623,77 @@ private theorem lower_source_validated (state : List StateDecl) (ep : Entrypoint
       rcases lowered with ⟨_, sourceValidated, _, _, _⟩
       exact sourceValidated
 
+private def validateReturnValueStep (caps : Capabilities) (env : TypeEnv)
+    (output : Output) (_ : PUnit) : Except Diagnostic (ForInStep PUnit) := do
+  if (env.lookup output.name).isSome then
+    throw {span := output.span, message := s!"entrypoint return '{output.name}' shadows a source binding"}
+  match output.ty.validate caps with
+  | .error message => throw {span := output.span, message}
+  | .ok _ => pure ()
+  match output.value.validate caps env with
+  | .error message => throw {span := output.span, message}
+  | .ok _ => pure (.yield .unit)
+
+private theorem validateReturnValueStep_succeeded (caps : Capabilities)
+    (env : TypeEnv) (output : Output) (step : ForInStep PUnit)
+    (success : validateReturnValueStep caps env output .unit = .ok step) :
+    step = .yield .unit ∧ output.value.validate caps env = .ok () := by
+  unfold validateReturnValueStep at success
+  cases shadowed : (env.lookup output.name).isSome with
+  | true => simp [shadowed, Bind.bind, Except.bind, throw, throwThe] at success
+  | false =>
+    cases typeCheck : output.ty.validate caps with
+    | error message => simp [shadowed, typeCheck, Bind.bind, Except.bind,
+        throw, throwThe] at success
+    | ok checkedType =>
+      cases valueCheck : output.value.validate caps env with
+      | error message => simp [shadowed, typeCheck, valueCheck, throw, throwThe] at success
+      | ok value =>
+        cases value
+        simp [shadowed, typeCheck, valueCheck] at success
+        change Except.ok (.yield .unit) = .ok step at success
+        exact ⟨(Except.ok.inj success).symm, rfl⟩
+
+private theorem forIn_return_values_valid (caps : Capabilities) (env : TypeEnv)
+    (outputs : List Output)
+    (loopAccepted : forIn outputs PUnit.unit (validateReturnValueStep caps env) = .ok .unit) :
+    ∀ output ∈ outputs, output.value.validate caps env = .ok () := by
+  induction outputs with
+  | nil => simp
+  | cons output rest ih =>
+    rw [List.forIn_cons] at loopAccepted
+    cases checked : validateReturnValueStep caps env output .unit with
+    | error message =>
+      rw [checked] at loopAccepted
+      cases loopAccepted
+    | ok step =>
+      obtain ⟨shape, valid⟩ := validateReturnValueStep_succeeded caps env output step checked
+      subst step
+      rw [checked] at loopAccepted
+      simp only [bind, Except.bind] at loopAccepted
+      intro result member
+      rcases List.mem_cons.mp member with same | later
+      · cases same
+        exact valid
+      · exact ih loopAccepted result later
+
+private theorem validateEffectSuffix_returns_valid (caps : Capabilities)
+    (ep : Entrypoint) (env : TypeEnv)
+    (accepted : Entrypoint.validateEffectSuffix caps ep env = .ok ()) :
+    ∀ output ∈ ep.returns, output.value.validate caps env = .ok () := by
+  have loopAccepted :
+      forIn ep.returns PUnit.unit (validateReturnValueStep caps env) = .ok .unit := by
+    unfold Entrypoint.validateEffectSuffix at accepted
+    by_cases namesValid : uniqueNames (ep.returns.map (·.name)) = true
+    · by_cases countValid : (ep.returns.map Output.nativeReturnFieldCount).sum ≤
+          maxEntrypointReturnFields
+      · simp [namesValid, countValid] at accepted
+        obtain ⟨_, loopAccepted, _⟩ := bind_ok.mp accepted
+        exact loopAccepted
+      · simp [namesValid, countValid, bind, Except.bind, throw, throwThe] at accepted
+    · simp [namesValid, bind, Except.bind, throw, throwThe] at accepted
+  exact forIn_return_values_valid caps env ep.returns loopAccepted
+
 private theorem validateEffectPrechecks_circuit_valid (state : List StateDecl)
     (ep : Entrypoint)
     (accepted : Entrypoint.validateEffectPrechecks stateEffectCaps state ep = .ok ()) :
@@ -648,20 +748,34 @@ theorem lower_circuit_validated_source (state : List StateDecl) (ep : Entrypoint
   have circuitAccepted := validateEffectPrefix_circuit_valid state ep initial prefixAccepted
   simpa [stateEffectCaps, Capabilities.source] using circuitAccepted
 
+/-- Accepted production lowering carries its ordered typed state effects and
+validates every physical return expression in the final source-effect environment. -/
+theorem lower_validated_effects_and_returns (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
+    (scalar : ScalarStateEffects ep.effects) :
+    ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final ∧
+      ∀ output ∈ ep.returns,
+        output.value.validate stateEffectCaps final = .ok () := by
+  have source := lower_source_validated state ep plan accepted
+  unfold Entrypoint.validate at source
+  rcases bind_ok.mp source with ⟨initial, prefixAccepted, afterPrefix⟩
+  rcases bind_ok.mp afterPrefix with ⟨final, effectsAccepted, suffixAccepted⟩
+  have initialShape := effectPrefix_env_shape state ep initial prefixAccepted
+  subst initial
+  refine ⟨final, ?_, ?_⟩
+  · exact forIn_validated_effects_at state ep ep.effects 0
+      (initialEffectTypeEnv ep) final scalar (by
+        simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)
+  · exact validateEffectSuffix_returns_valid stateEffectCaps ep final suffixAccepted
+
 /-- Accepted production lowering carries the exact ordered typed effect
 chain on the supported scalar state-effect scope. -/
 theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
     (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
     (scalar : ScalarStateEffects ep.effects) :
     ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final := by
-  have source := lower_source_validated state ep plan accepted
-  obtain ⟨initial, final, prefixAccepted, effectsAccepted⟩ :=
-    Entrypoint.validate_effect_loop_of_success stateEffectCaps state ep source
-  have initialShape := effectPrefix_env_shape state ep initial prefixAccepted
-  subst initial
-  exact ⟨final, forIn_validated_effects_at state ep ep.effects 0
-    (initialEffectTypeEnv ep) final scalar (by
-      simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)⟩
+  obtain ⟨final, chain, _⟩ := lower_validated_effects_and_returns state ep plan accepted scalar
+  exact ⟨final, chain⟩
 
 /-- Successful lowering validates scalar source read destinations against the
 initial bindings and keeps distinct destinations across the effect sequence. -/

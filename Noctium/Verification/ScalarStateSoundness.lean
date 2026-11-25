@@ -3,6 +3,7 @@ import Noctium.Verification.GenericStateEffectFold
 import Noctium.Verification.ScalarEffectReadFacts
 import Noctium.Verification.ScalarReadNames
 import Noctium.Verification.ScalarImpactOperationMeaning
+import Noctium.Verification.ScalarReturnSoundness
 
 namespace Noctium.Verification.ScalarStateSoundness
 open Backend NativeRelation ScalarNormalization
@@ -120,7 +121,8 @@ Impact plan authenticate the reads and determine the ordered source successor.
 The guard schedule may be empty or explicitly mark every effect unguarded.
 For admitted normalized fields and unguarded native input requirements, the
 public groups are exactly the fields consumed by the checked VM operations.
-The final equation retains the original source return checks. -/
+The final equations retain the original source return checks and identify
+the decoded Output observation for admitted scalar returns. -/
 theorem lowerEntrypoint_checked_state
     (state : List StateDecl) (entry : Entrypoint) (rewrites : Zkir.Rewrites)
     (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
@@ -178,7 +180,11 @@ theorem lowerEntrypoint_checked_state
         groups = NativeState.groups native) ∧
       entry.run ctx values initial = (do
         let returned ← Entrypoint.evalReturns ctx entry finalEnv
-        pure (outputs ++ returned, next)) := by
+        pure (outputs ++ returned, next)) ∧
+      ((∀ output ∈ entry.returns, ∃ _ : ScalarType output.ty, ScalarExpression output.value) →
+        ∃ returned, entry.run ctx values initial = .ok (outputs ++ returned, next) ∧
+          call.body.returns witness =
+            returned.map (fun binding => scalar (valueNumber binding.2))) := by
   let ep := Passes.pruneEntrypoint entry
   let reset := {initial with
     unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []}
@@ -204,7 +210,7 @@ theorem lowerEntrypoint_checked_state
       GenericStateEncoding.encodeState state initial from encoding_clear_unshielded state initial]
     exact admittedState.encoded
   obtain ⟨finalTypes, finalEnv, next, finalSlots, finalReads,
-    validated, effects, stateEncoded, layout, agreement⟩ :=
+    validated, effects, stateEncoded, layout, agreement, finalComplete⟩ :=
     GenericStateEffectFold.lower_checked_effects ctx state ep plan (outputs ++ values)
       readValues witness reset slots native final planAccepted unguarded effectScope operands
       (public_inputs_scalar entry values witness inputs) readDecoded distinctReads readFacts guards
@@ -216,20 +222,29 @@ theorem lowerEntrypoint_checked_state
   have disclosure : Disclosure.entrypoint entry = .ok () := by
     rw [← Passes.pruneEntrypoint_disclosure]
     exact lower_disclosure state ep plan planAccepted
+  have sourceRun :
+      entry.run ctx values initial = (do
+        let returned ← Entrypoint.evalReturns ctx entry finalEnv
+        pure (outputs ++ returned, next)) := by
+    unfold Entrypoint.run
+    simp only [disclosure, source, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    rw [show runEffectsWithGuardsAndEnv ctx entry.effects entry.effectGuards (outputs ++ values)
+          {initial with unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []} =
+        .ok (finalEnv, next) from sourceEffects]
+  obtain ⟨expected, expectedAccepted, requirements⟩ :=
+    RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_sourceRequirements
+      rewrites lowered decoded rowsParsed profile inputSchema
+  obtain ⟨assertions, bounds, _⟩ := requirements satisfies
+  have scalarReads := ScalarSourceFrame.plain_scalar_read_scope ep plan (fun read member =>
+    ⟨(plainReads read member).1, (plainReads read member).2.1⟩)
   refine ⟨outputs, readValues, finalEnv, finalTypes, next, finalSlots, finalReads, source,
-    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_, ?_⟩
+    readDecoded, validated, sourceEffects, stateEncoded, layout, agreement, ?_, sourceRun, ?_⟩
   · intro inputGuards fields
-    obtain ⟨_, expected, _, expectedAccepted, payloads⟩ :=
+    obtain ⟨_, groupExpected, _, acceptedGroups, payloads⟩ :=
       RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_impactPayloads
         rewrites lowered decoded rowsParsed profile inputSchema inputGuards
-    obtain ⟨requirementsExpected, acceptedRequirements, requirements⟩ :=
-      RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_sourceRequirements
-        rewrites lowered decoded rowsParsed profile inputSchema
-    have sameExpected := Except.ok.inj (acceptedRequirements.symm.trans expectedAccepted)
-    subst requirementsExpected
-    obtain ⟨assertions, bounds, _⟩ := requirements satisfies
-    have scalarReads := ScalarSourceFrame.plain_scalar_read_scope ep plan (fun read member =>
-      ⟨(plainReads read member).1, (plainReads read member).2.1⟩)
+    have sameExpected := Except.ok.inj (acceptedGroups.symm.trans expectedAccepted)
+    subst groupExpected
     obtain ⟨collectedFrame, collectedBounds, collectedAssertions, normalized, collected,
       boundMembers, assertionMembers⟩ := GenericStateCircuitParts.expectedEntrypoint_operations
         state ep expected plan planAccepted expectedAccepted scalarReads
@@ -248,10 +263,55 @@ theorem lowerEntrypoint_checked_state
     have values := congrArg (List.map (List.map (fun value : Option Scalar => value.getD zero)))
       exactPayloads
     simpa [List.map_map, Function.comp_def] using values
-  · unfold Entrypoint.run
-    simp only [disclosure, source, Bind.bind, Except.bind, Pure.pure, Except.pure]
-    rw [show runEffectsWithGuardsAndEnv ctx entry.effects entry.effectGuards (outputs ++ values)
-          {initial with unshieldedInputs := [], unshieldedOutputs := [], unshieldedSpendClaims := []} =
-        .ok (finalEnv, next) from sourceEffects]
+  · intro scalarReturns
+    obtain ⟨returnExpected, acceptedReturns, observations⟩ :=
+      RangeDedupAcceptedEntrypoint.lowerEntrypoint_scalarCall_returnValues
+        rewrites lowered decoded rowsParsed profile inputSchema
+    have sameExpected := Except.ok.inj (acceptedReturns.symm.trans expectedAccepted)
+    subst returnExpected
+    obtain ⟨returnFrame, normalized, frameChecked, normalizedReturns, returnTerms,
+      boundMembers, assertionMembers⟩ :=
+      GenericStateCircuitParts.expectedEntrypoint_scalar_returns
+        state ep expected plan planAccepted expectedAccepted scalarReads
+        (fun output member => by
+          obtain ⟨support, _⟩ := scalarReturns output member
+          exact ⟨support⟩)
+    have sameFrame := Except.ok.inj (frameChecked.symm.trans frameAccepted)
+    subst returnFrame
+    obtain ⟨validatedTypes, returnChain, checkedReturns⟩ :=
+      GenericStateEffectValidation.lower_validated_effects_and_returns
+        state ep plan planAccepted effectScope
+    have sameTypes := ValidatedEffects.final_unique returnChain validated
+    subst validatedTypes
+    have validReturns : ∀ output ∈ entry.returns,
+        output.value.validate Capabilities.scalarFragment finalTypes = .ok () := by
+      intro output member
+      rw [Capabilities.scalarFragment, ← GenericStateCaps.expr_validate_source_crypto]
+      exact checkedReturns output member
+    have typedFinal : TypedEnvironment hash witness frame.1
+        ((outputs ++ values) ++ readValues) finalTypes := by
+      refine ⟨typedPlan.aliases, finalComplete ?_⟩
+      intro name ty lookup
+      obtain ⟨raw, value, found, typed⟩ := base.complete name ty lookup
+      exact ⟨raw, value, by rw [List.lookup_append, found]; rfl, typed⟩
+    obtain ⟨returned, returnEvaluation, returnMeaning⟩ :=
+      ScalarReturnSoundness.normalized_scalar_return_values
+        ctx entry hash implementation witness frame.1 finalEnv ((outputs ++ values) ++ readValues)
+        finalTypes typedFinal agreement entry.returns normalized
+        (fun output member => by
+          obtain ⟨support, _⟩ := scalarReturns output member
+          exact ⟨support⟩)
+        (fun output member => (scalarReturns output member).choose_spec)
+        validReturns normalizedReturns
+        (fun bound member => bounds bound (boundMembers bound member))
+        (fun term member => assertions term (assertionMembers term member))
+    have runReturns : Entrypoint.evalReturns ctx entry finalEnv = .ok returned := returnEvaluation
+    refine ⟨returned, ?_, ?_⟩
+    · simp [sourceRun, runReturns, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    · have observed := observations satisfies
+      rw [returnTerms, List.map_map] at observed
+      have exactReturns := observed.symm.trans returnMeaning
+      have fields := congrArg (List.map (fun value : Option Scalar => value.getD zero)) exactReturns
+      simpa [List.map_map, Function.comp_def] using fields
 
 end Noctium.Verification.ScalarStateSoundness

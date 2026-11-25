@@ -1,4 +1,5 @@
 import Noctium.Backend.NativeExpected
+import Noctium.Verification.ScalarCircuit
 
 namespace Noctium.Verification.GenericStateCircuitParts
 open Backend.Native
@@ -312,6 +313,27 @@ theorem normalizeOutputs_loop (aliases : AliasEnvironment) (outputs : List Outpu
       normalizeOutputs aliases outputs := by
   simp [normalizeOutputs, outputFold, appendOutput]
 
+private def returnFrameStep (aliases : AliasEnvironment) (output : Output)
+    (state : ReturnFrame) : Except Diagnostic (ForInStep ReturnFrame) := do
+  if output.ty == Ty.bytes 0 then do
+    let emptyReturn ← (normalize aliases output.value).mapError
+      (fun message => ({span := output.span, message} : Diagnostic))
+    let fields ← output.nativeReturnFields.mapError
+      (fun message => ({span := output.span, message} : Diagnostic))
+    let returnResults ← forIn fields state.1 fun field returnResults => do
+      let value ← (normalize aliases field).mapError
+        (fun message => ({span := output.span, message} : Diagnostic))
+      pure (ForInStep.yield (returnResults ++ [value]))
+    pure (ForInStep.yield (returnResults, state.2 ++ [emptyReturn]))
+  else do
+    let fields ← output.nativeReturnFields.mapError
+      (fun message => ({span := output.span, message} : Diagnostic))
+    let returnResults ← forIn fields state.1 fun field returnResults => do
+      let value ← (normalize aliases field).mapError
+        (fun message => ({span := output.span, message} : Diagnostic))
+      pure (ForInStep.yield (returnResults ++ [value]))
+    pure (ForInStep.yield (returnResults, state.2))
+
 /-- Exact projections of the production ledger-call expected constructor. -/
 theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
     (expected : Expected) (accepted : expectedEntrypoint state entry = .ok expected) :
@@ -353,25 +375,7 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
         pure (results.map (·.term), results.flatMap (·.bounds), results.flatMap (·.assertions))) =
           .ok guardCollection ∧
       collectOperations entry.span aliases plan.operations outputFrame.2.1 = .ok operationFrame ∧
-      (forIn entry.returns ([], []) fun (output : Output) (state : ReturnFrame) => do
-        if output.ty == Ty.bytes 0 then do
-          let emptyReturn ← (normalize aliases output.value).mapError
-            (fun message => ({span := output.span, message} : Diagnostic))
-          let fields ← output.nativeReturnFields.mapError
-            (fun message => ({span := output.span, message} : Diagnostic))
-          let returnResults ← forIn fields state.1 fun field returnResults => do
-            let value ← (normalize aliases field).mapError
-              (fun message => ({span := output.span, message} : Diagnostic))
-            pure (ForInStep.yield (returnResults ++ [value]))
-          pure (ForInStep.yield (returnResults, state.2 ++ [emptyReturn]))
-        else do
-          let fields ← output.nativeReturnFields.mapError
-            (fun message => ({span := output.span, message} : Diagnostic))
-          let returnResults ← forIn fields state.1 fun field returnResults => do
-            let value ← (normalize aliases field).mapError
-              (fun message => ({span := output.span, message} : Diagnostic))
-            pure (ForInStep.yield (returnResults ++ [value]))
-          pure (ForInStep.yield (returnResults, state.2))) = .ok returns ∧
+      forIn entry.returns ([], []) (returnFrameStep aliases) = .ok returns ∧
       (activityGuardSources plan).mapM (normalizeActivityGuard entry aliases) = .ok activity ∧
       expected.inputs = inputState.1 ∧
       expected.groups = operationFrame.1 ∧
@@ -406,7 +410,7 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
     rw [readInputRequirements_eq] at inputStateAccepted
     simpa only [convert_eq_mapError] using inputStateAccepted
   have returnsExact := by
-    simpa only [convert_eq_mapError] using returnsAccepted
+    simpa only [returnFrameStep, convert_eq_mapError] using returnsAccepted
   have activityExact :
       (activityGuardSources plan).mapM (normalizeActivityGuard entry aliases) = .ok activity := by
     simp only [convert_eq_mapError] at activityAccepted
@@ -573,6 +577,87 @@ theorem expectedEntrypoint_operations (state : List StateDecl) (entry : Entrypoi
     rw [boundsShape]
     simp [member]
   · intro assertion member
+    rw [assertionsShape]
+    simp [member]
+
+private theorem returnFrameStep_scalar (aliases : AliasEnvironment) (output : Output)
+    (frame : ReturnFrame) (scalarType : ScalarNormalization.ScalarType output.ty) :
+    returnFrameStep aliases output frame = (do
+      let normal ← normalizeOutput aliases output
+      pure (.yield (frame.1 ++ [normal], frame.2))) := by
+  obtain ⟨field, fieldShape, normalizeField⟩ :=
+    ScalarNormalization.scalarOutputField aliases output.value scalarType
+  have notBytesZero : (output.ty == .bytes 0) = false := by
+    cases output with
+    | mk name ty value span => cases scalarType <;> rfl
+  simp only [returnFrameStep, notBytesZero, Bool.false_eq_true, ite_false,
+    Output.nativeReturnFields, fieldShape, normalizeOutput, List.forIn_cons,
+    List.forIn_nil, normalizeField, Pure.pure, Except.pure, Except.mapError,
+    Bind.bind, Except.bind]
+  cases normalize aliases output.value <;> rfl
+
+private theorem scalar_return_frame (aliases : AliasEnvironment) (outputs : List Output)
+    (frame final : ReturnFrame)
+    (scalar : ∀ output ∈ outputs, Nonempty (ScalarNormalization.ScalarType output.ty))
+    (accepted : forIn outputs frame (returnFrameStep aliases) = .ok final) :
+    ∃ normalized,
+      outputs.mapM (fun output => normalize aliases output.value) = .ok normalized ∧
+      final = (frame.1 ++ normalized, frame.2) := by
+  induction outputs generalizing frame final with
+  | nil =>
+    simp only [List.forIn_nil, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+    subst final
+    exact ⟨[], rfl, by simp⟩
+  | cons output rest ih =>
+    obtain ⟨scalarType⟩ := scalar output (by simp)
+    rw [List.forIn_cons, returnFrameStep_scalar aliases output frame scalarType] at accepted
+    unfold normalizeOutput at accepted
+    cases head : normalize aliases output.value with
+    | error message => simp [head, Bind.bind, Except.bind, Except.mapError] at accepted
+    | ok value =>
+      have remaining : forIn rest (frame.1 ++ [value], frame.2)
+          (returnFrameStep aliases) = .ok final := by
+        simpa [head, Bind.bind, Except.bind, Except.mapError, Pure.pure, Except.pure] using accepted
+      obtain ⟨tail, tailChecked, finalShape⟩ := ih _ _
+        (fun item member => scalar item (List.mem_cons_of_mem _ member)) remaining
+      exact ⟨value :: tail, by simp [List.mapM_cons, head, tailChecked, Bind.bind, Except.bind, Pure.pure, Except.pure],
+        by simpa only [List.append_assoc, List.singleton_append] using finalShape⟩
+
+/-- Each admitted scalar source return accounts for one expected return term.
+Its normalization uses the exact output frame and retains checked requirements. -/
+theorem expectedEntrypoint_scalar_returns (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty)
+    (scalarReturns : ∀ output ∈ entry.returns, Nonempty (ScalarNormalization.ScalarType output.ty)) :
+    ∃ (outputFrame : OutputFrame) (normalized : List Normalized),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      entry.returns.mapM (fun output => normalize outputFrame.1 output.value) = .ok normalized ∧
+      expected.returns = normalized.map (·.term) ∧
+      (∀ bound ∈ normalized.flatMap (·.bounds), bound ∈ expected.bounds) ∧
+      (∀ term ∈ normalized.flatMap (·.assertions), term ∈ expected.assertions) := by
+  obtain ⟨actualPlan, outputFrame, aliases, _, _, _, _, _, _, returns, _,
+    planAccepted, outputsAccepted, aliasesAccepted, _, _, _, _, _, _, returnsAccepted, _,
+    _, _, returnsShape, _, _, _, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst actualPlan
+  have aliasesEq :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
+  obtain ⟨normalized, checked, exactReturns⟩ :=
+    scalar_return_frame aliases entry.returns ([], []) returns scalarReturns returnsAccepted
+  subst returns
+  refine ⟨outputFrame, normalized, outputsAccepted,
+    by simpa only [aliasesEq] using checked, by simpa using returnsShape, ?_, ?_⟩
+  · intro bound member
+    rw [boundsShape]
+    simp [member]
+  · intro term member
     rw [assertionsShape]
     simp [member]
 

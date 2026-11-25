@@ -87,7 +87,7 @@ def valueNumber : Value → Nat
   | .bytes _ _ | .opaqueBytes _ | .opaqueString _ | .jubjubScalar _ | .jubjubPoint _ _
   | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ | .record _ => 0
 
-private theorem valueNumber_pack_scalar (ty : Ty) (value : ty.Denote)
+theorem valueNumber_pack_scalar (ty : Ty) (value : ty.Denote)
     (scalarType : ScalarType ty) :
     valueNumber (Value.pack ty value) = number scalarType value := by
   cases scalarType <;> rfl
@@ -145,7 +145,8 @@ private theorem normalize_native_cast {ty : Ty} (aliases : AliasEnvironment)
   simp only [normalize, requireSourceType_eq, bind, Except.bind, pure, Except.pure]
   cases normalized : normalize aliases expression <;> simp [normalized]
 
-private theorem scalarOutputField (aliases : AliasEnvironment) {ty : Ty}
+/-- A scalar ABI return field has the same normalized meaning as its source value. -/
+theorem scalarOutputField (aliases : AliasEnvironment) {ty : Ty}
     (value : Expr ty) (scalarType : ScalarType ty) :
     ∃ field, value.nativeCallFields = [field] ∧
       normalize aliases field = normalize aliases value := by
