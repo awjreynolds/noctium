@@ -66,6 +66,19 @@ private def scalarImpactExpected : List NativeState.Op := [
     | .error _ => Bool.false
   | .error _ => Bool.false
 
+-- The first supplied parameter succeeds. Both evaluators must report the
+-- same next missing parameter before reaching the later count read.
+#guard match Backend.Impact.lower [] scalarImpactEntry with
+  | .ok plan =>
+    let incomplete : EvalEnv := [("amount", .native 17)]
+    match GenericStateOps.evalPlan scalarImpactContext incomplete plan,
+      plan.operations.mapM (fun operation =>
+        GenericStateOps.evalFields scalarImpactContext incomplete operation.fields) with
+    | .error operationError, .error fieldError =>
+      operationError == "missing value 'enabled'" && fieldError == operationError
+    | _, _ => Bool.false
+  | .error _ => Bool.false
+
 private def bytes32ImpactEnv : EvalEnv :=
   [("digest", .bytes 32 (List.range 32))]
 

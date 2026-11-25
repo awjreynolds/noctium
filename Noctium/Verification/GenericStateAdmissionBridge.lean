@@ -74,6 +74,20 @@ theorem lower_field_admission (state : List StateDecl) (entry : Entrypoint)
   · exact bound _ (by simp [Impact.Op.fields])
   all_goals trivial
 
+/-- The accepted Impact plan orders the exact serialized scalar fields and
+native operations. Under scalar operation admission, both evaluations return
+the same groups on success or the same first evaluation error. -/
+theorem lower_evaluated_plan_groups_exact (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (ctx : EvalContext) (values : EvalEnv)
+    (lowered : Impact.lower state entry = .ok plan)
+    (modulus : ctx.modulus = Field.modulus)
+    (supported : ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation) :
+    plan.operations.mapM (fun operation =>
+      GenericStateOps.evalFields ctx values operation.fields) =
+        (GenericStateOps.evalPlan ctx values plan).map NativeState.groups := by
+  exact GenericStateOps.evalOperations_fields_exact ctx values plan.operations supported modulus
+    (lower_field_admission state entry plan lowered)
+
 /-- The actual lowered plan and its successful scalar VM evaluation fix the
 ordered native field groups and the supported operation fragment together. -/
 theorem lower_evaluated_plan_groups (state : List StateDecl) (entry : Entrypoint)
