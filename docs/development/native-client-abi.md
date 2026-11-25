@@ -206,6 +206,69 @@ unsupported collection return an error.
 [C header](../../runtime/include/noctium_native.h) ·
 [ABI tests](../../runtime/tests/collection_reads.rs)
 
+## Replay the scalar collection fixture
+
+The fixture manifest lists one public Impact plan and three tagged Ledger
+`ContractState` snapshots with SHA-256 hashes of the exact files. Each
+case specifies a state name, offset, limit and expected
+`noctium_ledger_collection_page` response. Use `keys: []` for these root
+collections and take both pins from the reviewed manifest.
+[Fixture manifest](../../tests/fixtures/native-collection-pages/manifest.json)
+
+`empty.state` covers empty List, Map and Set pages. `populated.state` has
+two pages each for `values` (List of Field), `flags` (Map from Field to
+Bool) and `members` (Set of Bytes32). `removed.state` records the Set
+after removing the member filled with byte 4. List pages preserve
+head-to-tail order. The Compact oracle sorts Map keys numerically and Set
+members lexicographically before slicing the pages.
+
+Swift and Android tests share the manifest and plan. Use the empty and
+populated snapshots for List and Map cases. Set cases also use the removed
+snapshot. [Swift List](https://github.com/awjreynolds/noctium/issues/1375) ·
+[Swift Map](https://github.com/awjreynolds/noctium/issues/1376) ·
+[Swift Set](https://github.com/awjreynolds/noctium/issues/1377) ·
+[Android List](https://github.com/awjreynolds/noctium/issues/1378) ·
+[Android Map](https://github.com/awjreynolds/noctium/issues/1379) ·
+[Android Set](https://github.com/awjreynolds/noctium/issues/1380)
+
+The fixture uses the selected Ledger 9.1.0.1 and ZKIR 3.2.1 profile.
+The oracle uses Compact 0.36.1 at `7fa3a117c` and Compact Runtime 0.21.0.
+[Target profile](../../profiles/midnight-ledger-9-zkir-3.2.1-target.json) ·
+[Pinned ledger source](../../runtime/Cargo.toml) ·
+[Compact release](https://github.com/LFDT-Minokawa/compact/releases/tag/compactc-v0.36.1) ·
+[Compact Runtime package](https://www.npmjs.com/package/@midnight-ntwrk/compact-runtime/v/0.21.0)
+
+Replay the retained bytes on the C ABI with Rust 1.100.0:
+
+```sh
+cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321 --test collection_reads \
+  retained_collection_snapshot_pages_match_c_abi -- --exact
+```
+
+Export to a scratch directory and compare with the retained fixture. Set
+`COMPACTC_0361` and `COMPACT_RUNTIME_0210` to absolute paths to the pinned
+compiler and Runtime package directory.
+
+```sh
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+NOCTIUM_COLLECTION_FIXTURE_EXPORT="$scratch/fixture" \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+    --no-default-features --features zkir-321 --test collection_reads \
+    retained_collection_snapshot_pages_match_c_abi -- --exact
+diff -r tests/fixtures/native-collection-pages "$scratch/fixture"
+"$COMPACTC_0361" --version | grep -E '^0\.36\.1 \(7fa3a117c'
+"$COMPACTC_0361" --skip-zk tests/compact/NativeCollectionPages.compact "$scratch/compact"
+NOCTIUM_COMPACT_RUNTIME_DIR="$COMPACT_RUNTIME_0210" \
+  node tests/compact/native-collection-pages.mjs "$scratch/compact"
+```
+
+The test builds synthetic public state with the native Ledger types and
+serializes each tagged snapshot. The C ABI replay checks all ten pages
+and rejects a tampered plan or snapshot hash. The Compact oracle derives
+the canonical page values independently by running the collection circuits.
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to
