@@ -615,38 +615,42 @@ theorem lowerEntrypoint_name_budget_of_frame (state : List StateDecl)
   exact NativeRelationJson.generatedIdentifier_fits_output_capacity index
     (Nat.lt_of_lt_of_le indexBound bounded)
 
+private theorem scalarOutput_nativeReturnFields (output : Output)
+    (scalarType : ScalarNormalization.ScalarType output.ty)
+    (admitted : ScalarNormalization.ScalarExpression output.value) :
+    ∃ field : Expr .native, output.nativeReturnFields = .ok [field] ∧
+      ScalarNormalization.ScalarExpression field := by
+  cases output with
+  | mk name ty value span =>
+    cases scalarType with
+    | native => exact ⟨value, rfl, admitted⟩
+    | bool => exact ⟨.cast .native value, rfl,
+        ScalarNormalization.ScalarExpression.cast value .bool .native admitted⟩
+    | uint maximum => exact ⟨.cast .native value, rfl,
+        ScalarNormalization.ScalarExpression.cast value (.uint maximum) .native admitted⟩
+
 private theorem scalarReturnPreflight_preservesOutputCapacityFrame
-    (circuit : Circuit)
-    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit)
-    (output : Output) (member : output ∈ circuit.outputs) :
+    (output : Output) (scalarType : ScalarNormalization.ScalarType output.ty) :
     Zkir.PreservesOutputCapacityFrame (Zkir.lowerReturnPreflight output) := by
   cases output with
   | mk name ty value span =>
-    obtain ⟨scalarType, _⟩ := admitted.outputs ⟨name, ty, value, span⟩ member
-    cases scalarType with
-    | native =>
-      simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
-    | bool =>
-      simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
-    | uint maximum =>
+    cases scalarType <;>
       simpa [Zkir.lowerReturnPreflight] using Zkir.pure_preservesOutputCapacityFrame ()
 
 private theorem scalarReturnFields_preservesOutputCapacityFrame
-    (circuit : Circuit)
-    (admitted : ScalarNormalization.ScalarCircuitAdmission circuit)
-    (output : Output) (member : output ∈ circuit.outputs) :
+    (output : Output) (scalarType : ScalarNormalization.ScalarType output.ty)
+    (expressionAdmission : ScalarNormalization.ScalarExpression output.value) :
     ∀ projections, output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
       Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr field) := by
-  obtain ⟨nativeField, fieldsAccepted, expressionAdmission⟩ :=
-    ScalarNormalization.ScalarCircuitAdmission.nativeReturnFields
-      circuit admitted output member
+  obtain ⟨nativeField, fieldsAccepted, nativeAdmission⟩ :=
+    scalarOutput_nativeReturnFields output scalarType expressionAdmission
   intro projections acceptedProjections field fieldMember
   have projectionsEq : [nativeField] = projections :=
     Except.ok.inj (fieldsAccepted.symm.trans acceptedProjections)
   subst projections
   have fieldEq : field = nativeField := by simpa using fieldMember
   subst field
-  exact lowerExpr_admitted_preservesOutputCapacityFrame nativeField expressionAdmission
+  exact lowerExpr_admitted_preservesOutputCapacityFrame nativeField nativeAdmission
 
 /-- Scalar admission supplies every expression frame needed to prove the
 default, pruned circuit body preserves its output allocation capacity. -/
@@ -660,10 +664,12 @@ theorem lowerBody_scalarAdmission_has_output_capacity_frame (circuit : Circuit)
     (fun condition member =>
       lowerExpr_admitted_preservesOutputCapacityFrame condition
         (prunedAdmission.constraints condition member))
-    (fun output member =>
-      scalarReturnPreflight_preservesOutputCapacityFrame pruned prunedAdmission output member)
-    (fun output member =>
-      scalarReturnFields_preservesOutputCapacityFrame pruned prunedAdmission output member)
+    (fun output member => by
+      obtain ⟨scalarType, _⟩ := prunedAdmission.outputs output member
+      exact scalarReturnPreflight_preservesOutputCapacityFrame output scalarType)
+    (fun output member => by
+      obtain ⟨scalarType, expressionAdmission⟩ := prunedAdmission.outputs output member
+      exact scalarReturnFields_preservesOutputCapacityFrame output scalarType expressionAdmission)
   exact bodyFrame {}
 
 /-- An accepted producer circuit assigns numeric names within the producer's
@@ -687,5 +693,114 @@ theorem lowerCircuit_scalarAdmission_generatedIdentifier (circuit : Circuit)
   apply NativeRelationJson.generatedIdentifier_fits_output_capacity
   exact Nat.lt_of_lt_of_le bounded
     (lowerCircuit_scalarAdmission_names_fit_producerCapacity circuit admitted produced)
+
+/-- Scalar expressions at the exact positions lowered by an entrypoint plan.
+The circuit admission covers its constraints and output aliases. The separate
+return list and state-derived plan expressions retain their own premises. -/
+structure ScalarEntrypointPlanAdmission (entry : Entrypoint) (plan : Impact.Plan) : Prop where
+  readGuards : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+    ∀ scalarRead ∈ read.scalarReads, ∀ guard, scalarRead.guard = some guard →
+      ScalarNormalization.ScalarExpression guard
+  readDefaults : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+    ∀ condition ∈ read.inactiveDefaultConstraints,
+      ScalarNormalization.ScalarExpression condition
+  planGuards : ∀ condition ∈ plan.guards,
+    ScalarNormalization.ScalarExpression condition
+  operationFields : ∀ item ∈ plan.operations.zipIdx, ∀ group ∈ item.1.fieldGroups,
+    ∀ field ∈ group, ScalarNormalization.ScalarExpression field
+  operationGuards : ∀ (index : Nat) (guard : Expr .bool),
+    plan.activityGuards[index]? = some (some guard) →
+    ScalarNormalization.ScalarExpression guard
+  returns : ∀ output ∈ entry.returns,
+    ∃ _scalarType : ScalarNormalization.ScalarType output.ty,
+      ScalarNormalization.ScalarExpression output.value
+
+/-- Compose the scalar-admitted circuit with scalar premises at the exact
+state-plan and return positions visited by entrypoint lowering. -/
+theorem lowerEntrypointBody_scalarAdmission_has_output_capacity_frame
+    (entry : Entrypoint) (plan : Impact.Plan)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission entry.circuit)
+    (planAdmission : ScalarEntrypointPlanAdmission entry plan) :
+    Zkir.OutputCapacityFrame {} ((Zkir.lowerEntrypointBody entry plan).run {}).2 := by
+  have constraintsFrame : ∀ condition ∈ entry.circuit.constraints,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr condition) := by
+    intro condition member
+    exact lowerExpr_admitted_preservesOutputCapacityFrame condition
+      (admitted.constraints condition member)
+  have aliasesFrame : Zkir.PreservesOutputCapacityFrame
+      (Zkir.lowerEntrypointAliases entry) := by
+    apply Zkir.lowerEntrypointAliases_preservesOutputCapacityFrame entry
+    intro output member
+    obtain ⟨scalarType, expressionAdmission⟩ := admitted.outputs output member
+    cases output with
+    | mk name ty value span =>
+      cases scalarType <;>
+        exact lowerExpr_admitted_preservesOutputCapacityFrame value expressionAdmission
+  have readGuardsFrame := fun read readMember scalarRead scalarReadMember guard selected =>
+    lowerExpr_admitted_preservesOutputCapacityFrame guard
+      (planAdmission.readGuards read readMember scalarRead scalarReadMember guard selected)
+  have readDefaultsFrame := fun read readMember condition conditionMember =>
+    lowerExpr_admitted_preservesOutputCapacityFrame condition
+      (planAdmission.readDefaults read readMember condition conditionMember)
+  have planGuardsFrame := fun condition member =>
+    lowerExpr_admitted_preservesOutputCapacityFrame condition
+      (planAdmission.planGuards condition member)
+  have operationFieldsFrame := fun item itemMember group groupMember field fieldMember =>
+    lowerExpr_admitted_preservesOutputCapacityFrame field
+      (planAdmission.operationFields item itemMember group groupMember field fieldMember)
+  have operationGuardsFrame : ∀ item ∈ plan.operations.zipIdx,
+      Zkir.PreservesOutputCapacityFrame
+        (Zkir.lowerExpr (((plan.activityGuards[item.2]?).getD none).getD (.bool true))) := by
+    intro item itemMember
+    cases selected : plan.activityGuards[item.2]? with
+    | none =>
+      simpa [selected] using
+        lowerExpr_admitted_preservesOutputCapacityFrame (.bool true)
+          (ScalarNormalization.ScalarExpression.bool true)
+    | some activity =>
+      cases activity with
+      | none =>
+        simpa [selected] using
+          lowerExpr_admitted_preservesOutputCapacityFrame (.bool true)
+            (ScalarNormalization.ScalarExpression.bool true)
+      | some guard =>
+        have guardAdmission := planAdmission.operationGuards item.2 guard (by simp [selected])
+        simpa [selected] using lowerExpr_admitted_preservesOutputCapacityFrame guard guardAdmission
+  have preflightFrame : ∀ output ∈ entry.returns,
+      Zkir.PreservesOutputCapacityFrame (Zkir.lowerReturnPreflight output) := by
+    intro output member
+    obtain ⟨scalarType, _⟩ := planAdmission.returns output member
+    exact scalarReturnPreflight_preservesOutputCapacityFrame output scalarType
+  have returnFieldsFrame : ∀ output ∈ entry.returns, ∀ projections,
+      output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
+        Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr field) := by
+    intro output member
+    obtain ⟨scalarType, expressionAdmission⟩ := planAdmission.returns output member
+    exact scalarReturnFields_preservesOutputCapacityFrame output scalarType expressionAdmission
+  have bodyFrame := Zkir.lowerEntrypointBody_preservesOutputCapacityFrame entry plan
+    constraintsFrame aliasesFrame readGuardsFrame readDefaultsFrame planGuardsFrame
+    operationFieldsFrame operationGuardsFrame preflightFrame returnFieldsFrame
+  exact bodyFrame {}
+
+/-- An accepted entrypoint gets the native identifier bound when every exact
+plan produced from its pruned form has the scalar expression admissions above. -/
+theorem lowerEntrypoint_scalarAdmission_names_fit_outputCapacity (state : List StateDecl)
+    (entry : Entrypoint) (program : Lean.Json)
+    (accepted : Zkir.lowerEntrypoint state entry = .ok program)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission entry.circuit)
+    (planAdmissions : ∀ plan,
+      Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan →
+        ScalarEntrypointPlanAdmission (Passes.pruneEntrypoint entry) plan) :
+    ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      let next :=
+        ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.next
+      next ≤ Native.maxInstructions * Native.maxVectorLength ∧
+        ∀ index, index < next → NativeRelationJson.validIdentifier s!"%v{index}" = true := by
+  apply lowerEntrypoint_name_budget_of_frame state entry program accepted
+  intro plan planAccepted
+  exact lowerEntrypointBody_scalarAdmission_has_output_capacity_frame
+    (Passes.pruneEntrypoint entry) plan
+    (ScalarNormalization.ScalarCircuitAdmission.pruneCircuit entry.circuit admitted)
+    (planAdmissions plan planAccepted)
 
 end Noctium.Verification.ScalarAllocationOutputFrame
