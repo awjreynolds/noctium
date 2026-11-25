@@ -661,6 +661,7 @@ jobs:
             Noctium.Verification.GuardedEffectPrefix \
             Noctium.Verification.GenericStateAdmissionBridge \
             Noctium.Verification.GenericStateCheckedReadDecode \
+            Noctium.Verification.GenericStateReadAuthentication \
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
