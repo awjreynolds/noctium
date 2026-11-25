@@ -936,8 +936,28 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
             simp [Expr.eval, ihA caps types ctx left right acceptedA agreement,
               ihB caps types ctx left right acceptedB agreement]
     | bytes length => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Bind.bind, Except.bind, throw] at valid
-    | opaqueBytes => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Bind.bind, Except.bind, throw] at valid
-    | opaqueString => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Bind.bind, Except.bind, throw] at valid
+    | opaqueBytes | opaqueString =>
+      cases supported : caps.equality
+      · simp [Expr.validate, Ty.isBytes, supported, Bind.bind, Except.bind,
+          throw] at valid
+      · cases first : a.validate caps types with
+        | error message =>
+          simp [Expr.validate, Ty.isBytes, supported, first, Bind.bind,
+            Except.bind] at valid
+        | ok checked =>
+          cases checked
+          cases second : b.validate caps types with
+          | error message =>
+            simp [Expr.validate, Ty.isBytes, supported, first, second,
+              Bind.bind, Except.bind] at valid
+          | ok checked =>
+            cases checked
+            have acceptedA : a.validate caps types = .ok () := first
+            have acceptedB : b.validate caps types = .ok () := by
+              simpa [Expr.validate, Ty.isBytes, supported, first,
+                Bind.bind, Except.bind] using valid
+            simp [Expr.eval, ihA caps types ctx left right acceptedA agreement,
+              ihB caps types ctx left right acceptedB agreement]
   case select =>
     intro ty condition yes no ihCondition ihYes ihNo caps types ctx left right valid agreement
     cases ty with
@@ -1050,8 +1070,34 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
                   simp [Expr.eval, ihCondition caps types ctx left right acceptedCondition agreement,
                     ihYes caps types ctx left right acceptedYes agreement,
                     ihNo caps types ctx left right acceptedNo agreement]
-    | opaqueBytes => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Ty.isJubjub, Ty.isForeign, Bind.bind, Except.bind, throw] at valid
-    | opaqueString => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Ty.isJubjub, Ty.isForeign, Bind.bind, Except.bind, throw] at valid
+    | opaqueBytes | opaqueString =>
+      cases selectCap : caps.select
+      · simp [Expr.validate, Ty.isBytes, Ty.isJubjub, Ty.isForeign,
+          selectCap, Bind.bind, Except.bind, throw] at valid
+      · cases first : condition.validate caps types with
+        | error message =>
+          simp [Expr.validate, Ty.isBytes, Ty.isJubjub, Ty.isForeign,
+            selectCap, first, Bind.bind, Except.bind] at valid
+        | ok checked =>
+          cases checked
+          cases second : yes.validate caps types with
+          | error message =>
+            simp [Expr.validate, Ty.isBytes, Ty.isJubjub, Ty.isForeign,
+              selectCap, first, second, Bind.bind, Except.bind] at valid
+          | ok checked =>
+            cases checked
+            cases third : no.validate caps types with
+            | error message =>
+              simp [Expr.validate, Ty.isBytes, Ty.isJubjub, Ty.isForeign,
+                selectCap, first, second, third, Bind.bind, Except.bind] at valid
+            | ok checked =>
+              cases checked
+              have acceptedCondition : condition.validate caps types = .ok () := first
+              have acceptedYes : yes.validate caps types = .ok () := second
+              have acceptedNo : no.validate caps types = .ok () := third
+              simp [Expr.eval, ihCondition caps types ctx left right acceptedCondition agreement,
+                ihYes caps types ctx left right acceptedYes agreement,
+                ihNo caps types ctx left right acceptedNo agreement]
     | jubjubScalar => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Ty.isJubjub, Ty.isForeign, Bind.bind, Except.bind, throw] at valid
     | jubjubPoint => simp [Expr.validate, Ty.isBytes, Ty.isOpaqueBytes, Ty.isOpaqueString, Ty.isJubjub, Ty.isForeign, Bind.bind, Except.bind, throw] at valid
   case poseidon2 =>

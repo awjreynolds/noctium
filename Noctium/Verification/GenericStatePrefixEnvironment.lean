@@ -1,4 +1,4 @@
-import Noctium.Verification.GenericStateCandidateEnvironment
+import Noctium.Verification.GenericStateInputValues
 import Noctium.Verification.GenericStateExpressionScope
 
 namespace Noctium.Verification.GenericStatePrefixEnvironment
@@ -68,17 +68,20 @@ theorem extend_read (types : TypeEnv) (current complete : EvalEnv)
     simp only [List.lookup_cons, unequal]
     exact agrees found foundTy typed
 
-theorem candidate_read_lookup (base : EvalEnv)
+/-- A freshly named read keeps the exact decoded binding when appended after
+the source input and output bindings. -/
+theorem candidate_read_lookup (base decoded : EvalEnv)
     (reads : List Backend.Impact.Read) (witness : Assignment)
+    (success : GenericStateInputValues.decodeReads reads witness = .ok decoded)
     (distinct : reads.Pairwise (fun left right => left.name ≠ right.name))
     (read : Backend.Impact.Read) (member : read ∈ reads)
     (fresh : base.lookup read.name = none) :
-    (base ++ GenericStateInputValues.decodeReads reads witness).lookup read.name =
-      some (Value.pack read.ty
-        (GenericStateInputValues.sourceValue read.ty
+    ∃ supported : ScalarType read.ty,
+      (base ++ decoded).lookup read.name = some (Value.pack read.ty
+        (GenericStateInputValues.sourceValue supported
           (witness ("%input_" ++ read.name)))) := by
   rw [List.lookup_append, fresh]
-  exact GenericStateInputValues.decodeReads_lookup reads witness distinct read member
+  exact GenericStateInputValues.decodeReads_lookup reads witness decoded success distinct read member
 
 /-- Non-read effects keep the same source environment and scope. -/
 theorem preserve (types : TypeEnv) (current complete : EvalEnv)
