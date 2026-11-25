@@ -13,17 +13,17 @@ theorem source_require_true (ctx : EvalContext) (env : EvalEnv)
     condition.eval ctx env = .ok true ∧ after = (env, state) := by
   cases evaluated : condition.eval ctx env with
   | error message =>
-    simp [SourceEffects.step, evaluated, bind, Except.bind] at success
+    simp [SourceEffects.step, runEffectWithEnv, evaluated, Bind.bind, Except.bind] at success
   | ok value =>
     cases value with
     | false =>
-      simp [SourceEffects.step, evaluated, bind, Except.bind,
+      simp [SourceEffects.step, runEffectWithEnv, evaluated, Bind.bind, Except.bind,
         throw, throwThe] at success
     | true =>
       have exactStep : SourceEffects.step ctx (.require condition)
           (env, state) = .ok (env, state) := by
-        simp [SourceEffects.step, evaluated, bind, Except.bind,
-          pure, Except.pure]
+        simp [SourceEffects.step, runEffectWithEnv, evaluated, Bind.bind, Except.bind,
+          Pure.pure, Except.pure]
       rw [exactStep] at success
       exact ⟨rfl, (Except.ok.inj success).symm⟩
 

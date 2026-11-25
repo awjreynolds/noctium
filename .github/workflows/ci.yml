@@ -671,6 +671,8 @@ jobs:
             Noctium.Verification.GenericStateWriteSourceTrace \
             Noctium.Verification.GenericStateWriteAuthentication \
             Noctium.Verification.GenericStateConverseWrite \
+            Noctium.Verification.GuardedWriteAuthentication \
+            Noctium.Verification.GuardedRequireSemantics \
             Noctium.Verification.GenericStateAbsenceInversion \
             Noctium.Verification.GenericStatePrefixEnvironment \
             Noctium.Verification.GenericStateCellAdmission

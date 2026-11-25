@@ -1,26 +1,9 @@
 import Noctium.Verification.GenericStateMapReadAuthentication
-import Noctium.Verification.GuardedScalarExpressionScope
 import Noctium.Verification.GuardedScalarInput
 import Noctium.Verification.GuardedScalarTotalization
 
 namespace Noctium.Verification.GuardedMapReadAuthentication
 open Backend NativeRelation NativeState ScalarNormalization
-
-private theorem eval_active_key (ctx : EvalContext) (env : EvalEnv)
-    (key : Expr ty) (admitted : ScalarExpression key) (guard : Expr .bool)
-    (binder : String) (fresh : binder ∉ Impact.expressionNames key)
-    (active : guard.eval ctx env = .ok true) (modulus : ctx.modulus = Field.modulus) :
-    (Expr.letE binder guard (GuardedExpression.totalize (.ref binder) key)).eval ctx env =
-      key.eval ctx env := by
-  let extended : EvalEnv := (binder, Value.pack .bool true) :: env
-  have guardRef : (Expr.ref binder : Expr .bool).eval ctx extended = .ok true := by
-    simp [Expr.eval, extended, Value.pack, Value.as, canonical_eq, Pure.pure, Except.pure]
-  have body := GuardedScalarTotalization.eval_totalize_active key admitted ctx extended
-    binder modulus fresh guardRef
-  have keyEval := GuardedScalarExpressionScope.eval_fresh_cons ctx key admitted env binder
-    (Value.pack .bool true) fresh
-  simp only [Expr.eval, active, Bind.bind, Except.bind]
-  exact body.trans keyEval
 
 private theorem guarded_chunk (ctx : EvalContext) (env : EvalEnv)
     (state : List StateDecl) (name destination : String) (keyTy valueTy : Ty) (key : Expr keyTy)
@@ -35,7 +18,8 @@ private theorem guarded_chunk (ctx : EvalContext) (env : EvalEnv)
   have nonForeign : ∀ kind, keyTy ≠ .foreign kind := by cases scalarType <;> simp
   obtain ⟨binder, fresh, raw, appended, sameOps⟩ := Impact.appendEffectWithActivity_readMap_key
     state name destination keyTy valueTy key guard before after nonForeign compiled
-  exact ⟨_, eval_active_key ctx env key admitted guard binder fresh active modulus,
+  exact ⟨_, GuardedScalarTotalization.eval_active_value ctx env key admitted guard
+      binder fresh active modulus,
     raw, appended, sameOps⟩
 
 /-- An active guarded Map read authenticates the actual native read against

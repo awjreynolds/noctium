@@ -114,17 +114,9 @@ theorem appendActivity_chunk (state : List StateDecl) (effect : Effect)
   cases scope with
   | unguarded scope => exact unguarded_chunk state effect scope before after lengths step
   | require condition required =>
-    unfold Impact.appendEffectWithActivity at step
-    simp only [bind_ok] at step
-    obtain ⟨effect, lowered, raw, appended, wrapped⟩ := step
-    have effectShape : ∃ required', effect = .require required' := by
-      simp only [Pure.pure, Except.pure] at lowered
-      cases lowered
-      exact ⟨_, rfl⟩
-    obtain ⟨required', rfl⟩ := effectShape
-    simp only [Impact.appendEffect] at appended
-    cases appended
-    cases wrapped
+    rw [Impact.appendEffectWithActivity_require] at step
+    simp only [Impact.appendEffect] at step
+    cases step
     exact ⟨[], (List.append_nil _).symm, by simp [operationGuards]⟩
   | readCell condition name destination ty =>
     obtain ⟨slot, value, _, _, _, _, _, ops, guards⟩ :=

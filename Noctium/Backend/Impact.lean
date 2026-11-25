@@ -2002,10 +2002,32 @@ private def totalizePathKeys (condition : Expr .bool) (keys : List PathKey) : Li
       let guardName := freshActivityName (avoid ++ expressionNames condition ++ expressionNames value)
       .mk ty (.letE guardName condition (Noctium.GuardedExpression.totalize (.ref guardName) value))
 
-private def totalizeActivityCondition (guard condition : Expr .bool) : Expr .bool :=
+def totalizeActivityCondition (guard condition : Expr .bool) : Expr .bool :=
   let name := freshActivityName (expressionNames guard ++ expressionNames condition)
   .letE name guard
     (.select (.ref name) (Noctium.GuardedExpression.totalize (.ref name) condition) (.bool true))
+
+/-- The guarded requirement rewrite captures the gate under a fresh binder,
+which is absent from both the gate and the required condition. -/
+theorem totalizeActivityCondition_shape (guard condition : Expr .bool) :
+    ∃ name,
+      totalizeActivityCondition guard condition =
+        .letE name guard
+          (.select (.ref name)
+            (Noctium.GuardedExpression.totalize (.ref name) condition) (.bool true)) ∧
+      name ∉ expressionNames guard ∧ name ∉ expressionNames condition := by
+  let avoid := expressionNames guard ++ expressionNames condition
+  let name := freshActivityName avoid
+  have fresh : name ∉ avoid := by
+    simpa [name, avoid] using freshActivityName_not_mem avoid
+  have guardFresh : name ∉ expressionNames guard := by
+    intro member
+    exact fresh (List.mem_append_left _ member)
+  have conditionFresh : name ∉ expressionNames condition := by
+    intro member
+    exact fresh (List.mem_append_right _ member)
+  refine ⟨name, ?_, guardFresh, conditionFresh⟩
+  simp [totalizeActivityCondition, name, avoid]
 
 /-- Evaluate a nested branch condition only when its enclosing branch is active.
 The inactive arm becomes false, and partial condition expressions are totalized
@@ -2734,6 +2756,14 @@ def appendEffectWithActivity (state : List StateDecl) (effect : Effect)
       pure {result with activityGuards := priorGuards ++ List.replicate added none}
   | some _, _ => throw "native guards are supported only on ledger reads, writes, and require effects"
 
+/-- A guarded require appends its totalized condition to the plan's existing
+guard list and leaves operation lowering unchanged. -/
+@[simp] theorem appendEffectWithActivity_require (state : List StateDecl)
+    (gate required : Expr .bool) (plan : Plan) :
+    appendEffectWithActivity state (.require required) (some gate) plan =
+      appendEffect state (.require (totalizeActivityCondition gate required)) plan := by
+  rfl
+
 /-- Lower ordered effects while keeping optional activity guards aligned with
 each emitted opcode group, and record the exclusive operation end after each
 source effect. -/
@@ -3096,6 +3126,87 @@ theorem appendEffectWithActivity_readMap_key (state : List StateDecl)
       simp only [readFound, Pure.pure, Except.pure, Except.map] at projected
       exact (Except.ok.inj projected).symm
   exact ⟨binder, fresh, raw, appended, sameOps⟩
+
+/-- An accepted guarded Cell write exposes the totalized source value and its
+fresh activity binder. On an active guard, verification can recover the
+source evaluation without assuming the totalized expression is equivalent on
+inactive paths. -/
+theorem appendEffectWithActivity_writeCell_value (state : List StateDecl)
+    (name : String) (ty : Ty) (value : Expr ty) (guard : Expr .bool)
+    (before after : Plan)
+    (accepted : appendEffectWithActivity state (.writeCell name ty value)
+      (some guard) before = .ok after) :
+    ∃ binder, binder ∉ expressionNames value ∧ ∃ raw,
+      appendEffect state (.writeCell name ty
+        (.letE binder guard (Noctium.GuardedExpression.totalize (.ref binder) value)))
+        before = .ok raw ∧ after.operations = raw.operations := by
+  let avoid := expressionNames guard ++ expressionNames value
+  let binder := freshActivityName avoid
+  have fresh : binder ∉ expressionNames value := by
+    intro member
+    exact freshActivityName_not_mem avoid (List.mem_append_right _ member)
+  have rewritten : totalizeActivityValue guard [] value =
+      .letE binder guard (Noctium.GuardedExpression.totalize (.ref binder) value) := by
+    simp [totalizeActivityValue, binder, avoid]
+  unfold appendEffectWithActivity at accepted
+  simp only [exceptBindOk] at accepted
+  obtain ⟨effect, effectAccepted, raw, appended, wrapped⟩ := accepted
+  simp only [rewritten, Pure.pure, Except.pure] at effectAccepted
+  cases effectAccepted
+  have sameOps : after.operations = raw.operations := by
+    have projected := congrArg (Except.map Plan.operations) wrapped
+    simp only [Pure.pure, Except.pure, Except.map] at projected
+    exact (Except.ok.inj projected).symm
+  exact ⟨binder, fresh, raw, appended, sameOps⟩
+
+/-- An accepted guarded scalar Map write exposes separately fresh
+totalizations for its key and value. Both expressions evaluate like their
+source terms when the guard is active. -/
+theorem appendEffectWithActivity_writeMap_key_value (state : List StateDecl)
+    (name : String) (keyTy valueTy : Ty) (key : Expr keyTy) (value : Expr valueTy)
+    (guard : Expr .bool) (before after : Plan)
+    (nonForeign : ∀ kind, keyTy ≠ .foreign kind)
+    (accepted : appendEffectWithActivity state
+      (.writeMap name keyTy valueTy key value) (some guard) before = .ok after) :
+    ∃ keyBinder, keyBinder ∉ expressionNames key ∧
+      ∃ valueBinder, valueBinder ∉ expressionNames value ∧ ∃ raw,
+        appendEffect state (.writeMap name keyTy valueTy
+          (.letE keyBinder guard (Noctium.GuardedExpression.totalize
+            (.ref keyBinder) key))
+          (.letE valueBinder guard (Noctium.GuardedExpression.totalize
+            (.ref valueBinder) value))) before = .ok raw ∧
+        after.operations = raw.operations := by
+  let avoid := expressionNames key ++ expressionNames value
+  let keyBinder := freshActivityName (avoid ++ expressionNames guard ++ expressionNames key)
+  let valueBinder := freshActivityName (avoid ++ expressionNames guard ++ expressionNames value)
+  have keyFresh : keyBinder ∉ expressionNames key := by
+    intro member
+    exact freshActivityName_not_mem
+      (avoid ++ expressionNames guard ++ expressionNames key)
+      (List.mem_append_right _ member)
+  have valueFresh : valueBinder ∉ expressionNames value := by
+    intro member
+    exact freshActivityName_not_mem
+      (avoid ++ expressionNames guard ++ expressionNames value)
+      (List.mem_append_right _ member)
+  have rewrittenKey : totalizeActivityKey guard avoid keyTy key =
+      .letE keyBinder guard (Noctium.GuardedExpression.totalize (.ref keyBinder) key) := by
+    cases keyTy <;> simp_all [totalizeActivityKey, totalizeActivityValue,
+      keyBinder, avoid]
+  have rewrittenValue : totalizeActivityValue guard avoid value =
+      .letE valueBinder guard (Noctium.GuardedExpression.totalize
+        (.ref valueBinder) value) := by
+    simp [totalizeActivityValue, valueBinder, avoid]
+  unfold appendEffectWithActivity at accepted
+  simp only [exceptBindOk] at accepted
+  obtain ⟨effect, effectAccepted, raw, appended, wrapped⟩ := accepted
+  simp only [avoid, rewrittenKey, rewrittenValue, Pure.pure, Except.pure] at effectAccepted
+  cases effectAccepted
+  have sameOps : after.operations = raw.operations := by
+    have projected := congrArg (Except.map Plan.operations) wrapped
+    simp only [Pure.pure, Except.pure, Except.map] at projected
+    exact (Except.ok.inj projected).symm
+  exact ⟨keyBinder, keyFresh, valueBinder, valueFresh, raw, appended, sameOps⟩
 
 /-- A successful public-input fold records its generated reads in source
 input order. Compound curve and foreign values follow their projection order. -/

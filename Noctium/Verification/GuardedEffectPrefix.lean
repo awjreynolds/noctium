@@ -163,6 +163,42 @@ theorem appendEffectWithActivity_none_result
   refine ⟨result, appended, ?_⟩
   split at finished <;> cases finished <;> exact ⟨rfl, rfl⟩
 
+/-- A raw write appends the same operations as its accepted empty-plan step. -/
+theorem appendEffect_writeCell_chunk
+    (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)
+    (before result : Impact.Plan)
+    (accepted : Impact.appendEffect state (.writeCell name ty value)
+      before = .ok result) :
+    ∃ base, Impact.appendEffect state (.writeCell name ty value) {} = .ok base ∧
+      result.operations = before.operations ++ base.operations := by
+  simp only [Impact.appendEffect, bind_ok] at accepted
+  obtain ⟨slot, slotAccepted, stored, storeAccepted, finished⟩ := accepted
+  cases finished
+  let base : Impact.Plan :=
+    {operations := [.push (.field (.native slot)), stored, .insert 1]}
+  refine ⟨base, ?_, rfl⟩
+  simp only [Impact.appendEffect, bind_ok]
+  exact ⟨slot, slotAccepted, stored, storeAccepted, rfl⟩
+
+/-- A raw write appends the same operations as its accepted empty-plan step. -/
+theorem appendEffect_writeMap_chunk
+    (state : List StateDecl) (name : String) (keyTy valueTy : Ty)
+    (key : Expr keyTy) (value : Expr valueTy) (before result : Impact.Plan)
+    (accepted : Impact.appendEffect state (.writeMap name keyTy valueTy key value)
+      before = .ok result) :
+    ∃ base, Impact.appendEffect state (.writeMap name keyTy valueTy key value) {} = .ok base ∧
+      result.operations = before.operations ++ base.operations := by
+  simp only [Impact.appendEffect, bind_ok] at accepted
+  obtain ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, finished⟩ := accepted
+  let base : Impact.Plan := {operations := result.operations.drop before.operations.length}
+  have exactResult := Except.ok.inj finished
+  refine ⟨base, ?_, ?_⟩
+  · simp only [Impact.appendEffect, bind_ok]
+    refine ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, ?_⟩
+    simp [base, ← exactResult, Pure.pure, Except.pure]
+  · rw [← exactResult]
+    simp [base, ← exactResult]
+
 /-- An unguarded production Cell write appends exactly its empty-plan
 operations, following the actual operations already emitted. -/
 theorem appendEffectWithActivity_unguarded_writeCell_chunk
@@ -174,14 +210,9 @@ theorem appendEffectWithActivity_unguarded_writeCell_chunk
       after.operations = before.operations ++ base.operations := by
   obtain ⟨result, appended, operations, _⟩ := appendEffectWithActivity_none_result
     state (.writeCell name ty value) before after accepted
-  simp only [Impact.appendEffect, bind_ok] at appended
-  obtain ⟨slot, slotAccepted, stored, storeAccepted, finished⟩ := appended
-  cases finished
-  let base : Impact.Plan :=
-    {operations := [.push (.field (.native slot)), stored, .insert 1]}
-  refine ⟨base, ?_, operations⟩
-  simp only [Impact.appendEffect, bind_ok]
-  exact ⟨slot, slotAccepted, stored, storeAccepted, rfl⟩
+  obtain ⟨base, emptyAccepted, rawOperations⟩ := appendEffect_writeCell_chunk
+    state name ty value before result appended
+  exact ⟨base, emptyAccepted, operations.trans rawOperations⟩
 
 /-- An unguarded production Map write appends its exact key, value and
 insertion operations, independently of the previous transcript length. -/
@@ -194,16 +225,9 @@ theorem appendEffectWithActivity_unguarded_writeMap_chunk
       after.operations = before.operations ++ base.operations := by
   obtain ⟨result, appended, operations, _⟩ := appendEffectWithActivity_none_result
     state (.writeMap name keyTy valueTy key value) before after accepted
-  simp only [Impact.appendEffect, bind_ok] at appended
-  obtain ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, finished⟩ := appended
-  let base : Impact.Plan := {operations := result.operations.drop before.operations.length}
-  have exactResult := Except.ok.inj finished
-  refine ⟨base, ?_, ?_⟩
-  · simp only [Impact.appendEffect, bind_ok]
-    refine ⟨slot, slotAccepted, aligned, keyAccepted, stored, storeAccepted, ?_⟩
-    simp [base, ← exactResult, Pure.pure, Except.pure]
-  · rw [operations, ← exactResult]
-    simp [base, ← exactResult]
+  obtain ⟨base, emptyAccepted, rawOperations⟩ := appendEffect_writeMap_chunk
+    state name keyTy valueTy key value before result appended
+  exact ⟨base, emptyAccepted, operations.trans rawOperations⟩
 
 theorem appendEffectWithActivity_readCell_operation_suffix
     (state : List StateDecl) (name destination : String) (ty : Ty)
