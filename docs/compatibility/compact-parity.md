@@ -53,6 +53,52 @@ its required evidence. A compiler-assertion case stays open. The focused tests
 remove required evidence and attempt to promote the failed oracle outcome.
 [Existing List.head fixtures and reproduction commands](../development/native-lists.md)
 
+## Verify the retained List.head comparison
+
+The record binds two root UInt8 List.head observations to the exact
+Noctium source commit, Compact 0.36.1 and Runtime 0.21.0. The input digests
+include the Foundation source profile and the selected Ledger 9.1.0.1 /
+ZKIR 3.2.1 target. The retained outputs are the Compact runner's JSON and
+the fresh Lean compiler head relation. Lean checks the two typed source
+results. [Comparison record](../../tests/compact/list-head-comparison-v1/record.json) ·
+[Foundation source profile](../../profiles/foundation-source-v1.json)
+
+From a checkout with the recorded commit in its Git history, run:
+
+```sh
+python3 scripts/check-compact-capability-register.py
+python3 scripts/check-compact-comparison-record.py
+python3 tests/test_compact_comparison_record.py
+```
+
+The offline checker reads the input bytes from the pinned Git revision and
+checks the retained output bytes against their digests. The focused tests
+accept the retained record and reject a copy with a changed Lean fixture
+digest. Compact is only needed to replay the oracle.
+
+To replay, check out the record's `noctiumCommit` in an isolated worktree.
+Set `COMPACTC_0361` and `COMPACT_RUNTIME_0210` to absolute paths to the pinned
+compiler and runtime package. Run these commands from that worktree:
+
+```sh
+set -eu
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+lake build noctium
+lake env lean tests/NativeScalarListMaybe.lean
+.lake/build/bin/noctium compile tests/NativeScalarListMaybe.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+node tests/compact/list-head-maybe.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" \
+  > "$scratch/compact.json"
+shasum -a 256 "$scratch/compact.json" "$scratch/native/NativeScalarListMaybe.head.zkir"
+```
+
+Compare both SHA-256 values with the `outputs` entries in the record.
+This run covers empty absence with zero and present 37 after a push to the
+list. It records source checks, the Compact runtime observation and native
+relation emission. [List fixture and native checker scope](../development/native-lists.md)
+
 ## Qualification order
 
 1. **Meaning and ABI.** Check language and standard-library cases and record the positive and rejection expectations. Carry them into explicit ledger paths and cross-contract scenarios. Compare values, encodings and canonical order where the profile specifies them.

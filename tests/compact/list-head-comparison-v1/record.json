@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "noctiumCommit": "b271407b11f0fd5279ca4aca31b6d4e61ffe2390",
+  "feature": "C-ADT-LIST-HEAD",
+  "cases": [
+    "LIST-HEAD-UINT8-EMPTY",
+    "LIST-HEAD-UINT8-POPULATED"
+  ],
+  "scope": "root-uint8-list-head-source-compact-runtime-and-native-relation-emission",
+  "compact": {
+    "compiler": "0.36.1",
+    "sourceCommit": "7fa3a117c5e7efe9d2c51da04263e5f0b3509144",
+    "runtime": "0.21.0",
+    "compilerArchiveSha256": "96ee68a59d9e8b093f05c97479a4cf08c79760015dcc26ecc797ec0160ca27f9",
+    "compilerSha256": "15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537"
+  },
+  "inputs": {
+    "docs/compatibility/compact-feature-matrix.json": "c20aa320786564459a2bfb70feb1e904deed51bf7f1d4c9a7b3f1d4c6f45ae8c",
+    "profiles/foundation-source-v1.json": "67f532d140aebadd1381150a408aee66566572212f036bbb0d9ec6453afcb8c0",
+    "profiles/midnight-ledger-9-zkir-3.2.1-target.json": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093",
+    "lean-toolchain": "ca5f1f601d34c49079e38d7e7041eb0f2a9c227fbc1df0f404820069a052330c",
+    "tests/NativeScalarListMaybe.lean": "ab9ef34897c1b4d21cf37c949477139a2815c978e7880acd0f81c4c46a485351",
+    "tests/compact/ListHeadMaybe.compact": "b0ab485098b80a701700de10acf062dec0980750504a415cc58a0a38719dc77c",
+    "tests/compact/list-head-maybe.mjs": "65863a23adaa291be0dda70e599be36dbc22adf8b510371a5f48a5a06b3a832d"
+  },
+  "outputs": {
+    "tests/compact/list-head-comparison-v1/compact.json": "d021c5e2844a30d19e598ed7fec1c02a7ede8938574a08e850b911adb1653c1e",
+    "tests/compact/list-head-comparison-v1/NativeScalarListMaybe.head.zkir": "03d2b0daa08b61cc7575344121b5a0f4bca64cbfc8f0f1c16b20bb2191fe473f"
+  }
+}
