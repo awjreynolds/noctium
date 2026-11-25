@@ -206,6 +206,43 @@ unsupported collection return an error.
 [C header](../../runtime/include/noctium_native.h) ·
 [ABI tests](../../runtime/tests/collection_reads.rs)
 
+### Observe root Map emptiness
+
+For the root `flags: Map<Field, Bool>` fixture, send `keys: []` to
+`noctium_ledger_collection_size` and compare the returned `size`
+with the canonical UInt64 string `"0"`. The host observation matches
+Compact's `flags.isEmpty()` circuit across these states:
+
+| State | Native size | Compact emptiness |
+| --- | --- | --- |
+| Initial | `"0"` | true |
+| Insert key 2 with true | `"1"` | false |
+| Overwrite key 2 with false | `"1"` | false |
+| Remove key 2 | `"0"` | true |
+
+The native replay builds checked in-process snapshots with persistent
+Map updates and verifies the stored false value after overwrite.
+The size reader returns `NOCTIUM_NATIVE_INVALID_ARGUMENT` for an
+eight-byte truncated snapshot even when its digest matches those bytes.
+This replay uses Compact 0.36.1 (`7fa3a117c`), Runtime
+0.21.0 and Noctium Ledger 9.1.0.1 / ZKIR 3.2.1.
+[Compact fixture](../../tests/compact/MapIsEmptyParity.compact) ·
+[Compact runner](../../tests/compact/map-is-empty-parity.mjs) ·
+[Native replay](../../runtime/tests/collection_reads.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/map-is-empty.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+node tests/compact/map-is-empty-parity.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+NOCTIUM_MAP_ISEMPTY_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test collection_reads \
+  host_map_is_empty_matches_compact_after_updates -- --ignored --exact
+```
+
 ## Replay the scalar collection fixture
 
 The fixture manifest lists one public Impact plan and three tagged Ledger

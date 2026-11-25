@@ -1,0 +1,16 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export ledger flags: Map<Field, Boolean>;
+
+export circuit read(): Boolean {
+  return flags.isEmpty();
+}
+
+export circuit put(key: Field, value: Boolean): [] {
+  flags.insert(disclose(key), disclose(value));
+}
+
+export circuit remove(key: Field): [] {
+  flags.remove(disclose(key));
+}

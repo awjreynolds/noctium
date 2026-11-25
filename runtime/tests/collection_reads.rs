@@ -746,6 +746,15 @@ fn native_collection_page_snapshot(
             StateValue::Cell(Sp::new(field_value(Fr::from(u64::from(*value))))),
         )
     });
+    native_collection_page_snapshot_with_flags(plan, flags, members, values)
+}
+
+fn native_collection_page_snapshot_with_flags(
+    plan: &[u8],
+    flags: HashMap<AlignedValue, StateValue<Db>, Db>,
+    members: &[u8],
+    values: &[u64],
+) -> Snapshot {
     let members = members.iter().fold(HashMap::new(), |set, value| {
         set.insert(AlignedValue::from([*value; 32]), StateValue::Null)
     });
@@ -2400,6 +2409,102 @@ fn source_emitted_cell_get_reads_u128_and_checked_record() -> anyhow::Result<()>
             "kind":"cell",
             "value":{"active":true,"amount":"513"}
         })
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires pinned Compact observations in NOCTIUM_MAP_ISEMPTY_COMPACT"]
+fn host_map_is_empty_matches_compact_after_updates() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let compact_path = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_MAP_ISEMPTY_COMPACT")
+            .expect("pinned Compact observations in NOCTIUM_MAP_ISEMPTY_COMPACT"),
+    );
+    let compact: Value = serde_json::from_slice(&std::fs::read(compact_path)?)?;
+    assert_eq!(compact["compact"], "0.36.1 (7fa3a117c 2026-11-11)");
+    assert_eq!(compact["runtime"], "0.21.0");
+
+    let plan_bytes = serde_json::to_vec(&native_collection_page_plan())?;
+    let key = field_value(Fr::from(2u64));
+    let empty = HashMap::new();
+    let inserted = empty.insert(
+        key.clone(),
+        StateValue::Cell(Sp::new(field_value(Fr::from(1u64)))),
+    );
+    let overwritten = inserted.insert(
+        key.clone(),
+        StateValue::Cell(Sp::new(field_value(Fr::from(0u64)))),
+    );
+    let removed = overwritten.remove(&key);
+
+    let snapshots = [
+        ("empty", empty),
+        ("insert", inserted),
+        ("overwrite", overwritten),
+        ("remove", removed),
+    ]
+    .map(|(stage, flags)| {
+        (
+            stage,
+            native_collection_page_snapshot_with_flags(&plan_bytes, flags, &[], &[]),
+        )
+    });
+    let observations = compact["observations"]
+        .as_array()
+        .expect("Compact observations array");
+    assert_eq!(observations.len(), snapshots.len());
+    for ((stage, snapshot), observation) in snapshots.iter().zip(observations) {
+        assert_eq!(observation["stage"], *stage);
+        let native_size = snapshot.size_at("flags", Vec::new());
+        let size = native_size["size"]
+            .as_str()
+            .expect("native size must be a canonical UInt64 decimal string");
+        assert_eq!(
+            native_size,
+            json!({
+                "abiVersion":1,
+                "kind":"collectionSize",
+                "collection":"map",
+                "size":size
+            }),
+            "{stage} exact native size JSON"
+        );
+        let parsed_size: u64 = size.parse()?;
+        assert_eq!(parsed_size.to_string(), size, "{stage} canonical UInt64");
+        let is_empty = parsed_size == 0;
+        assert_eq!(observation["size"].as_str(), Some(size), "{stage} size");
+        assert_eq!(
+            observation["isEmpty"].as_bool(),
+            Some(is_empty),
+            "{stage} Map.isEmpty"
+        );
+    }
+
+    assert_eq!(
+        snapshots[2].1.lookup("flags", json!("2")),
+        json!({
+            "abiVersion":1,
+            "kind":"mapLookup",
+            "found":true,
+            "value":false
+        }),
+        "overwrite retains key 2 with its false value"
+    );
+
+    let mut malformed = native_collection_page_snapshot(&plan_bytes, &[], &[], &[]);
+    malformed.state.truncate(8);
+    let plan_sha256 = artifacts::digest(&plan_bytes);
+    let malformed_state_sha256 = artifacts::digest(&malformed.state);
+    assert_eq!(
+        malformed.size_with_digests(
+            "flags",
+            Vec::new(),
+            &plan_sha256,
+            &malformed_state_sha256,
+        ),
+        Err(INVALID_ARGUMENT),
+        "truncated tagged state with its matching digest must be rejected"
     );
     Ok(())
 }
