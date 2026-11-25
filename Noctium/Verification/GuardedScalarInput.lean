@@ -144,6 +144,39 @@ theorem consume_accepted_public_read
     rw [active] at meaning ⊢
     exact ⟨meaning, by cases stream <;> simp [consume]⟩
 
+open ScalarNormalization in
+/-- An active scalar cell read executes the same source transition as an
+unconditional read, including when the cell is missing or malformed. -/
+theorem run_active_scalarCell_read (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (cell destination : String) {ty : Ty}
+    (supported : ScalarType ty) (guard : Expr .bool)
+    (active : guard.eval ctx env = .ok true) :
+    runEffectsWithGuardsAndEnv ctx [.readCell cell destination ty] [some guard] env ledger =
+      runEffectWithEnv ctx (.readCell cell destination ty) env ledger := by
+  dsimp [runEffectsWithGuardsAndEnv, List.zipIdx, List.all,
+    List.isEmpty, List.length, Option.isNone, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [List.forIn_cons]
+  dsimp [List.getElem?_cons_zero, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [active]
+  dsimp [runEffectWithEnv, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  cases ledger.cells.lookup cell with
+  | none => rfl
+  | some raw =>
+    dsimp only []
+    cases raw.as ty with
+    | none => rfl
+    | some value =>
+      dsimp only []
+      cases supported with
+      | native =>
+        by_cases bound : value < ctx.modulus <;> simp [canonical_eq, bound] <;> rfl
+      | bool => rfl
+      | uint maximum =>
+        by_cases invalid : (ScalarPolicy.maxUint < maximum ∨ maximum < value) ∨
+            ctx.modulus ≤ value <;> simp [canonical_eq, invalid] <;> rfl
+
 open GenericStateInputValues ScalarNormalization in
 /-- The production source evaluator binds the decoded zero for an inactive
 scalar cell read. Skipping the read preserves the current ledger state and

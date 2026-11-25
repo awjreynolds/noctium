@@ -2,6 +2,7 @@ import Noctium.Verification.GenericStateReadCellEvaluation
 import Noctium.Verification.GenericStateInputValues
 import Noctium.Verification.GenericStateSchemaSpans
 import Noctium.Verification.ScalarValidationMeaning
+import Noctium.Verification.GuardedScalarInput
 
 namespace Noctium.Verification.GenericStateReadAuthentication
 open Backend NativeRelation ScalarNormalization NativeState
@@ -163,5 +164,68 @@ theorem readCell_decoded_source_step (ctx : EvalContext)
   have numberMatches := Option.some.inj
     ((sourceScalar_eq_field scalarType candidate).symm.trans exactValue)
   exact ⟨candidate, sourceStep, exactValue, by rw [final, numberMatches]⟩
+
+/-- Authenticate the candidate decoded from the actual guarded read suffix.
+When the source guard is active, the checked Impact suffix reads the same cell
+into the source environment and appends that exact scalar to the read tape. -/
+theorem active_guardedCell_read_decoded_source_step (ctx : EvalContext)
+    (sourceEnv candidateEnv : EvalEnv) (state : List StateDecl)
+    (current : LedgerState) (slots : List NativeState.Slot)
+    (name destination : String) (ty : Ty) (condition : Expr .bool)
+    (before plan base : Impact.Plan) (segment : List NativeState.Op) (slot : Nat)
+    (reads : List NativeState.Cell) (after : NativeState.Machine) (witness : Assignment)
+    (lowered : Impact.appendEffectWithActivity state (.readCell name destination ty)
+      (some condition) before = .ok plan)
+    (compiled : Impact.appendEffect state (.readCell name destination ty) {} = .ok base)
+    (found : state.findIdx? (·.name == name) = some slot)
+    (declaration : StateDecl)
+    (declarationAt : state[slot]? = some declaration)
+    (named : declaration.name = name)
+    (kind : declaration.kind = .cell ty)
+    (encoded : GenericStateEncoding.encodeState state current = some slots)
+    (decoded : decodeReads (plan.reads.drop before.reads.length) witness = .ok candidateEnv)
+    (typed : ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ())
+    (bounded : (witness ("%input_" ++ destination)).val ≤ Native.sourceMaximum ty)
+    (modulus : ctx.modulus = Field.modulus)
+    (active : condition.eval ctx sourceEnv = .ok true)
+    (evaluated : (plan.operations.drop before.operations.length).mapM
+      (GenericStateOps.evalOp ctx candidateEnv) = .ok segment)
+    (checked : NativeState.run segment ⟨[.vector slots], reads⟩ = some after) :
+    ∃ candidate : ty.Denote,
+      runEffectsWithGuardsAndEnv ctx [.readCell name destination ty] [some condition]
+          sourceEnv current = .ok ((destination, Value.pack ty candidate) :: sourceEnv, current) ∧
+      sourceScalar? ty candidate = some (witness ("%input_" ++ destination)) ∧
+      after = ⟨[.vector slots], reads ++ [field (witness ("%input_" ++ destination))]⟩ := by
+  obtain ⟨operations, descriptors⟩ := GuardedEffectPrefix.appendEffectWithActivity_readCell_empty_chunk
+    state name destination ty condition before plan base lowered compiled
+  obtain ⟨read, singleton, _, readType⟩ :=
+    append_readCell_readIdentity state name destination ty base compiled
+  have readSuffix : plan.reads.drop before.reads.length = [{read with guard := some condition}] := by
+    rw [descriptors, singleton]
+    simp
+  have baseDecoded : decodeReads base.reads witness = .ok candidateEnv := by
+    rw [readSuffix] at decoded
+    rw [singleton]
+    have decoder : decodeRead {read with guard := some condition} witness =
+        decodeRead read witness := by
+      unfold decodeRead
+      dsimp only []
+      cases scalarType? read.ty <;> rfl
+    simpa only [decodeReads, List.mapM_cons, decoder] using decoded
+  have baseEvaluated : base.operations.mapM (GenericStateOps.evalOp ctx candidateEnv) =
+      .ok segment := by
+    simpa [operations] using evaluated
+  obtain ⟨candidate, sourceStep, exactScalar, tape⟩ := readCell_decoded_source_step
+    ctx sourceEnv candidateEnv state current slots name destination ty base segment slot
+    reads after witness compiled found declaration declarationAt named kind encoded
+    baseDecoded typed bounded modulus baseEvaluated checked
+  rw [singleton] at baseDecoded
+  obtain ⟨first, _, firstDecoded, _, _⟩ :=
+    decodeReads_cons_success read [] witness candidateEnv baseDecoded
+  obtain ⟨support, _⟩ := decodeRead_success read witness first firstDecoded
+  rw [readType] at support
+  rw [GuardedScalarInput.run_active_scalarCell_read ctx sourceEnv current name destination
+    support condition active]
+  exact ⟨candidate, sourceStep, exactScalar, tape⟩
 
 end Noctium.Verification.GenericStateReadAuthentication
