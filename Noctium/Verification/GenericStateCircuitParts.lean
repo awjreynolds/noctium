@@ -138,9 +138,146 @@ private theorem list_forIn_preserves_projection
         subst final
         exact stepPreserves item initial (.done next) stepResult
 
+private theorem list_forIn_preserves_projection_supported
+    {α β γ ε : Type} {items : List α} {initial final : β}
+    (supported : α → Prop) (project : β → γ)
+    (step : α → β → Except ε (ForInStep β))
+    (allSupported : ∀ item ∈ items, supported item)
+    (stepPreserves : ∀ item, supported item → ∀ state result,
+      step item state = .ok result →
+        project (forInStepValue result) = project state)
+    (accepted : forIn items initial step = .ok final) :
+    project final = project initial := by
+  induction items generalizing initial final with
+  | nil =>
+    simp only [List.forIn_nil] at accepted
+    cases accepted
+    rfl
+  | cons item rest ih =>
+    rw [List.forIn_cons] at accepted
+    cases stepResult : step item initial with
+    | error message =>
+      simp [stepResult, Bind.bind, Except.bind] at accepted
+    | ok result =>
+      simp only [stepResult, Bind.bind, Except.bind] at accepted
+      have itemSupported : supported item := allSupported item (by simp)
+      have restSupported : ∀ next ∈ rest, supported next := by
+        intro next member
+        exact allSupported next (by simp [member])
+      cases result with
+      | yield next =>
+        calc
+          project final = project next := ih restSupported accepted
+          _ = project initial := stepPreserves item itemSupported initial
+            (.yield next) stepResult
+      | done next =>
+        have nextEq : next = final := Except.ok.inj accepted
+        subst final
+        exact stepPreserves item itemSupported initial (.done next) stepResult
+
 def initialAliases (entry : Entrypoint) (plan : Backend.Impact.Plan) : AliasEnvironment :=
   (inputRequirements entry plan).map
     (fun input => (input.identifier.drop 7 |>.toString, .input input.identifier))
+
+/-- Seed aliases used while normalizing a generic entrypoint's circuit outputs.
+The circuit inputs keep their source or call-argument terms. Post-public reads
+start as their physical public input bindings. -/
+def entrypointSeedAliases (entry : Entrypoint) (plan : Backend.Impact.Plan) :
+    AliasEnvironment :=
+  entry.circuit.inputs.map (fun input =>
+    (input.name, if entry.callInputs.contains input.name then
+      Input.callArgumentTerm input else Input.sourceTerm input)) ++
+    (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+      fun read => read.bindings.map fun (name, _) =>
+        (name, Term.input ("%input_" ++ name))
+
+/-- One iteration of the expected constructor's post-output read-alias fold. -/
+def readAliasStep (entry : Entrypoint) (read : Backend.Impact.Read)
+    (aliases : AliasEnvironment) : Except Diagnostic (ForInStep AliasEnvironment) := do
+  let guard : Option Normalized ← read.guard.mapM fun guard =>
+    (normalize aliases guard).mapError
+      (fun message => ({span := entry.span, message} : Diagnostic))
+  match read.ty with
+  | .bytes length =>
+    let chunks := Backend.Impact.Read.bindings read |>.map fun ((name, _) : String × Ty) =>
+      let input := Term.input ("%input_" ++ name)
+      guard.map (fun (value : Normalized) =>
+        Term.select value.term input (.constant 0)) |>.getD input
+    pure (ForInStep.yield
+      ((read.name, bytesFromChunksTerm length chunks.reverse) :: aliases))
+  | .jubjubScalar =>
+    pure (ForInStep.yield ((read.name,
+      .unary "jubjub_scalar_from_native" (Term.input ("%input_" ++ read.name))) :: aliases))
+  | .jubjubPoint =>
+    let xName := (Backend.Impact.Read.bindings read)[0]!.1
+    let yName := (Backend.Impact.Read.bindings read)[1]!.1
+    let x := Term.input ("%input_" ++ xName)
+    let y := Term.input ("%input_" ++ yName)
+    let x := guard.map (fun (value : Normalized) =>
+      Term.select value.term x (.constant 0)) |>.getD x
+    let y := guard.map (fun (value : Normalized) =>
+      Term.select value.term y (.constant 1)) |>.getD y
+    pure (ForInStep.yield
+      ((read.name, .binary "from_coordinates_jubjub" x y) :: aliases))
+  | _ => pure (ForInStep.yield aliases)
+
+def scalarAliasReadType (ty : Ty) : Prop :=
+  ty = .native ∨ ty = .bool ∨ ∃ width, ty = .uint width
+
+private theorem readAliasStep_preserves_scalar (entry : Entrypoint)
+    (read : Backend.Impact.Read) (aliases : AliasEnvironment)
+    (supported : scalarAliasReadType read.ty) (result : ForInStep AliasEnvironment)
+    (accepted : readAliasStep entry read aliases = .ok result) :
+    forInStepValue result = aliases := by
+  rcases supported with native | boolean | ⟨width, unsigned⟩
+  · cases guardResult : (read.guard.mapM fun guard =>
+        (normalize aliases guard).mapError
+          (fun message => ({span := entry.span, message} : Diagnostic))) with
+    | error message =>
+      simp only [readAliasStep, guardResult, Bind.bind, Except.bind] at accepted
+      cases accepted
+    | ok guard =>
+      cases result with
+      | yield next =>
+        simp only [readAliasStep, native, guardResult, Bind.bind, Except.bind] at accepted
+        injection accepted with nextEq
+        injection nextEq with valuesEq
+        exact valuesEq.symm
+      | done next =>
+        simp only [readAliasStep, native, guardResult, Bind.bind, Except.bind] at accepted
+        cases accepted
+  · cases guardResult : (read.guard.mapM fun guard =>
+        (normalize aliases guard).mapError
+          (fun message => ({span := entry.span, message} : Diagnostic))) with
+    | error message =>
+      simp only [readAliasStep, guardResult, Bind.bind, Except.bind] at accepted
+      cases accepted
+    | ok guard =>
+      cases result with
+      | yield next =>
+        simp only [readAliasStep, boolean, guardResult, Bind.bind, Except.bind] at accepted
+        injection accepted with nextEq
+        injection nextEq with valuesEq
+        exact valuesEq.symm
+      | done next =>
+        simp only [readAliasStep, boolean, guardResult, Bind.bind, Except.bind] at accepted
+        cases accepted
+  · cases guardResult : (read.guard.mapM fun guard =>
+        (normalize aliases guard).mapError
+          (fun message => ({span := entry.span, message} : Diagnostic))) with
+    | error message =>
+      simp only [readAliasStep, guardResult, Bind.bind, Except.bind] at accepted
+      cases accepted
+    | ok guard =>
+      cases result with
+      | yield next =>
+        simp only [readAliasStep, unsigned, guardResult, Bind.bind, Except.bind] at accepted
+        injection accepted with nextEq
+        injection nextEq with valuesEq
+        exact valuesEq.symm
+      | done next =>
+        simp only [readAliasStep, unsigned, guardResult, Bind.bind, Except.bind] at accepted
+        cases accepted
 
 def normalizeOutput (aliases : AliasEnvironment) (output : Output) : Except Diagnostic Normalized :=
   (normalize aliases output.value).mapError (fun message => {span := output.span, message})
@@ -186,43 +323,10 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
       (operationFrame : List (List Term) × List (Term × Nat) × List Term)
       (returns : ReturnFrame) (activity : List Normalized),
       Backend.Impact.lower state entry = .ok plan ∧
-      normalizeOutputs
-        (entry.circuit.inputs.map (fun input =>
-          (input.name, if entry.callInputs.contains input.name then
-            Input.callArgumentTerm input else Input.sourceTerm input)) ++
-          (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
-            fun read => read.bindings.map fun (name, _) =>
-              (name, Term.input ("%input_" ++ name)))
-        entry.circuit.outputs = .ok outputFrame ∧
-      (forIn ((plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
-          Backend.Impact.Read.scalarReads) outputFrame.1
-        fun (read : Backend.Impact.Read) (aliases : AliasEnvironment) => do
-        let guard : Option Normalized ← read.guard.mapM fun guard =>
-          (normalize aliases guard).mapError
-            (fun message => ({span := entry.span, message} : Diagnostic))
-        match read.ty with
-        | .bytes length =>
-          let chunks := Backend.Impact.Read.bindings read |>.map fun ((name, _) : String × Ty) =>
-            let input := Term.input ("%input_" ++ name)
-            guard.map (fun (value : Normalized) =>
-              Term.select value.term input (.constant 0)) |>.getD input
-          pure (ForInStep.yield
-            ((read.name, bytesFromChunksTerm length chunks.reverse) :: aliases))
-        | .jubjubScalar =>
-          pure (ForInStep.yield ((read.name,
-            .unary "jubjub_scalar_from_native" (Term.input ("%input_" ++ read.name))) :: aliases))
-        | .jubjubPoint =>
-          let xName := (Backend.Impact.Read.bindings read)[0]!.1
-          let yName := (Backend.Impact.Read.bindings read)[1]!.1
-          let x := Term.input ("%input_" ++ xName)
-          let y := Term.input ("%input_" ++ yName)
-          let x := guard.map (fun (value : Normalized) =>
-            Term.select value.term x (.constant 0)) |>.getD x
-          let y := guard.map (fun (value : Normalized) =>
-            Term.select value.term y (.constant 1)) |>.getD y
-          pure (ForInStep.yield
-            ((read.name, .binary "from_coordinates_jubjub" x y) :: aliases))
-        | _ => pure (ForInStep.yield aliases)) = .ok aliases ∧
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      forIn ((plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+          Backend.Impact.Read.scalarReads) outputFrame.1 (readAliasStep entry) = .ok aliases ∧
       (forIn (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs))
         (((entry.circuit.inputs.filter fun input =>
             !entry.callInputs.contains input.name).flatMap Input.requirements) ++
@@ -292,18 +396,12 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
   rcases produced with ⟨returns, returnsAccepted, activity, activityAccepted, expectedAccepted⟩
   have outputProjection :
       normalizeOutputs
-        (entry.circuit.inputs.map (fun input =>
-          (input.name, if entry.callInputs.contains input.name then
-            Input.callArgumentTerm input else Input.sourceTerm input)) ++
-          (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
-            fun read => read.bindings.map fun (name, _) =>
-              (name, Term.input ("%input_" ++ name)))
-        entry.circuit.outputs = .ok outputFrame := by
+        (entrypointSeedAliases entry plan) entry.circuit.outputs = .ok outputFrame := by
     rw [← normalizeOutputs_loop]
-    simpa only [readInputAliases_eq, convert_eq_mapError,
+    simpa only [entrypointSeedAliases, readInputAliases_eq, convert_eq_mapError,
       normalizeOutput, Except.mapError] using outputAccepted
   have aliasesFoldExact := by
-    simpa only [convert_eq_mapError] using aliasesAccepted
+    simpa only [readAliasStep, convert_eq_mapError] using aliasesAccepted
   have inputStateExact := by
     rw [readInputRequirements_eq] at inputStateAccepted
     simpa only [convert_eq_mapError] using inputStateAccepted
@@ -367,6 +465,66 @@ theorem expectedEntrypoint_parts (state : List StateDecl) (entry : Entrypoint)
   · simp [produced]
   · simp [produced]
   · simp [produced]
+
+/-- A checked expected entrypoint retains normalized plan guards in its
+assertions and bounds. For Native, Bool, and UInt read scalars, the post-read
+alias fold leaves the normalized output frame unchanged. -/
+theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty) :
+    ∃ (outputFrame : OutputFrame) (guards : List Normalized),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      plan.guards.mapM (normalize outputFrame.1) = .ok guards ∧
+      (∀ term ∈ guards.flatMap (fun item => item.assertions ++ [item.term]),
+        term ∈ expected.assertions) ∧
+      (∀ bound ∈ guards.flatMap (·.bounds), bound ∈ expected.bounds) := by
+  obtain ⟨partsPlan, outputFrame, aliases, inputState, conditions, guards,
+      constraintCollection, guardCollection, operationFrame, returns, activity,
+      planAccepted, outputsAccepted, aliasesAccepted, inputStateAccepted,
+      conditionsAccepted, guardsAccepted, constraintCollectionAccepted,
+      guardCollectionAccepted, operationAccepted, returnsAccepted, activityAccepted,
+      inputsShape, groupsShape, returnsShape, modeShape, rawInputsShape,
+      groupGuardsShape, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : partsPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst partsPlan
+  have aliasesEq : aliases = outputFrame.1 := by
+    exact list_forIn_preserves_projection_supported
+      (supported := fun read : Backend.Impact.Read => scalarAliasReadType read.ty)
+      (project := id) (step := readAliasStep entry) scalarReads
+      (by
+        intro read supported current result stepAccepted
+        exact readAliasStep_preserves_scalar entry read current supported result stepAccepted)
+      aliasesAccepted
+  have normalizedGuards : plan.guards.mapM (normalize outputFrame.1) = .ok guards := by
+    simpa only [← aliasesEq] using guardsAccepted
+  have assertionMembers : ∀ term ∈ guards.flatMap
+      (fun item => item.assertions ++ [item.term]), term ∈ expected.assertions := by
+    intro term member
+    rw [assertionsShape]
+    simp [List.mem_append, member]
+  have guardCollectionEq :
+      (guards.map (·.term), guards.flatMap (·.bounds),
+        guards.flatMap (·.assertions)) = guardCollection := by
+    have collected := guardCollectionAccepted
+    simp only [guardsAccepted, Bind.bind, Except.bind, Except.mapError] at collected
+    exact Except.ok.inj collected
+  have guardCollectionBounds :
+      guardCollection.2.1 = guards.flatMap (·.bounds) := by
+    rw [← guardCollectionEq]
+  have boundMembers : ∀ bound ∈ guards.flatMap (·.bounds),
+      bound ∈ expected.bounds := by
+    intro bound member
+    rw [boundsShape, guardCollectionBounds]
+    simp [List.mem_append, member]
+  exact ⟨outputFrame, guards, outputsAccepted, normalizedGuards,
+    assertionMembers, boundMembers⟩
 
 /-- Every post-public Native, Bool, or UInt read descriptor appears in the
 accepted expected input list. The projection omits activityGuard because the

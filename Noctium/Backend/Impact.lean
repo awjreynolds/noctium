@@ -1198,9 +1198,21 @@ def publicInputReadCount (inputs : List Input) : Nat :=
       | .foreign kind => kind.encodedFieldCount
       | _ => 1) 0
 
-/-- Generated field expressions must retain the source/read types even though
-their native representation is uniformly a field. -/
-def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
+/-- Source and physical bindings contributed by a lowered read. -/
+def Read.typeBindings (read : Read) : TypeEnv :=
+  read.scalarReads.flatMap fun scalarRead =>
+    (match scalarRead.ty with
+      | .bytes _ | .opaqueBytes | .opaqueString | .jubjubPoint => [(scalarRead.name, scalarRead.ty)]
+      | _ => []) ++ scalarRead.bindings
+
+/-- Types available to expressions emitted in a native plan. -/
+def Plan.typeEnvironment (plan : Plan) (entry : Entrypoint) : TypeEnv :=
+  let publicCount := publicInputReadCount entry.circuit.inputs
+  entry.circuit.inputs.map (fun input => (input.name, input.ty)) ++
+    entry.circuit.outputs.map (fun output => (output.name, output.ty)) ++
+    (plan.reads.drop publicCount).flatMap Read.typeBindings
+
+private def Plan.validateBeforeGuards (entry : Entrypoint) : Except String Unit := do
   unless (entry.returns.map Output.nativeReturnFieldCount).sum ≤ maxEntrypointReturnFields do
     throw "entrypoint return field limit exceeded"
   unless entry.returnViews.length ≤ maxEntrypointReturnFields do
@@ -1212,16 +1224,13 @@ def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
     unless view.fields.length == view.physicalFieldCount compiled.checked.expandedLeaves do
       throw s!"logical return '{view.name}' field count does not match its type"
     discard (Types.schemaJson compiled)
-  let publicCount := publicInputReadCount entry.circuit.inputs
-  let env := entry.circuit.inputs.map (fun input => (input.name, input.ty)) ++
-    entry.circuit.outputs.map (fun output => (output.name, output.ty)) ++
-    (plan.reads.drop publicCount).flatMap fun read =>
-      read.scalarReads.flatMap fun scalarRead =>
-        (match scalarRead.ty with
-          | .bytes _ | .opaqueBytes | .opaqueString | .jubjubPoint => [(scalarRead.name, scalarRead.ty)]
-          | _ => []) ++ scalarRead.bindings
-  for field in plan.fields do field.validate expressionCapabilities env
-  for guard in plan.guards do guard.validate expressionCapabilities env
+
+private def Plan.validateGuardConstraints (plan : Plan) (entry : Entrypoint)
+    (env : TypeEnv) : Except String Unit :=
+  (validateConstraints Capabilities.crypto env entry.span plan.guards)
+    |>.mapError (·.message)
+
+private def Plan.validateAfterGuards (plan : Plan) (env : TypeEnv) : Except String Unit := do
   unless plan.activityGuards.isEmpty || plan.activityGuards.length == plan.operations.length do
     throw "native activity guard schedule length mismatch"
   for guard in plan.activityGuards do
@@ -1241,6 +1250,15 @@ def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
         throw "native composite reads require supported scalar fields or an unguarded shielded coin record"
       for (_, ty) in read.components do ty.validate expressionCapabilities
     if let some guard := read.guard then guard.validate expressionCapabilities env
+
+/-- Generated field expressions must retain the source/read types even though
+their native representation is uniformly a field. -/
+def Plan.validate (plan : Plan) (entry : Entrypoint) : Except String Unit := do
+  Plan.validateBeforeGuards entry
+  let env := plan.typeEnvironment entry
+  for field in plan.fields do field.validate expressionCapabilities env
+  plan.validateGuardConstraints entry env
+  plan.validateAfterGuards env
 
 private def nativeValue : (ty : Ty) → Expr ty → Except String Scalar
   | .native, value => pure value
@@ -3035,6 +3053,26 @@ private theorem exceptBindOk {ε α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem Plan.validate_guardConstraints_success (plan : Plan) (entry : Entrypoint)
+    (accepted : plan.validate entry = .ok ()) :
+    validateConstraints Capabilities.crypto (plan.typeEnvironment entry) entry.span plan.guards =
+      .ok () := by
+  unfold Plan.validate at accepted
+  simp only [exceptBindOk] at accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  obtain ⟨_, _, accepted⟩ := accepted
+  obtain ⟨_, guardAccepted, _⟩ := accepted
+  cases guardResult : validateConstraints Capabilities.crypto
+      (plan.typeEnvironment entry) entry.span plan.guards with
+  | error diagnostic =>
+      unfold Plan.validateGuardConstraints at guardAccepted
+      rw [guardResult] at guardAccepted
+      simp only [Except.mapError] at guardAccepted
+      cases guardAccepted
+  | ok result =>
+      cases result
+      rfl
+
 private theorem folded_activity_guards {α : Type} (items : List α) (initial : Plan)
     (step : Plan → α → Plan)
     (preserves : ∀ plan item, (step plan item).activityGuards = plan.activityGuards) :
@@ -3841,6 +3879,55 @@ Native field alignment. Membership results use the VM's byte-aligned boolean.
 The plan is not deployable until its fields are bound by the relation producer. -/
 def lower (state : List StateDecl) (entry : Entrypoint) : Except Diagnostic Plan :=
   (lowerWithEffectBoundaries state entry).map Prod.fst
+
+private theorem finishPlan_success_valid (entry : Entrypoint) (result : Except String Plan)
+    (plan : Plan) (accepted : finishPlan entry result = .ok plan) :
+    plan.validate entry = .ok () := by
+  cases result with
+  | error message => simp [finishPlan] at accepted
+  | ok rawPlan =>
+    cases validation : rawPlan.validate entry with
+    | error message => simp [finishPlan, validation] at accepted
+    | ok valid =>
+      simp [finishPlan, validation] at accepted
+      simp only [Pure.pure, Except.pure] at accepted
+      cases accepted
+      cases valid
+      exact validation
+
+/-- Every plan returned by lowering has its symbolic guards validated against
+the same expression environment used by `Plan.validate`. -/
+theorem lower_guards_validate (state : List StateDecl) (entry : Entrypoint)
+    (plan : Plan) (lowered : lower state entry = .ok plan) :
+    validateConstraints Capabilities.crypto (plan.typeEnvironment entry) entry.span plan.guards =
+      .ok () := by
+  have planValid : plan.validate entry = .ok () := by
+    unfold lower at lowered
+    cases lowerResult : lowerWithEffectBoundaries state entry with
+    | error failure =>
+      have impossible : False := by simp [lowerResult, Except.map] at lowered
+      exact impossible.elim
+    | ok pair =>
+      cases pair with
+      | mk completed boundaries =>
+        have completedEq : completed = plan := by
+          simpa [lowerResult, Except.map] using lowered
+        subst plan
+        have accepted : lowerWithEffectBoundaries state entry =
+            .ok (completed, boundaries) := lowerResult
+        unfold lowerWithEffectBoundaries at accepted
+        simp only [exceptBindOk] at accepted
+        rcases accepted with ⟨_, _, ⟨_, _, ⟨result, _,
+          ⟨finished, finishAccepted, outputAccepted⟩⟩⟩⟩
+        rcases result with ⟨rawPlan, rawBoundaries⟩
+        have outputPair : (finished, rawBoundaries) = (completed, boundaries) := by
+          change Except.ok (finished, rawBoundaries) =
+            Except.ok (completed, boundaries) at outputAccepted
+          exact Except.ok.inj outputAccepted
+        have finishedEq : finished = completed := congrArg Prod.fst outputPair
+        rw [← finishedEq]
+        exact finishPlan_success_valid entry (.ok rawPlan) finished finishAccepted
+  exact Plan.validate_guardConstraints_success plan entry planValid
 
 /-- JSON value atoms must be hydrated into Uint8Array by the ledger JS adapter. -/
 def Aligned.toJson (ctx : EvalContext) (env : EvalEnv) (value : Aligned) : Except String Lean.Json := do

@@ -12,12 +12,9 @@ open NativeRelation ScalarNormalization
 open GenericStateCheckedReadTrace
 open GenericStateInputValues
 
-/-- An accepted Native validation bounds the input slot for an actual
-post-public scalar read in the accepted Impact plan. The descriptor match
-connects the plan's singleton binding to the expected constructor's input
-slot. This bounds the accepted scalar input; it does not authenticate a
-candidate read value against ledger state. -/
-theorem accepted_scalarRead_inputBound
+/-- The accepted plan descriptor selects the source input requirement that
+supplies a scalar bound for the read's candidate lane. -/
+theorem accepted_scalarRead_inputBound_of_requirements
     (state : List StateDecl) (entry : Entrypoint)
     (expected : Backend.Native.Expected)
     (expectedAccepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
@@ -28,11 +25,11 @@ theorem accepted_scalarRead_inputBound
       (Backend.Impact.publicInputReadCount entry.circuit.inputs))
     (singleton : read.bindings = [(name, ty)])
     (supported : ty = .native ∨ ty = .bool ∨ ∃ width, ty = .uint width)
-    {program : Lean.Json} {instructions rawInputs : Array Lean.Json}
-    {seed final : Backend.Native.State} {hash : Hash} {inputs witness : Assignment}
-    (driver : ScalarValidationProjection.NativeValidationDriverFacts
-      expected program instructions rawInputs seed final)
-    (meaning : ScalarValidationMeaning.StateMeaning hash inputs witness final) :
+    {inputs : Assignment}
+    (requirements : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      requirement.ty.isForeign = false →
+      requirement.canonicalJubjubScalar = false →
+      (inputs requirement.identifier).val ≤ Backend.Native.sourceMaximum requirement.ty) :
     (inputs ("%input_" ++ name)).val ≤ Backend.Native.sourceMaximum ty := by
   obtain ⟨requirement, requirementPresent, descriptor⟩ :=
     GenericStateCircuitParts.expectedEntrypoint_scalarReadDescriptor state entry expected
@@ -57,9 +54,37 @@ theorem accepted_scalarRead_inputBound
       rfl
     · rw [uint]
       rfl
-  have bound := driver.inputBound meaning
+  have bound := requirements requirement
     (List.mem_append_right expected.rawInputs requirementPresent) nonforeign ordinary
   simpa [identifier, requirementTy] using bound
+
+/-- An accepted Native validation bounds the input slot for an actual
+post-public scalar read in the accepted Impact plan. The descriptor match
+connects the plan's singleton binding to the expected constructor's input
+slot. This bounds the accepted scalar input; it does not authenticate a
+candidate read value against ledger state. -/
+theorem accepted_scalarRead_inputBound
+    (state : List StateDecl) (entry : Entrypoint)
+    (expected : Backend.Native.Expected)
+    (expectedAccepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
+    (plan : Backend.Impact.Plan)
+    (planAccepted : Backend.Impact.lower state entry = .ok plan)
+    (read : Backend.Impact.Read) (name : String) (ty : Ty)
+    (postPublic : read ∈ plan.reads.drop
+      (Backend.Impact.publicInputReadCount entry.circuit.inputs))
+    (singleton : read.bindings = [(name, ty)])
+    (supported : ty = .native ∨ ty = .bool ∨ ∃ width, ty = .uint width)
+    {program : Lean.Json} {instructions rawInputs : Array Lean.Json}
+    {seed final : Backend.Native.State} {hash : Hash} {inputs witness : Assignment}
+    (driver : ScalarValidationProjection.NativeValidationDriverFacts
+      expected program instructions rawInputs seed final)
+    (meaning : ScalarValidationMeaning.StateMeaning hash inputs witness final) :
+    (inputs ("%input_" ++ name)).val ≤ Backend.Native.sourceMaximum ty := by
+  exact accepted_scalarRead_inputBound_of_requirements state entry expected
+    expectedAccepted plan planAccepted read name ty postPublic singleton supported
+    (inputs := inputs)
+    (fun requirement present nonforeign ordinary =>
+      driver.inputBound meaning present nonforeign ordinary)
 
 /-- The accepted default lowerer and checked scalar opcode profile provide the
 final Native state meaning needed to bound every identity-preserving singleton
@@ -131,7 +156,7 @@ theorem accepted_scalarRead_inputBounds_of_checkedProfile
   exact accepted_scalarRead_inputBound state ep expected expectedAccepted
     plan planAccepted read read.name read.ty postPublic singleton supportedTy driver meaning
 
-private theorem supported_plain_read_bindings (read : Impact.Read)
+theorem supported_plain_read_bindings (read : Impact.Read)
     (plain : read.components = []) (supported : (scalarType? read.ty).isSome = true) :
     read.bindings = [(read.name, read.ty)] := by
   cases read with

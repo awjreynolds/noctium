@@ -35,6 +35,16 @@ private theorem emptyNativeDefinitions : NativeDefinitions ({} : State) := by
   intro identifier fact found
   simp at found
 
+private theorem define_assertionCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  unfold define at accepted
+  simp only [Noctium.Verification.ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, _, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  cases result
+  rfl
+
 /-- A successful raw header seed establishes scalar meaning and Native typing
 for every fact defined by the producer. Header names use the same assignment
 for source inputs and satisfying witnesses, so each seeded field input has its
@@ -77,5 +87,27 @@ theorem seedRawInputs_meaning {hash : Hash} {inputs witness : Assignment}
     (accepted : seedRawInputs expected rawInputs = .ok seed) :
     StateMeaning hash inputs witness seed :=
   (seedRawInputs_meaning_and_nativeDefinitions nativeOnly inputAgreement accepted).1
+
+/-- An accepted native-only raw header seed leaves the producer's typed
+source assertion ordinal at its initial zero value. -/
+theorem seedRawInputs_assertionCount {expected : Expected} {rawInputs : Array Json}
+    {seed : State}
+    (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
+    (accepted : seedRawInputs expected rawInputs = .ok seed) :
+    seed.assertionCount = 0 := by
+  unfold seedRawInputs at accepted
+  simp only [Noctium.Verification.ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨loopState, loopAccepted, result⟩
+  cases result
+  apply forIn_preserves (initial := ({} : State))
+    (fun state => state.assertionCount = 0) rfl
+  · intro item state next stateCount stepAccepted
+    obtain ⟨required, _, _, _, defined⟩ :=
+      seedRawInput_native_parts nativeOnly stepAccepted
+    have countPreserved := define_assertionCount defined
+    calc
+      next.assertionCount = state.assertionCount := countPreserved
+      _ = 0 := stateCount
+  · exact loopAccepted
 
 end Noctium.Verification.ScalarValidationRawSeedMeaning
