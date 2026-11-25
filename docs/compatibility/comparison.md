@@ -1,6 +1,6 @@
 # Noctium and Compact capabilities
 
-This comparison uses Compact 0.36.1, language 0.28, and the selected Noctium target for Midnight Ledger 9 and ZKIR 3.2.1. Scope varies by operation, type and execution path. [Pinned releases and evidence](compact-feature-matrix.json)
+This comparison uses Compact 0.36.1, language 0.28, and the selected Noctium target for Midnight Ledger 9 and ZKIR 3.2.1. Scope varies by operation, type and execution path. [Pinned releases and evidence](compact-feature-matrix.json) · [Parity workstreams and acceptance](compact-parity.md)
 
 ## Contract features
 
