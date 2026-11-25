@@ -25,10 +25,10 @@ structure Inputs where
 private def operationCount (partition : Option Partition) : Nat :=
   (partition.map Partition.operationCount).getD 0
 
-/-- Construct the public statement from resolved scalar operations, their
-activity, and metadata from the native call before preview. -/
-def publicInputs (inputs : Inputs) (operations : List NativeState.Op)
-    (activity : List (Option Nat)) : Option (List NativeRelation.Scalar) := do
+private def previewFor (inputs : Inputs) (operations : List NativeState.Op)
+    (activity : List (Option Nat)) :
+    Option (ImpactCallPreview.CallTranscripts
+      (ImpactNoopPreview.PreviewEntry NativeState.Op)) := do
   let guaranteedCount := operationCount inputs.guaranteed
   let fallibleCount := operationCount inputs.fallible
   if guaranteedCount + fallibleCount != operations.length then
@@ -38,7 +38,20 @@ def publicInputs (inputs : Inputs) (operations : List NativeState.Op)
       ⟨operations.take guaranteedCount, part.computeTime⟩
     let fallible := inputs.fallible.map fun part =>
       ⟨operations.drop guaranteedCount, part.computeTime⟩
-    let call ← previewCall inputs.cost ⟨guaranteed, fallible⟩ activity
+    previewCall inputs.cost ⟨guaranteed, fallible⟩ activity
+
+/-- Build the ledger header from the same checked operation partition and
+preview used to construct the public statement. -/
+def headerFor (inputs : Inputs) (operations : List NativeState.Op)
+    (activity : List (Option Nat)) : Option ImpactCallStatement.Header := do
+  let call ← previewFor inputs operations activity
+  ImpactPreviewBinding.header inputs.metadata call inputs.communication
+
+/-- Construct the public statement from resolved scalar operations, their
+activity, and metadata from the native call before preview. -/
+def publicInputs (inputs : Inputs) (operations : List NativeState.Op)
+    (activity : List (Option Nat)) : Option (List NativeRelation.Scalar) := do
+    let call ← previewFor inputs operations activity
     let header ← ImpactPreviewBinding.header inputs.metadata call inputs.communication
     ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
 
@@ -154,10 +167,11 @@ theorem publicInputs_header_and_payload (inputs : Inputs)
     (accepted : publicInputs inputs operations activity = some fields) :
     ∃ (header : ImpactCallStatement.Header) (payload : List NativeRelation.Scalar),
       fields = [header.bindingInput, header.communicationsCommitment] ++ payload ∧
-      scheduledPayload ImpactStatementScalar.opFields operations activity = some payload := by
+      scheduledPayload ImpactStatementScalar.opFields operations activity = some payload ∧
+      headerFor inputs operations activity = some header := by
   by_cases countsMatch :
       operationCount inputs.guaranteed + operationCount inputs.fallible = operations.length
-  · simp [publicInputs, countsMatch, Bind.bind, Option.bind_eq_some_iff] at accepted
+  · simp [publicInputs, previewFor, countsMatch, Bind.bind, Option.bind_eq_some_iff] at accepted
     obtain ⟨call, previewed, header, headed, statementAccepted⟩ := accepted
     let before : ImpactCallPreview.CallTranscripts NativeState.Op :=
       ⟨inputs.guaranteed.map fun part =>
@@ -165,6 +179,8 @@ theorem publicInputs_header_and_payload (inputs : Inputs)
         inputs.fallible.map fun part =>
           ⟨operations.drop (operationCount inputs.guaranteed), part.computeTime⟩⟩
     have callPreview : previewCall inputs.cost before activity = some call := previewed
+    have headerReconstructed : headerFor inputs operations activity = some header := by
+      simp [headerFor, previewFor, before, countsMatch, callPreview, headed]
     obtain ⟨guaranteedActivity, fallibleActivity, activitySplit,
       guaranteedMatches, fallibleMatches, _⟩ :=
       previewCall_sound inputs.cost before activity callPreview
@@ -211,11 +227,12 @@ theorem publicInputs_header_and_payload (inputs : Inputs)
       exact List.take_append_drop _ _
     have splitReconstruction : guaranteedActivity ++ fallibleActivity = activity :=
       activitySplit
-    refine ⟨header, guaranteedFields ++ fallibleFields, ?_, ?_⟩
+    refine ⟨header, guaranteedFields ++ fallibleFields, ?_, ?_, ?_⟩
     · simpa [guaranteedFields, fallibleFields, List.append_assoc] using layout
     · rw [← operationReconstruction, ← splitReconstruction]
       exact payloadAccepted
-  · simp [publicInputs, countsMatch] at accepted
+    · exact headerReconstructed
+  · simp [publicInputs, previewFor, countsMatch] at accepted
 
 /-- Read the scalar schedule from exact artifact bytes and construct its
 public statement under the supplied native call metadata. -/

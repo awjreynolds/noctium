@@ -38,33 +38,79 @@ of each active or inactive Impact row. -/
 def observationFields (observations : List Observation) : List Scalar :=
   observations.flatMap Observation.payload
 
-/-- Project checked guarded rows through the pinned scalar preprocessing
-contract. Impact inputs and public read outputs are independently consumed.
-This models statement projection, not the cryptographic authentication of the
-commitment or the circuit relation. -/
-def fromRows (assignment : Assignment) (rows : List GuardedScalarRows.Row)
-    (header : ImpactCallStatement.Header) (inputs : Inputs) : Option Projection := do
+/-- Consume guarded rows through the pinned scalar preprocessing contract.
+Impact inputs and public read outputs are independently consumed. This models
+statement consumption, not cryptographic authentication or the circuit relation. -/
+def consumeRows (assignment : Assignment) (rows : List GuardedScalarRows.Row)
+    (inputs : Inputs) : Option (List Observation) := do
   let observations ← emittedObservations assignment rows
   let reads := emittedPublicReads assignment rows
   let consumedReads := consumeReads (reads.map ReadObservation.guard) inputs.transcriptOutputs
   if consumedReads != some (reads.map ReadObservation.value, []) then none
   else if inputs.transcriptInputs != activePayloads observations then none
-  else
-    pure {
-      fields := [header.bindingInput, header.communicationsCommitment] ++
-        observationFields observations
-      activity := observationActivity observations
-    }
+  else some observations
 
-/-- Decode exact ZKIR bytes and project their guarded rows only when the
-artifact declares the communications commitment used by the call header. -/
-def fromArtifact (bytes : ArtifactBytes.Bytes) (assignment : Assignment)
-    (header : ImpactCallStatement.Header) (inputs : Inputs) : Option Projection := do
+/-- Project consumed rows through a supplied Impact call header. -/
+def fromRows (assignment : Assignment) (rows : List GuardedScalarRows.Row)
+    (header : ImpactCallStatement.Header) (inputs : Inputs) : Option Projection :=
+  (consumeRows assignment rows inputs).map fun observations => {
+    fields := [header.bindingInput, header.communicationsCommitment] ++
+      observationFields observations
+    activity := observationActivity observations
+  }
+
+/-- Decode exact ZKIR bytes and consume their guarded rows only when the
+artifact declares the communications commitment required for a call. -/
+def consumeArtifact (bytes : ArtifactBytes.Bytes) (assignment : Assignment)
+    (inputs : Inputs) : Option (List Observation) := do
   let view ← (GuardedZkirArtifact.decodeBytes bytes).toOption
   if view.header.communicationsCommitment then
-    fromRows assignment view.rows header inputs
+    consumeRows assignment view.rows inputs
   else
     none
+
+/-- Project a successfully consumed artifact through a supplied Impact call
+header. The artifact's own commitment flag remains an independent gate. -/
+def fromArtifact (bytes : ArtifactBytes.Bytes) (assignment : Assignment)
+    (header : ImpactCallStatement.Header) (inputs : Inputs) : Option Projection :=
+  (consumeArtifact bytes assignment inputs).map fun observations => {
+    fields := [header.bindingInput, header.communicationsCommitment] ++
+      observationFields observations
+    activity := observationActivity observations
+  }
+
+/-- Rows are consumed exactly when their emitted observations match the Impact
+input stream and their public read stream is consumed completely. -/
+theorem consumeRows_iff (assignment : Assignment) (rows : List GuardedScalarRows.Row)
+    (inputs : Inputs) (observations : List Observation) :
+    consumeRows assignment rows inputs = some observations ↔
+      emittedObservations assignment rows = some observations ∧
+      inputs.transcriptInputs = activePayloads observations ∧
+      inputs.transcriptOutputs = activeReadValues (emittedPublicReads assignment rows) ∧
+      (∀ read ∈ emittedPublicReads assignment rows,
+        read.guard = one ∨ (read.guard = zero ∧ read.value = zero)) := by
+  let reads := emittedPublicReads assignment rows
+  let consumedReads := consumeReads (reads.map ReadObservation.guard) inputs.transcriptOutputs
+  have readContract := consumeReads_iff reads inputs.transcriptOutputs []
+  constructor
+  · intro accepted
+    unfold consumeRows at accepted
+    cases observed : emittedObservations assignment rows with
+    | none => simp [observed] at accepted
+    | some found =>
+      by_cases readsAccepted : consumedReads = some (reads.map ReadObservation.value, [])
+      · by_cases impactAccepted : inputs.transcriptInputs = activePayloads found
+        · simp [observed, reads, consumedReads, readsAccepted, impactAccepted] at accepted
+          cases accepted
+          have readsMeaning := readContract.mp readsAccepted
+          exact ⟨rfl, impactAccepted,
+            by simpa [reads] using readsMeaning.1,
+            by simpa [reads] using readsMeaning.2⟩
+        · simp [observed, reads, consumedReads, readsAccepted, impactAccepted] at accepted
+      · simp [observed, reads, consumedReads, readsAccepted] at accepted
+  · rintro ⟨observed, impactStream, readStream, readDefaults⟩
+    have readsAccepted := readContract.mpr ⟨by simpa [reads] using readStream, readDefaults⟩
+    simp [consumeRows, observed, reads, readsAccepted, impactStream]
 
 /-- The projection accepts exactly the ordered streams and public fields of
 the observations, including zero-valued inactive reads and their activity. -/
@@ -79,32 +125,56 @@ theorem fromRows_iff (assignment : Assignment) (rows : List GuardedScalarRows.Ro
       projection.fields =
         [header.bindingInput, header.communicationsCommitment] ++ observationFields observations ∧
       projection.activity = observationActivity observations := by
-  let reads := emittedPublicReads assignment rows
-  let consumedReads := consumeReads (reads.map ReadObservation.guard) inputs.transcriptOutputs
-  have readContract := consumeReads_iff reads inputs.transcriptOutputs []
   constructor
   · intro accepted
-    unfold fromRows at accepted
-    cases observationsResult : emittedObservations assignment rows with
-    | none => simp [observationsResult] at accepted
-    | some observations =>
-      by_cases readsAccepted : consumedReads = some (reads.map ReadObservation.value, [])
-      · by_cases impactAccepted : inputs.transcriptInputs = activePayloads observations
-        · simp [observationsResult, reads, consumedReads, readsAccepted, impactAccepted] at accepted
-          cases accepted
-          have readsMeaning := readContract.mp readsAccepted
-          exact ⟨observations, rfl, impactAccepted,
-            by simpa [reads] using readsMeaning.1,
-            by simpa [reads] using readsMeaning.2, rfl, rfl⟩
-        · simp [observationsResult, reads, consumedReads, readsAccepted, impactAccepted] at accepted
-      · simp [observationsResult, reads, consumedReads, readsAccepted] at accepted
+    have mapped : ∃ observations,
+        consumeRows assignment rows inputs = some observations ∧
+          ({ fields := [header.bindingInput, header.communicationsCommitment] ++
+              observationFields observations,
+             activity := observationActivity observations } : Projection) = projection := by
+      simpa [fromRows, Option.map_eq_some_iff] using accepted
+    rcases mapped with ⟨observations, consumed, projected⟩
+    have consumedMeaning := (consumeRows_iff assignment rows inputs observations).mp consumed
+    have fields : projection.fields =
+        [header.bindingInput, header.communicationsCommitment] ++ observationFields observations := by
+      simpa using (congrArg Projection.fields projected).symm
+    have activity : projection.activity = observationActivity observations := by
+      simpa using (congrArg Projection.activity projected).symm
+    exact ⟨observations, consumedMeaning.1, consumedMeaning.2.1,
+      consumedMeaning.2.2.1, consumedMeaning.2.2.2, fields, activity⟩
   · rintro ⟨observations, observed, impactStream, readStream, readDefaults, fields, activity⟩
-    have readsAccepted := readContract.mpr ⟨by simpa [reads] using readStream, readDefaults⟩
-    cases projection with
-    | mk projectedFields projectedActivity =>
-      cases fields
-      cases activity
-      simp [fromRows, observed, reads, readsAccepted, impactStream, observationActivity]
+    have consumed := (consumeRows_iff assignment rows inputs observations).mpr
+      ⟨observed, impactStream, readStream, readDefaults⟩
+    have projected :
+        ({ fields := [header.bindingInput, header.communicationsCommitment] ++
+            observationFields observations,
+           activity := observationActivity observations } : Projection) = projection := by
+      cases projection with
+      | mk projectedFields projectedActivity =>
+        simp only [Projection.mk.injEq]
+        exact ⟨fields.symm, activity.symm⟩
+    apply (Option.map_eq_some_iff).mpr
+    exact ⟨observations, consumed, projected⟩
+
+/-- Successful byte projection identifies the exact parsed artifact view,
+requires its communications commitment field, and projects its ordered rows. -/
+theorem consumeArtifact_sound (bytes : ArtifactBytes.Bytes) (assignment : Assignment)
+    (inputs : Inputs) (observations : List Observation)
+    (accepted : consumeArtifact bytes assignment inputs = some observations) :
+    ∃ view,
+      GuardedZkirArtifact.decodeBytes bytes = .ok view ∧
+      view.header.communicationsCommitment = Bool.true ∧
+      consumeRows assignment view.rows inputs = some observations := by
+  unfold consumeArtifact at accepted
+  cases decoded : GuardedZkirArtifact.decodeBytes bytes with
+  | error message =>
+    simp [decoded, Except.toOption] at accepted ⊢
+  | ok view =>
+    simp only [decoded, Except.toOption] at accepted
+    by_cases committed : view.header.communicationsCommitment
+    · simp [committed] at accepted
+      exact ⟨view, rfl, committed, accepted⟩
+    · simp [committed] at accepted
 
 /-- Successful byte projection identifies the exact parsed artifact view,
 requires its communications commitment field, and projects its ordered rows. -/
@@ -115,16 +185,19 @@ theorem fromArtifact_sound (bytes : ArtifactBytes.Bytes) (assignment : Assignmen
       GuardedZkirArtifact.decodeBytes bytes = .ok view ∧
       view.header.communicationsCommitment = Bool.true ∧
       fromRows assignment view.rows header inputs = some projection := by
-  unfold fromArtifact at accepted
-  cases decoded : GuardedZkirArtifact.decodeBytes bytes with
-  | error message =>
-    simp [decoded, Except.toOption] at accepted
-  | ok view =>
-    simp only [decoded, Except.toOption] at accepted
-    by_cases committed : view.header.communicationsCommitment
-    · simp [committed] at accepted
-      exact ⟨view, rfl, committed, accepted⟩
-    · simp [committed] at accepted
+  have mapped : ∃ observations,
+      consumeArtifact bytes assignment inputs = some observations ∧
+        ({ fields := [header.bindingInput, header.communicationsCommitment] ++
+            observationFields observations,
+           activity := observationActivity observations } : Projection) = projection := by
+    simpa [fromArtifact, Option.map_eq_some_iff] using accepted
+  rcases mapped with ⟨observations, consumed, projected⟩
+  obtain ⟨view, decoded, committed, rowsConsumed⟩ :=
+    consumeArtifact_sound bytes assignment inputs observations consumed
+  have rowsProjected : fromRows assignment view.rows header inputs = some projection := by
+    rw [fromRows, rowsConsumed]
+    exact congrArg some projected
+  exact ⟨view, decoded, committed, rowsProjected⟩
 
 private theorem observeImpact_inactive_zero (guard : Scalar) (values : List Scalar)
     (observation : Observation)

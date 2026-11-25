@@ -147,9 +147,12 @@ rejections, valid active writes and nested name shadowing. Its source is
 `runtime/src/proof/guarded_partials.rs`. The test passes the assembled call and
 its checked activity through the proof SDK's native statement preview. Lean
 checks the resulting public fields against the emitted Impact bytes for both
-active and inactive writes. Eager `select` keeps eager evaluation inside an
-active expression. Guarded assertions retain the existing successful-value
-disclosure scope, without a failure-channel privacy claim.
+active and inactive writes. Lean derives the ZKIR statement header from the
+same Impact preview that determines the public fields. The native call
+supplies the call metadata and communication commitment. Eager `select`
+keeps eager evaluation inside an active expression. Guarded assertions retain
+the existing successful-value disclosure scope, without a failure-channel
+privacy claim.
 
 The selected-3.2.1 inactive conditional-write fixture also passes real native
 proof construction and verified attachment. The SDK freezes a preview of native
