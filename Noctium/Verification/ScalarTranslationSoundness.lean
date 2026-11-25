@@ -255,7 +255,6 @@ number of generated names are distinct bounds. -/
 theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
     {inputs : Assignment} {json : Json} {relation : Program}
     (admitted : ScalarNormalization.CanonicalInputs circuit values inputs)
-    (scalarAdmission : ScalarNormalization.ScalarCircuitAdmission circuit)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
     (profile : checkedScalarOpcodeProfile
@@ -276,8 +275,8 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
   obtain ⟨decodedRows, decodedParsed, decoding⟩ :=
     NativeRelationInstructionProjection.decode_instructionProjection decoded
   cases Except.ok.inj (decodedParsed.symm.trans rowsParsed)
-  refine ⟨?_, ScalarAllocationOutputFrame.lowerCircuit_scalarAdmission_names_fit_producerCapacity
-    circuit scalarAdmission lowered, decoding,
+  refine ⟨?_, ScalarAllocationOutputFrame.lowerCircuit_names_fit_producerCapacity
+    circuit lowered, decoding,
     NativeRelationInstructionProjection.decodedRows_budget nativeAccepted rowsParsed decoding⟩
   intro input member
   apply identifiers (scalarInputRequirement input)

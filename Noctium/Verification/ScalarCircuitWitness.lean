@@ -66,7 +66,7 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
   have acceptedSource := (expectedCircuit_parts pruned expected expectedAccepted).1
   have validation := circuit_validation_parts pruned acceptedSource
   obtain ⟨names, capacity, rows, _⟩ := ScalarTranslationSoundness.lowerCircuit_witness_preflight
-    circuit admitted scalarAdmission lowered decoded profile
+    circuit admitted lowered decoded profile
   have inputCompletion := completes_circuit_inputs hash inputs pruned values prunedInputs names
   have constraintCompletion := completes_circuit_constraints ctx hash implementation pruned values inputs
     prunedInputs names prunedAdmission prunedConditions validation.1 steps.1
