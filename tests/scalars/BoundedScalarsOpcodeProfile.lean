@@ -3,7 +3,7 @@ import examples.BoundedScalars
 import Noctium.Verification.NativeInputOrdinalTrace
 import Noctium.Verification.NativeRelationInstructionProjection
 import Noctium.Verification.NativeRelationJson
-import Noctium.Verification.RangeDedupAcceptedArray
+import Noctium.Verification.RangeDedupAcceptedEntrypoint
 import Noctium.Verification.ScalarAllocationOutputFrame
 import Noctium.Verification.ScalarValidationOpcodeProfile
 import Noctium.Verification.ScalarValidationProjection
@@ -237,25 +237,24 @@ open Noctium.Verification.ScalarNormalization (interpret) in
 /-- Every satisfying assignment of the emitted relation satisfies every
 assertion in the corresponding validated source schedule. -/
 theorem boundedApply_checkedAssertions {hash : Hash} {assignment : Assignment}
-    (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
+    {streams : InputStreams} {groups : List (List Scalar)}
+    (satisfies : CircuitSatisfies hash decodedProgram streams assignment groups) :
     ∃ expected, Native.expectedEntrypoint BoundedScalars.state
       (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
       ∀ term ∈ expected.assertions, interpret hash assignment term = some one := by
-  obtain ⟨_, expected, _, seed, final, _, schedule, _, driver, trace⟩ :=
-    boundedApply_nativeValidationTrace
-  have checked := boundedApplyScalarInputs_checked
-  simp only [boundedApplyScalarInputs, schedule, Bool.and_eq_true] at checked
-  obtain ⟨⟨emptyHeader, scalarInputs⟩, _⟩ := checked
-  have empty : expected.rawInputs = [] := List.isEmpty_iff.mp emptyHeader
-  cases driver.emptyRawSeed empty
-  have schema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false := by
-    intro requirement inList
-    simpa using List.all_eq_true.mp scalarInputs requirement inList
-  refine ⟨expected, schedule, accepted_driver_assertion_schedule driver
-    (Noctium.Verification.ScalarValidationMeaning.empty_meaning hash assignment assignment)
-    empty_nativeDefinitions schema (fun _ _ => rfl)
-    (nativeDefinitionTrace_acceptedMeaningSteps trace holds) ?_⟩
-  simp [Noctium.Verification.RangeDedupAssertMeaning.CheckedAssertions]
+  have schema : ∀ expected,
+      Native.expectedEntrypoint BoundedScalars.state
+        (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected →
+      ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false := by
+    intro expected schedule requirement inList
+    have checked := boundedApplyScalarInputs_checked
+    simp only [boundedApplyScalarInputs, schedule, Bool.and_eq_true] at checked
+    simpa using List.all_eq_true.mp checked.1.2 requirement inList
+  obtain ⟨expected, schedule, assertions⟩ :=
+    Noctium.Verification.RangeDedupAcceptedEntrypoint.lowerEntrypoint_satisfies_sourceAssertions
+      BoundedScalars.state selectedEntrypoint .disabled boundedApply_lowered boundedApply_decoded
+      boundedApply_instructionsParsed boundedApply_checkedScalarOpcodeProfile schema
+  exact ⟨expected, schedule, assertions satisfies⟩
 
 theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
     (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
