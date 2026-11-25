@@ -152,6 +152,17 @@ private theorem evalFields_single (ctx : EvalContext) (env : EvalEnv)
   | error message => simp [evaluated, bind, Except.bind, Except.map, Functor.map] at accepted
   | ok value => exact ⟨value, rfl⟩
 
+private theorem evalFields_single_exact (ctx : EvalContext) (env : EvalEnv)
+    (expression : Impact.Scalar) :
+    evalFields ctx env [expression] = (fun value => [scalar value]) <$> expression.eval ctx env := by
+  cases evaluated : expression.eval ctx env with
+  | error message =>
+    simp [evalFields, List.mapM_cons, List.mapM_nil, evaluated, bind,
+      Except.bind, Except.map, Functor.map] <;> rfl
+  | ok value =>
+    simp [evalFields, List.mapM_cons, List.mapM_nil, evaluated, bind,
+      Except.bind, Except.map, Functor.map] <;> rfl
+
 theorem evalAligned_of_fields (ctx : EvalContext) (env : EvalEnv)
     (aligned : Impact.Aligned) (values : List Scalar)
     (supported : ScalarAligned aligned)
@@ -309,6 +320,73 @@ private theorem evalFields_literal_cons (ctx : EvalContext) (env : EvalEnv)
   simp [evalFields, List.mapM_cons, literal_eval ctx env n modulus bound,
     Except.bind, Except.map, Functor.map, Except.pure] <;> rfl
 
+/-- Field encoding preserves both successful aligned values and expression
+errors. This exact form is used when operation evaluation is compared with
+its scalar field encoding. -/
+theorem evalAligned_fields_exact (ctx : EvalContext) (env : EvalEnv)
+    (value : Impact.Aligned) (supported : ScalarAligned value)
+    (modulus : ctx.modulus = Field.modulus) :
+    evalFields ctx env value.fields = (evalAligned ctx env value).map Cell.fields := by
+  cases value with
+  | field expression =>
+    have oneBound : 1 < Field.modulus := by decide
+    have alignmentBound : Field.modulus - 2 < Field.modulus := by decide
+    change evalFields ctx env
+      [.native 1, .native (Field.modulus - 2), expression] =
+        (evalAligned ctx env (.field expression)).map Cell.fields
+    rw [evalFields_literal_cons ctx env 1 _ modulus oneBound]
+    rw [evalFields_literal_cons ctx env (Field.modulus - 2) _ modulus alignmentBound]
+    rw [evalFields_single_exact]
+    cases evaluated : expression.eval ctx env with
+    | error message =>
+      simp [evalAligned, evaluated, Cell.fields, field, scalar_one_eq,
+        bind, Except.bind, Except.map, Functor.map] <;> rfl
+    | ok number =>
+      simp [evalAligned, evaluated, Cell.fields, field, scalar_one_eq,
+        bind, Except.bind, Except.map, Functor.map] <;> rfl
+  | bit value =>
+    have oneBound : 1 < Field.modulus := by decide
+    change evalFields ctx env
+      [.native 1, .native 1, .native (if value then 1 else 0)] =
+        (evalAligned ctx env (.bit value)).map Cell.fields
+    rw [evalFields_literal_cons ctx env 1 _ modulus oneBound]
+    rw [evalFields_literal_cons ctx env 1 _ modulus oneBound]
+    cases value with
+    | false =>
+      have valueBound : (if false then 1 else 0) < Field.modulus := by decide
+      rw [evalFields_literal_cons ctx env (if false then 1 else 0) _ modulus valueBound]
+      simp [evalFields, evalAligned, Cell.fields, boolean, bit, scalar_one_eq,
+        one, zero, bind, Except.bind, Except.map, Except.pure, Functor.map] <;> rfl
+    | true =>
+      have valueBound : (if true then 1 else 0) < Field.modulus := by decide
+      rw [evalFields_literal_cons ctx env (if true then 1 else 0) _ modulus valueBound]
+      simp [evalFields, evalAligned, Cell.fields, boolean, bit, scalar_one_eq,
+        one, zero, bind, Except.bind, Except.map, Except.pure, Functor.map] <;> rfl
+  | bitExpr expression =>
+    have oneBound : 1 < Field.modulus := by decide
+    have oneEval : (Expr.native 1 : Expr .native).eval ctx env = .ok 1 := by
+      simp [Expr.eval, modulus, Field.modulus] <;> rfl
+    have zeroEval : (Expr.native 0 : Expr .native).eval ctx env = .ok 0 := by
+      simp [Expr.eval, modulus, Field.modulus] <;> rfl
+    change evalFields ctx env
+      [.native 1, .native 1, .select expression (.native 1) (.native 0)] =
+        (evalAligned ctx env (.bitExpr expression)).map Cell.fields
+    rw [evalFields_literal_cons ctx env 1 _ modulus oneBound]
+    rw [evalFields_literal_cons ctx env 1 _ modulus oneBound]
+    rw [evalFields_single_exact]
+    cases evaluated : expression.eval ctx env with
+    | error message =>
+      simp [evalAligned, Expr.eval, evaluated, Cell.fields, boolean, bit,
+        scalar_one_eq, one, zero, Except.bind, Except.map, Except.pure,
+        oneEval, zeroEval, modulus, Field.modulus, Functor.map] <;> rfl
+    | ok bitValue =>
+      cases bitValue <;>
+        simp [evalAligned, Expr.eval, evaluated, Cell.fields, boolean, bit,
+          scalar_one_eq, one, zero, Except.bind, Except.map, Except.pure,
+          oneEval, zeroEval, modulus, Field.modulus, Functor.map] <;> rfl
+  | foreignKey _ _ | bytes32 _ | bytes _ _ | compress _ | compressString _
+    | nativeFields _ | counter _ | u128 _ => simp [ScalarAligned] at supported
+
 theorem evalAligned_fields (ctx : EvalContext) (env : EvalEnv)
     (value : Impact.Aligned) (cell : Cell)
     (modulus : ctx.modulus = Field.modulus)
@@ -316,174 +394,180 @@ theorem evalAligned_fields (ctx : EvalContext) (env : EvalEnv)
     evalFields ctx env value.fields = .ok cell.fields := by
   cases value with
   | field expression =>
-    cases evaluated : expression.eval ctx env with
-    | error message =>
-      simp only [evalAligned, evaluated] at accepted
-      change (Except.error message : Except String Cell) = .ok cell at accepted
-      cases accepted
-    | ok number =>
-      simp [evalAligned, evaluated] at accepted
-      cases accepted
-      have oneEval : (Expr.native 1 : Expr .native).eval ctx env = .ok 1 := by
-        simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-      have alignmentEval :
-          (Expr.native (Field.modulus - 2) : Expr .native).eval ctx env =
-            .ok (Field.modulus - 2) := by
-        simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-      simp [evalFields, Impact.Aligned.fields, Cell.fields,
-        field, oneEval, alignmentEval, evaluated, scalar, one,
-        Except.bind, Except.map, Functor.map, Except.pure] <;> rfl
+    have exact := evalAligned_fields_exact ctx env (.field expression) (by trivial) modulus
+    rw [accepted] at exact
+    simpa [Except.map] using exact
   | bit value =>
-    simp [evalAligned] at accepted
-    cases accepted
-    have oneEval : (Expr.native 1 : Expr .native).eval ctx env = .ok 1 := by
-      simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-    have zeroEval : (Expr.native 0 : Expr .native).eval ctx env = .ok 0 := by
-      simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-    cases value <;>
-      simp [evalFields, Impact.Aligned.fields, Cell.fields, boolean,
-        bit, one, zero, oneEval, zeroEval,
-        Except.bind, Except.map, Functor.map, Except.pure] <;> rfl
+    have exact := evalAligned_fields_exact ctx env (.bit value) (by trivial) modulus
+    rw [accepted] at exact
+    simpa [Except.map] using exact
   | bitExpr expression =>
-    cases evaluated : expression.eval ctx env with
-    | error message =>
-      simp [evalAligned, evaluated] at accepted
-      cases accepted
-    | ok value =>
-      simp [evalAligned, evaluated] at accepted
-      cases accepted
-      have oneEval : (Expr.native 1 : Expr .native).eval ctx env = .ok 1 := by
-        simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-      have zeroEval : (Expr.native 0 : Expr .native).eval ctx env = .ok 0 := by
-        simp [Expr.eval, modulus, Field.modulus, Except.pure] <;> rfl
-      cases value <;>
-        simp [evalFields, Impact.Aligned.fields, Cell.fields, boolean,
-          bit, one, zero, evaluated, Expr.eval, oneEval, zeroEval,
-          scalar_one_eq, Except.bind, Except.map, Functor.map,
-          Except.pure] <;> rfl
+    have exact := evalAligned_fields_exact ctx env (.bitExpr expression) (by trivial) modulus
+    rw [accepted] at exact
+    simpa [Except.map] using exact
   | foreignKey _ _ | bytes32 _ | bytes _ _ | compress _ | compressString _
     | nativeFields _ | counter _ | u128 _ => simp [evalAligned] at accepted
 
+private theorem evalFields_append_exact (ctx : EvalContext) (env : EvalEnv)
+    (before after : List Impact.Scalar) :
+    evalFields ctx env (before ++ after) =
+      (evalFields ctx env before).bind fun beforeValues =>
+        (evalFields ctx env after).map fun suffix => beforeValues ++ suffix := by
+  simp [evalFields, List.mapM_append, bind, Except.bind, Except.map,
+    Functor.map] <;> rfl
+
+/-- The operation field encoder has the same success values and exact failure
+messages as the scalar operation interpreter on its supported, field-admitted
+fragment. -/
+theorem evalOp_fields_exact (ctx : EvalContext) (env : EvalEnv)
+    (operation : Impact.Op) (supported : ScalarOperation operation)
+    (modulus : ctx.modulus = Field.modulus)
+    (admitted : FieldAdmitted operation) :
+    evalFields ctx env operation.fields =
+      (evalOp ctx env operation).map NativeState.Op.fields := by
+  cases operation with
+  | dup =>
+    change evalFields ctx env [.native 0x30] =
+      (evalOp ctx env .dup).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env 0x30 [] modulus (by decide)]
+    rfl
+  | member =>
+    change evalFields ctx env [.native 0x18] =
+      (evalOp ctx env .member).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env 0x18 [] modulus (by decide)]
+    rfl
+  | insert levels =>
+    change evalFields ctx env [.native (0x90 + levels)] =
+      (evalOp ctx env (.insert levels)).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env (0x90 + levels) [] modulus admitted]
+    rfl
+  | index slot path =>
+    have slotBound : slot < Field.modulus := admitted
+    have opcodeBound : (if path then 0x70 else 0x50) < Field.modulus := by
+      cases path <;> decide
+    have slotEval : evalAligned ctx env (.field (.native slot)) =
+        .ok (field (scalar slot)) := by
+      simp [evalAligned, literal_eval ctx env slot modulus slotBound,
+        bind, Except.bind, Except.pure] <;> rfl
+    have slotFields := evalAligned_fields_exact ctx env
+      (.field (.native slot)) (by trivial) modulus
+    change evalFields ctx env
+      (.native (if path then 0x70 else 0x50) ::
+        (Impact.Aligned.field (.native slot)).fields) =
+      (evalOp ctx env (.index slot path)).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env _ _ modulus opcodeBound, slotFields]
+    simp [evalOp, slotEval, NativeState.Op.fields, scalar_one_eq,
+      Except.map, Functor.map] <;> rfl
+  | mapIndex slot key =>
+    cases key with
+    | field expression =>
+      have slotBound : slot < Field.modulus := admitted
+      have opcodeBound : 0x51 < Field.modulus := by decide
+      have slotPrefix : evalFields ctx env
+          ([.native 0x51] ++ (Impact.Aligned.field (.native slot)).fields) =
+          .ok (scalar 0x51 :: (field (scalar slot)).fields) := by
+        change evalFields ctx env
+          [.native 0x51, .native 1, .native (Field.modulus - 2), .native slot] = _
+        rw [evalFields_literal_cons ctx env 0x51 _ modulus opcodeBound]
+        rw [evalFields_literal_cons ctx env 1 _ modulus (by decide)]
+        rw [evalFields_literal_cons ctx env (Field.modulus - 2) _ modulus (by decide)]
+        rw [evalFields_literal_cons ctx env slot _ modulus slotBound]
+        rfl
+      have keyFields := evalAligned_fields_exact ctx env
+        (.field expression) (by trivial) modulus
+      change evalFields ctx env
+          (([.native 0x51] ++ (Impact.Aligned.field (.native slot)).fields) ++
+            (Impact.Aligned.field expression).fields) =
+        (evalOp ctx env (.mapIndex slot (.field expression))).map
+          NativeState.Op.fields
+      rw [evalFields_append_exact, slotPrefix, keyFields]
+      cases aligned : evalAligned ctx env (.field expression) with
+      | error message =>
+        simp [evalOp, aligned, NativeState.Op.fields, scalar_one_eq,
+          Except.map, Functor.map] <;> rfl
+      | ok cell =>
+        simp [evalOp, aligned, NativeState.Op.fields, scalar_one_eq,
+          Except.map, Functor.map] <;> rfl
+    | foreignKey _ _ | bit _ | bitExpr _ | bytes32 _ | bytes _ _ | compress _
+      | compressString _ | nativeFields _ | counter _ | u128 _ =>
+        simp [ScalarOperation] at supported
+  | push value storage =>
+    have alignedSupported : ScalarAligned value := by
+      simpa [ScalarOperation] using supported
+    have opcodeBound : (if storage then 0x11 else 0x10) < Field.modulus := by
+      cases storage <;> decide
+    have alignedFields := evalAligned_fields_exact ctx env value
+      alignedSupported modulus
+    change evalFields ctx env
+      (.native (if storage then 0x11 else 0x10) :: .native 1 :: value.fields) =
+        (evalOp ctx env (.push value storage)).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env _ _ modulus opcodeBound]
+    rw [evalFields_literal_cons ctx env 1 _ modulus (by decide)]
+    cases aligned : evalAligned ctx env value with
+    | error message =>
+      rw [alignedFields]
+      simp [evalOp, aligned, NativeState.Op.fields, scalar_one_eq,
+        Except.map, Functor.map]
+    | ok cell =>
+      rw [alignedFields]
+      simp [evalOp, aligned, NativeState.Op.fields, scalar_one_eq,
+        Except.map, Functor.map]
+  | popeq value =>
+    have alignedSupported : ScalarAligned value := by
+      simpa [ScalarOperation] using supported
+    have alignedFields := evalAligned_fields_exact ctx env value
+      alignedSupported modulus
+    change evalFields ctx env (.native 0x0c :: value.fields) =
+      (evalOp ctx env (.popeq value)).map NativeState.Op.fields
+    rw [evalFields_literal_cons ctx env 0x0c _ modulus (by decide)]
+    cases aligned : evalAligned ctx env value with
+    | error message =>
+      rw [alignedFields]
+      simp [evalOp, aligned, NativeState.Op.fields, Except.map, Functor.map]
+    | ok cell =>
+      rw [alignedFields]
+      simp [evalOp, aligned, NativeState.Op.fields, Except.map, Functor.map]
+  | _ => simp [ScalarOperation] at supported
+
+/-- Successful operation interpretation is a direct corollary of the exact
+correspondence. -/
 theorem evalOp_fields (ctx : EvalContext) (env : EvalEnv)
     (operation : Impact.Op) (native : Op)
     (modulus : ctx.modulus = Field.modulus)
     (admitted : FieldAdmitted operation)
     (accepted : evalOp ctx env operation = .ok native) :
     evalFields ctx env operation.fields = .ok native.fields := by
-  cases operation with
-  | dup =>
-    cases accepted
-    change evalFields ctx env [.native 0x30] = .ok [scalar 0x30]
-    rw [evalFields_literal_cons ctx env 0x30 [] modulus (by decide)]
-    rfl
-  | member =>
-    cases accepted
-    change evalFields ctx env [.native 0x18] = .ok [scalar 0x18]
-    rw [evalFields_literal_cons ctx env 0x18 [] modulus (by decide)]
-    rfl
-  | insert levels =>
-    cases accepted
-    change evalFields ctx env [.native (0x90 + levels)] =
-      .ok [scalar (0x90 + levels)]
-    rw [evalFields_literal_cons ctx env (0x90 + levels) [] modulus admitted]
-    rfl
-  | index slot path =>
-    cases accepted
-    have opcodeBound : (if path then 0x70 else 0x50) < Field.modulus := by
-      cases path <;> decide
-    have alignedAccepted : evalAligned ctx env
-        (.field (.native slot)) = .ok (field (scalar slot)) := by
-      simp [evalAligned, literal_eval ctx env slot modulus admitted,
-        Except.bind, Except.pure] <;> rfl
-    have alignedFields := evalAligned_fields ctx env
-      (.field (.native slot)) (field (scalar slot)) modulus alignedAccepted
-    change evalFields ctx env
-      (.native (if path then 0x70 else 0x50) ::
-        (Impact.Aligned.field (.native slot)).fields) =
-      .ok (scalar (if path then 0x70 else 0x50) :: (field (scalar slot)).fields)
-    rw [evalFields_literal_cons ctx env _ _ modulus opcodeBound, alignedFields]
-    rfl
-  | mapIndex slot key =>
-    cases key with
-    | field expression =>
-      cases aligned : evalAligned ctx env (.field expression) with
-      | error message =>
-        simp only [evalOp, aligned] at accepted
-        change (Except.error message : Except String Op) = .ok native at accepted
-        cases accepted
-      | ok cell =>
-        simp [evalOp, aligned] at accepted
-        cases accepted
-        have opcodeBound : 0x51 < Field.modulus := by decide
-        have alignedSlot : evalAligned ctx env
-            (.field (.native slot)) = .ok (field (scalar slot)) := by
-          simp [evalAligned, literal_eval ctx env slot modulus admitted,
-            Except.bind, Except.pure] <;> rfl
-        have slotFields := evalAligned_fields ctx env
-          (.field (.native slot)) (field (scalar slot)) modulus alignedSlot
-        have keyFields := evalAligned_fields ctx env
-          (.field expression) cell modulus aligned
-        change evalFields ctx env
-          (.native 0x51 :: ((Impact.Aligned.field (.native slot)).fields ++
-            (Impact.Aligned.field expression).fields)) =
-          .ok (scalar 0x51 :: ((field (scalar slot)).fields ++ cell.fields))
-        rw [evalFields_literal_cons ctx env 0x51 _ modulus opcodeBound]
-        have tailFields : evalFields ctx env
-            ((Impact.Aligned.field (.native slot)).fields ++
-              (Impact.Aligned.field expression).fields) =
-            .ok ((field (scalar slot)).fields ++ cell.fields) := by
-          have slotFields' :
-              (Impact.Aligned.field (.native slot)).fields.mapM
-                (fun item => scalar <$> item.eval ctx env) =
-              .ok (field (scalar slot)).fields := by
-            simpa [evalFields] using slotFields
-          have keyFields' :
-              (Impact.Aligned.field expression).fields.mapM
-                (fun item => scalar <$> item.eval ctx env) = .ok cell.fields := by
-            simpa [evalFields] using keyFields
-          change ((Impact.Aligned.field (.native slot)).fields ++
-            (Impact.Aligned.field expression).fields).mapM
-            (fun item => scalar <$> item.eval ctx env) = _
-          rw [List.mapM_append, slotFields', keyFields']
-          rfl
-        rw [tailFields]
-        rfl
-    | foreignKey _ _ | bit _ | bitExpr _ | bytes32 _ | bytes _ _ | compress _
-      | compressString _ | nativeFields _ | counter _ | u128 _ =>
-        simp [evalOp] at accepted
-  | push value storage =>
-    cases aligned : evalAligned ctx env value with
-    | error message =>
-      simp only [evalOp, aligned] at accepted
-      change (Except.error message : Except String Op) = .ok native at accepted
-      cases accepted
-    | ok cell =>
-      simp [evalOp, aligned] at accepted
-      cases accepted
-      have opcodeBound : (if storage then 0x11 else 0x10) < Field.modulus := by
-        cases storage <;> decide
-      have alignedFields := evalAligned_fields ctx env value cell modulus aligned
-      change evalFields ctx env
-        (.native (if storage then 0x11 else 0x10) :: .native 1 :: value.fields) =
-        .ok (scalar (if storage then 0x11 else 0x10) :: one :: cell.fields)
-      rw [evalFields_literal_cons ctx env _ _ modulus opcodeBound,
-        evalFields_literal_cons ctx env 1 _ modulus (by decide), alignedFields]
-      rfl
-  | popeq value =>
-    cases aligned : evalAligned ctx env value with
-    | error message =>
-      simp only [evalOp, aligned] at accepted
-      change (Except.error message : Except String Op) = .ok native at accepted
-      cases accepted
-    | ok cell =>
-      simp [evalOp, aligned] at accepted
-      cases accepted
-      have alignedFields := evalAligned_fields ctx env value cell modulus aligned
-      change evalFields ctx env (.native 0x0c :: value.fields) =
-        .ok (scalar 0x0c :: cell.fields)
-      rw [evalFields_literal_cons ctx env 0x0c _ modulus (by decide), alignedFields]
-      rfl
-  | _ => simp [evalOp] at accepted
+  have supported := evalOp_supported ctx env operation native accepted
+  have exact := evalOp_fields_exact ctx env operation supported modulus admitted
+  rw [accepted] at exact
+  simpa [Except.map] using exact
+
+/-- The exact field-operation correspondence composes over ordered operation
+lists, preserving group boundaries and the first evaluation error. -/
+theorem evalOperations_fields_exact (ctx : EvalContext) (env : EvalEnv)
+    (operations : List Impact.Op)
+    (supported : ∀ operation ∈ operations, ScalarOperation operation)
+    (modulus : ctx.modulus = Field.modulus)
+    (admitted : ∀ operation ∈ operations, FieldAdmitted operation) :
+    operations.mapM (fun operation => evalFields ctx env operation.fields) =
+      (operations.mapM (evalOp ctx env)).map (List.map NativeState.Op.fields) := by
+  induction operations with
+  | nil => rfl
+  | cons operation rest ih =>
+    have headSupported := supported operation (by simp)
+    have tailSupported : ∀ item ∈ rest, ScalarOperation item := by
+      intro item member
+      exact supported item (by simp [member])
+    have headAdmitted := admitted operation (by simp)
+    have tailAdmitted : ∀ item ∈ rest, FieldAdmitted item := by
+      intro item member
+      exact admitted item (by simp [member])
+    have head := evalOp_fields_exact ctx env operation headSupported modulus headAdmitted
+    have tail := ih tailSupported tailAdmitted
+    cases headEval : evalOp ctx env operation <;>
+      cases tailEval : rest.mapM (evalOp ctx env) <;>
+        simp [List.mapM_cons, head, tail, headEval, tailEval, bind,
+          Except.bind, Except.map, Functor.map] <;> rfl
 
 /-- The interpreted Impact operation fields equal the native VM field groups
 for every accepted operation, with no rearrangement or flattened boundaries. -/
@@ -494,33 +578,10 @@ theorem evalOperations_fields (ctx : EvalContext) (env : EvalEnv)
     (accepted : operations.mapM (evalOp ctx env) = .ok native) :
     operations.mapM (fun operation => evalFields ctx env operation.fields) =
       .ok (native.map Op.fields) := by
-  induction operations generalizing native with
-  | nil =>
-    simp only [List.mapM_nil] at accepted
-    cases accepted
-    rfl
-  | cons operation rest ih =>
-    have headAdmitted := admitted operation (by simp)
-    have tailAdmitted : ∀ item ∈ rest, FieldAdmitted item := by
-      intro item member
-      exact admitted item (by simp [member])
-    cases head : evalOp ctx env operation with
-    | error message =>
-      simp only [List.mapM_cons, head] at accepted
-      change (Except.error message : Except String (List Op)) = .ok native at accepted
-      cases accepted
-    | ok next =>
-      cases tail : rest.mapM (evalOp ctx env) with
-      | error message =>
-        simp only [List.mapM_cons, head, tail] at accepted
-        change (Except.error message : Except String (List Op)) = .ok native at accepted
-        cases accepted
-      | ok remaining =>
-        simp [List.mapM_cons, head, tail] at accepted
-        cases accepted
-        have one := evalOp_fields ctx env operation next modulus headAdmitted head
-        have others := ih remaining tailAdmitted tail
-        simp [List.mapM_cons, one, others, Except.pure] <;> rfl
+  have supported := evalOperations_supported ctx env operations native accepted
+  have exact := evalOperations_fields_exact ctx env operations supported modulus admitted
+  rw [accepted] at exact
+  simpa [Except.map] using exact
 
 /-- The native schedule preserves exact operation boundaries and order. -/
 theorem evalPlan_operations (ctx : EvalContext) (env : EvalEnv)
