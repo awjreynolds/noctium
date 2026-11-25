@@ -20,6 +20,52 @@ theorem appendEffect_readCell_operation_suffix (state : List StateDecl)
   cases resultAccepted
   exact ⟨slot, value, rfl⟩
 
+private theorem appendEffect_readCell_read_suffix (state : List StateDecl)
+    (name destination : String) (ty : Ty) (before after : Impact.Plan)
+    (step : Impact.appendEffect state (.readCell name destination ty) before =
+      .ok after) :
+    ∃ read, after.reads = before.reads ++ [read] ∧
+      read.name = destination ∧ read.ty = ty := by
+  simp only [Impact.appendEffect, bind_ok] at step
+  rcases step with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
+  simp only [Pure.pure, Except.pure] at resultAccepted
+  have stateEq := Except.ok.inj resultAccepted
+  let read : Impact.Read :=
+    after.reads[before.reads.length]?.getD {name := destination, ty}
+  have readsShape : after.reads = before.reads ++ [read] := by
+    simp [read, stateEq.symm]
+  exact ⟨read, readsShape, by simp [read, stateEq.symm],
+    by simp [read, stateEq.symm]⟩
+
+private theorem appendEffectWithActivity_readCell_wrapper_shape
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (condition : Expr .bool) (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state (.readCell name destination ty)
+      (some condition) before = .ok after) :
+    ∃ result read,
+      Impact.appendEffect state (.readCell name destination ty) before = .ok result ∧
+      result.reads[before.reads.length]? = some read ∧
+      {result with
+        reads := result.reads.take before.reads.length ++
+          [{read with guard := some condition}]
+        activityGuards :=
+          (if before.activityGuards.isEmpty then
+            List.replicate before.operations.length none else before.activityGuards) ++
+            List.replicate (result.operations.length - before.operations.length)
+              (some condition)} = after := by
+  unfold Impact.appendEffectWithActivity at step
+  simp only [bind_ok] at step
+  rcases step with ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩
+  have effectShape : lowered = .readCell name destination ty := by
+    change Except.ok (.readCell name destination ty) = Except.ok lowered at loweredAccepted
+    exact (Except.ok.inj loweredAccepted).symm
+  subst lowered
+  cases readFound : result.reads[before.reads.length]? with
+  | none => simp [readFound] at wrapperAccepted
+  | some read =>
+    simp only [readFound, Pure.pure, Except.pure] at wrapperAccepted
+    exact ⟨result, read, appendAccepted, readFound, Except.ok.inj wrapperAccepted⟩
+
 theorem appendEffect_writeCell_operation_suffix (state : List StateDecl)
     (name : String) (ty : Ty) (value : Expr ty) (before after : Impact.Plan)
     (step : Impact.appendEffect state (.writeCell name ty value) before =
@@ -65,23 +111,81 @@ theorem appendEffectWithActivity_readCell_operation_suffix
       (some condition) before = .ok after) :
     ∃ slot value, after.operations = before.operations ++
       [.dup, .index slot, value] := by
-  unfold Impact.appendEffectWithActivity at step
-  simp only [bind_ok] at step
-  rcases step with ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩
-  have effectShape : lowered = .readCell name destination ty := by
-    change Except.ok (.readCell name destination ty) = Except.ok lowered at loweredAccepted
-    exact (Except.ok.inj loweredAccepted).symm
-  subst lowered
+  obtain ⟨result, _, appendAccepted, _, wrapperShape⟩ :=
+    appendEffectWithActivity_readCell_wrapper_shape state name destination ty condition
+      before after step
   obtain ⟨slot, value, operationsShape⟩ :=
     appendEffect_readCell_operation_suffix state name destination ty before result appendAccepted
   have wrappedOperations : after.operations = result.operations := by
-    cases readFound : result.reads[before.reads.length]? with
-    | none => simp [readFound] at wrapperAccepted
-    | some read =>
-      have projected := congrArg (Except.map Impact.Plan.operations) wrapperAccepted
-      simp only [readFound, Pure.pure, Except.pure, Except.map] at projected
-      exact (Except.ok.inj projected).symm
+    exact (congrArg Impact.Plan.operations wrapperShape).symm
   exact ⟨slot, value, wrappedOperations.trans operationsShape⟩
+
+/-- A guarded cell read appends the same destination and type as its source
+effect, binds that read to the source condition, and assigns the guard to all
+three appended operations. Existing guard prefixes retain their padding rule. -/
+theorem appendEffectWithActivity_readCell_provenance
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (condition : Expr .bool) (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state (.readCell name destination ty)
+      (some condition) before = .ok after) :
+    ∃ slot value read,
+      read.name = destination ∧ read.ty = ty ∧ read.guard = some condition ∧
+      after.reads = before.reads ++ [read] ∧
+      after.operations = before.operations ++ [.dup, .index slot, value] ∧
+      after.activityGuards =
+        (if before.activityGuards.isEmpty then
+          List.replicate before.operations.length none else before.activityGuards) ++
+          List.replicate 3 (some condition) := by
+  obtain ⟨result, wrapperRead, appendAccepted, wrapperReadAt, wrapperShape⟩ :=
+    appendEffectWithActivity_readCell_wrapper_shape state name destination ty condition
+      before after step
+  obtain ⟨sourceRead, readsShape, sourceName, sourceTy⟩ :=
+    appendEffect_readCell_read_suffix state name destination ty before result appendAccepted
+  have sourceReadAt : result.reads[before.reads.length]? = some sourceRead := by
+    rw [readsShape]
+    simp
+  have wrapperReadEq : wrapperRead = sourceRead :=
+    Option.some.inj (wrapperReadAt.symm.trans sourceReadAt)
+  obtain ⟨slot, value, operationShape⟩ :=
+    appendEffect_readCell_operation_suffix state name destination ty before result appendAccepted
+  let read : Impact.Read := {sourceRead with guard := some condition}
+  have readFields : read.name = destination ∧ read.ty = ty ∧
+      read.guard = some condition := by
+    exact ⟨by simpa [read] using sourceName,
+      by simpa [read] using sourceTy, rfl⟩
+  have readsOut : after.reads = before.reads ++ [read] := by
+    have projected := congrArg (fun plan : Impact.Plan => plan.reads) wrapperShape
+    have updatedReads :
+        result.reads.take before.reads.length ++
+          [{wrapperRead with guard := some condition}] = before.reads ++ [read] := by
+      rw [wrapperReadEq, readsShape]
+      simp [read]
+    exact projected.symm.trans updatedReads
+  have operationsOut : after.operations = before.operations ++
+      [.dup, .index slot, value] := by
+    have projected := congrArg Impact.Plan.operations wrapperShape
+    exact projected.symm.trans operationShape
+  have operationCount : result.operations.length = before.operations.length + 3 := by
+    rw [operationShape, List.length_append]
+    simp
+  have appendedCount : result.operations.length - before.operations.length = 3 := by
+    omega
+  have guardsOut : after.activityGuards =
+      (if before.activityGuards.isEmpty then
+        List.replicate before.operations.length none else before.activityGuards) ++
+        List.replicate 3 (some condition) := by
+    have projected := congrArg Impact.Plan.activityGuards wrapperShape
+    calc
+      after.activityGuards =
+          (if before.activityGuards.isEmpty then
+            List.replicate before.operations.length none else before.activityGuards) ++
+            List.replicate (result.operations.length - before.operations.length)
+              (some condition) := projected.symm
+      _ = (if before.activityGuards.isEmpty then
+          List.replicate before.operations.length none else before.activityGuards) ++
+          List.replicate 3 (some condition) := by rw [appendedCount]
+  exact ⟨slot, value, read, readFields.1, readFields.2.1, readFields.2.2,
+    readsOut, operationsOut, guardsOut⟩
 
 theorem appendEffectWithActivity_writeCell_operation_suffix
     (state : List StateDecl) (name : String) (ty : Ty) (value : Expr ty)

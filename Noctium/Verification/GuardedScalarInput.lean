@@ -1,4 +1,6 @@
 import Noctium.Verification.NativeInputOrdinal
+import Noctium.Verification.GenericStateInputValues
+import Noctium.Verification.GuardedEffectPrefix
 
 namespace Noctium.Verification.GuardedScalarInput
 
@@ -141,5 +143,55 @@ theorem consume_accepted_public_read
   · right
     rw [active] at meaning ⊢
     exact ⟨meaning, by cases stream <;> simp [consume]⟩
+
+open GenericStateInputValues ScalarNormalization in
+/-- The production source evaluator binds the decoded zero for an inactive
+scalar cell read. Skipping the read preserves the current ledger state and
+does not require the cell to exist. -/
+theorem run_inactive_scalarCell_read (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (cell destination : String) {ty : Ty}
+    (supported : ScalarType ty) (guard : Expr .bool)
+    (inactive : guard.eval ctx env = .ok false) :
+    runEffectsWithGuardsAndEnv ctx [.readCell cell destination ty] [some guard] env ledger =
+      .ok ((destination, Value.pack ty (sourceValue supported zero)) :: env, ledger) := by
+  dsimp [runEffectsWithGuardsAndEnv, List.zipIdx, List.all,
+    List.isEmpty, List.length, Option.isNone, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [List.forIn_cons]
+  dsimp [List.getElem?_cons_zero, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [inactive]
+  cases supported <;> rfl
+
+open Backend GenericStateInputValues ScalarNormalization in
+/-- The compiled read descriptor ties an inactive preprocessing row to the
+same typed default bound by the production source evaluator. The source
+guard's inactivity and the row's zero guard are supplied by guard agreement. -/
+theorem inactive_guardedCell_read_agreement (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (state : List StateDecl) (cell destination : String)
+    {ty : Ty} (supported : ScalarType ty) (condition : Expr .bool)
+    (before after : Impact.Plan) (witness : Assignment) (stream remaining : List Scalar)
+    (lowered : Impact.appendEffectWithActivity state (.readCell cell destination ty)
+      (some condition) before = .ok after)
+    (inactive : condition.eval ctx env = .ok false)
+    (observed : consume zero stream =
+      some (witness ("%input_" ++ destination), remaining)) :
+    ∃ read,
+      after.reads = before.reads ++ [read] ∧ read.guard = some condition ∧
+      remaining = stream ∧
+      decodeRead read witness = .ok (destination, Value.pack ty (sourceValue supported zero)) ∧
+      runEffectsWithGuardsAndEnv ctx [.readCell cell destination ty] [some condition] env ledger =
+        .ok ((destination, Value.pack ty (sourceValue supported zero)) :: env, ledger) := by
+  obtain ⟨_, _, read, named, typed, guarded, reads, _, _⟩ :=
+    GuardedEffectPrefix.appendEffectWithActivity_readCell_provenance
+      state cell destination ty condition before after lowered
+  simp only [consume_inactive, Option.some.injEq, Prod.mk.injEq] at observed
+  refine ⟨read, reads, guarded, observed.2.symm, ?_,
+    run_inactive_scalarCell_read ctx env ledger cell destination supported condition inactive⟩
+  subst destination
+  subst ty
+  have supportedLookup {ty : Ty} (support : ScalarType ty) :
+      scalarType? ty = some support := by cases support <;> rfl
+  simp [decodeRead, supportedLookup supported, ← observed.1]
 
 end Noctium.Verification.GuardedScalarInput
