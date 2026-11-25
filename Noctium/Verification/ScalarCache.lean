@@ -14,7 +14,7 @@ theorem cached_testEq_meaning (hash : Hash) (inputs witness : NativeRelation.Ass
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
   rcases rightMeaning with ⟨rightOperand, rightDecoded, rightValue⟩
   obtain ⟨instructions, decoded, instruction, member, correspondence⟩ :=
-    invariant.cacheTrace _ result (ScalarValidation.lookup_member hit)
+    invariant.cacheTrace _ result (ScalarValidationMeaning.lookup_member hit)
   cases instruction <;> simp [CacheCorresponds] at correspondence
   next foundLeft foundRight output =>
     rcases correspondence with ⟨resultEq, a, b, ⟨rfl, rfl⟩, foundLeftDecoded, foundRightDecoded, outputValid⟩
@@ -25,7 +25,8 @@ theorem cached_testEq_meaning (hash : Hash) (inputs witness : NativeRelation.Ass
     rw [leftEq, rightEq] at holds
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
     simp only [Operand.read]
-    rw [holds, interpret_testEq, leftValue, rightValue]
+    simp only [interpret_testEq, leftValue, rightValue, Option.bind_some]
+    exact congrArg some holds.symm
 
 theorem cached_neg_meaning (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (invariant : LowerStateMeaning hash witness state)
@@ -35,7 +36,7 @@ theorem cached_neg_meaning (hash : Hash) (inputs witness : NativeRelation.Assign
     OperandMeaning hash inputs witness result (.unary "neg" term) := by
   rcases meaning with ⟨operand, operandDecoded, operandValue⟩
   obtain ⟨instructions, decoded, instruction, member, correspondence⟩ :=
-    invariant.cacheTrace _ result (ScalarValidation.lookup_member hit)
+    invariant.cacheTrace _ result (ScalarValidationMeaning.lookup_member hit)
   cases instruction <;> simp [CacheCorresponds] at correspondence
   next found output =>
     rcases correspondence with ⟨resultEq, foundDecoded, outputValid⟩
@@ -45,7 +46,8 @@ theorem cached_neg_meaning (hash : Hash) (inputs witness : NativeRelation.Assign
     rw [operandEq] at holds
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
     simp only [Operand.read]
-    rw [holds, interpret_neg, operandValue]
+    simp only [interpret_neg, operandValue, Option.bind_some]
+    exact congrArg some holds.symm
 
 theorem cached_not_meaning (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (invariant : LowerStateMeaning hash witness state)
@@ -55,7 +57,7 @@ theorem cached_not_meaning (hash : Hash) (inputs witness : NativeRelation.Assign
     OperandMeaning hash inputs witness result (.unary "not" term) := by
   rcases meaning with ⟨operand, operandDecoded, operandValue⟩
   obtain ⟨instructions, decoded, instruction, member, correspondence⟩ :=
-    invariant.cacheTrace _ result (ScalarValidation.lookup_member hit)
+    invariant.cacheTrace _ result (ScalarValidationMeaning.lookup_member hit)
   cases instruction <;> simp [CacheCorresponds] at correspondence
   next found output =>
     rcases correspondence with ⟨resultEq, foundDecoded, outputValid⟩
@@ -63,15 +65,22 @@ theorem cached_not_meaning (hash : Hash) (inputs witness : NativeRelation.Assign
     have operandEq : found = operand := Except.ok.inj (foundDecoded.symm.trans operandDecoded)
     have holds := invariant.holds instructions decoded (.not found output) member
     rw [operandEq] at holds
-    have boolean : interpret hash inputs term = zero ∨ interpret hash inputs term = one := by
-      simpa only [operandValue] using holds.1
+    have isZeroOrOne : Operand.read witness operand = zero ∨
+        Operand.read witness operand = one := holds.1
     have resultValue := holds.2
-    rw [operandValue] at resultValue
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
     simp only [Operand.read]
-    rcases boolean with isZero | isOne
-    · simpa [interpret_not, bit, isZero] using resultValue
-    · simpa [interpret_not, bit, isOne, Ne.symm zero_ne_one] using resultValue
+    rcases isZeroOrOne with isZero | isOne
+    · have outputIsOne : witness output = one := by simpa [isZero] using resultValue
+      simp [interpret_not, operandValue, isZero, outputIsOne, bit]
+    · have outputIsZero : witness output = zero := by
+        have isNotZero : Operand.read witness operand ≠ zero := by
+          intro equal
+          rw [equal] at isOne
+          exact zero_ne_one isOne
+        simpa [isNotZero] using resultValue
+      simp [interpret_not, operandValue, isOne, Ne.symm zero_ne_one,
+        outputIsZero, bit]
 
 theorem cached_select_meaning (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (invariant : LowerStateMeaning hash witness state)
@@ -85,7 +94,7 @@ theorem cached_select_meaning (hash : Hash) (inputs witness : NativeRelation.Ass
   rcases yesMeaning with ⟨yesOperand, yesDecoded, yesValue⟩
   rcases noMeaning with ⟨noOperand, noDecoded, noValue⟩
   obtain ⟨instructions, decoded, instruction, member, correspondence⟩ :=
-    invariant.cacheTrace _ result (ScalarValidation.lookup_member hit)
+    invariant.cacheTrace _ result (ScalarValidationMeaning.lookup_member hit)
   cases instruction <;> simp [CacheCorresponds] at correspondence
   next foundCondition foundYes foundNo output =>
     rcases correspondence with ⟨resultEq, c, a, b, ⟨rfl, rfl, rfl⟩, foundConditionDecoded, foundYesDecoded, foundNoDecoded, outputValid⟩
@@ -96,16 +105,20 @@ theorem cached_select_meaning (hash : Hash) (inputs witness : NativeRelation.Ass
     have noEq : foundNo = noOperand := Except.ok.inj (foundNoDecoded.symm.trans noDecoded)
     have holds := invariant.holds instructions decoded (.select foundCondition foundYes foundNo output) member
     rw [conditionEq, yesEq, noEq] at holds
-    have boolean : interpret hash inputs conditionTerm = zero ∨
-        interpret hash inputs conditionTerm = one := by
-      simpa only [conditionValue] using holds.1
+    have boolean : conditionOperand.read witness = zero ∨
+        conditionOperand.read witness = one := holds.1
     have resultValue := holds.2
-    rw [conditionValue, yesValue, noValue] at resultValue
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
     simp only [Operand.read]
     rcases boolean with isZero | isOne
-    · simpa [interpret_select, isZero, zero_ne_one] using resultValue
-    · simpa [interpret_select, isOne] using resultValue
+    · have outputValue : witness output = noOperand.read witness := by
+        simpa [isZero, zero_ne_one] using resultValue
+      simp [interpret_select, conditionValue, yesValue, noValue, isZero,
+        zero_ne_one, outputValue]
+    · have outputValue : witness output = yesOperand.read witness := by
+        simpa [isOne] using resultValue
+      simp [interpret_select, conditionValue, yesValue, noValue, isOne,
+        outputValue]
 
 theorem cached_hash_meaning (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (invariant : LowerStateMeaning hash witness state)
@@ -117,7 +130,7 @@ theorem cached_hash_meaning (hash : Hash) (inputs witness : NativeRelation.Assig
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
   rcases rightMeaning with ⟨rightOperand, rightDecoded, rightValue⟩
   obtain ⟨instructions, decoded, instruction, member, correspondence⟩ :=
-    invariant.cacheTrace _ result (ScalarValidation.lookup_member hit)
+    invariant.cacheTrace _ result (ScalarValidationMeaning.lookup_member hit)
   cases instruction <;> simp [CacheCorresponds] at correspondence
   next values output =>
     rcases correspondence with ⟨resultEq, foundDomain, a, b, ⟨⟨rfl, rfl⟩, rfl⟩, domainText, foundLeft, foundRight, valuesEq,
@@ -129,8 +142,13 @@ theorem cached_hash_meaning (hash : Hash) (inputs witness : NativeRelation.Assig
     rw [valuesEq, leftEq, rightEq] at holds
     refine ⟨.reference output, (OperandEncoding.reference output outputValid).decode, ?_⟩
     simp only [Operand.read]
-    simpa only [Instruction.Holds, List.map_cons, List.map_nil,
-      show (Operand.immediate (scalar domain)).read witness = scalar domain from rfl,
-      leftValue, rightValue, interpret_hash, interpret_constant] using holds
+    have outputMeaning : witness output =
+        hash [scalar domain, leftOperand.read witness, rightOperand.read witness] := by
+      simpa [Instruction.Holds, Operand.read] using holds
+    calc
+      interpret hash inputs (.hash [.constant domain, leftTerm, rightTerm]) =
+          some (hash [scalar domain, leftOperand.read witness, rightOperand.read witness]) := by
+        simp [interpret_hash, leftValue, rightValue]
+      _ = some (witness output) := congrArg some outputMeaning.symm
 
 end Noctium.Verification.ScalarCache

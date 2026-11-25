@@ -2,6 +2,7 @@ import Noctium.Compiler
 import Noctium.Backend.Zkir
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarWitness
+import Noctium.Verification.ScalarExpressionNativeTree
 
 open Lean Noctium Noctium.Backend Noctium.Verification
 open NativeRelation NativeRelationJson ScalarWitness
@@ -12,9 +13,17 @@ open scoped Noctium
 noctium_circuit scalarWitnessCapacityAddition where
   private left : Native
   private right : Native
-  output sum : Native := disclose(add(left, right))
+  output sum : Native := disclose(add(add(0, left), right))
 end
 end Source
+
+example : ∀ returned ∈ scalarWitnessCapacityAddition.outputs,
+    ScalarLowering.ExprComplete returned.value := by
+  intro returned present
+  simp only [scalarWitnessCapacityAddition, List.mem_cons, List.not_mem_nil, or_false] at present
+  subst returned
+  exact (ScalarWitnessConstruction.nativeArithmeticTree_complete
+    (.disclose _ (.add (.add (.literal 0) (.ref "left")) (.ref "right")))).2
 
 private def expectedInstructions : List Instruction := [
   .input .private "%input_left",
@@ -54,5 +63,4 @@ theorem twoInputAddition_witness (hash : Hash) (base : Assignment)
     · simp [Instruction.Holds]
     · simp [Instruction.Holds, Operand.read, assign]
     · simp [Instruction.Holds, Operand.read]
-      rfl
     · simp [Instruction.Holds]
