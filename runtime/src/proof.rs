@@ -3385,6 +3385,52 @@ mod tests {
         .unwrap();
         assert_eq!(preview.statement, prepared.statement);
 
+        let cost_model = &prepared.material.parameters.cost_model.runtime_cost_model;
+        let noop_charge = |count: u32| {
+            u128::from(cost_model.noop_constant.into_picoseconds())
+                + u128::from(cost_model.noop_coeff_arg.into_picoseconds()) * u128::from(count)
+        };
+        for (source, previewed) in [
+            (
+                source_call.guaranteed_transcript.as_deref(),
+                preview.call.guaranteed_transcript.as_deref(),
+            ),
+            (
+                source_call.fallible_transcript.as_deref(),
+                preview.call.fallible_transcript.as_deref(),
+            ),
+        ] {
+            match (source, previewed) {
+                (Some(source), Some(previewed)) => {
+                    let added_noop_gas: u128 = previewed
+                        .program
+                        .iter_deref()
+                        .filter_map(|op| match op {
+                            onchain_runtime::ops::Op::Noop { n } => Some(noop_charge(*n)),
+                            _ => None,
+                        })
+                        .sum();
+                    assert_eq!(
+                        u128::from(previewed.gas.compute_time.into_picoseconds()),
+                        u128::from(source.gas.compute_time.into_picoseconds()) + added_noop_gas,
+                        "each present partition charges its own inserted Noops"
+                    );
+                }
+                (None, None) => {}
+                _ => panic!("preview changed transcript partition presence"),
+            }
+        }
+
+        let mut bad_active_count = prepared.activity.clone();
+        bad_active_count.push(None);
+        assert!(preview_call_activity(
+            source_call,
+            &bad_active_count,
+            prepared.intent.binding_commitment.into(),
+            cost_model,
+        )
+        .is_err());
+
         let proved = block_on(prepared.prove(
             &LocalProver::new(OsRng),
             &parameters,
@@ -3469,18 +3515,39 @@ mod tests {
             .expect("all-inactive source retains an empty transcript container");
         assert_eq!(empty_source_transcript.program.len(), 0);
         assert!(empty_source_call.fallible_transcript.is_none());
+        let empty_cost = &empty_prepared.material.parameters.cost_model.runtime_cost_model;
         let empty_preview = preview_call_activity(
             empty_source_call,
             &empty_prepared.activity,
             empty_prepared.intent.binding_commitment.into(),
-            &empty_prepared
-                .material
-                .parameters
-                .cost_model
-                .runtime_cost_model,
+            empty_cost,
         )
         .unwrap();
         assert_eq!(empty_preview.statement, empty_prepared.statement);
+        assert!(empty_preview.call.fallible_transcript.is_none());
+        let empty_preview_transcript = empty_preview
+            .call
+            .guaranteed_transcript
+            .as_ref()
+            .expect("preview keeps the empty guaranteed partition");
+        assert_eq!(
+            empty_preview_transcript
+                .program
+                .iter_deref()
+                .filter_map(|op| match op {
+                    onchain_runtime::ops::Op::Noop { n } => Some(*n),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [26]
+        );
+        assert_eq!(
+            u128::from(empty_preview_transcript.gas.compute_time.into_picoseconds()),
+            u128::from(empty_source_transcript.gas.compute_time.into_picoseconds())
+                + u128::from(empty_cost.noop_constant.into_picoseconds())
+                + 26 * u128::from(empty_cost.noop_coeff_arg.into_picoseconds()),
+            "the empty partition charges its trailing Noop"
+        );
         let empty_parameters = TrustedParameters::from_bytes(
             &parameters_bytes,
             empty_prepared.k(),

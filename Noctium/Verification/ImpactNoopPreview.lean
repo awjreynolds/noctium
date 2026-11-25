@@ -214,19 +214,6 @@ private theorem expandProgram_complete
     expandProgramRaw_complete activeCountEq fits
   exact ⟨output, by simpa [expandProgram, fits] using rawExpansion⟩
 
-/-- Fitting activity pads the whole interval while preserving active order and width. -/
-private theorem preview_when_fit_and_active_count
-    {program : List α} {activity : List (Option Nat)}
-    (activeCountEq : activeCount activity = program.length)
-    (fits : skipRunsFit activity = true) :
-    ∃ output,
-      expandProgram program activity = some output ∧
-      activeProjection output = program ∧
-      skippedWidth output = activityWidth activity := by
-  obtain ⟨output, expanded⟩ := expandProgram_complete activeCountEq fits
-  obtain ⟨_, activeOrder, widthEq⟩ := expandProgram_success expanded
-  exact ⟨output, expanded, activeOrder, widthEq⟩
-
 /-- Unmerged expansion rejects a missing or extra active operation. -/
 private theorem expansion_rejects_active_count_mismatch
     (program : List α) (activity : List (Option Nat))
@@ -290,6 +277,23 @@ def previewProgram (program : List α) (activity : List (Option Nat)) :
     Option (List (PreviewEntry α)) :=
   (expandProgram program activity).map coalesceNoops
 
+theorem previewProgram_success
+    {program : List α} {activity : List (Option Nat)}
+    {entries : List (PreviewEntry α)}
+    (previewed : previewProgram program activity = some entries) :
+    activeCount activity = program.length ∧
+      activeProjection entries = program ∧
+      skippedWidth entries = activityWidth activity := by
+  unfold previewProgram at previewed
+  cases expansion : expandProgram program activity with
+  | none => simp [expansion] at previewed
+  | some expanded =>
+      have matched : coalesceNoops expanded = entries := by simpa [expansion] using previewed
+      subst entries
+      obtain ⟨count, order, width⟩ := expandProgram_success expansion
+      exact ⟨count, (coalesceNoops_activeProjection expanded).trans order,
+        (coalesceNoops_skippedWidth expanded).trans width⟩
+
 theorem previewProgram_preserves
     {program : List α} {activity : List (Option Nat)}
     (activeCountEq : activeCount activity = program.length)
@@ -298,11 +302,12 @@ theorem previewProgram_preserves
       previewProgram program activity = some output ∧
       activeProjection output = program ∧
       skippedWidth output = activityWidth activity := by
-  obtain ⟨expanded, found, activeOrder, width⟩ :=
-    preview_when_fit_and_active_count activeCountEq fits
-  exact ⟨coalesceNoops expanded, by simp [previewProgram, found],
-    (coalesceNoops_activeProjection expanded).trans activeOrder,
-    (coalesceNoops_skippedWidth expanded).trans width⟩
+  obtain ⟨expanded, found⟩ := expandProgram_complete activeCountEq fits
+  have previewed : previewProgram program activity = some (coalesceNoops expanded) := by
+    simp [previewProgram, found]
+  obtain ⟨_, order, width⟩ := previewProgram_success previewed
+  exact ⟨_, previewed, order, width⟩
+
 /-- A full interval rejects a missing or extra active operation. -/
 theorem rejects_active_count_mismatch
     (program : List α) (activity : List (Option Nat))
