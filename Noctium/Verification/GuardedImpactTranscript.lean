@@ -44,7 +44,9 @@ def expectedObservations (hash : Hash) (inputs : Assignment) (expected : Native.
     Option (List Observation) :=
   (List.range expected.groups.length).mapM (expectedObservationAt hash inputs expected)
 
-private theorem classify_decoded_row {hash : Hash} {witness : Assignment} {raw : Json}
+/-- An independently decoded row supplies the corresponding producer meaning
+step when its ordinary scalar constraints hold. -/
+theorem classify_decoded_row {hash : Hash} {witness : Assignment} {raw : Json}
     {row : Row} (decoded : decodeRow raw = .ok row)
     (ordinary : ordinaryHolds hash witness row) : AcceptedMeaningStep hash witness raw := by
   cases row with

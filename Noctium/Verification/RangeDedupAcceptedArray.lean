@@ -696,6 +696,12 @@ def impactOpcodeRow (raw : Json) : Bool :=
   | .ok opcode => opcode == "impact"
   | .error _ => false
 
+def inputOpcodeRow (raw : Json) : Bool :=
+  match Backend.Native.stringField raw "op" with
+  | .ok opcode =>
+    opcode == inputOpcode .«public» || opcode == inputOpcode .private
+  | .error _ => false
+
 /-- Count Impact opcodes in a producer prefix. This count is tied to the
 accepted raw rows by `accepted_loop_groupCount_at_steps` below. -/
 def impactOpcodeCount : List Json → Nat
@@ -804,6 +810,88 @@ theorem acceptedMeaningStep_groupCount_step
   | @output _ opcode _ =>
     rw [(accepted_output_counters opcode accepted).1]
     simp [impactOpcodeRow, opcode]
+
+/-- Each row in the accepted mixed meaning class advances the live native
+input cursor exactly when the producer dispatches a public or private input. -/
+theorem acceptedMeaningStep_inputCount_step
+    {hash : Hash} {witness : Assignment} {expected : Backend.Native.Expected}
+    {state next : Backend.Native.State} {raw : Json}
+    (definitions : NativeDefinitions state)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (step : AcceptedMeaningStep hash witness raw)
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
+    next.inputCount = state.inputCount + (if inputOpcodeRow raw then 1 else 0) := by
+  cases step with
+  | native nativeStep =>
+    cases nativeStep with
+    | publicInput opcode =>
+      obtain ⟨_, _, inputCount⟩ := accepted_input_row_step
+        (visibility := .«public») inputSchema
+        (by simpa [inputOpcode] using opcode) accepted
+      rw [inputCount]
+      simp [inputOpcodeRow, inputOpcode, opcode]
+    | privateInput opcode =>
+      obtain ⟨_, _, inputCount⟩ := accepted_input_row_step
+        (visibility := .private) inputSchema
+        (by simpa [inputOpcode] using opcode) accepted
+      rw [inputCount]
+      simp [inputOpcodeRow, inputOpcode, opcode]
+    | arithmetic arithmeticStep =>
+      cases arithmeticStep with
+      | add _ _ _ opcode _ _ =>
+        rw [(accepted_add_counters definitions opcode accepted).2]
+        simp [inputOpcodeRow, opcode, inputOpcode]
+      | mul _ _ _ opcode _ _ =>
+        rw [(accepted_mul_counters definitions opcode accepted).2]
+        simp [inputOpcodeRow, opcode, inputOpcode]
+      | neg _ _ opcode _ _ =>
+        rw [(accepted_neg_counters definitions opcode accepted).2]
+        simp [inputOpcodeRow, opcode, inputOpcode]
+  | @boolean _ opcode _ _ =>
+    rw [(accepted_constrainBoolean_counters opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @bits _ _ opcode _ _ =>
+    rw [(accepted_constrainBits_counters opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @lessThan _ _ _ _ opcode _ _ =>
+    rw [(accepted_lessThan_counters opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @assertion _ opcode _ _ =>
+    rw [(accepted_assert_counters opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @constrainEq _ _ opcode _ _ =>
+    rw [(accepted_constrainEq_counters definitions opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @testEq _ _ _ opcode _ _ =>
+    rw [(accepted_testEq_counters definitions opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @logicalNot _ _ opcode _ _ =>
+    obtain ⟨_, _, _, _, _, _, defined⟩ :=
+      accepted_not_components definitions opcode accepted
+    rw [(defineResult_counters defined).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | transientHash opcode _ _ =>
+    obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+    rw [(defineResult_counters defined).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @nativeSelect _ _ _ _ opcode _ _ =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+      accepted_native_select_components definitions opcode accepted
+    rw [(defineResult_counters defined).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @copy _ _ opcode _ _ =>
+    rw [(accepted_copy_counters definitions opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @impact _ _ opcode _ =>
+    rw [accepted_impact_inputCount opcode accepted]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @guardedImpact _ _ opcode _ _ =>
+    rw [accepted_impact_inputCount opcode accepted]
+    simp [inputOpcodeRow, opcode, inputOpcode]
+  | @output _ opcode _ =>
+    rw [(accepted_output_counters opcode accepted).2]
+    simp [inputOpcodeRow, opcode, inputOpcode]
 
 /-- The active producer fold's group cursor equals its incoming ordinal plus
 the number of accepted Impact rows in the prefix. -/

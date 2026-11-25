@@ -479,7 +479,7 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
         pure NativeValueType.native
     match required.activityGuard with
     | none =>
-      ensure ((← instruction.getObjVal? "guard") == Json.null)
+      ensure (← instruction.getObjVal? "guard").isNull
         "unexpected native input activity guard"
     | some expectedGuard =>
       ensure (expected.mode == .ledgerCall && descriptor.privacy.guard == .sourceBoundPublicRead)
