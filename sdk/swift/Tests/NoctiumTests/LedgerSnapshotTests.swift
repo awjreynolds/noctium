@@ -6,7 +6,7 @@ import XCTest
 final class LedgerSnapshotTests: XCTestCase {
     private let trustedManifestSHA256 = "3de4ada1aede5fe80791c4374f0ca223f29ff68c1b1377a26e611e427cbbf69f"
 
-    func testCompactScalarListPagesAndDigestRejection() throws {
+    func testCompactCollectionPagesAndDigestRejection() throws {
         let root = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures", isDirectory: true))
         let manifestBytes = try resource("manifest.json", in: root)
         XCTAssertEqual(sha256(manifestBytes), trustedManifestSHA256)
@@ -55,6 +55,55 @@ final class LedgerSnapshotTests: XCTestCase {
         )
         try assertPage(continuation, matches: continuationCase)
 
+        let firstFlagsCase = try pageCase(in: cases, snapshot: "populated", offset: 0, name: "flags")
+        let firstFlagsPage = try LedgerSnapshot.fieldBoolMapPage(
+            request: request(
+                planSHA256: planDigest,
+                stateSHA256: populatedDigest,
+                offset: try integer("offset", in: firstFlagsCase),
+                limit: try integer("limit", in: firstFlagsCase),
+                name: "flags"
+            ),
+            plan: plan,
+            snapshot: populated
+        )
+        XCTAssertEqual(firstFlagsPage.entries.count, 2)
+
+        let flagsContinuationOffset = try XCTUnwrap(firstFlagsPage.nextOffset)
+        let firstFlagsExpected = try dictionary(firstFlagsCase["expected"])
+        XCTAssertEqual(flagsContinuationOffset, try integer("nextOffset", in: firstFlagsExpected))
+        let flagsContinuationCase = try pageCase(
+            in: cases, snapshot: "populated", offset: flagsContinuationOffset, name: "flags"
+        )
+        let flagsContinuationPage = try LedgerSnapshot.fieldBoolMapPage(
+            request: request(
+                planSHA256: planDigest,
+                stateSHA256: populatedDigest,
+                offset: flagsContinuationOffset,
+                limit: try integer("limit", in: flagsContinuationCase),
+                name: "flags"
+            ),
+            plan: plan,
+            snapshot: populated
+        )
+        XCTAssertEqual(flagsContinuationPage.entries.count, 1)
+        XCTAssertNil(flagsContinuationPage.nextOffset)
+
+        let joinedFlagsEntries = firstFlagsPage.entries + flagsContinuationPage.entries
+        let oracleFlagsCases = [firstFlagsCase, flagsContinuationCase]
+        let oracleFlagsEntries = try oracleFlagsCases.flatMap { fixtureCase in
+            let expected = try dictionary(fixtureCase["expected"])
+            let entries = try XCTUnwrap(expected["entries"] as? [[String: Any]])
+            return try entries.map { entry in
+                (
+                    key: try string("key", in: entry),
+                    value: try XCTUnwrap(entry["value"] as? Bool)
+                )
+            }
+        }
+        XCTAssertEqual(joinedFlagsEntries.map(\.key), oracleFlagsEntries.map(\.key))
+        XCTAssertEqual(joinedFlagsEntries.map(\.value), oracleFlagsEntries.map(\.value))
+
         let firstByte = populatedDigest.first == "0" ? "1" : "0"
         let alteredDigest = firstByte + String(populatedDigest.dropFirst())
         XCTAssertThrowsError(try LedgerSnapshot.collectionPage(
@@ -63,6 +112,20 @@ final class LedgerSnapshotTests: XCTestCase {
                 stateSHA256: alteredDigest,
                 offset: 0,
                 limit: 2
+            ),
+            plan: plan,
+            snapshot: populated
+        )) {
+            XCTAssertEqual($0 as? WitnessSession.Failure, .nativeStatus(1))
+        }
+
+        XCTAssertThrowsError(try LedgerSnapshot.fieldBoolMapPage(
+            request: request(
+                planSHA256: planDigest,
+                stateSHA256: alteredDigest,
+                offset: 0,
+                limit: 2,
+                name: "flags"
             ),
             plan: plan,
             snapshot: populated
@@ -106,12 +169,18 @@ final class LedgerSnapshotTests: XCTestCase {
         )
     }
 
-    private func request(planSHA256: String, stateSHA256: String, offset: Int, limit: Int) throws -> Data {
+    private func request(
+        planSHA256: String,
+        stateSHA256: String,
+        offset: Int,
+        limit: Int,
+        name: String = "values"
+    ) throws -> Data {
         try JSONSerialization.data(withJSONObject: [
             "abiVersion": 1,
             "planSha256": planSHA256,
             "stateSha256": stateSHA256,
-            "name": "values",
+            "name": name,
             "keys": [],
             "offset": offset,
             "limit": limit,
@@ -133,9 +202,14 @@ final class LedgerSnapshotTests: XCTestCase {
         )
     }
 
-    private func pageCase(in cases: [[String: Any]], snapshot: String, offset: Int) throws -> [String: Any] {
+    private func pageCase(
+        in cases: [[String: Any]],
+        snapshot: String,
+        offset: Int,
+        name: String = "values"
+    ) throws -> [String: Any] {
         try XCTUnwrap(cases.first {
-            $0["snapshot"] as? String == snapshot && $0["name"] as? String == "values" &&
+            $0["snapshot"] as? String == snapshot && $0["name"] as? String == name &&
                 (($0["offset"] as? NSNumber)?.intValue == offset)
         })
     }
