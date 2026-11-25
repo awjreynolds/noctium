@@ -40,6 +40,39 @@ def evalActivity (ctx : EvalContext) (complete : EvalEnv)
     (guard : Option (Expr .bool)) : Except String (Option Bool) :=
   guard.mapM (fun condition => condition.eval ctx complete)
 
+/-- Evaluate one indexed source-plan operation. Missing activity metadata is
+unconditional, matching the plan's operation guard schedule. -/
+def evalScheduledOperation (ctx : EvalContext) (complete : EvalEnv)
+    (plan : Impact.Plan) (item : Impact.Op × Nat) : Option (List NativeState.Op) :=
+  (evalActivity ctx complete (plan.activityGuards[item.2]?.getD none) >>= fun activity =>
+    evalOperation ctx complete activity item.1).toOption
+
+/-- Collapsing errors to `Option` makes a two-pass traversal of independent
+activity and operation evaluations agree with the per-item traversal. -/
+private theorem evalTwoPass_toOption {α β γ : Type} (items : List α)
+    (activity : α → Except String β) (operation : α → β → Except String γ) :
+    ((items.mapM activity >>= fun activities =>
+      (items.zip activities).mapM (fun (item, selected) => operation item selected)).toOption) =
+    items.mapM (fun item =>
+      (activity item >>= fun selected => operation item selected).toOption) := by
+  induction items with
+  | nil => rfl
+  | cons item items ih =>
+      simp only [List.mapM_cons, ← ih]
+      cases head : activity item with
+      | error message =>
+          simp [Except.toOption, Bind.bind, Except.bind]
+      | ok value =>
+          cases tail : items.mapM activity with
+          | error message =>
+              simp [Except.toOption, Bind.bind, Except.bind]
+          | ok values =>
+              cases evaluated : operation item value <;>
+                cases rest : (items.zip values).mapM (fun (item, selected) =>
+                  operation item selected) <;>
+                simp [evaluated, rest, Except.toOption, Bind.bind,
+                  Except.bind, Pure.pure, Except.pure] <;> rfl
+
 private def evalPlanBody (ctx : EvalContext) (complete : EvalEnv)
     (plan : Impact.Plan) : Except String (List NativeState.Op) :=
   match (GuardedPlanActivity.operationGuards plan).mapM (evalActivity ctx complete) with
@@ -58,6 +91,71 @@ def evalPlan (ctx : EvalContext) (complete : EvalEnv) (plan : Impact.Plan) :
   if (GuardedPlanActivity.operationGuards plan).length = plan.operations.length then
     evalPlanBody ctx complete plan
   else .error "Impact operation activity guard count mismatch"
+
+private theorem guardsFromZipIdx (plan : Impact.Plan)
+    (aligned : (operationGuards plan).length = plan.operations.length) :
+    operationGuards plan =
+      plan.operations.zipIdx.map (fun item => plan.activityGuards[item.2]?.getD none) := by
+  apply List.ext_getElem
+  · simpa only [List.length_map, List.length_zipIdx] using aligned
+  · intro index guardInBounds opInBounds
+    simp only [List.getElem_map, List.getElem_zipIdx, Nat.zero_add]
+    generalize storedEq : plan.activityGuards = stored
+    cases stored with
+    | nil =>
+        simp [operationGuards, storedEq]
+    | cons first remaining =>
+        have guardBound : index < (first :: remaining).length := by
+          simpa [operationGuards, storedEq] using guardInBounds
+        rw [List.getElem?_eq_getElem guardBound]
+        simp [operationGuards, storedEq]
+
+/-- On aligned plans, source evaluation matches indexed guard-then-operation
+traversal after errors collapse to `Option`. -/
+theorem evalPlan_toOption_eq_schedule (ctx : EvalContext) (complete : EvalEnv)
+    (plan : Impact.Plan)
+    (aligned : (operationGuards plan).length = plan.operations.length) :
+    (evalPlan ctx complete plan).toOption =
+      (plan.operations.zipIdx.mapM (evalScheduledOperation ctx complete plan)).map List.flatten := by
+  let items := plan.operations.zipIdx
+  let activity (item : Impact.Op × Nat) :=
+    evalActivity ctx complete (plan.activityGuards[item.2]?.getD none)
+  let operation (item : Impact.Op × Nat) (selected : Option Bool) :=
+    evalOperation ctx complete selected item.1
+  have opZip (selected : List (Option Bool)) :
+      (plan.operations.zip selected).mapM (fun (op, active) =>
+        evalOperation ctx complete active op) =
+      (items.zip selected).mapM (fun (item, active) => operation item active) := by
+    calc
+      _ = ((items.map Prod.fst).zip selected).mapM
+          (fun (op, active) => evalOperation ctx complete active op) :=
+        congrArg (fun ops => (ops.zip selected).mapM fun (op, active) =>
+          evalOperation ctx complete active op) (List.zipIdx_map_fst 0 plan.operations).symm
+      _ = _ := by simp [List.zip_map_left, Function.comp_def, Prod.map, operation]
+  unfold evalPlan
+  rw [ite_eq_left aligned]
+  simp only [evalPlanBody, guardsFromZipIdx plan aligned,
+    List.mapM_map, Function.comp_def]
+  change (match items.mapM activity with
+    | .error error => Except.error error
+    | .ok selected =>
+      match (plan.operations.zip selected).mapM
+        (fun (op, active) => evalOperation ctx complete active op) with
+      | .error error => Except.error error
+      | .ok outputs => Except.ok outputs.flatten).toOption =
+    (items.mapM (fun item => (activity item >>= operation item).toOption)).map List.flatten
+  rw [← evalTwoPass_toOption items activity operation]
+  cases activities : items.mapM activity with
+  | error message => rfl
+  | ok selected =>
+      change (match (plan.operations.zip selected).mapM
+        (fun (op, active) => evalOperation ctx complete active op) with
+        | .error message => Except.error message
+        | .ok outputs => Except.ok outputs.flatten).toOption =
+          ((items.zip selected).mapM
+            (fun (item, active) => operation item active)).toOption.map List.flatten
+      rw [opZip]
+      cases (items.zip selected).mapM (fun (item, active) => operation item active) <;> rfl
 
 /-- Successful guard-aware plan evaluation exposes the aligned Boolean
 activity schedule, each per-operation output list, and their VM order. -/
