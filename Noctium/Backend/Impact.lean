@@ -1847,7 +1847,8 @@ private def merkleTreeResetHistoryAtOp (state : List StateDecl) (name : String)
   pure (.merkleTreeResetHistoryAt slot depth keys)
 
 mutual
-private def expressionNames : Expr ty → List String
+/-- Names referenced or bound by an expression, including its nested lets. -/
+def expressionNames : Expr ty → List String
   | .native _ | .bool _ | .uint _ _ | .opaqueBytesEmpty | .opaqueStringEmpty
   | .foreignBase _ _ | .foreignScalar _ _ | .foreignPoint _ _ => []
   | .opaqueBytesProjection value => expressionNames value
@@ -1921,6 +1922,28 @@ private def pathExpressionNames (keys : List PathKey) : List String :=
 private def freshActivityName (names : List String) : String :=
   let longest := names.foldl (fun length name => max length name.length) 0
   "_noctium_activity_guard_" ++ String.ofList (List.replicate (longest + 1) 'x')
+
+private theorem foldl_name_length_bound (names : List String) (initial : Nat) :
+    let longest := names.foldl (fun length name => max length name.length) initial
+    initial ≤ longest ∧ ∀ name ∈ names, name.length ≤ longest := by
+  induction names generalizing initial with
+  | nil => simp
+  | cons head rest ih =>
+    obtain ⟨headBound, restBound⟩ := ih (max initial head.length)
+    simp only [List.foldl_cons, List.mem_cons]
+    refine ⟨Nat.le_trans (Nat.le_max_left _ _) headBound, ?_⟩
+    intro name member
+    rcases member with rfl | inRest
+    · exact Nat.le_trans (Nat.le_max_right _ _) headBound
+    · exact restBound name inRest
+
+private theorem freshActivityName_not_mem (names : List String) :
+    freshActivityName names ∉ names := by
+  intro member
+  have bound := (foldl_name_length_bound names 0).2 _ member
+  simp only [freshActivityName, String.length_append, String.length_ofList,
+    List.length_replicate] at bound
+  omega
 
 private def totalizeActivityValue (guard : Expr .bool) (avoid : List String)
     (value : Expr ty) : Expr ty :=
@@ -2981,6 +3004,41 @@ private theorem exceptBindOk {ε α β : Type} {first : Except ε α}
     (first >>= next) = .ok result ↔
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
+
+/-- An accepted guarded non-foreign Map read emits the operations of the
+exact rewritten key. Its activity binder is absent from the source key. -/
+theorem appendEffectWithActivity_readMap_key (state : List StateDecl)
+    (name destination : String) (keyTy valueTy : Ty) (key : Expr keyTy)
+    (guard : Expr .bool) (before after : Plan)
+    (nonForeign : ∀ kind, keyTy ≠ .foreign kind)
+    (accepted : appendEffectWithActivity state (.readMap name destination keyTy valueTy key)
+      (some guard) before = .ok after) :
+    ∃ binder, binder ∉ expressionNames key ∧ ∃ raw,
+      appendEffect state (.readMap name destination keyTy valueTy
+        (.letE binder guard (Noctium.GuardedExpression.totalize (.ref binder) key)))
+        before = .ok raw ∧ after.operations = raw.operations := by
+  let avoid := expressionNames key ++ expressionNames guard ++ expressionNames key
+  let binder := freshActivityName avoid
+  have fresh : binder ∉ expressionNames key := by
+    intro member
+    exact freshActivityName_not_mem avoid
+      (List.mem_append_left _ (List.mem_append_left _ member))
+  have rewritten : totalizeActivityKey guard (expressionNames key) keyTy key =
+      .letE binder guard (Noctium.GuardedExpression.totalize (.ref binder) key) := by
+    cases keyTy <;> simp_all [totalizeActivityKey, totalizeActivityValue, binder, avoid]
+  unfold appendEffectWithActivity at accepted
+  simp only [exceptBindOk] at accepted
+  obtain ⟨effect, effectAccepted, raw, appended, wrapped⟩ := accepted
+  simp only [rewritten, Pure.pure, Except.pure] at effectAccepted
+  cases effectAccepted
+  have sameOps : after.operations = raw.operations := by
+    cases readFound : raw.reads[before.reads.length]? with
+    | none => simp [readFound] at wrapped
+    | some read =>
+      have projected := congrArg (Except.map Plan.operations) wrapped
+      simp only [readFound, Pure.pure, Except.pure, Except.map] at projected
+      exact (Except.ok.inj projected).symm
+  exact ⟨binder, fresh, raw, appended, sameOps⟩
 
 /-- A successful public-input fold records its generated reads in source
 input order. Compound curve and foreign values follow their projection order. -/

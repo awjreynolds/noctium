@@ -664,6 +664,7 @@ jobs:
             Noctium.Verification.GenericStateEvaluationCanonical \
             Noctium.Verification.GenericStateReadAuthentication \
             Noctium.Verification.GenericStateMapReadAuthentication \
+            Noctium.Verification.GuardedMapReadAuthentication \
             Noctium.Verification.GenericStateConverseRead \
             Noctium.Verification.GenericStateConverseAbsence \
             Noctium.Verification.GenericStateWriteSourceTrace \

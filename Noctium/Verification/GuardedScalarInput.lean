@@ -239,6 +239,47 @@ theorem run_inactive_scalarCell_read (ctx : EvalContext) (env : EvalEnv)
   rw [inactive]
   cases supported <;> rfl
 
+open ScalarNormalization in
+/-- When its guard is true, a scalar source Map read takes the ordinary step,
+with the same typed result or error. -/
+theorem run_active_map_read (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (name destination : String) {keyTy valueTy : Ty}
+    (key : Expr keyTy) (supported : ScalarType valueTy)
+    (guard : Expr .bool) (active : guard.eval ctx env = .ok true) :
+    runEffectsWithGuardsAndEnv ctx [.readMap name destination keyTy valueTy key] [some guard]
+      env ledger = runEffectWithEnv ctx (.readMap name destination keyTy valueTy key) env ledger := by
+  dsimp [runEffectsWithGuardsAndEnv, List.zipIdx, List.all,
+    List.isEmpty, List.length, Option.isNone, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [List.forIn_cons]
+  dsimp [List.getElem?_cons_zero, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [active]
+  dsimp [runEffectWithEnv, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  cases keyEval : key.eval ctx env with
+  | error message => rfl
+  | ok resolved =>
+    dsimp only []
+    cases ledger.maps.lookup name with
+    | none => rfl
+    | some entries =>
+      dsimp only []
+      cases entries.lookup (Value.pack keyTy resolved) with
+      | none => rfl
+      | some raw =>
+        dsimp only []
+        cases raw.as valueTy with
+        | none => rfl
+        | some value =>
+          dsimp only []
+          cases supported with
+          | native =>
+            by_cases bound : value < ctx.modulus <;> simp [canonical_eq, bound] <;> rfl
+          | bool => rfl
+          | uint maximum =>
+            by_cases invalid : (ScalarPolicy.maxUint < maximum ∨ maximum < value) ∨
+                ctx.modulus ≤ value <;> simp [canonical_eq, invalid] <;> rfl
+
 open GenericStateInputValues ScalarNormalization in
 /-- An inactive scalar Map read binds the decoded default and leaves the
 ledger intact, without evaluating its key or looking up the map. -/
