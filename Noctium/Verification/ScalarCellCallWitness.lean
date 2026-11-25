@@ -73,7 +73,8 @@ theorem lowerEntrypoint_construct_scalar_cell_witness
     obtain ⟨_, equalType⟩ := Prod.mk.inj (List.mem_singleton.mp binding)
     subst ty
     exact ⟨support⟩
-  obtain ⟨expected, expectedAccepted, _, _, rows, header, descriptors, identifiers, capacity⟩ :=
+  obtain ⟨expected, expectedAccepted, _, _, rows, header, descriptors, identifiers, capacity,
+    _instructionBudget⟩ :=
     lowerEntrypoint_witness_preflight declarations entry plan lowered decoded planAccepted profile
       (fun expected accepted => ScalarLedgerScalarSchema.accepted_nonforeign_input_schema
         declarations ep plan expected planAccepted accepted scalarInputs scalarReadBindings)

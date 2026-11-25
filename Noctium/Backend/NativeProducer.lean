@@ -1492,11 +1492,14 @@ def validate (expected : Expected) (program : Json) : Except String Unit := do
       "Jubjub FromCoordinates lacks exact Native x/y roundtrip constraints"
   for (term, maximum) in expected.bounds do checkBound state term maximum
 
-theorem validate_output_definitions_by_instruction_count {expected : Expected} {program : Json}
+/-- Producer admission bounds the row count and the output slots separately.
+A row may define several names, up to the validated vector limit. -/
+theorem validate_instruction_and_output_bounds {expected : Expected} {program : Json}
     (accepted : validate expected program = .ok ()) :
     ∃ instructions : Array Json,
       arrayField program "instructions" = .ok instructions ∧
-      outputDefinitionsInInstructions instructions.toList ≤ maxInstructions * maxVectorLength := by
+      instructions.size ≤ maxInstructions ∧
+      outputDefinitionsInInstructions instructions.toList ≤ instructions.size * maxVectorLength := by
   unfold validate at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨guardValue, guardParsed, programFields, programFieldsParsed,
@@ -1524,12 +1527,16 @@ theorem validate_output_definitions_by_instruction_count {expected : Expected} {
   have resources3 := (Bool.and_eq_true_iff.mp resources2).1
   have instructionCapBool := (Bool.and_eq_true_iff.mp resources3).1
   have instructionCap := of_decide_eq_true instructionCapBool
-  have instructionCountBound : instructions.toList.length ≤ maxInstructions := by
-    simpa using instructionCap
-  have total := validatedInstructions_output_definitions_budget instructionChecks instructionCountBound
-  refine ⟨instructions, ?_, ?_⟩
-  · exact parsedInstructions
-  · exact total
+  have total := validatedInstructions_output_definitions_bound instructionChecks
+  exact ⟨instructions, parsedInstructions, instructionCap, by simpa using total⟩
+
+theorem validate_output_definitions_by_instruction_count {expected : Expected} {program : Json}
+    (accepted : validate expected program = .ok ()) :
+    ∃ instructions : Array Json,
+      arrayField program "instructions" = .ok instructions ∧
+      outputDefinitionsInInstructions instructions.toList ≤ maxInstructions * maxVectorLength := by
+  obtain ⟨instructions, parsed, rows, outputs⟩ := validate_instruction_and_output_bounds accepted
+  exact ⟨instructions, parsed, Nat.le_trans outputs (Nat.mul_le_mul_right maxVectorLength rows)⟩
 
 theorem final_output_required (instructions : List Json) :
     requireFinalOutput instructions = .ok () ↔ finalOutputShape instructions = true := by

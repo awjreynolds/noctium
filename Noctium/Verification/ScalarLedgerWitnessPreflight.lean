@@ -96,7 +96,8 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
       (∀ requirement ∈ expected.rawInputs ++ expected.inputs,
         validIdentifier requirement.identifier = true) ∧
       ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.next ≤
-        Native.maxInstructions * Native.maxVectorLength := by
+        Native.maxInstructions * Native.maxVectorLength ∧
+      call.body.instructions.length ≤ Native.maxInstructions := by
   obtain ⟨actualPlan, expected, rows, actualAccepted, expectedAccepted, nativeAccepted,
     parsed, exactRows, decodedRows⟩ :=
     ScalarCallInstructionProjection.lowerEntrypoint_decodeScalarCall_instructionProjection
@@ -116,7 +117,9 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
         exact planAdmission)
   have sameBounded := Except.ok.inj (boundedAccepted.symm.trans planAccepted)
   subst boundedPlan
+  have instructionBudget :=
+    NativeRelationInstructionProjection.decodedRows_budget nativeAccepted parsed decodedRows
   exact ⟨expected, expectedAccepted, nativeAccepted, parsed, decodedRows, header, body,
-    identifiers, budget⟩
+    identifiers, budget, instructionBudget⟩
 
 end Noctium.Verification.ScalarLedgerWitnessPreflight

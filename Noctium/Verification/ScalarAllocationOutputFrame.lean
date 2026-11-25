@@ -504,17 +504,27 @@ private def accepted {ε α} : Except ε α → Bool
   | .ok _ => true
   | .error _ => false
 
+/-- Transfer both producer resource checks to the exact standalone lowering
+state. Output slots are bounded by the actual number of rows. -/
+theorem lowerCircuit_instruction_and_output_bounds (circuit : Circuit) {program : Lean.Json}
+    (produced : Zkir.lowerCircuit circuit = .ok program) :
+    let body := ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2
+    body.instructions.size ≤ Native.maxInstructions ∧
+      body.outputDefinitions ≤ body.instructions.size * Native.maxVectorLength := by
+  obtain ⟨expected, _, producerAccepted⟩ :=
+    Zkir.lowerCircuit_validated circuit program produced
+  obtain ⟨instructions, parsed, rows, outputs⟩ :=
+    Native.validate_instruction_and_output_bounds producerAccepted
+  have actualInstructions := Zkir.lowerCircuit_instructions circuit program produced
+  have sameRows := Except.ok.inj (parsed.symm.trans actualInstructions)
+  simpa [Zkir.LowerState.outputDefinitions, sameRows] using And.intro rows outputs
+
 theorem lowerCircuit_outputDefinitions_budget (circuit : Circuit) {program : Lean.Json}
     (produced : Zkir.lowerCircuit circuit = .ok program) :
     ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.outputDefinitions ≤
       Native.maxInstructions * Native.maxVectorLength := by
-  obtain ⟨expected, _, producerAccepted⟩ :=
-    Zkir.lowerCircuit_validated circuit program produced
-  obtain ⟨instructions, parsed, capacity⟩ :=
-    Native.validate_output_definitions_by_instruction_count producerAccepted
-  have actualInstructions := Zkir.lowerCircuit_instructions circuit program produced
-  have instructionsEqual := Except.ok.inj (parsed.symm.trans actualInstructions)
-  simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
+  obtain ⟨rows, outputs⟩ := lowerCircuit_instruction_and_output_bounds circuit produced
+  exact Nat.le_trans outputs (Nat.mul_le_mul_right Native.maxVectorLength rows)
 
 /-- A composed frame bounds allocated names by the producer's output budget. -/
 theorem lowerCircuit_output_budget_of_frame (circuit : Circuit) {program : Lean.Json}
@@ -579,21 +589,32 @@ theorem publicSecpPointReturn_names_fit_producerCapacity :
   fun produced => lowerCircuit_output_budget_of_frame publicSecpPointReturnCircuit produced
     publicSecpPointReturn_has_actual_output_capacity_frame
 
-/-- The producer's output-slot bound applies to the exact ledger body.
-The instruction cap stays a separate bound. This checks default lowering. -/
+/-- Transfer the separate row and output bounds to the exact accepted ledger
+body, using its production plan under default lowering. -/
+theorem lowerEntrypoint_instruction_and_output_bounds (state : List StateDecl)
+    (entry : Entrypoint) (program : Lean.Json)
+    (accepted : Zkir.lowerEntrypoint state entry = .ok program) :
+    ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
+      let body := ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2
+      body.instructions.size ≤ Native.maxInstructions ∧
+        body.outputDefinitions ≤ body.instructions.size * Native.maxVectorLength := by
+  obtain ⟨plan, _, planAccepted, _, producerAccepted, actualInstructions⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions state entry program accepted
+  obtain ⟨instructions, parsed, rows, outputs⟩ :=
+    Native.validate_instruction_and_output_bounds producerAccepted
+  have sameRows := Except.ok.inj (parsed.symm.trans actualInstructions)
+  refine ⟨plan, planAccepted, ?_⟩
+  simpa [Zkir.LowerState.outputDefinitions, sameRows] using And.intro rows outputs
+
 theorem lowerEntrypoint_outputDefinitions_budget (state : List StateDecl)
     (entry : Entrypoint) (program : Lean.Json)
     (accepted : Zkir.lowerEntrypoint state entry = .ok program) :
     ∃ plan, Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
       ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {}).2.outputDefinitions ≤
         Native.maxInstructions * Native.maxVectorLength := by
-  obtain ⟨plan, _, planAccepted, _, producerAccepted, actualInstructions⟩ :=
-    Zkir.lowerEntrypoint_validation_and_instructions state entry program accepted
-  obtain ⟨instructions, parsed, capacity⟩ :=
-    Native.validate_output_definitions_by_instruction_count producerAccepted
-  have instructionsEqual := Except.ok.inj (parsed.symm.trans actualInstructions)
-  refine ⟨plan, planAccepted, ?_⟩
-  simpa [Zkir.LowerState.outputDefinitions, instructionsEqual] using capacity
+  obtain ⟨plan, planAccepted, rows, outputs⟩ :=
+    lowerEntrypoint_instruction_and_output_bounds state entry program accepted
+  exact ⟨plan, planAccepted, Nat.le_trans outputs (Nat.mul_le_mul_right Native.maxVectorLength rows)⟩
 
 /-- Connect a frame for the exact accepted ledger plan to the native decoder's
 identifier limit. The producer validates the emitted output-slot budget. -/

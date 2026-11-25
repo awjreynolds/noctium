@@ -264,7 +264,8 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
       ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next ≤
         Native.maxInstructions * Native.maxVectorLength ∧
       (defaultLoweredRows circuit).toList.mapM NativeRelationJson.decodeInstruction =
-        .ok relation.instructions := by
+        .ok relation.instructions ∧
+      relation.instructions.length ≤ Native.maxInstructions := by
   obtain ⟨expected, expectedAccepted, nativeAccepted⟩ :=
     Zkir.lowerCircuit_validated circuit json lowered
   obtain ⟨shape, schema, _⟩ := canonicalInputRequirements circuit admitted expectedAccepted
@@ -276,7 +277,8 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
     NativeRelationInstructionProjection.decode_instructionProjection decoded
   cases Except.ok.inj (decodedParsed.symm.trans rowsParsed)
   refine ⟨?_, ScalarAllocationOutputFrame.lowerCircuit_scalarAdmission_names_fit_producerCapacity
-    circuit scalarAdmission lowered, decoding⟩
+    circuit scalarAdmission lowered, decoding,
+    NativeRelationInstructionProjection.decodedRows_budget nativeAccepted rowsParsed decoding⟩
   intro input member
   apply identifiers (scalarInputRequirement input)
   rw [shape]
