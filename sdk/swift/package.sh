@@ -27,6 +27,11 @@ cp "$sdk/CNoctium.modulemap" "$stage/headers/module.modulemap"
 cp "$repo/runtime/include/noctium_control.h" "$repo/runtime/include/noctium_native.h" "$stage/headers/"
 cp "$sdk/Package.swift" "$repo/LICENSE" "$stage/package/"
 cp -R "$sdk/Sources" "$sdk/Tests" "$stage/package/"
+fixture_directory="$repo/tests/fixtures/native-collection-pages"
+fixture_resources="$stage/package/Tests/NoctiumTests/Fixtures"
+mkdir -p "$fixture_resources"
+cp "$fixture_directory/manifest.json" "$fixture_directory/plan.impact.json" \
+  "$fixture_directory/empty.state" "$fixture_directory/populated.state" "$fixture_resources/"
 if [[ $features == *,localnet ]]; then
   sed -i '' 's/let localnet = false/let localnet = true/' "$stage/package/Package.swift"
 fi

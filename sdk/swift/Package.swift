@@ -20,6 +20,11 @@ let package = Package(
                 .linkedFramework("IOKit", .when(platforms: [.macOS])),
             ]
         ),
-        .testTarget(name: "NoctiumTests", dependencies: ["Noctium"], swiftSettings: features),
+        .testTarget(
+            name: "NoctiumTests",
+            dependencies: ["Noctium"],
+            resources: [.copy("Fixtures")],
+            swiftSettings: features
+        ),
     ]
 )

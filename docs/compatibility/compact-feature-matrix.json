@@ -3937,7 +3937,7 @@
       "layer": "host-ledger-view",
       "surface": "List.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI validates the linked FAB shape and pages scalar or checked composite record elements in head-to-tail order. The pinned Compact fixture matches scalar and checked four-field record contents. Wider SDK adapters remain open.",
+      "notes": "The native snapshot ABI validates the linked FAB shape and pages scalar or checked composite record elements in head-to-tail order. The pinned Compact fixture matches scalar and checked four-field record contents. The packaged macOS ARM64 Swift SDK replays the empty scalar List and both populated pages, follows the returned offset, and rejects a mismatched or malformed state digest. Wider SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -3948,6 +3948,8 @@
       "observedEvidence": [
         "runtime/tests/collection_reads.rs",
         "tests/fixtures/native-collection-pages/manifest.json",
+        "sdk/swift/Tests/NoctiumTests/LedgerSnapshotTests.swift",
+        "docs/development/swift-witness-sdk.md",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs"
