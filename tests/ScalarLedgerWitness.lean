@@ -73,7 +73,14 @@ private def initial : LedgerState := {cells := [("counter", .native 17)]}
           reads.map (·.name) == entries.map (·.1.name) &&
           (seed "%input_delta").val == 24 &&
           match GenericStateInputValues.decodeReads reads seed with
-          | .ok readValues => readValues == [("before", .native 17), ("after", .native 42)]
+          | .ok readValues =>
+            let complete := (outputs ++ values) ++ readValues
+            readValues == [("before", .native 17), ("after", .native 42)] &&
+              plan.operations.all (fun operation => operation.fieldGroups.all
+                (fun fields => fields.all (fun field => (field.eval context complete).isOk))) &&
+              match entry.evalReturns context complete with
+              | .ok returned => returned == [("result", .native 42)]
+              | .error _ => false
           | .error _ => false
 
 open Lean Elab Command in
@@ -87,6 +94,7 @@ run_cmd do
       `Noctium.Verification.ScalarWitnessConstruction.completes_plan_guards,
       `Noctium.Verification.ScalarWitnessConstruction.lowerLedgerOperations_complete_unGuarded,
       `Noctium.Verification.ScalarWitnessConstruction.completes_scalar_ledger_suffix,
+      `Noctium.Verification.ScalarWitnessConstruction.lower_cell_plan_evaluation,
       `Noctium.Verification.ScalarWitnessConstruction.lowerEntrypoint_construct_scalar_cell_witness,
       `Noctium.Verification.ScalarLedgerSourceReturns.evalReturns_transport,
       `Noctium.Verification.ScalarLedgerReturnObservation.expected_returns_observe_source,
