@@ -1,4 +1,5 @@
 import Noctium.Verification.GuardedStatementConsumption
+import Noctium.Verification.GuardedStatementWidths
 import Noctium.Verification.ImpactTranscriptSchedule
 import Noctium.Verification.ScalarImpactOperationMeaning
 
@@ -119,17 +120,16 @@ private theorem sourceGuard_mem {plan : Impact.Plan} {guard : Expr .bool}
     rw [same]
     exact List.of_mem_zip present |>.2
 
-/-- The decoded rows carry the same ordered activity bits and inactive group
-widths as the normalized source conditions and expected fields. -/
-private theorem observations_activity (hash : Hash) (inputs : Assignment)
+private theorem observation_shapes (hash : Hash) (inputs : Assignment)
     (expected : Native.Expected) (observations : List Observation)
     (activities : List (Option _root_.Bool))
     (guardMeaning : expected.groupGuards.map (interpret hash inputs) =
       activities.map (fun activity => some (bit (activity.getD _root_.Bool.true))))
     (aligned : activities.length = expected.groups.length)
     (observed : expectedObservations hash inputs expected = some observations) :
-    GuardedStatementConsumption.observationActivity observations =
-      List.zipWith groupActivity activities (expected.groups.map List.length) := by
+    observations.map (fun observation => (observation.active, observation.payload.length)) =
+      List.zipWith (fun activity width => (activity.getD _root_.Bool.true, width))
+        activities (expected.groups.map List.length) := by
   obtain ⟨obsLength, observationAt⟩ := mapM_option_frame _ observed
   have lengths : expected.groupGuards.length = activities.length := by
     simpa using congrArg List.length guardMeaning
@@ -164,24 +164,25 @@ private theorem observations_activity (hash : Hash) (inputs : Assignment)
     | some fields =>
       have width := (mapM_option_frame _ payload).1
       simp only [sourceObservation, term, payload, Bind.bind, Option.bind_some] at atIndex
-      simp only [GuardedStatementConsumption.observationActivity, List.getElem?_map,
+      simp only [List.getElem?_map,
         List.getElem?_zipWith, List.getElem?_eq_getElem activityInside, List.getElem?_eq_getElem inside,
         atIndex, Option.map_some]
       change (observeImpact (bit (activity.getD _root_.Bool.true)) fields).map _ =
-        some (groupActivity activity group.length)
-      cases active : activity.getD _root_.Bool.true <;>
-        simp [active, bit, groupActivity, observeImpact_active, observeImpact_inactive, width]
+        some (activity.getD _root_.Bool.true, group.length)
+      cases activity.getD _root_.Bool.true <;>
+        simp [bit, observeImpact_active, observeImpact_inactive, width]
   · have obsOutside : observations.length ≤ index := by simpa [obsLength] using Nat.le_of_not_gt inside
-    simp [GuardedStatementConsumption.observationActivity, List.getElem?_zipWith,
+    simp [List.getElem?_zipWith,
       List.getElem?_eq_none obsOutside, List.getElem?_eq_none (Nat.le_of_not_gt inside)]
 
-/-- The activity observed in the checked ZKIR rows follows the exact Impact
-plan's operation order, including the widths of skipped field groups. -/
+/-- The checked ZKIR rows follow the exact Impact plan's activity and field
+widths. Each active group retains the width of the native operation at that ordinal. -/
 theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
     (ctx : EvalContext) (hash : Hash) (inputs : Assignment) (env : EvalEnv)
     (implementation : HashAgreement ctx hash)
     (plan : Impact.Plan) (expected : Native.Expected) (frame : OutputFrame)
-    (observations : List Observation)
+    (observations : List Observation) (native : List NativeState.Op)
+    (evaluatedNative : GuardedPlanExecution.evalPlan ctx env plan = .ok native)
     (planAccepted : Impact.lower state ep = .ok plan)
     (expectedAccepted : Native.expectedEntrypoint state ep = .ok expected)
     (frameAccepted : normalizeOutputs (entrypointSeedAliases ep plan)
@@ -197,7 +198,9 @@ theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
       ∃ value, interpret hash inputs bound.1 = some value ∧ value.val ≤ bound.2)
     (observed : expectedObservations hash inputs expected = some observations) :
     (plan.operations.zipIdx.mapM (ImpactTranscriptSchedule.sourceGroups ctx env plan)).map
-      List.flatten = some (GuardedStatementConsumption.observationActivity observations) := by
+      List.flatten = some (GuardedStatementConsumption.observationActivity observations) ∧
+    native.map (fun op => (ImpactStatementScalar.opFields op).length) =
+      (observations.filter (·.active)).map (fun row => row.payload.length) := by
   obtain ⟨activityFrame, terms, activityFrameAccepted, normalized, guardShape,
     guardAssertions, guardBounds⟩ :=
     expectedEntrypoint_activity state ep expected plan planAccepted expectedAccepted reads
@@ -227,13 +230,44 @@ theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
   have activityAligned : activities.length = expected.groups.length := by
     rw [activityLength, ImpactTranscriptSchedule.sourceGroupGuards_length plan aligned single]
     simpa using widthLength.symm
-  have observationSchedule := observations_activity hash inputs expected observations activities
+  have observedShapes := observation_shapes hash inputs expected observations activities
     meaning activityAligned observed
-  rw [ImpactTranscriptSchedule.sourceGroups_flatten ctx env plan aligned single]
-  have sourceSchedule := evaluate_groups ctx env (activityGuardSources plan) activities
-    (plan.operations.flatMap (fun op => op.fieldGroups.map List.length)) evaluated
-  rw [← widths] at sourceSchedule
-  rw [← widths]
-  exact sourceSchedule.trans (congrArg some observationSchedule.symm)
+  constructor
+  · have observationSchedule := congrArg
+      (List.map (fun group : _root_.Bool × Nat => if group.1 then none else some group.2))
+      observedShapes
+    have observationActivity : GuardedStatementConsumption.observationActivity observations =
+        List.zipWith groupActivity activities (expected.groups.map List.length) := by
+      change _ = List.zipWith (fun activity width =>
+        if activity.getD _root_.Bool.true then none else some width)
+        activities (expected.groups.map List.length)
+      simpa only [GuardedStatementConsumption.observationActivity, List.map_map, List.map_zipWith,
+        Function.comp_def] using observationSchedule
+    rw [ImpactTranscriptSchedule.sourceGroups_flatten ctx env plan aligned single]
+    have sourceSchedule := evaluate_groups ctx env (activityGuardSources plan) activities
+      (plan.operations.flatMap (fun op => op.fieldGroups.map List.length)) evaluated
+    rw [← widths] at sourceSchedule
+    rw [← widths]
+    exact sourceSchedule.trans (congrArg some observationActivity.symm)
+  · obtain ⟨_, _, sourceGuards, operationWidths⟩ :=
+      ImpactTranscriptSchedule.scalar_source_shapes plan aligned single
+    have evaluatedGuards : (GuardedPlanActivity.operationGuards plan).mapM
+        (GuardedPlanExecution.evalActivity ctx env) = .ok activities := by
+      rw [← sourceGuards]
+      exact evaluated
+    have opShapes : observations.map (fun row => (row.active, row.payload.length)) =
+        (plan.operations.zip activities).map (fun item =>
+          (item.2.getD _root_.Bool.true, item.1.fields.length)) := by
+      rw [observedShapes, widths, operationWidths, List.map_zip_eq_zipWith,
+        List.zipWith_map_right, List.zipWith_comm]
+      rfl
+    have matchedWidths := congrArg
+      (fun groups : List (_root_.Bool × Nat) => (groups.filter Prod.fst).map Prod.snd) opShapes
+    have activeWidths := GuardedStatementWidths.evalPlan_active_field_widths ctx env plan
+      native evaluatedNative implementation.modulus
+      (GenericStateAdmissionBridge.lower_field_admission state ep plan planAccepted)
+      activities evaluatedGuards
+    rw [activeWidths]
+    simpa only [List.filter_map, List.map_map, Function.comp_def] using matchedWidths.symm
 
 end Noctium.Verification.GuardedSourceActivity

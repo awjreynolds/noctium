@@ -1,6 +1,8 @@
 import Noctium.Verification.GuardedInputTranscript
 import Noctium.Verification.GuardedZkirArtifact
 import Noctium.Verification.ImpactCallStatement
+import Noctium.Verification.ImpactStatementPayload
+import Noctium.Verification.ImpactStatementScalar
 
 namespace Noctium.Verification.GuardedStatementConsumption
 
@@ -123,5 +125,193 @@ theorem fromArtifact_sound (bytes : ArtifactBytes.Bytes) (assignment : Assignmen
     · simp [committed] at accepted
       exact ⟨view, rfl, committed, accepted⟩
     · simp [committed] at accepted
+
+private theorem observeImpact_inactive_zero (guard : Scalar) (values : List Scalar)
+    (observation : Observation)
+    (observed : observeImpact guard values = some observation)
+    (inactive : observation.active = false) :
+    observation.payload = List.replicate observation.payload.length zero := by
+  by_cases isOne : guard = one
+  · simp [observeImpact, isOne] at observed
+    cases observed
+    simp at inactive
+  · by_cases isZero : guard = zero
+    · simp [observeImpact, isZero] at observed
+      cases observed
+      simp
+    · simp [observeImpact, isOne, isZero] at observed
+
+/-- Emitted inactive rows retain their width and contain only zero fields. -/
+theorem emittedObservations_inactive_zero (witness : Assignment) (rows : List Row)
+    {observations : List Observation}
+    (observed : emittedObservations witness rows = some observations) :
+    ∀ obs ∈ observations, obs.active = false →
+      obs.payload = List.replicate obs.payload.length zero := by
+  induction rows generalizing observations with
+  | nil =>
+    simp [emittedObservations] at observed
+    subst observations
+    intro obs member
+    simp at member
+  | cons row rest ih =>
+    cases row with
+    | strict instruction =>
+      simpa [emittedObservations] using
+        (ih (observations := observations) observed)
+    | publicInput output guard =>
+      simpa [emittedObservations] using
+        (ih (observations := observations) observed)
+    | impact guard values =>
+      simp only [emittedObservations] at observed
+      cases head : observeImpact (guard.read witness) (values.map (·.read witness)) with
+      | none => simp [head] at observed
+      | some observation =>
+        cases tail : emittedObservations witness rest with
+        | none => simp [head, tail] at observed
+        | some tailObservations =>
+          simp [head, tail] at observed
+          cases observed
+          intro obs member inactive
+          simp only [List.mem_cons] at member
+          rcases member with same | member
+          · subst obs
+            exact observeImpact_inactive_zero _ _ _ head inactive
+          · exact ih (observations := tailObservations) tail obs member inactive
+
+private theorem flatMap_eq_of_equal_widths {α β : Type}
+    (encode : α → List β) (operations : List α) (payloads : List (List β))
+    (flat : operations.flatMap encode = payloads.flatten)
+    (widths : operations.map (fun operation => (encode operation).length) =
+      payloads.map List.length) :
+    operations.map encode = payloads := by
+  induction operations generalizing payloads with
+  | nil =>
+    cases payloads with
+    | nil => rfl
+    | cons payload rest => simp at widths
+  | cons operation rest ih =>
+    cases payloads with
+    | nil => simp at widths
+    | cons payload payloadRest =>
+      simp only [List.map_cons, List.cons.injEq] at widths
+      obtain ⟨headWidth, tailWidths⟩ := widths
+      have flatParts : encode operation ++ rest.flatMap encode =
+          payload ++ payloadRest.flatten := by
+        simpa only [List.flatMap_cons, List.flatten_cons] using flat
+      have sameHead : encode operation = payload := by
+        calc
+          encode operation = List.take (encode operation).length
+              (encode operation ++ rest.flatMap encode) := by rw [List.take_left]
+          _ = List.take (encode operation).length
+              (payload ++ payloadRest.flatten) := by rw [flatParts]
+          _ = List.take (encode operation).length payload :=
+            List.take_append_of_le_length (by omega)
+          _ = payload := by rw [headWidth, List.take_length]
+      have sameTail : rest.flatMap encode = payloadRest.flatten := by
+        have cancel : encode operation ++ rest.flatMap encode =
+            encode operation ++ payloadRest.flatten := by
+          simpa [sameHead] using flatParts
+        exact List.append_cancel_left cancel
+      have tailMap := ih payloadRest sameTail tailWidths
+      simp [sameHead, tailMap]
+
+private theorem scheduledPayload_aligned (encode : α → List Scalar)
+    (operations : List α) (observations : List Observation)
+    (aligned : operations.map encode =
+      (observations.filter (·.active)).map Observation.payload)
+    (inactiveZero : ∀ obs ∈ observations, obs.active = false →
+      obs.payload = List.replicate obs.payload.length zero) :
+    ImpactStatementPayload.scheduledPayload encode operations
+        (observationActivity observations) = some (observationFields observations) := by
+  induction observations generalizing operations with
+  | nil =>
+    cases operations with
+    | nil => rfl
+    | cons operation rest => simp at aligned
+  | cons observation rest ih =>
+    cases observation with
+    | mk active payload =>
+      cases active with
+      | true =>
+        cases operations with
+        | nil => simp at aligned
+        | cons operation restOperations =>
+          simp at aligned
+          obtain ⟨head, tail⟩ := aligned
+          have restResult := ih restOperations tail
+            (by
+              intro obs member inactive
+              exact inactiveZero obs (by simp [member]) inactive)
+          simpa [ImpactStatementPayload.scheduledPayload, observationActivity,
+            observationFields, head] using restResult
+      | false =>
+        have restAligned : operations.map encode =
+            (rest.filter (·.active)).map Observation.payload := by
+          simpa [List.filter_cons] using aligned
+        have restResult := ih operations restAligned
+          (by
+            intro obs member inactive
+            exact inactiveZero obs (by simp [member]) inactive)
+        have zeroPayload := inactiveZero ⟨false, payload⟩ (by simp) rfl
+        change ImpactStatementPayload.scheduledPayload encode operations
+            (some payload.length :: observationActivity rest) =
+          some (payload ++ observationFields rest)
+        cases operations with
+        | nil =>
+          rw [ImpactStatementPayload.scheduledPayload.eq_def]
+          dsimp
+          rw [restResult]
+          simp [observationFields]
+          exact zeroPayload.symm
+        | cons operation restOperations =>
+          rw [ImpactStatementPayload.scheduledPayload.eq_def]
+          dsimp
+          rw [restResult]
+          simp [observationFields]
+          exact zeroPayload.symm
+
+private theorem activePayloads_filter (observations : List Observation) :
+    activePayloads observations =
+      ((observations.filter (·.active)).map Observation.payload).flatten := by
+  induction observations with
+  | nil => rfl
+  | cons observation rest ih =>
+    cases observation with
+    | mk active payload =>
+      change List.flatMap activePayload (⟨active, payload⟩ :: rest) =
+        ((List.filter (·.active) (⟨active, payload⟩ :: rest)).map
+          Observation.payload).flatten
+      cases active with
+      | false =>
+        simp [List.flatMap_cons, activePayload]
+        change activePayloads rest =
+          ((List.filter (·.active) rest).map Observation.payload).flatten
+        exact ih
+      | true =>
+        simp [List.flatMap_cons, activePayload]
+        change activePayloads rest =
+          ((List.filter (·.active) rest).map Observation.payload).flatten
+        exact ih
+
+/-- Matching operation field widths recover each active observation payload
+from the ordered flattened stream, then schedule inactive rows as zero padding. -/
+theorem scheduledPayload_of_observations (operations : List NativeState.Op)
+    (observations : List Observation)
+    (fields : operations.flatMap ImpactStatementScalar.opFields =
+      activePayloads observations)
+    (widths : operations.map
+      (fun operation => (ImpactStatementScalar.opFields operation).length) =
+      (observations.filter (·.active)).map (fun row => row.payload.length))
+    (inactiveZero : ∀ obs ∈ observations, obs.active = false →
+      obs.payload = List.replicate obs.payload.length zero) :
+    ImpactStatementPayload.scheduledPayload ImpactStatementScalar.opFields operations
+        (observationActivity observations) = some (observationFields observations) := by
+  apply scheduledPayload_aligned
+  · apply flatMap_eq_of_equal_widths ImpactStatementScalar.opFields operations
+        ((observations.filter (·.active)).map Observation.payload)
+    · rw [activePayloads_filter] at fields
+      exact fields
+    · simpa [List.map_map, Function.comp_def] using widths
+  · exact inactiveZero
 
 end Noctium.Verification.GuardedStatementConsumption
