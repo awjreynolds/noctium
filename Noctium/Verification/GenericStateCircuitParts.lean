@@ -76,6 +76,26 @@ private def inputStateStep (entry : Entrypoint) (aliases : AliasEnvironment)
 def inputRequirementCore (input : InputRequirement) : String × Visibility × Ty × Bool :=
   (input.identifier, input.visibility, input.ty, input.canonicalJubjubScalar)
 
+def sourceInitialInputRequirements (entry : Entrypoint) : List InputRequirement :=
+  (entry.circuit.inputs.filter fun input =>
+    !entry.callInputs.contains input.name).flatMap Input.requirements
+
+def sourcePostReadRequirements (entry : Entrypoint) (plan : Backend.Impact.Plan) :
+    List InputRequirement :=
+  (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+    fun (read : Backend.Impact.Read) => read.bindings.map fun (name, ty) =>
+      (match ty with
+      | Ty.jubjubScalar =>
+        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native,
+          canonicalJubjubScalar := true} : InputRequirement)
+      | Ty.opaqueBytes | Ty.opaqueString =>
+        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native} : InputRequirement)
+      | _ => ({identifier := "%input_" ++ name, visibility := .«public», ty} : InputRequirement))
+
+def expectedInputRequirementSources (entry : Entrypoint) (plan : Backend.Impact.Plan) :
+    List InputRequirement :=
+  sourceInitialInputRequirements entry ++ sourcePostReadRequirements entry plan
+
 private theorem inputRequirementCore_guardedZipIdx (inputs : List InputRequirement)
     (start count : Nat) (guard : Term) :
     (inputs.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
@@ -1178,6 +1198,129 @@ theorem expectedEntrypoint_sourceCircuitRequirements
     outputBoundMembers, outputAssertionMembers, conditionBoundMembers,
     conditionAssertionMembers⟩
 
+private theorem inputStateStep_preserves_requirementCore (entry : Entrypoint)
+    (aliases : AliasEnvironment) (read : Backend.Impact.Read)
+    (current next : InputState)
+    (accepted : inputStateStep entry aliases read current = .ok (.yield next)) :
+    next.1.map inputRequirementCore = current.1.map inputRequirementCore := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      have stateEq : (current.1, values.1, values.2,
+          current.2.2.2 + (Backend.Impact.Read.bindings read).length) = next := by
+        injection accepted with yieldEq
+        injection yieldEq with stateEq
+      cases stateEq
+      rfl
+  | some guard =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases normalizedEq : (normalize aliases guard).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [normalizedEq] at accepted
+    | ok normalizedValue =>
+      simp only [normalizedEq] at accepted
+      cases defaultsEq : inactiveDefaultResults entry aliases read
+          (current.2.1 ++ normalizedValue.assertions,
+            current.2.2.1 ++ normalizedValue.bounds) with
+      | error message => simp [defaultsEq] at accepted
+      | ok values =>
+        simp only [defaultsEq] at accepted
+        have stateEq : (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+            if current.2.2.2 ≤ position && position < current.2.2.2 +
+                (Backend.Impact.Read.bindings read).length then
+              {input with activityGuard := some normalizedValue.term} else input,
+            values.1, values.2, current.2.2.2 +
+              (Backend.Impact.Read.bindings read).length) = next := by
+          injection accepted with yieldEq
+          injection yieldEq with stateEq
+        cases stateEq
+        simpa only [forInStepValue] using
+          inputRequirementCore_guardedZipIdx current.1 current.2.2.2
+            (Backend.Impact.Read.bindings read).length normalizedValue.term
+
+private theorem inputStateFold_preserves_requirementCore (entry : Entrypoint)
+    (aliases : AliasEnvironment) (reads : List Backend.Impact.Read)
+    (initial final : InputState)
+    (accepted : forIn reads initial (inputStateStep entry aliases) = .ok final) :
+    final.1.map inputRequirementCore = initial.1.map inputRequirementCore := by
+  refine list_forIn_preserves_projection
+    (items := reads) (initial := initial) (final := final)
+    (project := fun state : InputState => state.1.map inputRequirementCore)
+    (step := inputStateStep entry aliases)
+    (by
+      intro read state result stepAccepted
+      obtain ⟨next, rfl⟩ := inputStateStep_yields entry aliases read state result stepAccepted
+      simpa only [forInStepValue] using
+        inputStateStep_preserves_requirementCore entry aliases read state next stepAccepted)
+    accepted
+
+/-- The expected input list has the same identifier, visibility, type, and
+canonical-scalar descriptors as its source inputs followed by post-public
+read bindings. Activity guards do not change this projection. -/
+theorem expectedEntrypoint_inputRequirementCoreMap (state : List StateDecl)
+    (entry : Entrypoint) (expected : Expected) (plan : Backend.Impact.Plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (planAccepted : Backend.Impact.lower state entry = .ok plan) :
+    expected.inputs.map inputRequirementCore =
+      (expectedInputRequirementSources entry plan).map inputRequirementCore := by
+  obtain ⟨actualPlan, _, aliases, inputState, _, _, _, _, _, _, _,
+      lowerAccepted, _, _, inputStateAccepted, _, _, _, _, _, _, _, inputShape, _, _, _, _, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : actualPlan = plan := Except.ok.inj (lowerAccepted.symm.trans planAccepted)
+  subst actualPlan
+  let initialInputs := sourceInitialInputRequirements entry
+  let postReads := plan.reads.drop
+    (Backend.Impact.publicInputReadCount entry.circuit.inputs)
+  let readRequirements := sourcePostReadRequirements entry plan
+  let initialState : InputState :=
+    (initialInputs ++ readRequirements, [], [], initialInputs.length)
+  have loopAccepted : forIn postReads initialState (inputStateStep entry aliases) =
+      .ok inputState := by
+    change forIn postReads initialState (inputStateStep entry aliases) = .ok inputState
+      at inputStateAccepted
+    exact inputStateAccepted
+  have corePreserved := inputStateFold_preserves_requirementCore entry aliases
+    postReads initialState inputState loopAccepted
+  calc
+    expected.inputs.map inputRequirementCore = inputState.1.map inputRequirementCore := by
+      rw [inputShape]
+    _ = (expectedInputRequirementSources entry plan).map inputRequirementCore := by
+      simpa [initialState, initialInputs, readRequirements,
+        expectedInputRequirementSources, sourceInitialInputRequirements,
+        sourcePostReadRequirements] using corePreserved
+
+/-- Every unmodified circuit-input requirement remains represented in the
+accepted expected input list. The descriptor projection forgets only the
+activity guard added while normalizing post-public reads. -/
+theorem expectedEntrypoint_initialInputCore (state : List StateDecl)
+    (entry : Entrypoint) (expected : Expected)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (requirement : InputRequirement)
+    (member : requirement ∈
+      ((entry.circuit.inputs.filter fun input =>
+        !entry.callInputs.contains input.name).flatMap Input.requirements)) :
+    ∃ emitted, emitted ∈ expected.inputs ∧
+      inputRequirementCore emitted = inputRequirementCore requirement := by
+  obtain ⟨actualPlan, _, _, _, _, _, _, _, _, _, _, lowerAccepted, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have coreMap := expectedEntrypoint_inputRequirementCoreMap state entry expected
+    actualPlan accepted lowerAccepted
+  have sourceMember : requirement ∈ sourceInitialInputRequirements entry := by
+    simpa only [sourceInitialInputRequirements] using member
+  have sourcesMember : requirement ∈ expectedInputRequirementSources entry actualPlan :=
+    List.mem_append_left _ sourceMember
+  have coreMember : inputRequirementCore requirement ∈ expected.inputs.map inputRequirementCore := by
+    rw [coreMap]
+    exact List.mem_map_of_mem sourcesMember
+  obtain ⟨emitted, emittedMember, coreEq⟩ := List.mem_map.mp coreMember
+  exact ⟨emitted, emittedMember, coreEq⟩
+
 /-- Every post-public Native, Bool, or UInt read descriptor appears in the
 accepted expected input list. The projection omits activityGuard because the
 expected constructor fills that field for guarded reads after making the
@@ -1194,157 +1337,33 @@ theorem expectedEntrypoint_scalarReadDescriptor
     (supported : ty = .native ∨ ty = .bool ∨ ∃ width, ty = .uint width) :
     ∃ requirement, requirement ∈ expected.inputs ∧
       inputRequirementCore requirement = ("%input_" ++ name, .«public», ty, false) := by
-  obtain ⟨actualPlan, _, aliases, inputState, _, _, _, _, _, _, _,
-      lowerAccepted, _, _, inputStateAccepted, _, _, _, _, _, _, _, inputShape, _, _, _, _, _, _⟩ :=
-    expectedEntrypoint_parts state entry expected accepted
-  have planEq : actualPlan = plan := Except.ok.inj (lowerAccepted.symm.trans planAccepted)
-  subst actualPlan
-  let initialInputs := (entry.circuit.inputs.filter fun input =>
-      !entry.callInputs.contains input.name).flatMap Input.requirements
-  let postReads := plan.reads.drop
-    (Backend.Impact.publicInputReadCount entry.circuit.inputs)
-  let readRequirements := postReads.flatMap fun (read : Backend.Impact.Read) =>
-    read.bindings.map fun (name, ty) =>
-      (match ty with
-      | Ty.jubjubScalar =>
-        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native,
-          canonicalJubjubScalar := true} : InputRequirement)
-      | Ty.opaqueBytes | Ty.opaqueString =>
-        ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native} : InputRequirement)
-      | _ => ({identifier := "%input_" ++ name, visibility := .«public», ty} : InputRequirement))
-  let initialState : InputState :=
-    (initialInputs ++ readRequirements, [], [], initialInputs.length)
-  have loopAccepted : forIn postReads initialState (inputStateStep entry aliases) =
-      .ok inputState := by
-    change forIn postReads initialState (inputStateStep entry aliases) = .ok inputState
-      at inputStateAccepted
-    exact inputStateAccepted
-  have corePreserved : inputState.1.map inputRequirementCore =
-      initialState.1.map inputRequirementCore := by
-    refine list_forIn_preserves_projection
-      (items := postReads) (initial := initialState) (final := inputState)
-      (project := fun inputState : List InputRequirement × List Term ×
-        List (Term × Nat) × Nat => inputState.1.map inputRequirementCore)
-      (step := inputStateStep entry aliases)
-      (by
-        intro read current result stepAccepted
-        cases result with
-        | done next =>
-          unfold inputStateStep at stepAccepted
-          cases guardEq : read.guard with
-          | none =>
-            simp only [guardEq, Bind.bind, Except.bind] at stepAccepted
-            cases defaults : inactiveDefaultResults entry aliases read
-                (current.2.1, current.2.2.1) with
-            | error message => simp [defaults] at stepAccepted
-            | ok values =>
-              simp only [defaults] at stepAccepted
-              change Except.ok (ForInStep.yield
-                (current.1, values.1, values.2, current.2.2.2 +
-                  (Backend.Impact.Read.bindings read).length)) =
-                Except.ok (ForInStep.done next) at stepAccepted
-              cases stepAccepted
-          | some guardTerm =>
-            simp only [guardEq, Bind.bind, Except.bind] at stepAccepted
-            cases normalizedEq : (normalize aliases guardTerm).mapError
-                (fun message => ({span := entry.span, message} : Diagnostic)) with
-            | error message => simp [normalizedEq] at stepAccepted
-            | ok normalizedValue =>
-              simp only [normalizedEq] at stepAccepted
-              cases defaults : inactiveDefaultResults entry aliases read
-                  (current.2.1 ++ normalizedValue.assertions,
-                    current.2.2.1 ++ normalizedValue.bounds) with
-              | error message => simp [defaults] at stepAccepted
-              | ok values =>
-                simp only [defaults] at stepAccepted
-                change Except.ok (ForInStep.yield
-                  (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
-                    if current.2.2.2 ≤ position && position < current.2.2.2 +
-                        (Backend.Impact.Read.bindings read).length then
-                      {input with activityGuard := some normalizedValue.term} else input,
-                    values.1, values.2, current.2.2.2 +
-                      (Backend.Impact.Read.bindings read).length)) =
-                  Except.ok (ForInStep.done next) at stepAccepted
-                cases stepAccepted
-        | yield next =>
-          unfold inputStateStep at stepAccepted
-          cases guardEq : read.guard with
-          | none =>
-            simp only [guardEq, Bind.bind, Except.bind] at stepAccepted
-            cases defaults : inactiveDefaultResults entry aliases read
-                (current.2.1, current.2.2.1) with
-            | error message => simp [defaults] at stepAccepted
-            | ok values =>
-              simp only [defaults] at stepAccepted
-              change Except.ok (ForInStep.yield
-                (current.1, values.1, values.2, current.2.2.2 +
-                  (Backend.Impact.Read.bindings read).length)) =
-                Except.ok (ForInStep.yield next) at stepAccepted
-              have stateEq : (current.1, values.1, values.2, current.2.2.2 +
-                  (Backend.Impact.Read.bindings read).length) = next := by
-                injection stepAccepted with yieldEq
-                injection yieldEq with stateEq
-              cases stateEq
-              simp [forInStepValue]
-          | some guardTerm =>
-            simp only [guardEq, Bind.bind, Except.bind] at stepAccepted
-            cases normalizedEq : (normalize aliases guardTerm).mapError
-                (fun message => ({span := entry.span, message} : Diagnostic)) with
-            | error message => simp [normalizedEq] at stepAccepted
-            | ok normalizedValue =>
-              simp only [normalizedEq] at stepAccepted
-              cases defaults : inactiveDefaultResults entry aliases read
-                  (current.2.1 ++ normalizedValue.assertions,
-                    current.2.2.1 ++ normalizedValue.bounds) with
-              | error message => simp [defaults] at stepAccepted
-              | ok values =>
-                simp only [defaults] at stepAccepted
-                change Except.ok (ForInStep.yield
-                  (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
-                    if current.2.2.2 ≤ position && position < current.2.2.2 +
-                        (Backend.Impact.Read.bindings read).length then
-                      {input with activityGuard := some normalizedValue.term} else input,
-                    values.1, values.2, current.2.2.2 +
-                      (Backend.Impact.Read.bindings read).length)) =
-                  Except.ok (ForInStep.yield next) at stepAccepted
-                have stateEq : (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
-                    if current.2.2.2 ≤ position && position < current.2.2.2 +
-                        (Backend.Impact.Read.bindings read).length then
-                      {input with activityGuard := some normalizedValue.term} else input,
-                    values.1, values.2, current.2.2.2 +
-                      (Backend.Impact.Read.bindings read).length) = next := by
-                  injection stepAccepted with yieldEq
-                  injection yieldEq with stateEq
-                cases stateEq
-                simpa only [forInStepValue] using
-                  inputRequirementCore_guardedZipIdx current.1 current.2.2.2
-                    (Backend.Impact.Read.bindings read).length normalizedValue.term)
-      loopAccepted
+  have coreMap := expectedEntrypoint_inputRequirementCoreMap state entry expected
+    plan accepted planAccepted
   let target : InputRequirement :=
     {identifier := "%input_" ++ name, visibility := .«public», ty}
-  have readRequirementMember : target ∈ readRequirements := by
-    unfold readRequirements
+  have readRequirementMember : target ∈ expectedInputRequirementSources entry plan := by
+    unfold expectedInputRequirementSources
+    apply List.mem_append_right
+    unfold sourcePostReadRequirements
     apply List.mem_flatMap.mpr
     refine ⟨read, postPublic, ?_⟩
-    rw [singleton]
-    rcases supported with native | boolean | ⟨width, uint⟩
-    · subst ty
-      simp [target]
-    · subst ty
-      simp [target]
-    · subst ty
-      simp [target]
-  have targetMember : target ∈ initialState.1 := by
-    simp [initialState, readRequirementMember]
-  have coreMember : inputRequirementCore target ∈
-      inputState.1.map inputRequirementCore := by
-    rw [corePreserved]
-    exact List.mem_map_of_mem targetMember
+    apply List.mem_map.mpr
+    refine ⟨(name, ty), ?_, ?_⟩
+    · rw [singleton]
+      simp
+    · rcases supported with native | boolean | ⟨width, uint⟩
+      · subst ty
+        rfl
+      · subst ty
+        rfl
+      · subst ty
+        rfl
+  have coreMember : inputRequirementCore target ∈ expected.inputs.map inputRequirementCore := by
+    rw [coreMap]
+    exact List.mem_map_of_mem readRequirementMember
   obtain ⟨requirement, requirementMember, coreEq⟩ := List.mem_map.mp coreMember
-  refine ⟨requirement, ?_, ?_⟩
-  · rw [inputShape]
-    exact requirementMember
-  · simpa [target, inputRequirementCore] using coreEq
+  refine ⟨requirement, requirementMember, ?_⟩
+  simpa [target, inputRequirementCore] using coreEq
 
 /-- The checked native call header comes from the source argument order. -/
 theorem expectedEntrypoint_rawInputs (state : List StateDecl) (entry : Entrypoint)

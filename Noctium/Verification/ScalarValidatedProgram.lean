@@ -223,7 +223,8 @@ def inputValues (expected : Expected) (visibility : Visibility)
   expected.inputs.filterMap fun requirement =>
     if requirement.visibility == visibility then some (witness requirement.identifier) else none
 
-private theorem inputValues_of_descriptors {program : Program} {expected : Expected}
+/-- The validated descriptor order fixes the ordered input values. -/
+theorem inputValues_of_descriptors {program : Program} {expected : Expected}
     (descriptors : program.instructions.flatMap strictInstructionInputDescriptors =
       expected.inputs.map expectedInputDescriptor)
     (visibility : Visibility) (witness : Assignment) :

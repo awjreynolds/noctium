@@ -451,7 +451,7 @@ theorem lowerLedgerOperations_complete_unGuarded (ctx : EvalContext) (hash : Has
     (implementation : HashAgreement ctx hash) (inputs : Assignment)
     (normalAliases : Backend.Native.AliasEnvironment) (values : EvalEnv)
     (entry : Entrypoint) (plan : Impact.Plan)
-    (typed : TypedEnvironment hash inputs normalAliases values (plan.typeEnvironment entry))
+    (sourceAliases : AliasAgreement hash inputs normalAliases values)
     (witness : Assignment) (state : Zkir.LowerState)
     (meaning : LowerStateMeaning hash witness state)
     (lowerAliases : LowerAliasAgreement hash inputs witness normalAliases state.aliases values)
@@ -470,7 +470,7 @@ theorem lowerLedgerOperations_complete_unGuarded (ctx : EvalContext) (hash : Has
       LowerAliasAgreement hash inputs extension.witness normalAliases
         ((Zkir.lowerLedgerOperations plan).run state).2.aliases values := by
   exact (lowerLedgerOperations_aliasComplete_unGuarded ctx hash implementation inputs normalAliases
-    values (plan.typeEnvironment entry) typed.aliases plan allNone admitted validated evaluated)
+    values (plan.typeEnvironment entry) sourceAliases plan allNone admitted validated evaluated)
     witness state meaning lowerAliases budget
 
 end Noctium.Verification.ScalarWitnessConstruction
