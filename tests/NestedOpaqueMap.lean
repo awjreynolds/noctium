@@ -28,9 +28,23 @@ noctium_circuit nestedOpaqueStringPathInputs where
   public key : Bytes32
 end
 
+noctium_circuit nestedDeepOpaqueStringStoreInputs where
+  public owner : Bytes32
+  public group : Bytes32
+  public key : Bytes32
+  public value : OpaqueString
+end
+
+noctium_circuit nestedDeepOpaqueStringPathInputs where
+  public owner : Bytes32
+  public group : Bytes32
+  public key : Bytes32
+end
+
 noctium_contract NestedOpaqueMap where
   tree byteBuckets : Bytes32 => Bytes32 => OpaqueBytes
   tree stringBuckets : Bytes32 => Bytes32 => OpaqueString
+  tree deepStringBuckets : Bytes32 => Bytes32 => Bytes32 => OpaqueString
 
   entry storeBytes uses nestedOpaqueBytesStoreInputs where
     member byteBuckets[disclose(owner)] as ownerPresent
@@ -71,6 +85,25 @@ noctium_contract NestedOpaqueMap where
     read stringBuckets[disclose(owner)][disclose(key)] as stored
     return value : OpaqueString := disclose(stored)
   end
+
+  entry storeDeepString uses nestedDeepOpaqueStringStoreInputs where
+    member deepStringBuckets[disclose(owner)] as ownerPresent
+    if eq(ownerPresent, false) then {
+      insert deepStringBuckets[disclose(owner)] := emptyMap
+    } else {
+    }
+    member deepStringBuckets[disclose(owner)][disclose(group)] as groupPresent
+    if eq(groupPresent, false) then {
+      insertDefault deepStringBuckets[disclose(owner)][disclose(group)]
+    } else {
+    }
+    insert deepStringBuckets[disclose(owner)][disclose(group)][disclose(key)] := disclose(value)
+  end
+
+  entry readDeepString uses nestedDeepOpaqueStringPathInputs where
+    read deepStringBuckets[disclose(owner)][disclose(group)][disclose(key)] as stored
+    return value : OpaqueString := disclose(stored)
+  end
 end
 
 private def nestedOpaqueEntry (name : String) : Entrypoint :=
@@ -82,7 +115,9 @@ private def nestedOpaqueEntry (name : String) : Entrypoint :=
   | [ {name := "byteBuckets", kind := .tree (.map (.bytes 32)
         (.map (.bytes 32) (.scalar .opaqueBytes))), ..},
       {name := "stringBuckets", kind := .tree (.map (.bytes 32)
-        (.map (.bytes 32) (.scalar .opaqueString))), ..} ] => Bool.true
+        (.map (.bytes 32) (.scalar .opaqueString))), ..},
+      {name := "deepStringBuckets", kind := .tree (.map (.bytes 32)
+        (.map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString)))), ..} ] => Bool.true
   | _ => Bool.false
 
 #guard match NestedOpaqueMap.validate Capabilities.source with
@@ -94,13 +129,27 @@ private def nestedOpaqueEntry (name : String) : Entrypoint :=
   | .error message => message.contains "OpaqueString is only supported"
   | .ok _ => Bool.false
 
-#guard ["storeBytes", "hasBytes", "readBytes", "storeString", "hasString", "readString"].all fun name =>
+#guard match (LedgerValueType.map (.bytes 32)
+    (.map (.bytes 32) (.map (.bytes 32) (.scalar .opaqueString)))).validate
+    Capabilities.source with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match (LedgerValueType.map (.bytes 32)
+    (.map (.bytes 32) (.map .native (.scalar .opaqueString)))).validate
+    Capabilities.source with
+  | .error message => message.contains "OpaqueString is only supported"
+  | .ok _ => Bool.false
+
+#guard ["storeBytes", "hasBytes", "readBytes", "storeString", "hasString", "readString",
+    "storeDeepString", "readDeepString"].all fun name =>
   let operation := nestedOpaqueEntry name
   match Backend.Impact.lower NestedOpaqueMap.state operation with
   | .ok _ => Bool.true
   | .error _ => Bool.false
 
-#guard ["storeBytes", "hasBytes", "readBytes", "storeString", "hasString", "readString"].all fun name =>
+#guard ["storeBytes", "hasBytes", "readBytes", "storeString", "hasString", "readString",
+    "storeDeepString", "readDeepString"].all fun name =>
   let operation := nestedOpaqueEntry name
   match Backend.Zkir.lowerPrunedEntrypoint NestedOpaqueMap.state operation with
   | .ok _ => Bool.true

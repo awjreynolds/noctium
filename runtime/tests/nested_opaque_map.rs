@@ -141,8 +141,7 @@ fn assert_nested_value(
     state: &ChargedState<Db>,
     plan: &Plan,
     map_name: &str,
-    owner_byte: u8,
-    key_byte: u8,
+    path: &[u8],
     expected: &[u8],
 ) {
     let StateValue::Array(slots) = state.get_ref() else {
@@ -153,18 +152,18 @@ fn assert_nested_value(
         .iter()
         .position(|declaration| declaration.name == map_name)
         .expect("nested Map declaration");
-    let StateValue::Map(owners) = &*slots.get(slot).expect("nested Map state slot") else {
-        panic!("expected nested opaque outer Map");
-    };
-    let owner_key = aligned_bytes32(&owner(owner_byte));
-    let owner_bucket = owners.get(&owner_key).expect("owner bucket initialized");
-    let StateValue::Map(entries) = &*owner_bucket else {
-        panic!("expected inner opaque Map");
-    };
-    let entry_key = aligned_bytes32(&key(key_byte));
-    let entry = entries.get(&entry_key).expect("nested opaque entry exists");
-    let StateValue::Cell(value) = &*entry else {
-        panic!("expected an opaque value Cell at each inner Map leaf");
+    let mut entry = slots.get(slot).expect("nested Map state slot").clone();
+    for byte in path {
+        let StateValue::Map(entries) = &entry else {
+            panic!("expected a Map along the nested opaque path");
+        };
+        entry = (*entries
+            .get(&aligned_bytes32(&[*byte; 32]))
+            .expect("nested opaque entry exists"))
+        .clone();
+    }
+    let StateValue::Cell(value) = &entry else {
+        panic!("expected an opaque value Cell at the nested Map leaf");
     };
     assert_eq!(**value, compressed(expected));
 }
@@ -228,11 +227,27 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
     let store_string = fixture(&directory, "storeString")?;
     let has_string = fixture(&directory, "hasString")?;
     let read_string = fixture(&directory, "readString")?;
+    let store_deep = fixture(&directory, "storeDeepString")?;
+    let read_deep = fixture(&directory, "readDeepString")?;
 
     let config = BTreeMap::from([
         ("byteBuckets".into(), json!([])),
         ("stringBuckets".into(), json!([])),
+        ("deepStringBuckets".into(), json!([])),
     ]);
+    let mut malformed_plan = store_deep.0.clone();
+    let deep_map = malformed_plan
+        .state
+        .iter_mut()
+        .find(|declaration| declaration.name == "deepStringBuckets")
+        .expect("deep string Map declaration");
+    deep_map.kind["tree"]["map"][1]["map"][1]["map"][0] = json!("Bytes<31>");
+    let malformed = create_state(&malformed_plan, &config).expect_err("mixed key width rejected");
+    assert!(
+        malformed
+            .to_string()
+            .contains("OpaqueString requires a Bytes32-keyed Map leaf")
+    );
     let mut state = create_state(&store_bytes.0, &config)?;
     let byte_cases = [
         ("ownerOneEmpty", 0x11, 0x44),
@@ -255,8 +270,7 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
             &stored.after.state,
             &store_bytes.0,
             "byteBuckets",
-            owner_byte,
-            key_byte,
+            &[owner_byte, key_byte],
             &payload,
         );
         state = stored.after.state;
@@ -281,8 +295,7 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
             &stored.after.state,
             &store_string.0,
             "stringBuckets",
-            owner_byte,
-            key_byte,
+            &[owner_byte, key_byte],
             value.as_bytes(),
         );
         state = stored.after.state;
@@ -387,5 +400,52 @@ fn nested_opaque_maps_match_compact_and_bind_exact_compress_payloads() -> Result
     ensure!(compact["missingReadsRejected"]["byteOwner"].as_bool() == Some(true));
     ensure!(compact["missingReadsRejected"]["stringChild"].as_bool() == Some(true));
     ensure!(compact["missingReadsRejected"]["stringOwner"].as_bool() == Some(true));
+
+    let deep_cases = [
+        ("primaryBeforeOverwrite", [0x11, 0x77, 0x44], "A\0λ雪"),
+        ("siblingGroup", [0x11, 0x88, 0x44], "group🌙"),
+        ("siblingOwner", [0x22, 0x77, 0x44], "owner🦊"),
+        (
+            "primaryAfterOverwrite",
+            [0x11, 0x77, 0x44],
+            "overwritten\0é",
+        ),
+    ];
+    let deep_inputs = |[owner_byte, group_byte, key_byte]: [u8; 3]| {
+        let mut inputs = path_inputs(owner_byte, key_byte);
+        inputs.insert("group".into(), bytes_json(&[group_byte; 32]));
+        inputs
+    };
+    for (name, path, value) in deep_cases {
+        assert_eq!(compact["deepStringReads"][name].as_str(), Some(value));
+        let mut inputs = deep_inputs(path);
+        inputs.insert("value".into(), opaque_string_json(value));
+        let stored = run(&store_deep, &inputs, &state)?;
+        assert!(stored.returns().is_empty());
+        state = stored.after.state;
+        let read = run(&read_deep, &deep_inputs(path), &state)?;
+        assert_opaque_read(&read, "value", opaque_string_json(value), value.as_bytes());
+    }
+    for (_, path, value) in &deep_cases[1..] {
+        assert_nested_value(
+            &state,
+            &store_deep.0,
+            "deepStringBuckets",
+            path,
+            value.as_bytes(),
+        );
+        let read = run(&read_deep, &deep_inputs(*path), &state)?;
+        assert_opaque_read(&read, "value", opaque_string_json(value), value.as_bytes());
+        assert_eq!(read.after.state.get_ref(), state.get_ref());
+    }
+
+    for (name, path) in [
+        ("deepStringChild", [0x11, 0x77, 0xaa]),
+        ("deepStringGroup", [0x11, 0x99, 0x44]),
+        ("deepStringOwner", [0x33, 0x77, 0x44]),
+    ] {
+        assert_eq!(compact["missingReadsRejected"][name].as_bool(), Some(true));
+        assert!(run(&read_deep, &deep_inputs(path), &state).is_err());
+    }
     Ok(())
 }

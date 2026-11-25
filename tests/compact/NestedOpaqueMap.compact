@@ -3,6 +3,7 @@ import CompactStandardLibrary;
 
 export ledger byteBuckets: Map<Bytes<32>, Map<Bytes<32>, Opaque<"Uint8Array">>>;
 export ledger stringBuckets: Map<Bytes<32>, Map<Bytes<32>, Opaque<"string">>>;
+export ledger deepStringBuckets: Map<Bytes<32>, Map<Bytes<32>, Map<Bytes<32>, Opaque<"string">>>>;
 
 export circuit storeBytes(
   owner: Bytes<32>, key: Bytes<32>, payload: Opaque<"Uint8Array">,
@@ -38,4 +39,22 @@ export circuit hasString(owner: Bytes<32>, key: Bytes<32>): Boolean {
 
 export circuit readString(owner: Bytes<32>, key: Bytes<32>): Opaque<"string"> {
   return stringBuckets.lookup(disclose(owner)).lookup(disclose(key));
+}
+
+export circuit storeDeepString(
+  owner: Bytes<32>, group: Bytes<32>, key: Bytes<32>, value: Opaque<"string">,
+): [] {
+  const ownerKey = disclose(owner);
+  const groupKey = disclose(group);
+  if (!deepStringBuckets.member(ownerKey)) { deepStringBuckets.insertDefault(ownerKey); }
+  if (!deepStringBuckets.lookup(ownerKey).member(groupKey)) {
+    deepStringBuckets.lookup(ownerKey).insertDefault(groupKey);
+  }
+  deepStringBuckets.lookup(ownerKey).lookup(groupKey).insert(disclose(key), disclose(value));
+}
+
+export circuit readDeepString(
+  owner: Bytes<32>, group: Bytes<32>, key: Bytes<32>,
+): Opaque<"string"> {
+  return deepStringBuckets.lookup(disclose(owner)).lookup(disclose(group)).lookup(disclose(key));
 }

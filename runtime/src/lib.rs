@@ -2805,6 +2805,8 @@ fn scalar_storage_type_at_path(plan: &Plan, slot: u32, depth: usize) -> Result<S
     ScalarType::parse(declared)
 }
 
+const MAX_OPAQUE_STRING_MAP_DEPTH: usize = 3;
+
 fn validate_scalar_storage_type(
     plan: &Plan,
     slot: u32,
@@ -2824,12 +2826,12 @@ fn validate_scalar_storage_type(
             ensure!(depth == 0, "OpaqueString Cell path schema mismatch");
         } else {
             ensure!(
-                (1..=2).contains(&depth)
+                (1..=MAX_OPAQUE_STRING_MAP_DEPTH).contains(&depth)
                     && state.kind.get("tree").is_some()
                     && map_path_key_types(plan, slot, depth)?
                         .iter()
                         .all(|key| *key == ScalarType::Bytes32),
-                "OpaqueString requires a Bytes32-keyed Map leaf at depth one or two"
+                "OpaqueString requires a Bytes32-keyed Map leaf at depth one through three"
             );
         }
     }
@@ -3019,12 +3021,17 @@ fn opaque_compressed_storage_path(
         bail!("opaque write requires an adjacent indexed storage path")
     };
     let depth = keys.len() + 1;
+    let max_depth = if *ty == ScalarType::OpaqueString {
+        MAX_OPAQUE_STRING_MAP_DEPTH
+    } else {
+        2
+    };
     ensure!(
-        depth <= 2
+        depth <= max_depth
             && map_path_key_types(plan, *slot, depth)?
                 .iter()
                 .all(|key| *key == ScalarType::Bytes32),
-        "opaque storage requires a Bytes32-keyed Map path at depth one or two"
+        "opaque storage requires a Bytes32-keyed Map path with depth at most {max_depth}"
     );
     ensure!(
         matches!(insert_operation, Instruction::Insert { n } if usize::from(*n) == depth + 1),
@@ -3121,8 +3128,8 @@ fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> R
     if let Some(ty) = fields.get("scalar").and_then(Json::as_str) {
         ensure!(
             validate_tree_scalar_type(ty)? != ScalarType::OpaqueString
-                || ((1..=2).contains(&depth) && bytes32_parents),
-            "OpaqueString requires a Bytes32-keyed Map leaf at depth one or two"
+                || ((1..=MAX_OPAQUE_STRING_MAP_DEPTH).contains(&depth) && bytes32_parents),
+            "OpaqueString requires a Bytes32-keyed Map leaf at depth one through three"
         );
         return Ok(());
     }

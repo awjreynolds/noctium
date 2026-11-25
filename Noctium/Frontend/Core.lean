@@ -507,6 +507,7 @@ scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "MerkleTree" nlmerklespec
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" "HistoricMerkleTree" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "MerkleTree" nlmerklespec : nlstate
 scoped syntax "tree" ident ":" nltype "=>" "HistoricMerkleTree" nlmerklespec : nlstate
+scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nltype "=>" nltype : nlstate
 scoped syntax "tree" ident ":" nltype "=>" nltype "=>" nltype : nlstate
 
 declare_syntax_cat nlleaves
@@ -612,6 +613,7 @@ scoped syntax "when" nlexpr "insert" ident "[" nlleaves "]" ":=" nlleaves : nlef
 scoped syntax "insert" ident "[" nlexpr "]" ":=" "emptyMap" : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "write" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
+scoped syntax "insert" ident "[" nlexpr "]" "[" nlexpr "]" "[" nlexpr "]" ":=" nlexpr : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" ":=" nlleaves : nleffect
 scoped syntax "write" ident "[" nlexpr "]" ":=" nlleaves : nleffect
 scoped syntax "insert" ident "[" nlexpr "]" "[" nlexpr "]" ":=" nlleaves : nleffect
@@ -4869,6 +4871,17 @@ private def elaborateEffect (schema : List (String × StateKind))
       `(Noctium.Effect.insertPath $(stringTerm storage.getId.toString) $keys $(← tyTerm ty) $loweredValue)
       else `(Noctium.Effect.writePath $(stringTerm storage.getId.toString) $keys $(← tyTerm ty) $loweredValue)
     state := {state with terms := state.terms.push term}
+  | `(nleffect| insert $storage:ident [$first:nlexpr] [$second:nlexpr] [$third:nlexpr] := $value:nlexpr) => do
+    let schema ← treeStateSchema schema storage
+    let (path, result) ← lowerMapPath state storage schema [first, second, third]
+    let .scalar .opaqueString := result
+      | throwErrorAt effect "three-key insert must select an OpaqueString value"
+    let loweredValue ← checkedMapValue state storage value .opaqueString
+    let keys ← pathKeysTerm path
+    let term ← `(Noctium.Effect.insertPath
+      $(stringTerm storage.getId.toString) $keys
+      $(← tyTerm .opaqueString) $loweredValue)
+    state := {state with terms := state.terms.push term}
   | `(nleffect| increment $path:nlpath by $amount:nlexpr)
   | `(nleffect| when $_:nlexpr increment $path:nlpath by $amount:nlexpr) =>
     state := ← elaborateCounterAdjust schema path Bool.false amount state
@@ -6806,6 +6819,27 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree
             (Noctium.LedgerValueType.map $outerTerm
               (Noctium.LedgerValueType.map $innerTerm Noctium.LedgerValueType.counter))))
+        | `(nlstate| tree $id:ident : $first:nltype => $second:nltype =>
+            $third:nltype => $value:nltype) => do
+          let firstTy ← readTy first
+          let secondTy ← readTy second
+          let thirdTy ← readTy third
+          let valueTy ← readTy value
+          unless firstTy == .bytes 32 && secondTy == .bytes 32 &&
+              thirdTy == .bytes 32 && valueTy == .opaqueString do
+            throwErrorAt state "three-key scalar trees currently support only Bytes32 => Bytes32 => Bytes32 => OpaqueString"
+          let valueSchema := LedgerValueType.map firstTy
+            (.map secondTy (.map thirdTy (.scalar valueTy)))
+          let firstTerm ← tyTerm firstTy
+          let secondTerm ← tyTerm secondTy
+          let thirdTerm ← tyTerm thirdTy
+          let valueTerm ← tyTerm valueTy
+          let schemaTerm ← `(Noctium.LedgerValueType.map $firstTerm
+            (Noctium.LedgerValueType.map $secondTerm
+              (Noctium.LedgerValueType.map $thirdTerm
+                (Noctium.LedgerValueType.scalar $valueTerm))))
+          pure (id, StateKind.tree valueSchema,
+            ← `(Noctium.StateKind.tree $schemaTerm))
         | `(nlstate| tree $id:ident : $key:nltype => struct $record:ident { $recordFields:nlcompositefield* }) => do
           let keyTy ← readTy key
           let contractName := (← getCurrNamespace) ++ name.getId
