@@ -244,7 +244,7 @@
       "layer": "language",
       "surface": "Uint<n> and Uint<0..n>",
       "noctiumStatus": "subset",
-      "notes": "Pinned compiler uses inclusive maxima internally. For ordinary Uint<0..m> and Uint<0..n>, addition returns exclusive bound m+n-1 and multiplication returns (m-1)*(n-1)+1. Subtraction retains the left maximum and asserts a nonnegative result. Focused Compact 0.36.1 and Noctium source comparisons cover arithmetic, inferred bounds, typed and literal zero, the 248-bit limit, and subtraction underflow. The transparent Compact alias is compared with the underlying Noctium type. Focused nominal alias comparisons cover arithmetic, casts and selected ledger reads and writes. Broader source contexts and complete native proof coverage remain open.",
+      "notes": "Pinned compiler uses inclusive maxima internally. For ordinary Uint<0..m> and Uint<0..n>, addition returns exclusive bound m+n-1 and multiplication returns (m-1)*(n-1)+1. Subtraction retains the left maximum and asserts a nonnegative result. Focused Compact 0.36.1 and Noctium source comparisons cover arithmetic, inferred bounds, typed and literal zero, the 248-bit limit, and subtraction underflow. The transparent Compact alias is compared with the underlying Noctium type. Focused nominal alias comparisons cover arithmetic, casts and selected ledger reads and writes. Broader source contexts and complete native proof coverage remain open. The matched helper argument accepts exclusive bound 511 for a sum of two Uint8 operands, rejects bound 510, and returns 510 on both generated paths. The native result retains inclusive maximum 510.",
       "source": [
         "reference",
         "uintNormalization",
@@ -258,7 +258,7 @@
         "SEM",
         "ZK"
       ],
-      "observedEvidence": ["tests/BoundedScalars.lean", "tests/scalars/constraint-cases.json", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/BoundedUintDeclaredZeroTooNarrow.compact", "tests/compact/BoundedUintMaxAddBitRejected.compact", "tests/compact/bounded-uint-arithmetic.mjs", "tests/NominalUInt.lean", "tests/compact/nominal-uint.mjs", "tests/NominalRecordMaybe.lean", "tests/NominalUIntNestedRecords.lean", "runtime/tests/nominal_record_maybe.rs"],
+      "observedEvidence": ["tests/BoundedUintHelper.lean", "runtime/tests/unsigned.rs", "docs/development/native-unsigned-scalars.md", "tests/BoundedScalars.lean", "tests/scalars/constraint-cases.json", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/BoundedUintDeclaredZeroTooNarrow.compact", "tests/compact/BoundedUintMaxAddBitRejected.compact", "tests/compact/bounded-uint-arithmetic.mjs", "tests/NominalUInt.lean", "tests/compact/nominal-uint.mjs", "tests/NominalRecordMaybe.lean", "tests/NominalUIntNestedRecords.lean", "runtime/tests/nominal_record_maybe.rs"],
       "equivalence": "unverified",
       "sourceDerivedRules": {
         "evidenceStatus": "partially-executed",
@@ -285,6 +285,21 @@
           "status": "executed-pinned-compact-and-noctium",
           "evidence": ["tests/BoundedScalars.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
           "result": "Pinned Compact accepted Uint<0..511>, rejected Uint<0..510>, and returned 510 for 255+255. Noctium evaluator accepted the same result and its existing constraints reject an incorrect public sum and out-of-range operand."
+        },
+        {
+          "id": "UINT-ADD-HELPER-ARGUMENT",
+          "context": "function-argument",
+          "scope": "One sum of two ordinary Uint8 parameters passed directly to a separately typed helper",
+          "input": "Two Uint8 arguments with value 255 each",
+          "expected": "Helper exclusive bound 511 accepts and returns 510. Changing only the parameter bound to 510 rejects the call.",
+          "status": "executed-pinned-compact-and-noctium",
+          "oracle": {"outcome": "executed", "compiler": "0.36.1", "runtime": "0.21.0"},
+          "requiredEvidence": ["SEM", "ZK"],
+          "evidenceByKind": {
+            "SEM": ["tests/BoundedUintHelper.lean", "tests/compact/BoundedUintArithmetic.compact", "tests/compact/bounded-uint-arithmetic.mjs"],
+            "ZK": ["runtime/tests/unsigned.rs", "docs/development/native-unsigned-scalars.md"]
+          },
+          "result": "Both source checks agree at the helper argument. The accepted Compact and native calls return 510. The native plan and result retain the exclusive bound 511 and inclusive maximum 510."
         },
         {
           "id": "UINT-MUL-EXCLUSIVE",
@@ -683,7 +698,7 @@
       "layer": "language",
       "surface": "Subtyping and least upper bounds",
       "noctiumStatus": "subset",
-      "notes": "Compare normalized inclusive Uint maxima. Source/prose result-bound discrepancy changes return, binding, ledger-write and argument acceptance. See C-LANG-UINT conformance cases. Compact value semantics need a Lean surface design rather than copied syntax.",
+      "notes": "Compare normalized inclusive Uint maxima. Source/prose result-bound discrepancy changes return, binding, ledger-write and argument acceptance. See C-LANG-UINT conformance cases. Compact value semantics need a Lean surface design rather than copied syntax. The paired bounded-addition helper argument confirms acceptance at the exact inclusive maximum 510 and source rejection at maximum 509. The accepted native result is 510.",
       "source": [
         "reference",
         "typeInference",
@@ -694,6 +709,10 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/BoundedUintHelper.lean",
+        "tests/compact/bounded-uint-arithmetic.mjs",
+        "runtime/tests/unsigned.rs",
+        "docs/development/native-unsigned-scalars.md",
         "SEM"
       ],
       "equivalence": "unverified",

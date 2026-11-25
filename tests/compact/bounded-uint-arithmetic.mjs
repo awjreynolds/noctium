@@ -22,6 +22,15 @@ try {
   const compile = spawnSync(compactc, ['--skip-zk', source, generated], { encoding: 'utf8' });
   assert.equal(compile.status, 0, compile.stderr || compile.stdout);
 
+  const contractInfo = JSON.parse(readFileSync(join(generated, 'compiler/contract-info.json'), 'utf8'));
+  const addViaHelperInfo = contractInfo.circuits.find(({ name }) => name === 'addViaHelper');
+  assert.ok(addViaHelperInfo, 'emitted contract metadata must include addViaHelper');
+  assert.deepEqual(addViaHelperInfo.arguments.map(({ type }) => type), [
+    { 'type-name': 'Uint', maxval: 255 },
+    { 'type-name': 'Uint', maxval: 255 },
+  ]);
+  assert.deepEqual(addViaHelperInfo['result-type'], { 'type-name': 'Uint', maxval: 510 });
+
   const sourceText = readFileSync(source, 'utf8');
   for (const [operation, acceptedBound, rejectedBound] of [['sum', 511, 510], ['product', 65026, 65025]]) {
     const type = `Uint<0..${acceptedBound}>`;
@@ -34,6 +43,22 @@ try {
     assert.ok((rejected.stderr + rejected.stdout).includes(`actual return type ${type}`),
       rejected.stderr || rejected.stdout);
   }
+
+  const narrowedHelperSourceText = sourceText.replace(
+    'pure circuit acceptBoundedSum(value: Uint<0..511>): Uint<0..511>',
+    'pure circuit acceptBoundedSum(value: Uint<0..510>): Uint<0..511>',
+  );
+  assert.notEqual(narrowedHelperSourceText, sourceText,
+    'helper parameter narrowing must leave the declared return type unchanged');
+  const narrowedHelperSource = join(scratch, 'narrowed-helper-parameter.compact');
+  writeFileSync(narrowedHelperSource, narrowedHelperSourceText);
+  const narrowedHelperCompile = spawnSync(compactc, ['--skip-zk', narrowedHelperSource,
+    join(scratch, 'narrowed-helper-parameter')], { encoding: 'utf8' });
+  const narrowedHelperDiagnostic = narrowedHelperCompile.stderr + narrowedHelperCompile.stdout;
+  assert.notEqual(narrowedHelperCompile.status, 0,
+    'Uint<0..510> helper parameter must reject the Uint<0..511> addition argument');
+  assert.match(narrowedHelperDiagnostic,
+    /no compatible function named acceptBoundedSum is in scope at this call[\s\S]*supplied argument types:\s*\(Uint<0\.\.511>\)[\s\S]*declared argument types for function[\s\S]*\(Uint<0\.\.510>\)/);
 
   for (const [fixture, diagnostic] of [
     ['BoundedUintDeclaredZeroTooNarrow.compact', /actual return type Uint<0\.\.511>.*declared return type Uint<8>/s],
@@ -75,7 +100,8 @@ try {
   assert.equal((await contract.circuits.addMaxToZero(context('addMaxToZero'), uint248Max, 0n)).result,
     uint248Max);
   assert.equal((await contract.circuits.addSmall(context('addSmall'), 255n, 255n)).result, 510n);
-  console.log(`Compact ${version} matched ordinary Uint bounds, zero, max-width, alias, and rejection cases`);
+  assert.equal((await contract.circuits.addViaHelper(context('addViaHelper'), 255n, 255n)).result, 510n);
+  console.log(`Compact ${version} matched Uint bounds, helper argument rejection, and runtime addition cases`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
