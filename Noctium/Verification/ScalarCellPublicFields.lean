@@ -11,6 +11,16 @@ open Noctium.Verification.GenericStateOps
 open Noctium.Verification.GenericStateScalarPrefix
 open Noctium.Verification.GenericStateReadCellEvaluation
 
+theorem canonical_inputs_scalar_compatible (circuit : Circuit) (values : EvalEnv)
+    (inputs : Assignment) (admitted : CanonicalInputs circuit values inputs) :
+    ∀ input ∈ circuit.inputs, Impact.publicInputScalarCompatible input := by
+  intro input member
+  obtain ⟨_, _, canonical⟩ := admitted.complete input member
+  have support := scalarCellTypeOfCanonical canonical
+  cases input with
+  | mk name ty visibility span =>
+    cases support <;> simp [Impact.publicInputScalarCompatible]
+
 private theorem bind_ok {α β : Type} {first : Except ε α}
     {next : α → Except ε β} {result : β} :
     (first >>= next) = .ok result ↔

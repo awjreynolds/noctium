@@ -1,5 +1,5 @@
 import Noctium.Verification
-import Noctium.Verification.ScalarCellCallWitness
+import Noctium.Verification.ScalarCellCallNativeRun
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
 
@@ -49,6 +49,16 @@ private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool true),
 
 private def initial : LedgerState := {cells := [("counter", .native 17)]}
 
+private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState) : Bool :=
+  match GenericStateEncoding.encodeInitialState declarations initial,
+      GenericStateEncoding.encodeState declarations next,
+      GenericStateOps.evalPlan context complete plan with
+  | some initialSlots, some finalSlots, .ok operations =>
+    let cell := fun value => NativeState.field (NativeRelation.scalar value)
+    let expected : NativeState.Machine := ⟨[.vector finalSlots], [cell 1, cell 17, cell 42]⟩
+    decide (NativeState.run operations (GenericStateEncoding.initial initialSlots) = some expected)
+  | _, _, _ => false
+
 #guard match entry.run context values initial with
   | .ok (returned, next) =>
     returned == [("increment", .native 25), ("result", .native 42)] &&
@@ -64,7 +74,7 @@ private def initial : LedgerState := {cells := [("counter", .native 17)]}
     | .ok outputs =>
       match ScalarCellSourceReads.sourceReadInputs context entry.effects cutoff (outputs ++ values, initial) with
       | .error _ => false
-      | .ok (entries, _) =>
+      | .ok (entries, (_, next)) =>
         let seed := ScalarCellWitnessReadSeed.seedReadValues
           (fun name => if name == "%input_delta" then NativeRelation.scalar 24 else NativeRelation.zero)
           entries
@@ -78,6 +88,7 @@ private def initial : LedgerState := {cells := [("counter", .native 17)]}
             readValues == [("before", .native 17), ("after", .native 42)] &&
               plan.operations.all (fun operation => operation.fieldGroups.all
                 (fun fields => fields.all (fun field => (field.eval context complete).isOk))) &&
+              nativeCallMatches plan complete next &&
               match entry.evalReturns context complete with
               | .ok returned => returned == [("result", .native 42)]
               | .error _ => false
@@ -96,6 +107,8 @@ run_cmd do
       `Noctium.Verification.ScalarWitnessConstruction.completes_scalar_ledger_suffix,
       `Noctium.Verification.ScalarWitnessConstruction.lower_cell_plan_evaluation,
       `Noctium.Verification.ScalarWitnessConstruction.lowerEntrypoint_construct_scalar_cell_witness,
+      `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_run_scalar_cell_native,
+      `Noctium.Verification.ScalarCellNativeTrace.lowerEntrypoint_construct_scalar_cell_execution,
       `Noctium.Verification.ScalarLedgerSourceReturns.evalReturns_transport,
       `Noctium.Verification.ScalarLedgerReturnObservation.expected_returns_observe_source,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_returns] do

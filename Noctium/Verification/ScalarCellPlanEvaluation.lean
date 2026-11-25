@@ -48,16 +48,8 @@ theorem lower_cell_plan_evaluation (ctx : EvalContext) (state : List StateDecl)
       ((outputs ++ values) ++ readValues) returned := by
   let ep := Passes.pruneEntrypoint entry
   let complete := (outputs ++ values) ++ readValues
-  have compatible : ∀ input ∈ entry.circuit.inputs, Impact.publicInputScalarCompatible input := by
-    intro input member
-    obtain ⟨_, _, canonical⟩ := inputAdmission.complete input member
-    have support := scalarTypeOfCanonicalInput canonical
-    cases input with
-    | mk name ty visibility span =>
-      cases support with
-      | native => exact Or.inr (Or.inl rfl)
-      | bool => exact Or.inr (Or.inr (Or.inl rfl))
-      | uint maximum => exact Or.inr (Or.inr (Or.inr ⟨maximum, rfl⟩))
+  have compatible := ScalarCellPublicFields.canonical_inputs_scalar_compatible
+    entry.circuit values inputs inputAdmission
   have noGuards := ScalarCellPlanScope.lower_guards_empty state ep plan
     accepted unguarded compatible admission
   obtain ⟨fieldEvaluation, finalTypes, validated, finalAgrees⟩ :=
