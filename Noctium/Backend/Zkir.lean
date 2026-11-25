@@ -881,6 +881,97 @@ private theorem freshList_length (items : List α) (state : LowerState) :
     rw [List.length_cons, ih]
     simp
 
+private theorem freshEmit_bind_preservesOutputCapacityFrame
+    (opcode : String) (fields : String → List (String × Json))
+    (outputCount : ∀ output,
+      Native.outputDefinitionsInInstruction (instruction opcode (fields output)) = 1)
+    (next : String → LowerM α)
+    (nextFrame : ∀ output, PreservesOutputCapacityFrame (next output)) :
+    PreservesOutputCapacityFrame (do
+      let output ← fresh
+      emit opcode (fields output)
+      next output) := by
+  intro state
+  let output := "%v" ++ state.next.repr
+  let emitted := instruction opcode (fields output)
+  let after : LowerState :=
+    {state with next := state.next + 1, instructions := state.instructions.push emitted}
+  have frame : OutputCapacityFrame state after := by
+    apply OutputCapacityFrame.of_instruction_push emitted (by simp [after]) rfl
+    change state.next + 1 - state.next ≤ Native.outputDefinitionsInInstruction emitted
+    simp [emitted, outputCount]
+  exact frame.trans (nextFrame output after)
+
+private theorem cachedOr_preservesOutputCapacityFrame
+    (key : ExpressionKey) (allocate : LowerM String)
+    (allocateFrame : PreservesOutputCapacityFrame allocate) :
+    PreservesOutputCapacityFrame (do
+      if let some existing := (← get).expressions.lookup key then return existing
+      allocate) := by
+  intro state
+  cases hit : state.expressions.lookup key with
+  | some existing =>
+    simp [StateT.run_bind, StateT.run_get, StateT.run_pure, hit]
+    exact OutputCapacityFrame.refl state
+  | none =>
+    simpa [StateT.run_bind, StateT.run_get, hit] using allocateFrame state
+
+private theorem lowerTypedBoolConstant_preservesOutputCapacityFrame (value : Bool) :
+    PreservesOutputCapacityFrame (lowerTypedBoolConstant value) := by
+  unfold lowerTypedBoolConstant
+  apply cachedScalarOutput_preservesOutputCapacityFrame
+  intro output
+  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+private theorem lowerNativeToBool_preservesOutputCapacityFrame (value : String) :
+    PreservesOutputCapacityFrame (lowerNativeToBool value) := by
+  unfold lowerNativeToBool
+  apply cachedOr_preservesOutputCapacityFrame
+  apply bind_preservesOutputCapacityFrame _ _ (lowerTypedBoolConstant_preservesOutputCapacityFrame true)
+  intro yes
+  apply bind_preservesOutputCapacityFrame _ _ (lowerTypedBoolConstant_preservesOutputCapacityFrame false)
+  intro no
+  refine freshEmit_bind_preservesOutputCapacityFrame "cond_select"
+    (fun output => [("bit", toJson value), ("a", toJson yes),
+      ("b", toJson no), ("output", toJson output)]) ?_ _ ?_
+  · intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+      rfl
+  · intro output state
+    exact OutputCapacityFrame.of_sameInstructions rfl rfl
+
+private theorem lowerBoolGate_preservesOutputCapacityFrame (opcode left right : String)
+    (ordinary : opcode ≠ "encode" ∧ opcode ≠ "bytes_into_natives" ∧
+      opcode ≠ "into_coordinates") :
+    PreservesOutputCapacityFrame (lowerBoolGate opcode left right) := by
+  unfold lowerBoolGate
+  apply bind_preservesOutputCapacityFrame _ _ (lowerNativeToBool_preservesOutputCapacityFrame left)
+  intro leftBool
+  apply bind_preservesOutputCapacityFrame _ _ (lowerNativeToBool_preservesOutputCapacityFrame right)
+  intro rightBool
+  apply cachedOr_preservesOutputCapacityFrame
+  refine freshEmit_bind_preservesOutputCapacityFrame opcode
+    (fun output => [("inputs", toJson [leftBool, rightBool]), ("output", toJson output)]) ?_ _ ?_
+  · intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ordinary _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+      rfl
+  · intro result
+    refine freshEmit_bind_preservesOutputCapacityFrame "encode"
+      (fun output => [("input", toJson result), ("outputs", toJson [output])])
+      (fun output => encodeInstruction_outputDefinitions result [output]) _ ?_
+    intro output state
+    exact OutputCapacityFrame.of_sameInstructions rfl rfl
+
 private theorem selectOperands_preservesOutputCapacityFrame (bit yes no : String) :
     PreservesOutputCapacityFrame (selectOperands bit yes no) := by
   by_cases equal : yes == no
@@ -2095,6 +2186,132 @@ private theorem lowerForeignToBytes_preservesOutputCapacityFrame
   · intro output
     exact encodeFixedBytes_preservesOutputCapacityFrame kind.byteLength output
 
+private theorem lowerForeignConstant_preservesOutputCapacityFrame
+    (kind : Foreign.Kind) (encoding : Except String (List Nat)) :
+    PreservesOutputCapacityFrame (lowerForeignConstant kind encoding) := by
+  have cachedFrame (operands : List String) :=
+    cachedScalarOutput_preservesOutputCapacityFrame
+      ("load_constant:" ++ kind.nativeName, operands, none) "load_constant"
+      (fun output => [("type", toJson kind.nativeName), ("encoding", toJson operands),
+        ("output", toJson output)]) (by
+        intro output
+        apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+        all_goals
+          simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+            Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+          rfl)
+  cases encoding with
+  | ok values =>
+    simpa [lowerForeignConstant] using cachedFrame (values.map fieldImmediate)
+  | error message =>
+    have frame := bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering" [("message", toJson message)])
+      (fun _ => cachedFrame [])
+    simpa [lowerForeignConstant, rejectLowering, bind_assoc, pure_bind] using frame
+
+private theorem assertEqual_preservesOutputCapacityFrame (left right : String) :
+    PreservesOutputCapacityFrame (assertEqual left right) := by
+  unfold assertEqual
+  apply bind_preservesOutputCapacityFrame _ _
+    (ordinaryBinary_preservesOutputCapacityFrame "test_eq" left right
+      ⟨by decide, by decide, by decide⟩)
+  intro equal
+  exact emit_preservesOutputCapacityFrame "assert" [("cond", toJson equal)]
+
+private theorem assertForeignNonzero_preservesOutputCapacityFrame
+    (kind : Foreign.Kind) (value : String) :
+    PreservesOutputCapacityFrame (assertForeignNonzero kind value) := by
+  unfold assertForeignNonzero
+  apply bind_preservesOutputCapacityFrame _ _ (lowerForeignConstant_preservesOutputCapacityFrame kind _)
+  intro zero
+  apply bind_preservesOutputCapacityFrame _ _
+    (ordinaryBinary_preservesOutputCapacityFrame "test_eq" value zero
+      ⟨by decide, by decide, by decide⟩)
+  intro equal
+  apply bind_preservesOutputCapacityFrame _ _
+    (ordinaryUnary_preservesOutputCapacityFrame "not" equal
+      ⟨by decide, by decide, by decide⟩)
+  intro nonzero
+  exact emit_preservesOutputCapacityFrame "assert" [("cond", toJson nonzero)]
+
+private theorem lowerForeignUnary_preservesOutputCapacityFrame
+    (op : Foreign.UnaryOp) (value : String) :
+    PreservesOutputCapacityFrame (lowerForeignUnary op value) := by
+  cases op with
+  | neg kind =>
+    exact ordinaryUnary_preservesOutputCapacityFrame "neg" value ⟨by decide, by decide, by decide⟩
+  | inv field =>
+    unfold lowerForeignUnary
+    apply bind_preservesOutputCapacityFrame _ _
+      (assertForeignNonzero_preservesOutputCapacityFrame field.kind value)
+    intro _
+    exact ordinaryUnary_preservesOutputCapacityFrame "inv" value ⟨by decide, by decide, by decide⟩
+  | mulGenerator curve =>
+    unfold lowerForeignUnary
+    apply cachedScalarOutput_preservesOutputCapacityFrame
+    intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+      rfl
+  | x curve | y curve =>
+    by_cases check : Native.coordinateExtractionRequiresNonidentity curve = true
+    · simp only [lowerForeignUnary, check, if_true]
+      apply bind_preservesOutputCapacityFrame _ _
+        (assertForeignNonzero_preservesOutputCapacityFrame (.point curve) value)
+      intro _
+      apply bind_preservesOutputCapacityFrame _ _ (lowerPointCoordinates_preservesOutputCapacityFrame value)
+      intro _
+      exact pure_preservesOutputCapacityFrame _
+    · simp only [lowerForeignUnary, check, if_false]
+      apply bind_preservesOutputCapacityFrame _ _ (lowerPointCoordinates_preservesOutputCapacityFrame value)
+      intro _
+      exact pure_preservesOutputCapacityFrame _
+
+private theorem lowerForeignBinary_preservesOutputCapacityFrame
+    (op : Foreign.BinaryOp) (left right : String) :
+    PreservesOutputCapacityFrame (lowerForeignBinary op left right) := by
+  cases op with
+  | add kind =>
+    exact ordinaryBinary_preservesOutputCapacityFrame "add" left right ⟨by decide, by decide, by decide⟩
+  | sub kind =>
+    unfold lowerForeignBinary
+    apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryUnary_preservesOutputCapacityFrame "neg" right ⟨by decide, by decide, by decide⟩)
+    intro negated
+    exact ordinaryBinary_preservesOutputCapacityFrame "add" left negated ⟨by decide, by decide, by decide⟩
+  | mul kind =>
+    exact ordinaryBinary_preservesOutputCapacityFrame "mul" left right ⟨by decide, by decide, by decide⟩
+  | ecMul curve =>
+    unfold lowerForeignBinary
+    apply cachedScalarOutput_preservesOutputCapacityFrame
+    intro output
+    apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+    all_goals
+      simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+        Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+      rfl
+  | fromCoordinates curve =>
+    unfold lowerForeignBinary
+    refine cachedScalarOutput_match_bind_preservesOutputCapacityFrame
+      ("from_coordinates:" ++ curve.name, [left, right], none) "from_coordinates"
+      (fun output => [("inputs", toJson [left, right]), ("output", toJson output)]) ?_ _ ?_
+    · intro output
+      apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+      all_goals
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+        rfl
+    · intro output
+      apply bind_preservesOutputCapacityFrame _ _ (lowerPointCoordinates_preservesOutputCapacityFrame output)
+      rintro ⟨x, y⟩
+      apply bind_preservesOutputCapacityFrame _ _ (assertEqual_preservesOutputCapacityFrame left x)
+      intro _
+      apply bind_preservesOutputCapacityFrame _ _ (assertEqual_preservesOutputCapacityFrame right y)
+      intro _
+      exact pure_preservesOutputCapacityFrame output
+
 private def nativeTypeName : Ty → String
   | .native => "Scalar<BLS12-381>"
   | .jubjubScalar => "Scalar<Jubjub>"
@@ -3111,8 +3328,6 @@ decreasing_by
   all_goals simp_wf <;> omega
 end
 
-/-- SHA-512 allocates from the actual digest and packed outputs, for any
-fixed-width preimage whose lowering has an output capacity frame. -/
 theorem lowerBytes_reverse_preservesOutputCapacityFrame {length : Nat}
     (value : Expr (.bytes length))
     (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
@@ -3277,6 +3492,342 @@ theorem lowerBytes_persistentHashNativeVector_preservesOutputCapacityFrame
     intro _
     exact pure_preservesOutputCapacityFrame _
 
+theorem lowerExpr_boolAnd_preservesOutputCapacityFrame (left right : Expr .bool)
+    (leftFrame : PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.boolAnd left right)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro a
+  apply bind_preservesOutputCapacityFrame _ _ rightFrame
+  intro b
+  exact lowerBoolGate_preservesOutputCapacityFrame "and" a b ⟨by decide, by decide, by decide⟩
+
+theorem lowerExpr_boolOr_preservesOutputCapacityFrame (left right : Expr .bool)
+    (leftFrame : PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.boolOr left right)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro a
+  apply bind_preservesOutputCapacityFrame _ _ rightFrame
+  intro b
+  exact lowerBoolGate_preservesOutputCapacityFrame "or" a b ⟨by decide, by decide, by decide⟩
+
+theorem lowerExpr_boolXor_preservesOutputCapacityFrame (left right : Expr .bool)
+    (leftFrame : PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.boolXor left right)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro a
+  apply bind_preservesOutputCapacityFrame _ _ rightFrame
+  intro b
+  split
+  · exact ordinaryUnary_preservesOutputCapacityFrame "not" b ⟨by decide, by decide, by decide⟩
+  · exact ordinaryUnary_preservesOutputCapacityFrame "not" a ⟨by decide, by decide, by decide⟩
+  · exact lowerBoolGate_preservesOutputCapacityFrame "xor" a b ⟨by decide, by decide, by decide⟩
+
+theorem lowerExpr_cast_preservesOutputCapacityFrame (target : Ty) (value : Expr source)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.cast target value)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro output
+  cases target <;> try exact rejectThenPure_preservesOutputCapacityFrame _ _
+  · exact pure_preservesOutputCapacityFrame output
+  · apply bind_preservesOutputCapacityFrame _ _
+      (ordinaryBinary_preservesOutputCapacityFrame "test_eq" output "0x00"
+        ⟨by decide, by decide, by decide⟩)
+    intro zero
+    exact ordinaryUnary_preservesOutputCapacityFrame "not" zero ⟨by decide, by decide, by decide⟩
+  · apply bind_preservesOutputCapacityFrame _ _ (constrainUnsigned_preservesOutputCapacityFrame _ output)
+    intro _
+    exact pure_preservesOutputCapacityFrame output
+
+theorem lowerExpr_inv_preservesOutputCapacityFrame (value : Expr ty)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.inv value)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operand
+  have tailFrame (nonzeroOperand : String) := bind_preservesOutputCapacityFrame _
+    (fun isZero => do
+      let isNonzero ← unary "not" isZero
+      emit "assert" [("cond", toJson isNonzero)]
+      unary "inv" operand)
+    (ordinaryBinary_preservesOutputCapacityFrame "test_eq" nonzeroOperand "0x00"
+      ⟨by decide, by decide, by decide⟩) (by
+        intro isZero
+        apply bind_preservesOutputCapacityFrame _ _
+          (ordinaryUnary_preservesOutputCapacityFrame "not" isZero ⟨by decide, by decide, by decide⟩)
+        intro isNonzero
+        apply bind_preservesOutputCapacityFrame _ _
+          (emit_preservesOutputCapacityFrame "assert" [("cond", toJson isNonzero)])
+        intro _
+        exact ordinaryUnary_preservesOutputCapacityFrame "inv" operand ⟨by decide, by decide, by decide⟩)
+  cases ty
+  all_goals
+    first
+    | simpa only [pure_bind] using tailFrame operand
+    | exact bind_preservesOutputCapacityFrame _ _
+        (lowerJubjubScalarToNative_preservesOutputCapacityFrame operand) tailFrame
+    | apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+      intro _
+      simpa only [pure_bind] using tailFrame operand
+
+theorem lowerExpr_hashToCurve_preservesOutputCapacityFrame (values : List (Expr .native))
+    (members : ∀ value ∈ values, PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.hashToCurve values)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerNativeVectorFields_preservesOutputCapacityFrame values members)
+  intro operands
+  apply cachedScalarOutput_preservesOutputCapacityFrame
+  intro output
+  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+theorem lowerExpr_transientHash_preservesOutputCapacityFrame (values : List (Expr .native))
+    (members : ∀ value ∈ values, PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.transientHash values)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerNativeVectorFields_preservesOutputCapacityFrame values members)
+  intro operands
+  apply cachedScalarOutput_preservesOutputCapacityFrame
+  intro output
+  apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+  all_goals
+    simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+      Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem, Lean.ToJson.toJson]
+    rfl
+
+theorem lowerExpr_foreignUnary_preservesOutputCapacityFrame (op : Foreign.UnaryOp)
+    (value : Expr (.foreign op.inputKind))
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.foreignUnary op value)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame (lowerForeignUnary_preservesOutputCapacityFrame op)
+
+theorem lowerExpr_foreignBinary_preservesOutputCapacityFrame (op : Foreign.BinaryOp)
+    (left : Expr (.foreign op.leftKind)) (right : Expr (.foreign op.rightKind))
+    (leftFrame : PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.foreignBinary op left right)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro a
+  exact bind_preservesOutputCapacityFrame _ _ rightFrame (lowerForeignBinary_preservesOutputCapacityFrame op a)
+
+theorem lowerExpr_foreignEncodedField_preservesOutputCapacityFrame {kind : Foreign.Kind}
+    (value : Expr (.foreign kind)) (index : Nat)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.foreignEncodedField value index)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro output
+  apply bind_preservesOutputCapacityFrame _ _ (encodeForeign_preservesOutputCapacityFrame kind output)
+  intro fields
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  · exact rejectThenPure_preservesOutputCapacityFrame _ _
+
+private theorem cachedJubjubOutput_preservesOutputCapacityFrame
+    (key : ExpressionKey) (opcode : String) (fields : String → List (String × Json))
+    (outputCount : ∀ output,
+      Native.outputDefinitionsInInstruction (instruction opcode (fields output)) = 1) :
+    PreservesOutputCapacityFrame (do
+      if let some existing := (← get).expressions.lookup key then return existing
+      let output ← fresh
+      emit opcode (fields output)
+      modify fun state => {state with expressions := (key, output) :: state.expressions}
+      pure output) := by
+  exact cachedScalarOutput_preservesOutputCapacityFrame key opcode fields outputCount
+
+theorem lowerExpr_jubjubScalarFromNative_preservesOutputCapacityFrame
+    (value : Expr .native)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubScalarFromNative value)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerJubjubScalarFromNative_preservesOutputCapacityFrame)
+
+theorem lowerExpr_jubjubScalarToNative_preservesOutputCapacityFrame
+    (value : Expr .jubjubScalar)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubScalarToNative value)) := by
+  simp only [lowerExpr]
+  exact bind_preservesOutputCapacityFrame _ _ valueFrame
+    (lowerJubjubScalarToNative_preservesOutputCapacityFrame)
+
+theorem lowerExpr_jubjubMulGenerator_preservesOutputCapacityFrame
+    (scalar : Expr .jubjubScalar)
+    (scalarFrame : PreservesOutputCapacityFrame (lowerExpr scalar)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubMulGenerator scalar)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ scalarFrame
+  intro scalar
+  exact cachedJubjubOutput_preservesOutputCapacityFrame
+    ("ec_mul_generator", [scalar], none) "ec_mul_generator"
+    (fun output => [("scalar", toJson scalar), ("output", toJson output)])
+    (by
+      intro output
+      apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+      all_goals
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+          Lean.ToJson.toJson]
+        rfl)
+
+theorem lowerExpr_jubjubMul_preservesOutputCapacityFrame
+    (point : Expr .jubjubPoint) (scalar : Expr .jubjubScalar)
+    (pointFrame : PreservesOutputCapacityFrame (lowerExpr point))
+    (scalarFrame : PreservesOutputCapacityFrame (lowerExpr scalar)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubMul point scalar)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ pointFrame
+  intro loweredPoint
+  apply bind_preservesOutputCapacityFrame _ _ scalarFrame
+  intro loweredScalar
+  exact cachedJubjubOutput_preservesOutputCapacityFrame
+    ("ec_mul", [loweredPoint, loweredScalar], none) "ec_mul"
+    (fun output => [("a", toJson loweredPoint), ("scalar", toJson loweredScalar),
+      ("output", toJson output)])
+    (by
+      intro output
+      apply instruction_scalarOutputDefinitions _ _ _ ⟨by decide, by decide, by decide⟩ _
+      all_goals
+        simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+          Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+          Lean.ToJson.toJson]
+        rfl)
+
+theorem lowerExpr_jubjubAdd_preservesOutputCapacityFrame
+    (left right : Expr .jubjubPoint)
+    (leftFrame : PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubAdd left right)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ leftFrame
+  intro loweredLeft
+  apply bind_preservesOutputCapacityFrame _ _ rightFrame
+  intro loweredRight
+  exact ordinaryBinary_preservesOutputCapacityFrame "add" loweredLeft loweredRight
+    ⟨by decide, by decide, by decide⟩
+
+theorem lowerExpr_jubjubNeg_preservesOutputCapacityFrame
+    (point : Expr .jubjubPoint)
+    (pointFrame : PreservesOutputCapacityFrame (lowerExpr point)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubNeg point)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ pointFrame
+  intro loweredPoint
+  exact ordinaryUnary_preservesOutputCapacityFrame "neg" loweredPoint
+    ⟨by decide, by decide, by decide⟩
+
+theorem lowerExpr_jubjubCoordinate_preservesOutputCapacityFrame
+    (point : Expr .jubjubPoint) (index : Nat)
+    (pointFrame : PreservesOutputCapacityFrame (lowerExpr point)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubCoordinate point index)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ pointFrame
+  intro loweredPoint
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerPointCoordinates_preservesOutputCapacityFrame loweredPoint)
+  intro coordinates
+  split
+  · exact pure_preservesOutputCapacityFrame _
+  · exact pure_preservesOutputCapacityFrame _
+  · exact rejectThenPure_preservesOutputCapacityFrame _ _
+
+theorem lowerExpr_jubjubFromCoordinates_preservesOutputCapacityFrame
+    (x y : Expr .native)
+    (xFrame : PreservesOutputCapacityFrame (lowerExpr x))
+    (yFrame : PreservesOutputCapacityFrame (lowerExpr y)) :
+    PreservesOutputCapacityFrame (lowerExpr (.jubjubFromCoordinates x y)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ xFrame
+  intro loweredX
+  apply bind_preservesOutputCapacityFrame _ _ yFrame
+  intro loweredY
+  exact lowerPointFromCoordinates_preservesOutputCapacityFrame loweredX loweredY
+
+theorem lowerBytes_copyValue_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.copyValue value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  apply bind_preservesOutputCapacityFrame _ _
+    (listMapM_preservesOutputCapacityFrame operands.values
+      (fun value => unary "copy" value "val")
+      (by intro value; exact copyVal_preservesOutputCapacityFrame value))
+  intro copied
+  exact pure_preservesOutputCapacityFrame {operands with values := copied}
+
+theorem lowerBytes_sha256_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.sha256 value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  split
+  · apply bind_preservesOutputCapacityFrame _ _
+      (alignedBytes32Fields_preservesOutputCapacityFrame operands.values)
+    rintro ⟨highByte, low31⟩
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPersistentHash_preservesOutputCapacityFrame
+        "bytes32" bytes32Alignment [highByte, low31])
+    intro outputs
+    exact pure_preservesOutputCapacityFrame ({values := outputs, packed := true} : ByteOperands)
+  · exact lowerFixedByteHash_preservesOutputCapacityFrame
+      "persistent_hash" length 32 operands ⟨by decide, by decide, by decide⟩
+
+theorem lowerBytes_keccak256_preservesOutputCapacityFrame {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.keccak256 value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  exact lowerFixedByteHash_preservesOutputCapacityFrame
+    "keccak256" length 32 operands ⟨by decide, by decide, by decide⟩
+
+theorem lowerBytes_keccak256Secp256k1Point_preservesOutputCapacityFrame
+    (value : Expr (.foreign (.point .secp256k1)))
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.keccak256Secp256k1Point value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro point
+  apply bind_preservesOutputCapacityFrame _ _
+    (encodeForeign_preservesOutputCapacityFrame (.point .secp256k1) point)
+  intro fields
+  exact lowerAlignedDigest_preservesOutputCapacityFrame "keccak256" 32
+    (Json.arr (fabHashAlignmentAtoms (.curve (.foreign (.point .secp256k1)))).toArray)
+    fields ("keccak256", fields, some 96) ⟨by decide, by decide, by decide⟩
+
+theorem lowerBytes_persistentHashNative_preservesOutputCapacityFrame
+    (value : Expr .native)
+    (valueFrame : PreservesOutputCapacityFrame (lowerExpr value)) :
+    PreservesOutputCapacityFrame (lowerBytes (.persistentHashNative value)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro native
+  apply bind_preservesOutputCapacityFrame _ _
+    (lowerPersistentHash_preservesOutputCapacityFrame
+      "native-field" nativeFieldAlignment [native])
+  intro outputs
+  exact pure_preservesOutputCapacityFrame ({values := outputs, packed := true} : ByteOperands)
+
+/-- SHA-512 allocates from the actual digest and packed outputs, for any
+fixed-width preimage whose lowering has an output capacity frame. -/
 theorem lowerBytes_sha512_preservesOutputCapacityFrame {length : Nat}
     (value : Expr (.bytes length))
     (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
