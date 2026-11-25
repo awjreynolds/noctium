@@ -106,7 +106,7 @@ private theorem hashSuffix_step (hash : Hash) (inputs witness : Assignment)
     (rightMeaning : OperandMeaning hash inputs witness rightText rightTerm)
     (leftScope : TextScope state.next leftText) (rightScope : TextScope state.next rightText)
     (domainCanonical : domain < Field.modulus)
-    (budget : (hashSuffix domain leftText rightText).run state |>.2.next ≤ Native.maxInstructions) :
+    (budget : (hashSuffix domain leftText rightText).run state |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (hashSuffix domain leftText rightText)
       (.hash [.constant domain, leftTerm, rightTerm])) := by
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
@@ -145,9 +145,9 @@ private theorem hashSuffix_step (hash : Hash) (inputs witness : Assignment)
         (output, appendFreshState state raw key output) := by
       simpa only [key, output, raw] using hashSuffix_miss_run domain leftText rightText state hit
     have budgetAfter : (hashSuffix domain leftText rightText).run state |>.2.next ≤
-        Native.maxInstructions := budget
+        (Native.maxInstructions * Native.maxVectorLength) := budget
     rw [run] at budgetAfter
-    have budgetFresh : state.next + 1 ≤ Native.maxInstructions := by
+    have budgetFresh : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by
       simpa only [appendFreshState] using budgetAfter
     have outputValid : validIdentifier output = true := by
       dsimp only [output]
@@ -267,17 +267,17 @@ theorem exprComplete_poseidon2 (domain : Nat) (left right : Expr .native)
           apply bind_preserves _ _ (lowerExpr_preserves right)
           intro rightText
           exact hashSuffix_preserves domain text rightText
-        have leftBudget : ((Zkir.lowerExpr left).run state).2.next ≤ Native.maxInstructions := by
+        have leftBudget : ((Zkir.lowerExpr left).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
           apply bind_middle_budget (Zkir.lowerExpr left)
             (fun text => do
               let rightText ← Zkir.lowerExpr right
-              hashSuffix domain text rightText) state suffixPreserves Native.maxInstructions
+              hashSuffix domain text rightText) state suffixPreserves (Native.maxInstructions * Native.maxVectorLength)
           simpa only [← lowerExpr_poseidon2_shape] using budget
         obtain ⟨first⟩ := leftComplete ctx hash implementation inputs witness state normalAliases
           values types leftValue leftValid leftEval aliases lowerAliases stateMeaning leftBudget
         have remainingBudget : ((do
             let rightText ← Zkir.lowerExpr right
-            hashSuffix domain first.text rightText).run first.finalState).2.next ≤ Native.maxInstructions := by
+            hashSuffix domain first.text rightText).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
           have bound := budget
           change ((do
             let leftText ← Zkir.lowerExpr left
@@ -288,7 +288,7 @@ theorem exprComplete_poseidon2 (domain : Nat) (left right : Expr .native)
         have rightBudget := bind_middle_budget (Zkir.lowerExpr right)
           (fun rightText => hashSuffix domain first.text rightText) first.finalState
           (fun rightText => hashSuffix_preserves domain first.text rightText)
-          Native.maxInstructions remainingBudget
+          (Native.maxInstructions * Native.maxVectorLength) remainingBudget
         obtain ⟨second⟩ := rightComplete ctx hash implementation inputs first.finalWitness
           first.finalState normalAliases values types rightValue rightValid rightEval aliases
           first.aliasAgreement first.stateMeaning rightBudget
@@ -301,7 +301,7 @@ theorem exprComplete_poseidon2 (domain : Nat) (left right : Expr .native)
           rw [second.run] at bound
           exact bound
         have hashBudget : (hashSuffix domain first.text second.text).run second.finalState |>.2.next ≤
-            Native.maxInstructions := by
+            (Native.maxInstructions * Native.maxVectorLength) := by
           have bound := remainingBudget
           change ((do
             let rightText ← Zkir.lowerExpr right

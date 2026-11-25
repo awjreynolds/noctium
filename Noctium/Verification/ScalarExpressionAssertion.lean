@@ -29,10 +29,10 @@ theorem exprComplete_assertE (condition : Expr .bool) (body : Expr ty)
         Zkir.lowerExpr body) := by
         intro text
         exact bind_preserves _ _ (emit_preserves _ _) (fun _ => lowerExpr_preserves body)
-      have conditionBudget : ((Zkir.lowerExpr condition).run state).2.next ≤ Native.maxInstructions := by
+      have conditionBudget : ((Zkir.lowerExpr condition).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         apply bind_middle_budget (Zkir.lowerExpr condition)
           (fun text => do Zkir.emit "assert" [("cond", toJson text)]; Zkir.lowerExpr body)
-          state suffixFrame Native.maxInstructions
+          state suffixFrame (Native.maxInstructions * Native.maxVectorLength)
         exact budget
       obtain ⟨first⟩ := conditionComplete ctx hash implementation inputs witness state normalAliases values types true
         conditionValid conditionEval aliases lowerAliases meaning conditionBudget
@@ -48,7 +48,7 @@ theorem exprComplete_assertE (condition : Expr .bool) (body : Expr ty)
           rw [oneValue]
           decide
         · exact ScalarExpressionArithmetic.TextScope.identifiers first.textScope parsed
-      have bodyBudget : ((Zkir.lowerExpr body).run assertedState).2.next ≤ Native.maxInstructions := by
+      have bodyBudget : ((Zkir.lowerExpr body).run assertedState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have endBudget := budget
         change ((do
           let text ← Zkir.lowerExpr condition

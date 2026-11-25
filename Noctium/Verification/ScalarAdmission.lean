@@ -1,7 +1,6 @@
 import Noctium.Verification.ScalarValidation
 import Noctium.Verification.ScalarCircuit
 import Noctium.Verification.ScalarInstructionEncoding
-import Noctium.Verification.ScalarAllocation
 
 namespace Noctium.Verification.ScalarAdmission
 open Lean Backend.Native NativeRelation
@@ -136,7 +135,9 @@ theorem admitted_fresh_identifier (circuit : Circuit) (json : Json) (program : P
     (bound : index ≤ program.instructions.length) :
     NativeRelationJson.validIdentifier s!"%v{index}" = true := by
   apply ScalarInstructionEncoding.fresh_identifier index
-  exact Nat.le_trans bound (lowerCircuit_admission circuit json program lowered decoded).1
+  exact Nat.le_trans
+    (Nat.le_trans bound (lowerCircuit_admission circuit json program lowered decoded).1)
+    (by decide)
 
 theorem lowerBody_instruction_count (circuit : Circuit) (json : Json) (program : Program)
     (lowered : Backend.Zkir.lowerCircuit circuit = .ok json)
@@ -146,15 +147,5 @@ theorem lowerBody_instruction_count (circuit : Circuit) (json : Json) (program :
   rw [Backend.Zkir.lowerCircuit_instructions circuit json lowered] at parsed
   cases parsed
   simpa using (mapM_length trace).symm
-
-/-- Bound generated-name allocation using the actual emitted vector and terminal
-native admission, rather than an assumed budget on source execution. -/
-theorem lowerBody_budget (circuit : Circuit) (json : Json) (program : Program)
-    (lowered : Backend.Zkir.lowerCircuit circuit = .ok json)
-    (decoded : NativeRelationJson.decode json = .ok program) :
-    ((Backend.Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next ≤ maxInstructions := by
-  have allocated := ScalarAllocation.lowerBody_allocated (Passes.pruneCircuit circuit)
-  rw [lowerBody_instruction_count circuit json program lowered decoded] at allocated
-  exact Nat.le_trans allocated (lowerCircuit_admission circuit json program lowered decoded).1
 
 end Noctium.Verification.ScalarAdmission

@@ -292,11 +292,11 @@ theorem fresh_name_injective {left right : Nat} (same : s!"%v{left}" = s!"%v{rig
   change "%v" ++ left.repr = "%v" ++ right.repr at same
   exact Nat.repr_injective ((String.append_right_inj "%v").mp same)
 
-/-- The actual producer's instruction budget bounds the generated SSA names. -/
-theorem fresh_identifier (index : Nat) (bounded : index ≤ Native.maxInstructions) :
-    NativeRelationJson.validIdentifier s!"%v{index}" = true := by
-  apply NativeRelationJson.generatedIdentifier_valid
-  have budget : Native.maxInstructions < 10 ^ 8 := by decide
-  omega
+/-- The producer's output capacity fits the decoded numeric identifier limit. -/
+theorem fresh_identifier (index : Nat)
+    (bounded : index ≤ Native.maxInstructions * Native.maxVectorLength) :
+    NativeRelationJson.validIdentifier s!"%v{index}" = true :=
+  NativeRelationJson.generatedIdentifier_valid index
+    (Nat.lt_of_le_of_lt bounded (by decide))
 
 end Noctium.Verification.ScalarInstructionEncoding

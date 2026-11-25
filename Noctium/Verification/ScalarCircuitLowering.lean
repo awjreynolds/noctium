@@ -1,6 +1,7 @@
 import Noctium.Verification.ScalarStateExtensions
 import Noctium.Verification.ScalarCircuit
 import Noctium.Verification.ScalarAdmission
+import Noctium.Verification.ScalarAllocationOutputFrame
 import Noctium.Verification.ScalarExpressionArithmetic
 
 namespace Noctium.Verification.ScalarCircuitLowering
@@ -111,7 +112,7 @@ def InputFrame (inputs witness : NativeRelation.Assignment) : Prop :=
 
 def Completes (hash : Hash) (inputs : NativeRelation.Assignment) (operation : StateM Zkir.LowerState α) : Prop :=
   ∀ witness state, LowerStateMeaning hash witness state → InputFrame inputs witness → state.aliases = [] →
-    (operation.run state).2.next ≤ Native.maxInstructions →
+    (operation.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength →
     Nonempty (PrefixExtension hash witness state (operation.run state).2)
 
 theorem completes_pure (hash : Hash) (inputs : NativeRelation.Assignment) (value : α) : Completes hash inputs (pure value) := by
@@ -125,8 +126,8 @@ theorem completes_bind (hash : Hash) (inputs : NativeRelation.Assignment) (first
     (firstComplete : Completes hash inputs first) (nextComplete : ∀ value, Completes hash inputs (next value)) :
     Completes hash inputs (first >>= next) := by
   intro witness state meaning inputFrame aliases budget
-  have runBudget : ((next (first.run state).1).run (first.run state).2).2.next ≤ Native.maxInstructions := budget
-  have middleBudget : (first.run state).2.next ≤ Native.maxInstructions :=
+  have runBudget : ((next (first.run state).1).run (first.run state).2).2.next ≤ Native.maxInstructions * Native.maxVectorLength := budget
+  have middleBudget : (first.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
     Nat.le_trans (nextFrame _ _).next runBudget
   obtain ⟨left⟩ := firstComplete witness state meaning inputFrame aliases middleBudget
   have nextInput : InputFrame inputs left.witness := fun name =>
@@ -165,7 +166,7 @@ theorem constrain_type_complete (hash : Hash) (inputs witness : NativeRelation.A
     (canonical : Canonical ty value) (termValue : interpret hash inputs term = scalar (number ty value))
     (meaning : LowerStateMeaning hash witness state)
     (operand : OperandMeaning hash inputs witness text term) (scope : TextScope state.next text)
-    (budget : ((Zkir.constrainType ty text).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.constrainType ty text).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (PrefixExtension hash witness state ((Zkir.constrainType ty text).run state).2) := by
   cases ty with
   | native => exact ⟨{witness, meaning, aliases := rfl, frame := by intro name _; rfl}⟩
@@ -279,7 +280,7 @@ theorem completes_condition (ctx : EvalContext) (hash : Hash) (implementation : 
     (success : condition.eval ctx values = .ok true) :
     Completes hash inputs (do let text ← Zkir.lowerExpr condition; Zkir.emit "assert" [("cond", toJson text)]) := by
   intro witness state meaning inputFrame aliases budget
-  have exprBudget : ((Zkir.lowerExpr condition).run state).2.next ≤ Native.maxInstructions := budget
+  have exprBudget : ((Zkir.lowerExpr condition).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength := budget
   obtain ⟨result⟩ := complete _ condition ctx hash implementation inputs witness state
     (circuitAliases circuit) values _ true valid success
     (admitted.typedEnvironment circuit values inputs hash).aliases
@@ -355,7 +356,7 @@ theorem outputs_complete (ctx : EvalContext) (hash : Hash) (implementation : Has
     (aliases : state.aliases = []) (scopes : ∀ text ∈ texts, TextScope state.next text)
     (budget : ((forIn outputs texts (fun (output : Output) (accumulated : List String) => do
       let text ← Zkir.lowerExpr output.value
-      pure (.yield (accumulated ++ [text])))).run state).2.next ≤ Native.maxInstructions) :
+      pure (.yield (accumulated ++ [text])))).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (PrefixExtension hash witness state ((forIn outputs texts (fun (output : Output) (accumulated : List String) => do
       let text ← Zkir.lowerExpr output.value
       pure (.yield (accumulated ++ [text])))).run state).2) ∧
@@ -385,12 +386,12 @@ theorem outputs_complete (ctx : EvalContext) (hash : Hash) (implementation : Has
       simp only [bind_assoc, pure_bind]
       rfl
     rw [runEq] at budget ⊢
-    have middleBudget : ((Zkir.lowerExpr output.value).run state).2.next ≤ Native.maxInstructions :=
+    have middleBudget : ((Zkir.lowerExpr output.value).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
       Nat.le_trans (tailFrame _ _).next budget
     obtain ⟨step⟩ := complete _ output.value ctx hash implementation inputs witness state (circuitAliases circuit)
       values _ value (valid output (by simp)) evaluated (admitted.typedEnvironment circuit values inputs hash).aliases
       (current_aliases hash inputs witness circuit values state admitted identifiers inputFrame aliases) meaning middleBudget
-    have continuedBudget : ((tail (texts ++ [step.text])).run step.finalState).2.next ≤ Native.maxInstructions := by
+    have continuedBudget : ((tail (texts ++ [step.text])).run step.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       change ((tail (texts ++ [((Zkir.lowerExpr output.value).run state).1])).run
         ((Zkir.lowerExpr output.value).run state).2).2.next ≤ _ at budget
       simpa only [step.run] using budget
@@ -453,7 +454,7 @@ theorem completes_outputs (ctx : EvalContext) (hash : Hash) (implementation : Ha
     split
     · exact ScalarAllocation.bind_preserves _ _ (ScalarAllocation.bindPublic_preserves _) (fun _ => ScalarAllocation.emit_preserves _ _)
     · exact ScalarAllocation.emit_preserves _ _
-  have loopBudget : (loop.run state).2.next ≤ Native.maxInstructions :=
+  have loopBudget : (loop.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
     ScalarAllocation.bind_middle_budget loop footer state footerFrame _ budget
   obtain ⟨⟨result⟩, scopes⟩ := outputs_complete ctx hash implementation complete circuit values inputs
     admitted identifiers circuit.outputs valid success witness state [] meaning inputFrame aliases (by simp) loopBudget
@@ -583,7 +584,7 @@ theorem lowerCircuit_witness_with_expressions (ctx : EvalContext) (hash : Hash)
   have construction := lowerBody_complete_with_expressions ctx hash implementation complete
     (Passes.pruneCircuit circuit) values result inputs prunedInputs identifiers validation prunedSuccess
   obtain ⟨extension⟩ := construction inputs {} (empty_state hash inputs) (by intro name; rfl) rfl
-    (ScalarAdmission.lowerBody_budget circuit json program lowered decoded)
+    (ScalarAllocationOutputFrame.lowerCircuit_names_fit_producerCapacity circuit lowered)
   refine ⟨extension.witness, ?_, ?_⟩
   · intro name
     exact extension.frame _ (Or.inl ⟨name, rfl⟩)

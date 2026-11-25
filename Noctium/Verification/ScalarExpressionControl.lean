@@ -25,7 +25,7 @@ private theorem eq_left_budget (left right : Expr ty) (state : Zkir.LowerState)
     intro text
     apply bind_preserves _ _ (lowerExpr_preserves right)
     intro rightText
-    exact binary_preserves "test_eq" text rightText
+    exact binary_preserves "test_eq" text rightText ⟨by decide, by decide, by decide⟩
   apply bind_middle_budget (Zkir.lowerExpr left)
     (fun text => do
       let rightText ← Zkir.lowerExpr right
@@ -117,14 +117,14 @@ theorem exprComplete_letE (name : String) (expression : Expr source) (body : Exp
         modify fun (current : Zkir.LowerState) => {current with aliases := (name, text) :: snapshot.aliases}
         let bodyText ← Zkir.lowerExpr body
         modify fun (current : Zkir.LowerState) => {current with aliases := snapshot.aliases}
-        pure bodyText) state suffixPreserves Native.maxInstructions (by
+        pure bodyText) state suffixPreserves (Native.maxInstructions * Native.maxVectorLength) (by
           change ((do
             let text ← Zkir.lowerExpr expression
             let snapshot ← (get : StateM Zkir.LowerState Zkir.LowerState)
             modify fun (current : Zkir.LowerState) => {current with aliases := (name, text) :: snapshot.aliases}
             let bodyText ← Zkir.lowerExpr body
             modify fun (current : Zkir.LowerState) => {current with aliases := snapshot.aliases}
-            pure bodyText).run state).2.next ≤ Native.maxInstructions at budget
+            pure bodyText).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength at budget
           exact budget)
     obtain ⟨first⟩ := valueComplete ctx hash implementation inputs witness state normalAliases values types
       sourceValue expressionValid expressionEval aliasAgreement lowerAliasAgreement lowerStateMeaning
@@ -134,7 +134,7 @@ theorem exprComplete_letE (name : String) (expression : Expr source) (body : Exp
       modify fun (current : Zkir.LowerState) => {current with aliases := (name, first.text) :: snapshot.aliases}
       let bodyText ← Zkir.lowerExpr body
       modify fun (current : Zkir.LowerState) => {current with aliases := snapshot.aliases}
-      pure bodyText).run first.finalState).2.next ≤ Native.maxInstructions := by
+      pure bodyText).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       have bound := budget
       change ((do
         let text ← Zkir.lowerExpr expression
@@ -142,7 +142,7 @@ theorem exprComplete_letE (name : String) (expression : Expr source) (body : Exp
         modify fun (current : Zkir.LowerState) => {current with aliases := (name, text) :: snapshot.aliases}
         let bodyText ← Zkir.lowerExpr body
         modify fun (current : Zkir.LowerState) => {current with aliases := snapshot.aliases}
-        pure bodyText).run state).2.next ≤ Native.maxInstructions at bound
+        pure bodyText).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength at bound
       rw [StateT.run_bind, first.run] at bound
       exact bound
     let bodyState : Zkir.LowerState :=
@@ -151,26 +151,26 @@ theorem exprComplete_letE (name : String) (expression : Expr source) (body : Exp
       modify fun (current : Zkir.LowerState) => {current with aliases := (name, first.text) :: first.finalState.aliases}
       let bodyText ← Zkir.lowerExpr body
       modify fun (current : Zkir.LowerState) => {current with aliases := first.finalState.aliases}
-      pure bodyText).run first.finalState).2.next ≤ Native.maxInstructions := by
+      pure bodyText).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       exact bind_suffix_bound get
         (fun snapshot => do
           modify fun (current : Zkir.LowerState) => {current with aliases := (name, first.text) :: snapshot.aliases}
           let bodyText ← Zkir.lowerExpr body
           modify fun (current : Zkir.LowerState) => {current with aliases := snapshot.aliases}
           pure bodyText)
-        first.finalState first.finalState first.finalState Native.maxInstructions
+        first.finalState first.finalState first.finalState (Native.maxInstructions * Native.maxVectorLength)
         (by rfl) afterExpressionBound
     have afterAliasBound : ((do
       let bodyText ← Zkir.lowerExpr body
       modify fun (current : Zkir.LowerState) => {current with aliases := first.finalState.aliases}
-      pure bodyText).run bodyState).2.next ≤ Native.maxInstructions := by
+      pure bodyText).run bodyState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       exact bind_suffix_bound (modify fun (current : Zkir.LowerState) =>
           {current with aliases := (name, first.text) :: first.finalState.aliases})
         (fun _ => do
           let bodyText ← Zkir.lowerExpr body
           modify fun (current : Zkir.LowerState) => {current with aliases := first.finalState.aliases}
           pure bodyText)
-        first.finalState () bodyState Native.maxInstructions (by rfl) afterSnapshotBound
+        first.finalState () bodyState (Native.maxInstructions * Native.maxVectorLength) (by rfl) afterSnapshotBound
     have bodyTailPreserves : ∀ (text : String), PreservesFrame
         (do
           modify fun (current : Zkir.LowerState) => {current with aliases := first.finalState.aliases}
@@ -183,7 +183,7 @@ theorem exprComplete_letE (name : String) (expression : Expr source) (body : Exp
       (fun bodyText => do
         modify fun (current : Zkir.LowerState) => {current with aliases := first.finalState.aliases}
         pure bodyText)
-      bodyState bodyTailPreserves Native.maxInstructions afterAliasBound
+      bodyState bodyTailPreserves (Native.maxInstructions * Native.maxVectorLength) afterAliasBound
     have normalAgreementBody : AliasAgreement hash inputs
         ((name, first.normalized.term) :: normalAliases)
         ((name, Value.pack source sourceValue) :: values) :=
@@ -321,8 +321,8 @@ theorem exprComplete_eq (left right : Expr ty)
     cases rightEval : right.eval ctx values with
     | error message => simp [Expr.eval, leftEval, rightEval, Bind.bind, Except.bind] at success
     | ok rightValue =>
-      have firstBudget : ((Zkir.lowerExpr left).run state).2.next ≤ Native.maxInstructions :=
-        eq_left_budget left right state Native.maxInstructions budget
+      have firstBudget : ((Zkir.lowerExpr left).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
+        eq_left_budget left right state (Native.maxInstructions * Native.maxVectorLength) budget
       rcases leftComplete ctx hash implementation inputs witness state normalAliases values types
           leftValue validParts.1 leftEval aliasAgreement lowerAliasAgreement lowerStateMeaning
           firstBudget with ⟨leftResult⟩
@@ -334,24 +334,24 @@ theorem exprComplete_eq (left right : Expr ty)
           normalAliases state.aliases values lowerAliasAgreement lowerStateMeaning.aliases leftResult.frame
       have afterLeftBudget :
           (StateT.run (Zkir.lowerExpr right >>= fun rightText =>
-            Zkir.binary "test_eq" leftResult.text rightText) rightStart).2.next ≤ Native.maxInstructions := by
+            Zkir.binary "test_eq" leftResult.text rightText) rightStart).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have sequenceBound :
             ((Zkir.lowerExpr left >>= fun leftText => do
               let rightText ← Zkir.lowerExpr right
-              Zkir.binary "test_eq" leftText rightText).run state).2.next ≤ Native.maxInstructions := by
+              Zkir.binary "test_eq" leftText rightText).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
           simpa only [Zkir.lowerExpr] using budget
         exact bind_suffix_bound (Zkir.lowerExpr left)
           (fun leftText => do
             let rightText ← Zkir.lowerExpr right
             Zkir.binary "test_eq" leftText rightText)
-          state leftResult.text leftResult.finalState Native.maxInstructions leftResult.run sequenceBound
+          state leftResult.text leftResult.finalState (Native.maxInstructions * Native.maxVectorLength) leftResult.run sequenceBound
       have rightFrame : ∀ rightText, PreservesFrame (Zkir.binary "test_eq" leftResult.text rightText) := by
         intro rightText
-        exact binary_preserves "test_eq" leftResult.text rightText
-      have rightBudget : ((Zkir.lowerExpr right).run rightStart).2.next ≤ Native.maxInstructions :=
+        exact binary_preserves "test_eq" leftResult.text rightText ⟨by decide, by decide, by decide⟩
+      have rightBudget : ((Zkir.lowerExpr right).run rightStart).2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
         bind_middle_budget (Zkir.lowerExpr right)
           (fun rightText => Zkir.binary "test_eq" leftResult.text rightText)
-          rightStart rightFrame Native.maxInstructions afterLeftBudget
+          rightStart rightFrame (Native.maxInstructions * Native.maxVectorLength) afterLeftBudget
       rcases rightComplete ctx hash implementation inputs leftResult.finalWitness rightStart
           normalAliases values types rightValue validParts.2 rightEval aliasAgreement lowerAgreementLeft
           leftResult.stateMeaning rightBudget with ⟨rightResult⟩
@@ -367,20 +367,20 @@ theorem exprComplete_eq (left right : Expr ty)
           leftResult.stateMeaning.aliases rightResult.frame
       have opBudget :
           ((Zkir.binary "test_eq" leftResult.text rightResult.text).run rightResult.finalState).2.next ≤
-            Native.maxInstructions := by
+            (Native.maxInstructions * Native.maxVectorLength) := by
         have sequenceBound :
             ((Zkir.lowerExpr left >>= fun leftText => do
               let rightText ← Zkir.lowerExpr right
-              Zkir.binary "test_eq" leftText rightText).run state).2.next ≤ Native.maxInstructions := by
+              Zkir.binary "test_eq" leftText rightText).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
           simpa only [Zkir.lowerExpr] using budget
         have afterLeft := bind_suffix_bound (Zkir.lowerExpr left)
           (fun leftText => do
             let rightText ← Zkir.lowerExpr right
             Zkir.binary "test_eq" leftText rightText)
-          state leftResult.text leftResult.finalState Native.maxInstructions leftResult.run sequenceBound
+          state leftResult.text leftResult.finalState (Native.maxInstructions * Native.maxVectorLength) leftResult.run sequenceBound
         exact bind_suffix_bound (Zkir.lowerExpr right)
           (fun rightText => Zkir.binary "test_eq" leftResult.text rightText)
-          rightStart rightResult.text rightResult.finalState Native.maxInstructions rightResult.run
+          rightStart rightResult.text rightResult.finalState (Native.maxInstructions * Native.maxVectorLength) rightResult.run
           (by simpa only [StateT.run_bind, Id.instMonad] using afterLeft)
       have leftScope : TextScope rightResult.finalState.next leftResult.text :=
         TextScope.mono (by simpa only [leftResult.run] using rightMono) leftResult.textScope

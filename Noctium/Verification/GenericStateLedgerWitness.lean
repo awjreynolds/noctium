@@ -156,7 +156,7 @@ theorem lowerExpr_assert_complete (ctx : EvalContext) (hash : Hash)
     (meaning : LowerStateMeaning hash witness state)
     (budget : (Zkir.lowerExpr condition >>= fun text =>
       Zkir.emit "assert" [("cond", toJson text)]).run state |>.2.next ≤
-        Native.maxInstructions) :
+        (Native.maxInstructions * Native.maxVectorLength)) :
     ∃ result finalState,
       (do let text ← Zkir.lowerExpr condition
           Zkir.emit "assert" [("cond", toJson text)]).run state = ((), finalState) ∧
@@ -164,7 +164,7 @@ theorem lowerExpr_assert_complete (ctx : EvalContext) (hash : Hash)
       LowerAliasAgreement hash inputs result aliases finalState.aliases values ∧
       (∀ name, result ("%input_" ++ name) = witness ("%input_" ++ name)) := by
   have expressionBudget : (Zkir.lowerExpr condition).run state |>.2.next ≤
-      Native.maxInstructions := by
+      (Native.maxInstructions * Native.maxVectorLength) := by
     exact ScalarAllocation.bind_middle_budget (Zkir.lowerExpr condition)
       (fun text => Zkir.emit "assert" [("cond", toJson text)]) state
       (by intro text; exact ScalarAllocation.emit_preserves _ _) _ budget
@@ -226,7 +226,7 @@ theorem lowerExprs_complete (ctx : EvalContext) (hash : Hash)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
     (budget : (expressions.mapM Zkir.lowerExpr).run initialState |>.2.next ≤
-      Native.maxInstructions) :
+      (Native.maxInstructions * Native.maxVectorLength)) :
     ∃ texts finalWitness finalState,
       (expressions.mapM Zkir.lowerExpr).run initialState = (texts, finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -248,25 +248,25 @@ theorem lowerExprs_complete (ctx : EvalContext) (hash : Hash)
       exact ScalarAllocation.bind_preserves _ _ tailFrame
         (fun _ => ScalarAllocation.pure_preserves _)
     have wholeBudget : ((Zkir.lowerExpr expression >>= finishText).run initialState).2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       simpa only [List.mapM_cons, bind_assoc, pure_bind, tail, finishText] using budget
     have firstBudget := ScalarAllocation.bind_middle_budget
       (Zkir.lowerExpr expression) finishText initialState finishTextFrame
-      Native.maxInstructions wholeBudget
+      (Native.maxInstructions * Native.maxVectorLength) wholeBudget
     obtain ⟨value, expressionEval⟩ := evaluated expression (by simp)
     obtain ⟨step⟩ := complete .native expression ctx hash implementation inputs
       initialWitness initialState aliases values types value
       (valid expression (by simp)) expressionEval sourceAliases lowerAliases meaning firstBudget
     have continueBudget : (finishText step.text).run step.finalState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       change ((Zkir.lowerExpr expression >>= finishText).run initialState).2.next ≤ _ at wholeBudget
       simp only [StateT.run_bind] at wholeBudget
       rw [step.run] at wholeBudget
       exact wholeBudget
-    have tailBudget : tail.run step.finalState |>.2.next ≤ Native.maxInstructions :=
+    have tailBudget : tail.run step.finalState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength :=
       ScalarAllocation.bind_middle_budget tail
         (fun texts => pure (step.text :: texts)) step.finalState
-        (by intro texts; exact ScalarAllocation.pure_preserves _) Native.maxInstructions
+        (by intro texts; exact ScalarAllocation.pure_preserves _) (Native.maxInstructions * Native.maxVectorLength)
         (by simpa only [finishText] using continueBudget)
     have nextFrame : ScalarCircuitLowering.InputFrame inputs step.finalWitness := by
       intro name
@@ -317,7 +317,7 @@ theorem lowerFieldsImpact_complete (ctx : EvalContext) (hash : Hash)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
     (budget : ((expressions.mapM Zkir.lowerExpr) >>= fun texts =>
-      Zkir.bindPublic texts).run initialState |>.2.next ≤ Native.maxInstructions) :
+      Zkir.bindPublic texts).run initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       ((expressions.mapM Zkir.lowerExpr) >>= fun texts =>
         Zkir.bindPublic texts).run initialState = ((), finalState) ∧
@@ -327,7 +327,7 @@ theorem lowerFieldsImpact_complete (ctx : EvalContext) (hash : Hash)
   have expressionBudget := ScalarAllocation.bind_middle_budget
     (expressions.mapM Zkir.lowerExpr) (fun texts => Zkir.bindPublic texts)
     initialState (by intro texts; exact ScalarAllocation.bindPublic_preserves _)
-    Native.maxInstructions budget
+    (Native.maxInstructions * Native.maxVectorLength) budget
   obtain ⟨texts, finalWitness, expressionState, expressionRun, finalMeaning,
     finalAliases, finalFrame, scopes⟩ := lowerExprs_complete ctx hash implementation
       complete inputs initialWitness initialState aliases values types expressions
@@ -455,7 +455,7 @@ theorem lowerReadBody_complete (hash : Hash) (inputs witness : NativeRelation.As
     (lowerAliases : LowerAliasAgreement hash inputs witness aliases state.aliases values)
     (meaning : LowerStateMeaning hash witness state)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs witness)
-    (budget : (lowerReadBody read).run state |>.2.next ≤ Native.maxInstructions) :
+    (budget : (lowerReadBody read).run state |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       (lowerReadBody read).run state = ((), finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -478,7 +478,7 @@ theorem lowerReadBody_complete (hash : Hash) (inputs witness : NativeRelation.As
     simpa only [emittedState, input, publicVisibility, if_true] using
       ScalarCircuitLowering.emit_input hash witness state meaning input identifier
   have typeBudget : (Zkir.constrainType read.ty ("%input_" ++ read.name)).run emittedState |>.2.next ≤
-      Native.maxInstructions := by
+      (Native.maxInstructions * Native.maxVectorLength) := by
     change (do
       Zkir.emit "public_input"
         [("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),
@@ -532,7 +532,7 @@ theorem lowerReadLoop_complete (hash : Hash) (inputs initialWitness : NativeRela
       initialState.aliases values)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
-    (budget : (lowerReadLoop reads).run initialState |>.2.next ≤ Native.maxInstructions) :
+    (budget : (lowerReadLoop reads).run initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       (lowerReadLoop reads).run initialState = ((), finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -547,18 +547,18 @@ theorem lowerReadLoop_complete (hash : Hash) (inputs initialWitness : NativeRela
     have tailFrame : ScalarAllocation.PreservesFrame (lowerReadLoop reads) :=
       lowerReadLoop_preserves reads
     have wholeBudget : ((lowerReadBody read >>= fun _ => lowerReadLoop reads).run
-        initialState).2.next ≤ Native.maxInstructions := by
+        initialState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       simpa only [lowerReadLoop_cons] using budget
     have bodyBudget := ScalarAllocation.bind_middle_budget
       (lowerReadBody read) (fun _ => lowerReadLoop reads) initialState
-      (fun _ => tailFrame) Native.maxInstructions wholeBudget
+      (fun _ => tailFrame) (Native.maxInstructions * Native.maxVectorLength) wholeBudget
     obtain ⟨value, canonical, binding⟩ := facts read (by simp)
     obtain ⟨middleWitness, middleState, bodyRun, middleMeaning, middleFrame,
       middleAliases, bodyAliasesEq⟩ := lowerReadBody_complete hash inputs initialWitness initialState
       aliases values read value canonical binding (identifiers read (by simp))
       lowerAliases meaning inputFrame bodyBudget
     have tailBudget : (lowerReadLoop reads).run middleState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       change ((lowerReadBody read >>= fun _ => lowerReadLoop reads).run
         initialState).2.next ≤ _ at wholeBudget
       simp only [StateT.run_bind] at wholeBudget
@@ -642,7 +642,7 @@ theorem lowerGuardLoop_complete (ctx : EvalContext) (hash : Hash)
       initialState.aliases values)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
-    (budget : (lowerGuardLoop conditions).run initialState |>.2.next ≤ Native.maxInstructions) :
+    (budget : (lowerGuardLoop conditions).run initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       (lowerGuardLoop conditions).run initialState = ((), finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -656,11 +656,11 @@ theorem lowerGuardLoop_complete (ctx : EvalContext) (hash : Hash)
     have tailFrame : ScalarAllocation.PreservesFrame (lowerGuardLoop conditions) :=
       lowerGuardLoop_preserves conditions
     have wholeBudget : ((lowerGuardBody condition >>= fun _ => lowerGuardLoop conditions).run
-        initialState).2.next ≤ Native.maxInstructions := by
+        initialState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       simpa only [lowerGuardLoop_cons] using budget
     have bodyBudget := ScalarAllocation.bind_middle_budget
       (lowerGuardBody condition) (fun _ => lowerGuardLoop conditions) initialState
-      (fun _ => tailFrame) Native.maxInstructions wholeBudget
+      (fun _ => tailFrame) (Native.maxInstructions * Native.maxVectorLength) wholeBudget
     obtain ⟨middleWitness, middleState, bodyRun, middleMeaning, middleAliases,
       extensionFrame⟩ := lowerExpr_assert_complete ctx hash implementation complete inputs
       initialWitness initialState aliases values types condition (valid condition (by simp))
@@ -671,7 +671,7 @@ theorem lowerGuardLoop_complete (ctx : EvalContext) (hash : Hash)
       intro name
       exact (extensionFrame name).trans (inputFrame name)
     have tailBudget : (lowerGuardLoop conditions).run middleState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       change ((lowerGuardBody condition >>= fun _ => lowerGuardLoop conditions).run
         initialState).2.next ≤ _ at wholeBudget
       rw [StateT.run_bind, guardRun] at wholeBudget
@@ -1066,7 +1066,7 @@ theorem lowerOperationLoop_complete (ctx : EvalContext) (hash : Hash)
       initialState.aliases values)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
-    (budget : (lowerOperationLoop operations).run initialState |>.2.next ≤ Native.maxInstructions) :
+    (budget : (lowerOperationLoop operations).run initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       (lowerOperationLoop operations).run initialState = ((), finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -1085,11 +1085,11 @@ theorem lowerOperationLoop_complete (ctx : EvalContext) (hash : Hash)
     have tailFrame : ScalarAllocation.PreservesFrame (lowerOperationLoop operations) :=
       lowerOperationLoop_preserves operations
     have wholeBudget : ((lowerOperationBody operation >>= fun _ =>
-        lowerOperationLoop operations).run initialState).2.next ≤ Native.maxInstructions := by
+        lowerOperationLoop operations).run initialState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       simpa only [lowerOperationLoop_cons] using budget
     have bodyBudget := ScalarAllocation.bind_middle_budget
       (lowerOperationBody operation) (fun _ => lowerOperationLoop operations) initialState
-      (fun _ => tailFrame) Native.maxInstructions wholeBudget
+      (fun _ => tailFrame) (Native.maxInstructions * Native.maxVectorLength) wholeBudget
     have expressionValid : ∀ expression ∈ operation.fields,
         expression.validate {poseidon2 := true} types = .ok () := by
       intro expression member
@@ -1103,7 +1103,7 @@ theorem lowerOperationLoop_complete (ctx : EvalContext) (hash : Hash)
         ((), middleState) := by
       simpa only [lowerOperationBody] using bodyRun
     have tailBudget : (lowerOperationLoop operations).run middleState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       change ((lowerOperationBody operation >>= fun _ =>
         lowerOperationLoop operations).run initialState).2.next ≤ _ at wholeBudget
       rw [StateT.run_bind, operationRun] at wholeBudget
@@ -1141,7 +1141,7 @@ theorem lowerOutputLoop_complete (ctx : EvalContext) (hash : Hash)
       initial.1 initialState.aliases stackValues)
     (meaning : LowerStateMeaning hash initialWitness initialState)
     (inputFrame : ScalarCircuitLowering.InputFrame inputs initialWitness)
-    (budget : (lowerOutputLoop outputs).run initialState |>.2.next ≤ Native.maxInstructions) :
+    (budget : (lowerOutputLoop outputs).run initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ∃ finalWitness finalState,
       (lowerOutputLoop outputs).run initialState = ((), finalState) ∧
       LowerStateMeaning hash finalWitness finalState ∧
@@ -1190,11 +1190,11 @@ theorem lowerOutputLoop_complete (ctx : EvalContext) (hash : Hash)
     have tailFrame : ScalarAllocation.PreservesFrame (lowerOutputLoop outputs) :=
       lowerOutputLoop_preserves outputs
     have wholeBudget : ((lowerOutputBody output >>= fun _ => lowerOutputLoop outputs).run
-        initialState).2.next ≤ Native.maxInstructions := by
+        initialState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       simpa only [lowerOutputLoop_cons] using budget
     have bodyBudget := ScalarAllocation.bind_middle_budget
       (lowerOutputBody output) (fun _ => lowerOutputLoop outputs) initialState
-      (fun _ => tailFrame) Native.maxInstructions wholeBudget
+      (fun _ => tailFrame) (Native.maxInstructions * Native.maxVectorLength) wholeBudget
     have pushFrame : ∀ text, ScalarAllocation.PreservesFrame
         (modify fun state => {state with aliases := (output.name, text) :: state.aliases}) := by
       intro text
@@ -1206,11 +1206,11 @@ theorem lowerOutputLoop_complete (ctx : EvalContext) (hash : Hash)
     have outputBodyBudget := bodyBudget
     change (Zkir.lowerExpr output.value >>= fun text =>
       modify fun state => {state with aliases := (output.name, text) :: state.aliases}).run
-        initialState |>.2.next ≤ Native.maxInstructions at outputBodyBudget
+        initialState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength at outputBodyBudget
     have expressionBudget := ScalarAllocation.bind_middle_budget
       (Zkir.lowerExpr output.value)
       (fun text => modify fun state => {state with aliases := (output.name, text) :: state.aliases})
-      initialState pushFrame Native.maxInstructions outputBodyBudget
+      initialState pushFrame (Native.maxInstructions * Native.maxVectorLength) outputBodyBudget
     obtain ⟨step⟩ := complete output.ty output.value ctx hash implementation
       inputs initialWitness initialState initial.1 values types value
       (valid output (by simp)) valueEval sourceAliases sourceLowerAliases meaning
@@ -1263,7 +1263,7 @@ theorem lowerOutputLoop_complete (ctx : EvalContext) (hash : Hash)
       intro name
       exact (step.frame _ (Or.inl ⟨name, rfl⟩)).trans (inputFrame name)
     have tailBudget : (lowerOutputLoop outputs).run outputState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
       change ((lowerOutputBody output >>= fun _ => lowerOutputLoop outputs).run
         initialState).2.next ≤ _ at wholeBudget
       simp only [StateT.run_bind] at wholeBudget
@@ -1463,8 +1463,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
       (Passes.pruneEntrypoint entry) plan expected json relation planAccepted
       expectedAccepted producerAccepted decoded
   obtain ⟨budgetPlan, budgetPlanAccepted, bodyBudget⟩ :=
-    GenericStateLedgerAllocation.lowerEntrypoint_budget state entry json relation
-      lowered decoded
+    GenericStateLedgerAllocation.lowerEntrypoint_outputCapacity state entry json lowered
   have budgetPlanEqual : budgetPlan = plan := by
     rw [planAccepted] at budgetPlanAccepted
     exact (Except.ok.inj budgetPlanAccepted).symm
@@ -1473,16 +1472,16 @@ theorem lowered_body_source_witness (state : List StateDecl)
   let afterPrelude := lowerLedgerAfterPrelude (Passes.pruneEntrypoint entry) plan
   let preludeState := prelude.run {} |>.2
   have stagesBudget : (lowerLedgerBodyStages (Passes.pruneEntrypoint entry) plan).run
-      {} |>.2.next ≤ Native.maxInstructions := by
+      {} |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     rw [← lowerEntrypointBody_eq_stages]
     exact bodyBudget
   have wholePreludeBudget : (prelude >>= fun _ => afterPrelude).run {} |>.2.next ≤
-      Native.maxInstructions := by
+      (Native.maxInstructions * Native.maxVectorLength) := by
     simpa only [lowerLedgerBodyStages, prelude, afterPrelude, bind_assoc, pure_bind]
       using stagesBudget
   have preludeBound := ScalarAllocation.bind_middle_budget prelude
     (fun _ => afterPrelude) {} (fun _ => lowerLedgerAfterPrelude_preserves
-      (Passes.pruneEntrypoint entry) plan) Native.maxInstructions wholePreludeBudget
+      (Passes.pruneEntrypoint entry) plan) (Native.maxInstructions * Native.maxVectorLength) wholePreludeBudget
   have preludeComplete := lowerLedgerPrelude_complete ctx hash implementation
     (fun ty expression => ScalarExpressionLowering.lowerExpr_complete expression)
     (Passes.pruneEntrypoint entry).circuit values witness canonical
@@ -1496,7 +1495,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
     initialInputFrame (by rfl) preludeBound
   have preludeRun : prelude.run {} = ((), preludeState) := rfl
   have afterPreludeBudget :
-      (afterPrelude.run preludeState).2.next ≤ Native.maxInstructions := by
+      (afterPrelude.run preludeState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     change (prelude >>= fun _ => afterPrelude).run {} |>.2.next ≤ _
       at wholePreludeBudget
     rw [StateT.run_bind, preludeRun] at wholePreludeBudget
@@ -1547,13 +1546,13 @@ theorem lowered_body_source_witness (state : List StateDecl)
   have outputTailBudget :
       ((lowerOutputLoop (Passes.pruneEntrypoint entry).circuit.outputs >>= fun _ =>
         lowerLedgerAfterOutput (Passes.pruneEntrypoint entry) plan).run preludeState).2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
     exact afterPreludeBudget
   have outputBound := ScalarAllocation.bind_middle_budget
     (lowerOutputLoop (Passes.pruneEntrypoint entry).circuit.outputs)
     (fun _ => lowerLedgerAfterOutput (Passes.pruneEntrypoint entry) plan)
     preludeState (fun _ => lowerLedgerAfterOutput_preserves
-      (Passes.pruneEntrypoint entry) plan) Native.maxInstructions outputTailBudget
+      (Passes.pruneEntrypoint entry) plan) (Native.maxInstructions * Native.maxVectorLength) outputTailBudget
   obtain ⟨outputWitness, outputState, outputRun, outputMeaning,
     outputInputFrame, outputLowerAliases, outputAliasNames⟩ :=
     lowerOutputLoop_complete ctx hash implementation
@@ -1614,7 +1613,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
         preludeState = ((), outputState) := outputRun
   have readTailBudget :
       (lowerLedgerAfterOutput (Passes.pruneEntrypoint entry) plan).run outputState |>.2.next ≤
-        Native.maxInstructions := by
+        (Native.maxInstructions * Native.maxVectorLength) := by
     change ((lowerOutputLoop (Passes.pruneEntrypoint entry).circuit.outputs >>= fun _ =>
       lowerLedgerAfterOutput (Passes.pruneEntrypoint entry) plan).run preludeState).2.next ≤ _
       at outputTailBudget
@@ -1622,7 +1621,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
     exact outputTailBudget
   have readBound := ScalarAllocation.bind_middle_budget
     (lowerReadLoop reads) (fun _ => lowerLedgerAfterReads plan) outputState
-    (fun _ => lowerLedgerAfterReads_preserves plan) Native.maxInstructions
+    (fun _ => lowerLedgerAfterReads_preserves plan) (Native.maxInstructions * Native.maxVectorLength)
     (by simpa only [lowerLedgerAfterOutput, reads, bind_assoc, pure_bind]
       using readTailBudget)
   have readNamesIdentifiers : ∀ read ∈ reads,
@@ -1695,14 +1694,14 @@ theorem lowered_body_source_witness (state : List StateDecl)
     (Passes.pruneEntrypoint entry) planValidation
   have guardsValidEach := validateConstraints_members guardsValid
   have guardWholeBudget :
-      (lowerLedgerAfterReads plan).run readState |>.2.next ≤ Native.maxInstructions := by
+      (lowerLedgerAfterReads plan).run readState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     change ((lowerReadLoop reads >>= fun _ => lowerLedgerAfterReads plan).run
       outputState).2.next ≤ _ at readTailBudget
     rw [StateT.run_bind, readRun] at readTailBudget
     exact readTailBudget
   have guardBound := ScalarAllocation.bind_middle_budget
     (lowerGuardLoop plan.guards) (fun _ => lowerLedgerAfterGuards plan) readState
-    (fun _ => lowerLedgerAfterGuards_preserves plan) Native.maxInstructions
+    (fun _ => lowerLedgerAfterGuards_preserves plan) (Native.maxInstructions * Native.maxVectorLength)
     (by simpa only [lowerLedgerAfterReads, bind_assoc, pure_bind]
       using guardWholeBudget)
   obtain ⟨guardWitness, guardState, guardRun, guardMeaning,
@@ -1715,7 +1714,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
       traceGuardTruth candidateAliases guardLowerAliases
       readMeaning readInputFrame guardBound
   have operationTailBudget :
-      (lowerLedgerAfterGuards plan).run guardState |>.2.next ≤ Native.maxInstructions := by
+      (lowerLedgerAfterGuards plan).run guardState |>.2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     change ((lowerGuardLoop plan.guards >>= fun _ =>
       lowerLedgerAfterGuards plan).run readState).2.next ≤ _ at guardWholeBudget
     rw [StateT.run_bind, guardRun] at guardWholeBudget
@@ -1724,7 +1723,7 @@ theorem lowered_body_source_witness (state : List StateDecl)
     (lowerOperationLoop plan.operations)
     (fun _ => Zkir.emit "output" [("vals", toJson ([] : List String))])
     guardState (fun _ => ScalarAllocation.emit_preserves _ _)
-    Native.maxInstructions operationTailBudget
+    (Native.maxInstructions * Native.maxVectorLength) operationTailBudget
   have planEvalCandidateExact : GenericStateOps.evalPlan ctx candidateValues plan =
       .ok native := by
     simpa only [candidateValues, reads, candidateValuesShape] using planEval

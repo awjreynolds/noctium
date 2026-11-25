@@ -1,3 +1,4 @@
+import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarCache
 import Noctium.Verification.ScalarRangeLowering
 import Noctium.Verification.ScalarStateExtensions
@@ -17,7 +18,7 @@ private def unchanged_result (hash : Hash) (inputs witness : NativeRelation.Assi
     (scope : TextScope state.next text)
     (aliases : LowerAliasAgreement hash inputs witness normalAliases state.aliases values)
     (stateMeaning : LowerStateMeaning hash witness state)
-    (budget : ((Zkir.lowerExpr expression).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.lowerExpr expression).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     ExprStepResult hash inputs witness state normalAliases values expression value := {
   text, finalState := state, finalWitness := witness, normalized
   run, normalization, represents, operandMeaning := meaning, textScope := scope, stateMeaning
@@ -132,7 +133,7 @@ structure NativeStepResult (hash : Hash) (inputs initialWitness : NativeRelation
   operandMeaning : OperandMeaning hash inputs finalWitness text term
   textScope : TextScope finalState.next text
   stateMeaning : LowerStateMeaning hash finalWitness finalState
-  budget : finalState.next ≤ Native.maxInstructions
+  budget : finalState.next ≤ Native.maxInstructions * Native.maxVectorLength
   aliasesPreserved : finalState.aliases = initialState.aliases
   frame : ∀ name, InScope initialState.next name → finalWitness name = initialWitness name
 
@@ -190,7 +191,7 @@ private theorem cached_step (hash : Hash) (inputs witness : NativeRelation.Assig
     (hit : state.expressions.lookup key = some output)
     (run : operation.run state = (output, state))
     (meaning : OperandMeaning hash inputs witness output term)
-    (budget : (operation.run state).2.next ≤ Native.maxInstructions) :
+    (budget : (operation.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state operation term) := by
   refine ⟨{
     text := output
@@ -220,9 +221,9 @@ private theorem fresh_step (hash : Hash) (inputs witness : NativeRelation.Assign
     (scope : ∀ name ∈ instructionIdentifiers instruction, InScope (state.next + 1) name)
     (holds : instruction.Holds hash (assign witness (freshName state.next) value))
     (valueMeaning : value = interpret hash inputs term)
-    (budget : (operation.run state).2.next ≤ Native.maxInstructions) :
+    (budget : (operation.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state operation term) := by
-  have finalBudget : state.next + 1 ≤ Native.maxInstructions := by
+  have finalBudget : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by
     rw [run] at budget
     exact budget
   have valid : validIdentifier (freshName state.next) = true :=
@@ -281,7 +282,7 @@ theorem binary_add_step (hash : Hash) (inputs witness : NativeRelation.Assignmen
     (leftMeaning : OperandMeaning hash inputs witness left leftTerm)
     (rightMeaning : OperandMeaning hash inputs witness right rightTerm)
     (leftScope : TextScope state.next left) (rightScope : TextScope state.next right)
-    (budget : ((Zkir.binary "add" left right).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.binary "add" left right).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (Zkir.binary "add" left right)
       (.binary "add" leftTerm rightTerm)) := by
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
@@ -296,7 +297,7 @@ theorem binary_add_step (hash : Hash) (inputs witness : NativeRelation.Assignmen
         ⟨leftOperand, leftDecoded, leftValue⟩ ⟨rightOperand, rightDecoded, rightValue⟩ hit) budget
   | none =>
     have run := binary_cache_miss state "add" left right hit
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [run] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [run] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state (Zkir.binary "add" left right)
       (.binary "add" leftTerm rightTerm)
@@ -318,7 +319,7 @@ theorem binary_mul_step (hash : Hash) (inputs witness : NativeRelation.Assignmen
     (leftMeaning : OperandMeaning hash inputs witness left leftTerm)
     (rightMeaning : OperandMeaning hash inputs witness right rightTerm)
     (leftScope : TextScope state.next left) (rightScope : TextScope state.next right)
-    (budget : ((Zkir.binary "mul" left right).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.binary "mul" left right).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (Zkir.binary "mul" left right)
       (.binary "mul" leftTerm rightTerm)) := by
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
@@ -333,7 +334,7 @@ theorem binary_mul_step (hash : Hash) (inputs witness : NativeRelation.Assignmen
         ⟨leftOperand, leftDecoded, leftValue⟩ ⟨rightOperand, rightDecoded, rightValue⟩ hit) budget
   | none =>
     have run := binary_cache_miss state "mul" left right hit
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [run] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [run] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state (Zkir.binary "mul" left right)
       (.binary "mul" leftTerm rightTerm)
@@ -355,7 +356,7 @@ theorem binary_testEq_step (hash : Hash) (inputs witness : NativeRelation.Assign
     (leftMeaning : OperandMeaning hash inputs witness left leftTerm)
     (rightMeaning : OperandMeaning hash inputs witness right rightTerm)
     (leftScope : TextScope state.next left) (rightScope : TextScope state.next right)
-    (budget : ((Zkir.binary "test_eq" left right).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.binary "test_eq" left right).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (Zkir.binary "test_eq" left right)
       (.binary "test_eq" leftTerm rightTerm)) := by
   rcases leftMeaning with ⟨leftOperand, leftDecoded, leftValue⟩
@@ -370,7 +371,7 @@ theorem binary_testEq_step (hash : Hash) (inputs witness : NativeRelation.Assign
         ⟨leftOperand, leftDecoded, leftValue⟩ ⟨rightOperand, rightDecoded, rightValue⟩ hit) budget
   | none =>
     have run := binary_cache_miss state "test_eq" left right hit
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [run] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [run] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state (Zkir.binary "test_eq" left right)
       (.binary "test_eq" leftTerm rightTerm)
@@ -391,7 +392,7 @@ theorem unary_neg_step (hash : Hash) (inputs witness : NativeRelation.Assignment
     (stateMeaning : LowerStateMeaning hash witness state)
     (meaning : OperandMeaning hash inputs witness text term)
     (scope : TextScope state.next text)
-    (budget : ((Zkir.unary "neg" text).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.unary "neg" text).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (Zkir.unary "neg" text) (.unary "neg" term)) := by
   rcases meaning with ⟨operand, decoded, operandValue⟩
   have names := TextScope.identifiers scope decoded
@@ -403,7 +404,7 @@ theorem unary_neg_step (hash : Hash) (inputs witness : NativeRelation.Assignment
         ⟨operand, decoded, operandValue⟩ hit) budget
   | none =>
     have run := unary_cache_miss state "neg" text hit
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [run] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [run] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state (Zkir.unary "neg" text) (.unary "neg" term)
       (Zkir.instruction "neg" [("a", toJson text), ("output", toJson (freshName state.next))])
@@ -422,7 +423,7 @@ theorem unary_not_step (hash : Hash) (inputs witness : NativeRelation.Assignment
     (meaning : OperandMeaning hash inputs witness text term)
     (scope : TextScope state.next text)
     (boolean : interpret hash inputs term = zero ∨ interpret hash inputs term = one)
-    (budget : ((Zkir.unary "not" text).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((Zkir.unary "not" text).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state (Zkir.unary "not" text) (.unary "not" term)) := by
   rcases meaning with ⟨operand, decoded, operandValue⟩
   have names := TextScope.identifiers scope decoded
@@ -434,7 +435,7 @@ theorem unary_not_step (hash : Hash) (inputs witness : NativeRelation.Assignment
         ⟨operand, decoded, operandValue⟩ hit) budget
   | none =>
     have run := unary_cache_miss state "not" text hit
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [run] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [run] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state (Zkir.unary "not" text) (.unary "not" term)
       (Zkir.instruction "not" [("a", toJson text), ("output", toJson (freshName state.next))])
@@ -450,8 +451,8 @@ theorem unary_not_step (hash : Hash) (inputs witness : NativeRelation.Assignment
 
 theorem subtraction_preserves (left right : String) :
     ScalarAllocation.PreservesFrame (do let negated ← Zkir.unary "neg" right; Zkir.binary "add" left negated) :=
-  ScalarAllocation.bind_preserves _ _ (ScalarAllocation.unary_preserves "neg" right)
-    (fun negated => ScalarAllocation.binary_preserves "add" left negated)
+  ScalarAllocation.bind_preserves _ _ (ScalarAllocation.unary_preserves "neg" right ⟨by decide, by decide, by decide⟩)
+    (fun negated => ScalarAllocation.binary_preserves "add" left negated ⟨by decide, by decide, by decide⟩)
 
 theorem subtraction_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
     (state : Zkir.LowerState) (left right : String) (leftTerm rightTerm : Native.Term)
@@ -459,22 +460,22 @@ theorem subtraction_step (hash : Hash) (inputs witness : NativeRelation.Assignme
     (leftMeaning : OperandMeaning hash inputs witness left leftTerm)
     (rightMeaning : OperandMeaning hash inputs witness right rightTerm)
     (leftScope : TextScope state.next left) (rightScope : TextScope state.next right)
-    (budget : ((do let negated ← Zkir.unary "neg" right; Zkir.binary "add" left negated).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((do let negated ← Zkir.unary "neg" right; Zkir.binary "add" left negated).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state
       (do let negated ← Zkir.unary "neg" right; Zkir.binary "add" left negated)
       (.binary "add" leftTerm (.unary "neg" rightTerm))) := by
   have unaryBudget := ScalarAllocation.bind_middle_budget (Zkir.unary "neg" right)
     (fun negated => Zkir.binary "add" left negated) state
-    (fun negated => ScalarAllocation.binary_preserves "add" left negated) Native.maxInstructions budget
+    (fun negated => ScalarAllocation.binary_preserves "add" left negated ⟨by decide, by decide, by decide⟩) (Native.maxInstructions * Native.maxVectorLength) budget
   obtain ⟨negative⟩ := unary_neg_step hash inputs witness state right rightTerm stateMeaning rightMeaning rightScope unaryBudget
   have negativeNext : state.next ≤ negative.finalState.next := by
-    have bound := (ScalarAllocation.unary_preserves "neg" right state).next
+    have bound := (ScalarAllocation.unary_preserves "neg" right ⟨by decide, by decide, by decide⟩ state).next
     rw [negative.run] at bound
     exact bound
   have preservedLeft := OperandMeaning.of_frame hash inputs witness negative.finalWitness state.next left leftTerm
     leftMeaning leftScope negative.frame
   have preservedScope := TextScope.mono negativeNext leftScope
-  have addBudget : ((Zkir.binary "add" left negative.text).run negative.finalState).2.next ≤ Native.maxInstructions := by
+  have addBudget : ((Zkir.binary "add" left negative.text).run negative.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     rw [StateT.run_bind, negative.run] at budget
     exact budget
   obtain ⟨added⟩ := binary_add_step hash inputs negative.finalWitness negative.finalState left negative.text
@@ -486,26 +487,26 @@ theorem boolean_cast_step (hash : Hash) (inputs witness : NativeRelation.Assignm
     (state : Zkir.LowerState) (text : String) (term : Native.Term)
     (stateMeaning : LowerStateMeaning hash witness state)
     (meaning : OperandMeaning hash inputs witness text term) (scope : TextScope state.next text)
-    (budget : ((do let compared ← Zkir.binary "test_eq" text "0x00"; Zkir.unary "not" compared).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((do let compared ← Zkir.binary "test_eq" text "0x00"; Zkir.unary "not" compared).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state
       (do let compared ← Zkir.binary "test_eq" text "0x00"; Zkir.unary "not" compared)
       (.unary "not" (.binary "test_eq" term (.constant 0)))) := by
   have compareBudget := ScalarAllocation.bind_middle_budget (Zkir.binary "test_eq" text "0x00")
     (fun compared => Zkir.unary "not" compared) state
-    (fun compared => ScalarAllocation.unary_preserves "not" compared) Native.maxInstructions budget
+    (fun compared => ScalarAllocation.unary_preserves "not" compared ⟨by decide, by decide, by decide⟩) (Native.maxInstructions * Native.maxVectorLength) budget
   have spelling : Zkir.fieldImmediate 0 = "0x00" := by decide
   obtain ⟨compared⟩ := binary_testEq_step hash inputs witness state text "0x00" term (.constant 0) stateMeaning meaning
     (by simpa only [spelling] using OperandMeaning.fieldImmediate hash inputs witness 0 (by decide)) scope
     (by simpa only [spelling] using TextScope.fieldImmediate state.next 0 (by decide)) compareBudget
   have compareNext : state.next ≤ compared.finalState.next := by
-    have bound := (ScalarAllocation.binary_preserves "test_eq" text "0x00" state).next
+    have bound := (ScalarAllocation.binary_preserves "test_eq" text "0x00" ⟨by decide, by decide, by decide⟩ state).next
     rw [compared.run] at bound
     exact bound
   have boolean : interpret hash inputs (.binary "test_eq" term (.constant 0)) = zero ∨
       interpret hash inputs (.binary "test_eq" term (.constant 0)) = one := by
     rw [interpret_testEq]
     cases decide (interpret hash inputs term = interpret hash inputs (.constant 0)) <;> simp [bit]
-  have notBudget : ((Zkir.unary "not" compared.text).run compared.finalState).2.next ≤ Native.maxInstructions := by
+  have notBudget : ((Zkir.unary "not" compared.text).run compared.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
     rw [StateT.run_bind, compared.run] at budget
     exact budget
   obtain ⟨negated⟩ := unary_not_step hash inputs compared.finalWitness compared.finalState compared.text
@@ -547,7 +548,7 @@ theorem constrainUnsigned_step (hash : Hash) (inputs witness : NativeRelation.As
     (stateMeaning : LowerStateMeaning hash witness state)
     (meaning : OperandMeaning hash inputs witness text term) (scope : TextScope state.next text)
     (range : (interpret hash inputs term).val ≤ maximum) (admitted : maximum ≤ ScalarPolicy.maxUint)
-    (budget : ((do Zkir.constrainUnsigned maximum text; pure text).run state).2.next ≤ Native.maxInstructions) :
+    (budget : ((do Zkir.constrainUnsigned maximum text; pure text).run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state
       (do Zkir.constrainUnsigned maximum text; pure text) term) := by
   rcases meaning with ⟨operand, operandDecoded, operandValue⟩
@@ -555,8 +556,8 @@ theorem constrainUnsigned_step (hash : Hash) (inputs witness : NativeRelation.As
   have names := TextScope.identifiers scope operandDecoded
   let after := ((Zkir.constrainUnsigned maximum text).run state).2
   have next : state.next ≤ after.next := (ScalarAllocation.constrainUnsigned_preserves maximum text state).next
-  have finalBudget : after.next ≤ Native.maxInstructions := budget
-  have beforeBudget : state.next ≤ Native.maxInstructions := Nat.le_trans next finalBudget
+  have finalBudget : after.next ≤ Native.maxInstructions * Native.maxVectorLength := budget
+  have beforeBudget : state.next ≤ Native.maxInstructions * Native.maxVectorLength := Nat.le_trans next finalBudget
   have independent := Operand.independent_of_scope state.next operand names
   have priorIndependent : ∀ instruction ∈ prior, InstructionIndependent (freshName state.next) instruction := by
     intro instruction member
@@ -665,17 +666,17 @@ theorem complete_add (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; Zkir.binary "add" a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right)
-          (fun b => ScalarAllocation.binary_preserves "add" a b)) Native.maxInstructions budget
+          (fun b => ScalarAllocation.binary_preserves "add" a b ⟨by decide, by decide, by decide⟩)) (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; Zkir.binary "add" first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; Zkir.binary "add" first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         change ((do let a ← Zkir.lowerExpr left; let b ← Zkir.lowerExpr right; Zkir.binary "add" a b).run state).2.next ≤ _ at bound
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right)
         (fun b => Zkir.binary "add" first.text b) first.finalState
-        (fun b => ScalarAllocation.binary_preserves "add" first.text b) Native.maxInstructions remainingBudget
+        (fun b => ScalarAllocation.binary_preserves "add" first.text b ⟨by decide, by decide, by decide⟩) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -689,7 +690,7 @@ theorem complete_add (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have nativeBudget : ((Zkir.binary "add" first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have nativeBudget : ((Zkir.binary "add" first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       obtain ⟨native⟩ := binary_add_step hash inputs second.finalWitness second.finalState first.text second.text
@@ -748,17 +749,17 @@ theorem complete_mul (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; Zkir.binary "mul" a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right)
-          (fun b => ScalarAllocation.binary_preserves "mul" a b)) Native.maxInstructions budget
+          (fun b => ScalarAllocation.binary_preserves "mul" a b ⟨by decide, by decide, by decide⟩)) (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; Zkir.binary "mul" first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; Zkir.binary "mul" first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         change ((do let a ← Zkir.lowerExpr left; let b ← Zkir.lowerExpr right; Zkir.binary "mul" a b).run state).2.next ≤ _ at bound
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right)
         (fun b => Zkir.binary "mul" first.text b) first.finalState
-        (fun b => ScalarAllocation.binary_preserves "mul" first.text b) Native.maxInstructions remainingBudget
+        (fun b => ScalarAllocation.binary_preserves "mul" first.text b ⟨by decide, by decide, by decide⟩) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -772,7 +773,7 @@ theorem complete_mul (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have nativeBudget : ((Zkir.binary "mul" first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have nativeBudget : ((Zkir.binary "mul" first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       obtain ⟨native⟩ := binary_mul_step hash inputs second.finalWitness second.finalState first.text second.text
@@ -822,7 +823,7 @@ theorem complete_uadd {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
     Zkir.constrainUnsigned (m + n) output
     pure output
   have tailPreserves (a b : String) : ScalarAllocation.PreservesFrame (tail a b) :=
-    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "add" a b)
+    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "add" a b ⟨by decide, by decide, by decide⟩)
       (fun output => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves (m + n) output)
         (fun _ => ScalarAllocation.pure_preserves output))
   change ((do let a ← Zkir.lowerExpr left; let b ← Zkir.lowerExpr right; tail a b).run state).2.next ≤ _ at budget
@@ -843,15 +844,15 @@ theorem complete_uadd {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; tail a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right) (tailPreserves a))
-        Native.maxInstructions budget
+        (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right) (tail first.text) first.finalState
-        (tailPreserves first.text) Native.maxInstructions remainingBudget
+        (tailPreserves first.text) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -865,18 +866,18 @@ theorem complete_uadd {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       have binaryBudget := ScalarAllocation.bind_middle_budget (Zkir.binary "add" first.text second.text)
         (fun output => do Zkir.constrainUnsigned (m + n) output; pure output) second.finalState
         (fun output => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves (m + n) output)
-          (fun _ => ScalarAllocation.pure_preserves output)) Native.maxInstructions tailBudget
+          (fun _ => ScalarAllocation.pure_preserves output)) (Native.maxInstructions * Native.maxVectorLength) tailBudget
       obtain ⟨binary⟩ := binary_add_step hash inputs second.finalWitness second.finalState first.text second.text
         first.normalized.term second.normalized.term second.stateMeaning leftMeaning second.operandMeaning
         leftScope second.textScope binaryBudget
       have binaryNext : second.finalState.next ≤ binary.finalState.next := by
-        have bound := (ScalarAllocation.binary_preserves "add" first.text second.text second.finalState).next
+        have bound := (ScalarAllocation.binary_preserves "add" first.text second.text ⟨by decide, by decide, by decide⟩ second.finalState).next
         rw [binary.run] at bound
         exact bound
       obtain ⟨normalized, normalization, represents⟩ :=
@@ -889,7 +890,7 @@ theorem complete_uadd {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have resultRange : (interpret hash inputs (.binary "add" first.normalized.term second.normalized.term)).val ≤ m + n := by
         rw [← termEq, represents.2.2]
         exact Nat.le_trans (Nat.mod_le value Field.modulus) represents.1.2.2
-      have rangeBudget : ((do Zkir.constrainUnsigned (m + n) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions := by
+      have rangeBudget : ((do Zkir.constrainUnsigned (m + n) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         change ((do let output ← Zkir.binary "add" first.text second.text; Zkir.constrainUnsigned (m + n) output; pure output).run second.finalState).2.next ≤ _ at tailBudget
         rw [StateT.run_bind, binary.run] at tailBudget
         exact tailBudget
@@ -934,7 +935,7 @@ theorem complete_umul {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
     Zkir.constrainUnsigned (m * n) output
     pure output
   have tailPreserves (a b : String) : ScalarAllocation.PreservesFrame (tail a b) :=
-    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "mul" a b)
+    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "mul" a b ⟨by decide, by decide, by decide⟩)
       (fun output => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves (m * n) output)
         (fun _ => ScalarAllocation.pure_preserves output))
   change ((do let a ← Zkir.lowerExpr left; let b ← Zkir.lowerExpr right; tail a b).run state).2.next ≤ _ at budget
@@ -955,15 +956,15 @@ theorem complete_umul {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; tail a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right) (tailPreserves a))
-        Native.maxInstructions budget
+        (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right) (tail first.text) first.finalState
-        (tailPreserves first.text) Native.maxInstructions remainingBudget
+        (tailPreserves first.text) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -977,18 +978,18 @@ theorem complete_umul {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       have binaryBudget := ScalarAllocation.bind_middle_budget (Zkir.binary "mul" first.text second.text)
         (fun output => do Zkir.constrainUnsigned (m * n) output; pure output) second.finalState
         (fun output => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves (m * n) output)
-          (fun _ => ScalarAllocation.pure_preserves output)) Native.maxInstructions tailBudget
+          (fun _ => ScalarAllocation.pure_preserves output)) (Native.maxInstructions * Native.maxVectorLength) tailBudget
       obtain ⟨binary⟩ := binary_mul_step hash inputs second.finalWitness second.finalState first.text second.text
         first.normalized.term second.normalized.term second.stateMeaning leftMeaning second.operandMeaning
         leftScope second.textScope binaryBudget
       have binaryNext : second.finalState.next ≤ binary.finalState.next := by
-        have bound := (ScalarAllocation.binary_preserves "mul" first.text second.text second.finalState).next
+        have bound := (ScalarAllocation.binary_preserves "mul" first.text second.text ⟨by decide, by decide, by decide⟩ second.finalState).next
         rw [binary.run] at bound
         exact bound
       obtain ⟨normalized, normalization, represents⟩ :=
@@ -1001,7 +1002,7 @@ theorem complete_umul {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have resultRange : (interpret hash inputs (.binary "mul" first.normalized.term second.normalized.term)).val ≤ m * n := by
         rw [← termEq, represents.2.2]
         exact Nat.le_trans (Nat.mod_le value Field.modulus) represents.1.2.2
-      have rangeBudget : ((do Zkir.constrainUnsigned (m * n) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions := by
+      have rangeBudget : ((do Zkir.constrainUnsigned (m * n) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         change ((do let output ← Zkir.binary "mul" first.text second.text; Zkir.constrainUnsigned (m * n) output; pure output).run second.finalState).2.next ≤ _ at tailBudget
         rw [StateT.run_bind, binary.run] at tailBudget
         exact tailBudget
@@ -1045,8 +1046,8 @@ theorem complete_sub (left right : Expr .native) (ihLeft : ExprComplete left) (i
     let negated ← Zkir.unary "neg" b
     Zkir.binary "add" a negated
   have tailPreserves (a b : String) : ScalarAllocation.PreservesFrame (tail a b) :=
-    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.unary_preserves "neg" b)
-      (fun negated => ScalarAllocation.binary_preserves "add" a negated)
+    ScalarAllocation.bind_preserves _ _ (ScalarAllocation.unary_preserves "neg" b ⟨by decide, by decide, by decide⟩)
+      (fun negated => ScalarAllocation.binary_preserves "add" a negated ⟨by decide, by decide, by decide⟩)
   have validation := valid
   change (do left.validate {poseidon2 := true} types; right.validate {poseidon2 := true} types) = .ok () at validation
   simp only [ScalarValidation.bind_ok] at validation
@@ -1061,17 +1062,17 @@ theorem complete_sub (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; tail a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right)
-          (fun b => tailPreserves a b)) Native.maxInstructions budget
+          (fun b => tailPreserves a b)) (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         change ((do let a ← Zkir.lowerExpr left; let b ← Zkir.lowerExpr right; tail a b).run state).2.next ≤ _ at bound
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right)
         (fun b => tail first.text b) first.finalState
-        (fun b => tailPreserves first.text b) Native.maxInstructions remainingBudget
+        (fun b => tailPreserves first.text b) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -1085,7 +1086,7 @@ theorem complete_sub (left right : Expr .native) (ihLeft : ExprComplete left) (i
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have nativeBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have nativeBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       obtain ⟨native⟩ := subtraction_step hash inputs second.finalWitness second.finalState first.text second.text
@@ -1156,15 +1157,15 @@ theorem complete_usub {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr left)
         (fun a => do let b ← Zkir.lowerExpr right; tail a b) state
         (fun a => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.lowerExpr_preserves right) (tailPreserves a))
-        Native.maxInstructions budget
+        (Native.maxInstructions * Native.maxVectorLength) budget
       obtain ⟨first⟩ := ihLeft ctx hash implementation inputs witness state normalAliases values types leftValue
         leftValid leftEval aliases lowerAliases stateMeaning leftBudget
-      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions := by
+      have remainingBudget : ((do let b ← Zkir.lowerExpr right; tail first.text b).run first.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         have bound := budget
         rw [StateT.run_bind, first.run] at bound
         exact bound
       have rightBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr right) (tail first.text) first.finalState
-        (tailPreserves first.text) Native.maxInstructions remainingBudget
+        (tailPreserves first.text) (Native.maxInstructions * Native.maxVectorLength) remainingBudget
       obtain ⟨second⟩ := ihRight ctx hash implementation inputs first.finalWitness first.finalState normalAliases values types rightValue
         rightValid rightEval aliases first.aliasAgreement first.stateMeaning rightBudget
       have firstNext : state.next ≤ first.finalState.next := by
@@ -1178,13 +1179,13 @@ theorem complete_usub {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have leftMeaning := OperandMeaning.of_frame hash inputs first.finalWitness second.finalWitness
         first.finalState.next first.text first.normalized.term first.operandMeaning first.textScope second.frame
       have leftScope := TextScope.mono secondNext first.textScope
-      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions := by
+      have tailBudget : ((tail first.text second.text).run second.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         rw [StateT.run_bind, second.run] at remainingBudget
         exact remainingBudget
       have binaryBudget := ScalarAllocation.bind_middle_budget (do let negated ← Zkir.unary "neg" second.text; Zkir.binary "add" first.text negated)
         (fun output => do Zkir.constrainUnsigned (m) output; pure output) second.finalState
         (fun output => ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves (m) output)
-          (fun _ => ScalarAllocation.pure_preserves output)) Native.maxInstructions tailBudget
+          (fun _ => ScalarAllocation.pure_preserves output)) (Native.maxInstructions * Native.maxVectorLength) tailBudget
       obtain ⟨binary⟩ := subtraction_step hash inputs second.finalWitness second.finalState first.text second.text
         first.normalized.term second.normalized.term second.stateMeaning leftMeaning second.operandMeaning
         leftScope second.textScope binaryBudget
@@ -1202,7 +1203,7 @@ theorem complete_usub {m n : Nat} (left : Expr (.uint m)) (right : Expr (.uint n
       have resultRange : (interpret hash inputs (.binary "add" first.normalized.term (.unary "neg" second.normalized.term))).val ≤ m := by
         rw [← termEq, represents.2.2]
         exact Nat.le_trans (Nat.mod_le value Field.modulus) represents.1.2.2
-      have rangeBudget : ((do Zkir.constrainUnsigned (m) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions := by
+      have rangeBudget : ((do Zkir.constrainUnsigned (m) binary.text; pure binary.text).run binary.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
         change ((do let output ← (do let negated ← Zkir.unary "neg" second.text; Zkir.binary "add" first.text negated); Zkir.constrainUnsigned (m) output; pure output).run second.finalState).2.next ≤ _ at tailBudget
         rw [StateT.run_bind, binary.run] at tailBudget
         exact tailBudget
@@ -1250,8 +1251,8 @@ theorem complete_cast {sourceTy : Ty} (target : Ty) (expression : Expr sourceTy)
     cases target with
     | native => exact ScalarAllocation.pure_preserves text
     | bool =>
-      exact ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "test_eq" text "0x00")
-        (fun compared => ScalarAllocation.unary_preserves "not" compared)
+      exact ScalarAllocation.bind_preserves _ _ (ScalarAllocation.binary_preserves "test_eq" text "0x00" ⟨by decide, by decide, by decide⟩)
+        (fun compared => ScalarAllocation.unary_preserves "not" compared ⟨by decide, by decide, by decide⟩)
     | uint maximum =>
       exact ScalarAllocation.bind_preserves _ _ (ScalarAllocation.constrainUnsigned_preserves maximum text)
         (fun _ => ScalarAllocation.pure_preserves text)
@@ -1264,14 +1265,14 @@ theorem complete_cast {sourceTy : Ty} (target : Ty) (expression : Expr sourceTy)
   | error message => simp [Expr.eval, evaluated, Bind.bind, Except.bind] at success
   | ok expressionValue =>
     have expressionBudget := ScalarAllocation.bind_middle_budget (Zkir.lowerExpr expression) tail state
-      tailPreserves Native.maxInstructions budget
+      tailPreserves (Native.maxInstructions * Native.maxVectorLength) budget
     obtain ⟨child⟩ := ih ctx hash implementation inputs witness state normalAliases values types expressionValue
       expressionValid evaluated aliases lowerAliases stateMeaning expressionBudget
     have childNext : state.next ≤ child.finalState.next := by
       have bound := ScalarAllocation.lowerExpr_next expression state
       rw [child.run] at bound
       exact bound
-    have tailBudget : ((tail child.text).run child.finalState).2.next ≤ Native.maxInstructions := by
+    have tailBudget : ((tail child.text).run child.finalState).2.next ≤ Native.maxInstructions * Native.maxVectorLength := by
       rw [StateT.run_bind, child.run] at budget
       exact budget
     obtain ⟨normalized, normalization, represents⟩ :=
@@ -1351,7 +1352,7 @@ theorem select_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
           (Zkir.instruction "cond_select" [("bit", toJson condition), ("a", toJson yes), ("b", toJson no),
             ("output", toJson (freshName state.next))])
           ("cond_select", [condition, yes, no], none) (freshName state.next)))
-    (budget : (operation.run state).2.next ≤ Native.maxInstructions) :
+    (budget : (operation.run state).2.next ≤ Native.maxInstructions * Native.maxVectorLength) :
     Nonempty (NativeStepResult hash inputs witness state operation (.select conditionTerm yesTerm noTerm)) := by
   rcases conditionMeaning with ⟨conditionOperand, conditionDecoded, conditionValue⟩
   rcases yesMeaning with ⟨yesOperand, yesDecoded, yesValue⟩
@@ -1371,7 +1372,7 @@ theorem select_step (hash : Hash) (inputs witness : NativeRelation.Assignment)
         (Zkir.instruction "cond_select" [("bit", toJson condition), ("a", toJson yes), ("b", toJson no),
           ("output", toJson (freshName state.next))])
         ("cond_select", [condition, yes, no], none) (freshName state.next)) := by rw [run, hit]
-    have counter : state.next + 1 ≤ Native.maxInstructions := by rw [actualRun] at budget; exact budget
+    have counter : state.next + 1 ≤ Native.maxInstructions * Native.maxVectorLength := by rw [actualRun] at budget; exact budget
     have valid : validIdentifier (freshName state.next) = true := fresh_identifier state.next (by omega)
     apply fresh_step hash inputs witness state operation (.select conditionTerm yesTerm noTerm)
       (Zkir.instruction "cond_select" [("bit", toJson condition), ("a", toJson yes), ("b", toJson no),
