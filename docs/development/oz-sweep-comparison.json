@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-25",
+  "issue": "https://github.com/awjreynolds/noctium/issues/1382",
+  "scope": "One in-process sweep after registered Alice and Bob receive synthetic pending mints of 12 and 7, followed by an unregistered invocation on both sides and a stale pending candidate on Noctium.",
+  "target": {
+    "ledger": "9.1.0.1",
+    "zkir": "3.2.1",
+    "profileSha256": "02b4242c2561232daea1d7d1d29bde68f3157eb9eed8cfb037254a0013f40093"
+  },
+  "observation": {
+    "before": {
+      "aliceBalance": "0",
+      "alicePending": "12",
+      "bobBalance": "0",
+      "bobPending": "7",
+      "totalSupply": "19"
+    },
+    "after": {
+      "aliceBalance": "12",
+      "alicePending": "0",
+      "bobBalance": "0",
+      "bobPending": "7",
+      "totalSupply": "19"
+    },
+    "returnedCaller": "02d449a31fbb267c8f352e9968a79e3e5fc95c1bbeaa502fd6454ebde5a4bedc",
+    "siblingUnchanged": true
+  },
+  "matchingScope": "No direct call arguments, Bytes32 caller return, tested spendable and pending transitions, sibling preservation and unregistered rejection.",
+  "sizing": {
+    "eligible": false,
+    "reason": "Noctium receives explicit account and old ciphertext bindings at the hosted witness boundary and checks them against ledger values. Compact derives the account and obtains both ciphertexts through direct ledger reads."
+  },
+  "noctium": {
+    "compilerRevision": "948dd6831438768d4a6dd0d22b94c8b27c59bb0b",
+    "lean": "leanprover/lean4:v4.35.0",
+    "tokenSourceSha256": "f52ed8886d547e4b303a2a1d9c835314cce4b05d64f035439aeb8a42275ae367",
+    "runtimeTestSource": "runtime/tests/confidential_token.rs",
+    "sweepZkir": {
+      "sha256": "04425d6921742fa401c74379de8e16f9a98358d719c76f37f96a54b937b65942",
+      "inputs": [],
+      "outputs": [
+        "Scalar<BLS12-381>",
+        "Scalar<BLS12-381>"
+      ],
+      "inputInstructions": {
+        "public_input": 22,
+        "private_input": 64
+      }
+    },
+    "sweepImpactSha256": "525d61afa7e75d2413317ec2b68c24f33ecbfb01daae061880946d89e5a1ed2c",
+    "sweepWitnessControlSha256": "7d70a6504e2ac2da509f6499b69e8a9052497c19eb14b03ba700f17b5b19432c",
+    "witnessInputs": [
+      {
+        "name": "accountId",
+        "type": "Bytes<32>"
+      },
+      {
+        "name": "balanceC1X",
+        "type": "Native"
+      },
+      {
+        "name": "balanceC1Y",
+        "type": "Native"
+      },
+      {
+        "name": "balanceC2X",
+        "type": "Native"
+      },
+      {
+        "name": "balanceC2Y",
+        "type": "Native"
+      },
+      {
+        "name": "pendingC1X",
+        "type": "Native"
+      },
+      {
+        "name": "pendingC1Y",
+        "type": "Native"
+      },
+      {
+        "name": "pendingC2X",
+        "type": "Native"
+      },
+      {
+        "name": "pendingC2Y",
+        "type": "Native"
+      }
+    ],
+    "ledgerStatePaths": [
+      "balances[accountId]",
+      "pending[accountId]"
+    ],
+    "balanceCiphertextSumChecked": true,
+    "pendingResetToIdentity": true,
+    "siblingMemoAndEpochPreserved": true,
+    "unregisteredRejection": {
+      "accepted": false,
+      "accountId": "23d80081d9366bf46cc350aae99f6aa12214e60aeb4c0a264aa321a1e80980cb",
+      "error": "missing map path key",
+      "stateUnchanged": true
+    },
+    "staleCommitmentRejection": {
+      "accepted": false,
+      "accountId": "02d449a31fbb267c8f352e9968a79e3e5fc95c1bbeaa502fd6454ebde5a4bedc",
+      "error": "native circuit assertion or preimage check failed",
+      "pendingCommitment": "identity ciphertext",
+      "stateUnchanged": true
+    }
+  },
+  "compact": {
+    "compiler": "0.36.1 (7fa3a117c 2026-11-11)",
+    "compilerSha256": "15646793d3ff7f36cd81aa63419163e29d9893538bb4a6911a21012e8735b537",
+    "runtime": "0.21.0",
+    "openZeppelinCommit": "f85f1a23685c6bbedfc8c2589ae3aa128aff7c46",
+    "wrapperSha256": "4f30d84cf9567529ca15cade71f22cab08512a6371b6277655352943efa836f9",
+    "oracleSource": "tests/compact/confidential-token-sweep.mjs",
+    "sweepZkir": {
+      "sha256": "d0ae945b67d61f77fd4351c9fdd6259f8199254e52a0cd8908c178c3e80e3dfc",
+      "inputs": [],
+      "outputs": [
+        "Scalar<BLS12-381>",
+        "Scalar<BLS12-381>"
+      ],
+      "inputInstructions": {
+        "public_input": 7,
+        "private_input": 4
+      }
+    },
+    "generatedInterfaceSha256": "b72b0d8d5a36aef6ecdb293cd415d7e9bec963efc71e6704f58de6236fba8c9e",
+    "directArgumentTypes": [],
+    "generatedResultType": {
+      "tag": "Bytes",
+      "length": 32
+    },
+    "ledgerStatePaths": [
+      "Token__balances[accountId]",
+      "Token__pending[accountId]"
+    ],
+    "balanceCiphertextSumChecked": true,
+    "pendingResetToIdentity": true,
+    "otherMapEntriesPreserved": {
+      "allEncryptionKeys": true,
+      "allMemoLists": true,
+      "allEscrowEntries": true,
+      "allNonAliceBalanceEntries": true,
+      "allNonAlicePendingEntries": true
+    },
+    "unregisteredRejection": {
+      "circuit": "sweep",
+      "callerAccountId": "23d80081d9366bf46cc350aae99f6aa12214e60aeb4c0a264aa321a1e80980cb",
+      "expected": "ConfidentialFungibleToken: not registered",
+      "rejected": true,
+      "errorName": "CompactError",
+      "errorMessage": "failed assert: ConfidentialFungibleToken: not registered",
+      "exactStateFrameUnchanged": true,
+      "state": {
+        "sha256Before": "21c8423d973ca299347db6fbe048a44f0881645b3287b8f0e135fb2262ab587f",
+        "sha256After": "21c8423d973ca299347db6fbe048a44f0881645b3287b8f0e135fb2262ab587f",
+        "unchanged": true
+      }
+    }
+  }
+}

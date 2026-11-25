@@ -494,6 +494,69 @@ PYTHON
 "$ZKIR_321" mock-compile "$scratch/compact/zkir/totalSupply.zkir"
 ```
 
+## Paired sweep state observations
+
+Both generated interfaces accepted a no-argument sweep and returned the
+same Bytes32 caller. The test registered two synthetic accounts and minted
+pending credits of 12 and 7. Both sides checked the ElGamal ciphertext sum
+and identity reset. The amounts below describe this seeded fixture.
+[Observations and artifact hashes](oz-sweep-comparison.json)
+
+| Observed amount | Before | After |
+| --- | ---: | ---: |
+| Alice spendable | 0 | 12 |
+| Alice pending | 12 | 0 |
+| Bob spendable | 0 | 0 |
+| Bob pending | 7 | 7 |
+| Total supply | 19 | 19 |
+
+Bob's checked ciphertexts and memo history stayed unchanged. Both sides
+rejected the same unregistered caller and preserved the input state. The
+Noctium run also replaced Alice's pending candidate with the old identity
+ciphertext and rejected it at the native check.
+
+The actual state paths are Noctium's `balances[accountId]` and
+`pending[accountId]` and Compact's `Token__balances[accountId]` and
+`Token__pending[accountId]`. The Noctium host witness takes the account ID
+and eight old ciphertext coordinates and binds them to ledger reads. The
+Compact circuit derives the ID and reads both ledger paths directly. Both
+ZKIR headers have two scalar outputs and no declared inputs. Their
+instruction streams bind inputs differently. This evidence qualifies the
+tested state transition and leaves paired K and rows unreported.
+[Native port](../../examples/openzeppelin/ConfidentialToken.lean) ·
+[Pinned token module](https://github.com/OpenZeppelin/compact-contracts/blob/f85f1a23685c6bbedfc8c2589ae3aa128aff7c46/contracts/src/token/ConfidentialFungibleToken.compact)
+
+## Paired sweep reproduction
+
+Use the same pinned Compact compiler, runtime and OpenZeppelin checkout as
+the totalSupply comparison. The native replay uses the stock Noctium port
+and the selected Ledger 9.1.0.1 / ZKIR 3.2.1 profile.
+
+```sh
+set -eu
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+lake build Noctium.Compiler Noctium.Frontend Noctium.Cli
+lake env lean --run NoctiumMain.lean compile examples/openzeppelin/ConfidentialToken.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --dedup-range-checks --output "$scratch/native"
+NOCTIUM_SWEEP_ARTIFACTS="$scratch/native" NOCTIUM_SWEEP_RESULT="$scratch/native.json" \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+    --no-default-features --features zkir-321 --test confidential_token \
+    confidential_token_sweep_native_observation -- --exact --ignored
+node tests/compact/confidential-token-sweep.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" "$OZ_SOURCE" "$scratch/compact" \
+  > "$scratch/compact.json"
+python3 - "$scratch/native.json" "$scratch/compact.json" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+native, compact = [json.loads(Path(name).read_bytes()) for name in sys.argv[1:]]
+for field in ["before", "after", "returnedCaller", "siblingUnchanged"]:
+    assert native["observation"][field] == compact["observation"][field]
+PYTHON
+```
+
 ## Reproduction and limits
 
 ```sh

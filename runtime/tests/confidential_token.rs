@@ -2719,6 +2719,392 @@ fn confidential_token_total_supply_native_observation() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires fresh ConfidentialToken artifacts in NOCTIUM_SWEEP_ARTIFACTS"]
+fn confidential_token_sweep_native_observation() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_SWEEP_ARTIFACTS")
+            .expect("set the directory containing fresh ConfidentialToken artifacts"),
+    );
+    let alice_account_secret = [17u8; 32];
+    let alice_encryption_secret = [7u8; 32];
+    let bob_account_secret = [18u8; 32];
+    let bob_encryption_secret = [8u8; 32];
+    let missing_account_secret = [19u8; 32];
+    let missing_encryption_secret = [9u8; 32];
+    let alice = account_id(&alice_account_secret);
+    let bob = account_id(&bob_account_secret);
+    let missing = account_id(&missing_account_secret);
+    let alice_scalar = encryption_scalar(&alice_encryption_secret);
+    let bob_scalar = encryption_scalar(&bob_encryption_secret);
+    let generator = EmbeddedGroupAffine::generator();
+    let alice_key = generator * alice_scalar;
+    let bob_key = generator * bob_scalar;
+    let identity = generator * EmbeddedFr::from(0u64);
+    let identity_ciphertext = Ciphertext {
+        c1: identity,
+        c2: identity,
+    };
+
+    let register_plan = generated_plan(&directory, "registerWithKey");
+    let mint_plan = generated_plan(&directory, "mint");
+    let sweep_plan = generated_plan(&directory, "sweep");
+    let sweep_control = generated_control(&directory, "sweep");
+    let sweep_impact: Json = serde_json::from_slice(&std::fs::read(generated_artifact(
+        &directory,
+        "sweep",
+        ".impact.json",
+    ))?)?;
+    let raw_zkir_header: Json = serde_json::from_slice(&std::fs::read(generated_artifact(
+        &directory, "sweep", ".zkir",
+    ))?)?;
+    let total_supply_plan = generated_plan(&directory, "totalSupply");
+    assert_eq!(sweep_plan.entrypoint, "sweep");
+    assert_eq!(
+        sweep_plan.target_profile.as_ref().unwrap()["ledger"],
+        "9.1.0.1"
+    );
+    assert_eq!(sweep_plan.target_profile.as_ref().unwrap()["zkir"], "3.2.1");
+
+    let mut state = initial_state(&register_plan);
+    for (sequence, account, account_secret, encryption_secret, public_key) in [
+        (
+            1,
+            alice,
+            &alice_account_secret,
+            &alice_encryption_secret,
+            alice_key,
+        ),
+        (2, bob, &bob_account_secret, &bob_encryption_secret, bob_key),
+    ] {
+        state = run_generated_entry(
+            &directory,
+            "registerWithKey",
+            BTreeMap::from([
+                ("accountId".into(), bytes(&account)),
+                ("pk".into(), point_json(public_key)),
+            ]),
+            account_secret,
+            encryption_secret,
+            &[],
+            sequence,
+            &state,
+        )
+        .map_err(anyhow::Error::msg)?
+        .0;
+    }
+
+    let mint_values = |prior_state: &ChargedState<Db>,
+                       recipient: &[u8; 32],
+                       amount: u64,
+                       recipient_key: EmbeddedGroupAffine| {
+        let previous_pending = map_record(&mint_plan, prior_state, "pending", recipient);
+        let mut values = BTreeMap::from([
+            ("recipient".into(), bytes(recipient)),
+            ("value".into(), json!(amount.to_string())),
+            ("recipientPk".into(), point_json(recipient_key)),
+            ("epoch".into(), json!("1")),
+        ]);
+        for (name, value) in ["previousC1X", "previousC1Y", "previousC2X", "previousC2Y"]
+            .into_iter()
+            .zip(previous_pending)
+        {
+            values.insert(name.into(), json!(field_decimal(value)));
+        }
+        values
+    };
+    state = run_generated_entry(
+        &directory,
+        "mint",
+        mint_values(&state, &alice, 12, alice_key),
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[[0x31u8; 32]],
+        3,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+    state = run_generated_entry(
+        &directory,
+        "mint",
+        mint_values(&state, &bob, 7, bob_key),
+        &bob_account_secret,
+        &bob_encryption_secret,
+        &[[0x32u8; 32]],
+        4,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?
+    .0;
+
+    let plaintext = |state: &ChargedState<Db>, account: &[u8; 32], name: &str, key: EmbeddedFr| {
+        decrypt_small(
+            ciphertext_from_fields(&map_record(&sweep_plan, state, name, account), 0),
+            key,
+            64,
+        )
+    };
+    let total_supply = |state: &ChargedState<Db>| {
+        let StateValue::Cell(cell) = state_slot(&total_supply_plan, state, "totalSupply") else {
+            panic!("expected totalSupply cell")
+        };
+        let mut fields = Vec::new();
+        cell.value_only_field_repr(&mut fields);
+        field_decimal(fields[0])
+    };
+    let alice_balance_before =
+        ciphertext_from_fields(&map_record(&sweep_plan, &state, "balances", &alice), 0);
+    let alice_pending_before =
+        ciphertext_from_fields(&map_record(&sweep_plan, &state, "pending", &alice), 0);
+    let bob_snapshot_before = (
+        map_record(&sweep_plan, &state, "balances", &bob),
+        map_record(&sweep_plan, &state, "pending", &bob),
+        memo_records(&sweep_plan, &state, &bob),
+        map_record(&sweep_plan, &state, "creditEpochs", &bob),
+    );
+    let alice_history_before = (
+        memo_records(&sweep_plan, &state, &alice),
+        map_record(&sweep_plan, &state, "creditEpochs", &alice),
+    );
+    let before = json!({
+        "aliceBalance": plaintext(&state, &alice, "balances", alice_scalar).to_string(),
+        "alicePending": plaintext(&state, &alice, "pending", alice_scalar).to_string(),
+        "bobBalance": plaintext(&state, &bob, "balances", bob_scalar).to_string(),
+        "bobPending": plaintext(&state, &bob, "pending", bob_scalar).to_string(),
+        "totalSupply": total_supply(&state)
+    });
+    assert_eq!(before["aliceBalance"], "0");
+    assert_eq!(before["alicePending"], "12");
+    assert_eq!(before["bobBalance"], "0");
+    assert_eq!(before["bobPending"], "7");
+    assert_eq!(before["totalSupply"], "19");
+
+    let make_sweep_values = |account: &[u8; 32], balance: Ciphertext, pending: Ciphertext| {
+        let mut values = BTreeMap::from([("accountId".into(), bytes(account))]);
+        for (name, value) in ["balanceC1X", "balanceC1Y", "balanceC2X", "balanceC2Y"]
+            .into_iter()
+            .zip(
+                coordinates(balance.c1)
+                    .into_iter()
+                    .chain(coordinates(balance.c2)),
+            )
+            .chain(
+                ["pendingC1X", "pendingC1Y", "pendingC2X", "pendingC2Y"]
+                    .into_iter()
+                    .zip(
+                        coordinates(pending.c1)
+                            .into_iter()
+                            .chain(coordinates(pending.c2)),
+                    ),
+            )
+        {
+            values.insert(name.into(), json!(field_decimal(value)));
+        }
+        values
+    };
+    let stale_pending_values = make_sweep_values(&alice, alice_balance_before, identity_ciphertext);
+    let state_before_stale_rejection = state.clone();
+    let stale_pending_rejection = run_generated_entry(
+        &directory,
+        "sweep",
+        stale_pending_values,
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[],
+        5,
+        &state,
+    )
+    .expect_err("stale pending ciphertext commitment must fail the native relation");
+    assert!(!stale_pending_rejection.is_empty());
+    assert_eq!(state, state_before_stale_rejection);
+
+    let sweep_values = make_sweep_values(&alice, alice_balance_before, alice_pending_before);
+    let (after_sweep, sweep_native_inputs, sweep_returns) = run_generated_entry(
+        &directory,
+        "sweep",
+        sweep_values,
+        &alice_account_secret,
+        &alice_encryption_secret,
+        &[],
+        6,
+        &state,
+    )
+    .map_err(anyhow::Error::msg)?;
+    assert_eq!(sweep_returns["caller"], bytes(&alice));
+
+    let alice_balance_after = ciphertext_from_fields(
+        &map_record(&sweep_plan, &after_sweep, "balances", &alice),
+        0,
+    );
+    let alice_pending_after =
+        ciphertext_from_fields(&map_record(&sweep_plan, &after_sweep, "pending", &alice), 0);
+    let expected_balance_after = add_ciphertexts(alice_balance_before, alice_pending_before);
+    assert_eq!(
+        coordinates(alice_balance_after.c1),
+        coordinates(expected_balance_after.c1),
+        "sweep adds c1 of the pending ciphertext to c1 of the balance"
+    );
+    assert_eq!(
+        coordinates(alice_balance_after.c2),
+        coordinates(expected_balance_after.c2),
+        "sweep adds c2 of the pending ciphertext to c2 of the balance"
+    );
+    assert_eq!(
+        coordinates(alice_pending_after.c1),
+        coordinates(identity_ciphertext.c1)
+    );
+    assert_eq!(
+        coordinates(alice_pending_after.c2),
+        coordinates(identity_ciphertext.c2)
+    );
+    assert_eq!(
+        (
+            memo_records(&sweep_plan, &after_sweep, &alice),
+            map_record(&sweep_plan, &after_sweep, "creditEpochs", &alice),
+        ),
+        alice_history_before,
+        "sweep preserves Alice's memo history and credit epoch"
+    );
+    assert_eq!(
+        (
+            map_record(&sweep_plan, &after_sweep, "balances", &bob),
+            map_record(&sweep_plan, &after_sweep, "pending", &bob),
+            memo_records(&sweep_plan, &after_sweep, &bob),
+            map_record(&sweep_plan, &after_sweep, "creditEpochs", &bob),
+        ),
+        bob_snapshot_before,
+        "sweep leaves the sibling account and its memo/epoch observations unchanged"
+    );
+    let after = json!({
+        "aliceBalance": plaintext(&after_sweep, &alice, "balances", alice_scalar).to_string(),
+        "alicePending": plaintext(&after_sweep, &alice, "pending", alice_scalar).to_string(),
+        "bobBalance": plaintext(&after_sweep, &bob, "balances", bob_scalar).to_string(),
+        "bobPending": plaintext(&after_sweep, &bob, "pending", bob_scalar).to_string(),
+        "totalSupply": total_supply(&after_sweep)
+    });
+    assert_eq!(
+        after,
+        json!({
+            "aliceBalance": "12",
+            "alicePending": "0",
+            "bobBalance": "0",
+            "bobPending": "7",
+            "totalSupply": "19"
+        })
+    );
+
+    let state_before_rejection = after_sweep.clone();
+    let rejected_sweep_values =
+        make_sweep_values(&missing, identity_ciphertext, identity_ciphertext);
+    let rejection = run_generated_entry(
+        &directory,
+        "sweep",
+        rejected_sweep_values,
+        &missing_account_secret,
+        &missing_encryption_secret,
+        &[],
+        7,
+        &after_sweep,
+    )
+    .expect_err("unregistered account sweep must fail the native relation");
+    assert!(!rejection.is_empty(), "record the native rejection error");
+    assert_eq!(after_sweep, state_before_rejection);
+
+    let control_inputs = sweep_control["inputs"]
+        .as_array()
+        .expect("typed witness control inputs")
+        .iter()
+        .map(|input| json!({"name": input["name"], "type": input["type"]}))
+        .collect::<Vec<_>>();
+    let plan_circuit_inputs = sweep_plan
+        .circuit
+        .inputs
+        .iter()
+        .map(|input| {
+            json!({
+                "name": input.name,
+                "type": input.ty,
+                "visibility": input.visibility
+            })
+        })
+        .collect::<Vec<_>>();
+    let generated_reads = sweep_impact["reads"]
+        .as_array()
+        .expect("generated sweep read schema")
+        .iter()
+        .map(|read| json!({"name": read["name"], "type": read["type"]}))
+        .collect::<Vec<_>>();
+    let public_input_values = sweep_plan
+        .circuit
+        .inputs
+        .iter()
+        .filter(|input| input.visibility == "public")
+        .map(|input| {
+            (
+                input.name.clone(),
+                sweep_native_inputs
+                    .get(&input.name)
+                    .expect("public sweep commitment has a native value")
+                    .clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let observation = json!({
+        "before": before,
+        "after": after,
+        "returnedCaller": hex::encode(alice),
+        "siblingUnchanged": true
+    });
+    let result = json!({
+        "observation": observation,
+        "rejection": {
+            "accountId": hex::encode(missing),
+            "accepted": false,
+            "error": rejection,
+            "stateUnchanged": after_sweep == state_before_rejection
+        },
+        "staleCommitmentRejection": {
+            "accountId": hex::encode(alice),
+            "pendingCommitment": "identity ciphertext",
+            "accepted": false,
+            "error": stale_pending_rejection,
+            "stateUnchanged": state == state_before_stale_rejection
+        },
+        "native": {
+            "target": sweep_plan.target,
+            "targetProfile": sweep_plan.target_profile,
+            "entrypoint": sweep_plan.entrypoint,
+            "callInputs": sweep_plan.call_inputs,
+            "witnessControlInputs": control_inputs,
+            "planCircuitInputs": plan_circuit_inputs,
+            "generatedReads": generated_reads,
+            "rawZkirHeader": {
+                "inputs": raw_zkir_header["inputs"],
+                "outputs": raw_zkir_header["outputs"]
+            },
+            "publicInputs": public_input_values,
+            "return": sweep_impact["returns"],
+            "callerReturned": true,
+            "ciphertextAdditionVerified": true,
+            "pendingResetToIdentity": true,
+            "aliceMemoAndEpochPreserved": true,
+            "bobMemoAndEpochPreserved": true,
+            "totalSupplyUnchanged": before["totalSupply"] == after["totalSupply"]
+        }
+    });
+    let output = serde_json::to_string(&result)?;
+    println!("{output}");
+    if let Some(path) = std::env::var_os("NOCTIUM_SWEEP_RESULT") {
+        let path = std::path::PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, output)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn confidential_token_registration_pending_sweep_and_transfer_use_native_relations() {
     // These deterministic seeds and keys exercise test plumbing only. They do not establish
     // production seed freshness or production confidentiality.
