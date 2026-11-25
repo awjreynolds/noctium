@@ -4497,7 +4497,7 @@
       "layer": "standard-library",
       "surface": "Maybe",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs and projects typed Maybe values for Native, Bool and bounded UInt, with false and a canonical zero payload for none. Matched Compact 0.36.1 and native ZKIR 3.2.1 checks cover those scalar outputs. Scalar native List heads also return Maybe for UInt8. Composite some and none in readable witness circuits match pinned Compact for a Limits record containing UInt8, Bool and Bytes4. The native session accepted the logical record, the proof bound its flattened fields and both return values, and the relation rejected a changed return commitment. Source disclosure rejects a private record returned through some without explicit release. The checked constructors also match Compact for fixed bytes, including length zero, and for Jubjub and Secp256k1 points. Native ZKIR binds the tag and payload, including canonical curve identities when absent. Other source positions and element families remain open. A named Maybe codec accepts a composite caller argument. The matched Compact and Rust fixtures preserve the full record for both tags, including a nonzero payload with a false tag, and write the supplied tag to a Bool cell. Readable Unit payloads match the pinned empty-tuple case. A Unit witness still runs in order, and only its Maybe tag occupies a return field. The paired nominal UInt case preserves distinct Amount and Other identities at the value field while emitting canonical bounded UInt lanes. The Lean fixture checks projection through tuple wrappers. The paired opaque Maybe fixture covers strings and byte arrays. The native witness session returns the typed payload and each call result binds one Compress field per payload. POC CI replays the retained Compact outputs on freshly emitted artifacts. A native K8 proof verifies for the original result and rejects the commitment derived from a changed opaque return.",
+      "notes": "Readable witness authoring constructs and projects typed Maybe values for Native, Bool and bounded UInt, with false and a canonical zero payload for none. Matched Compact 0.36.1 and native ZKIR 3.2.1 checks cover those scalar outputs. Scalar native List heads also return Maybe for UInt8. Composite some and none in readable witness circuits match pinned Compact for a Limits record containing UInt8, Bool and Bytes4. The native session accepted the logical record, the proof bound its flattened fields and both return values, and the relation rejected a changed return commitment. Source disclosure rejects a private record returned through some without explicit release. The checked constructors also match Compact for fixed bytes, including length zero, and for Jubjub and Secp256k1 points. Native ZKIR binds the tag and payload, including canonical curve identities when absent. Other source positions and element families remain open. A named Maybe codec accepts a composite caller argument. The matched Compact and Rust fixtures preserve the full record for both tags, including a nonzero payload with a false tag, and write the supplied tag to a Bool cell. Readable Unit payloads match the pinned empty-tuple case. A Unit witness still runs in order, and only its Maybe tag occupies a return field. The paired nominal UInt case preserves distinct Amount and Other identities at the value field while emitting canonical bounded UInt lanes. The Lean fixture checks projection through tuple wrappers. The paired opaque Maybe fixture covers strings and byte arrays. The native witness session returns the typed payload and each call result binds one Compress field per payload. POC CI replays the retained Compact outputs on freshly emitted artifacts. A native K8 proof verifies for the original result and rejects the commitment derived from a changed opaque return. One paired nested UInt8 case binds both ordered Maybe tags and the UInt8 leaf. Native output reconstructs both typed levels, and a substituted result payload fails the ZKIR relation check.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -4511,6 +4511,9 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/NestedMaybeUInt.lean",
+        "tests/compact/nested-maybe-uint.mjs",
+        "docs/development/typed-witnesses.md",
         "tests/NominalUIntMaybe.lean",
         "tests/compact/nominal-uint-maybe.mjs",
         "runtime/tests/nominal_uint_maybe.rs",
@@ -5362,7 +5365,7 @@
       "layer": "standard-library",
       "surface": "some",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs typed Some values for Native, Bool and bounded UInt and returns checked aggregate fields. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover the tag and payload. Paired checks also cover fixed bytes, including length zero, and the Jubjub and Secp256k1 generators. Other element families and nested uses remain open. The checked Limits record case also matches the composite constructor's ordered tag and payload. The typed Unit case evaluates a Unit witness exactly once and emits only the present tag. The paired nominal UInt case preserves the declared payload type. Compact rejects some<Other>(Amount), and Noctium rejects assigning the projected Amount payload to Other even through a tuple wrapper. The paired opaque fixture preserves an embedded NUL in the string and all original bytes, rejects kind substitution, and rejects implicit publication of private opaque payloads.",
+      "notes": "Readable witness authoring constructs typed Some values for Native, Bool and bounded UInt and returns checked aggregate fields. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover the tag and payload. Paired checks also cover fixed bytes, including length zero, and the Jubjub and Secp256k1 generators. Other element families and nested uses beyond the paired case remain open. The checked Limits record case also matches the composite constructor's ordered tag and payload. The typed Unit case evaluates a Unit witness exactly once and emits only the present tag. The paired nominal UInt case preserves the declared payload type. Compact rejects some<Other>(Amount), and Noctium rejects assigning the projected Amount payload to Other even through a tuple wrapper. The paired opaque fixture preserves an embedded NUL in the string and all original bytes, rejects kind substitution, and rejects implicit publication of private opaque payloads. One paired nested UInt8 case preserves the outer Some with an absent inner and distinguishes Some(Some(0)) from both absent cases. A present maximum remains 255.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5376,6 +5379,9 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/NestedMaybeUInt.lean",
+        "tests/compact/nested-maybe-uint.mjs",
+        "docs/development/typed-witnesses.md",
         "tests/NominalUIntMaybe.lean",
         "tests/compact/nominal-uint-maybe.mjs",
         "runtime/tests/nominal_uint_maybe.rs",
@@ -5407,7 +5413,7 @@
       "layer": "standard-library",
       "surface": "none",
       "noctiumStatus": "related-subset",
-      "notes": "Readable witness authoring constructs typed None values for Native, Bool and bounded UInt, zeroing the inactive payload. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover those layouts. Paired checks also cover zero-filled fixed bytes, including length zero, and canonical Jubjub and Secp256k1 identities. Other element families and nested uses remain open. The checked Limits record case also matches the absent tag and typed defaults for all payload fields. The direct Unit case emits the absent tag with a zero-width payload. The paired nominal UInt case preserves the Amount and Other declarations and emits a false tag with canonical zero under their UInt8 bound. The paired opaque fixture returns false tags with canonical empty strings and byte arrays. The native checker binds both tags and their compressed payloads.",
+      "notes": "Readable witness authoring constructs typed None values for Native, Bool and bounded UInt, zeroing the inactive payload. Paired Compact 0.36.1 and native ZKIR 3.2.1 checks cover those layouts. Paired checks also cover zero-filled fixed bytes, including length zero, and canonical Jubjub and Secp256k1 identities. Other element families and nested uses beyond the paired case remain open. The checked Limits record case also matches the absent tag and typed defaults for all payload fields. The direct Unit case emits the absent tag with a zero-width payload. The paired nominal UInt case preserves the Amount and Other declarations and emits a false tag with canonical zero under their UInt8 bound. The paired opaque fixture returns false tags with canonical empty strings and byte arrays. The native checker binds both tags and their compressed payloads. One paired nested UInt8 case clears both tags and the payload for outer None. Some(None) keeps the outer tag and uses an absent inner with UInt8 zero.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5421,6 +5427,9 @@
         "ABI"
       ],
       "observedEvidence": [
+        "tests/NestedMaybeUInt.lean",
+        "tests/compact/nested-maybe-uint.mjs",
+        "docs/development/typed-witnesses.md",
         "tests/NominalUIntMaybe.lean",
         "tests/compact/nominal-uint-maybe.mjs",
         "runtime/tests/nominal_uint_maybe.rs",

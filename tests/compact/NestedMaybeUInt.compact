@@ -1,0 +1,11 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export pure circuit inspect(outer: Boolean, inner: Boolean, value: Uint<8>): Maybe<Maybe<Uint<8>>> {
+  const innerMaybe: Maybe<Uint<8>> = inner
+    ? some<Uint<8>>(value)
+    : none<Uint<8>>();
+  return outer
+    ? some<Maybe<Uint<8>>>(innerMaybe)
+    : none<Maybe<Uint<8>>>();
+}

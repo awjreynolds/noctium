@@ -168,3 +168,147 @@ fn readable_composite_maybe_input_binds_present_and_absent_payloads() -> Result<
     assert!(check(&changed, &circuit).is_err());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh NestedMaybeUInt artifacts and the pinned Compact oracle"]
+fn nested_maybe_uint_preserves_tags_defaults_and_result_binding() -> Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_NESTED_MAYBE_UINT_DIR").expect("NOCTIUM_NESTED_MAYBE_UINT_DIR"),
+    );
+    let oracle_path = std::env::var_os("NOCTIUM_NESTED_MAYBE_UINT_COMPACT")
+        .expect("NOCTIUM_NESTED_MAYBE_UINT_COMPACT");
+    let oracle: Json = serde_json::from_slice(&fs::read(oracle_path)?)?;
+    assert!(
+        oracle["compactVersion"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
+    assert_eq!(oracle["runtimeVersion"], "0.21.0");
+    let name = "NestedMaybeUInt.inspect";
+    let mut plan: Plan =
+        serde_json::from_slice(&fs::read(directory.join(format!("{name}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(directory.join(format!("{name}.zkir")))?)?;
+    let [view] = plan.return_views.as_slice() else {
+        panic!("expected one grouped nested Maybe output");
+    };
+    assert_eq!(view.name, "result");
+    assert_eq!(view.fields.len(), 3);
+    let fields = view.fields.clone();
+    let layout = &view.schema["layout"];
+    let inner_layout = &layout["fields"][1]["layout"];
+    let outer_id = layout["id"].as_str().expect("outer Maybe type").to_owned();
+    let inner_id = inner_layout["id"]
+        .as_str()
+        .expect("inner Maybe type")
+        .to_owned();
+    assert_ne!(outer_id, inner_id);
+    for level in [layout, inner_layout] {
+        assert_eq!(level["kind"], "struct");
+        assert_eq!(level["fields"].as_array().unwrap().len(), 2);
+        assert_eq!(level["fields"][0]["name"], "is_some");
+        assert_eq!(
+            level["fields"][0]["layout"]["leaf"],
+            json!({"kind": "bool"})
+        );
+        assert_eq!(level["fields"][1]["name"], "value");
+    }
+    assert_eq!(
+        inner_layout["fields"][1]["layout"]["leaf"],
+        json!({"kind": "uint", "maximum": "255"})
+    );
+
+    let expected = |outer, inner, value| {
+        maybe(
+            &outer_id,
+            outer,
+            maybe(
+                &inner_id,
+                inner,
+                json!({"kind":"uint", "maximum":"255", "value":value}),
+            ),
+        )
+    };
+    let inputs = |outer, inner, value: &str| {
+        BTreeMap::from([
+            ("outer".into(), json!(outer)),
+            ("inner".into(), json!(inner)),
+            ("value".into(), json!(value)),
+        ])
+    };
+    let state = create_state(&plan, &BTreeMap::new())?;
+    let address = ContractAddress::default();
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let cases = oracle["cases"]
+        .as_array()
+        .expect("four observed Compact results");
+    let fixtures = [
+        (false, true, "255", false, false, "0"),
+        (true, false, "255", true, false, "0"),
+        (true, true, "0", true, true, "0"),
+        (true, true, "255", true, true, "255"),
+    ];
+    assert_eq!(cases.len(), fixtures.len());
+    let decimal = |value: &Json| match value {
+        Json::String(text) => text.clone(),
+        value => value.to_string(),
+    };
+    for ((outer, inner, value, outer_some, inner_some, payload), row) in
+        fixtures.into_iter().zip(cases)
+    {
+        assert_eq!(row["outer"], outer);
+        assert_eq!(row["inner"], inner);
+        assert_eq!(decimal(&row["value"]), value);
+        assert_eq!(row["result"]["is_some"], outer_some);
+        assert_eq!(row["result"]["value"]["is_some"], inner_some);
+        assert_eq!(decimal(&row["result"]["value"]["value"]), payload);
+        let execution = prepare(&plan, &inputs(outer, inner, value), &state, params, address)?;
+        check(&execution, &circuit)?;
+        let native_fields = [
+            u64::from(outer_some),
+            u64::from(inner_some),
+            payload.parse()?,
+        ];
+        assert_eq!(execution.returns().len(), 3);
+        for ((name, value), (expected_name, field)) in execution
+            .returns()
+            .iter()
+            .zip(fields.iter().zip(native_fields))
+        {
+            assert_eq!(name, expected_name);
+            assert_eq!(
+                value,
+                &noctium_runtime::Value::Native(transient_crypto::curve::Fr::from(field))
+            );
+        }
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([("result".into(), expected(outer_some, inner_some, payload))])
+        );
+    }
+
+    let accepted_inputs = inputs(true, true, "255");
+    let accepted = prepare(&plan, &accepted_inputs, &state, params, address)?;
+    let output = plan
+        .returns
+        .iter_mut()
+        .find(|output| output.name == fields[2])
+        .expect("bound UInt8 result leaf");
+    output.expression = Expr::Constant {
+        value: "254".into(),
+    };
+    let altered = prepare(&plan, &accepted_inputs, &state, params, address)?;
+    assert_eq!(
+        altered.returns_json()["result"],
+        expected(true, true, "254")
+    );
+    assert_ne!(
+        accepted.preimage.communications_commitment.unwrap().0,
+        altered.preimage.communications_commitment.unwrap().0
+    );
+    assert!(
+        check(&altered, &circuit).is_err(),
+        "emitted relation rejects a substituted UInt8 result"
+    );
+    Ok(())
+}

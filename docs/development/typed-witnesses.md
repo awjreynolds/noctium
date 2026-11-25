@@ -128,6 +128,48 @@ NOCTIUM_COMPACT_RUNTIME_DIR="$COMPACT_RUNTIME_0210" \
 node tests/compact/composite-either-input.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
 ```
 
+## Nested Maybe returns
+
+The paired `Maybe<Maybe<UInt8>>` case uses `some` and `none` at both
+levels. The outer `none` carries a canonical absent inner Maybe. A
+present outer with an absent inner keeps the outer tag. A present
+inner value of zero stays distinct from either absent case.
+
+| Outer input | Inner input | UInt8 input | Outer tag | Inner tag | Payload |
+| --- | --- | ---: | --- | --- | ---: |
+| false | true | 255 | false | false | 0 |
+| true | false | 255 | true | false | 0 |
+| true | true | 0 | true | true | 0 |
+| true | true | 255 | true | true | 255 |
+
+The native return binds these three fields in order and reconstructs a
+typed `result`. Replacing the prepared payload of 255 with 254 changes
+the call commitment and fails the emitted ZKIR relation check. The test
+uses Ledger 9.1.0.1 / ZKIR 3.2.1 and compares generated Compact 0.36.1
+(`7fa3a117c`) contract behavior under Runtime 0.21.0. Compact compiles
+`inspect` as a pure entrypoint and emits no proving relation for this case.
+[Lean fixture](../../tests/NestedMaybeUInt.lean) ·
+[Compact reference](../../tests/compact/nested-maybe-uint.mjs) ·
+[Native check](../../runtime/tests/composite_maybe.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/nested-maybe-uint.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/nested-maybe-uint.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/NestedMaybeUInt.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --output "$scratch/native"
+NOCTIUM_NESTED_MAYBE_UINT_DIR="$scratch/native" \
+NOCTIUM_NESTED_MAYBE_UINT_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test composite_maybe \
+  nested_maybe_uint_preserves_tags_defaults_and_result_binding -- --ignored --exact
+```
+
 ## Pass a qualified shielded coin
 
 Use `Noctium.Midnight.QualifiedShieldedCoinInfo.codec` with a `Payload`
