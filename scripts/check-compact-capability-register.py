@@ -16,6 +16,7 @@ DEFAULT_MATRIX = ROOT / "docs/compatibility/compact-feature-matrix.json"
 TARGET_PROFILE = ROOT / "profiles/midnight-ledger-9-zkir-3.2.1-target.json"
 
 CASE_ID = re.compile(r"C-[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
+CONFORMANCE_CASE_ID = re.compile(r"[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 COMPACT_BASELINE = {
     "featureToolchain": "0.36.1",
     "language": "0.28.0",
@@ -29,6 +30,7 @@ COMPACT_BASELINE = {
     "bundledZkirCommit": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
 }
 TARGET_NAME = "midnight-ledger-9-zkir-3.2.1"
+LEGACY_CONFORMANCE_FEATURES = {"C-LANG-UINT"}
 
 
 def require(condition: bool, message: str) -> None:
@@ -93,6 +95,120 @@ def evidence_file_path(reference: str, case_id: str) -> Path:
     return resolved
 
 
+def nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def validate_conformance_cases(feature: dict[str, Any], feature_id: str,
+                               evidence_tokens: set[str], seen_ids: set[str],
+                               equivalence: str) -> None:
+    if "conformanceContexts" in feature:
+        contexts = feature["conformanceContexts"]
+        require(isinstance(contexts, list)
+                and all(nonempty_string(context) for context in contexts),
+                f"conformance contexts invalid for {feature_id}")
+        require(len(set(contexts)) == len(contexts),
+                f"duplicate conformance context for {feature_id}")
+        context_set = set(contexts)
+    else:
+        context_set = set()
+
+    if "conformanceCases" not in feature:
+        return
+    cases = feature["conformanceCases"]
+    require(isinstance(cases, list),
+            f"conformance cases invalid for {feature_id}")
+
+    for case in cases:
+        require(isinstance(case, dict),
+                f"invalid conformance case for {feature_id}")
+        case_id = case.get("id")
+        require(isinstance(case_id, str)
+                and CONFORMANCE_CASE_ID.fullmatch(case_id) is not None,
+                f"invalid conformance case ID: {case_id}")
+        if case_id in seen_ids:
+            raise ValueError(f"duplicate case ID: {case_id}")
+        seen_ids.add(case_id)
+
+        for field in ("input", "expected", "result", "status"):
+            require(nonempty_string(case.get(field)),
+                    f"{field} missing or invalid for conformance case {case_id}")
+
+        oracle = case.get("oracle")
+        structured = any(
+            key in case for key in (
+                "oracle", "context", "scope", "requiredEvidence", "evidenceByKind"
+            )
+        )
+        if structured:
+            require(isinstance(oracle, dict),
+                    f"oracle missing or invalid for {case_id}")
+            outcome = oracle.get("outcome")
+            require(isinstance(outcome, str)
+                    and outcome in {"executed", "compiler-assertion"},
+                    f"invalid oracle outcome for {case_id}: {outcome}")
+            require(oracle.get("compiler") == COMPACT_BASELINE["featureToolchain"],
+                    f"oracle compiler pin mismatch for {case_id}")
+            if outcome == "executed" or "runtime" in oracle:
+                require(oracle.get("runtime") == COMPACT_BASELINE["compactRuntimeReferenceOnly"],
+                        f"oracle runtime pin mismatch for {case_id}")
+
+            context = case.get("context")
+            require(nonempty_string(context) and context in context_set,
+                    f"unknown conformance context for {case_id}: {context}")
+            require(nonempty_string(case.get("scope")),
+                    f"scope missing or invalid for {case_id}")
+
+            required = case.get("requiredEvidence")
+            require(isinstance(required, list) and bool(required)
+                    and all(isinstance(kind, str) and kind in evidence_tokens
+                            for kind in required),
+                    f"required evidence invalid for conformance case {case_id}")
+            require(len(set(required)) == len(required),
+                    f"duplicate required evidence for {case_id}")
+
+            evidence_by_kind = case.get("evidenceByKind")
+            require(isinstance(evidence_by_kind, dict),
+                    f"evidence by kind missing or invalid for {case_id}")
+            for kind, references in evidence_by_kind.items():
+                require(isinstance(kind, str) and kind in evidence_tokens,
+                        f"unknown case evidence kind for {case_id}: {kind}")
+                require(isinstance(references, list) and bool(references)
+                        and all(nonempty_string(reference) for reference in references),
+                        f"case evidence invalid for {case_id}: {kind}")
+                for reference in references:
+                    evidence_file_path(reference, case_id)
+
+            for kind in required:
+                if kind not in evidence_by_kind:
+                    raise ValueError(f"missing case evidence for {case_id}: {kind}")
+            expected_status = (
+                "open-upstream-compiler-assertion"
+                if outcome == "compiler-assertion"
+                else "executed-pinned-compact-and-noctium"
+            )
+            require(case["status"] == expected_status,
+                    f"case status contradicts oracle outcome for {case_id}")
+            if outcome == "compiler-assertion":
+                require(equivalence != "verified",
+                        f"upstream-open case under verified row: {case_id}")
+
+        legacy_evidence = case.get("evidence")
+        if not structured:
+            require(feature_id in LEGACY_CONFORMANCE_FEATURES,
+                    f"unstructured conformance case unsupported for {feature_id}: {case_id}")
+            require(isinstance(legacy_evidence, list),
+                    f"case evidence invalid for {case_id}")
+            require(bool(legacy_evidence),
+                    f"case evidence missing for {case_id}")
+            for reference in legacy_evidence:
+                require(nonempty_string(reference),
+                        f"case evidence invalid for {case_id}")
+                evidence_file_path(reference, case_id)
+        elif legacy_evidence is not None:
+            raise ValueError(f"legacy case evidence unsupported for structured case {case_id}")
+
+
 def validate_features(matrix: dict[str, Any]) -> list[dict[str, Any]]:
     sources = matrix.get("sources")
     require(isinstance(sources, dict) and bool(sources), "sources missing or invalid")
@@ -151,6 +267,8 @@ def validate_features(matrix: dict[str, Any]) -> list[dict[str, Any]]:
                 f"invalid equivalence for {case_id}: {equivalence}")
         require(isinstance(feature.get("layer"), str) and bool(feature["layer"]),
                 f"layer missing or invalid for {case_id}")
+        validate_conformance_cases(feature, case_id, evidence_tokens, seen_ids,
+                                   feature["equivalence"])
     return features
 
 

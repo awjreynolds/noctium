@@ -70,5 +70,51 @@ class CompactCapabilityRegisterTests(unittest.TestCase):
                       result.stdout + result.stderr)
 
 
+    def list_head_case(self, matrix, case_id):
+        row = next(row for row in matrix["features"] if row["id"] == "C-ADT-LIST-HEAD")
+        return next(case for case in row["conformanceCases"] if case["id"] == case_id)
+
+    def test_missing_required_case_evidence_is_rejected(self):
+        matrix = deepcopy(self.original)
+        case = self.list_head_case(matrix, "LIST-HEAD-UINT8-EMPTY")
+        del case["evidenceByKind"]["ZK"]
+        self.write_matrix(matrix)
+
+        result = self.run_checker(self.matrix_path)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"missing case evidence for {case['id']}: ZK",
+            result.stdout + result.stderr,
+        )
+
+    def test_upstream_compiler_assertion_cannot_be_promoted(self):
+        matrix = deepcopy(self.original)
+        case = self.list_head_case(matrix, "LIST-HEAD-SECP256K1-SCALAR")
+        case["status"] = "executed-pinned-compact-and-noctium"
+        self.write_matrix(matrix)
+
+        result = self.run_checker(self.matrix_path)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"case status contradicts oracle outcome for {case['id']}",
+            result.stdout + result.stderr,
+        )
+
+
+    def test_open_oracle_case_blocks_promoting_its_feature_row(self):
+        matrix = deepcopy(self.original)
+        row = next(row for row in matrix["features"] if row["id"] == "C-ADT-LIST-HEAD")
+        row["noctiumStatus"] = "equivalent"
+        row["equivalence"] = "verified"
+        self.write_matrix(matrix)
+
+        result = self.run_checker(self.matrix_path)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "upstream-open case under verified row: LIST-HEAD-SECP256K1-SCALAR",
+            result.stdout + result.stderr,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

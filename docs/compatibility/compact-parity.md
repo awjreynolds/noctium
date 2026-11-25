@@ -32,7 +32,9 @@ Assign each row to one package by matching the selectors below from top to botto
 3. Expose genuine blockers as GitHub dependencies. Land the required typed representation or fixture before its consumers. Sequence shared code paths, and keep independent hosts and fixtures available in parallel. Record a pinned upstream failure and its retest trigger when an external capability blocks the slice.
 4. Attach the exact rows, commands, tool and artifact identities and scoped result to the PR. Update only the affected inventory evidence. A ticket covers its stated layout, overloads, host and profile. The row's `requiredEvidence` determines when broader equivalence has been verified.
 
-[List.head case records](https://github.com/awjreynolds/noctium/issues/1390) establish the next structured coverage example after the existing bounded Uint cases. Extend that case-to-row mapping by workstream. Each case records its admitted domain, oracle, expected observations, evidence by kind and disposition. Include widened bounds, zero-width side effects, unsupported source forms and excluded host or ledger observations where they apply. Link the new work package to #35 when the issue's native sub-issue limit prevents a direct child.
+The first List.head case records cover two executed UInt8 heads and an open Secp256k1Scalar compiler assertion. [Capability register](compact-feature-matrix.json) · [List.head evidence ticket](https://github.com/awjreynolds/noctium/issues/1390)
+
+Extend that case-to-row mapping by workstream. Each case records its admitted domain, oracle, expected observations, evidence by kind and disposition. Include widened bounds, zero-width side effects, unsupported source forms and excluded host or ledger observations where they apply. Link the new work package to #35 when the issue's native sub-issue limit prevents a direct child.
 
 ## Check the capability register
 
@@ -44,6 +46,12 @@ python3 tests/test_compact_capability_register.py
 ```
 
 The first command checks the pinned Compact and Noctium profile identities, case IDs, source keys and local evidence files. It reports Noctium status and equivalence together and counts the native extension separately. The second command checks rejection of a duplicate ID, a missing evidence file and a changed Compact version using temporary copies of the register. Compact is optional for these checks. The reported counts reflect the recorded evidence status, which individual conformance cases establish. [Validator ticket](https://github.com/awjreynolds/noctium/issues/1384) · [Target profile](../../profiles/midnight-ledger-9-zkir-3.2.1-target.json)
+
+For the structured List.head records, the validator also checks pinned oracle
+outcome, declared context and local evidence by kind. An executed case needs
+its required evidence. A compiler-assertion case stays open. The focused tests
+remove required evidence and attempt to promote the failed oracle outcome.
+[Existing List.head fixtures and reproduction commands](../development/native-lists.md)
 
 ## Qualification order
 
