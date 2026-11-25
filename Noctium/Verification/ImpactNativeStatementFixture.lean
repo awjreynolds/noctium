@@ -1,16 +1,12 @@
 import Lean
 import Noctium.Verification.ImpactDecimal
-import Noctium.Verification.ImpactPreviewBinding
-import Noctium.Verification.ImpactStatementScalar
+import Noctium.Verification.ImpactPlanStatement
 
 namespace Noctium.Verification.ImpactNativeStatementFixture
 
 open Lean
-open Noctium.Verification.ImpactCallPreview
 open Noctium.Verification.ImpactPreviewBinding
-open Noctium.Verification.ImpactStatementScalar
 open Noctium.Verification.NativeRelation
-open Noctium.Verification.NativeState
 
 /-- Native transcript metadata before the preview inserts skipped operations. -/
 structure Partition where
@@ -152,10 +148,6 @@ def decode (json : Json) : Except String NativeStatementFixture := do
   pure ⟨address, entryPoint, parentPedersen, communication,
     ⟨constant, coefficient⟩, guaranteed, fallible, fields⟩
 
-private def operationCount : Option Partition → Nat
-  | none => 0
-  | some partition => partition.operationCount
-
 private def mismatchIndex : Nat → List Scalar → List Scalar → Option Nat
   | _, [], [] => none
   | index, expected :: expectedRest, actual :: actualRest =>
@@ -163,35 +155,30 @@ private def mismatchIndex : Nat → List Scalar → List Scalar → Option Nat
       else some index
   | index, _, _ => some index
 
-/-- Preview native partitions using the independently decoded operations and
-activity. Compare the resulting public inputs with the native ledger fields. -/
-def check (fixture : NativeStatementFixture) (operations : List NativeState.Op)
-    (activity : List (Option Nat)) : Except String Unit := do
-  let guaranteedCount := operationCount fixture.guaranteed
-  let fallibleCount := operationCount fixture.fallible
-  if guaranteedCount + fallibleCount != operations.length then
-    throw s!"partition operation counts total {guaranteedCount + fallibleCount}, but resolved operation list has {operations.length}"
-  let guaranteed := fixture.guaranteed.map fun partition =>
-    ({ program := operations.take guaranteedCount,
-       computeTime := partition.computeTime } : Transcript NativeState.Op)
-  let fallible := fixture.fallible.map fun partition =>
-    ({ program := operations.drop guaranteedCount,
-       computeTime := partition.computeTime } : Transcript NativeState.Op)
-  let some call := previewCall fixture.cost ⟨guaranteed, fallible⟩ activity
-    | throw "fixture partitions and decoded activity cannot form a preview"
-  let metadata : ImpactPreviewBinding.Metadata := {
+def NativeStatementFixture.inputs (fixture : NativeStatementFixture) :
+    ImpactPlanStatement.Inputs := {
+  cost := fixture.cost
+  metadata := {
     address := fixture.address
     entryPoint := fixture.entryPoint
-    guaranteed := fixture.guaranteed.map fun partition =>
-      ⟨partition.readTime, partition.bytesWritten, partition.bytesDeleted, partition.effects⟩
-    fallible := fixture.fallible.map fun partition =>
-      ⟨partition.readTime, partition.bytesWritten, partition.bytesDeleted, partition.effects⟩
+    guaranteed := fixture.guaranteed.map fun part =>
+      ⟨part.readTime, part.bytesWritten, part.bytesDeleted, part.effects⟩
+    fallible := fixture.fallible.map fun part =>
+      ⟨part.readTime, part.bytesWritten, part.bytesDeleted, part.effects⟩
     parentPedersen := fixture.parentPedersen
   }
-  let some header := ImpactPreviewBinding.header metadata call fixture.communication
-    | throw "fixture identity, counters, or partition metadata cannot form a statement header"
-  let some calculated := ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
-    | throw "calculated statement exceeds the pinned public-input limit"
+  communication := fixture.communication
+  guaranteed := fixture.guaranteed.map fun part => ⟨part.operationCount, part.computeTime⟩
+  fallible := fixture.fallible.map fun part => ⟨part.operationCount, part.computeTime⟩
+}
+
+/-- Compare the public fields reconstructed from the actual file bytes with
+the native ledger fields in the fixture. -/
+def checkBytes (fixture : NativeStatementFixture) (fuel : Nat) (ctx : EvalContext)
+    (env : EvalEnv) (keyWidth : Nat → Option Nat) (bytes : ArtifactBytes.Bytes) :
+    Except String Unit := do
+  let some calculated := ImpactPlanStatement.fromBytes fuel ctx env keyWidth bytes fixture.inputs
+    | throw "artifact and fixture inputs cannot form a scalar public statement"
   if calculated.length != fixture.fields.length then
     throw s!"public statement field count mismatch: calculated {calculated.length}, fixture has {fixture.fields.length}"
   match mismatchIndex 0 calculated fixture.fields with
