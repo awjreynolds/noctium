@@ -44,6 +44,9 @@ pub use composition::{
     CompositionDraft, CompositionMaterial, IndependentComposition, PreparedComposition,
 };
 
+#[cfg(all(test, feature = "zkir-321"))]
+mod guarded_partials;
+
 const MAX_RESPONSE: usize = 1_048_576;
 const MAX_PARAMETERS: usize = 134_217_728;
 const MAX_PRIVATE_CONFIG: usize = 1_048_576;

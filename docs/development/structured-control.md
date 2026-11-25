@@ -111,8 +111,11 @@ when disclose(enabled) require assertThen(approved, true)
 One focused native test covers inactive failures, corresponding active
 rejections, valid active writes and nested name shadowing. Its source is
 `tests/Issue43GuardedPartialWrites.lean`, with native checks in
-`runtime/tests/guarded_partials.rs`. Eager `select` keeps eager evaluation inside
-an active expression. Guarded assertions retain the existing successful-value
+`runtime/src/proof/guarded_partials.rs`. The test passes the assembled call and
+its checked activity through the proof SDK's native statement preview. Lean
+checks the resulting public fields against the emitted Impact bytes for both
+active and inactive writes. Eager `select` keeps eager evaluation inside an
+active expression. Guarded assertions retain the existing successful-value
 disclosure scope, without a failure-channel privacy claim.
 
 The selected-3.2.1 inactive conditional-write fixture also passes real native
