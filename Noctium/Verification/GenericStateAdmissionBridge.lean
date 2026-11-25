@@ -33,30 +33,26 @@ private theorem plan_native_literals_checked (plan : Impact.Plan) (entry : Entry
     (accepted : plan.validate entry = .ok ()) (n : Nat) (member : Expr.native n ∈ plan.fields) :
     n < Field.modulus := by
   unfold Impact.Plan.validate at accepted
-  by_cases physical : (entry.returns.map Output.nativeReturnFieldCount).sum ≤ maxEntrypointReturnFields
-  · by_cases logical : entry.returnViews.length ≤ maxEntrypointReturnFields
-    · simp only [physical, logical, ite_true, bind_ok] at accepted
-      rcases accepted with ⟨_, _, value, fields, _⟩
-      cases value
-      let property := fun (field : Impact.Scalar) =>
-        ∀ value, field = .native value → value < Field.modulus
-      have actions := GenericStateAliases.forIn_extract _ property plan.fields (by
-        intro field step checked
-        simp only [bind_ok] at checked
-        rcases checked with ⟨result, evaluated, equality⟩
-        cases result
-        refine ⟨(Except.ok.inj equality).symm, ?_⟩
-        intro value same
-        subst field
-        simp only [Expr.validate] at evaluated
-        change (if value < Field.modulus then Except.ok () else
-          Except.error "noncanonical native constant") = (Except.ok () : Except String Unit) at evaluated
-        by_cases fits : value < Field.modulus
-        · exact fits
-        · simp [fits] at evaluated) fields
-      exact actions (.native n) member n rfl
-    · simp [physical, logical, Bind.bind, Except.bind, MonadExcept.throw] at accepted
-  · simp [physical, Bind.bind, Except.bind, MonadExcept.throw] at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, value, fields, _⟩
+  cases value
+  let property := fun (field : Impact.Scalar) =>
+    ∀ value, field = .native value → value < Field.modulus
+  have actions := GenericStateAliases.forIn_extract _ property plan.fields (by
+    intro field step checked
+    simp only [bind_ok] at checked
+    rcases checked with ⟨result, evaluated, equality⟩
+    cases result
+    refine ⟨(Except.ok.inj equality).symm, ?_⟩
+    intro value same
+    subst field
+    simp only [Expr.validate] at evaluated
+    change (if value < Field.modulus then Except.ok () else
+      Except.error "noncanonical native constant") = (Except.ok () : Except String Unit) at evaluated
+    by_cases fits : value < Field.modulus
+    · exact fits
+    · simp [fits] at evaluated) fields
+  exact actions (.native n) member n rfl
 
 /-- Accepted Impact lowering checks the native literals before the scalar VM
 evaluates the plan. Index slots and insert encodings are field-admissible. -/
