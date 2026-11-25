@@ -111,8 +111,12 @@ fn public_receipt(receipt: &FinalizedReceipt) -> Json {
     json!({
         "blockHash": receipt.block_hash,
         "height": receipt.height,
+        "finalizedHash": receipt.finalized_hash,
+        "finalizedHeight": receipt.finalized_height,
         "extrinsicHash": receipt.extrinsic_hash,
+        "extrinsicIndex": receipt.extrinsic_index,
         "transactionId": receipt.transaction_id,
+        "intentId": receipt.intent_id,
         "event": receipt.event,
         "stateSha256": crate::artifacts::digest(&receipt.contract_state),
     })
@@ -182,8 +186,11 @@ pub(super) async fn finalize(
         marker_fields == [Fr::from(23u64)] && balance_fields == [Fr::from(99u64)],
         "finalized marker or balance differs from the source result"
     );
+    let (runtime_code_hash, metadata_sha256) = context.node.runtime_fingerprint();
     Ok(json!({
         "chain": called.chain,
+        "runtimeCodeHash": runtime_code_hash,
+        "metadataSha256": metadata_sha256,
         "contractAddress": called.contract_address,
         "deployment": public_receipt(&deployed),
         "call": public_receipt(&called),

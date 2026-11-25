@@ -1,11 +1,15 @@
 {
   "call": {
-    "blockHash": "bfdf59eac795033f866106c94e0a56bb61d9f42fdb0045a96677822679d64257",
+    "blockHash": "72d9b08eed83bf11a4370ecd5fe6eb45d93bca63ea3109134b12df6687cf403b",
     "event": "Call",
-    "extrinsicHash": "9725013cd2264a15df76439493e6ba92ee852b0e00e1378d914e29ca4835bec5",
-    "height": 153,
+    "extrinsicHash": "8d2b8f7624689adbe69a1569fa3eb41c4dfade4def575d4eb664cb38973a4620",
+    "extrinsicIndex": 4,
+    "finalizedHash": "72d9b08eed83bf11a4370ecd5fe6eb45d93bca63ea3109134b12df6687cf403b",
+    "finalizedHeight": 223,
+    "height": 223,
+    "intentId": "3b5fac929c258083a83f76b7181bafeab6126f1773d0e55ff68910993a697fed",
     "stateSha256": "f57d19a576471b946b88e07390b8057b400e945b0765a038d89755da069a9b75",
-    "transactionId": "ee45a9311f6550204924731f387568f334dfb61d61459c295f9c429be7199347"
+    "transactionId": "f2845bf653c06127d366ba26165850e5343cb5950c8e6fc4ca50427521ccaaaa"
   },
   "chain": {
     "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
@@ -14,23 +18,38 @@
     "specVersion": 2001100,
     "transactionVersion": 4
   },
-  "contractAddress": "cfefc529700f010162d5fc6376f0fda56eb0fbd652078e700caa6dbd83df046a",
+  "contractAddress": "dd3a74aca4d7f6d67919668a0b5fcfafc75254279ab3ba43ddf0019c59079cab",
   "deployment": {
-    "blockHash": "6881b8d66ff3205b22c2cd0ae3b4012183d45878aa1a29bf5da411583dcb5363",
+    "blockHash": "978ef8853c02d67046000580aae5a540ab3640229f0e82f33adc4e31c7e8dfb8",
     "event": "Deploy",
-    "extrinsicHash": "46f08e0feea0557637b002177fe2efa3332e69d5bc932e0b90064a96c598887f",
-    "height": 150,
+    "extrinsicHash": "c896147784e21f9ef348ff7373e763b109d991e0b8eba19bf05b374aa2483167",
+    "extrinsicIndex": 4,
+    "finalizedHash": "978ef8853c02d67046000580aae5a540ab3640229f0e82f33adc4e31c7e8dfb8",
+    "finalizedHeight": 220,
+    "height": 220,
+    "intentId": "52987b16fab8bb42317f6854f1dc981c4d6e011c19aca7e5181df2abce3ece94",
     "stateSha256": "44e657ed76a3dbe6e8f933d9cd021a4471bcd36e0cfad9c1b4d617fada31d97a",
-    "transactionId": "8bc3c261a8b1698e76b6ccdff4881043736cfff054475300e67bced7ccd760ff"
+    "transactionId": "87e7b9bb234aec4405df1fc72252f72461c48c5741f69313ca545e8df28aec95"
   },
   "impactSha256": "54d7d3ba8648abad66a440a9fa4b3105c5a50bbc7a650eba4bbbc22078d43fd3",
+  "metadataSha256": "0ac5917f03f657e594e7c6c6544a37440fbce7f19e58d07a7773c50fc1461713",
   "observedState": {
     "balances": {
       "7": "99"
     },
-    "blockHash": "bfdf59eac795033f866106c94e0a56bb61d9f42fdb0045a96677822679d64257",
-    "height": 153,
+    "blockHash": "72d9b08eed83bf11a4370ecd5fe6eb45d93bca63ea3109134b12df6687cf403b",
+    "height": 223,
     "marker": "23"
   },
+  "proof": {
+    "entryPoint": "update",
+    "proofSha256": "c12b74b512bbbc37f87c9995ee39b70a21cc93767b234201fbf4da438fe2d44e",
+    "publicFieldCount": 107,
+    "publicFieldsSha256": "756b3bd8bd7ce6cb346bf6a645f5dffba90ad38da427fcbad7517358b21bbc83",
+    "srsSha256": "909b707551eaaea79828e883cde6fc46ab15986c3b1d791bed462c9e2805c933",
+    "verifierKeySha256": "14b4c89ebc054b052d8bda19cc2c006b03d613a148365e6bc1b475ccf09e5177",
+    "version": 3
+  },
+  "runtimeCodeHash": "110283b44ab3f1ce35165efc00cc24ef4bf6ca5aefab6c97652a0c9e68c30fb6",
   "zkirSha256": "1b46ec41d61456418779c91a63a3d85096d2dc769d31362980f6f9df511fff4c"
 }
