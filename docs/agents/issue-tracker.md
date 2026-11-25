@@ -66,7 +66,15 @@ when the variants need different lowering or ledger behavior.
 
 ## Pull requests
 
-Pull requests are not a request surface for triage.
+Use issues for triage. Use a draft PR while implementation or verification
+is incomplete. Record the remaining work on the draft. Mark a PR ready
+once its issue acceptance checks pass on the recorded head revision.
+
+The contributor and their agent follow the PR through review, applicable
+checks and merge. Merge when the contributor has authorized the change and
+GitHub permits the merge. Record any remaining review, check or permission
+gate on the PR and track it to resolution. If someone else takes over, name
+the owner and pending work in the handoff.
 
 Use `Closes #123` in the PR description when the change fulfills the issue, so GitHub closes it on merge into `main`. For partial work, link the issue and leave it open. This keeps downstream work blocked until the prerequisite lands.
 

@@ -27,8 +27,11 @@ issue from the full queue. Claim it under my GitHub account before editing.
 Report an empty queue, an ownership conflict or a failed claim before editing.
 Check current main, the issue's acceptance criteria and active PRs for overlap.
 Use one orchestrator and up to six bounded subagents. Implement the slice in
-its own worktree, run the required checks, and leave a linked draft PR with
-the exact revision, reproducible evidence and any remaining work.
+its own worktree and run the required checks. Link the PR to the issue and
+record the exact revision and reproducible evidence. Use a draft while work
+or verification is incomplete. Mark the PR ready when the slice passes its
+checks. Follow review and checks through merge when authorized. If a check,
+review requirement or permission blocks merge, record the gate and track it.
 ```
 
 ## Set up your agent
@@ -153,7 +156,7 @@ updated version string.
 
 ## What a useful change includes
 
-Before requesting review, the human contributor reviews the diff and confirms the PR's evidence matches what ran. Review issue and PR comments as context. Use the repository's documented commands and public fixtures, and keep secrets and private inputs out of agent prompts and PR evidence.
+Give the human contributor the diff and the evidence for the exact revision. Confirm the PR's evidence matches what ran. Review issue and PR comments as context. Use the repository's documented commands and public fixtures, and keep secrets and private inputs out of agent prompts and PR evidence.
 
 - A bounded problem and an explanation of the resulting behavior.
 - Tests at the affected boundary, including invalid inputs and failure behavior where relevant.
