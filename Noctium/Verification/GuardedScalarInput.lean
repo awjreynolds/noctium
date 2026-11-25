@@ -37,6 +37,21 @@ theorem consume_rejects_nonboolean (guard : Scalar) (stream : List Scalar)
     consume guard stream = none := by
   simp [consume, notOne, notZero]
 
+/-- The witness value assigned to one positional public input row, together
+with the activity guard that controls transcript consumption. -/
+structure ReadObservation where
+  guard : Scalar
+  value : Scalar
+  deriving Repr, DecidableEq
+
+/-- Values consumed from the transcript in public input order. -/
+def activeReadValues : List ReadObservation → List Scalar
+  | [] => []
+  | observation :: rest =>
+      if observation.guard = one then
+        observation.value :: activeReadValues rest
+      else activeReadValues rest
+
 /-- Interpret an ordered sequence of guarded public input rows. The first
 component records one witness value per static row, including zero for
 inactive rows. The second component is the unconsumed public transcript. -/
@@ -49,6 +64,125 @@ def consumeReads : List Scalar → List Scalar → Option (List Scalar × List S
       match consumeReads guards remaining with
       | none => none
       | some (values, finalStream) => some (value :: values, finalStream)
+
+private theorem consume_success {guard value : Scalar} {stream remaining : List Scalar}
+    (accepted : consume guard stream = some (value, remaining)) :
+    (guard = one ∧ stream = value :: remaining) ∨
+      (guard = zero ∧ value = zero ∧ stream = remaining) := by
+  by_cases active : guard = one
+  · subst guard
+    cases stream with
+    | nil => simp [consume] at accepted
+    | cons first rest =>
+      simp [consume] at accepted
+      rcases accepted with ⟨firstEq, restEq⟩
+      subst value
+      subst remaining
+      exact Or.inl ⟨rfl, rfl⟩
+  · by_cases inactive : guard = zero
+    · subst guard
+      simp [consume, zero_ne_one] at accepted
+      rcases accepted with ⟨valueEq, streamEq⟩
+      subst value
+      exact Or.inr ⟨rfl, rfl, streamEq⟩
+    · simp [consume, active, inactive] at accepted
+
+/-- Successful preprocessing assigns one value to every positional row. The
+public transcript supplies active row values in order. Inactive rows assign
+zero and consume no transcript field. Non-Boolean guards reject. -/
+theorem consumeReads_iff (observations : List ReadObservation)
+    (transcript remaining : List Scalar) :
+    consumeReads (observations.map ReadObservation.guard) transcript =
+        some (observations.map ReadObservation.value, remaining) ↔
+      transcript = activeReadValues observations ++ remaining ∧
+        ∀ observation ∈ observations,
+          observation.guard = one ∨
+            (observation.guard = zero ∧ observation.value = zero) := by
+  induction observations generalizing transcript with
+  | nil => simp [consumeReads, activeReadValues]
+  | cons observation rest ih =>
+    cases observation with
+    | mk guard value =>
+      constructor
+      · intro accepted
+        change (match consume guard transcript with
+          | none => none
+          | some (headValue, nextStream) =>
+              match consumeReads (rest.map ReadObservation.guard) nextStream with
+              | none => none
+              | some (tailValues, finalStream) => some (headValue :: tailValues, finalStream)) =
+          some (value :: rest.map ReadObservation.value, remaining) at accepted
+        cases head : consume guard transcript with
+        | none => simp [head] at accepted
+        | some pair =>
+          rcases pair with ⟨headValue, nextStream⟩
+          cases tail : consumeReads (rest.map ReadObservation.guard) nextStream with
+          | none => simp [head, tail] at accepted
+          | some tailPair =>
+            rcases tailPair with ⟨tailValues, finalStream⟩
+            have resultParts := by simpa [head, tail] using accepted
+            rcases resultParts with ⟨⟨headEq, tailValuesEq⟩, finalEq⟩
+            subst headValue
+            have tailAccepted : consumeReads (rest.map ReadObservation.guard) nextStream =
+                some (rest.map ReadObservation.value, remaining) := by
+              rw [tail]
+              simp [tailValuesEq, finalEq]
+            have headCase := consume_success head
+            have tailFacts := (ih nextStream).mp tailAccepted
+            rcases headCase with ⟨guardOne, streamEq⟩ | ⟨guardZero, valueZero, streamEq⟩
+            · have guardEq : guard = one := by simpa using guardOne
+              subst guard
+              have transcriptEq : transcript = value :: (activeReadValues rest ++ remaining) := by
+                rw [streamEq, tailFacts.1]
+              refine ⟨?_, ?_⟩
+              · simpa [activeReadValues] using transcriptEq
+              · intro row member
+                rcases List.mem_cons.mp member with headMember | tailMember
+                · cases headMember
+                  exact Or.inl rfl
+                · exact tailFacts.2 row tailMember
+            · have guardEq : guard = zero := by simpa using guardZero
+              have valueEq : value = zero := by simpa using valueZero
+              subst guard
+              subst value
+              have transcriptEq : transcript = activeReadValues rest ++ remaining := by
+                rw [streamEq, tailFacts.1]
+              refine ⟨?_, ?_⟩
+              · simpa [activeReadValues, zero_ne_one] using transcriptEq
+              · intro row member
+                rcases List.mem_cons.mp member with headMember | tailMember
+                · cases headMember
+                  exact Or.inr ⟨rfl, rfl⟩
+                · exact tailFacts.2 row tailMember
+      · rintro ⟨transcriptEq, rowChecks⟩
+        have headCheck := rowChecks ⟨guard, value⟩ (by simp)
+        have tailChecks : ∀ row ∈ rest,
+            row.guard = one ∨ (row.guard = zero ∧ row.value = zero) := by
+          intro row member
+          exact rowChecks row (List.mem_cons_of_mem _ member)
+        cases headCheck with
+        | inl guardOne =>
+          change guard = one at guardOne
+          subst guard
+          have tailAccepted := (ih (activeReadValues rest ++ remaining)).mpr
+            ⟨rfl, tailChecks⟩
+          have transcriptEq' :
+              transcript = value :: (activeReadValues rest ++ remaining) := by
+            simpa [activeReadValues] using transcriptEq
+          rw [transcriptEq']
+          simp [consumeReads, consume_active_cons, tailAccepted]
+        | inr inactive =>
+          rcases inactive with ⟨guardZero, valueZero⟩
+          change guard = zero at guardZero
+          change value = zero at valueZero
+          subst guard
+          subst value
+          have tailAccepted := (ih (activeReadValues rest ++ remaining)).mpr
+            ⟨rfl, tailChecks⟩
+          have transcriptEq' : transcript = activeReadValues rest ++ remaining := by
+            simpa [activeReadValues, zero_ne_one] using transcriptEq
+          rw [transcriptEq']
+          simp [consumeReads, consume_inactive, tailAccepted]
 
 /-- Splitting a guarded input schedule preserves the same ordered stream
 transition. -/

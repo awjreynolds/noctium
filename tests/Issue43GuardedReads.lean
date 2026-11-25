@@ -3,7 +3,7 @@ import Noctium.Backend.NativeExpected
 import Noctium.Backend.Zkir
 import Noctium.Frontend
 import Noctium.Verification.GenericStateCircuitParts
-import Noctium.Verification.GuardedImpactTranscript
+import Noctium.Verification.GuardedInputTranscript
 import Noctium.Verification.GuardedScalarInput
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationProjection
@@ -599,3 +599,35 @@ private def issue43WholeGuardedTranscript (rewrites : Backend.Zkir.Rewrites) :
 
 #guard (issue43WholeGuardedTranscript .disabled).toOption == some Bool.true
 #guard (issue43WholeGuardedTranscript .includingComparisons).toOption == some Bool.true
+
+
+/-- The skipped Cell keeps its static position and requires zero between
+the active public reads of the full emitted trace. -/
+private def issue43WholePublicReadTranscript (rewrites : Backend.Zkir.Rewrites) :
+    Except String _root_.Bool := do
+  let json ← (Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state
+    issue43GuardedEntry rewrites).mapError (·.message)
+  let raw ← Backend.Native.arrayField json "instructions"
+  let rows ← raw.toList.mapM Verification.GuardedScalarRows.decodeRow
+  let reads := Verification.GuardedInputTranscript.emittedPublicReads
+    (fun _ => Verification.NativeRelation.zero) rows
+  let altered := Verification.GuardedInputTranscript.emittedPublicReads (fun name =>
+    if name == "%input_skippedCell" then Verification.NativeRelation.scalar 23
+    else Verification.NativeRelation.zero) rows
+  let stream := Verification.GuardedScalarInput.activeReadValues reads
+  let guards := reads.map Verification.GuardedScalarInput.ReadObservation.guard
+  let result := Verification.GuardedScalarInput.consumeReads guards stream
+  let expected ← (Backend.Native.expectedEntrypoint Issue43GuardedReads.state
+    (Passes.pruneEntrypoint issue43GuardedEntry)).mapError (·.message)
+  let some first := raw[0]? | throw "expected a leading public input"
+  let alteredGuard := replaceJsonField first "guard" (toJson ("0x01" : String))
+  return (Backend.Native.validateInstruction expected {} first).isOk &&
+    !(Backend.Native.validateInstruction expected {} alteredGuard).isOk &&
+    reads.any (fun observation => observation.guard == Verification.NativeRelation.one) &&
+    reads.any (fun observation => observation.guard == Verification.NativeRelation.zero) &&
+    decide (result = some (reads.map Verification.GuardedScalarInput.ReadObservation.value, []) ∧
+      stream = Verification.GuardedScalarInput.activeReadValues altered ∧
+      result ≠ some (altered.map Verification.GuardedScalarInput.ReadObservation.value, []))
+
+#guard (issue43WholePublicReadTranscript .disabled).toOption == some Bool.true
+#guard (issue43WholePublicReadTranscript .includingComparisons).toOption == some Bool.true

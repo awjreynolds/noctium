@@ -138,6 +138,15 @@ theorem decodeRow_strict {raw : Json} {instruction : Instruction}
       subst opcode
       simp at impactOpcode
 
+theorem decodeRow_strict_not_publicInput {raw : Json} {instruction : Instruction}
+    (accepted : decodeRow raw = .ok (.strict instruction)) :
+    Backend.Native.stringField raw "op" ≠ .ok "public_input" := by
+  intro opcode
+  unfold decodeRow at accepted
+  simp only [opcode, Bind.bind, Except.bind, beq_self_eq_true, ite_true] at accepted
+  obtain ⟨_, _, impossible, _, _⟩ := publicInput_parts accepted
+  cases impossible
+
 theorem decodeRow_publicInput_fields {raw : Json} {output : String} {guard : Option Operand}
     (accepted : decodeRow raw = .ok (.publicInput output guard)) :
     Backend.Native.stringField raw "op" = .ok "public_input" ∧
