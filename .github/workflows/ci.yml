@@ -675,6 +675,7 @@ jobs:
             Noctium.Verification.GuardedRequireSemantics \
             Noctium.Verification.GenericStateAbsenceInversion \
             Noctium.Verification.GenericStatePrefixEnvironment \
+            Noctium.Verification.GenericStateEffectFold \
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean

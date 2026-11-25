@@ -111,9 +111,17 @@ theorem pruneEntrypoint_disclosure (entry : Entrypoint) (control : Disclosure.Or
 set_option maxHeartbeats 1000000 in
 theorem pruneEntrypoint_validate (caps : Capabilities) (state : List StateDecl) (entry : Entrypoint) :
     (pruneEntrypoint entry).validate caps state = entry.validate caps state := by
-  unfold Entrypoint.validate
-  dsimp only [pruneEntrypoint]
-  simp only [pruneCircuit_validate]
+  have samePrefix : (pruneEntrypoint entry).validateEffectPrefix caps state =
+      entry.validateEffectPrefix caps state := by
+    unfold Entrypoint.validateEffectPrefix Entrypoint.validateEffectPrechecks
+      Entrypoint.validateOutputEnvironment Entrypoint.validateOutputStep
+    dsimp only [pruneEntrypoint]
+    rw [pruneCircuit_validate]
+    rfl
+  simp only [Entrypoint.validate, samePrefix]
+  unfold Entrypoint.validateEffectLoop Entrypoint.validateEffectStep
+    Entrypoint.validateEffectWriteGate Entrypoint.validateEffectGuard Entrypoint.effectGuardAt
+    Entrypoint.validateEffectBindingsDiagnostic Entrypoint.validateEffectSuffix
   rfl
 
 theorem pruneEntrypoint_run (ctx : EvalContext) (env : EvalEnv)

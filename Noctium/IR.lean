@@ -2349,13 +2349,59 @@ def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Uni
     | .error message => throw {span := output.span, message}
     | .ok _ => pure ()
 
-private def requireState (decls : List StateDecl) (name : String) (kind : StateKind) : Except String Unit :=
+private def requireStateInternal (decls : List StateDecl) (name : String)
+    (kind : StateKind) : Except String Unit :=
   match decls.find? (·.name == name) with
   | none => .error s!"unknown state '{name}'"
   | some {kind := .opaqueString, ..} =>
     .error "OpaqueString constructor metadata cannot be read or written by entrypoints"
   | some decl => if decl.kind == kind then pure () else .error s!"state type mismatch for '{name}'"
 
+/-- Expose the existing typed state-name check to verification proofs. -/
+def Entrypoint.requireState (decls : List StateDecl) (name : String)
+    (kind : StateKind) : Except String Unit :=
+  requireStateInternal decls name kind
+
+/-- A successful production state-name check identifies the declared state
+and proves its stored kind equals the requested kind. -/
+theorem Entrypoint.requireState_succeeded (decls : List StateDecl) (name : String)
+    (kind : StateKind)
+    (success : Entrypoint.requireState decls name kind = .ok ()) :
+    ∃ declaration, decls.find? (fun item => item.name == name) = some declaration ∧
+      (declaration.kind == kind) = true := by
+  unfold Entrypoint.requireState requireStateInternal at success
+  cases found : decls.find? (fun item => item.name == name) with
+  | none => simp [found] at success
+  | some declaration =>
+    cases declaration with
+    | mk declarationName storedKind sealed span alignment =>
+      cases storedKind with
+      | opaqueString => simp [found] at success
+      | cell ty =>
+        cases matching : (StateKind.cell ty == kind) with
+        | false => simp [found, matching] at success
+        | true =>
+          exact ⟨_, rfl, matching⟩
+      | map keyTy valueTy =>
+        cases matching : (StateKind.map keyTy valueTy == kind) with
+        | false => simp [found, matching] at success
+        | true =>
+          exact ⟨_, rfl, matching⟩
+      | tree schema =>
+        cases matching : (StateKind.tree schema == kind) with
+        | false => simp [found, matching] at success
+        | true =>
+          exact ⟨_, rfl, matching⟩
+      | merkleTree depth =>
+        cases matching : (StateKind.merkleTree depth == kind) with
+        | false => simp [found, matching] at success
+        | true =>
+          exact ⟨_, rfl, matching⟩
+      | historicMerkleTree depth =>
+        cases matching : (StateKind.historicMerkleTree depth == kind) with
+        | false => simp [found, matching] at success
+        | true =>
+          exact ⟨_, rfl, matching⟩
 private def validateCallArguments (inputs : List Input) (names : List String)
     (span : SourceSpan) : Except Diagnostic Unit := do
   unless uniqueNames names do
@@ -2372,8 +2418,9 @@ private def validateCallArguments (inputs : List Input) (names : List String)
   if fieldCount > 256 then
     throw {span := span, message := "too many native call argument fields"}
 
-/-- Validate state names, typed reads, guards and writes in execution order. -/
-def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entrypoint) : Except Diagnostic Unit := do
+/-- Run the entrypoint checks that precede the source binding environment. -/
+def Entrypoint.validateEffectPrechecks (caps : Capabilities) (decls : List StateDecl)
+    (e : Entrypoint) : Except Diagnostic Unit := do
   for decl in decls do
     match decl.kind with
     | .tree schema =>
@@ -2411,651 +2458,718 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
     groupedInputs := groupedInputs ++ fields
   unless e.effectGuards.isEmpty || e.effectGuards.length == e.effects.length do
     throw {span := e.span, message := "effect guard metadata length mismatch"}
+
+/-- Validate one output binding in the source environment. -/
+def Entrypoint.validateOutputStep (e : Entrypoint) (output : Output) (env : TypeEnv) :
+    Except Diagnostic (ForInStep TypeEnv) := do
+  if (e.circuit.inputs.find? (·.name == output.name)).isSome then
+    throw {span := output.span, message := s!"output '{output.name}' shadows a circuit input"}
+  pure (.yield (env ++ [(output.name, output.ty)]))
+
+/-- A successful output binding appends its name and type exactly once. -/
+theorem Entrypoint.validateOutputStep_succeeded (e : Entrypoint) (output : Output)
+    (env : TypeEnv) (step : ForInStep TypeEnv)
+    (success : Entrypoint.validateOutputStep e output env = .ok step) :
+    step = .yield (env ++ [(output.name, output.ty)]) := by
+  unfold Entrypoint.validateOutputStep at success
+  split at success
+  · simp [throw, throwThe, Bind.bind, Except.bind] at success
+  · exact (Except.ok.inj success).symm
+
+/-- Validate and append the output bindings used by source effects. -/
+def Entrypoint.validateOutputEnvironment (e : Entrypoint) : Except Diagnostic TypeEnv := do
   -- Typing permits private operands. Mandatory disclosure analysis decides
   -- whether their value/control dependence is authorized at a public sink.
-  let mut env := e.circuit.inputs.map fun i => (i.name, i.ty)
-  for output in e.circuit.outputs do
-    if (e.circuit.inputs.find? (·.name == output.name)).isSome then
-      throw {span := output.span, message := s!"output '{output.name}' shadows a circuit input"}
-    env := env ++ [(output.name, output.ty)]
-  for (effect, index) in e.effects.zipIdx do
-    let span := e.effectSpans[index]?.getD e.span
-    if let some stateName := effect.writeTarget then
-      if let some state := decls.find? (·.name == stateName) then
-        if state.sealed then
-          throw {span, message := s!"sealed state '{stateName}' cannot be written by an entrypoint"}
-    if let some condition := e.effectGuardAt index then
-      match condition.validate caps env with
-      | .error message => throw {span, message}
-      | .ok _ => pure ()
-      match effect with
-      | .readCell .. | .readMap .. | .readMember .. | .writeCell .. | .writeMap .. |
-          .claimContractCall .. | .claimShielded .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
-          .readContractAddress .. | .readTokenBalance .. | .mintShielded .. | .mintUnshielded .. |
-          .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
-          .readPath .. | .memberPath .. | .memberRecordSet .. | .readRecordMap .. |
-          .readRecordMapComposite .. | .memberRecordMap .. | .writeRecordMap .. |
-          .writeRecordMapComposite .. | .removeRecordMap .. |
-          .mapIsEmpty .. | .mapSize .. |
-          .insertPath .. | .writePath .. | .emptyMapPath .. | .setInsert .. |
-          .setInsertRecord .. | .removeRecordSet .. |
-          .readCompositePath .. | .writeCompositePath .. | .counterRead .. | .counterLessThan .. |
-          .counterAdjust .. | .counterReset .. | .listLength .. | .listHead .. |
-          .listPushFront .. | .listPopFront .. | .listReset .. | .removePath .. |
-          .readCaller .. | .blockTimeCompare .. | .merkleTreeIsFull .. | .merkleTreeCheckRoot .. |
-          .merkleTreeInsertHash .. | .merkleTreeInsertHashIndex .. | .merkleTreeReset .. |
-          .merkleTreeResetHistory .. | .merkleTreeIsFullAt .. |
-          .merkleTreeCheckRootAt .. | .merkleTreeInsertHashAt .. |
-          .merkleTreeInsertHashIndexAt .. | .merkleTreeResetAt .. |
-          .merkleTreeResetHistoryAt .. => pure ()
-      | .require _ => pure ()
-      | _ =>
-        throw {span := span, message := "native guards are supported only on ledger reads, writes, and require effects"}
-    let result : Except String (List (String × Ty)) := do
-      match effect with
-      | .readCell state destination ty =>
-        if !caps.stateCells then throw "target lacks state cells"
-        requireState decls state (.cell ty)
-        pure [(destination, ty)]
-      | .readMap state destination keyTy valueTy key =>
-        if !caps.stateMaps then throw "target lacks state maps"
-        requireState decls state (.map keyTy valueTy)
-        key.validate caps env
-        pure [(destination, valueTy)]
-      | .readMember state destination keyTy valueTy key =>
-        if !caps.stateMaps then throw "target lacks state maps"
-        requireState decls state (.map keyTy valueTy)
-        key.validate caps env
-        pure [(destination, .bool)]
-      | .readRecordMap state destination valueTy values parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
-        unless foundValueTy == valueTy do throw "record Map value type mismatch"
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for value in values do match value with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        pure [(destination, valueTy)]
-      | .readRecordMapComposite state _destination valueType values destinations parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state values parentKeys
-        let (_, foundValueType, valueFields) ←
-          resolveRecordMapCompositeValue decls state parentKeys
-        unless foundValueType == valueType do throw "record Map value type mismatch"
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in keyFields ++ valueFields do ty.validate caps
-        for value in values do match value with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        unless destinations.map Prod.snd == valueFields.map Prod.snd do
-          throw "record Map read destination field type mismatch"
-        pure destinations
-      | .memberRecordMap state destination values parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for value in values do match value with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        pure [(destination, .bool)]
-      | .readContractAddress destination => do
-        (.bytes 32 : Ty).validate caps
-        pure [(destination, .bytes 32)]
-      | .require condition =>
-        condition.validate caps env
-        pure []
-      | .claimContractCall address entryPointHash commitment => do
-        address.validate caps env
-        entryPointHash.validate caps env
-        commitment.validate caps env
-        pure []
-      | .claimShielded _ digest => do
-        digest.validate caps env
-        pure []
-      | .mintShielded domain amount | .mintUnshielded domain amount => do
-        domain.validate caps env
-        amount.validate caps env
-        pure []
-      | .receiveShieldedToMap state nonce color amount selfAddress keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown shielded coin map '{state}'"
-        unless keys.length ≤ 1 do
-          throw "shielded coin receive supports at most one Bytes32 parent Map key"
-        unless keys.all (fun parent => parent.ty == .bytes 32) do
-          throw "shielded coin Map parent keys must be Bytes32"
-        let .tree treeSchema := declaration.kind
-          | throw s!"shielded coin receive requires a typed Bytes32-keyed tree Map '{state}'"
-        let selected ← treeSchema.resolvePath keys
-        let .map keyTy (.composite compositeEnv recordType) := selected
-          | throw s!"shielded coin receive path must select a Bytes32-keyed coin Map '{state}'"
-        unless keyTy == .bytes 32 do
-          throw "shielded coin map key must be Bytes32"
-        for key in keys do key.validate caps env
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .writeShieldedCoinCell state nonce color amount selfAddress => do
-        if !caps.stateCells then throw "target lacks state cells"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin Cell '{state}'"
-        let .tree (.composite compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin write requires a root composite Cell '{state}'"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .writeShieldedCoinCellTo state nonce color amount isContract recipient => do
-        if !caps.stateCells then throw "target lacks state cells"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin Cell '{state}'"
-        let .tree (.composite compositeEnv recordType) := declaration.kind
-          | throw s!"qualified shielded coin write requires a root composite Cell '{state}'"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        isContract.validate caps env
-        recipient.validate caps env
-        pure []
-      | .pushFrontCoin state nonce color amount selfAddress keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin List '{state}'"
-        let .tree treeSchema := declaration.kind
-          | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
-        unless keys.length ≤ 13 && keys.all (fun key => key.ty == .bytes 32) do
-          throw s!"qualified shielded coin push supports a List under at most 13 Bytes32-keyed Maps '{state}'"
-        let (compositeEnv, recordType, _) ← treeSchema.listPath keys
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .pushFrontCoinTo state nonce color amount isContract recipient keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown qualified shielded coin List '{state}'"
-        let .tree treeSchema := declaration.kind
-          | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
-        unless keys.length ≤ 13 && keys.all (fun key => key.ty == .bytes 32) do
-          throw s!"qualified shielded coin push supports a List under at most 13 Bytes32-keyed Maps '{state}'"
-        let (compositeEnv, recordType, _) ← treeSchema.listPath keys
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        isContract.validate caps env
-        recipient.validate caps env
-        pure []
-      | .insertShieldedCoinSet state nonce color amount selfAddress keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        validateQualifiedCoinSetTarget decls state keys
-        for key in keys do key.validate caps env
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .insertShieldedCoinSetTo state nonce color amount isContract recipient keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        validateQualifiedCoinSetTarget decls state keys
-        for key in keys do key.validate caps env
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        isContract.validate caps env
-        recipient.validate caps env
-        pure []
-      | .insertShieldedCoinMap state key nonce color amount isContract recipient keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        validateQualifiedCoinMapTarget decls state keys
-        for pathKey in keys do pathKey.validate caps env
-        key.validate caps env
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        isContract.validate caps env
-        recipient.validate caps env
-        pure []
-      | .spendShieldedFromMap state nonce color amount recipient selfAddress => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown shielded coin map '{state}'"
-        let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
-          | throw s!"shielded coin spend requires a root Bytes32-keyed tree Map '{state}'"
-        unless keyTy == .bytes 32 do
-          throw "shielded coin map key must be Bytes32"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        recipient.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .mergeShieldedFromMap state nonceA colorA amountA nonceB colorB amountB selfAddress _staged => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown shielded coin map '{state}'"
-        let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
-          | throw s!"shielded coin merge requires a root Bytes32-keyed tree Map '{state}'"
-        unless keyTy == .bytes 32 do
-          throw "shielded coin map key must be Bytes32"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonceA.validate caps env
-        colorA.validate caps env
-        amountA.validate caps env
-        nonceB.validate caps env
-        colorB.validate caps env
-        amountB.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .sendShieldedFromMap state nonce color inputAmount sendAmount recipient selfAddress => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown shielded coin map '{state}'"
-        let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
-          | throw s!"shielded coin send requires a root Bytes32-keyed tree Map '{state}'"
-        unless keyTy == .bytes 32 do
-          throw "shielded coin map key must be Bytes32"
-        discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
-        nonce.validate caps env
-        color.validate caps env
-        inputAmount.validate caps env
-        sendAmount.validate caps env
-        recipient.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .relayShieldedImmediate nonce color amount recipient selfAddress => do
-        nonce.validate caps env
-        color.validate caps env
-        amount.validate caps env
-        recipient.validate caps env
-        selfAddress.validate caps env
-        pure []
-      | .incUnshieldedInputs color amount isUnshielded
-      | .incUnshieldedOutputs color amount isUnshielded => do
-        color.validate caps env
-        amount.validate caps env
-        isUnshielded.validate caps env
-        pure []
-      | .claimUnshieldedCoinSpend color amount isUnshielded isContract recipient => do
-        color.validate caps env
-        amount.validate caps env
-        isUnshielded.validate caps env
-        isContract.validate caps env
-        recipient.validate caps env
-        pure []
-      | .requireContractCaller address => do
-        address.validate caps env
-        pure []
-      | .checkpoint => pure []
-      | .readCaller destinations => do
-        (.bytes 32 : Ty).validate caps
-        pure destinations.types
-      | .readTokenBalance destination color isUnshielded query => do
-        color.validate caps env
-        isUnshielded.validate caps env
-        match query with
-        | .exact => pure ()
-        | .compare _ limit => limit.validate caps env
-        pure [(destination, query.resultType)]
-      | .blockTimeCompare destination _ deadline => do
-        deadline.validate caps env
-        pure [(destination, .bool)]
-      | .emitEvent _ payload =>
-        payload.validate caps env
-        pure []
-      | .writeCell state ty value =>
-        if !caps.stateCells then throw "target lacks state cells"
-        requireState decls state (.cell ty)
-        value.validate caps env
-        pure []
-      | .writeMap state keyTy valueTy key value =>
-        if !caps.stateMaps then throw "target lacks state maps"
-        requireState decls state (.map keyTy valueTy)
-        key.validate caps env
-        value.validate caps env
-        pure []
-      | .writeRecordMap state values valueTy value parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
-        unless foundValueTy == valueTy do throw "record Map value type mismatch"
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for field in values do match field with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        valueTy.validate caps
-        value.validate caps env
-        pure []
-      | .writeRecordMapComposite state valueType keyValues valueValues parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state keyValues parentKeys
-        let (_, foundValueType, valueFields) ←
-          resolveRecordMapCompositeValue decls state parentKeys
-        unless foundValueType == valueType do throw "record Map value type mismatch"
-        unless valueFields.map Prod.snd == valueValues.map LedgerFieldExpr.ty do
-          throw "record Map value field type mismatch"
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in keyFields ++ valueFields do ty.validate caps
-        for field in keyValues ++ valueValues do match field with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        pure []
-      | .removeRecordMap state values parentKeys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
-        for key in parentKeys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for field in values do match field with
-          | .mk ty expression => ty.validate caps; expression.validate caps env
-        pure []
-      | .requireAbsent state keyTy key =>
-        if !caps.stateMaps then throw "target lacks state maps"
-        match decls.find? (·.name == state) with
-        | some {kind := .map found _, ..} =>
-          if found != keyTy then throw s!"state key type mismatch for '{state}'"
-        | _ => throw s!"unknown map state '{state}'"
-        key.validate caps env
-        pure []
-      | .readPath state destination keys valueTy => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let .scalar found ← resolveTreeState decls state keys
-          | throw "nested map read must select a scalar value"
-        unless found == valueTy do throw "nested map read value type mismatch"
-        valueTy.validate caps
-        pure [(destination, valueTy)]
-      | .memberPath state destination keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown map or set state '{state}'"
-        let some schema := decl.kind.pathSchema
-          | throw s!"state '{state}' is not a map or set"
-        discard (schema.entryParent keys)
-        pure [(destination, .bool)]
-      | .memberRecordSet state destination keys values => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveRecordSetFields decls state keys values
-        for key in keys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for value in values do
-          match value with
-          | .mk ty expression => do
-            ty.validate caps
-            expression.validate caps env
-        pure [(destination, .bool)]
-      | .mapIsEmpty state destination keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown map or set state '{state}'"
-        decl.kind.validateCollectionPath keys
-        pure [(destination, .bool)]
-      | .mapSize state destination keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown map or set state '{state}'"
-        decl.kind.validateCollectionPath keys
-        pure [(destination, .uint (2 ^ 64 - 1))]
-      | .counterRead state destination keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        validateCounterEffect decls state keys
-        pure [(destination, .uint (2 ^ 64 - 1))]
-      | .counterLessThan state destination keys threshold => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        validateCounterEffect decls state keys
-        threshold.validate caps env
-        pure [(destination, .bool)]
-      | .counterAdjust state keys _ amount => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        validateCounterEffect decls state keys
-        amount.validate caps env
-        pure []
-      | .counterReset state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        validateCounterEffect decls state keys
-        pure []
-      | .listLength state destination keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveListState decls state keys)
-        pure [(destination, .uint (2 ^ 64 - 1))]
-      | .listHead state _ keys type destinations => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let (_, foundType, fields) ← resolveListState decls state keys
-        unless foundType == type do throw "list head record type mismatch"
-        unless fields.map Prod.snd == destinations.map Prod.snd do
-          throw "list head destination count mismatch"
-        unless uniqueNames (destinations.map Prod.fst) do throw "duplicate list head destination"
-        for (_, ty) in fields do ty.validate caps
-        pure destinations
-      | .listPushFront state keys type values => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let (_, foundType, fields) ← resolveListState decls state keys
-        unless foundType == type do throw "list push record type mismatch"
-        unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
-          throw "list push record field type mismatch"
-        for (_, ty) in fields do ty.validate caps
-        for value in values do
-          match value with
-          | .mk ty expression => do
-            ty.validate caps
-            expression.validate caps env
-        pure []
-      | .listPopFront state keys | .listReset state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveListState decls state keys)
-        pure []
-      | .merkleTreeIsFull state destination => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let some depth := declaration.kind.merkleTreeDepth?
-          | throw s!"unknown MerkleTree state '{state}'"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "MerkleTree depth must be between 2 and 32"
-        pure [(destination, .bool)]
-      | .merkleTreeCheckRoot state expected destination => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let some depth := declaration.kind.merkleTreeDepth?
-          | throw s!"unknown MerkleTree state '{state}'"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "MerkleTree depth must be between 2 and 32"
-        expected.validate caps env
-        pure [(destination, .bool)]
-      | .merkleTreeInsertHash state hash => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let some depth := declaration.kind.merkleTreeDepth?
-          | throw s!"unknown MerkleTree state '{state}'"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "MerkleTree depth must be between 2 and 32"
-        hash.validate caps env
-        pure []
-      | .merkleTreeInsertHashIndex state hash index => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let some depth := declaration.kind.merkleTreeDepth?
-          | throw s!"unknown MerkleTree state '{state}'"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "MerkleTree depth must be between 2 and 32"
-        hash.validate caps env
-        index.validate caps env
-        pure []
-      | .merkleTreeReset state => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let some depth := declaration.kind.merkleTreeDepth?
-          | throw s!"unknown MerkleTree state '{state}'"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "MerkleTree depth must be between 2 and 32"
-        pure []
-      | .merkleTreeResetHistory state => do
-        let some declaration := decls.find? (·.name == state)
-          | throw s!"unknown MerkleTree state '{state}'"
-        let .historicMerkleTree depth := declaration.kind
-          | throw "resetHistory requires a HistoricMerkleTree"
-        unless 2 ≤ depth && depth ≤ 32 do
-          throw "HistoricMerkleTree depth must be between 2 and 32"
-        pure []
-      | .merkleTreeIsFullAt state keys destination => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveMerkleTreePath decls state keys)
-        pure [(destination, .bool)]
-      | .merkleTreeCheckRootAt state keys expected destination => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveMerkleTreePath decls state keys)
-        expected.validate caps env
-        pure [(destination, .bool)]
-      | .merkleTreeInsertHashAt state keys hash => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveMerkleTreePath decls state keys)
-        hash.validate caps env
-        pure []
-      | .merkleTreeInsertHashIndexAt state keys hash index => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        discard (resolveMerkleTreePath decls state keys)
-        hash.validate caps env
-        index.validate caps env
-        pure []
-      | .merkleTreeResetAt state keys depth historic emptyHistory => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        if emptyHistory && keys.isEmpty then
-          throw "empty-history reset requires a nested HistoricMerkleTree"
-        for key in keys do key.validate caps env
-        let (foundDepth, foundHistoric) ← resolveMerkleTreePath decls state keys
-        unless depth == foundDepth && historic == foundHistoric do
-          throw "nested MerkleTree reset schema mismatch"
-        if emptyHistory && !historic then
-          throw "empty-history reset requires a HistoricMerkleTree"
-        pure []
-      | .merkleTreeResetHistoryAt state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let (_, historic) ← resolveMerkleTreePath decls state keys
-        unless historic do throw "resetHistory requires a HistoricMerkleTree"
-        pure []
-      | .insertPath state keys valueTy value
-      | .writePath state keys valueTy value => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let .scalar found ← resolveTreeState decls state keys
-          | throw "nested scalar write must select a scalar value"
-        unless found == valueTy do throw "nested scalar write value type mismatch"
-        value.validate caps env
-        pure []
-      | .readCompositePath state _ keys type destinations => do
-        for key in keys do key.validate caps env
-        let (compositeEnv, foundType) ← if keys.isEmpty then do
-          if !caps.stateCells then throw "target lacks state cells"
-          let some declaration := decls.find? (·.name == state)
-            | throw s!"unknown root composite Cell '{state}'"
-          let .tree (.composite compositeEnv foundType) := declaration.kind
-            | throw "root composite read must target a checked record Cell"
-          pure (compositeEnv, foundType)
-        else do
-          if !caps.stateMaps then throw "target lacks state maps"
-          let .composite compositeEnv foundType ← resolveTreeState decls state keys
-            | throw "nested composite read must select a composite value"
-          pure (compositeEnv, foundType)
-        unless foundType == type do throw "nested composite read type mismatch"
-        let fields ← if keys.isEmpty then
-          LedgerValueType.cellRecordFields compositeEnv type
-        else LedgerValueType.mapRecordFields compositeEnv type
-        unless fields.map Prod.snd == destinations.map Prod.snd do
-          throw "nested composite read destination count mismatch"
-        unless uniqueNames (destinations.map Prod.fst) do throw "duplicate nested composite read destination"
-        for (_, ty) in fields do ty.validate caps
-        pure destinations
-      | .writeCompositePath state keys type values => do
-        for key in keys do key.validate caps env
-        let fields ← if keys.isEmpty then do
-          if !caps.stateCells then throw "target lacks state cells"
-          let some declaration := decls.find? (·.name == state)
-            | throw s!"unknown root composite Cell '{state}'"
-          let .tree (.composite compositeEnv foundType) := declaration.kind
-            | throw "root composite write must target a checked record Cell"
-          unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.cellWriteEffectFields compositeEnv type values
-        else do
-          if !caps.stateMaps then throw "target lacks state maps"
-          let .composite compositeEnv foundType ← resolveTreeState decls state keys
-            | throw "nested composite write must select a composite value"
-          unless foundType == type do throw "nested composite write type mismatch"
-          LedgerValueType.mapRecordWriteFields compositeEnv type
-        unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
-          throw "nested composite write field type mismatch"
-        for (_, ty) in fields do ty.validate caps
-        for value in values do
-          match value with
-          | .mk ty expression => do
-            ty.validate caps
-            expression.validate caps env
-        pure []
-      | .emptyMapPath state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown map or set state '{state}'"
-        decl.kind.validateCollectionPath keys
-        pure []
-      | .setInsert state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown set state '{state}'"
-        let some schema := decl.kind.pathSchema
-          | throw s!"state '{state}' is not a set"
-        let .set _ ← schema.entryParent keys
-          | throw "set insertion path must select a Set"
-        pure []
-      | .setInsertRecord state keys values | .removeRecordSet state keys values => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        let fields ← resolveRecordSetFields decls state keys values
-        for key in keys do key.validate caps env
-        for (_, ty) in fields do ty.validate caps
-        for value in values do
-          match value with
-          | .mk ty expression => do
-            ty.validate caps
-            expression.validate caps env
-        pure []
-      | .removePath state keys => do
-        if !caps.stateMaps then throw "target lacks state maps"
-        for key in keys do key.validate caps env
-        let some decl := decls.find? (·.name == state)
-          | throw s!"unknown map or set state '{state}'"
-        let some schema := decl.kind.pathSchema
-          | throw s!"state '{state}' is not a map or set"
-        schema.removalPath keys
-        pure []
-    match result with
-    | .error message => throw {span := e.span, message}
-    | .ok bindings =>
-      for (name, ty) in bindings do
-        if (env.lookup name).isSome then
-          throw {span := e.span, message := s!"state read shadows '{name}'"}
-        env := env ++ [(name, ty)]
+  let env := e.circuit.inputs.map fun i => (i.name, i.ty)
+  forIn e.circuit.outputs env (fun output env => Entrypoint.validateOutputStep e output env)
+
+/-- Run pre-effect checks and build the source input/output type environment. -/
+def Entrypoint.validateEffectPrefix (caps : Capabilities) (decls : List StateDecl)
+    (e : Entrypoint) : Except Diagnostic TypeEnv := do
+  Entrypoint.validateEffectPrechecks caps decls e
+  Entrypoint.validateOutputEnvironment e
+
+/-- Validate one effect's declaration and typed expression operands using the
+same cases and checks used by entrypoint admission. -/
+def Entrypoint.validateEffectBindings (caps : Capabilities) (decls : List StateDecl)
+    (effect : Effect) (env : TypeEnv) : Except String (List (String × Ty)) := do
+  match effect with
+  | .readCell state destination ty =>
+    if !caps.stateCells then throw "target lacks state cells"
+    Entrypoint.requireState decls state (.cell ty)
+    pure [(destination, ty)]
+  | .readMap state destination keyTy valueTy key =>
+    if !caps.stateMaps then throw "target lacks state maps"
+    Entrypoint.requireState decls state (.map keyTy valueTy)
+    key.validate caps env
+    pure [(destination, valueTy)]
+  | .readMember state destination keyTy valueTy key =>
+    if !caps.stateMaps then throw "target lacks state maps"
+    Entrypoint.requireState decls state (.map keyTy valueTy)
+    key.validate caps env
+    pure [(destination, .bool)]
+  | .readRecordMap state destination valueTy values parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
+    unless foundValueTy == valueTy do throw "record Map value type mismatch"
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for value in values do match value with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    pure [(destination, valueTy)]
+  | .readRecordMapComposite state _destination valueType values destinations parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state values parentKeys
+    let (_, foundValueType, valueFields) ←
+      resolveRecordMapCompositeValue decls state parentKeys
+    unless foundValueType == valueType do throw "record Map value type mismatch"
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in keyFields ++ valueFields do ty.validate caps
+    for value in values do match value with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    unless destinations.map Prod.snd == valueFields.map Prod.snd do
+      throw "record Map read destination field type mismatch"
+    pure destinations
+  | .memberRecordMap state destination values parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for value in values do match value with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    pure [(destination, .bool)]
+  | .readContractAddress destination => do
+    (.bytes 32 : Ty).validate caps
+    pure [(destination, .bytes 32)]
+  | .require condition =>
+    condition.validate caps env
+    pure []
+  | .claimContractCall address entryPointHash commitment => do
+    address.validate caps env
+    entryPointHash.validate caps env
+    commitment.validate caps env
+    pure []
+  | .claimShielded _ digest => do
+    digest.validate caps env
+    pure []
+  | .mintShielded domain amount | .mintUnshielded domain amount => do
+    domain.validate caps env
+    amount.validate caps env
+    pure []
+  | .receiveShieldedToMap state nonce color amount selfAddress keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown shielded coin map '{state}'"
+    unless keys.length ≤ 1 do
+      throw "shielded coin receive supports at most one Bytes32 parent Map key"
+    unless keys.all (fun parent => parent.ty == .bytes 32) do
+      throw "shielded coin Map parent keys must be Bytes32"
+    let .tree treeSchema := declaration.kind
+      | throw s!"shielded coin receive requires a typed Bytes32-keyed tree Map '{state}'"
+    let selected ← treeSchema.resolvePath keys
+    let .map keyTy (.composite compositeEnv recordType) := selected
+      | throw s!"shielded coin receive path must select a Bytes32-keyed coin Map '{state}'"
+    unless keyTy == .bytes 32 do
+      throw "shielded coin map key must be Bytes32"
+    for key in keys do key.validate caps env
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .writeShieldedCoinCell state nonce color amount selfAddress => do
+    if !caps.stateCells then throw "target lacks state cells"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown qualified shielded coin Cell '{state}'"
+    let .tree (.composite compositeEnv recordType) := declaration.kind
+      | throw s!"qualified shielded coin write requires a root composite Cell '{state}'"
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .writeShieldedCoinCellTo state nonce color amount isContract recipient => do
+    if !caps.stateCells then throw "target lacks state cells"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown qualified shielded coin Cell '{state}'"
+    let .tree (.composite compositeEnv recordType) := declaration.kind
+      | throw s!"qualified shielded coin write requires a root composite Cell '{state}'"
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    isContract.validate caps env
+    recipient.validate caps env
+    pure []
+  | .pushFrontCoin state nonce color amount selfAddress keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown qualified shielded coin List '{state}'"
+    let .tree treeSchema := declaration.kind
+      | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
+    unless keys.length ≤ 13 && keys.all (fun key => key.ty == .bytes 32) do
+      throw s!"qualified shielded coin push supports a List under at most 13 Bytes32-keyed Maps '{state}'"
+    let (compositeEnv, recordType, _) ← treeSchema.listPath keys
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .pushFrontCoinTo state nonce color amount isContract recipient keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown qualified shielded coin List '{state}'"
+    let .tree treeSchema := declaration.kind
+      | throw s!"qualified shielded coin push requires a root List or nested List '{state}'"
+    unless keys.length ≤ 13 && keys.all (fun key => key.ty == .bytes 32) do
+      throw s!"qualified shielded coin push supports a List under at most 13 Bytes32-keyed Maps '{state}'"
+    let (compositeEnv, recordType, _) ← treeSchema.listPath keys
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    isContract.validate caps env
+    recipient.validate caps env
+    pure []
+  | .insertShieldedCoinSet state nonce color amount selfAddress keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    validateQualifiedCoinSetTarget decls state keys
+    for key in keys do key.validate caps env
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .insertShieldedCoinSetTo state nonce color amount isContract recipient keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    validateQualifiedCoinSetTarget decls state keys
+    for key in keys do key.validate caps env
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    isContract.validate caps env
+    recipient.validate caps env
+    pure []
+  | .insertShieldedCoinMap state key nonce color amount isContract recipient keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    validateQualifiedCoinMapTarget decls state keys
+    for pathKey in keys do pathKey.validate caps env
+    key.validate caps env
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    isContract.validate caps env
+    recipient.validate caps env
+    pure []
+  | .spendShieldedFromMap state nonce color amount recipient selfAddress => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown shielded coin map '{state}'"
+    let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
+      | throw s!"shielded coin spend requires a root Bytes32-keyed tree Map '{state}'"
+    unless keyTy == .bytes 32 do
+      throw "shielded coin map key must be Bytes32"
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    recipient.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .mergeShieldedFromMap state nonceA colorA amountA nonceB colorB amountB selfAddress _staged => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown shielded coin map '{state}'"
+    let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
+      | throw s!"shielded coin merge requires a root Bytes32-keyed tree Map '{state}'"
+    unless keyTy == .bytes 32 do
+      throw "shielded coin map key must be Bytes32"
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonceA.validate caps env
+    colorA.validate caps env
+    amountA.validate caps env
+    nonceB.validate caps env
+    colorB.validate caps env
+    amountB.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .sendShieldedFromMap state nonce color inputAmount sendAmount recipient selfAddress => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown shielded coin map '{state}'"
+    let .tree (.map keyTy (.composite compositeEnv recordType)) := declaration.kind
+      | throw s!"shielded coin send requires a root Bytes32-keyed tree Map '{state}'"
+    unless keyTy == .bytes 32 do
+      throw "shielded coin map key must be Bytes32"
+    discard (LedgerValueType.shieldedCoinRecordFields compositeEnv recordType)
+    nonce.validate caps env
+    color.validate caps env
+    inputAmount.validate caps env
+    sendAmount.validate caps env
+    recipient.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .relayShieldedImmediate nonce color amount recipient selfAddress => do
+    nonce.validate caps env
+    color.validate caps env
+    amount.validate caps env
+    recipient.validate caps env
+    selfAddress.validate caps env
+    pure []
+  | .incUnshieldedInputs color amount isUnshielded
+  | .incUnshieldedOutputs color amount isUnshielded => do
+    color.validate caps env
+    amount.validate caps env
+    isUnshielded.validate caps env
+    pure []
+  | .claimUnshieldedCoinSpend color amount isUnshielded isContract recipient => do
+    color.validate caps env
+    amount.validate caps env
+    isUnshielded.validate caps env
+    isContract.validate caps env
+    recipient.validate caps env
+    pure []
+  | .requireContractCaller address => do
+    address.validate caps env
+    pure []
+  | .checkpoint => pure []
+  | .readCaller destinations => do
+    (.bytes 32 : Ty).validate caps
+    pure destinations.types
+  | .readTokenBalance destination color isUnshielded query => do
+    color.validate caps env
+    isUnshielded.validate caps env
+    match query with
+    | .exact => pure ()
+    | .compare _ limit => limit.validate caps env
+    pure [(destination, query.resultType)]
+  | .blockTimeCompare destination _ deadline => do
+    deadline.validate caps env
+    pure [(destination, .bool)]
+  | .emitEvent _ payload =>
+    payload.validate caps env
+    pure []
+  | .writeCell state ty value =>
+    if !caps.stateCells then throw "target lacks state cells"
+    Entrypoint.requireState decls state (.cell ty)
+    value.validate caps env
+    pure []
+  | .writeMap state keyTy valueTy key value =>
+    if !caps.stateMaps then throw "target lacks state maps"
+    Entrypoint.requireState decls state (.map keyTy valueTy)
+    key.validate caps env
+    value.validate caps env
+    pure []
+  | .writeRecordMap state values valueTy value parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let (_, fields, foundValueTy) ← resolveRecordMap decls state values parentKeys
+    unless foundValueTy == valueTy do throw "record Map value type mismatch"
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for field in values do match field with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    valueTy.validate caps
+    value.validate caps env
+    pure []
+  | .writeRecordMapComposite state valueType keyValues valueValues parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let (_, _, keyFields) ← resolveRecordMapCompositeKey decls state keyValues parentKeys
+    let (_, foundValueType, valueFields) ←
+      resolveRecordMapCompositeValue decls state parentKeys
+    unless foundValueType == valueType do throw "record Map value type mismatch"
+    unless valueFields.map Prod.snd == valueValues.map LedgerFieldExpr.ty do
+      throw "record Map value field type mismatch"
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in keyFields ++ valueFields do ty.validate caps
+    for field in keyValues ++ valueValues do match field with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    pure []
+  | .removeRecordMap state values parentKeys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let fields ← resolveAnyRecordMapKeyFields decls state values parentKeys
+    for key in parentKeys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for field in values do match field with
+      | .mk ty expression => ty.validate caps; expression.validate caps env
+    pure []
+  | .requireAbsent state keyTy key =>
+    if !caps.stateMaps then throw "target lacks state maps"
+    match decls.find? (·.name == state) with
+    | some {kind := .map found _, ..} =>
+      if found != keyTy then throw s!"state key type mismatch for '{state}'"
+    | _ => throw s!"unknown map state '{state}'"
+    key.validate caps env
+    pure []
+  | .readPath state destination keys valueTy => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let .scalar found ← resolveTreeState decls state keys
+      | throw "nested map read must select a scalar value"
+    unless found == valueTy do throw "nested map read value type mismatch"
+    valueTy.validate caps
+    pure [(destination, valueTy)]
+  | .memberPath state destination keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown map or set state '{state}'"
+    let some schema := decl.kind.pathSchema
+      | throw s!"state '{state}' is not a map or set"
+    discard (schema.entryParent keys)
+    pure [(destination, .bool)]
+  | .memberRecordSet state destination keys values => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let fields ← resolveRecordSetFields decls state keys values
+    for key in keys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for value in values do
+      match value with
+      | .mk ty expression => do
+        ty.validate caps
+        expression.validate caps env
+    pure [(destination, .bool)]
+  | .mapIsEmpty state destination keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown map or set state '{state}'"
+    decl.kind.validateCollectionPath keys
+    pure [(destination, .bool)]
+  | .mapSize state destination keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown map or set state '{state}'"
+    decl.kind.validateCollectionPath keys
+    pure [(destination, .uint (2 ^ 64 - 1))]
+  | .counterRead state destination keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    validateCounterEffect decls state keys
+    pure [(destination, .uint (2 ^ 64 - 1))]
+  | .counterLessThan state destination keys threshold => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    validateCounterEffect decls state keys
+    threshold.validate caps env
+    pure [(destination, .bool)]
+  | .counterAdjust state keys _ amount => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    validateCounterEffect decls state keys
+    amount.validate caps env
+    pure []
+  | .counterReset state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    validateCounterEffect decls state keys
+    pure []
+  | .listLength state destination keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveListState decls state keys)
+    pure [(destination, .uint (2 ^ 64 - 1))]
+  | .listHead state _ keys type destinations => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let (_, foundType, fields) ← resolveListState decls state keys
+    unless foundType == type do throw "list head record type mismatch"
+    unless fields.map Prod.snd == destinations.map Prod.snd do
+      throw "list head destination count mismatch"
+    unless uniqueNames (destinations.map Prod.fst) do throw "duplicate list head destination"
+    for (_, ty) in fields do ty.validate caps
+    pure destinations
+  | .listPushFront state keys type values => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let (_, foundType, fields) ← resolveListState decls state keys
+    unless foundType == type do throw "list push record type mismatch"
+    unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+      throw "list push record field type mismatch"
+    for (_, ty) in fields do ty.validate caps
+    for value in values do
+      match value with
+      | .mk ty expression => do
+        ty.validate caps
+        expression.validate caps env
+    pure []
+  | .listPopFront state keys | .listReset state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveListState decls state keys)
+    pure []
+  | .merkleTreeIsFull state destination => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let some depth := declaration.kind.merkleTreeDepth?
+      | throw s!"unknown MerkleTree state '{state}'"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "MerkleTree depth must be between 2 and 32"
+    pure [(destination, .bool)]
+  | .merkleTreeCheckRoot state expected destination => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let some depth := declaration.kind.merkleTreeDepth?
+      | throw s!"unknown MerkleTree state '{state}'"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "MerkleTree depth must be between 2 and 32"
+    expected.validate caps env
+    pure [(destination, .bool)]
+  | .merkleTreeInsertHash state hash => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let some depth := declaration.kind.merkleTreeDepth?
+      | throw s!"unknown MerkleTree state '{state}'"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "MerkleTree depth must be between 2 and 32"
+    hash.validate caps env
+    pure []
+  | .merkleTreeInsertHashIndex state hash index => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let some depth := declaration.kind.merkleTreeDepth?
+      | throw s!"unknown MerkleTree state '{state}'"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "MerkleTree depth must be between 2 and 32"
+    hash.validate caps env
+    index.validate caps env
+    pure []
+  | .merkleTreeReset state => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let some depth := declaration.kind.merkleTreeDepth?
+      | throw s!"unknown MerkleTree state '{state}'"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "MerkleTree depth must be between 2 and 32"
+    pure []
+  | .merkleTreeResetHistory state => do
+    let some declaration := decls.find? (·.name == state)
+      | throw s!"unknown MerkleTree state '{state}'"
+    let .historicMerkleTree depth := declaration.kind
+      | throw "resetHistory requires a HistoricMerkleTree"
+    unless 2 ≤ depth && depth ≤ 32 do
+      throw "HistoricMerkleTree depth must be between 2 and 32"
+    pure []
+  | .merkleTreeIsFullAt state keys destination => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveMerkleTreePath decls state keys)
+    pure [(destination, .bool)]
+  | .merkleTreeCheckRootAt state keys expected destination => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveMerkleTreePath decls state keys)
+    expected.validate caps env
+    pure [(destination, .bool)]
+  | .merkleTreeInsertHashAt state keys hash => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveMerkleTreePath decls state keys)
+    hash.validate caps env
+    pure []
+  | .merkleTreeInsertHashIndexAt state keys hash index => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    discard (resolveMerkleTreePath decls state keys)
+    hash.validate caps env
+    index.validate caps env
+    pure []
+  | .merkleTreeResetAt state keys depth historic emptyHistory => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    if emptyHistory && keys.isEmpty then
+      throw "empty-history reset requires a nested HistoricMerkleTree"
+    for key in keys do key.validate caps env
+    let (foundDepth, foundHistoric) ← resolveMerkleTreePath decls state keys
+    unless depth == foundDepth && historic == foundHistoric do
+      throw "nested MerkleTree reset schema mismatch"
+    if emptyHistory && !historic then
+      throw "empty-history reset requires a HistoricMerkleTree"
+    pure []
+  | .merkleTreeResetHistoryAt state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let (_, historic) ← resolveMerkleTreePath decls state keys
+    unless historic do throw "resetHistory requires a HistoricMerkleTree"
+    pure []
+  | .insertPath state keys valueTy value
+  | .writePath state keys valueTy value => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let .scalar found ← resolveTreeState decls state keys
+      | throw "nested scalar write must select a scalar value"
+    unless found == valueTy do throw "nested scalar write value type mismatch"
+    value.validate caps env
+    pure []
+  | .readCompositePath state _ keys type destinations => do
+    for key in keys do key.validate caps env
+    let (compositeEnv, foundType) ← if keys.isEmpty then do
+      if !caps.stateCells then throw "target lacks state cells"
+      let some declaration := decls.find? (·.name == state)
+        | throw s!"unknown root composite Cell '{state}'"
+      let .tree (.composite compositeEnv foundType) := declaration.kind
+        | throw "root composite read must target a checked record Cell"
+      pure (compositeEnv, foundType)
+    else do
+      if !caps.stateMaps then throw "target lacks state maps"
+      let .composite compositeEnv foundType ← resolveTreeState decls state keys
+        | throw "nested composite read must select a composite value"
+      pure (compositeEnv, foundType)
+    unless foundType == type do throw "nested composite read type mismatch"
+    let fields ← if keys.isEmpty then
+      LedgerValueType.cellRecordFields compositeEnv type
+    else LedgerValueType.mapRecordFields compositeEnv type
+    unless fields.map Prod.snd == destinations.map Prod.snd do
+      throw "nested composite read destination count mismatch"
+    unless uniqueNames (destinations.map Prod.fst) do throw "duplicate nested composite read destination"
+    for (_, ty) in fields do ty.validate caps
+    pure destinations
+  | .writeCompositePath state keys type values => do
+    for key in keys do key.validate caps env
+    let fields ← if keys.isEmpty then do
+      if !caps.stateCells then throw "target lacks state cells"
+      let some declaration := decls.find? (·.name == state)
+        | throw s!"unknown root composite Cell '{state}'"
+      let .tree (.composite compositeEnv foundType) := declaration.kind
+        | throw "root composite write must target a checked record Cell"
+      unless foundType == type do throw "nested composite write type mismatch"
+      LedgerValueType.cellWriteEffectFields compositeEnv type values
+    else do
+      if !caps.stateMaps then throw "target lacks state maps"
+      let .composite compositeEnv foundType ← resolveTreeState decls state keys
+        | throw "nested composite write must select a composite value"
+      unless foundType == type do throw "nested composite write type mismatch"
+      LedgerValueType.mapRecordWriteFields compositeEnv type
+    unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
+      throw "nested composite write field type mismatch"
+    for (_, ty) in fields do ty.validate caps
+    for value in values do
+      match value with
+      | .mk ty expression => do
+        ty.validate caps
+        expression.validate caps env
+    pure []
+  | .emptyMapPath state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown map or set state '{state}'"
+    decl.kind.validateCollectionPath keys
+    pure []
+  | .setInsert state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown set state '{state}'"
+    let some schema := decl.kind.pathSchema
+      | throw s!"state '{state}' is not a set"
+    let .set _ ← schema.entryParent keys
+      | throw "set insertion path must select a Set"
+    pure []
+  | .setInsertRecord state keys values | .removeRecordSet state keys values => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    let fields ← resolveRecordSetFields decls state keys values
+    for key in keys do key.validate caps env
+    for (_, ty) in fields do ty.validate caps
+    for value in values do
+      match value with
+      | .mk ty expression => do
+        ty.validate caps
+        expression.validate caps env
+    pure []
+  | .removePath state keys => do
+    if !caps.stateMaps then throw "target lacks state maps"
+    for key in keys do key.validate caps env
+    let some decl := decls.find? (·.name == state)
+      | throw s!"unknown map or set state '{state}'"
+    let some schema := decl.kind.pathSchema
+      | throw s!"state '{state}' is not a map or set"
+    schema.removalPath keys
+    pure []
+
+/-- Run source write gating before guard and operand validation. -/
+def Entrypoint.validateEffectWriteGate (decls : List StateDecl) (e : Entrypoint)
+    (effect : Effect) (index : Nat) : Except Diagnostic Unit := do
+  let span := e.effectSpans[index]?.getD e.span
+  if let some stateName := effect.writeTarget then
+    if let some state := decls.find? (·.name == stateName) then
+      if state.sealed then
+        throw {span, message := s!"sealed state '{stateName}' cannot be written by an entrypoint"}
+
+/-- Validate a source effect guard and its supported effect class. -/
+def Entrypoint.validateEffectGuard (caps : Capabilities) (e : Entrypoint)
+    (effect : Effect) (index : Nat) (env : TypeEnv) : Except Diagnostic Unit := do
+  let span := e.effectSpans[index]?.getD e.span
+  if let some condition := e.effectGuardAt index then
+    match condition.validate caps env with
+    | .error message => throw {span, message}
+    | .ok _ => pure ()
+    match effect with
+    | .readCell .. | .readMap .. | .readMember .. | .writeCell .. | .writeMap .. |
+        .claimContractCall .. | .claimShielded .. | .requireContractCaller .. | .checkpoint | .emitEvent .. |
+        .readContractAddress .. | .readTokenBalance .. | .mintShielded .. | .mintUnshielded .. |
+        .incUnshieldedInputs .. | .incUnshieldedOutputs .. | .claimUnshieldedCoinSpend .. |
+        .readPath .. | .memberPath .. | .memberRecordSet .. | .readRecordMap .. |
+        .readRecordMapComposite .. | .memberRecordMap .. | .writeRecordMap .. |
+        .writeRecordMapComposite .. | .removeRecordMap .. |
+        .mapIsEmpty .. | .mapSize .. |
+        .insertPath .. | .writePath .. | .emptyMapPath .. | .setInsert .. |
+        .setInsertRecord .. | .removeRecordSet .. |
+        .readCompositePath .. | .writeCompositePath .. | .counterRead .. | .counterLessThan .. |
+        .counterAdjust .. | .counterReset .. | .listLength .. | .listHead .. |
+        .listPushFront .. | .listPopFront .. | .listReset .. | .removePath .. |
+        .readCaller .. | .blockTimeCompare .. | .merkleTreeIsFull .. | .merkleTreeCheckRoot .. |
+        .merkleTreeInsertHash .. | .merkleTreeInsertHashIndex .. | .merkleTreeReset .. |
+        .merkleTreeResetHistory .. | .merkleTreeIsFullAt .. |
+        .merkleTreeCheckRootAt .. | .merkleTreeInsertHashAt .. |
+        .merkleTreeInsertHashIndexAt .. | .merkleTreeResetAt .. |
+        .merkleTreeResetHistoryAt .. => pure ()
+    | .require _ => pure ()
+    | _ =>
+      throw {span := span, message := "native guards are supported only on ledger reads, writes, and require effects"}
+
+/-- Preserve the source diagnostic span when typed effect validation fails. -/
+def Entrypoint.validateEffectBindingsDiagnostic (caps : Capabilities)
+    (decls : List StateDecl) (e : Entrypoint) (effect : Effect) (env : TypeEnv) :
+    Except Diagnostic (List (String × Ty)) :=
+  match Entrypoint.validateEffectBindings caps decls effect env with
+  | .error message => .error {span := e.span, message}
+  | .ok bindings => .ok bindings
+
+/-- Check and append the bindings produced by one source effect in order. -/
+private def validateEffectBindingEnvironment (span : SourceSpan) (incoming : TypeEnv)
+    (bindings : List (String × Ty)) : Except Diagnostic TypeEnv :=
+  match bindings with
+  | [] => .ok incoming
+  | (name, ty) :: rest =>
+    if (incoming.lookup name).isSome then
+      .error {span, message := s!"state read shadows '{name}'"}
+    else
+      validateEffectBindingEnvironment span (incoming ++ [(name, ty)]) rest
+
+/-- Validate one ordered source effect using the production entrypoint rules. -/
+def Entrypoint.validateEffectStep (caps : Capabilities) (decls : List StateDecl)
+    (e : Entrypoint) (effect : Effect) (index : Nat) (incoming : TypeEnv) :
+    Except Diagnostic (ForInStep TypeEnv) := do
+  Entrypoint.validateEffectWriteGate decls e effect index
+  Entrypoint.validateEffectGuard caps e effect index incoming
+  let bindings ← Entrypoint.validateEffectBindingsDiagnostic caps decls e effect incoming
+  let env ← validateEffectBindingEnvironment e.span incoming bindings
+  pure (.yield env)
+
+/-- Run the production source effect checks in their original order. -/
+def Entrypoint.validateEffectLoop (caps : Capabilities) (decls : List StateDecl)
+    (e : Entrypoint) (initial : TypeEnv) : Except Diagnostic TypeEnv :=
+  forIn e.effects.zipIdx initial (fun item env =>
+    Entrypoint.validateEffectStep caps decls e item.1 item.2 env)
+
+/-- Validate entrypoint return values after all source effects. -/
+def Entrypoint.validateEffectSuffix (caps : Capabilities) (e : Entrypoint)
+    (env : TypeEnv) : Except Diagnostic Unit := do
   unless uniqueNames (e.returns.map (·.name)) do
     throw {span := e.span, message := "duplicate entrypoint return label"}
   unless (e.returns.map Output.nativeReturnFieldCount).sum ≤ maxEntrypointReturnFields do
@@ -3149,6 +3263,95 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl) (e : Entr
         | throw {span := e.span, message := s!"logical return '{view.name}' references missing physical field '{fieldName}'"}
       unless output.ty == type do
         throw {span := output.span, message := s!"logical return field '{fieldName}' does not match its physical type"}
+
+/-- Validate state names, typed reads, guards and writes in execution order. -/
+def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl)
+    (e : Entrypoint) : Except Diagnostic Unit := do
+  let env ← Entrypoint.validateEffectPrefix caps decls e
+  let final ← Entrypoint.validateEffectLoop caps decls e env
+  Entrypoint.validateEffectSuffix caps e final
+
+private theorem except_bind_ok {α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
+    (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem validateEffectBindingEnvironment_succeeded (e : Entrypoint)
+    (incoming : TypeEnv) (bindings : List (String × Ty)) (final : TypeEnv)
+    (success : validateEffectBindingEnvironment e.span incoming bindings = .ok final) :
+    final = incoming ++ bindings ∧
+      (∀ binding, bindings.head? = some binding → incoming.lookup binding.1 = none) := by
+  induction bindings generalizing incoming final with
+  | nil =>
+    simp [validateEffectBindingEnvironment] at success
+    cases success
+    constructor
+    · simp
+    · intro binding head
+      simp at head
+  | cons binding rest ih =>
+    cases binding with
+    | mk name ty =>
+      cases lookup : incoming.lookup name with
+      | none =>
+        simp [validateEffectBindingEnvironment, lookup] at success
+        obtain ⟨shape, _⟩ := ih (incoming ++ [(name, ty)]) final success
+        constructor
+        · simpa [List.append_assoc] using shape
+        · intro binding head
+          simp only [List.head?_cons] at head
+          cases head
+          exact lookup
+      | some value =>
+        simp [validateEffectBindingEnvironment, lookup] at success
+
+/-- Successful source-effect execution exposes the validated operand bindings,
+their ordered type-environment extension, and the first-binding freshness check. -/
+theorem Entrypoint.validateEffectStep_succeeded (caps : Capabilities)
+    (decls : List StateDecl) (e : Entrypoint) (effect : Effect) (index : Nat)
+    (incoming : TypeEnv) (step : ForInStep TypeEnv)
+    (success : Entrypoint.validateEffectStep caps decls e effect index incoming = .ok step) :
+    ∃ bindings,
+      Entrypoint.validateEffectBindings caps decls effect incoming = .ok bindings ∧
+      (∀ binding, bindings.head? = some binding → incoming.lookup binding.1 = none) ∧
+      step = .yield (incoming ++ bindings) := by
+  unfold Entrypoint.validateEffectStep at success
+  rcases except_bind_ok.mp success with ⟨_, _, afterWriteGate⟩
+  rcases except_bind_ok.mp afterWriteGate with ⟨_, _, afterGuard⟩
+  rcases except_bind_ok.mp afterGuard with ⟨bindings, diagnosticAccepted, afterBindings⟩
+  rcases except_bind_ok.mp afterBindings with ⟨final, environmentAccepted, yielded⟩
+  have rawBindings :
+      Entrypoint.validateEffectBindings caps decls effect incoming = .ok bindings := by
+    unfold Entrypoint.validateEffectBindingsDiagnostic at diagnosticAccepted
+    cases checked : Entrypoint.validateEffectBindings caps decls effect incoming with
+    | error message => simp [checked] at diagnosticAccepted
+    | ok actual =>
+      have same : actual = bindings := by
+        simpa [checked] using diagnosticAccepted
+      cases same
+      rfl
+  obtain ⟨finalShape, firstFresh⟩ := validateEffectBindingEnvironment_succeeded e
+    incoming bindings final environmentAccepted
+  have stepShape : step = .yield final := (Except.ok.inj yielded).symm
+  refine ⟨bindings, rawBindings, ?_, ?_⟩
+  · intro binding head
+    exact firstFresh binding head
+  rw [finalShape] at stepShape
+  exact stepShape
+
+/-- Successful entrypoint validation exposes the exact source effect loop it
+ran, with the same prefix environment and ordered effect list. -/
+theorem Entrypoint.validate_effect_loop_of_success
+    (caps : Capabilities) (decls : List StateDecl) (e : Entrypoint)
+    (accepted : e.validate caps decls = .ok ()) :
+    ∃ initial final,
+      Entrypoint.validateEffectPrefix caps decls e = .ok initial ∧
+      Entrypoint.validateEffectLoop caps decls e initial = .ok final := by
+  unfold Entrypoint.validate at accepted
+  rcases except_bind_ok.mp accepted with ⟨initial, prefixAccepted, afterPrefix⟩
+  rcases except_bind_ok.mp afterPrefix with ⟨final, effectsAccepted, _⟩
+  exact ⟨initial, final, prefixAccepted, effectsAccepted⟩
 
 def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic Unit := do
   if !uniqueNames (c.state.map (·.name)) then

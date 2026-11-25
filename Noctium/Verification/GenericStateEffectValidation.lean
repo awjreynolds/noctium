@@ -1,4 +1,4 @@
-import Noctium.Verification.GenericStateTypeAdmission
+import Noctium.Verification.GenericStateAdmissionPrefix
 
 namespace Noctium.Verification.GenericStateEffectValidation
 open Backend
@@ -9,9 +9,54 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem curve_beq_true (left right : Foreign.Curve)
+    (same : (left == right) = true) : left = right := by
+  cases left <;> cases right <;>
+    simp_all [BEq.beq, Foreign.instBEqCurve.beq, Foreign.Curve.ctorIdx]
+
+private theorem curve_beq_self (curve : Foreign.Curve) : (curve == curve) = true := by
+  cases curve <;> rfl
+
+private theorem foreignKind_beq_true (left right : Foreign.Kind)
+    (same : (left == right) = true) : left = right := by
+  cases left with
+  | base leftCurve =>
+      cases right with
+      | base rightCurve =>
+          change (leftCurve == rightCurve) = true at same
+          exact congrArg Foreign.Kind.base (curve_beq_true leftCurve rightCurve same)
+      | _ => simp [BEq.beq, Foreign.instBEqKind.beq] at same
+  | scalar leftCurve =>
+      cases right with
+      | scalar rightCurve =>
+          change (leftCurve == rightCurve) = true at same
+          exact congrArg Foreign.Kind.scalar (curve_beq_true leftCurve rightCurve same)
+      | _ => simp [BEq.beq, Foreign.instBEqKind.beq] at same
+  | point leftCurve =>
+      cases right with
+      | point rightCurve =>
+          change (leftCurve == rightCurve) = true at same
+          exact congrArg Foreign.Kind.point (curve_beq_true leftCurve rightCurve same)
+      | _ => simp [BEq.beq, Foreign.instBEqKind.beq] at same
+
+private theorem foreignKind_beq_self (kind : Foreign.Kind) : (kind == kind) = true := by
+  cases kind with
+  | base curve => cases curve <;> rfl
+  | scalar curve => cases curve <;> rfl
+  | point curve => cases curve <;> rfl
+
 private theorem type_beq_true (left right : Ty) (same : (left == right) = true) :
     left = right := by
-  cases left <;> cases right <;> simp_all [BEq.beq, instBEqTy.beq]
+  cases left <;> cases right <;> try
+    simp_all [BEq.beq, instBEqTy.beq]
+  case foreign.foreign leftKind rightKind =>
+    change (leftKind == rightKind) = true at same
+    exact foreignKind_beq_true leftKind rightKind same
+
+private theorem type_beq_self (ty : Ty) : (ty == ty) = true := by
+  cases ty with
+  | foreign kind => exact foreignKind_beq_self kind
+  | _ => simp [BEq.beq, instBEqTy.beq]
 
 private theorem kind_cell_beq_true (kind : StateKind) (ty : Ty)
     (same : (kind == .cell ty) = true) : kind = .cell ty := by
@@ -20,7 +65,7 @@ private theorem kind_cell_beq_true (kind : StateKind) (ty : Ty)
     have equal : (found == ty) = true := by
       simpa only [BEq.beq, instBEqStateKind.beq] using same
     exact congrArg StateKind.cell (type_beq_true found ty equal)
-  | map key value => simp [BEq.beq, instBEqStateKind.beq] at same
+  | _ => simp [BEq.beq, instBEqStateKind.beq] at same
 
 private theorem kind_map_beq_true (kind : StateKind) (keyTy valueTy : Ty)
     (same : (kind == .map keyTy valueTy) = true) :
@@ -37,9 +82,15 @@ private theorem kind_map_beq_true (kind : StateKind) (keyTy valueTy : Ty)
     cases type_beq_true foundKey keyTy equalKey
     cases type_beq_true foundValue valueTy equalValue
     rfl
+  | _ => simp [BEq.beq, instBEqStateKind.beq] at same
 
 def stateEffectCaps : Capabilities :=
-  {poseidon2 := true, stateCells := true, stateMaps := true}
+  {poseidon2 := true, persistentHash32 := true, persistentHashVector32 := true,
+    persistentHashNative := true, bytes32Conversions := true, sha512 := true,
+    keccak256 := true, typedBoolean := true, hashToCurve := true,
+    foreignValues := true, foreignArithmetic := true,
+    foreignByteConversions := true, jubjub := true,
+    stateCells := true, stateMaps := true}
 
 def HasDeclaration (state : List StateDecl) (name : String)
     (kind : StateKind) : Prop :=
@@ -47,57 +98,26 @@ def HasDeclaration (state : List StateDecl) (name : String)
     state.find? (fun item => item.name == name) = some declaration ∧
       declaration.kind = kind
 
-private def requireDeclaredState (decls : List StateDecl) (name : String)
-    (kind : StateKind) : Except String Unit :=
-  match decls.find? (·.name == name) with
-  | none => .error s!"unknown state '{name}'"
-  | some decl => if decl.kind == kind then .ok ()
-    else .error s!"state type mismatch for '{name}'"
+inductive ScalarStateEffect : Effect → Prop where
+  | readCell (state destination : String) (ty : Ty) :
+      ScalarStateEffect (.readCell state destination ty)
+  | readMap (state destination : String) (keyTy valueTy : Ty)
+      (key : Expr keyTy) :
+      ScalarStateEffect (.readMap state destination keyTy valueTy key)
+  | require (condition : Expr .bool) : ScalarStateEffect (.require condition)
+  | writeCell (state : String) (ty : Ty) (value : Expr ty) :
+      ScalarStateEffect (.writeCell state ty value)
+  | writeMap (state : String) (keyTy valueTy : Ty)
+      (key : Expr keyTy) (value : Expr valueTy) :
+      ScalarStateEffect (.writeMap state keyTy valueTy key value)
+  | requireAbsent (state : String) (keyTy : Ty) (key : Expr keyTy) :
+      ScalarStateEffect (.requireAbsent state keyTy key)
 
-private def effectCheck (caps : Capabilities) (decls : List StateDecl)
-    (env : TypeEnv) : Effect → Except String (Option (String × Ty))
-  | .readCell state destination ty => do
-      if !caps.stateCells then throw "target lacks state cells"
-      requireDeclaredState decls state (.cell ty)
-      pure (some (destination, ty))
-  | .readMap state destination keyTy valueTy key => do
-      if !caps.stateMaps then throw "target lacks state maps"
-      requireDeclaredState decls state (.map keyTy valueTy)
-      key.validate caps env
-      pure (some (destination, valueTy))
-  | .require condition => do
-      condition.validate caps env
-      pure none
-  | .writeCell state ty value => do
-      if !caps.stateCells then throw "target lacks state cells"
-      requireDeclaredState decls state (.cell ty)
-      value.validate caps env
-      pure none
-  | .writeMap state keyTy valueTy key value => do
-      if !caps.stateMaps then throw "target lacks state maps"
-      requireDeclaredState decls state (.map keyTy valueTy)
-      key.validate caps env
-      value.validate caps env
-      pure none
-  | .requireAbsent state keyTy key => do
-      if !caps.stateMaps then throw "target lacks state maps"
-      match decls.find? (·.name == state) with
-      | some {kind := .map found _, ..} =>
-        if found != keyTy then throw s!"state key type mismatch for '{state}'"
-      | _ => throw s!"unknown map state '{state}'"
-      key.validate caps env
-      pure none
-
-private def effectValidationStep (caps : Capabilities) (decls : List StateDecl)
-    (span : SourceSpan) (effect : Effect) (env : TypeEnv) :
-    Except Diagnostic (ForInStep TypeEnv) :=
-  match effectCheck caps decls env effect with
-  | .error message => .error {span, message}
-  | .ok none => .ok (.yield env)
-  | .ok (some (name, ty)) =>
-    if (env.lookup name).isSome then
-      .error {span, message := s!"state read shadows '{name}'"}
-    else .ok (.yield (env ++ [(name, ty)]))
+inductive ScalarStateEffects : List Effect → Prop where
+  | nil : ScalarStateEffects []
+  | cons {effect : Effect} {rest : List Effect}
+      (head : ScalarStateEffect effect) (tail : ScalarStateEffects rest) :
+      ScalarStateEffects (effect :: rest)
 
 inductive EffectValidation (state : List StateDecl) :
     TypeEnv → Effect → TypeEnv → Prop where
@@ -132,6 +152,36 @@ inductive EffectValidation (state : List StateDecl) :
       (declared : HasDeclaration state stateName (.map keyTy valueTy))
       (keyValid : key.validate stateEffectCaps env = .ok ()) :
       EffectValidation state env (.requireAbsent stateName keyTy key) env
+
+inductive EffectBindingValidation (state : List StateDecl) :
+    TypeEnv → Effect → List (String × Ty) → Prop where
+  | readCell {env : TypeEnv} {stateName destination : String} {ty : Ty}
+      (declared : HasDeclaration state stateName (.cell ty)) :
+      EffectBindingValidation state env (.readCell stateName destination ty)
+        [(destination, ty)]
+  | readMap {env : TypeEnv} {stateName destination : String}
+      {keyTy valueTy : Ty} {key : Expr keyTy}
+      (declared : HasDeclaration state stateName (.map keyTy valueTy))
+      (keyValid : key.validate stateEffectCaps env = .ok ()) :
+      EffectBindingValidation state env
+        (.readMap stateName destination keyTy valueTy key) [(destination, valueTy)]
+  | require {env : TypeEnv} {condition : Expr .bool}
+      (conditionValid : condition.validate stateEffectCaps env = .ok ()) :
+      EffectBindingValidation state env (.require condition) []
+  | writeCell {env : TypeEnv} {stateName : String} {ty : Ty}
+      {value : Expr ty} (declared : HasDeclaration state stateName (.cell ty))
+      (valueValid : value.validate stateEffectCaps env = .ok ()) :
+      EffectBindingValidation state env (.writeCell stateName ty value) []
+  | writeMap {env : TypeEnv} {stateName : String} {keyTy valueTy : Ty}
+      {key : Expr keyTy} {value : Expr valueTy}
+      (declared : HasDeclaration state stateName (.map keyTy valueTy))
+      (keyValid : key.validate stateEffectCaps env = .ok ())
+      (valueValid : value.validate stateEffectCaps env = .ok ()) :
+      EffectBindingValidation state env (.writeMap stateName keyTy valueTy key value) []
+  | requireAbsent {env : TypeEnv} {stateName : String} {keyTy valueTy : Ty}
+      {key : Expr keyTy} (declared : HasDeclaration state stateName (.map keyTy valueTy))
+      (keyValid : key.validate stateEffectCaps env = .ok ()) :
+      EffectBindingValidation state env (.requireAbsent stateName keyTy key) []
 
 inductive ValidatedEffects (state : List StateDecl) :
     TypeEnv → List Effect → TypeEnv → Prop where
@@ -195,177 +245,6 @@ theorem ValidatedEffects.uncons {state : List StateDecl} {types final : TypeEnv}
   | requireAbsent declared keyValid tail =>
     exact ⟨_, .requireAbsent declared keyValid, tail⟩
 
-private theorem effectValidationStep_shape (caps : Capabilities)
-    (decls : List StateDecl) (span : SourceSpan) (effect : Effect)
-    (env : TypeEnv) (step : ForInStep TypeEnv)
-    (success : effectValidationStep caps decls span effect env = .ok step) :
-    ∃ result, effectCheck caps decls env effect = .ok result ∧
-      step = .yield (env ++ result.toList) ∧
-      ∀ pair ∈ result.toList, env.lookup pair.1 = none := by
-  cases checked : effectCheck caps decls env effect with
-  | error message => simp [effectValidationStep, checked] at success
-  | ok result =>
-    cases result with
-    | none =>
-      simp only [effectValidationStep, checked] at success
-      refine ⟨none, rfl, ?_, by simp⟩
-      simpa using (Except.ok.inj success).symm
-    | some pair =>
-      rcases pair with ⟨name, ty⟩
-      by_cases shadow : (env.lookup name).isSome
-      · simp [effectValidationStep, checked, shadow] at success
-      · have stepShape : step = .yield (env ++ [(name, ty)]) := by
-          simp only [effectValidationStep, checked] at success
-          split at success
-          · simp at success
-          · exact (Except.ok.inj success).symm
-        have freshName : env.lookup name = none := by
-          cases lookup : env.lookup name with
-          | none => rfl
-          | some value => simp [lookup] at shadow
-        refine ⟨some (name, ty), rfl, stepShape, ?_⟩
-        intro found member
-        simp only [Option.toList_some, List.mem_singleton] at member
-        cases member
-        simpa using freshName
-
-private theorem effectStep_validated (decls : List StateDecl) (span : SourceSpan)
-    (effect : Effect) (env : TypeEnv) (step : ForInStep TypeEnv)
-    (success : effectValidationStep stateEffectCaps decls span effect env = .ok step) :
-    ∃ after, step = .yield after ∧ EffectValidation decls env effect after := by
-  obtain ⟨result, checked, shape, fresh⟩ :=
-    effectValidationStep_shape stateEffectCaps decls span effect env step success
-  cases effect with
-  | readCell stateName destination ty =>
-    change (requireDeclaredState decls stateName (.cell ty) >>= fun _ =>
-      .ok (some (destination, ty))) = .ok result at checked
-    rcases bind_ok.mp checked with ⟨_, declarationValid, resultValid⟩
-    have declaration : HasDeclaration decls stateName (.cell ty) := by
-      unfold requireDeclaredState at declarationValid
-      cases found : decls.find? (fun item => item.name == stateName) with
-      | none => simp [found] at declarationValid
-      | some item =>
-        cases matching : item.kind == .cell ty with
-        | false => simp [found, matching] at declarationValid
-        | true =>
-          have kindEqual := kind_cell_beq_true item.kind ty matching
-          exact ⟨item, found, kindEqual⟩
-    have resultEq : result = some (destination, ty) := by
-      exact (Except.ok.inj resultValid).symm
-    subst result
-    refine ⟨env ++ [(destination, ty)], shape, ?_⟩
-    exact .readCell declaration (fresh (destination, ty) (by simp))
-  | readMap stateName destination keyTy valueTy key =>
-    change (requireDeclaredState decls stateName (.map keyTy valueTy) >>= fun _ =>
-      key.validate stateEffectCaps env >>= fun _ =>
-        .ok (some (destination, valueTy))) = .ok result at checked
-    rcases bind_ok.mp checked with ⟨_, declarationValid, restValid⟩
-    rcases bind_ok.mp restValid with ⟨_, keyValid, resultValid⟩
-    have declaration : HasDeclaration decls stateName (.map keyTy valueTy) := by
-      unfold requireDeclaredState at declarationValid
-      cases found : decls.find? (fun item => item.name == stateName) with
-      | none => simp [found] at declarationValid
-      | some item =>
-        cases matching : item.kind == .map keyTy valueTy with
-        | false => simp [found, matching] at declarationValid
-        | true => exact ⟨item, found, kind_map_beq_true item.kind keyTy valueTy matching⟩
-    have resultEq : result = some (destination, valueTy) :=
-      (Except.ok.inj resultValid).symm
-    subst result
-    refine ⟨env ++ [(destination, valueTy)], shape, ?_⟩
-    exact .readMap declaration keyValid (fresh (destination, valueTy) (by simp))
-  | require condition =>
-    change (condition.validate stateEffectCaps env >>= fun _ => .ok none) =
-      .ok result at checked
-    rcases bind_ok.mp checked with ⟨_, conditionValid, resultValid⟩
-    have resultEq : result = none := (Except.ok.inj resultValid).symm
-    subst result
-    exact ⟨env, by simpa using shape, .require conditionValid⟩
-  | writeCell stateName ty value =>
-    change (requireDeclaredState decls stateName (.cell ty) >>= fun _ =>
-      value.validate stateEffectCaps env >>= fun _ => .ok none) = .ok result at checked
-    rcases bind_ok.mp checked with ⟨_, declarationValid, restValid⟩
-    rcases bind_ok.mp restValid with ⟨_, valueValid, resultValid⟩
-    have declaration : HasDeclaration decls stateName (.cell ty) := by
-      unfold requireDeclaredState at declarationValid
-      cases found : decls.find? (fun item => item.name == stateName) with
-      | none => simp [found] at declarationValid
-      | some item =>
-        cases matching : item.kind == .cell ty with
-        | false => simp [found, matching] at declarationValid
-        | true => exact ⟨item, found, kind_cell_beq_true item.kind ty matching⟩
-    have resultEq : result = none := (Except.ok.inj resultValid).symm
-    subst result
-    exact ⟨env, by simpa using shape, .writeCell declaration valueValid⟩
-  | writeMap stateName keyTy valueTy key value =>
-    change (requireDeclaredState decls stateName (.map keyTy valueTy) >>= fun _ =>
-      key.validate stateEffectCaps env >>= fun _ =>
-        value.validate stateEffectCaps env >>= fun _ => .ok none) = .ok result at checked
-    rcases bind_ok.mp checked with ⟨_, declarationValid, restValid⟩
-    rcases bind_ok.mp restValid with ⟨_, keyValid, restValid⟩
-    rcases bind_ok.mp restValid with ⟨_, valueValid, resultValid⟩
-    have declaration : HasDeclaration decls stateName (.map keyTy valueTy) := by
-      unfold requireDeclaredState at declarationValid
-      cases found : decls.find? (fun item => item.name == stateName) with
-      | none => simp [found] at declarationValid
-      | some item =>
-        cases matching : item.kind == .map keyTy valueTy with
-        | false => simp [found, matching] at declarationValid
-        | true => exact ⟨item, found, kind_map_beq_true item.kind keyTy valueTy matching⟩
-    have resultEq : result = none := (Except.ok.inj resultValid).symm
-    subst result
-    exact ⟨env, by simpa using shape, .writeMap declaration keyValid valueValid⟩
-  | requireAbsent stateName keyTy key =>
-    -- This branch mirrors the source validator's special map-kind and key-type check.
-    cases found : decls.find? (fun item => item.name == stateName) with
-    | none => simp [effectCheck, stateEffectCaps, found, throw, throwThe,
-        bind, Except.bind] at checked
-    | some item =>
-      cases item with
-      | mk itemName kind itemSpan =>
-        cases kind with
-        | cell cellTy =>
-          simp [effectCheck, stateEffectCaps, found, throw, throwThe,
-            bind, Except.bind] at checked
-        | map foundKey foundValue =>
-          by_cases keySame : foundKey = keyTy
-          · have equalTy : (foundKey == keyTy) = true := by
-              subst foundKey
-              cases keyTy <;> simp [BEq.beq, instBEqTy.beq]
-            have mismatch : (foundKey != keyTy) = false := by simp [bne, equalTy]
-            have keyValid : key.validate stateEffectCaps env = .ok () := by
-              cases keyChecked : key.validate stateEffectCaps env with
-              | error message =>
-                simp [effectCheck, stateEffectCaps, found, mismatch] at checked
-                dsimp [stateEffectCaps] at keyChecked
-                rw [keyChecked] at checked
-                cases checked
-              | ok value =>
-                cases value
-                simp
-            have resultEq : result = none := by
-              have checked' := checked
-              simp [effectCheck, stateEffectCaps, found, mismatch] at checked'
-              have keyValid' := keyValid
-              dsimp [stateEffectCaps] at keyValid'
-              rw [keyValid'] at checked'
-              exact (Except.ok.inj checked').symm
-            subst result
-            refine ⟨env, by simpa using shape,
-              .requireAbsent (valueTy := foundValue) ?_ keyValid⟩
-            refine ⟨{name := itemName, kind := .map foundKey foundValue, span := itemSpan}, ?_, ?_⟩
-            · simpa using found
-            · simp [keySame]
-          · have unequalTy : (foundKey == keyTy) = false := by
-              cases equal : (foundKey == keyTy) with
-              | false => rfl
-              | true =>
-                have typeEqual := type_beq_true foundKey keyTy equal
-                exact False.elim (keySame typeEqual)
-            have mismatch : (foundKey != keyTy) = true := by simp [bne, unequalTy]
-            simp [effectCheck, stateEffectCaps, found, mismatch, throw, throwThe,
-              bind, Except.bind] at checked
-
 private theorem forIn_append_shape
     (body : α → TypeEnv → Except ε (ForInStep TypeEnv))
     (binding : α → String × Ty) (values : List α)
@@ -389,74 +268,285 @@ private theorem forIn_append_shape
       simp only [checked, bind, Except.bind] at success
       simpa [List.append_assoc] using ih _ success
 
-private theorem forIn_validated_effects (state : List StateDecl)
-    (span : SourceSpan) (effects : List Effect) (initial final : TypeEnv)
-    (success : forIn effects initial
-      (fun effect env => effectValidationStep stateEffectCaps state span effect env) =
-        .ok final) :
+def initialEffectTypeEnv (ep : Entrypoint) : TypeEnv :=
+  ep.circuit.inputs.map (fun input => (input.name, input.ty)) ++
+    ep.circuit.outputs.map (fun output => (output.name, output.ty))
+
+private theorem effectBindings_validated (state : List StateDecl)
+    (effect : Effect) (env : TypeEnv) (bindings : List (String × Ty))
+    (scope : ScalarStateEffect effect)
+    (accepted : Entrypoint.validateEffectBindings stateEffectCaps state effect env =
+      .ok bindings) :
+    bindings = (match effect with
+      | .readCell _ destination ty => [(destination, ty)]
+      | .readMap _ destination _ valueTy _ => [(destination, valueTy)]
+      | _ => []) ∧ EffectBindingValidation state env effect bindings := by
+  cases scope with
+  | readCell stateName destination ty =>
+    change (Entrypoint.requireState state stateName (.cell ty) >>= fun _ =>
+      .ok [(destination, ty)]) = .ok bindings at accepted
+    rcases bind_ok.mp accepted with ⟨_, declared, result⟩
+    have resultEq : bindings = [(destination, ty)] :=
+      (Except.ok.inj result).symm
+    have declared' : HasDeclaration state stateName (.cell ty) := by
+      obtain ⟨declaration, found, kind⟩ :=
+        Entrypoint.requireState_succeeded state stateName (.cell ty) declared
+      exact ⟨declaration, found, kind_cell_beq_true declaration.kind ty kind⟩
+    constructor
+    · exact resultEq
+    · subst bindings
+      exact .readCell declared'
+  | readMap stateName destination keyTy valueTy key =>
+    change (Entrypoint.requireState state stateName (.map keyTy valueTy) >>= fun _ =>
+      key.validate stateEffectCaps env >>= fun _ => .ok [(destination, valueTy)]) =
+        .ok bindings at accepted
+    rcases bind_ok.mp accepted with ⟨_, declared, rest⟩
+    rcases bind_ok.mp rest with ⟨_, keyValid, result⟩
+    have resultEq : bindings = [(destination, valueTy)] :=
+      (Except.ok.inj result).symm
+    have declared' : HasDeclaration state stateName (.map keyTy valueTy) := by
+      obtain ⟨declaration, found, kind⟩ :=
+        Entrypoint.requireState_succeeded state stateName (.map keyTy valueTy) declared
+      exact ⟨declaration, found, kind_map_beq_true declaration.kind keyTy valueTy kind⟩
+    constructor
+    · exact resultEq
+    · subst bindings
+      exact .readMap declared' keyValid
+  | require condition =>
+    change (condition.validate stateEffectCaps env >>= fun _ => .ok []) =
+      .ok bindings at accepted
+    rcases bind_ok.mp accepted with ⟨_, conditionValid, result⟩
+    have resultEq : bindings = [] := (Except.ok.inj result).symm
+    constructor
+    · exact resultEq
+    · subst bindings
+      exact .require conditionValid
+  | writeCell stateName ty value =>
+    change (Entrypoint.requireState state stateName (.cell ty) >>= fun _ =>
+      value.validate stateEffectCaps env >>= fun _ => .ok []) =
+        .ok bindings at accepted
+    rcases bind_ok.mp accepted with ⟨_, declared, rest⟩
+    rcases bind_ok.mp rest with ⟨_, valueValid, result⟩
+    have resultEq : bindings = [] := (Except.ok.inj result).symm
+    have declared' : HasDeclaration state stateName (.cell ty) := by
+      obtain ⟨declaration, found, kind⟩ :=
+        Entrypoint.requireState_succeeded state stateName (.cell ty) declared
+      exact ⟨declaration, found, kind_cell_beq_true declaration.kind ty kind⟩
+    constructor
+    · exact resultEq
+    · subst bindings
+      exact .writeCell declared' valueValid
+  | writeMap stateName keyTy valueTy key value =>
+    change (Entrypoint.requireState state stateName (.map keyTy valueTy) >>= fun _ =>
+      key.validate stateEffectCaps env >>= fun _ =>
+      value.validate stateEffectCaps env >>= fun _ => .ok []) =
+        .ok bindings at accepted
+    rcases bind_ok.mp accepted with ⟨_, declared, rest⟩
+    rcases bind_ok.mp rest with ⟨_, keyValid, rest⟩
+    rcases bind_ok.mp rest with ⟨_, valueValid, result⟩
+    have resultEq : bindings = [] := (Except.ok.inj result).symm
+    have declared' : HasDeclaration state stateName (.map keyTy valueTy) := by
+      obtain ⟨declaration, found, kind⟩ :=
+        Entrypoint.requireState_succeeded state stateName (.map keyTy valueTy) declared
+      exact ⟨declaration, found, kind_map_beq_true declaration.kind keyTy valueTy kind⟩
+    constructor
+    · exact resultEq
+    · subst bindings
+      exact .writeMap declared' keyValid valueValid
+  | requireAbsent stateName keyTy key =>
+    unfold Entrypoint.validateEffectBindings at accepted
+    cases found : state.find? (fun item => item.name == stateName) with
+    | none => simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+    | some declaration =>
+      cases declaration with
+      | mk itemName itemKind sealed span alignment =>
+        cases itemKind with
+        | cell cellTy => simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+        | tree schema => simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+        | merkleTree depth => simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+        | historicMerkleTree depth =>
+          simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+        | opaqueString => simp [found, stateEffectCaps, Bind.bind, Except.bind] at accepted
+        | map foundKey foundValue =>
+          by_cases sameKey : foundKey = keyTy
+          · have mismatch : (foundKey != keyTy) = false := by
+              rw [sameKey]
+              simp only [bne]
+              rw [type_beq_self keyTy]
+              rfl
+            have accepted' := accepted
+            simp [stateEffectCaps, found, mismatch, Bind.bind, Except.bind] at accepted'
+            rcases bind_ok.mp accepted' with ⟨_, keyValid, result⟩
+            have resultEq : bindings = [] := (Except.ok.inj result).symm
+            have declared : HasDeclaration state stateName (.map keyTy foundValue) := by
+              refine ⟨StateDecl.mk itemName (.map foundKey foundValue) sealed span alignment,
+                ?_, ?_⟩
+              · exact found
+              · cases sameKey
+                rfl
+            constructor
+            · exact resultEq
+            · subst bindings
+              exact .requireAbsent declared keyValid
+          · have unequal : (foundKey == keyTy) = false := by
+              cases comparison : (foundKey == keyTy) with
+              | false => rfl
+              | true =>
+                have typeEqual := type_beq_true foundKey keyTy comparison
+                exact False.elim (sameKey typeEqual)
+            have mismatch : (foundKey != keyTy) = true := by simp [bne, unequal]
+            simp [found, mismatch, stateEffectCaps, Bind.bind, Except.bind] at accepted
+
+private theorem effectStep_validated (state : List StateDecl) (ep : Entrypoint)
+    (effect : Effect) (index : Nat) (env : TypeEnv) (step : ForInStep TypeEnv)
+    (_unguarded : ep.effectGuards = []) (scope : ScalarStateEffect effect)
+    (success : Entrypoint.validateEffectStep stateEffectCaps state ep effect index env =
+      .ok step) :
+    ∃ after, step = .yield after ∧ EffectValidation state env effect after := by
+  obtain ⟨bindings, accepted, firstFresh, stepShape⟩ :=
+    Entrypoint.validateEffectStep_succeeded stateEffectCaps state ep effect index env step success
+  cases scope with
+  | readCell stateName destination ty =>
+    have source := effectBindings_validated state (.readCell stateName destination ty) env
+      bindings (.readCell stateName destination ty) accepted
+    have bindingShape : bindings = [(destination, ty)] := by simpa using source.1
+    have fresh : env.lookup destination = none := by
+      apply firstFresh (destination, ty)
+      simp [bindingShape]
+    subst bindings
+    exact ⟨env ++ [(destination, ty)], stepShape, by
+      cases source.2 with
+      | readCell declared => exact .readCell declared fresh⟩
+  | readMap stateName destination keyTy valueTy key =>
+    have source := effectBindings_validated state
+      (.readMap stateName destination keyTy valueTy key) env bindings
+      (.readMap stateName destination keyTy valueTy key) accepted
+    have bindingShape : bindings = [(destination, valueTy)] := by simpa using source.1
+    have fresh : env.lookup destination = none := by
+      apply firstFresh (destination, valueTy)
+      simp [bindingShape]
+    subst bindings
+    exact ⟨env ++ [(destination, valueTy)], stepShape, by
+      cases source.2 with
+      | readMap declared valid => exact .readMap declared valid fresh⟩
+  | require condition =>
+    have source := effectBindings_validated state (.require condition) env bindings
+      (.require condition) accepted
+    have bindingShape : bindings = [] := by simpa using source.1
+    subst bindings
+    exact ⟨env, by simpa using stepShape, by
+      cases source.2 with
+      | require conditionValid => exact .require conditionValid⟩
+  | writeCell stateName ty value =>
+    have source := effectBindings_validated state (.writeCell stateName ty value) env bindings
+      (.writeCell stateName ty value) accepted
+    have bindingShape : bindings = [] := by simpa using source.1
+    subst bindings
+    exact ⟨env, by simpa using stepShape, by
+      cases source.2 with
+      | writeCell declared valueValid => exact .writeCell declared valueValid⟩
+  | writeMap stateName keyTy valueTy key value =>
+    have source := effectBindings_validated state
+      (.writeMap stateName keyTy valueTy key value) env bindings
+      (.writeMap stateName keyTy valueTy key value) accepted
+    have bindingShape : bindings = [] := by simpa using source.1
+    subst bindings
+    exact ⟨env, by simpa using stepShape, by
+      cases source.2 with
+      | writeMap declared keyValid valueValid => exact .writeMap declared keyValid valueValid⟩
+  | requireAbsent stateName keyTy key =>
+    have source := effectBindings_validated state (.requireAbsent stateName keyTy key) env bindings
+      (.requireAbsent stateName keyTy key) accepted
+    have bindingShape : bindings = [] := by simpa using source.1
+    subst bindings
+    exact ⟨env, by simpa using stepShape, by
+      cases source.2 with
+      | requireAbsent declared keyValid => exact .requireAbsent declared keyValid⟩
+
+private theorem forIn_validated_effects_at (state : List StateDecl) (ep : Entrypoint)
+    (effects : List Effect) (offset : Nat) (initial final : TypeEnv)
+    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects effects)
+    (success : forIn (effects.zipIdx offset) initial
+      (fun item env => Entrypoint.validateEffectStep stateEffectCaps state ep
+        item.1 item.2 env) = .ok final) :
     ValidatedEffects state initial effects final := by
-  induction effects generalizing initial with
+  induction effects generalizing offset initial with
   | nil =>
     change Except.ok initial = .ok final at success
     cases success
     exact .nil
   | cons effect rest ih =>
-    rw [List.forIn_cons] at success
-    cases checked : effectValidationStep stateEffectCaps state span effect initial with
-    | error message => simp [checked, bind, Except.bind] at success
-    | ok step =>
-      obtain ⟨middle, shape, validated⟩ :=
-        effectStep_validated state span effect initial step checked
-      simp only [checked, bind, Except.bind] at success
-      rw [shape] at success
-      have tail := ih middle success
-      cases validated with
-      | readCell declared fresh => exact .readCell declared fresh tail
-      | readMap declared keyValid fresh => exact .readMap declared keyValid fresh tail
-      | require conditionValid => exact .require conditionValid tail
-      | writeCell declared valueValid => exact .writeCell declared valueValid tail
-      | writeMap declared keyValid valueValid => exact .writeMap declared keyValid valueValid tail
-      | requireAbsent declared keyValid => exact .requireAbsent declared keyValid tail
+    cases scalar with
+    | cons head tail =>
+      simp only [List.zipIdx_cons, List.forIn_cons] at success
+      cases checked : Entrypoint.validateEffectStep stateEffectCaps state ep
+          effect offset initial with
+      | error message =>
+        simp only [checked, bind, Except.bind] at success
+        cases success
+      | ok step =>
+        obtain ⟨middle, shape, validated⟩ := effectStep_validated state ep effect
+          offset initial step unguarded head checked
+        simp only [checked, bind, Except.bind] at success
+        rw [shape] at success
+        have restValid := ih (offset + 1) middle tail success
+        cases validated with
+        | readCell declared fresh => exact .readCell declared fresh restValid
+        | readMap declared keyValid fresh => exact .readMap declared keyValid fresh restValid
+        | require conditionValid => exact .require conditionValid restValid
+        | writeCell declared valueValid => exact .writeCell declared valueValid restValid
+        | writeMap declared keyValid valueValid =>
+          exact .writeMap declared keyValid valueValid restValid
+        | requireAbsent declared keyValid =>
+          exact .requireAbsent declared keyValid restValid
 
-def initialEffectTypeEnv (ep : Entrypoint) : TypeEnv :=
-  ep.circuit.inputs.map (fun input => (input.name, input.ty)) ++
-    ep.circuit.outputs.map (fun output => (output.name, output.ty))
+private theorem effectPrefix_env_shape (state : List StateDecl) (ep : Entrypoint)
+    (env : TypeEnv)
+    (accepted : Entrypoint.validateEffectPrefix stateEffectCaps state ep = .ok env) :
+    env = initialEffectTypeEnv ep := by
+  unfold Entrypoint.validateEffectPrefix at accepted
+  rcases bind_ok.mp accepted with ⟨_, _, outputsAccepted⟩
+  unfold Entrypoint.validateOutputEnvironment at outputsAccepted
+  have shape := forIn_append_shape _
+    (fun output : Output => (output.name, output.ty)) ep.circuit.outputs
+    (ep.circuit.inputs.map (fun input => (input.name, input.ty))) env
+    (by
+      intro output before step success
+      exact Entrypoint.validateOutputStep_succeeded ep output before step success)
+    outputsAccepted
+  simpa [initialEffectTypeEnv, List.map_append, List.map_map,
+    Function.comp_def] using shape
 
-/-- Accepted production lowering inherits a typed and fresh effect chain from
-the actual source entrypoint validator. Read steps append their binding, and
-all later expressions validate against that exact prefix environment. -/
-theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
+private theorem lower_source_validated (state : List StateDecl) (ep : Entrypoint)
     (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan) :
-    ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final := by
-  have source := GenericStateAdmission.lower_source_validated state ep plan accepted
-  unfold Entrypoint.validate at source
-  simp only [bind_ok] at source
-  obtain ⟨_, _, _, _, env, outputsChecked, final, effectsChecked, _⟩ := source
-  have outputShape : env = initialEffectTypeEnv ep := by
-    have shape := forIn_append_shape _
-      (fun output : Output => (output.name, output.ty)) ep.circuit.outputs
-      (ep.circuit.inputs.map (fun input => (input.name, input.ty))) env
-      (by
-        intro output before step success
-        split at success
-        · simp [throw, throwThe, bind, Except.bind] at success
-        · change Except.ok (.yield (before ++ [(output.name, output.ty)])) =
-            .ok step at success
-          exact (Except.ok.inj success).symm)
-      outputsChecked
-    simpa [initialEffectTypeEnv, List.map_append, List.map_map,
-      Function.comp_def] using shape
-  have checkedEffects : forIn ep.effects env
-      (fun effect current => effectValidationStep stateEffectCaps state ep.span effect current) =
-        .ok final := by
-    change forIn ep.effects env
-      (fun effect current => effectValidationStep stateEffectCaps state ep.span effect current) =
-        .ok final
-    exact effectsChecked
-  subst env
-  exact ⟨final, forIn_validated_effects state ep.span ep.effects
-    (initialEffectTypeEnv ep) final checkedEffects⟩
+    ep.validate stateEffectCaps state = .ok () := by
+  unfold Impact.lower at accepted
+  cases lowered : Impact.lowerWithEffectBoundaries state ep with
+  | error message => simp [lowered, Except.map] at accepted
+  | ok output =>
+    cases output with
+    | mk candidate boundaries =>
+      simp only [lowered, Except.map] at accepted
+      have candidateEq : candidate = plan := Except.ok.inj accepted
+      subst plan
+      unfold Impact.lowerWithEffectBoundaries at lowered
+      simp only [bind_ok] at lowered
+      rcases lowered with ⟨_, sourceValidated, _, _, _⟩
+      exact sourceValidated
 
-#print axioms lower_validated_effects
+/-- Accepted production lowering carries the exact ordered typed effect
+chain on the explicit unguarded scalar state-effect scope. -/
+theorem lower_validated_effects (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan)
+    (unguarded : ep.effectGuards = []) (scalar : ScalarStateEffects ep.effects) :
+    ∃ final, ValidatedEffects state (initialEffectTypeEnv ep) ep.effects final := by
+  have source := lower_source_validated state ep plan accepted
+  obtain ⟨initial, final, prefixAccepted, effectsAccepted⟩ :=
+    Entrypoint.validate_effect_loop_of_success stateEffectCaps state ep source
+  have initialShape := effectPrefix_env_shape state ep initial prefixAccepted
+  subst initial
+  exact ⟨final, forIn_validated_effects_at state ep ep.effects 0
+    (initialEffectTypeEnv ep) final unguarded scalar (by
+      simpa only [Entrypoint.validateEffectLoop] using effectsAccepted)⟩
 
 end Noctium.Verification.GenericStateEffectValidation
