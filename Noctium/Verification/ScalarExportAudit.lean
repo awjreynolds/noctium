@@ -1,15 +1,16 @@
 import Noctium.Verification
+import Noctium.Verification.ScalarCircuitWitness
 import Lean.Replay
 import LeanExport.Parse
 
 namespace Noctium.Verification.ScalarExportAudit
 open Lean
 
-private def soundnessAnchor : Name := `Noctium.Verification.ScalarTranslation.lowerCircuit_sound
-private def completenessAnchor : Name := `Noctium.Verification.ScalarTranslation.lowerCircuit_complete
+private def soundnessAnchor : Name := `Noctium.Verification.ScalarTranslationSoundness.lowerCircuit_sound
+private def completenessAnchor : Name := `Noctium.Verification.ScalarWitnessConstruction.lowerCircuit_complete
 
 private def load (path : System.FilePath) : IO LeanExport.ExportedEnv := do
-  unless (← path.metadata).byteSize ≤ 96 * 1024 * 1024 do
+  unless (← path.metadata).byteSize ≤ 160 * 1024 * 1024 do
     throw (IO.userError "export_limit")
   IO.FS.withFile path .read fun handle => LeanExport.parseStream (.ofHandle handle)
 
@@ -71,7 +72,7 @@ def run (args : List String) : IO UInt32 := do
     let soundness ← checkRole environment soundnessProof soundnessAnchor "soundness"
     let completeness ← checkRole environment completenessProof completenessAnchor "completeness"
     IO.println (Json.mkObj [
-      ("status", toJson ("generic-scalar-library-proofs-checked" : String)),
+      ("status", toJson ("scalar-circuit-lowering-proofs-checked" : String)),
       ("soundnessProof", toJson soundnessName), ("completenessProof", toJson completenessName),
       ("axioms", toJson (((soundness ++ completeness).toList.eraseDups.mergeSort Name.lt).map Name.toString)),
       ("statementComparison", toJson ("kernel definitional equality to externally pinned model roles" : String)),
