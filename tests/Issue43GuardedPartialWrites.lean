@@ -75,8 +75,33 @@ private def issue43PartialInitial : LedgerState := {
       after.cells.lookup "valid" == some (.native 3)
   | .error _ => Bool.false
 
-#guard match Backend.Impact.lower Issue43GuardedPartialWrites.state issue43PartialEntry with
-  | .ok plan => plan.guards.length == 1 &&
+private def issue43WritesOnly : Entrypoint := {issue43PartialEntry with
+  effects := issue43PartialEntry.effects.dropLast
+  effectGuards := issue43PartialEntry.effectGuards.dropLast
+  effectSpans := issue43PartialEntry.effectSpans.dropLast}
+
+-- The final guarded require adds an assertion while preserving the write count.
+#guard match Backend.Impact.lower Issue43GuardedPartialWrites.state issue43PartialEntry,
+    Backend.Impact.lower Issue43GuardedPartialWrites.state issue43WritesOnly with
+  | .ok plan, .ok writes => plan.guards.length == 1 && writes.guards.isEmpty &&
+      plan.operations.length == writes.operations.length &&
       plan.activityGuards.length == plan.operations.length &&
       plan.activityGuards.any Option.isSome
-  | .error _ => Bool.false
+  | _, _ => Bool.false
+
+private def issue43PartialRequirementResult (checkEnabled approved : _root_.Bool)
+    (expected : _root_.Bool) : _root_.Bool :=
+  match Backend.Impact.lower Issue43GuardedPartialWrites.state issue43PartialEntry with
+  | .ok plan =>
+      match plan.guards with
+      | [assertion] =>
+          match assertion.eval issue43PartialContext
+              (issue43PartialInputs _root_.Bool.false checkEnabled 1 2 3 approved) with
+            | .ok value => value == expected
+            | .error _ => expected == _root_.Bool.false
+      | _ => _root_.Bool.false
+  | .error _ => _root_.Bool.false
+
+#guard issue43PartialRequirementResult _root_.Bool.false _root_.Bool.false _root_.Bool.true
+#guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.true _root_.Bool.true
+#guard issue43PartialRequirementResult _root_.Bool.true _root_.Bool.false _root_.Bool.false

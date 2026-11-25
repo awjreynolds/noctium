@@ -449,8 +449,6 @@ theorem lower_checked_guarded_effects (ctx : EvalContext) (state : List StateDec
     (encoded : GenericStateEncoding.encodeState state initial = some slots)
     (distinct : state.Pairwise (fun left right => left.name ≠ right.name))
     (stateBound : state.length < Field.modulus) (modulus : ctx.modulus = Field.modulus)
-    (guardEvaluation : ∀ item ∈ entry.effects.zipIdx, ∃ activity,
-      (entry.effectGuardAt item.2).mapM (Expr.eval ctx (base ++ decoded)) = .ok activity)
     (evaluated : GuardedPlanExecution.evalPlan ctx (base ++ decoded) plan = .ok native)
     (checked : NativeState.run native ⟨[.vector slots], []⟩ = some final) :
     ∃ finalTypes finalEnv finalState finalSlots finalReads,
@@ -466,7 +464,7 @@ theorem lower_checked_guarded_effects (ctx : EvalContext) (state : List StateDec
   obtain ⟨offsets, inputPlan, chunks, publicNative, groups, _, publicAccepted,
     compiled, publicEvaluated, effectEvaluated, sequence⟩ :=
     GuardedPlanTrace.lower_scoped_active_chunks state entry plan ctx (base ++ decoded)
-      native lowered scope evaluated guardEvaluation
+      native lowered scope evaluated assertions
   obtain ⟨publicReads, _, publicRun⟩ := GenericStateAdmissionPrefix.public_prefix_run
     entry.circuit.inputs inputPlan ctx (base ++ decoded) publicNative [.vector slots] []
     publicAccepted publicCompatible publicEvaluated
