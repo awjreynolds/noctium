@@ -1,24 +1,23 @@
-#![cfg(feature = "zkir-321")]
-
-use ledger::structure::ContractCall;
-use noctium_runtime::{
+use super::preview_call_activity;
+use crate::{
     Db, Execution, Expr, Instruction, Plan, check, create_state, field_decimal, prepare,
     zkir::IrSource,
 };
+use ledger::structure::{ContractAction, ContractCall, ProofPreimageVersioned};
 use onchain_runtime::context::QueryContext;
 use onchain_runtime::state::{ChargedState, StateValue};
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::{Value as Json, json};
 use serialize::Serializable;
 use std::{collections::BTreeMap, env, fs};
-use transient_crypto::commitment::Pedersen;
 use transient_crypto::fab::AlignedValueExt;
+use transient_crypto::{commitment::Pedersen, curve::Fr};
 
 const PLAN: &str = include_str!(
-    "fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.impact.json"
+    "../../tests/fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.impact.json"
 );
 const CIRCUIT: &[u8] = include_bytes!(
-    "fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.zkir"
+    "../../tests/fixtures/generic-state/issue43-guarded-partials/321/Issue43GuardedPartialWrites.update.zkir"
 );
 
 fn plan() -> Plan {
@@ -155,14 +154,12 @@ fn transcript_statement(transcript: Option<&onchain_runtime::transcript::Transcr
 fn native_statement<P: ledger::structure::ProofKind<Db>>(
     call: &ContractCall<P, Db>,
     parent_pedersen: Pedersen,
-    before_guaranteed: Option<&onchain_runtime::transcript::Transcript<Db>>,
-    before_fallible: Option<&onchain_runtime::transcript::Transcript<Db>>,
+    fields: &[Fr],
 ) -> Json {
     let parent_pedersen_bytes = serialized(&parent_pedersen);
-    let fields = call
-        .public_inputs(parent_pedersen)
-        .expect("pinned ledger computes the native call public inputs");
-    let cost_model = &ledger::structure::INITIAL_PARAMETERS.cost_model.runtime_cost_model;
+    let cost_model = &ledger::structure::INITIAL_PARAMETERS
+        .cost_model
+        .runtime_cost_model;
 
     json!({
         "address": call.address.0.0.to_vec(),
@@ -171,29 +168,25 @@ fn native_statement<P: ledger::structure::ProofKind<Db>>(
         "communication": field_decimal(call.communication_commitment),
         "noopConstant": cost_model.noop_constant.into_picoseconds(),
         "noopCoefficient": cost_model.noop_coeff_arg.into_picoseconds(),
-        "guaranteed": transcript_statement(before_guaranteed),
-        "fallible": transcript_statement(before_fallible),
-        "fields": fields.into_iter().map(field_decimal).collect::<Vec<_>>(),
+        "guaranteed": transcript_statement(call.guaranteed_transcript.as_deref()),
+        "fallible": transcript_statement(call.fallible_transcript.as_deref()),
+        "fields": fields.iter().copied().map(field_decimal).collect::<Vec<_>>(),
     })
 }
 
-fn export_native_statement_if_requested(
+fn check_native_statement(
     destination: &str,
     plan: &Plan,
     circuit: &IrSource,
     execution: &Execution,
     initial: &ChargedState<Db>,
 ) {
-    let Some(path) = env::var_os(destination) else {
-        return;
-    };
-
     let address = coin_structure::contract::ContractAddress::default();
     let parameters = &ledger::structure::INITIAL_PARAMETERS;
     let context = QueryContext::new(initial.clone(), address);
     let mut rng = StdRng::from_seed([7; 32]);
-    let intent = noctium_runtime::assembly::assemble_checked_calls(
-        &[noctium_runtime::assembly::CheckedNativeCall {
+    let intent = crate::assembly::assemble_checked_calls(
+        &[crate::assembly::CheckedNativeCall {
             execution,
             circuit,
             initial_context: context.clone(),
@@ -205,35 +198,81 @@ fn export_native_statement_if_requested(
         &mut rng,
     )
     .expect("assemble the checked native call");
-    let ledger::structure::ContractAction::Call(source_call) =
+    let ContractAction::Call(source_call) =
         intent.actions.iter_deref().next().expect("one call action")
     else {
         panic!("assembly emits a native contract call");
     };
     let before_guaranteed = source_call.guaranteed_transcript.as_deref();
     let before_fallible = source_call.fallible_transcript.as_deref();
-    let mut call = (**source_call).clone();
+    let ProofPreimageVersioned::V2(preimage) = &source_call.proof else {
+        panic!("assembly emits a V2 proof preimage");
+    };
+    assert_eq!(
+        preimage
+            .communications_commitment
+            .map(|(commitment, _)| commitment),
+        Some(source_call.communication_commitment),
+        "the circuit preimage binds the native communication commitment"
+    );
+    let activity = preimage
+        .check(circuit)
+        .expect("assembled proof preimage derives the circuit activity schedule");
+    let cost_model = &parameters.cost_model.runtime_cost_model;
+    let preview = preview_call_activity(
+        source_call,
+        &activity,
+        intent.binding_commitment.into(),
+        cost_model,
+    )
+    .expect("production activity preview builds the native public statement");
+    let mut bound_preimage = (**preimage).clone();
+    bound_preimage.binding_input = preview.statement[0];
+    let rebound_activity = bound_preimage
+        .check(circuit)
+        .expect("source preimage remains valid after public binding");
+    assert_eq!(
+        rebound_activity, activity,
+        "binding the public statement preserves selected circuit activity"
+    );
     if execution.program.is_empty() {
         assert!(execution.guaranteed.is_none() && execution.fallible.is_none());
         let before = before_guaranteed.expect("assembly adds the required empty partition");
         assert!(before.program.is_empty() && before_fallible.is_none());
         // The checked inactive schedule has one contiguous run of 55 skipped fields.
-        let program: noctium_runtime::Program = vec![onchain_runtime::ops::Op::Noop { n: 55 }];
+        let program: crate::Program = vec![onchain_runtime::ops::Op::Noop { n: 55 }];
         let query = context
-            .query(&program, None, &parameters.cost_model.runtime_cost_model)
+            .query(&program, None, cost_model)
             .expect("the native runtime executes and prices the single Noop");
-        let mut padded = before.clone();
-        padded.gas.compute_time = query.gas_cost.compute_time;
-        assert_eq!(padded.gas, query.gas_cost);
-        assert_eq!(padded.effects, query.context.effects);
-        padded.program = program.into();
-        call.guaranteed_transcript = Some(storage::arena::Sp::new(padded));
+        let previewed = preview
+            .call
+            .guaranteed_transcript
+            .as_deref()
+            .expect("production preview keeps the empty guaranteed partition");
+        let mut preview_program = previewed.program.iter_deref();
+        assert!(matches!(
+            preview_program.next(),
+            Some(onchain_runtime::ops::Op::Noop { n: 55 })
+        ));
+        assert!(
+            preview_program.next().is_none(),
+            "the 55 skipped fields coalesce"
+        );
+        assert_eq!(previewed.gas, query.gas_cost);
+        assert_eq!(previewed.effects, query.context.effects);
+        assert!(preview.call.fallible_transcript.is_none());
     }
+    assert_eq!(
+        preview.statement.get(1),
+        Some(&source_call.communication_commitment)
+    );
+    let Some(path) = env::var_os(destination) else {
+        return;
+    };
     let statement = native_statement(
-        &call,
+        source_call,
         intent.binding_commitment.into(),
-        before_guaranteed,
-        before_fallible,
+        &preview.statement,
     );
     fs::write(
         path,
@@ -300,7 +339,7 @@ fn prepare_case(
     plan: &Plan,
     initial: &ChargedState<Db>,
     values: BTreeMap<String, Json>,
-) -> anyhow::Result<noctium_runtime::Execution> {
+) -> anyhow::Result<crate::Execution> {
     prepare(
         plan,
         &values,
@@ -355,14 +394,14 @@ fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
     assert_eq!(cell(&active.after.state, 2), "7");
     assert_eq!(cell(&active.after.state, 3), "1");
     assert_eq!(cell(&active.after.state, 4), "3");
-    export_native_statement_if_requested(
+    check_native_statement(
         "NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE",
         &plan,
         &circuit,
         &active,
         &initial,
     );
-    export_native_statement_if_requested(
+    check_native_statement(
         "NOCTIUM_GUARDED_PARTIALS_INACTIVE_STATEMENT_FILE",
         &plan,
         &circuit,

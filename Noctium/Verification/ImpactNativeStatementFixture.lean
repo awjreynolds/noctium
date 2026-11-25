@@ -155,6 +155,31 @@ private def mismatchIndex : Nat → List Scalar → List Scalar → Option Nat
       else some index
   | index, _, _ => some index
 
+private theorem mismatchIndex_none_eq (index : Nat) :
+    ∀ expected actual : List Scalar, mismatchIndex index expected actual = none →
+      expected = actual := by
+  intro expected
+  induction expected generalizing index with
+  | nil =>
+      intro actual accepted
+      cases actual with
+      | nil => rfl
+      | cons head tail => simp [mismatchIndex] at accepted
+  | cons head tail ih =>
+      intro actual accepted
+      cases actual with
+      | nil => simp [mismatchIndex] at accepted
+      | cons actualHead actualTail =>
+          dsimp [mismatchIndex] at accepted
+          by_cases equal : head == actualHead
+          · have same : head = actualHead := of_decide_eq_true equal
+            subst actualHead
+            have restEqual : tail = actualTail := by
+              apply ih
+              simpa [mismatchIndex, equal] using accepted
+            simp [restEqual]
+          · simp [equal] at accepted
+
 def NativeStatementFixture.inputs (fixture : NativeStatementFixture) :
     ImpactPlanStatement.Inputs := {
   cost := fixture.cost
@@ -179,10 +204,38 @@ def checkBytes (fixture : NativeStatementFixture) (fuel : Nat) (ctx : EvalContex
     Except String Unit := do
   let some calculated := ImpactPlanStatement.fromBytes fuel ctx env keyWidth bytes fixture.inputs
     | throw "artifact and fixture inputs cannot form a scalar public statement"
-  if calculated.length != fixture.fields.length then
+  if calculated.length = fixture.fields.length then
+    match mismatchIndex 0 calculated fixture.fields with
+    | none => pure ()
+    | some index => throw s!"public statement field mismatch at index {index}"
+  else
     throw s!"public statement field count mismatch: calculated {calculated.length}, fixture has {fixture.fields.length}"
-  match mismatchIndex 0 calculated fixture.fields with
-  | none => pure ()
-  | some index => throw s!"public statement field mismatch at index {index}"
+
+/-- A successful native statement check identifies the exact public field
+vector reconstructed from the supplied Impact bytes. -/
+theorem checkBytes_sound (fixture : NativeStatementFixture) (fuel : Nat)
+    (ctx : EvalContext) (env : EvalEnv) (keyWidth : Nat → Option Nat)
+    (bytes : ArtifactBytes.Bytes)
+    (accepted : checkBytes fixture fuel ctx env keyWidth bytes = .ok ()) :
+    ImpactPlanStatement.fromBytes fuel ctx env keyWidth bytes fixture.inputs =
+      some fixture.fields := by
+  cases calculatedResult : ImpactPlanStatement.fromBytes fuel ctx env keyWidth bytes
+      fixture.inputs with
+  | none =>
+      simp [checkBytes, calculatedResult] at accepted
+  | some calculated =>
+      have calculatedEq : calculated = fixture.fields := by
+        by_cases sameLength : calculated.length = fixture.fields.length
+        · have accepted' := accepted
+          simp [checkBytes, calculatedResult, sameLength] at accepted'
+          cases differentAt : mismatchIndex 0 calculated fixture.fields with
+          | none =>
+              simp [differentAt] at accepted'
+              exact mismatchIndex_none_eq 0 calculated fixture.fields differentAt
+          | some index =>
+              simp [differentAt] at accepted'
+        · have accepted' := accepted
+          simp [checkBytes, calculatedResult, sameLength] at accepted'
+      rw [calculatedEq]
 
 end Noctium.Verification.ImpactNativeStatementFixture
