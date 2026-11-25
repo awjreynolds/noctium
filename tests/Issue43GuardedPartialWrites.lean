@@ -112,6 +112,17 @@ def main (args : List String) : IO Unit := do
   let contract := Issue43GuardedPartialWrites
   let selected := Passes.pruneEntrypoint issue43PartialEntry
   let plan ← IO.ofExcept ((Backend.Impact.lower contract.state selected).mapError (·.message))
+  let checkPlan := Verification.ImpactPlanStatementAgreement.admitsScalarPlan (fun _ => none)
+  unless checkPlan plan do
+    throw (IO.userError "the lowered fixture falls outside the scalar statement fragment")
+  if checkPlan { plan with operations := .newMap :: plan.operations } then
+    throw (IO.userError "scalar statement admission accepted a non-scalar operation")
+  let values := issue43PartialInputs _root_.Bool.true _root_.Bool.true 3 2 3 _root_.Bool.true
+  let checkEnvironment := Verification.ImpactTypedEnvironment.check (plan.typeEnvironment selected)
+  unless checkEnvironment values do
+    throw (IO.userError "the fixture values are outside the lowered scalar type environment")
+  if checkEnvironment (("wide", .native Field.modulus) :: values) then
+    throw (IO.userError "scalar environment admission accepted a noncanonical field value")
   let expected := Compiler.nativePlanJson TargetProfile.selected321 `Issue43GuardedPartialWrites
     contract.state contract.constructor selected plan Bool.false
   let checkSchedule := fun bytes =>

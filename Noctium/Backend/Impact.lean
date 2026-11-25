@@ -1230,11 +1230,20 @@ private def Plan.validateGuardConstraints (plan : Plan) (entry : Entrypoint)
   (validateConstraints Capabilities.crypto env entry.span plan.guards)
     |>.mapError (·.message)
 
+private def Plan.validateActivitySchedule (plan : Plan) : Except String Unit :=
+  if plan.activityGuards.isEmpty ||
+      plan.activityGuards.length == plan.operations.length then
+    .ok ()
+  else
+    .error "native activity guard schedule length mismatch"
+
+private def validateActivityGuard (env : TypeEnv) : Option (Expr .bool) → Except String Unit
+  | none => .ok ()
+  | some guard => guard.validate expressionCapabilities env
+
 private def Plan.validateAfterGuards (plan : Plan) (env : TypeEnv) : Except String Unit := do
-  unless plan.activityGuards.isEmpty || plan.activityGuards.length == plan.operations.length do
-    throw "native activity guard schedule length mismatch"
-  for guard in plan.activityGuards do
-    if let some guard := guard then guard.validate expressionCapabilities env
+  Plan.validateActivitySchedule plan
+  for guard in plan.activityGuards do validateActivityGuard env guard
   for read in plan.reads do
     if read.components.isEmpty != read.schema.isNone then
       throw "native composite read schema/component metadata mismatch"
@@ -3053,6 +3062,47 @@ private theorem exceptBindOk {ε α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem forIn_validate_success {α : Type} (items : List α)
+    (validate : α → Except String Unit)
+    (accepted : forIn items PUnit.unit (fun item (_ : PUnit) => do
+      validate item
+      pure (.yield PUnit.unit)) = .ok PUnit.unit) :
+    ∀ item ∈ items, validate item = .ok () := by
+  have step (item : α) :
+      (do validate item; pure (.yield PUnit.unit) : Except String (ForInStep PUnit)) =
+        (fun _ : Unit => ForInStep.yield PUnit.unit) <$> validate item := by
+    cases validate item <;> rfl
+  change forIn items PUnit.unit (fun item (_ : PUnit) => do
+      validate item
+      pure (.yield PUnit.unit)) = .ok PUnit.unit at accepted
+  simp only [step, List.forIn_yield_eq_foldlM] at accepted
+  have folded : items.foldlM (fun (_ : Unit) item => validate item) () = .ok () := by
+    cases h : items.foldlM (fun (_ : Unit) item => validate item) () with
+    | error reason =>
+      have stepEq : (fun (_ : PUnit) item => (fun _ : Unit => PUnit.unit) <$> validate item) =
+          fun (_ : PUnit) item => validate item := by
+        funext _ item
+        cases validate item <;> rfl
+      rw [stepEq, h] at accepted
+      cases accepted
+    | ok result => cases result; rfl
+  clear accepted
+  induction items with
+  | nil => simp
+  | cons head tail ih =>
+    rw [List.foldlM_cons] at folded
+    cases first : validate head with
+    | error reason => simp [first, Bind.bind, Except.bind] at folded
+    | ok result =>
+      cases result
+      have tailCheck : tail.foldlM (fun (_ : Unit) item => validate item) () = .ok () := by
+        simpa [first, Bind.bind, Except.bind] using folded
+      intro item member
+      rw [List.mem_cons] at member
+      rcases member with rfl | member
+      · exact first
+      · exact ih tailCheck item member
+
 private theorem Plan.validate_guardConstraints_success (plan : Plan) (entry : Entrypoint)
     (accepted : plan.validate entry = .ok ()) :
     validateConstraints Capabilities.crypto (plan.typeEnvironment entry) entry.span plan.guards =
@@ -3072,6 +3122,64 @@ private theorem Plan.validate_guardConstraints_success (plan : Plan) (entry : En
   | ok result =>
       cases result
       rfl
+
+/-- Successful plan validation checks every native field expression with the
+same expression capabilities as the crypto runtime. -/
+theorem Plan.validate_fields_success (plan : Plan) (entry : Entrypoint)
+    (valid : plan.validate entry = .ok ()) :
+    ∀ field ∈ plan.fields,
+      field.validate Capabilities.crypto (plan.typeEnvironment entry) = .ok () := by
+  unfold Plan.validate at valid
+  simp only [exceptBindOk] at valid
+  obtain ⟨_, _, valid⟩ := valid
+  obtain ⟨fieldsResult, fieldsAccepted, _⟩ := valid
+  cases fieldsResult
+  have fieldsValid := forIn_validate_success plan.fields
+    (fun field => field.validate expressionCapabilities (plan.typeEnvironment entry))
+    fieldsAccepted
+  intro field member
+  change field.validate Capabilities.crypto (plan.typeEnvironment entry) = .ok ()
+  exact fieldsValid field member
+
+private theorem Plan.validateAfterGuards_activity_success (plan : Plan) (env : TypeEnv)
+    (valid : plan.validateAfterGuards env = .ok ()) :
+    (plan.activityGuards.isEmpty = true ∨
+      plan.activityGuards.length = plan.operations.length) ∧
+    ∀ guard, some guard ∈ plan.activityGuards →
+      guard.validate expressionCapabilities env = .ok () := by
+  unfold Plan.validateAfterGuards at valid
+  simp only [exceptBindOk] at valid
+  obtain ⟨_, scheduleAccepted, guardResult, guardsAccepted, _⟩ := valid
+  cases guardResult
+  have schedule :
+      (plan.activityGuards.isEmpty ||
+        plan.activityGuards.length == plan.operations.length) = true := by
+    unfold Plan.validateActivitySchedule at scheduleAccepted
+    split at scheduleAccepted
+    · assumption
+    · cases scheduleAccepted
+  have guardsValid := forIn_validate_success plan.activityGuards
+    (validateActivityGuard env) guardsAccepted
+  constructor
+  · exact (Bool.or_eq_true_iff.mp schedule).imp id beq_iff_eq.mp
+  · intro guard inside
+    exact guardsValid (some guard) inside
+
+/-- Successful plan validation checks activity schedule alignment and every
+present activity guard in the same environment used by runtime admission. -/
+theorem Plan.validate_activity_success (plan : Plan) (entry : Entrypoint)
+    (valid : plan.validate entry = .ok ()) :
+    (plan.activityGuards.isEmpty = Bool.true ∨
+      plan.activityGuards.length = plan.operations.length) ∧
+    ∀ guard, some guard ∈ plan.activityGuards →
+      guard.validate Capabilities.crypto (plan.typeEnvironment entry) = .ok () := by
+  unfold Plan.validate at valid
+  simp only [exceptBindOk] at valid
+  obtain ⟨_, _, valid⟩ := valid
+  obtain ⟨_, _, valid⟩ := valid
+  obtain ⟨_, _, afterAccepted⟩ := valid
+  exact Plan.validateAfterGuards_activity_success plan (plan.typeEnvironment entry)
+    afterAccepted
 
 private theorem folded_activity_guards {α : Type} (items : List α) (initial : Plan)
     (step : Plan → α → Plan)
@@ -3914,39 +4022,43 @@ private theorem finishPlan_success_valid (entry : Entrypoint) (result : Except S
       cases valid
       exact validation
 
+/-- A successful lowering result passed production plan validation. -/
+theorem lower_validated (state : List StateDecl) (entry : Entrypoint)
+    (plan : Plan) (lowered : lower state entry = .ok plan) :
+    plan.validate entry = .ok () := by
+  unfold lower at lowered
+  cases lowerResult : lowerWithEffectBoundaries state entry with
+  | error failure =>
+    have impossible : False := by simp [lowerResult, Except.map] at lowered
+    exact impossible.elim
+  | ok pair =>
+    cases pair with
+    | mk completed boundaries =>
+      have completedEq : completed = plan := by
+        simpa [lowerResult, Except.map] using lowered
+      subst plan
+      have accepted : lowerWithEffectBoundaries state entry =
+          .ok (completed, boundaries) := lowerResult
+      unfold lowerWithEffectBoundaries at accepted
+      simp only [exceptBindOk] at accepted
+      rcases accepted with ⟨_, _, ⟨_, _, ⟨result, _,
+        ⟨finished, finishAccepted, outputAccepted⟩⟩⟩⟩
+      rcases result with ⟨rawPlan, rawBoundaries⟩
+      have outputPair : (finished, rawBoundaries) = (completed, boundaries) := by
+        change Except.ok (finished, rawBoundaries) =
+          Except.ok (completed, boundaries) at outputAccepted
+        exact Except.ok.inj outputAccepted
+      have finishedEq : finished = completed := congrArg Prod.fst outputPair
+      rw [← finishedEq]
+      exact finishPlan_success_valid entry (.ok rawPlan) finished finishAccepted
+
 /-- Every plan returned by lowering has its symbolic guards validated against
 the same expression environment used by `Plan.validate`. -/
 theorem lower_guards_validate (state : List StateDecl) (entry : Entrypoint)
     (plan : Plan) (lowered : lower state entry = .ok plan) :
     validateConstraints Capabilities.crypto (plan.typeEnvironment entry) entry.span plan.guards =
       .ok () := by
-  have planValid : plan.validate entry = .ok () := by
-    unfold lower at lowered
-    cases lowerResult : lowerWithEffectBoundaries state entry with
-    | error failure =>
-      have impossible : False := by simp [lowerResult, Except.map] at lowered
-      exact impossible.elim
-    | ok pair =>
-      cases pair with
-      | mk completed boundaries =>
-        have completedEq : completed = plan := by
-          simpa [lowerResult, Except.map] using lowered
-        subst plan
-        have accepted : lowerWithEffectBoundaries state entry =
-            .ok (completed, boundaries) := lowerResult
-        unfold lowerWithEffectBoundaries at accepted
-        simp only [exceptBindOk] at accepted
-        rcases accepted with ⟨_, _, ⟨_, _, ⟨result, _,
-          ⟨finished, finishAccepted, outputAccepted⟩⟩⟩⟩
-        rcases result with ⟨rawPlan, rawBoundaries⟩
-        have outputPair : (finished, rawBoundaries) = (completed, boundaries) := by
-          change Except.ok (finished, rawBoundaries) =
-            Except.ok (completed, boundaries) at outputAccepted
-          exact Except.ok.inj outputAccepted
-        have finishedEq : finished = completed := congrArg Prod.fst outputPair
-        rw [← finishedEq]
-        exact finishPlan_success_valid entry (.ok rawPlan) finished finishAccepted
-  exact Plan.validate_guardConstraints_success plan entry planValid
+  exact Plan.validate_guardConstraints_success plan entry (lower_validated state entry plan lowered)
 
 /-- JSON value atoms must be hydrated into Uint8Array by the ledger JS adapter. -/
 def Aligned.toJson (ctx : EvalContext) (env : EvalEnv) (value : Aligned) : Except String Lean.Json := do
