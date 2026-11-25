@@ -162,8 +162,6 @@ theorem collectPlan_scalar_schedule
     (bounds : List (Native.Term × Nat)) (assertions : List Native.Term)
     (supported : ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation)
     (expressions : ∀ operation ∈ plan.operations, ∀ field ∈ operation.fields, ScalarExpression field)
-    (valid : ∀ operation ∈ plan.operations, ∀ field ∈ operation.fields,
-      field.validate Capabilities.scalarFragment (plan.typeEnvironment entry) = .ok ())
     (boundsChecked : ∀ requirement ∈ bounds,
       ∃ value, interpret hash witness requirement.1 = some value ∧ value.val ≤ requirement.2)
     (assertionsChecked : ∀ assertion ∈ assertions, interpret hash witness assertion = some one)
@@ -176,9 +174,13 @@ theorem collectPlan_scalar_schedule
   simp only [bind_ok] at collected
   obtain ⟨pieces, pieceCollection, exactShape⟩ := collected
   cases exactShape
+  have validated := plan.validate_fields_success entry
+    (Impact.lower_validated state entry plan lowered)
   obtain ⟨fields, fieldEval, payloads⟩ := collected_operation_payloads
     ctx hash implementation witness aliases env (plan.typeEnvironment entry) typed
-    entry.span plan.operations pieces supported expressions valid
+    entry.span plan.operations pieces supported expressions
+    (fun operation member field present => validated field
+      (List.mem_flatMap.mpr ⟨operation, member, present⟩))
     (fun bound member => boundsChecked bound (List.mem_append_right _ member))
     assertionsChecked pieceCollection
   have exactSchedule := GenericStateAdmissionBridge.lower_evaluated_plan_groups_exact

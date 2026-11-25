@@ -173,10 +173,7 @@ theorem lowerEntrypoint_checked_state
       ((∀ expected,
         Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
           ∀ input ∈ expected.inputs, input.activityGuard = none) →
-        (∀ operation ∈ plan.operations,
-          ∀ field ∈ operation.fields, ScalarExpression field ∧
-            field.validate Capabilities.scalarFragment
-              (plan.typeEnvironment (Passes.pruneEntrypoint entry)) = .ok ()) →
+        (∀ operation ∈ plan.operations, ∀ field ∈ operation.fields, ScalarExpression field) →
         groups = NativeState.groups native) ∧
       entry.run ctx values initial = (do
         let returned ← Entrypoint.evalReturns ctx entry finalEnv
@@ -256,9 +253,7 @@ theorem lowerEntrypoint_checked_state
       ScalarImpactOperationMeaning.collectPlan_scalar_schedule
         state ep plan planAccepted ctx hash implementation witness frame.1
         ((outputs ++ values) ++ readValues) typedPlan
-        frame.2.1 expected.groups collectedBounds collectedAssertions supported
-        (fun operation member expression present => (fields operation member expression present).1)
-        (fun operation member expression present => (fields operation member expression present).2)
+        frame.2.1 expected.groups collectedBounds collectedAssertions supported fields
         (fun bound member => bounds bound (boundMembers bound member))
         (fun term member => assertions term (assertionMembers term member)) collected
     have scheduleExact := Except.ok.inj (scheduleEvaluated.symm.trans planEvaluated)
