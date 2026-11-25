@@ -717,6 +717,8 @@ jobs:
           lake env lean tests/ScalarValidatedProgram.lean
           lake env lean tests/ScalarWitnessCapacity.lean
           lake env lean tests/ScalarCircuitWitness.lean
+          lake env lean tests/ScalarExpressionLowering.lean
+          lake env lean tests/ScalarTranslation.lean
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
