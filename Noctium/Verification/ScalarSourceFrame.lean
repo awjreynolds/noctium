@@ -103,6 +103,19 @@ private theorem scalar_shape (ty : Ty) (supported : (scalarType? ty).isSome = tr
     scalarAliasReadType ty := by
   cases ty <;> simp [scalarAliasReadType, scalarType?] at supported ⊢
 
+/-- Plain supported reads retain their scalar descriptor after flattening. -/
+theorem plain_scalar_read_scope (entry : Entrypoint) (plan : Impact.Plan)
+    (plain : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      read.components = [] ∧ (scalarType? read.ty).isSome = true) :
+    ∀ read ∈ (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+      Impact.Read.scalarReads, scalarAliasReadType read.ty := by
+  intro read member
+  obtain ⟨original, present, inOne⟩ := List.mem_flatMap.mp member
+  have supported := plain original present
+  have same : read = original := by simpa [Impact.Read.scalarReads, supported.1] using inOne
+  rw [same]
+  exact scalar_shape original.ty supported.2
+
 /-- Compose circuit execution with checked read decoding and plan assertions.
 Read name separation and descriptor admission are stated in terms of the
 actual plan. Checked native state execution authenticates the read values. -/
@@ -143,17 +156,13 @@ theorem lowerEntrypoint_sourceFrame_and_guards
       (∀ read ∈ reads,
         (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty) ∧
       (∀ guard ∈ plan.guards, guard.eval ctx ((result ++ values) ++ readValues) = .ok true) ∧
-      (∀ read ∈ reads, (result ++ values).lookup read.name = none) := by
+      (∀ read ∈ reads, (result ++ values).lookup read.name = none) ∧
+      normalizeOutputs (entrypointSeedAliases (Passes.pruneEntrypoint entry) plan)
+        entry.circuit.outputs = .ok frame := by
   let ep := Passes.pruneEntrypoint entry
   let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
-  have scalarReads : ∀ read ∈ reads.flatMap Impact.Read.scalarReads,
-      scalarAliasReadType read.ty := by
-    intro read member
-    obtain ⟨original, present, inOne⟩ := List.mem_flatMap.mp member
-    obtain ⟨plain, supported, _⟩ := plainReads original present
-    have same : read = original := by simpa [Impact.Read.scalarReads, plain] using inOne
-    rw [same]
-    exact scalar_shape original.ty supported
+  have scalarReads := plain_scalar_read_scope entry plan (fun read member =>
+    ⟨(plainReads read member).1, (plainReads read member).2.1⟩)
   obtain ⟨expected, frame, result, expectedAccepted, frameAccepted, source, resultNames, base⟩ :=
     lowerEntrypoint_sourceFrame state entry rewrites ctx hash implementation
       values witness streams groups json call rows plan lowered decoded rowsParsed profile
@@ -195,6 +204,6 @@ theorem lowerEntrypoint_sourceFrame_and_guards
       planAccepted expectedAccepted (inputSchema _ expectedAccepted) frameAccepted base
       plainReads readFresh distinctReads readAliases guardAdmission
   exact ⟨frame, result, readValues, source, readDecoded, base, environment, bounds, guards,
-    fun read member => (readFresh read member).1⟩
+    (fun read member => (readFresh read member).1), frameAccepted⟩
 
 end Noctium.Verification.ScalarSourceFrame
