@@ -1,4 +1,5 @@
 import Noctium.Verification.RangeDedupProducer
+import Noctium.Verification.NativeInputOrdinal
 import Noctium.Verification.RangeDedupComparisonMeaning
 import Noctium.Verification.RangeDedupAssertMeaning
 import Noctium.Verification.RangeDedupWholeTrace
@@ -14,6 +15,8 @@ open Lean Backend.Native NativeRelation NativeRelationJson
 open Noctium.Backend.RangeDedup
 open Noctium.Verification.RangeDedup
 open Noctium.Verification.RangeDedupProducer
+open Noctium.Verification.NativeInputOrdinal
+open Noctium.Verification.RangeDedupAssertMeaning (CheckedAssertions)
 open Noctium.Verification.ScalarValidationMeaning
 open Noctium.Verification.ScalarValidationArithmeticLoop
 open Noctium.Verification.ScalarValidationNativeLoop
@@ -278,7 +281,13 @@ private theorem acceptedMeaningStep_preserves
       witness requirement.identifier = inputs requirement.identifier)
     (step : AcceptedMeaningStep hash witness raw)
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next) :
-    StateMeaning hash inputs witness next ∧ NativeDefinitions next := by
+    StateMeaning hash inputs witness next ∧ NativeDefinitions next ∧
+      (CheckedAssertions hash inputs expected state.assertionCount →
+        CheckedAssertions hash inputs expected next.assertionCount) := by
+  have preservePrefix (count : next.assertionCount = state.assertionCount)
+      (prior : CheckedAssertions hash inputs expected state.assertionCount) :
+      CheckedAssertions hash inputs expected next.assertionCount := by
+    rwa [count]
   cases step with
   | native nativeStep =>
     cases nativeStep with
@@ -288,17 +297,22 @@ private theorem acceptedMeaningStep_preserves
       have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
       have nonforeignInput := inputSchema requirement member
       have agreement := inputAgreement requirement member
+      have assertionCount := accepted_input_row_assertion_count_unchanged
+        (visibility := .«public») selected nonforeignInput
+        (by simpa [inputOpcode] using opcode) accepted
       cases guarded : requirement.activityGuard with
       | none =>
         exact ⟨public_input_step_meaning meaning selected nonforeignInput guarded agreement
             opcode accepted,
           input_nativeDefinitions_step (visibility := .«public») definitions selected nonforeignInput
-            guarded (by simpa [inputOpcode] using opcode) accepted⟩
+            guarded (by simpa [inputOpcode] using opcode) accepted,
+          preservePrefix assertionCount⟩
       | some guardTerm =>
         exact ⟨guarded_public_input_step_meaning meaning selected nonforeignInput guarded
             agreement opcode accepted,
           guarded_public_input_nativeDefinitions_step definitions selected nonforeignInput
-            guarded (by simpa [inputOpcode] using opcode) accepted⟩
+            guarded (by simpa [inputOpcode] using opcode) accepted,
+          preservePrefix assertionCount⟩
     | privateInput opcode =>
       obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
         (visibility := .«private») (by simpa [inputOpcode] using opcode) accepted
@@ -310,15 +324,30 @@ private theorem acceptedMeaningStep_preserves
       exact ⟨private_input_step_meaning meaning selected nonforeignInput unguarded agreement
           opcode accepted,
         input_nativeDefinitions_step (visibility := .«private») definitions selected nonforeignInput
-          unguarded (by simpa [inputOpcode] using opcode) accepted⟩
+          unguarded (by simpa [inputOpcode] using opcode) accepted,
+        preservePrefix (accepted_input_row_assertion_count_unchanged
+          (visibility := .private) selected nonforeignInput
+          (by simpa [inputOpcode] using opcode) accepted)⟩
     | arithmetic arithmeticStep =>
       cases arithmeticStep with
       | add _ _ _ opcode decoded holds =>
-        exact accepted_native_add_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨nextMeaning, nextDefinitions⟩ :=
+          accepted_native_add_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
+          accepted_add_components definitions opcode accepted
+        exact ⟨nextMeaning, nextDefinitions, preservePrefix (defineResult_assertionCount defined)⟩
       | mul _ _ _ opcode decoded holds =>
-        exact accepted_native_mul_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨nextMeaning, nextDefinitions⟩ :=
+          accepted_native_mul_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨_, _, _, _, _, _, _, _, defined⟩ :=
+          accepted_mul_components definitions opcode accepted
+        exact ⟨nextMeaning, nextDefinitions, preservePrefix (defineResult_assertionCount defined)⟩
       | neg _ _ opcode decoded holds =>
-        exact accepted_native_neg_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨nextMeaning, nextDefinitions⟩ :=
+          accepted_native_neg_step_meaning meaning definitions opcode accepted decoded holds
+        obtain ⟨_, _, _, _, _, defined⟩ :=
+          accepted_neg_components definitions opcode accepted
+        exact ⟨nextMeaning, nextDefinitions, preservePrefix (defineResult_assertionCount defined)⟩
   | boolean opcode decoded holds =>
     unfold Backend.Native.validateInstruction at accepted
     simp only [ScalarValidationMeaning.bind_ok] at accepted
@@ -344,7 +373,8 @@ private theorem acceptedMeaningStep_preserves
           simpa [one] using congrArg (fun value : Scalar => value.val) equal
         omega
     exact ⟨RangeDedupAssertMeaning.refineMeaning meaning bounded refined,
-      refine_nativeDefinitions definitions refined⟩
+      refine_nativeDefinitions definitions refined,
+      preservePrefix (refine_assertionCount refined)⟩
   | @bits value bitsWidth opcode decoded holds =>
     unfold Backend.Native.validateInstruction at accepted
     simp only [ScalarValidationMeaning.bind_ok] at accepted
@@ -373,13 +403,19 @@ private theorem acceptedMeaningStep_preserves
         (.reference text) bitsWidth holds
       simpa [Operand.read, widthAgreement] using valueBound
     exact ⟨RangeDedupAssertMeaning.refineMeaning meaning bounded refined,
-      refine_nativeDefinitions definitions refined⟩
+      refine_nativeDefinitions definitions refined,
+      preservePrefix (refine_assertionCount refined)⟩
   | lessThan opcode decoded holds =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+      RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
     exact ⟨RangeDedupComparisonMeaning.lessThanStepMeaning meaning opcode decoded holds accepted,
-      accepted_lessThan_nativeDefinitions definitions opcode accepted⟩
+      accepted_lessThan_nativeDefinitions definitions opcode accepted,
+      preservePrefix (defineResult_assertionCount defined)⟩
   | assertion opcode decoded holds =>
     exact ⟨RangeDedupAssertMeaning.assertStepMeaning meaning opcode decoded holds accepted,
-      accepted_assert_nativeDefinitions definitions opcode accepted⟩
+      accepted_assert_nativeDefinitions definitions opcode accepted,
+      fun prior => (RangeDedupAssertMeaning.assertStep_preservesCheckedAssertions
+        meaning prior opcode decoded holds accepted).2⟩
   | @copy source destination opcode decoded holds =>
     obtain ⟨sourceFact, sourceAccepted, sourceNative, defined⟩ :=
       accepted_copy_components definitions opcode accepted
@@ -411,7 +447,8 @@ private theorem acceptedMeaningStep_preserves
       have same : identifier = destination := Except.ok.inj (parsed.symm.trans fields.2.1)
       subst identifier
       exact destinationMeaning
-    exact ⟨defineResult_meaning meaning outputMeaning defined, typed⟩
+    exact ⟨defineResult_meaning meaning outputMeaning defined, typed,
+      preservePrefix (defineResult_assertionCount defined)⟩
   | @constrainEq left right opcode decoded holds =>
     unfold Backend.Native.validateInstruction at accepted
     simp only [ScalarValidationMeaning.bind_ok] at accepted
@@ -505,7 +542,11 @@ private theorem acceptedMeaningStep_preserves
         have sameMember : (identifier, fact) ∈ afterRight.definitions := by
           simpa [definitionsEq] using member
         exact afterRightDefinitions identifier fact sameMember
-      exact ⟨finalMeaning, finalDefinitions⟩
+      have countEq : next.assertionCount = afterRight.assertionCount := by
+        simpa using (congrArg Backend.Native.State.assertionCount finalStateEq).symm
+      exact ⟨finalMeaning, finalDefinitions, preservePrefix
+        (countEq.trans ((refine_assertionCount rightRefined).trans
+          (refine_assertionCount leftRefined)))⟩
   | @testEq left right output opcode decoded holds =>
     obtain ⟨leftFact, rightFact, fact, leftAccepted, rightAccepted,
       leftNative, rightNative, combined, defined⟩ :=
@@ -539,7 +580,7 @@ private theorem acceptedMeaningStep_preserves
     have meaningNext := defineResult_meaning meaning outputMeaning defined
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
-    exact ⟨meaningNext, definitionsNext⟩
+    exact ⟨meaningNext, definitionsNext, preservePrefix (defineResult_assertionCount defined)⟩
   | @logicalNot value output opcode decoded holds =>
     obtain ⟨factInput, fact, valueAccepted, valueNative, booleanBound,
       combined, defined⟩ := accepted_not_components definitions opcode accepted
@@ -571,7 +612,7 @@ private theorem acceptedMeaningStep_preserves
       exact factMeaning) defined
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
-    exact ⟨meaningNext, definitionsNext⟩
+    exact ⟨meaningNext, definitionsNext, preservePrefix (defineResult_assertionCount defined)⟩
   | @nativeSelect condition yes no output opcode decoded holds =>
     obtain ⟨conditionFact, yesFact, noFact, fact, conditionAccepted,
       yesAccepted, noAccepted, _conditionNative, _yesNative, _noNative, _conditionBound,
@@ -618,14 +659,14 @@ private theorem acceptedMeaningStep_preserves
       exact factMeaning) defined
     have factNative := combine_native combined
     have definitionsNext := defineResult_nativeDefinitions definitions factNative defined
-    exact ⟨meaningNext, definitionsNext⟩
+    exact ⟨meaningNext, definitionsNext, preservePrefix (defineResult_assertionCount defined)⟩
   | impact opcode _ =>
     rw [accepted_impact_state opcode accepted]
-    exact ⟨meaning, definitions⟩
+    exact ⟨meaning, definitions, id⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
-    exact ⟨meaning, definitions⟩
+    exact ⟨meaning, definitions, id⟩
 
 def impactOpcodeRow (raw : Json) : Bool :=
   match Backend.Native.stringField raw "op" with
@@ -763,11 +804,61 @@ theorem accepted_loop_groupCount_at_steps
         (steps head (by simp)) checked
       have after := acceptedMeaningStep_preserves initialMeaning initialDefinitions
         inputSchema inputAgreement (steps head (by simp)) checked
-      have tailCount := ih after.1 after.2
+      have tailCount := ih after.1 after.2.1
         (fun item member => steps item (List.mem_cons_of_mem _ member)) accepted
       rw [tailCount, countStep]
       simp [impactOpcodeCount]
       omega
+
+/-- Thread producer meaning through the actual accepted instruction trace.
+The established scalar assertions at the initial cursor extend to the final
+cursor, while every row retains its before and after meaning. -/
+theorem accepted_loop_meaning_assertions_at_steps
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {items : List (Json × Nat)} {initial final : Backend.Native.State}
+    (initialMeaning : StateMeaning hash inputs witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (steps : ∀ item ∈ items, AcceptedMeaningStep hash witness item.1)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
+    StateMeaning hash inputs witness final ∧ NativeDefinitions final ∧
+      (CheckedAssertions hash inputs expected initial.assertionCount →
+        CheckedAssertions hash inputs expected final.assertionCount) ∧
+      ∀ raw index, (raw, index) ∈ items →
+        ∃ state next, StateMeaning hash inputs witness state ∧ NativeDefinitions state ∧
+          Backend.Native.validateInstruction expected state raw = .ok next ∧
+          StateMeaning hash inputs witness next ∧ NativeDefinitions next := by
+  induction items generalizing initial final with
+  | nil =>
+    have initialEq : initial = final := by injection accepted
+    subst final
+    exact ⟨initialMeaning, initialDefinitions, id, by simp⟩
+  | cons head tail ih =>
+    rw [Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial head.1 with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have after := acceptedMeaningStep_preserves initialMeaning initialDefinitions
+        inputSchema inputAgreement (steps head (by simp)) checked
+      obtain ⟨finalMeaning, finalDefinitions, tailAssertions, tailVisits⟩ :=
+        ih after.1 after.2.1
+          (fun item member => steps item (List.mem_cons_of_mem _ member)) accepted
+      refine ⟨finalMeaning, finalDefinitions, tailAssertions ∘ after.2.2, ?_⟩
+      intro raw index member
+      have headOrTail : (raw, index) = head ∨ (raw, index) ∈ tail := by
+        simpa only [List.mem_cons] using member
+      rcases headOrTail with headMember | tailMember
+      · have rawEq : raw = head.1 := congrArg Prod.fst headMember
+        have indexEq : index = head.2 := congrArg Prod.snd headMember
+        subst raw
+        subst index
+        exact ⟨initial, next, initialMeaning, initialDefinitions, checked,
+          after.1, after.2.1⟩
+      · exact tailVisits raw index tailMember
 
 /-- Thread producer meaning through any accepted indexed trace in the declared
 step class and retain the invariant at every instruction pre-state. This lets
@@ -789,34 +880,30 @@ theorem accepted_loop_meaning_at_steps
         ∃ state next, StateMeaning hash inputs witness state ∧ NativeDefinitions state ∧
           Backend.Native.validateInstruction expected state raw = .ok next ∧
           StateMeaning hash inputs witness next ∧ NativeDefinitions next := by
-  induction items generalizing initial final with
-  | nil =>
-    have initialEq : initial = final := by injection accepted
-    subst final
-    exact ⟨initialMeaning, initialDefinitions, by simp⟩
-  | cons head tail ih =>
-    rw [Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
-    cases checked : Backend.Native.validateInstruction expected initial head.1 with
-    | error message => simp [checked, Bind.bind, Except.bind] at accepted
-    | ok next =>
-      simp only [checked, bind_pure_comp] at accepted
-      have after := acceptedMeaningStep_preserves initialMeaning initialDefinitions
-        inputSchema inputAgreement (steps head (by simp)) checked
-      obtain ⟨finalMeaning, finalDefinitions, tailVisits⟩ :=
-        ih after.1 after.2
-          (fun item member => steps item (List.mem_cons_of_mem _ member)) accepted
-      refine ⟨finalMeaning, finalDefinitions, ?_⟩
-      intro raw index member
-      have headOrTail : (raw, index) = head ∨ (raw, index) ∈ tail := by
-        simpa only [List.mem_cons] using member
-      rcases headOrTail with headMember | tailMember
-      · have rawEq : raw = head.1 := congrArg Prod.fst headMember
-        have indexEq : index = head.2 := congrArg Prod.snd headMember
-        subst raw
-        subst index
-        exact ⟨initial, next, initialMeaning, initialDefinitions, checked,
-          after.1, after.2⟩
-      · exact tailVisits raw index tailMember
+  obtain ⟨meaning, definitions, _, visits⟩ := accepted_loop_meaning_assertions_at_steps
+    initialMeaning initialDefinitions inputSchema inputAgreement steps accepted
+  exact ⟨meaning, definitions, visits⟩
+
+/-- The completed validator has consumed the entire assertion schedule.
+For a satisfying trace, every scheduled term evaluates to true under the
+source inputs whenever the incoming assertion prefix has already been proved. -/
+theorem accepted_driver_assertion_schedule
+    {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
+    {program : Json} {instructions rawInputs : Array Json}
+    {seed final : Backend.Native.State}
+    (driver : NativeValidationDriverFacts expected program instructions rawInputs seed final)
+    (initialMeaning : StateMeaning hash inputs witness seed)
+    (initialDefinitions : NativeDefinitions seed)
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputAgreement : ∀ requirement ∈ expected.inputs,
+      witness requirement.identifier = inputs requirement.identifier)
+    (steps : ∀ item ∈ instructions.toList.zipIdx, AcceptedMeaningStep hash witness item.1)
+    (initialAssertions : CheckedAssertions hash inputs expected seed.assertionCount) :
+    ∀ term ∈ expected.assertions, interpret hash inputs term = some one := by
+  obtain ⟨_, _, preserveAssertions, _⟩ := accepted_loop_meaning_assertions_at_steps
+    initialMeaning initialDefinitions inputSchema inputAgreement steps driver.instructionTrace
+  have checked := preserveAssertions initialAssertions
+  simpa only [driver.assertionCount, CheckedAssertions, List.take_length] using checked
 
 /-- Add scalar projection facts at every position of the actual indexed
 producer fold, reusing meaning and Native typing for all existing steps. -/
@@ -1116,7 +1203,7 @@ theorem acceptedProfileOrderedImpactPayloads
         have same := Except.ok.inj (decoded.symm.trans row.decoded)
         subst decodedInstruction
         exact holds instruction (by simp))
-      have ⟨nextMeaning, nextDefinitions⟩ :=
+      have ⟨nextMeaning, nextDefinitions, _⟩ :=
         acceptedMeaningStep_preserves initialMeaning initialDefinitions inputSchema
           inputAgreement step checked
       rw [ih nextMeaning nextDefinitions

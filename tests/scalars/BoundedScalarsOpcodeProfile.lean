@@ -233,6 +233,30 @@ theorem boundedApply_checkedRanges {hash : Hash} {assignment : Assignment}
   refine ⟨?_, expected, schedule, driver.rangeRequirements meaning⟩
   simpa [eq_of_beq name, ty, Native.sourceMaximum] using bound
 
+open Noctium.Verification.ScalarNormalization (interpret) in
+/-- Every satisfying assignment of the emitted relation satisfies every
+assertion in the corresponding validated source schedule. -/
+theorem boundedApply_checkedAssertions {hash : Hash} {assignment : Assignment}
+    (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
+    ∃ expected, Native.expectedEntrypoint BoundedScalars.state
+      (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
+      ∀ term ∈ expected.assertions, interpret hash assignment term = some one := by
+  obtain ⟨_, expected, _, seed, final, _, schedule, _, driver, trace⟩ :=
+    boundedApply_nativeValidationTrace
+  have checked := boundedApplyScalarInputs_checked
+  simp only [boundedApplyScalarInputs, schedule, Bool.and_eq_true] at checked
+  obtain ⟨⟨emptyHeader, scalarInputs⟩, _⟩ := checked
+  have empty : expected.rawInputs = [] := List.isEmpty_iff.mp emptyHeader
+  cases driver.emptyRawSeed empty
+  have schema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = Bool.false := by
+    intro requirement inList
+    simpa using List.all_eq_true.mp scalarInputs requirement inList
+  refine ⟨expected, schedule, accepted_driver_assertion_schedule driver
+    (Noctium.Verification.ScalarValidationMeaning.empty_meaning hash assignment assignment)
+    empty_nativeDefinitions schema (fun _ _ => rfl)
+    (nativeDefinitionTrace_acceptedMeaningSteps trace holds) ?_⟩
+  simp [Noctium.Verification.RangeDedupAssertMeaning.CheckedAssertions]
+
 theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
     (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
     (assignment "%input_old").val ≤ 510 :=
