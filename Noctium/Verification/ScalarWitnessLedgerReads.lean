@@ -12,6 +12,14 @@ Its source type is separately constrained to Native, Bool, or UInt by the
 def PlainScalarLedgerRead (read : Impact.Read) : Prop :=
   read.components = [] ∧ read.guard = none
 
+theorem PlainScalarLedgerRead.bindings (read : Impact.Read)
+    (plain : PlainScalarLedgerRead read) (scalarType : ScalarType read.ty) :
+    read.bindings = [(read.name, read.ty)] := by
+  rcases read with ⟨name, ty, components, schema, guard, rootCellRead⟩
+  have flat : components = [] := plain.1
+  subst components
+  cases scalarType <;> rfl
+
 private def ledgerReadEmit (name : String) : StateM Zkir.LowerState Unit :=
   Zkir.emit "public_input"
     [("guard", Json.null), ("type", toJson ("Scalar<BLS12-381>" : String)),

@@ -18,8 +18,7 @@ theorem completes_scalar_ledger_suffix (ctx : EvalContext) (hash : Hash)
     (witness : Assignment) (state : Zkir.LowerState)
     (meaning : LowerStateMeaning hash witness state) (inputFrame : InputFrame inputs witness)
     (baseAliases : LowerAliasAgreement hash inputs witness normalAliases state.aliases baseValues)
-    (typed : TypedEnvironment hash inputs normalAliases (baseValues ++ readValues)
-      (plan.typeEnvironment entry))
+    (sourceAliases : AliasAgreement hash inputs normalAliases (baseValues ++ readValues))
     (admission : ScalarEntrypointPlanAdmission entry plan)
     (frames : ScalarEntrypointStageFrames entry plan)
     (readAliases : ∀ pair ∈ readValues,
@@ -78,7 +77,7 @@ theorem completes_scalar_ledger_suffix (ctx : EvalContext) (hash : Hash)
       baseValues readValues oldAliases readAliases inputFrameAfterReads
   obtain ⟨guards, guardAgreement⟩ := completes_plan_guards ctx hash implementation inputs
     reads.witness afterReads normalAliases (baseValues ++ readValues) (plan.typeEnvironment entry)
-    plan typed.aliases readAgreement reads.meaning admission.planGuards guardsValid guardsTrue guardsBudget
+    plan sourceAliases readAgreement reads.meaning admission.planGuards guardsValid guardsTrue guardsBudget
   have fieldsAdmitted : ∀ operation ∈ plan.operations, ∀ fields ∈ operation.fieldGroups,
       ∀ field ∈ fields, ScalarExpression field := by
     intro operation member fields group field fieldMember
@@ -88,11 +87,11 @@ theorem completes_scalar_ledger_suffix (ctx : EvalContext) (hash : Hash)
     subst operation
     exact admission.operationFields indexed indexedMember fields group field fieldMember
   obtain ⟨ops, opAgreement⟩ := lowerLedgerOperations_complete_unGuarded ctx hash implementation inputs
-    normalAliases (baseValues ++ readValues) entry plan typed guards.witness afterGuards
+    normalAliases (baseValues ++ readValues) entry plan sourceAliases guards.witness afterGuards
     guards.meaning guardAgreement activity fieldsAdmitted fieldsValid fieldsEvaluated opsBudget
   obtain ⟨returns⟩ := completes_entrypoint_returns ctx hash implementation entry (baseValues ++ readValues)
     inputs (plan.typeEnvironment entry) normalAliases admission.returns returnsValid returnsEvaluated
-    ops.witness afterOperations ops.meaning typed.aliases opAgreement returnBudget
+    ops.witness afterOperations ops.meaning sourceAliases opAgreement returnBudget
   refine ⟨{
     witness := returns.witness
     meaning := returns.meaning

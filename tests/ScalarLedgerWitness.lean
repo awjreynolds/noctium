@@ -1,8 +1,7 @@
 import Noctium.Verification
-import Noctium.Verification.ScalarLedgerWitnessComposition
-import Noctium.Verification.ScalarLedgerWitnessPreflight
-import Noctium.Verification.ScalarLedgerWitnessSource
-import Noctium.Verification.ScalarWitnessEntrypointPrelude
+import Noctium.Verification.ScalarCellCallWitness
+import Noctium.Verification.ScalarLedgerReturnObservation
+import Noctium.Verification.ScalarLedgerSourceReturns
 
 open Noctium Noctium.Backend Noctium.Verification
 open NativeRelationJson ScalarValidationOpcodeProfile
@@ -18,11 +17,15 @@ private def entry : Entrypoint := {
       {name := "enabled", ty := .bool, visibility := .public},
       {name := "limit", ty := .uint 63, visibility := .private}]
     constraints := [.ref "enabled"]
+    outputs := [{
+      name := "increment"
+      ty := .native
+      value := .disclose {} (.add (.ref "delta") (.native 1))}]
   }
   callInputs := ["delta"]
   effects := [
     .readCell "counter" "before" .native,
-    .writeCell "counter" .native (.disclose {} (.add (.ref "before") (.ref "delta"))),
+    .writeCell "counter" .native (.add (.ref "before") (.ref "increment")),
     .readCell "counter" "after" .native]
   returns := [{name := "result", ty := .native, value := .ref "after"}]
 }
@@ -42,24 +45,36 @@ private def entry : Entrypoint := {
 private def context : EvalContext :=
   {modulus := Field.modulus, poseidon2 := fun _ _ _ => .error "no hash in this fixture"}
 
-private def values : EvalEnv := [("delta", .native 25), ("enabled", .bool true), ("limit", .uint 63 50)]
+private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool true), ("limit", .uint 63 50)]
 
 private def initial : LedgerState := {cells := [("counter", .native 17)]}
 
 #guard match entry.run context values initial with
   | .ok (returned, next) =>
-    returned == [("result", .native 42)] && next.cells == [("counter", .native 42)]
+    returned == [("increment", .native 25), ("result", .native 42)] &&
+      next.cells == [("counter", .native 42)]
   | .error _ => false
 
 #guard match Impact.lower declarations entry with
   | .error _ => false
   | .ok plan =>
     let cutoff := Impact.publicInputReadCount entry.circuit.inputs
-    match ScalarCellSourceReads.sourceReadInputs context entry.effects cutoff (values, initial) with
+    match entry.circuit.run context values with
     | .error _ => false
-    | .ok (entries, _) =>
-      (entries.map fun (read, value) => (read.name, value.val)) == [("before", 17), ("after", 42)] &&
-        (plan.reads.drop cutoff).map (·.name) == entries.map (·.1.name)
+    | .ok outputs =>
+      match ScalarCellSourceReads.sourceReadInputs context entry.effects cutoff (outputs ++ values, initial) with
+      | .error _ => false
+      | .ok (entries, _) =>
+        let seed := ScalarCellWitnessReadSeed.seedReadValues
+          (fun name => if name == "%input_delta" then NativeRelation.scalar 24 else NativeRelation.zero)
+          entries
+        let reads := plan.reads.drop cutoff
+        (entries.map fun (read, value) => (read.name, value.val)) == [("before", 17), ("after", 42)] &&
+          reads.map (·.name) == entries.map (·.1.name) &&
+          (seed "%input_delta").val == 24 &&
+          match GenericStateInputValues.decodeReads reads seed with
+          | .ok readValues => readValues == [("before", .native 17), ("after", .native 42)]
+          | .error _ => false
 
 open Lean Elab Command in
 run_cmd do
@@ -72,6 +87,9 @@ run_cmd do
       `Noctium.Verification.ScalarWitnessConstruction.completes_plan_guards,
       `Noctium.Verification.ScalarWitnessConstruction.lowerLedgerOperations_complete_unGuarded,
       `Noctium.Verification.ScalarWitnessConstruction.completes_scalar_ledger_suffix,
+      `Noctium.Verification.ScalarWitnessConstruction.lowerEntrypoint_construct_scalar_cell_witness,
+      `Noctium.Verification.ScalarLedgerSourceReturns.evalReturns_transport,
+      `Noctium.Verification.ScalarLedgerReturnObservation.expected_returns_observe_source,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_returns] do
     match Noctium.Verification.Audit.axiomsIn environment proof with
     | .ok _ => pure ()
