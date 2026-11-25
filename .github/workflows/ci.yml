@@ -664,6 +664,8 @@ jobs:
             Noctium.Verification.GenericStateEvaluationCanonical \
             Noctium.Verification.GenericStateReadAuthentication \
             Noctium.Verification.GenericStateConverseRead \
+            Noctium.Verification.GenericStateConverseAbsence \
+            Noctium.Verification.GenericStateWriteSourceTrace \
             Noctium.Verification.GenericStatePrefixEnvironment \
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/ScalarImpactInputAdmission.lean

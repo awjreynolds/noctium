@@ -139,6 +139,49 @@ theorem AdmittedState.encoded (admitted : AdmittedState declarations source slot
   · exact encoded
   · simp at encoded
 
+/-- The checked initial encoder admits every declaration, including empty maps
+whose element types cannot be inferred from stored values. -/
+theorem AdmittedState.declarationsSupported
+    (admitted : AdmittedState declarations source slots) :
+    ∀ declaration ∈ declarations, declarationSupported declaration = true := by
+  have encoded := admitted.initialEncoded
+  unfold encodeInitialState at encoded
+  split at encoded
+  · rename_i valid
+    simp only [initialShapeValid, Bool.and_eq_true] at valid
+    exact List.all_eq_true.mp valid.2
+  · cases encoded
+
+/-- The cell located by the actual source name has an unaligned scalar type
+in the checked ledger schema. -/
+theorem AdmittedState.cellType
+    (admitted : AdmittedState declarations source slots)
+    (name : String) (declaration : StateDecl) (ty : Ty)
+    (found : declarations.find? (·.name == name) = some declaration)
+    (kind : declaration.kind = .cell ty) :
+    declaration.cellAlignment? = none ∧ (scalarType? ty).isSome = true := by
+  have supported := admitted.declarationsSupported declaration (List.mem_of_find?_eq_some found)
+  cases declaration with
+  | mk name declaredKind sealed span alignment =>
+    change declaredKind = .cell ty at kind
+    subst declaredKind
+    cases alignment <;> simp_all [declarationSupported]
+
+/-- An empty map still supplies checked key and value type witnesses from the
+initial schema. A successful raw state fold alone does not establish this. -/
+theorem AdmittedState.mapTypes
+    (admitted : AdmittedState declarations source slots)
+    (name : String) (declaration : StateDecl) (keyTy valueTy : Ty)
+    (found : declarations.find? (·.name == name) = some declaration)
+    (kind : declaration.kind = .map keyTy valueTy) :
+    (scalarType? keyTy).isSome = true ∧ (scalarType? valueTy).isSome = true := by
+  have supported := admitted.declarationsSupported declaration (List.mem_of_find?_eq_some found)
+  cases declaration with
+  | mk name declaredKind sealed span alignment =>
+    change declaredKind = .map keyTy valueTy at kind
+    subst declaredKind
+    exact Bool.and_eq_true_iff.mp supported
+
 theorem AdmittedState.distinctDeclarations
     (admitted : AdmittedState declarations source slots) :
     declarations.Pairwise (fun left right => left.name ≠ right.name) := by
@@ -916,6 +959,47 @@ theorem encodeMapEntry_key_match (keyTy valueTy : Ty)
         rw [decode_encode_pack keyTy key canonical] at decoded
         exact False.elim (same (Option.some.inj decoded).symm)
     rw [sourceFalse, scalarFalse]
+
+/-- Exact scalar map encoding preserves a missing source key. Together with
+`encodedMap_absent`, this rules out both invented and lost key matches. -/
+theorem sourceMap_absent (keyTy valueTy : Ty)
+    (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
+    (key : keyTy.Denote) (canonical : Canonical keyTy key)
+    (mapped : entries.mapM (encodeMapEntry keyTy valueTy) = some encoded)
+    (missing : entries.lookup (Value.pack keyTy key) = none) :
+    encoded.any (fun pair => pair.1 == scalar (number keyTy key)) = false := by
+  induction entries generalizing encoded with
+  | nil =>
+    simp only [List.mapM_nil] at mapped
+    cases mapped
+    rfl
+  | cons entry rest ih =>
+    simp only [List.mapM_cons] at mapped
+    cases first : encodeMapEntry keyTy valueTy entry with
+    | none => simp [first] at mapped
+    | some pair =>
+      cases later : rest.mapM (encodeMapEntry keyTy valueTy) with
+      | none => simp [first, later] at mapped
+      | some remaining =>
+        simp [first, later] at mapped
+        cases mapped
+        have noSource := List.lookup_eq_none_iff.mp missing
+        have headMissing : (entry.1 == Value.pack keyTy key) = false := by
+          cases equal : (entry.1 == Value.pack keyTy key) with
+          | false => rfl
+          | true =>
+            have rawEqual := value_beq_eq _ _ equal
+            have different := noSource entry (by simp)
+            rw [rawEqual] at different
+            simp [bne, value_beq_refl] at different
+        have tailMissing : rest.lookup (Value.pack keyTy key) = none := by
+          apply List.lookup_eq_none_iff.mpr
+          intro item member
+          exact noSource item (List.mem_cons_of_mem _ member)
+        have nativeMissing :=
+          (encodeMapEntry_key_match keyTy valueTy entry pair key canonical first).symm.trans
+            headMissing
+        simpa only [List.any_cons, nativeMissing, Bool.false_or] using ih remaining later tailMissing
 
 theorem encodeMapEntries_filter_key (keyTy valueTy : Ty)
     (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
