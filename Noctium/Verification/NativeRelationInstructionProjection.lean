@@ -1,6 +1,5 @@
 import Noctium.Backend.Zkir
 import Noctium.Verification.NativeRelationJson
-import Noctium.Verification.ScalarValidationProjection
 
 namespace Noctium.Verification.NativeRelationInstructionProjection
 
@@ -92,6 +91,20 @@ private theorem mapM_length {function : α → Except String β} {values : List 
         have tailSuccess : rest.mapM function = .ok tail := tailResult
         simp only [List.length_cons, ih tailSuccess]
 
+/-- Bounds from the accepted row array apply after decoding, including
+call decoders that project the raw header separately. -/
+theorem decodedRows_budget {expected : Native.Expected} {json : Json}
+    {rows : Array Json} {instructions : List Instruction}
+    (validated : Native.validate expected json = .ok ())
+    (parsed : Native.arrayField json "instructions" = .ok rows)
+    (decoded : rows.toList.mapM NativeRelationJson.decodeInstruction = .ok instructions) :
+    instructions.length ≤ Native.maxInstructions := by
+  obtain ⟨acceptedRows, acceptedParsed, rowCount, _⟩ :=
+    Native.validate_instruction_and_output_bounds validated
+  have sameRows : rows = acceptedRows := Except.ok.inj (parsed.symm.trans acceptedParsed)
+  rw [mapM_length decoded, sameRows]
+  simpa using rowCount
+
 /-- The production resource limit bounds exactly the rows consumed by
 the strict relation decoder, independently of allocated SSA names. -/
 theorem decodedInstruction_budget {expected : Native.Expected}
@@ -99,12 +112,8 @@ theorem decodedInstruction_budget {expected : Native.Expected}
     (validated : Native.validate expected json = .ok ())
     (decoded : NativeRelationJson.decode json = .ok program) :
     program.instructions.length ≤ Native.maxInstructions := by
-  obtain ⟨rows, rowsParsed, decoding⟩ := decode_instructionProjection decoded
-  obtain ⟨accepted, _, _, _, driver⟩ :=
-    ScalarValidationProjection.validate_driver_result validated
-  have sameRows := Except.ok.inj (rowsParsed.symm.trans driver.instructionsParsed)
-  rw [mapM_length decoding, sameRows]
-  simpa using driver.instructionCount
+  obtain ⟨_, parsed, decoding⟩ := decode_instructionProjection decoded
+  exact decodedRows_budget validated parsed decoding
 
 /-- The accepted producer's instruction limit applies to the exact decoded
 vector. SSA output-slot capacity stays with the separate output-capacity frame. -/
