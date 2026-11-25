@@ -26,7 +26,7 @@ fn view_id(plan: &Plan, name: &str) -> String {
         .to_owned()
 }
 
-fn wire_session(control: &Json, value: Json) -> Result<Session> {
+fn wire_session(control: &Json, entrypoint: &str, value: Json) -> Result<Session> {
     let binding_text = control["binding"].as_str().expect("witness binding");
     let pin = hex::encode(Sha256::digest(binding_text.as_bytes()));
     Session::from_json_with_invocation_target(
@@ -51,7 +51,7 @@ fn wire_session(control: &Json, value: Json) -> Result<Session> {
         Some(&pin),
         Some(InvocationTarget {
             contract_address: "a".repeat(64),
-            entrypoint: "echo".into(),
+            entrypoint: entrypoint.into(),
         }),
     )
 }
@@ -136,7 +136,7 @@ fn readable_composite_either_input_preserves_both_arms_and_discloses_tag() -> Re
 
     for is_left in [true, false] {
         let source_value = either(&either_id, is_left, left.clone(), right.clone());
-        let mut session = wire_session(&control, source_value)?;
+        let mut session = wire_session(&control, "echo", source_value)?;
         assert_eq!(session.advance()?["status"], "completed");
         let completion = session.private_completion(&binding["nativeRelation"])?;
         let inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
@@ -160,8 +160,133 @@ fn readable_composite_either_input_preserves_both_arms_and_discloses_tag() -> Re
 
     let mut malformed_tag = either(&either_id, false, left.clone(), right.clone());
     malformed_tag["fields"][0]["value"]["value"] = json!("false");
-    assert!(wire_session(&control, malformed_tag).is_err());
+    assert!(wire_session(&control, "echo", malformed_tag).is_err());
     let malformed_arm = either(&either_id, false, left, bool_vector(&[true]));
-    assert!(wire_session(&control, malformed_arm).is_err());
+    assert!(wire_session(&control, "echo", malformed_arm).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires fresh artifacts in NOCTIUM_COMPOSITE_EITHER_INPUT_DIR"]
+fn readable_either_input_preserves_a_nested_maybe_payload() -> Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_COMPOSITE_EITHER_INPUT_DIR")
+            .expect("NOCTIUM_COMPOSITE_EITHER_INPUT_DIR"),
+    );
+    let name = "CompositeEitherInput.echoNested";
+    let control: Json = serde_json::from_slice(&fs::read(
+        directory.join(format!("{name}.witness.control.json")),
+    )?)?;
+    let binding: Json = serde_json::from_str(control["binding"].as_str().expect("binding"))?;
+    assert_eq!(binding["target"]["entrypoint"], "echoNested");
+    assert_eq!(control["inputs"].as_array().unwrap().len(), 1);
+    assert_eq!(control["inputs"][0]["name"], "value");
+    assert_eq!(control["inputs"][0]["visibility"], "public");
+
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(directory.join(format!("{name}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(directory.join(format!("{name}.zkir")))?)?;
+    let input_names = [
+        "value.is_left",
+        "value.left",
+        "value.right.is_some",
+        "value.right.value",
+    ];
+    assert_eq!(
+        plan.circuit
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect::<Vec<_>>(),
+        input_names
+    );
+    let [view] = plan.return_views.as_slice() else {
+        panic!("expected one grouped Either return");
+    };
+    assert_eq!(view.name, "echoed");
+    assert_eq!(view.fields.len(), 4);
+    let layout = &view.schema["layout"];
+    let inner = &layout["fields"][2]["layout"];
+    assert_eq!(layout["id"], "CompositeEitherInput.BoolOrMaybeUInt8");
+    assert_eq!(inner["id"], "CompositeEitherInput.MaybeUInt8");
+    assert_eq!(
+        layout["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["is_left", "left", "right"]
+    );
+    assert_eq!(
+        inner["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["is_some", "value"]
+    );
+    assert_eq!(
+        inner["fields"][1]["layout"]["leaf"],
+        json!({"kind":"uint", "maximum":"255"})
+    );
+
+    let examples: Json = serde_json::from_str(include_str!(
+        "../../tests/compact/composite-either-nested-maybe-cases.json"
+    ))?;
+    let typed = |row: &Json| {
+        either(
+            "CompositeEitherInput.BoolOrMaybeUInt8",
+            row["is_left"].as_bool().unwrap(),
+            json!({"kind":"bool", "value":row["left"]}),
+            json!({"kind":"struct", "id":"CompositeEitherInput.MaybeUInt8", "fields":[
+                {"name":"is_some", "value":{"kind":"bool", "value":row["right"]["is_some"]}},
+                {"name":"value", "value":{"kind":"uint", "maximum":"255", "value":row["right"]["value"].to_string()}}
+            ]}),
+        )
+    };
+    let initial = create_state(&plan, &BTreeMap::from([("seen".into(), json!(false))]))?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    for row in examples["accepted"].as_array().unwrap() {
+        let is_left = row["is_left"].as_bool().unwrap();
+        let fields = [
+            u64::from(is_left),
+            u64::from(row["left"].as_bool().unwrap()),
+            u64::from(row["right"]["is_some"].as_bool().unwrap()),
+            row["right"]["value"].as_u64().unwrap(),
+        ];
+        let source_value = typed(row);
+        let mut session = wire_session(&control, "echoNested", source_value.clone())?;
+        assert_eq!(session.advance()?["status"], "completed");
+        let completion = session.private_completion(&binding["nativeRelation"])?;
+        let inputs: BTreeMap<String, Json> = serde_json::from_value(completion["inputs"].clone())?;
+        assert_eq!(
+            inputs,
+            BTreeMap::from_iter(
+                input_names
+                    .into_iter()
+                    .zip(fields)
+                    .map(|(name, value)| (name.into(), json!(value.to_string())))
+            )
+        );
+        let execution = prepare(&plan, &inputs, &initial, params, address)?;
+        check(&execution, &circuit)?;
+        assert_eq!(
+            execution.preimage.public_transcript_outputs,
+            fields.map(Fr::from)
+        );
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([("echoed".into(), source_value)])
+        );
+        let expected_after =
+            create_state(&plan, &BTreeMap::from([("seen".into(), json!(is_left))]))?;
+        assert_eq!(execution.after.state.get_ref(), expected_after.get_ref());
+    }
+    for row in examples["rejected"].as_array().unwrap() {
+        assert!(wire_session(&control, "echoNested", typed(row)).is_err());
+    }
     Ok(())
 }

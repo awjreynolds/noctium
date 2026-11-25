@@ -97,25 +97,18 @@ Caller-supplied values retain the tag and both checked arms, matching the
 Compact call ABI. The fixture returns the same ordered record and writes
 its tag to a Bool cell. [Lean fixture](../../tests/CompositeEitherInput.lean) · [Compact fixture](../../tests/compact/composite-either-input.mjs)
 
-The CI artifact check runs both ignored native input tests against fresh
-ledger and witness output. It covers three accepted Maybe values, two rejected
-Maybe inputs, both accepted Either tags, and three rejected Either inputs.
+The CI artifact check runs the native Maybe and Either input tests against
+fresh ledger and witness output, including the nested Either case below.
 The optional Compact comparison uses compiler 0.36.1 at source commit
 `7fa3a117c5e7efe9d2c51da04263e5f0b3509144` and
 `@midnight-ntwrk/compact-runtime` 0.21.0. Set the two variables
-to absolute paths for those installed tools. The commands use a temporary
-Maybe output directory and clean the Either runner's fixed generated directory
-after the run.
+to absolute paths for those installed tools. The Maybe command uses a
+temporary output directory. The Either runner creates and removes its own.
 
 ```sh
 set -eu
-either_generated=build/experiments/either-input/compact/generated
-if [ -e "$either_generated" ]; then
-  printf 'Refusing to overwrite existing Compact output: %s\n' "$either_generated" >&2
-  exit 1
-fi
 scratch=$(mktemp -d)
-trap 'rm -rf -- "$scratch" "$either_generated"' EXIT
+trap 'rm -rf -- "$scratch"' EXIT
 : "${COMPACTC_0361:?set the absolute path to Compact 0.36.1}"
 : "${COMPACT_RUNTIME_0210:?set the absolute path to compact-runtime 0.21.0}"
 "$COMPACTC_0361" --version | grep -E '^0\.36\.1 \(7fa3a117c'
@@ -126,6 +119,47 @@ ln -s "$COMPACT_RUNTIME_0210" "$scratch/maybe/node_modules/@midnight-ntwrk/compa
 NOCTIUM_COMPACT_RUNTIME_DIR="$COMPACT_RUNTIME_0210" \
   node tests/compact/composite-maybe-input.mjs "$scratch/maybe"
 node tests/compact/composite-either-input.mjs "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
+```
+
+## Either arguments with a nested Maybe
+
+`echoNested` accepts `Either<Bool, Maybe<UInt8>>`, writes the outer
+`is_left` tag to `seen`, and echoes the typed argument. The host flattens
+the argument as `is_left`, `left`, `right.is_some`, `right.value`.
+The typed return retains the same nested structure and values.
+
+| `is_left` | `left` | `right.is_some` | `right.value` |
+| --- | --- | --- | ---: |
+| true | false | true | 255 |
+| false | true | false | 17 |
+| false | true | true | 0 |
+
+The caller-supplied right arm retains 255 when the left arm is selected.
+When the right arm is selected and its Maybe tag is false, the supplied
+17 remains in the echo. Validation applies to every supplied field. A
+string in place of the nested Bool tag and a UInt8 payload of 256 both
+reject at the host boundary before native preparation.
+
+The same [shared cases](../../tests/compact/composite-either-nested-maybe-cases.json)
+run against Compact 0.36.1 (`7fa3a117c`) / Runtime 0.21.0 and the native
+Ledger 9.1.0.1 / ZKIR 3.2.1 checker. The Compact runner compares generated
+contract behavior with `--skip-zk`. The native run checks the emitted
+relation, ordered arguments, typed echo, and ledger Bool update.
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/either-nested-maybe.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/composite-either-input.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
+lake env lean --run NoctiumMain.lean compile tests/CompositeEitherInput.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --emit witness --output "$scratch/native"
+NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$scratch/native" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test composite_either_input -- --ignored
 ```
 
 ## Nested Maybe returns

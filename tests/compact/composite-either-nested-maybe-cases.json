@@ -1,0 +1,11 @@
+{
+  "accepted": [
+    {"is_left": true, "left": false, "right": {"is_some": true, "value": 255}},
+    {"is_left": false, "left": true, "right": {"is_some": false, "value": 17}},
+    {"is_left": false, "left": true, "right": {"is_some": true, "value": 0}}
+  ],
+  "rejected": [
+    {"is_left": true, "left": false, "right": {"is_some": "true", "value": 255}},
+    {"is_left": false, "left": true, "right": {"is_some": false, "value": 256}}
+  ]
+}

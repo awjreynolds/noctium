@@ -13,3 +13,9 @@ export circuit echo(value: Either<Limits, Vector<2, Boolean>>): Either<Limits, V
   seen = disclose(value.is_left);
   return disclose(value);
 }
+
+export circuit echoNested(value: Either<Boolean, Maybe<Uint<8>>>): Either<Boolean, Maybe<Uint<8>>> {
+  const disclosed = disclose(value);
+  seen = disclosed.is_left;
+  return disclosed;
+}
