@@ -715,13 +715,23 @@ structure ScalarEntrypointPlanAdmission (entry : Entrypoint) (plan : Impact.Plan
     ∃ _scalarType : ScalarNormalization.ScalarType output.ty,
       ScalarNormalization.ScalarExpression output.value
 
-/-- Compose the scalar-admitted circuit with scalar premises at the exact
-state-plan and return positions visited by entrypoint lowering. -/
-theorem lowerEntrypointBody_scalarAdmission_has_output_capacity_frame
+/-- The exact stage frames let witness construction bound each prefix from
+the accepted capacity of the whole entrypoint. -/
+structure ScalarEntrypointStageFrames (entry : Entrypoint) (plan : Impact.Plan) : Prop where
+  constraints : Zkir.PreservesOutputCapacityFrame (Zkir.lowerConstraints entry.circuit.constraints)
+  aliases : Zkir.PreservesOutputCapacityFrame (Zkir.lowerEntrypointAliases entry)
+  reads : Zkir.PreservesOutputCapacityFrame (Zkir.lowerLedgerReads entry plan)
+  guards : Zkir.PreservesOutputCapacityFrame (Zkir.lowerConstraints plan.guards)
+  operations : Zkir.PreservesOutputCapacityFrame (Zkir.lowerLedgerOperations plan)
+  returns : Zkir.PreservesOutputCapacityFrame (do
+    let returned ← Zkir.lowerReturnFields entry.returns
+    Zkir.emit "output" [("vals", Lean.toJson returned)])
+
+theorem scalarEntrypointStageFrames
     (entry : Entrypoint) (plan : Impact.Plan)
     (admitted : ScalarNormalization.ScalarCircuitAdmission entry.circuit)
     (planAdmission : ScalarEntrypointPlanAdmission entry plan) :
-    Zkir.OutputCapacityFrame {} ((Zkir.lowerEntrypointBody entry plan).run {}).2 := by
+    ScalarEntrypointStageFrames entry plan := by
   have constraintsFrame : ∀ condition ∈ entry.circuit.constraints,
       Zkir.PreservesOutputCapacityFrame (Zkir.lowerExpr condition) := by
     intro condition member
@@ -777,10 +787,36 @@ theorem lowerEntrypointBody_scalarAdmission_has_output_capacity_frame
     intro output member
     obtain ⟨scalarType, expressionAdmission⟩ := planAdmission.returns output member
     exact scalarReturnFields_preservesOutputCapacityFrame output scalarType expressionAdmission
-  have bodyFrame := Zkir.lowerEntrypointBody_preservesOutputCapacityFrame entry plan
-    constraintsFrame aliasesFrame readGuardsFrame readDefaultsFrame planGuardsFrame
-    operationFieldsFrame operationGuardsFrame preflightFrame returnFieldsFrame
-  exact bodyFrame {}
+  exact ⟨Zkir.lowerConstraints_preservesOutputCapacityFrame _ constraintsFrame, aliasesFrame,
+    Zkir.lowerLedgerReads_preservesOutputCapacityFrame entry plan readGuardsFrame readDefaultsFrame,
+    Zkir.lowerConstraints_preservesOutputCapacityFrame _ planGuardsFrame,
+    Zkir.lowerLedgerOperations_preservesOutputCapacityFrame plan operationFieldsFrame operationGuardsFrame,
+    Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.lowerReturnFields_preservesOutputCapacityFrame _ preflightFrame returnFieldsFrame)
+      (fun _ => Zkir.emit_preservesOutputCapacityFrame _ _)⟩
+
+/-- Compose allocation along the same stages used by witness construction. -/
+theorem lowerEntrypointBody_scalarAdmission_has_output_capacity_frame
+    (entry : Entrypoint) (plan : Impact.Plan)
+    (admitted : ScalarNormalization.ScalarCircuitAdmission entry.circuit)
+    (planAdmission : ScalarEntrypointPlanAdmission entry plan) :
+    Zkir.OutputCapacityFrame {} ((Zkir.lowerEntrypointBody entry plan).run {}).2 := by
+  let frames := scalarEntrypointStageFrames entry plan admitted planAdmission
+  have whole : Zkir.PreservesOutputCapacityFrame (Zkir.lowerEntrypointBody entry plan) := by
+    unfold Zkir.lowerEntrypointBody
+    apply Zkir.bind_preservesOutputCapacityFrame _ _
+      (Zkir.lowerEntrypointInputs_preservesOutputCapacityFrame entry)
+    intro _
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ frames.constraints
+    intro _
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ frames.aliases
+    intro _
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ frames.reads
+    intro _
+    apply Zkir.bind_preservesOutputCapacityFrame _ _ frames.guards
+    intro _
+    exact Zkir.bind_preservesOutputCapacityFrame _ _ frames.operations (fun _ => frames.returns)
+  exact whole {}
 
 /-- An accepted entrypoint gets the native identifier bound when every exact
 plan produced from its pruned form has the scalar expression admissions above. -/
