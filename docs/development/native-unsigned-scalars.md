@@ -27,6 +27,44 @@ The bounded ZKIR whitelist now includes `neg`, `not`, `constrain_eq`, `constrain
 
 `runtime/tests/unsigned.rs` covers maximum and maximum-plus-one boundaries, malformed inputs, type confusion, inferred-range limits, subtraction underflow, conversions, output visibility and unsigned state cells. Its checked-in fixture comes from `examples/BoundedScalars.lean`. The native checker accepts private values 255 and 255 with public sum 510, then rejects a wrong sum, out-of-range input and nonzero previous cell.
 
+## Bounded addition at a helper argument
+
+Two UInt8 operands each have inclusive maximum 255. Their sum has
+inclusive maximum 510 and exclusive bound 511. Compact accepts the sum
+as a `Uint<0..511>` helper argument. Noctium accepts it as `UIntRange 511`.
+Both reject changing only the helper parameter to the exclusive bound
+510. The declared return still admits 510, so the rejection is at the
+argument boundary. Both accepted runs return 510 for 255 + 255.
+
+The emitted Noctium Impact plan normalizes the operands to
+`UIntRange<256>` and the return to `UIntRange<511>`. The Rust check
+confirms that the selected Ledger 9.1.0.1 / ZKIR 3.2.1 relation accepts
+the call and the return retains the inclusive maximum 510. Compact
+0.36.1 (`7fa3a117c`) records operand `maxval` 255 and result `maxval` 510
+in `compiler/contract-info.json`. Its generated runtime is checked with
+Compact Runtime 0.21.0.
+[Lean fixture](../../tests/BoundedUintHelper.lean) ·
+[Compact reference](../../tests/compact/bounded-uint-arithmetic.mjs) ·
+[Native check](../../runtime/tests/unsigned.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/bounded-helper.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+lake env lean tests/BoundedUintHelper.lean
+node tests/compact/bounded-uint-arithmetic.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210"
+lake env lean --run NoctiumMain.lean compile tests/BoundedUintHelper.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_BOUNDED_HELPER_DIR="$scratch/native" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test unsigned \
+  bounded_uint_addition_crosses_the_checked_helper_boundary -- --ignored --exact
+```
+
 ## Repeated-call state guard
 
 Run [`tests/scalars/replay-bounded-scalars.sh`](../../tests/scalars/replay-bounded-scalars.sh) for a focused replay comparison. The [Lean source runner](../../tests/scalars/BoundedScalarsReplay.lean) accepts two identical zero-sum calls at total zero, then accepts a sum of two. The [native Rust test](../../runtime/tests/bounded_scalars_replay.rs) checks the same three calls through pinned native 3.2.1 `prepare` and ZKIR `check`. A sum of three passes both checks from a fresh zero state. After the accepted sum of two, preparation returns an execution but the native checker rejects it at the state guard. The last accepted decoded total stays two, and the entrypoint has no committed call returns.

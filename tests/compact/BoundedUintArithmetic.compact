@@ -30,6 +30,14 @@ export pure circuit addMaxToZero(value: Uint<248>, zero: Uint<0..1>): Uint<248> 
 
 type Small = Uint<8>;
 
+pure circuit acceptBoundedSum(value: Uint<0..511>): Uint<0..511> {
+  return value;
+}
+
 export pure circuit addSmall(left: Small, right: Small): Uint<0..511> {
   return left + right;
+}
+
+export pure circuit addViaHelper(left: Uint<8>, right: Uint<8>): Uint<0..511> {
+  return acceptBoundedSum(left + right);
 }

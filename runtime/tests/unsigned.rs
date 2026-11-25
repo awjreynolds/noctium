@@ -215,3 +215,60 @@ fn source_generated_unsigned_plan_passes_official_checker() {
             .is_err()
     );
 }
+
+#[cfg(feature = "zkir-321")]
+#[test]
+#[ignore = "requires fresh BoundedUintHelper artifacts in NOCTIUM_BOUNDED_HELPER_DIR"]
+fn bounded_uint_addition_crosses_the_checked_helper_boundary() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_BOUNDED_HELPER_DIR").expect("NOCTIUM_BOUNDED_HELPER_DIR"),
+    );
+    let stem = "BoundedUintHelper.addViaHelper";
+    let plan: Plan = serde_json::from_reader(std::fs::File::open(
+        directory.join(format!("{stem}.impact.json")),
+    )?)?;
+    let circuit = noctium_runtime::zkir::IrSource::load(std::fs::File::open(
+        directory.join(format!("{stem}.zkir")),
+    )?)?;
+    assert_eq!(
+        plan.circuit
+            .inputs
+            .iter()
+            .map(|input| (input.name.as_str(), input.ty.as_str()))
+            .collect::<Vec<_>>(),
+        [("left", "UIntRange<256>"), ("right", "UIntRange<256>")],
+    );
+    let [result] = plan.returns.as_slice() else {
+        panic!("expected one bounded helper result");
+    };
+    assert_eq!(result.name, "sum");
+    assert_eq!(result.ty, "UIntRange<511>");
+    let inputs = BTreeMap::from([
+        ("left".into(), json!("255")),
+        ("right".into(), json!("255")),
+    ]);
+    let state = create_state(&plan, &BTreeMap::new())?;
+    let execution = noctium_runtime::prepare(
+        &plan,
+        &inputs,
+        &state,
+        &ledger::structure::INITIAL_PARAMETERS,
+        coin_structure::contract::ContractAddress::default(),
+    )?;
+    noctium_runtime::check(&execution, &circuit)?;
+    assert_eq!(
+        execution.returns(),
+        &[(
+            "sum".into(),
+            Value::UInt {
+                number: 510u32.into(),
+                maximum: 510u32.into()
+            }
+        )],
+    );
+    assert_eq!(
+        execution.returns_json(),
+        BTreeMap::from([("sum".into(), json!("510"))])
+    );
+    Ok(())
+}
