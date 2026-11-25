@@ -1,11 +1,62 @@
 import Noctium.Verification.GenericStateCheckedReadTrace
 import Noctium.Verification.GenericStateCandidateDecode
+import Noctium.Verification.GenericStateCircuitParts
+import Noctium.Verification.ScalarValidationProjection
 
 namespace Noctium.Verification.GenericStateCheckedReadDecode
 open Backend
 open NativeRelation ScalarNormalization
 open GenericStateCheckedReadTrace
 open GenericStateInputValues
+
+/-- An accepted Native validation bounds the input slot for an actual
+post-public scalar read in the accepted Impact plan. The descriptor match
+connects the plan's singleton binding to the expected constructor's input
+slot. This bounds the accepted scalar input; it does not authenticate a
+candidate read value against ledger state. -/
+theorem accepted_scalarRead_inputBound
+    (state : List StateDecl) (entry : Entrypoint)
+    (expected : Backend.Native.Expected)
+    (expectedAccepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
+    (plan : Backend.Impact.Plan)
+    (planAccepted : Backend.Impact.lower state entry = .ok plan)
+    (read : Backend.Impact.Read) (name : String) (ty : Ty)
+    (postPublic : read ∈ plan.reads.drop
+      (Backend.Impact.publicInputReadCount entry.circuit.inputs))
+    (singleton : read.bindings = [(name, ty)])
+    (supported : ty = .native ∨ ty = .bool ∨ ∃ width, ty = .uint width)
+    {program : Lean.Json} {instructions rawInputs : Array Lean.Json}
+    {seed final : Backend.Native.State} {hash : Hash} {inputs witness : Assignment}
+    (driver : ScalarValidationProjection.NativeValidationDriverFacts
+      expected program instructions rawInputs seed final)
+    (meaning : ScalarValidationMeaning.StateMeaning hash inputs witness final) :
+    (inputs ("%input_" ++ name)).val ≤ Backend.Native.sourceMaximum ty := by
+  obtain ⟨requirement, requirementPresent, descriptor⟩ :=
+    GenericStateCircuitParts.expectedEntrypoint_scalarReadDescriptor state entry expected
+      expectedAccepted plan planAccepted read name ty postPublic singleton supported
+  have identifier : requirement.identifier = "%input_" ++ name := by
+    have projection := congrArg Prod.fst descriptor
+    simpa [GenericStateCircuitParts.inputRequirementCore] using projection
+  have requirementTy : requirement.ty = ty := by
+    have projection := congrArg
+      (fun core : String × Visibility × Ty × Bool => core.2.2.1) descriptor
+    simpa [GenericStateCircuitParts.inputRequirementCore] using projection
+  have ordinary : requirement.canonicalJubjubScalar = false := by
+    have projection := congrArg
+      (fun core : String × Visibility × Ty × Bool => core.2.2.2) descriptor
+    simpa [GenericStateCircuitParts.inputRequirementCore] using projection
+  have nonforeign : requirement.ty.isForeign = false := by
+    rw [requirementTy]
+    rcases supported with native | bool | ⟨width, uint⟩
+    · rw [native]
+      rfl
+    · rw [bool]
+      rfl
+    · rw [uint]
+      rfl
+  have bound := driver.inputBound meaning
+    (List.mem_append_right expected.rawInputs requirementPresent) nonforeign ordinary
+  simpa [identifier, requirementTy] using bound
 
 private theorem read_suffix_metadata (state : List StateDecl) (entry : Entrypoint)
     (plan inputPlan : Impact.Plan) (boundaries : List Nat)
