@@ -1,8 +1,4 @@
 import Noctium.Verification.ImpactNativeStatementFixture
-import Noctium.Verification.ImpactPreviewBinding
-import Noctium.Verification.ImpactStatementScalar
-import Noctium.Verification.ImpactPlanAgreement
-import Noctium.Verification.ImpactTranscriptSchedule
 
 open Noctium Noctium.Verification
 
@@ -30,11 +26,10 @@ private def machine (values : List Nat) : NativeState.Machine :=
   | some ⟨some ⟨[.noop 2], 14⟩, some ⟨[.active 9, .noop 3], 20⟩⟩ => Bool.true
   | _ => Bool.false
 
-private def checkNative (path : String) (operations : List NativeState.Op)
-    (activity : List (Option Nat)) : IO Unit := do
+private def checkNative (path : String) (env : EvalEnv) (bytes : ArtifactBytes.Bytes) : IO Unit := do
   let fixture ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile path) >>=
     ImpactNativeStatementFixture.decode)
-  IO.ofExcept (ImpactNativeStatementFixture.check fixture operations activity)
+  IO.ofExcept (ImpactNativeStatementFixture.checkBytes fixture 64 context env (fun _ => none) bytes)
 
 def main (args : List String) : IO Unit := do
   let (artifact, nativeStatements) ← match args with
@@ -56,48 +51,43 @@ def main (args : List String) : IO Unit := do
   unless activeActivity == List.replicate 15 none && inactiveActivity == skipped do
     throw (IO.userError "decoded activity schedule differs from the guarded scalar fixture")
   -- The fixture supplies test bytes at the effects and parent commitment boundaries.
-  let metadata : ImpactPreviewBinding.Metadata := {
-    address := ByteArray.mk (Array.replicate 32 0)
-    entryPoint := "update".toUTF8
-    guaranteed := some ⟨1, 2, 3, ByteArray.mk #[13, 14]⟩
+  let statementInputs : ImpactPlanStatement.Inputs := {
+    cost := ⟨3, 2⟩
+    metadata := {
+      address := ByteArray.mk (Array.replicate 32 0)
+      entryPoint := "update".toUTF8
+      guaranteed := some ⟨1, 2, 3, ByteArray.mk #[13, 14]⟩
+      fallible := none
+      parentPedersen := ByteArray.mk (#[1] ++ Array.replicate 31 0)
+    }
+    communication := NativeRelation.scalar 5
+    guaranteed := some ⟨15, 7⟩
     fallible := none
-    parentPedersen := ByteArray.mk (#[1] ++ Array.replicate 31 0)
   }
-  let commitment := NativeRelation.scalar 5
+  let statement := fun env inputs =>
+    ImpactPlanStatement.fromBytes 64 context env (fun _ => none) bytes inputs
+  let inactiveInputs : ImpactPlanStatement.Inputs :=
+    { statementInputs with guaranteed := some ⟨0, 7⟩ }
   let inactiveBinding := NativeRelation.scalar
     28275337270660864951591803471226560440628912649504939734825220606033283957
   let activeBinding :=
     376973846635362786591406240642568956494276904876123793983990665364314846599
-  let preview := fun program activity => ImpactCallPreview.previewCall
-    {noopConstant := 3, noopCoefficient := 2}
-    {guaranteed := some ⟨program, 7⟩, fallible := none} activity
-  let some inactiveOperations := ImpactPlanAgreement.evaluatePlan 64 context disabled raw |
-    throw (IO.userError "inactive Impact plan rejected")
-  let inactivePreview := preview inactiveOperations inactiveActivity
-  match inactivePreview with
-  | some call =>
-      let some header := ImpactPreviewBinding.header metadata call commitment |
-        throw (IO.userError "inactive binding serialization rejected")
-      unless decide (ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call =
-          some ([inactiveBinding, commitment] ++
-            List.replicate 55 NativeRelation.zero)) do
-        throw (IO.userError "inactive statement differs in header or skipped fields")
-      match call with
-      | ⟨some ⟨[.noop 55], 120⟩, none⟩ => pure ()
-      | _ => throw (IO.userError "inactive preview differs in skipped width or compute time")
-  | none => throw (IO.userError "inactive preview rejected")
+  unless decide (statement disabled inactiveInputs =
+      some ([inactiveBinding, inactiveInputs.communication] ++
+        List.replicate 55 NativeRelation.zero)) do
+    throw (IO.userError "inactive statement differs in header or skipped fields")
   let some activeOperations := ImpactPlanAgreement.evaluatePlan 64 context enabled raw |
     throw (IO.userError "active Impact plan rejected")
-  let activeStatement : Option (List NativeRelation.Scalar) := do
-    let call ← preview activeOperations activeActivity
-    let header ← ImpactPreviewBinding.header metadata call commitment
-    ImpactCallStatement.publicInputs ImpactStatementScalar.opFields header call
   let expected : List Nat := [1, 3, 7, 1, 3]
   let writeFields : List Nat := expected.zipIdx.flatMap fun (value, index) =>
     [0x10, 1, 1, Field.modulus - 2, index,
       0x11, 1, 1, Field.modulus - 2, value, 0x91]
-  unless decide (activeStatement = some (([activeBinding, 5] ++ writeFields).map NativeRelation.scalar)) do
+  unless decide (statement enabled statementInputs =
+      some (([activeBinding, 5] ++ writeFields).map NativeRelation.scalar)) do
     throw (IO.userError "active statement differs in the ordered native write fields")
+  unless (ImpactPlanStatement.fromBytes 64 context enabled (fun _ => none)
+      (bytes ++ [0]) statementInputs).isNone do
+    throw (IO.userError "statement accepted trailing artifact bytes")
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
   unless decide (activeOperations = operations) do
@@ -110,5 +100,5 @@ def main (args : List String) : IO Unit := do
       (runWith (inputs Bool.true 3 2 3 Bool.false)).isNone do
     throw (IO.userError "decoded schedule accepted a partial scalar failure")
   if let some (active, inactive) := nativeStatements then
-    checkNative active activeOperations activeActivity
-    checkNative inactive inactiveOperations inactiveActivity
+    checkNative active enabled bytes
+    checkNative inactive disabled bytes

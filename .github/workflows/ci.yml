@@ -331,6 +331,7 @@ jobs:
             Noctium.Verification.ImpactPlanAgreement \
             Noctium.Verification.ImpactTranscriptSchedule \
             Noctium.Verification.ImpactCallStatement \
+            Noctium.Verification.ImpactPlanStatementAgreement \
             Noctium.Verification.ImpactNativeStatementFixture \
             Noctium.Verification.ArtifactBytes
           lake env lean tests/Issue43ConditionalWrites.lean
