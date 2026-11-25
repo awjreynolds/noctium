@@ -7,13 +7,12 @@ namespace Noctium.Verification.ImpactNativeStatementFixture
 
 open Lean
 open Noctium.Verification.ImpactCallPreview
-open Noctium.Verification.ImpactNoopPreview
 open Noctium.Verification.ImpactPreviewBinding
 open Noctium.Verification.ImpactStatementScalar
 open Noctium.Verification.NativeRelation
 open Noctium.Verification.NativeState
 
-/-- One source transcript partition from the native statement fixture. -/
+/-- Native transcript metadata before the preview inserts skipped operations. -/
 structure Partition where
   operationCount : Nat
   readTime : Nat
@@ -22,13 +21,13 @@ structure Partition where
   bytesDeleted : Nat
   effects : ByteArray
 
-/-- Data copied from the Rust native public statement fixture. Scalar strings
-are decoded only after checking their canonical decimal spelling and range. -/
+/-- Native inputs to the preview and the ledger's public fields after preview. -/
 structure NativeStatementFixture where
   address : ByteArray
   entryPoint : ByteArray
   parentPedersen : ByteArray
   communication : Scalar
+  cost : ImpactPreviewGas.CostModel
   guaranteed : Option Partition
   fallible : Option Partition
   fields : List Scalar
@@ -131,7 +130,8 @@ private def partitionField (json : Json) (name : String) :
 fields, invalid bytes, noncanonical scalars, and out-of-range counters reject. -/
 def decode (json : Json) : Except String NativeStatementFixture := do
   exactFields json
-    ["address", "entryPoint", "parentPedersen", "communication", "guaranteed", "fallible", "fields"]
+    ["address", "entryPoint", "parentPedersen", "communication", "noopConstant",
+      "noopCoefficient", "guaranteed", "fallible", "fields"]
     "native statement fixture"
   let address ← byteArrayField json "address" "address"
   if address.size != ImpactBindingIdentity.contractAddressWidth then
@@ -144,18 +144,17 @@ def decode (json : Json) : Except String NativeStatementFixture := do
     throw "parentPedersen must contain exactly 32 bytes"
   let communicationText ← stringField json "communication" "communication"
   let communication ← scalarText communicationText "communication"
+  let constant ← u64Field json "noopConstant" "noopConstant"
+  let coefficient ← u64Field json "noopCoefficient" "noopCoefficient"
   let guaranteed ← partitionField json "guaranteed"
   let fallible ← partitionField json "fallible"
   let fields ← scalarArrayField json "fields" "fields"
-  pure ⟨address, entryPoint, parentPedersen, communication, guaranteed, fallible, fields⟩
+  pure ⟨address, entryPoint, parentPedersen, communication,
+    ⟨constant, coefficient⟩, guaranteed, fallible, fields⟩
 
 private def operationCount : Option Partition → Nat
   | none => 0
   | some partition => partition.operationCount
-
-private def sourceOperations (operations : List NativeState.Op)
-    (count : Nat) : List (PreviewEntry NativeState.Op) :=
-  (operations.take count).map PreviewEntry.active
 
 private def mismatchIndex : Nat → List Scalar → List Scalar → Option Nat
   | _, [], [] => none
@@ -164,22 +163,22 @@ private def mismatchIndex : Nat → List Scalar → List Scalar → Option Nat
       else some index
   | index, _, _ => some index
 
-/-- Reconstruct the two source partitions using their exact declared
-operation counts, then compare the entire Lean public statement vector with
-the fixture fields. -/
-def check (fixture : NativeStatementFixture) (operations : List NativeState.Op) :
-    Except String Unit := do
+/-- Preview native partitions using the independently decoded operations and
+activity. Compare the resulting public inputs with the native ledger fields. -/
+def check (fixture : NativeStatementFixture) (operations : List NativeState.Op)
+    (activity : List (Option Nat)) : Except String Unit := do
   let guaranteedCount := operationCount fixture.guaranteed
   let fallibleCount := operationCount fixture.fallible
   if guaranteedCount + fallibleCount != operations.length then
     throw s!"partition operation counts total {guaranteedCount + fallibleCount}, but resolved operation list has {operations.length}"
-  let guaranteedProgram := sourceOperations operations guaranteedCount
-  let fallibleProgram := sourceOperations (operations.drop guaranteedCount) fallibleCount
   let guaranteed := fixture.guaranteed.map fun partition =>
-    ({ program := guaranteedProgram, computeTime := partition.computeTime } : Transcript (PreviewEntry NativeState.Op))
+    ({ program := operations.take guaranteedCount,
+       computeTime := partition.computeTime } : Transcript NativeState.Op)
   let fallible := fixture.fallible.map fun partition =>
-    ({ program := fallibleProgram, computeTime := partition.computeTime } : Transcript (PreviewEntry NativeState.Op))
-  let call : CallTranscripts (PreviewEntry NativeState.Op) := ⟨guaranteed, fallible⟩
+    ({ program := operations.drop guaranteedCount,
+       computeTime := partition.computeTime } : Transcript NativeState.Op)
+  let some call := previewCall fixture.cost ⟨guaranteed, fallible⟩ activity
+    | throw "fixture partitions and decoded activity cannot form a preview"
   let metadata : ImpactPreviewBinding.Metadata := {
     address := fixture.address
     entryPoint := fixture.entryPoint

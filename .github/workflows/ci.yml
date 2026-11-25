@@ -544,6 +544,7 @@ jobs:
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
             NOCTIUM_GUARDED_PARTIALS_DIR="$artifacts/guarded-partials" \
             NOCTIUM_GUARDED_PARTIALS_STATEMENT_FILE="$artifacts/guarded-partials/statement.json" \
+            NOCTIUM_GUARDED_PARTIALS_INACTIVE_STATEMENT_FILE="$artifacts/guarded-partials/inactive-statement.json" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
               --test guarded_partials \
@@ -551,7 +552,8 @@ jobs:
               --test constructor_actions
           lake env lean --run tests/ImpactPlanEvaluation.lean \
             "$artifacts/guarded-partials/Issue43GuardedPartialWrites.update.impact.json" \
-            "$artifacts/guarded-partials/statement.json"
+            "$artifacts/guarded-partials/statement.json" \
+            "$artifacts/guarded-partials/inactive-statement.json"
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \
