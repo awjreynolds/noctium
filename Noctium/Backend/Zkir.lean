@@ -2312,6 +2312,143 @@ private theorem lowerForeignBinary_preservesOutputCapacityFrame
       intro _
       exact pure_preservesOutputCapacityFrame output
 
+private theorem lowerForeignFromBytes_preservesOutputCapacityFrame
+    (kind : Foreign.Kind) (length : Nat) (value : ByteOperands) :
+    PreservesOutputCapacityFrame (lowerForeignFromBytes kind length value) := by
+  let afterChunks : Foreign.Kind → List String → LowerM String := fun kind chunks => do
+    if length == 0 then return ← lowerForeignConstant kind (Foreign.encodeField kind 0)
+    let bytes ← lowerFixedBytesFromChunks length chunks
+    let key : ExpressionKey := ("foreign_from_bytes:" ++ kind.nativeName, [bytes], some length)
+    let output ← match (← get).expressions.lookup key with
+      | some existing => pure existing
+      | none => do
+        let output ← fresh
+        emit "from_bytes" [("bytes", toJson bytes), ("type", toJson kind.nativeName),
+          ("output", toJson output)]
+        modify fun state => {state with expressions := (key, output) :: state.expressions}
+        pure output
+    if let .point _ := kind then
+      let roundtrip ← lowerForeignToBytes kind output
+      for (original, encoded) in chunks.zip roundtrip.values do
+        assertEqual original encoded
+    pure output
+  have afterChunksFrame : ∀ kind chunks, PreservesOutputCapacityFrame (afterChunks kind chunks) := by
+    intro kind chunks
+    cases kind with
+    | base curve =>
+      unfold afterChunks
+      split
+      · exact lowerForeignConstant_preservesOutputCapacityFrame (.base curve)
+          (Foreign.encodeField (.base curve) 0)
+      · apply bind_preservesOutputCapacityFrame _ _
+          (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+        intro bytes
+        let key : ExpressionKey := ("foreign_from_bytes:" ++ (Foreign.Kind.base curve).nativeName,
+          [bytes], some length)
+        apply cachedScalarOutput_match_bind_preservesOutputCapacityFrame key "from_bytes"
+          (fun output => [("bytes", toJson bytes),
+            ("type", toJson (Foreign.Kind.base curve).nativeName), ("output", toJson output)])
+        · intro output
+          exact instruction_scalarOutputDefinitions "from_bytes"
+            [("bytes", toJson bytes), ("type", toJson (Foreign.Kind.base curve).nativeName),
+              ("output", toJson output)]
+            (by rfl) ⟨by decide, by decide, by decide⟩ (by
+              simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+                Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+                Lean.ToJson.toJson]
+              rfl)
+        · intro output
+          exact pure_preservesOutputCapacityFrame output
+    | scalar curve =>
+      unfold afterChunks
+      split
+      · exact lowerForeignConstant_preservesOutputCapacityFrame (.scalar curve)
+          (Foreign.encodeField (.scalar curve) 0)
+      · apply bind_preservesOutputCapacityFrame _ _
+          (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+        intro bytes
+        let key : ExpressionKey := ("foreign_from_bytes:" ++ (Foreign.Kind.scalar curve).nativeName,
+          [bytes], some length)
+        apply cachedScalarOutput_match_bind_preservesOutputCapacityFrame key "from_bytes"
+          (fun output => [("bytes", toJson bytes),
+            ("type", toJson (Foreign.Kind.scalar curve).nativeName), ("output", toJson output)])
+        · intro output
+          exact instruction_scalarOutputDefinitions "from_bytes"
+            [("bytes", toJson bytes), ("type", toJson (Foreign.Kind.scalar curve).nativeName),
+              ("output", toJson output)]
+            (by rfl) ⟨by decide, by decide, by decide⟩ (by
+              simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+                Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+                Lean.ToJson.toJson]
+              rfl)
+        · intro output
+          exact pure_preservesOutputCapacityFrame output
+    | point curve =>
+      unfold afterChunks
+      split
+      · exact lowerForeignConstant_preservesOutputCapacityFrame (.point curve)
+          (Foreign.encodeField (.point curve) 0)
+      · apply bind_preservesOutputCapacityFrame _ _
+          (lowerFixedBytesFromChunks_preservesOutputCapacityFrame length chunks)
+        intro bytes
+        let key : ExpressionKey := ("foreign_from_bytes:" ++ (Foreign.Kind.point curve).nativeName,
+          [bytes], some length)
+        apply cachedScalarOutput_match_bind_preservesOutputCapacityFrame key "from_bytes"
+          (fun output => [("bytes", toJson bytes),
+            ("type", toJson (Foreign.Kind.point curve).nativeName), ("output", toJson output)])
+        · intro output
+          exact instruction_scalarOutputDefinitions "from_bytes"
+            [("bytes", toJson bytes), ("type", toJson (Foreign.Kind.point curve).nativeName),
+              ("output", toJson output)]
+            (by rfl) ⟨by decide, by decide, by decide⟩ (by
+              simp [Native.stringField, instruction, Json.getObjVal?, Json.mkObj, Json.getStr?,
+                Std.TreeMap.Raw.get?_eq_getElem?, Std.TreeMap.Raw.getElem?_ofList_of_mem,
+                Lean.ToJson.toJson]
+              rfl)
+        · intro output
+          apply bind_preservesOutputCapacityFrame _ _
+            (lowerForeignToBytes_preservesOutputCapacityFrame (.point curve) output)
+          intro roundtrip
+          apply forIn_preservesOutputCapacityFrame_of_mem
+            (chunks.zip roundtrip.values) ()
+          intro pair member accumulator
+          rcases pair with ⟨original, encoded⟩
+          apply bind_preservesOutputCapacityFrame _ _
+            (assertEqual_preservesOutputCapacityFrame original encoded)
+          intro _
+          exact pure_preservesOutputCapacityFrame (ForInStep.yield accumulator)
+  let rest : Foreign.Kind → LowerM String := fun kind => do
+    let chunks ← byteChunks length value
+    afterChunks kind chunks
+  have restFrame : ∀ kind, PreservesOutputCapacityFrame (rest kind) := by
+    intro kind
+    unfold rest
+    apply bind_preservesOutputCapacityFrame _ _
+      (byteChunks_preservesOutputCapacityFrame length value)
+    intro chunks
+    exact afterChunksFrame kind chunks
+  cases kind with
+  | base curve =>
+    simpa [lowerForeignFromBytes, rest, afterChunks, StateT.run_bind, StateT.run_get,
+      StateT.run_pure] using restFrame (.base curve)
+  | scalar curve =>
+    simpa [lowerForeignFromBytes, rest, afterChunks, StateT.run_bind, StateT.run_get,
+      StateT.run_pure] using restFrame (.scalar curve)
+  | point curve =>
+    by_cases exactLength : length == (Foreign.Kind.point curve).byteLength
+    · simpa [lowerForeignFromBytes, exactLength, rest, afterChunks,
+        StateT.run_bind, StateT.run_get, StateT.run_pure] using restFrame (.point curve)
+    · have rejected : PreservesOutputCapacityFrame (do
+          rejectLowering "foreign point decoding requires the curve's exact byte length"
+          let chunks ← byteChunks length value
+          afterChunks (.point curve) chunks) := by
+        unfold rejectLowering
+        apply bind_preservesOutputCapacityFrame _ _ (emit_preservesOutputCapacityFrame _ _)
+        intro _
+        exact restFrame (.point curve)
+      simpa [lowerForeignFromBytes, exactLength, rest, afterChunks,
+        StateT.run_bind, StateT.run_get, StateT.run_pure] using rejected
+
 private def nativeTypeName : Ty → String
   | .native => "Scalar<BLS12-381>"
   | .jubjubScalar => "Scalar<Jubjub>"
@@ -2964,47 +3101,55 @@ termination_by value => sizeOf value
 decreasing_by
   all_goals simp_wf <;> omega
 
+private def lowerFabHashField : Types.Layout → Sigma Expr → LowerM (List String)
+  | .bytes length .byteField, value@⟨.bytes _, expression⟩ => do
+    let bytes ← lowerBytes expression
+    if length == 32 then do
+      let (highByte, low31) ← match value with
+        | ⟨.bytes 32, source⟩ => alignedBytes32Value source bytes.values
+        | _ => alignedBytes32Fields bytes.values
+      pure [highByte, low31]
+    else do pure ((← byteChunks length bytes).reverse)
+  | .scalar .nativeField, ⟨.native, expression⟩ => do
+    pure [← lowerExpr expression]
+  | .scalar .booleanField, ⟨.bool, expression⟩ => do
+    pure [← lowerExpr expression]
+  | .scalar (.boundedUnsignedField _), ⟨.uint _, expression⟩ => do
+    pure [← lowerExpr expression]
+  | .enumeration _ (.enumTagField _) _ 0 _ _, ⟨.uint _, expression⟩ => do
+    pure [← lowerExpr expression]
+  | .curve .jubjubScalar, ⟨.jubjubScalar, expression⟩ => do
+    let scalar ← lowerExpr expression
+    pure [← lowerJubjubScalarToNative scalar]
+  | .curve .jubjubPoint, ⟨.jubjubPoint, expression⟩ => do
+    let point ← lowerExpr expression
+    let (x, y) ← lowerPointCoordinates point
+    pure [x, y]
+  | .curve (.foreign expected), ⟨.foreign actual, expression⟩ => do
+    unless expected == actual do
+      rejectLowering "mixed FAB curve type differs from its checked layout"
+    encodeForeign actual (← lowerExpr expression)
+  | _, _ => do
+    rejectLowering "mixed FAB field type differs from its checked layout"
+    pure []
+termination_by _ value => sizeOf value
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | exact sizeOfSigmaExprHeadLt _ _
+    | omega
+
 private def lowerFabHashFields : List (String × Types.Layout) → List (Sigma Expr) → LowerM (List String)
   | [], [] => pure []
   | field :: fields, value :: rest => do
-    let aligned ← match field.2, value with
-      | .bytes length .byteField, ⟨.bytes _, expression⟩ => do
-        let bytes ← lowerBytes expression
-        if length == 32 then do
-          let (highByte, low31) ← match value with
-            | ⟨.bytes 32, source⟩ => alignedBytes32Value source bytes.values
-            | _ => alignedBytes32Fields bytes.values
-          pure [highByte, low31]
-        else do pure ((← byteChunks length bytes).reverse)
-      | .scalar .nativeField, ⟨.native, expression⟩ => pure [← lowerExpr expression]
-      | .scalar .booleanField, ⟨.bool, expression⟩ => pure [← lowerExpr expression]
-      | .scalar (.boundedUnsignedField _), ⟨.uint _, expression⟩ => pure [← lowerExpr expression]
-      | .enumeration _ (.enumTagField _) _ 0 _ _, ⟨.uint _, expression⟩ =>
-        pure [← lowerExpr expression]
-      | .curve .jubjubScalar, ⟨.jubjubScalar, expression⟩ => do
-        let scalar ← lowerExpr expression
-        pure [← lowerJubjubScalarToNative scalar]
-      | .curve .jubjubPoint, ⟨.jubjubPoint, expression⟩ => do
-        let point ← lowerExpr expression
-        let (x, y) ← lowerPointCoordinates point
-        pure [x, y]
-      | .curve (.foreign expected), ⟨.foreign actual, expression⟩ => do
-        unless expected == actual do
-          rejectLowering "mixed FAB curve type differs from its checked layout"
-        encodeForeign actual (← lowerExpr expression)
-      | _, _ => do
-        rejectLowering "mixed FAB field type differs from its checked layout"
-        pure []
+    let aligned ← lowerFabHashField field.2 value
     pure (aligned ++ (← lowerFabHashFields fields rest))
   | _, _ => do
     rejectLowering "mixed FAB field count differs from its checked layout"
     pure []
 termination_by _ values => sizeOf values
 decreasing_by
-  all_goals simp_wf
-  all_goals first
-    | exact sizeOfSigmaExprHeadLt _ _
-    | omega
+  all_goals simp_wf <;> omega
 
 private def lowerBytes32VectorFields : List (Expr (.bytes 32)) → LowerM (List String)
   | [] => pure []
@@ -3826,6 +3971,390 @@ theorem lowerBytes_persistentHashNative_preservesOutputCapacityFrame
   intro outputs
   exact pure_preservesOutputCapacityFrame ({values := outputs, packed := true} : ByteOperands)
 
+theorem lowerExpr_foreignFromBytes_preservesOutputCapacityFrame {kind : Foreign.Kind} {length : Nat}
+    (value : Expr (.bytes length))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value)) :
+    PreservesOutputCapacityFrame
+      (lowerExpr (.foreignFromBytes (kind := kind) (length := length) value)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro operands
+  exact lowerForeignFromBytes_preservesOutputCapacityFrame kind length operands
+
+private theorem lowerExprSingleton_preservesOutputCapacityFrame
+    (expression : Expr ty)
+    (expressionFrame : PreservesOutputCapacityFrame (lowerExpr expression)) :
+    PreservesOutputCapacityFrame (do
+      let value ← lowerExpr expression
+      pure [value]) := by
+  apply bind_preservesOutputCapacityFrame _ _ expressionFrame
+  intro value
+  exact pure_preservesOutputCapacityFrame [value]
+
+theorem lowerFabHashField_preservesOutputCapacityFrame
+    (layout : Types.Layout) (value : Sigma Expr)
+    (exprFrame : ∀ {ty : Ty} (expression : Expr ty),
+      value = (⟨ty, expression⟩ : Sigma Expr) →
+        PreservesOutputCapacityFrame (lowerExpr expression))
+    (bytesFrame : ∀ {length : Nat} (expression : Expr (.bytes length)),
+      value = (⟨.bytes length, expression⟩ : Sigma Expr) →
+        PreservesOutputCapacityFrame (lowerBytes expression)) :
+    PreservesOutputCapacityFrame (lowerFabHashField layout value) := by
+  fun_cases lowerFabHashField layout value
+  case case1 layoutLength sourceLength expression =>
+    apply bind_preservesOutputCapacityFrame _ _ (bytesFrame expression rfl)
+    intro bytes
+    split
+    · split
+      · apply bind_preservesOutputCapacityFrame _ _
+          (alignedBytes32Value_preservesOutputCapacityFrame _ bytes.values)
+        intro chunks
+        rcases chunks with ⟨highByte, low31⟩
+        exact pure_preservesOutputCapacityFrame [highByte, low31]
+      · apply bind_preservesOutputCapacityFrame _ _
+          (alignedBytes32Fields_preservesOutputCapacityFrame bytes.values)
+        intro chunks
+        rcases chunks with ⟨highByte, low31⟩
+        exact pure_preservesOutputCapacityFrame [highByte, low31]
+    · apply bind_preservesOutputCapacityFrame _ _
+        (byteChunks_preservesOutputCapacityFrame layoutLength bytes)
+      intro chunks
+      exact pure_preservesOutputCapacityFrame chunks.reverse
+  case case2 expression =>
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression
+      (exprFrame expression rfl)
+  case case3 expression =>
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression
+      (exprFrame expression rfl)
+  case case4 maximum expression =>
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression
+      (exprFrame expression rfl)
+  case case5 id maximum tagMaximum padding variants valueMaximum expression =>
+    exact lowerExprSingleton_preservesOutputCapacityFrame expression
+      (exprFrame expression rfl)
+  case case6 expression =>
+    apply bind_preservesOutputCapacityFrame _ _ (exprFrame expression rfl)
+    intro scalar
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerJubjubScalarToNative_preservesOutputCapacityFrame scalar)
+    intro encoded
+    exact pure_preservesOutputCapacityFrame [encoded]
+  case case7 expression =>
+    apply bind_preservesOutputCapacityFrame _ _ (exprFrame expression rfl)
+    intro point
+    apply bind_preservesOutputCapacityFrame _ _
+      (lowerPointCoordinates_preservesOutputCapacityFrame point)
+    intro coordinates
+    rcases coordinates with ⟨x, y⟩
+    exact pure_preservesOutputCapacityFrame [x, y]
+  case case8 expected actual expression _ equal =>
+    change PreservesOutputCapacityFrame (do
+      let lowered ← lowerExpr expression
+      encodeForeign actual lowered)
+    apply bind_preservesOutputCapacityFrame _ _ (exprFrame expression rfl)
+    intro lowered
+    exact encodeForeign_preservesOutputCapacityFrame actual lowered
+  case case9 expected actual expression _ equal =>
+    change PreservesOutputCapacityFrame (do
+      rejectLowering "mixed FAB curve type differs from its checked layout"
+      let lowered ← lowerExpr expression
+      encodeForeign actual lowered)
+    apply bind_preservesOutputCapacityFrame _ _
+      (emit_preservesOutputCapacityFrame "noctium_invalid_lowering"
+        [("message", toJson "mixed FAB curve type differs from its checked layout")])
+    intro ignored
+    apply bind_preservesOutputCapacityFrame _ _ (exprFrame expression rfl)
+    intro lowered
+    exact encodeForeign_preservesOutputCapacityFrame actual lowered
+  case case10 layout value =>
+    exact rejectThenPure_preservesOutputCapacityFrame
+      "mixed FAB field type differs from its checked layout" []
+
+private theorem lowerFabHashFields_preservesOutputCapacityFrame
+    (fields : List (String × Types.Layout)) (values : List (Sigma Expr))
+    (exprFrame : ∀ {ty : Ty} (expression : Expr ty),
+      (⟨ty, expression⟩ : Sigma Expr) ∈ values →
+        PreservesOutputCapacityFrame (lowerExpr expression))
+    (bytesFrame : ∀ {length : Nat} (expression : Expr (.bytes length)),
+      (⟨.bytes length, expression⟩ : Sigma Expr) ∈ values →
+        PreservesOutputCapacityFrame (lowerBytes expression)) :
+    PreservesOutputCapacityFrame (lowerFabHashFields fields values) := by
+  induction fields generalizing values with
+  | nil =>
+    cases values with
+    | nil =>
+      simp only [lowerFabHashFields]
+      exact pure_preservesOutputCapacityFrame []
+    | cons value rest =>
+      simp only [lowerFabHashFields]
+      exact rejectThenPure_preservesOutputCapacityFrame
+        "mixed FAB field count differs from its checked layout" []
+  | cons field fields ih =>
+    cases values with
+    | nil =>
+      simp only [lowerFabHashFields]
+      exact rejectThenPure_preservesOutputCapacityFrame
+        "mixed FAB field count differs from its checked layout" []
+    | cons value rest =>
+      simp only [lowerFabHashFields]
+      apply bind_preservesOutputCapacityFrame _ _
+        (lowerFabHashField_preservesOutputCapacityFrame field.2 value
+          (by
+            intro ty expression equal
+            subst value
+            exact exprFrame expression (by simp))
+          (by
+            intro length expression equal
+            subst value
+            exact bytesFrame expression (by simp)))
+      intro aligned
+      apply bind_preservesOutputCapacityFrame _ _
+      · apply ih
+        · intro ty expression member
+          exact exprFrame expression (List.mem_cons_of_mem value member)
+        · intro length expression member
+          exact bytesFrame expression (List.mem_cons_of_mem value member)
+      · intro restFields
+        exact pure_preservesOutputCapacityFrame (aligned ++ restFields)
+
+private theorem lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame
+    (name : String) (value : LowerM String)
+    (valueFrame : PreservesOutputCapacityFrame value)
+    (body : LowerM α) (bodyFrame : PreservesOutputCapacityFrame body) :
+    PreservesOutputCapacityFrame (do
+      let value ← value
+      let aliases := (← get).aliases
+      modify fun state => {state with aliases := (name, value) :: aliases}
+      let result ← body
+      modify fun state => {state with aliases}
+      pure result) := by
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro lowered
+  have getFrame : PreservesOutputCapacityFrame (get : StateM LowerState LowerState) := by
+    intro state
+    exact OutputCapacityFrame.refl state
+  apply bind_preservesOutputCapacityFrame _ _ getFrame
+  intro original
+  apply bind_preservesOutputCapacityFrame _ _
+    (modify_preservesOutputCapacityFrame
+      (fun state => {state with aliases := (name, lowered) :: original.aliases})
+      (fun _ => rfl) (fun _ => rfl))
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _ bodyFrame
+  intro result
+  apply bind_preservesOutputCapacityFrame _ _
+    (modify_preservesOutputCapacityFrame
+      (fun state => {state with aliases := original.aliases})
+      (fun _ => rfl) (fun _ => rfl))
+  intro _
+  exact pure_preservesOutputCapacityFrame result
+
+private theorem lowerExpr_letByteAliasEnvironment_preservesOutputCapacityFrame
+    (name : String) (value : LowerM ByteOperands)
+    (valueFrame : PreservesOutputCapacityFrame value)
+    (body : LowerM α) (bodyFrame : PreservesOutputCapacityFrame body) :
+    PreservesOutputCapacityFrame (do
+      let value ← value
+      let byteAliases := (← get).byteAliases
+      modify fun state => {state with byteAliases := (name, value) :: byteAliases}
+      let result ← body
+      modify fun state => {state with byteAliases}
+      pure result) := by
+  apply bind_preservesOutputCapacityFrame _ _ valueFrame
+  intro lowered
+  have getFrame : PreservesOutputCapacityFrame (get : StateM LowerState LowerState) := by
+    intro state
+    exact OutputCapacityFrame.refl state
+  apply bind_preservesOutputCapacityFrame _ _ getFrame
+  intro original
+  apply bind_preservesOutputCapacityFrame _ _
+    (modify_preservesOutputCapacityFrame
+      (fun state => {state with byteAliases := (name, lowered) :: original.byteAliases})
+      (fun _ => rfl) (fun _ => rfl))
+  intro _
+  apply bind_preservesOutputCapacityFrame _ _ bodyFrame
+  intro result
+  apply bind_preservesOutputCapacityFrame _ _
+    (modify_preservesOutputCapacityFrame
+      (fun state => {state with byteAliases := original.byteAliases})
+      (fun _ => rfl) (fun _ => rfl))
+  intro _
+  exact pure_preservesOutputCapacityFrame result
+
+theorem lowerExpr_letE_preservesOutputCapacityFrame {source result : Ty}
+    (name : String) (value : Expr source) (body : Expr result)
+    (valueFrame : match source, value with
+      | .bytes _, value => PreservesOutputCapacityFrame (lowerBytes value)
+      | .opaqueBytes, value => PreservesOutputCapacityFrame (lowerOpaqueBytes value)
+      | .opaqueString, value => PreservesOutputCapacityFrame (lowerOpaqueString value)
+      | _, value => PreservesOutputCapacityFrame (lowerExpr value))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerExpr body)) :
+    PreservesOutputCapacityFrame (lowerExpr (Expr.letE name value body)) := by
+  cases source with
+  | bytes length =>
+    simp only [lowerExpr]
+    exact lowerExpr_letByteAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerBytes value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | opaqueBytes =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerOpaqueBytes value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | opaqueString =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerOpaqueString value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | native =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | bool =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | uint maximum =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | jubjubScalar =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | jubjubPoint =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+  | foreign kind =>
+    simp only [lowerExpr]
+    exact lowerExpr_letAliasEnvironment_preservesOutputCapacityFrame name
+      (lowerExpr value) (by simpa using valueFrame) (lowerExpr body) bodyFrame
+
+theorem lowerBytes_letE_preservesOutputCapacityFrame {sourceLength resultLength : Nat}
+    (name : String) (value : Expr (.bytes sourceLength)) (body : Expr (.bytes resultLength))
+    (valueFrame : PreservesOutputCapacityFrame (lowerBytes value))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerBytes body)) :
+    PreservesOutputCapacityFrame (lowerBytes (Expr.letE name value body)) := by
+  simp only [lowerBytes]
+  exact lowerExpr_letByteAliasEnvironment_preservesOutputCapacityFrame name
+    (lowerBytes value) valueFrame (lowerBytes body) bodyFrame
+
+theorem lowerExpr_assertE_preservesOutputCapacityFrame {ty : Ty}
+    (condition : Expr .bool) (body : Expr ty)
+    (conditionFrame : PreservesOutputCapacityFrame (lowerExpr condition))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerExpr body)) :
+    PreservesOutputCapacityFrame (lowerExpr (Expr.assertE condition body)) := by
+  simp only [lowerExpr]
+  apply bind_preservesOutputCapacityFrame _ _ conditionFrame
+  intro lowered
+  apply bind_preservesOutputCapacityFrame _ _
+    (emit_preservesOutputCapacityFrame "assert" [("cond", toJson lowered)])
+  intro _
+  exact bodyFrame
+
+theorem lowerBytes_assertE_preservesOutputCapacityFrame {length : Nat}
+    (condition : Expr .bool) (body : Expr (.bytes length))
+    (conditionFrame : PreservesOutputCapacityFrame (lowerExpr condition))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerBytes body)) :
+    PreservesOutputCapacityFrame (lowerBytes (Expr.assertE condition body)) := by
+  simp only [lowerBytes]
+  apply bind_preservesOutputCapacityFrame _ _ conditionFrame
+  intro lowered
+  apply bind_preservesOutputCapacityFrame _ _
+    (emit_preservesOutputCapacityFrame "assert" [("cond", toJson lowered)])
+  intro _
+  exact bodyFrame
+
+theorem lowerOpaqueBytes_assertE_preservesOutputCapacityFrame
+    (condition : Expr .bool) (body : Expr .opaqueBytes)
+    (conditionFrame : PreservesOutputCapacityFrame (lowerExpr condition))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerOpaqueBytes body)) :
+    PreservesOutputCapacityFrame (lowerOpaqueBytes (Expr.assertE condition body)) := by
+  simp only [lowerOpaqueBytes]
+  apply bind_preservesOutputCapacityFrame _ _ conditionFrame
+  intro lowered
+  apply bind_preservesOutputCapacityFrame _ _
+    (emit_preservesOutputCapacityFrame "assert" [("cond", toJson lowered)])
+  intro _
+  exact bodyFrame
+
+theorem lowerOpaqueString_assertE_preservesOutputCapacityFrame
+    (condition : Expr .bool) (body : Expr .opaqueString)
+    (conditionFrame : PreservesOutputCapacityFrame (lowerExpr condition))
+    (bodyFrame : PreservesOutputCapacityFrame (lowerOpaqueString body)) :
+    PreservesOutputCapacityFrame (lowerOpaqueString (Expr.assertE condition body)) := by
+  simp only [lowerOpaqueString]
+  apply bind_preservesOutputCapacityFrame _ _ conditionFrame
+  intro lowered
+  apply bind_preservesOutputCapacityFrame _ _
+    (emit_preservesOutputCapacityFrame "assert" [("cond", toJson lowered)])
+  intro _
+  exact bodyFrame
+
+private theorem lowerExpr_ref_preservesOutputCapacityFrame {ty : Ty} (name : String) :
+    PreservesOutputCapacityFrame (lowerExpr (Expr.ref name : Expr ty)) := by
+  cases ty with
+  | native | bool | uint _ | foreign _ =>
+    simp only [lowerExpr]
+    have getFrame : PreservesOutputCapacityFrame (get : LowerM LowerState) := by
+      intro state
+      exact OutputCapacityFrame.refl state
+    apply bind_preservesOutputCapacityFrame _ _ getFrame
+    intro snapshot
+    exact pure_preservesOutputCapacityFrame
+      (snapshot.aliases.lookup name |>.getD ("%input_" ++ name))
+  | jubjubScalar | jubjubPoint =>
+    simp only [lowerExpr]
+    have getFrame : PreservesOutputCapacityFrame (get : LowerM LowerState) := by
+      intro state
+      exact OutputCapacityFrame.refl state
+    apply bind_preservesOutputCapacityFrame _ _ getFrame
+    intro snapshot
+    cases hit : snapshot.aliases.lookup name with
+    | some value => simpa only [hit] using pure_preservesOutputCapacityFrame value
+    | none =>
+      simpa only [hit] using
+        (rejectThenPure_preservesOutputCapacityFrame "unbound typed Jubjub source symbol" "0x00")
+  | bytes _ | opaqueBytes | opaqueString =>
+    simp only [lowerExpr]
+    exact rejectThenPure_preservesOutputCapacityFrame
+      "byte strings require their typed FAB alignment" "0x00"
+
+private theorem lowerExpr_eq_preservesOutputCapacityFrame {ty : Ty}
+    (left right : Expr ty)
+    (leftFrame : match ty with
+      | .opaqueBytes => PreservesOutputCapacityFrame (lowerOpaqueBytes left)
+      | .opaqueString => PreservesOutputCapacityFrame (lowerOpaqueString left)
+      | _ => PreservesOutputCapacityFrame (lowerExpr left))
+    (rightFrame : match ty with
+      | .opaqueBytes => PreservesOutputCapacityFrame (lowerOpaqueBytes right)
+      | .opaqueString => PreservesOutputCapacityFrame (lowerOpaqueString right)
+      | _ => PreservesOutputCapacityFrame (lowerExpr right)) :
+    PreservesOutputCapacityFrame (lowerExpr (.eq left right)) := by
+  cases ty with
+  | opaqueBytes =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+  | opaqueString =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+  | native | bool | uint _ | bytes _ | jubjubScalar | jubjubPoint | foreign _ =>
+    simp only [lowerExpr]
+    apply bind_preservesOutputCapacityFrame _ _ leftFrame
+    intro leftValue
+    apply bind_preservesOutputCapacityFrame _ _ rightFrame
+    intro rightValue
+    exact ordinaryBinary_preservesOutputCapacityFrame "test_eq" leftValue rightValue
+      ⟨by decide, by decide, by decide⟩
+
 /-- SHA-512 allocates from the actual digest and packed outputs, for any
 fixed-width preimage whose lowering has an output capacity frame. -/
 theorem lowerBytes_sha512_preservesOutputCapacityFrame {length : Nat}
@@ -4114,6 +4643,26 @@ def lowerReturnFieldsFrom (outputs : List Output) (values : List String) : Lower
 
 def lowerReturnFields (outputs : List Output) : LowerM (List String) :=
   lowerReturnFieldsFrom outputs []
+
+theorem lowerReturnPreflight_preservesOutputCapacityFrame (output : Output)
+    (bytesFrame : match output with
+      | {ty := .bytes 0, value, ..} => PreservesOutputCapacityFrame (lowerBytes value)
+      | _ => True) :
+    PreservesOutputCapacityFrame (lowerReturnPreflight output) := by
+  cases output with
+  | mk name ty value span =>
+    cases ty with
+    | bytes length =>
+      cases length with
+      | zero =>
+        have valueFrame : PreservesOutputCapacityFrame (lowerBytes value) := bytesFrame
+        intro state
+        simp [lowerReturnPreflight, Functor.discard, Functor.mapConst]
+        exact valueFrame state
+      | succ length =>
+        exact pure_preservesOutputCapacityFrame ()
+    | _ =>
+      exact pure_preservesOutputCapacityFrame ()
 
 theorem lowerReturnFields_preservesOutputCapacityFrame (outputs : List Output)
     (preflight : ∀ output ∈ outputs, PreservesOutputCapacityFrame (lowerReturnPreflight output))
