@@ -1,5 +1,6 @@
 import Noctium.Backend.Zkir
 import Noctium.Verification.NativeRelationJson
+import Noctium.Verification.ScalarValidationProjection
 
 namespace Noctium.Verification.NativeRelationInstructionProjection
 
@@ -68,37 +69,6 @@ theorem lowerEntrypoint_instructionProjection (state : List StateDecl)
   exact ⟨plan, expected, instructions, impactAccepted, expectedAccepted, producerAccepted,
     parsed, exactBodyInstructions, decodedInstructions⟩
 
-private theorem validated_instructionArray_budget {expected : Native.Expected} {json : Json}
-    (accepted : Native.validate expected json = .ok ()) :
-    ∃ instructions : Array Json,
-      Native.arrayField json "instructions" = .ok instructions ∧
-      instructions.size ≤ Native.maxInstructions := by
-  unfold Native.validate at accepted
-  simp only [bind_ok] at accepted
-  rcases accepted with ⟨guardValue, guardParsed, programFields, programFieldsParsed,
-    versionJson, versionParsed, versionFields, versionFieldsParsed,
-    major, majorParsed, minor, minorParsed, versionCheck, versionCheckParsed,
-    instructions, parsedInstructions, resources, resourceParsed,
-    rawInputs, rawInputsParsed, rawInputCount, rawInputCountParsed,
-    inputNames, inputNamesParsed, seedState, seedStateParsed,
-    returns, returnsParsed, returnCount, returnCountParsed,
-    outputTypes, outputTypesParsed,
-    commitmentJson, commitmentParsed, commitment, commitmentParsedBool,
-    commitmentCheck, commitmentCheckParsed, finalOutput, finalOutputParsed,
-    finalState, instructionTrace,
-    inputCount, inputCountParsed, groupCount, groupCountParsed,
-    assertionCount, assertionCountParsed,
-    inputChecks, inputChecksParsed, coordinateChecks, coordinateChecksParsed,
-    boundChecks, boundChecksParsed, _⟩
-  have resourcesBool := ensure_ok.mp resourceParsed
-  have resources1 := (Bool.and_eq_true_iff.mp resourcesBool).1
-  have resources2 := (Bool.and_eq_true_iff.mp resources1).1
-  have resources3 := (Bool.and_eq_true_iff.mp resources2).1
-  have instructionCapBool := (Bool.and_eq_true_iff.mp resources3).1
-  have instructionCap := of_decide_eq_true instructionCapBool
-  refine ⟨instructions, parsedInstructions, ?_⟩
-  simpa using instructionCap
-
 private theorem mapM_length {function : α → Except String β} {values : List α}
     {results : List β} (success : values.mapM function = .ok results) :
     results.length = values.length := by
@@ -122,6 +92,20 @@ private theorem mapM_length {function : α → Except String β} {values : List 
         have tailSuccess : rest.mapM function = .ok tail := tailResult
         simp only [List.length_cons, ih tailSuccess]
 
+/-- The production resource limit bounds exactly the rows consumed by
+the strict relation decoder, independently of allocated SSA names. -/
+theorem decodedInstruction_budget {expected : Native.Expected}
+    {json : Json} {program : NativeRelation.Program}
+    (validated : Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    program.instructions.length ≤ Native.maxInstructions := by
+  obtain ⟨rows, rowsParsed, decoding⟩ := decode_instructionProjection decoded
+  obtain ⟨accepted, _, _, _, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result validated
+  have sameRows := Except.ok.inj (rowsParsed.symm.trans driver.instructionsParsed)
+  rw [mapM_length decoding, sameRows]
+  simpa using driver.instructionCount
+
 /-- The accepted producer's instruction limit applies to the exact decoded
 vector. SSA output-slot capacity stays with the separate output-capacity frame. -/
 theorem lowerEntrypoint_decodedInstructionBudget (state : List StateDecl)
@@ -139,17 +123,8 @@ theorem lowerEntrypoint_decodedInstructionBudget (state : List StateDecl)
   obtain ⟨plan, expected, instructions, impactAccepted, expectedAccepted, producerAccepted,
     parsed, exactBodyInstructions, decodedInstructions⟩ :=
     lowerEntrypoint_instructionProjection state entry json program lowered decoded
-  obtain ⟨acceptedInstructions, acceptedArray, instructionCount⟩ :=
-    validated_instructionArray_budget producerAccepted
-  have sameInstructions : acceptedInstructions = instructions :=
-    Except.ok.inj (acceptedArray.symm.trans parsed)
-  have rawCount : instructions.toList.length ≤ Native.maxInstructions := by
-    rw [← sameInstructions]
-    simpa using instructionCount
-  have decodedCount := mapM_length decodedInstructions
-  refine ⟨plan, expected, instructions, impactAccepted, expectedAccepted, producerAccepted,
-    parsed, exactBodyInstructions, decodedInstructions, ?_⟩
-  rw [decodedCount]
-  exact rawCount
+  exact ⟨plan, expected, instructions, impactAccepted, expectedAccepted, producerAccepted,
+    parsed, exactBodyInstructions, decodedInstructions,
+    decodedInstruction_budget producerAccepted decoded⟩
 
 end Noctium.Verification.NativeRelationInstructionProjection
