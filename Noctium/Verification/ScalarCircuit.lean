@@ -465,30 +465,32 @@ structure ScalarCircuitAdmission (circuit : Circuit) : Prop where
   outputs : ∀ output ∈ circuit.outputs,
     ∃ scalarType : ScalarType output.ty, ScalarExpression output.value
 
+/-- Literal-true pruning keeps a subset of the source constraints. -/
+theorem pruneTrue_subset : ∀ conditions condition,
+    condition ∈ pruneTrue conditions → condition ∈ conditions := by
+  intro conditions
+  induction conditions with
+  | nil =>
+    intro condition member
+    simp [pruneTrue] at member
+  | cons head rest ih =>
+    intro condition member
+    by_cases literal : head = .bool true
+    · subst head
+      simp only [pruneTrue] at member
+      exact List.mem_cons_of_mem _ (ih condition member)
+    · have retained : pruneTrue (head :: rest) = head :: pruneTrue rest := by
+        simp [pruneTrue, literal]
+      rw [retained] at member
+      rcases List.mem_cons.mp member with same | member
+      · exact List.mem_cons.mpr (Or.inl same)
+      · exact List.mem_cons.mpr (Or.inr (ih condition member))
+
 /-- Scalar expression admission survives literal-true constraint pruning.
 The retained constraints and outputs inherit admission from the source. -/
 theorem ScalarCircuitAdmission.pruneCircuit (circuit : Circuit)
     (admitted : ScalarCircuitAdmission circuit) :
     ScalarCircuitAdmission (Passes.pruneCircuit circuit) := by
-  have pruneTrue_subset : ∀ conditions condition,
-      condition ∈ pruneTrue conditions → condition ∈ conditions := by
-    intro conditions
-    induction conditions with
-    | nil =>
-      intro condition member
-      simp [pruneTrue] at member
-    | cons head rest ih =>
-      intro condition member
-      by_cases literal : head = .bool true
-      · subst head
-        simp only [pruneTrue] at member
-        exact List.mem_cons_of_mem _ (ih condition member)
-      · have retained : pruneTrue (head :: rest) = head :: pruneTrue rest := by
-          simp [pruneTrue, literal]
-        rw [retained] at member
-        rcases List.mem_cons.mp member with same | member
-        · exact List.mem_cons.mpr (Or.inl same)
-        · exact List.mem_cons.mpr (Or.inr (ih condition member))
   constructor
   · intro condition member
     exact admitted.constraints condition (pruneTrue_subset circuit.constraints condition member)

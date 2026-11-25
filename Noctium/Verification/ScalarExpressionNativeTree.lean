@@ -7,11 +7,11 @@ open ScalarInstructionEncoding ScalarWitness
 
 /-- Disclosure keeps evaluation, normalization, and lowering evidence from its
 child expression. -/
-private theorem complete_disclose (span : SourceSpan) (expression : Expr ty)
+theorem complete_disclose (span : SourceSpan) (expression : Expr ty)
     (complete : ExprComplete expression) : ExprComplete (.disclose span expression) := by
   intro ctx hash implementation inputs witness state normalAliases values types value
     valid success aliasAgreement lowerAliasAgreement lowerStateMeaning budget
-  have childValid : expression.validate {poseidon2 := true} types = .ok () := by
+  have childValid : expression.validate Capabilities.crypto types = .ok () := by
     simpa only [Expr.validate] using valid
   have childSuccess : expression.eval ctx values = .ok value := by
     simpa only [Expr.eval] using success

@@ -147,9 +147,10 @@ private theorem NativeOperator.complete (operator : NativeOperator) (left right 
     ExprComplete (operator.expression left right) := by
   intro ctx hash implementation inputs witness state normalAliases values types value
     valid success aliases lowerAliases stateMeaning budget
-  have validChildren : (do left.validate {poseidon2 := true} types
-                           right.validate {poseidon2 := true} types) = .ok () := by
-    cases operator <;> simpa [NativeOperator.expression, Expr.validate] using valid
+  have nativeArithmetic : Capabilities.crypto.nativeArithmetic = true := rfl
+  have validChildren : (do left.validate Capabilities.crypto types
+                           right.validate Capabilities.crypto types) = .ok () := by
+    cases operator <;> simpa [NativeOperator.expression, Expr.validate, nativeArithmetic] using valid
   obtain ⟨_, leftValid, rightValid⟩ := ScalarValidationMeaning.bind_ok.mp validChildren
   obtain ⟨leftValue, rightValue, leftEval, rightEval⟩ :
       ∃ a b, left.eval ctx values = .ok a ∧ right.eval ctx values = .ok b := by

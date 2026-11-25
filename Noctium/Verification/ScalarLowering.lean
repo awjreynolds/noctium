@@ -226,7 +226,7 @@ def ExprComplete (expression : Expr ty) : Prop :=
     (inputs witness : Assignment) (state : Zkir.LowerState)
     (normalAliases : Backend.Native.AliasEnvironment) (values : EvalEnv) (types : TypeEnv)
     (value : ty.Denote),
-    expression.validate {poseidon2 := true} types = .ok () →
+    expression.validate Capabilities.crypto types = .ok () →
     expression.eval ctx values = .ok value →
     AliasAgreement hash inputs normalAliases values →
     LowerAliasAgreement hash inputs witness normalAliases state.aliases values →

@@ -286,7 +286,7 @@ private theorem forIn_preservesOutputCapacityFrame (items : List α) (initial : 
     | done result => exact pure_preservesOutputCapacityFrame _
     | yield result => exact ih result
 
-private theorem forIn_preservesOutputCapacityFrame_of_mem (items : List α) (initial : β)
+theorem forIn_preservesOutputCapacityFrame_of_mem (items : List α) (initial : β)
     (body : α → β → StateM LowerState (ForInStep β))
     (preserves : ∀ item ∈ items, ∀ accumulator,
       PreservesOutputCapacityFrame (body item accumulator)) :
@@ -1197,7 +1197,7 @@ theorem nativeUIntAdd_preservesOutputCapacityFrame (maximum : Nat)
   intro _
   exact pure_preservesOutputCapacityFrame output
 
-private theorem constrainType_preservesOutputCapacityFrame (ty : Ty) (value : String) :
+theorem constrainType_preservesOutputCapacityFrame (ty : Ty) (value : String) :
     PreservesOutputCapacityFrame (constrainType ty value) := by
   cases ty with
   | native => exact pure_preservesOutputCapacityFrame ()
@@ -1973,7 +1973,7 @@ private theorem insertByteAlias_preservesOutputCapacityFrame (name : String)
   change OutputCapacityFrame state {state with byteAliases := (name, value) :: state.byteAliases}
   exact OutputCapacityFrame.of_sameInstructions rfl rfl
 
-private def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit := do
+def lowerByteInput (input : Input) (raw : Bool := false) : LowerM Unit := do
   let op := if input.visibility == .«public» then "public_input" else "private_input"
   let read (identifier : String) (ty : Json := nativeType) :=
     lowerInputRead op raw identifier ty
@@ -2950,7 +2950,7 @@ theorem lowerPublicForeignInputPrefix_preservesOutputCapacityFrame
 def bindPublicGuarded (guard : Expr .bool) (values : List String) : LowerM Unit := do
   emit "impact" [("guard", toJson (← lowerExpr guard)), ("inputs", toJson values)]
 
-private def lowerCircuitInput (input : Input) : LowerM Unit := do
+def lowerCircuitInput (input : Input) : LowerM Unit := do
   if input.visibility == .«public» then
     match input.ty with
     | .bytes _ => lowerPublicFixedBytesInputPrefix input
@@ -2961,7 +2961,7 @@ private def lowerCircuitInput (input : Input) : LowerM Unit := do
   else
     lowerByteInput input
 
-private theorem lowerCircuitInput_preservesOutputCapacityFrame (input : Input) :
+theorem lowerCircuitInput_preservesOutputCapacityFrame (input : Input) :
     PreservesOutputCapacityFrame (lowerCircuitInput input) := by
   cases input with
   | mk name ty visibility span =>
@@ -3002,12 +3002,12 @@ theorem lowerCircuitInputs_preservesOutputCapacityFrame (inputs : List Input) :
   intro _
   exact pure_preservesOutputCapacityFrame _
 
-private def lowerConstraints (constraints : List (Expr .bool)) : LowerM Unit := do
+def lowerConstraints (constraints : List (Expr .bool)) : LowerM Unit := do
   for condition in constraints do
     let value ← lowerExpr condition
     emit "assert" [("cond", toJson value)]
 
-private theorem lowerConstraints_preservesOutputCapacityFrame
+theorem lowerConstraints_preservesOutputCapacityFrame
     (constraints : List (Expr .bool))
     (frames : ∀ condition ∈ constraints, PreservesOutputCapacityFrame (lowerExpr condition)) :
     PreservesOutputCapacityFrame (lowerConstraints constraints) := by
@@ -3025,28 +3025,35 @@ def lowerReturnPreflight (output : Output) : LowerM Unit :=
   | {ty := .bytes 0, value, ..} => discard (lowerBytes value)
   | _ => pure ()
 
-private def lowerReturnFields (outputs : List Output) : LowerM (List String) :=
-  forIn outputs [] fun output values => do
-    lowerReturnPreflight output
-    match output.nativeReturnFields with
-    | .error message => do
-      rejectLowering message
-      pure (ForInStep.yield values)
-    | .ok fields =>
-      let values ← forIn fields values fun field accumulator => do
-        let value ← lowerExpr field
-        pure (ForInStep.yield (accumulator ++ [value]))
-      pure (ForInStep.yield values)
+def lowerReturnFieldStep (output : Output) (values : List String) :
+    LowerM (ForInStep (List String)) := do
+  lowerReturnPreflight output
+  match output.nativeReturnFields with
+  | .error message => do
+    rejectLowering message
+    pure (ForInStep.yield values)
+  | .ok fields =>
+    let values ← forIn fields values fun field accumulator => do
+      let value ← lowerExpr field
+      pure (ForInStep.yield (accumulator ++ [value]))
+    pure (ForInStep.yield values)
 
-private theorem lowerReturnFields_preservesOutputCapacityFrame (outputs : List Output)
+def lowerReturnFieldsFrom (outputs : List Output) (values : List String) : LowerM (List String) :=
+  forIn outputs values lowerReturnFieldStep
+
+def lowerReturnFields (outputs : List Output) : LowerM (List String) :=
+  lowerReturnFieldsFrom outputs []
+
+theorem lowerReturnFields_preservesOutputCapacityFrame (outputs : List Output)
     (preflight : ∀ output ∈ outputs, PreservesOutputCapacityFrame (lowerReturnPreflight output))
     (fields : ∀ output ∈ outputs, ∀ projections,
       output.nativeReturnFields = .ok projections → ∀ field ∈ projections,
         PreservesOutputCapacityFrame (lowerExpr field)) :
     PreservesOutputCapacityFrame (lowerReturnFields outputs) := by
-  unfold lowerReturnFields
+  unfold lowerReturnFields lowerReturnFieldsFrom
   apply forIn_preservesOutputCapacityFrame_of_mem
   intro output member values
+  unfold lowerReturnFieldStep
   apply bind_preservesOutputCapacityFrame _ _ (preflight output member)
   intro _
   cases projections : output.nativeReturnFields with
