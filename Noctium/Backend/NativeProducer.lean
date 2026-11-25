@@ -613,7 +613,7 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
       requireBoolean no
     let term := if yes.valueType == .bool && yes.term == typedBoolConstantTerm 1 &&
         no.term == typedBoolConstantTerm 0 then nativeToBoolTerm condition.term
-      else .select condition.term yes.term no.term
+      else selectTerm condition.term yes.term no.term
     let fact ← combine term (max yes.maximum no.maximum) [condition, yes, no]
     defineResult state instruction {fact with
       valueType := yes.valueType

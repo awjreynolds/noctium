@@ -56,6 +56,35 @@ private def zeroPackedReturnCircuit : Noctium.Circuit := {
   outputs := [{name := "zeros", ty := .bytes 32, value := .bytes32Literal (List.replicate 32 0)}]
 }
 
+private def equalZeroSelectionCircuit : Noctium.Circuit := {
+  name := "equal_zero_byte_selection"
+  inputs := [{name := "condition", ty := .bool, visibility := .«private»}]
+  outputs := [{name := "decoded", ty := .native, value := .disclose {} (
+    .fromBytes32 (target := .native) (.select (.ref "condition")
+      (.assertE (.bool Bool.true) (.bytes32Literal (List.replicate 32 0)))
+      (.assertE (.bool Bool.true) (.bytes32Literal (List.replicate 32 0)))))}]
+}
+
+private def equalScalarSelectionCircuit : Noctium.Circuit := {
+  name := "equal_scalar_selection"
+  inputs := [
+    {name := "condition", ty := .bool, visibility := .«private»},
+    {name := "amount", ty := .uint 15, visibility := .«private»}]
+  outputs := [{name := "same", ty := .uint 15, value := .disclose {} (
+    .select (.ref "condition")
+      (.assertE (.bool Bool.true) (.ref "amount"))
+      (.assertE (.bool Bool.true) (.ref "amount")))}]
+}
+
+private def selectedCopiedNativeCircuit : Noctium.Circuit := {
+  name := "selected_copied_native"
+  inputs := [
+    {name := "gate", ty := .bool, visibility := .«private»},
+    {name := "amount", ty := .native, visibility := .«private»}]
+  outputs := [{name := "selected", ty := .native, value := .disclose {} (
+    .select (.ref "gate") (.copyValue (.ref "amount")) (.ref "amount"))}]
+}
+
 private def mixedByteZeroSuffixCircuit : Noctium.Circuit := {
   name := "mixed_byte_zero_suffix"
   inputs := [{name := "value", ty := .bytes 1, visibility := .«private»}]
@@ -153,6 +182,28 @@ private def nativeBytePackingFieldValues (relation : Lean.Json) (opcode field : 
   | .ok relation =>
       (nativeBytePackingInstructions relation).map nativeBytePackingOpcode ==
         [some "impact", some "output"]
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit equalZeroSelectionCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "cond_select" == 0 &&
+        nativeBytePackingCount relation "constrain_to_boolean" == 1 &&
+        nativeBytePackingCount relation "assert" == 2
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit equalScalarSelectionCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "cond_select" == 0 &&
+        nativeBytePackingCount relation "constrain_to_boolean" == 1 &&
+        nativeBytePackingCount relation "constrain_bits" == 1 &&
+        nativeBytePackingCount relation "assert" == 2
+  | .error _ => _root_.Bool.false
+
+#guard match Noctium.Backend.Zkir.lowerCircuit selectedCopiedNativeCircuit with
+  | .ok relation =>
+      nativeBytePackingCount relation "copy" == 1 &&
+        nativeBytePackingCount relation "cond_select" == 1 &&
+        nativeBytePackingCount relation "constrain_to_boolean" == 1
   | .error _ => _root_.Bool.false
 
 #guard match Noctium.Backend.Zkir.lowerCircuit mixedByteZeroSuffixCircuit with

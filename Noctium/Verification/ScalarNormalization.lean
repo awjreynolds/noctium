@@ -861,8 +861,8 @@ theorem normalize_success (ctx : EvalContext) (hash : Hash)
           subst value
           refine ⟨_, by simp only [normalize, nc, na, nb]; rfl, ?_⟩
           simp only [requireSourceType_eq]
-          change Represents hash inputs ty {term := .select cn.term an.term bn.term, bounds := typeBounds ty (.select cn.term an.term bn.term) (cn.bounds ++ an.bounds ++ bn.bounds), assertions := cn.assertions ++ an.assertions ++ bn.assertions} (if cv then av else bv)
-          apply represent_with_bound hash inputs ty (.select cn.term an.term bn.term)
+          change Represents hash inputs ty {term := selectTerm cn.term an.term bn.term, bounds := typeBounds ty (selectTerm cn.term an.term bn.term) (cn.bounds ++ an.bounds ++ bn.bounds), assertions := cn.assertions ++ an.assertions ++ bn.assertions} (if cv then av else bv)
+          apply represent_with_bound hash inputs ty (selectTerm cn.term an.term bn.term)
             (cn.bounds ++ an.bounds ++ bn.bounds) (cn.assertions ++ an.assertions ++ bn.assertions) (if cv then av else bv)
           · cases cv
             · exact bc
@@ -873,6 +873,11 @@ theorem normalize_success (ctx : EvalContext) (hash : Hash)
           · have conditionMeaning : interpret hash inputs cn.term = some (bit cv) := by
               rw [← bit_sourceScalar cv] at cm
               exact cm
+            have selectedMeaning : interpret hash inputs (selectTerm cn.term an.term bn.term) =
+                interpret hash inputs (.select cn.term an.term bn.term) :=
+              ScalarTermMeaning.interpret_selectTerm hash inputs cn.term an.term bn.term
+                ⟨bit cv, conditionMeaning⟩
+            rw [selectedMeaning]
             cases cv <;> simp [interpret_select, conditionMeaning, am, bm, bit, zero_ne_one]
   | poseidon2 domain a b leftSupported rightSupported ia ib =>
     simp only [Expr.eval] at success

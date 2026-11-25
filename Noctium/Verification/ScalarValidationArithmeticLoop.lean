@@ -155,7 +155,8 @@ theorem accepted_native_select_components {expected : Expected} {state next : St
       (condition.valueType == .native) = true ∧
       yes.valueType = .native ∧ no.valueType = .native ∧
       condition.maximum ≤ 1 ∧
-      combine (.select condition.term yes.term no.term) (max yes.maximum no.maximum)
+      combine (Backend.Native.selectTerm condition.term yes.term no.term)
+        (max yes.maximum no.maximum)
         [condition, yes, no] = .ok fact ∧
       defineResult state raw fact = .ok next := by
   unfold validateInstruction at accepted
