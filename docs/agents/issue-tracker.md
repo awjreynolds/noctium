@@ -9,15 +9,22 @@ The public map is [issue #1](https://github.com/awjreynolds/noctium/issues/1). A
 - The map is a GitHub issue labelled `wayfinder:map`.
 - Give each decision ticket one Wayfinder label. Use `wayfinder:research` for investigation, `wayfinder:prototype` for an experiment, `wayfinder:grilling` for a decision with a human, or `wayfinder:task` for a prerequisite to a decision.
 - Use GitHub's native sub-issue and issue dependency relationships. Keep the map's Decisions so far section updated when a ticket closes.
-- Use `gh` inside the repository for issue, label, and relationship operations.
+- With `gh`, target `awjreynolds/noctium` for issue, label, and relationship operations, including from a fork.
 
 ## Review and claim implementation issues
 
 1. Fetch the canonical `main` (`origin/main` for a direct clone, `upstream/main` for a fork). Read the issue, parent, blockers, recent comments and linked or overlapping open PRs. Update the scope with links to any acceptance evidence already on `main`.
 2. Give each issue one demonstrable outcome. For compiler work, pick one source behavior and carry it through the affected lowering, runtime and verification boundaries. For SDK work, pick one host and one complete flow. State the success check, the relevant rejection or recovery check, and the environment or fixture needed to run them.
 3. Keep broad work as a parent and link the deliverable slices as sub-issues. Add `ready` once the slice has clear checks, its prerequisites are available, and no open issue blocks it. Remove `ready` if those conditions change. Matt Pocock's `ready-for-agent` role maps to `ready`. Use the existing issue state, assignee and dependency fields for the rest of the workflow.
-4. Pick an issue from the [ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked). Claim it under your human contributor's GitHub account and refresh to confirm the sole assignee. An issue with a different owner stays with them until an agreed handoff. If the same account already has an active branch, PR or session on the issue, resume that work or coordinate with its owner before starting another session.
+4. Resume the supplied issue if your contributor owns it. With no issue supplied, take the first eligible result in the [shared ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked). Recheck that it is open, ready, unassigned and unblocked, then claim it under your contributor's account. Refresh to confirm the sole assignee. If a competing claim appeared, remove only your own assignment and move to the next eligible result. If your account already has active work on the issue, resume it or coordinate before starting another session. Report an empty queue, an ownership conflict on a supplied issue, or a failed claim before editing.
 5. Start a branch and worktree named for the issue from the checked base, or reuse the existing branch when resuming. Record the branch and planned write scope on the issue or linked draft PR. If two issues need the same code path or evidence, agree on the write boundary or sequence them with a dependency. Keep the assignment through review and unassign yourself if you return the work to the queue.
+
+List the queue from either a direct clone or a fork.
+
+```sh
+gh issue list -R awjreynolds/noctium --state open \
+  --search 'label:ready no:assignee -is:blocked'
+```
 
 ## Parallel worktree handoff
 
@@ -60,6 +67,8 @@ when the variants need different lowering or ledger behavior.
 ## Pull requests
 
 Pull requests are not a request surface for triage.
+
+Use `Closes #123` in the PR description when the change fulfills the issue, so GitHub closes it on merge into `main`. For partial work, link the issue and leave it open. This keeps downstream work blocked until the prerequisite lands.
 
 Keep parallel implementation in separate worktrees. Sequence merges that touch
 the same compiler path or change the same evidence. Reuse the recorded check
