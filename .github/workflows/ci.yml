@@ -276,6 +276,7 @@ jobs:
           lake build Noctium.Verification.GenericStateCircuitParts \
             Noctium.Verification.RangeDedupAcceptedArray \
             Noctium.Verification.ScalarCallHeaderProjection \
+            Noctium.Verification.ScalarCallInstructionProjection \
             Noctium.Verification.ScalarValidationRawSeedMeaning
           lake env lean tests/NativeReturns.lean
           lake env lean tests/TypedCallArguments.lean
