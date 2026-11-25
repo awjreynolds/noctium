@@ -326,7 +326,8 @@ jobs:
           lake env lean tests/SealedMapConstructor.lean
           lake env lean tests/SealedRootCounterListConstructor.lean
           lake env lean tests/SealedRootSetConstructor.lean
-          lake build Noctium.Verification.GuardedZkirStateSoundness Noctium.Verification.GuardedInputTranscript
+          lake build Noctium.Verification.GuardedZkirStateSoundness \
+            Noctium.Verification.GuardedInputTranscript Noctium.Verification.ImpactWireSoundness
           lake env lean tests/Issue43ConditionalWrites.lean
           lake env lean tests/Issue43EmptyActivity.lean
           lake env lean tests/Issue43MapMembership.lean
@@ -357,6 +358,9 @@ jobs:
           .lake/build/bin/noctium compile tests/Issue43EffectBlocks.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --dedup-range-checks --emit ledger --output "$artifacts/dedup"
+          .lake/build/bin/noctium compile tests/Issue43GuardedPartialWrites.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/guarded-partials"
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
@@ -533,8 +537,10 @@ jobs:
           cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
             --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_EFFECT_BLOCKS_DIR="$artifacts" \
+            NOCTIUM_GUARDED_PARTIALS_DIR="$artifacts/guarded-partials" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test effect_blocks \
+              --test guarded_partials \
               --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi \
               --test constructor_actions
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \

@@ -1,6 +1,8 @@
 #![cfg(feature = "zkir-321")]
 
-use noctium_runtime::{Db, Plan, check, create_state, field_decimal, prepare, zkir::IrSource};
+use noctium_runtime::{
+    Db, Expr, Instruction, Plan, check, create_state, field_decimal, prepare, zkir::IrSource,
+};
 use onchain_runtime::state::{ChargedState, StateValue};
 use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
@@ -14,7 +16,80 @@ const CIRCUIT: &[u8] = include_bytes!(
 );
 
 fn plan() -> Plan {
-    serde_json::from_str(PLAN).expect("source-generated guarded partial plan parses")
+    serde_json::from_slice(&artifact("impact.json", PLAN.as_bytes()))
+        .expect("source-generated guarded partial plan parses")
+}
+
+fn artifact(suffix: &str, committed: &[u8]) -> Vec<u8> {
+    let Some(directory) = std::env::var_os("NOCTIUM_GUARDED_PARTIALS_DIR") else {
+        return committed.to_vec();
+    };
+    let path = std::path::PathBuf::from(directory)
+        .join(format!("Issue43GuardedPartialWrites.update.{suffix}"));
+    std::fs::read(path).expect("read freshly compiled guarded partial artifact")
+}
+
+fn enabled_guarded_operation(instruction: &Instruction) -> &Instruction {
+    let Instruction::Guarded { guard, operation } = instruction else {
+        panic!("scalar plan operation is guarded")
+    };
+    assert_eq!(
+        guard,
+        &Expr::Reference {
+            name: "enabled".to_owned()
+        }
+    );
+    operation
+}
+
+#[test]
+fn guarded_scalar_plan_decodes_order_guards_and_partial_operands() {
+    let plan = plan();
+    assert_eq!(plan.entrypoint, "update");
+    assert_eq!(
+        plan.state
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["underflowed", "narrowed", "asserted", "shadowed", "valid"]
+    );
+    assert_eq!(plan.operations.len(), 15);
+
+    for (slot, operations) in plan.operations.chunks_exact(3).enumerate() {
+        let Instruction::Push {
+            storage: false,
+            expression: Expr::Constant { value },
+            alignment,
+        } = enabled_guarded_operation(&operations[0])
+        else {
+            panic!("each scalar write starts with its ordered Cell slot")
+        };
+        assert_eq!(value, &slot.to_string());
+        assert_eq!(alignment, "field");
+
+        let Instruction::Push {
+            storage: true,
+            expression,
+            alignment,
+        } = enabled_guarded_operation(&operations[1])
+        else {
+            panic!("each scalar write stores its value after the Cell slot")
+        };
+        assert_eq!(alignment, "field");
+        if slot == 0 {
+            let Expr::Cast { ty, value } = expression else {
+                panic!("the value stored in the first Cell is widened to Native");
+            };
+            assert_eq!(ty, "Native");
+            assert!(matches!(value.as_ref(), Expr::Let { body, .. }
+                if matches!(body.as_ref(), Expr::Usub { maximum, .. } if maximum == "255")));
+        }
+
+        assert!(matches!(
+            enabled_guarded_operation(&operations[2]),
+            Instruction::Insert { n: 1 }
+        ));
+    }
 }
 
 fn state(plan: &Plan) -> ChargedState<Db> {
@@ -79,7 +154,7 @@ fn prepare_case(
 #[test]
 fn guarded_partial_scalar_expressions_are_safe_and_keep_active_semantics() {
     let plan = plan();
-    let circuit = IrSource::load(CIRCUIT).expect("source ZKIR parses");
+    let circuit = IrSource::load(artifact("zkir", CIRCUIT).as_slice()).expect("source ZKIR parses");
     let initial = state(&plan);
 
     let inactive = prepare_case(&plan, &initial, inputs(false, false, 1, 2, 8, false))

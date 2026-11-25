@@ -7,6 +7,7 @@ import Noctium.Target
 import Noctium.ArtifactRole
 import Noctium.RustBinding
 import Noctium.Types.ValueSchema
+import Std.Data.TreeMap.Raw.Lemmas
 
 namespace Noctium.Compiler
 open Lean Elab Command
@@ -1312,6 +1313,13 @@ private def returnViewsJson (views : List ReturnView) : Json :=
       ("schema", schema.toOption.getD Json.null),
       ("fields", toJson view.fields)] ++ nominalFields ++ packedFields))
 
+/-- The scheduled operation payload written to the native Impact plan. -/
+abbrev nativeOperationJson := operationJson
+
+def nativeOperationsJson (plan : Backend.Impact.Plan) : Json :=
+  toJson (plan.operations.zipIdx.map fun (operation, index) =>
+    nativeOperationJson (plan.activityGuards[index]?.getD none) operation)
+
 /-- The exact symbolic plan tree written by the compiler. This pure function
 also gives proof modules a kernel-visible artifact boundary. -/
 def nativePlanJson (profile : TargetProfile) (contractName : Name)
@@ -1361,11 +1369,28 @@ def nativePlanJson (profile : TargetProfile) (contractName : Name)
     ("entrypoint", toJson ep.name), ("nativeCircuitFile", toJson (nativeCircuitFile contractName ep)),
     ("state", toJson (state.map stateJson)),
     ("circuit", circuit),
-    ("operations", toJson (plan.operations.zipIdx.map fun (operation, index) =>
-      operationJson (plan.activityGuards[index]?.getD none) operation)),
+    ("operations", nativeOperationsJson plan),
     ] ++ constructorFields ++ callInputFields ++ returnFields ++ returnViewFields ++ [
     ("reads", toJson reads),
     ("guards", toJson (plan.guards.map nativeExpressionJson))])
+
+theorem nativePlanJson_operations (profile : TargetProfile) (contractName : Name)
+    (state : List StateDecl) (ctor : Option Constructor)
+    (ep : Entrypoint) (plan : Backend.Impact.Plan) (standaloneFile : _root_.Bool) :
+    (nativePlanJson profile contractName state ctor ep plan standaloneFile).getObjVal?
+      "operations" = .ok (nativeOperationsJson plan) := by
+  unfold nativePlanJson
+  change (Json.mkObj _).getObjVal? _ = _
+  simp only [Json.mkObj, Json.getObjVal?, Std.TreeMap.Raw.get?_eq_getElem?,
+    Std.TreeMap.Raw.ofList_eq_insertMany_empty,
+    Std.TreeMap.Raw.getElem?_insertMany_list
+      (t := (∅ : Std.TreeMap.Raw String Json compare)) Std.TreeMap.Raw.WF.empty,
+    List.findSomeRev?_eq_findSome?_reverse, List.reverse_append, List.findSome?_append]
+  cases ctor <;>
+    by_cases inputs : ep.callInputs.isEmpty <;>
+    by_cases returns : ep.returns.isEmpty <;>
+    by_cases views : ep.returnViews.isEmpty <;>
+    simp [inputs, returns, views, List.reverse_cons] <;> rfl
 
 private unsafe def inspectWithModules (moduleOutputs : Array (Name × ModuleBuildOutput))
     (rewrites : Backend.Zkir.Rewrites := .disabled) :
