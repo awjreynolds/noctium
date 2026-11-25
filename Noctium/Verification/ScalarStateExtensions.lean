@@ -73,11 +73,11 @@ theorem OperandMeaning.of_frame (hash : Hash) (inputs before after : Assignment)
   rw [parsed] at scopedParsed
   cases scopedParsed
   refine ⟨operand, parsed, ?_⟩
-  rw [← value]
   cases operand with
-  | immediate value => rfl
+  | immediate value => simpa [Operand.read] using value
   | reference name =>
-    exact frame name (identifiers name (by simp [operandIdentifiers]))
+    have same := frame name (identifiers name (by simp [operandIdentifiers]))
+    simpa [Operand.read, same] using value
 
 private theorem input_textScope (next : Nat) (name : String) (operand : Operand)
     (parsed : decodeOperand (toJson ("%input_" ++ name)) = .ok operand) :
@@ -86,7 +86,7 @@ private theorem input_textScope (next : Nat) (name : String) (operand : Operand)
     apply String.startsWith_string_iff.mpr
     rw [String.toList_append]
     exact ⟨['i', 'n', 'p', 'u', 't', '_'] ++ name.toList, rfl⟩
-  have notImmediate := ScalarValidation.reference_not_immediate percent
+  have notImmediate := NativeRelationJson.reference_not_immediate percent
   have reference : operand = .reference ("%input_" ++ name) := by
     unfold decodeOperand at parsed
     change (if ("%input_" ++ name).startsWith "0x" then
@@ -115,7 +115,7 @@ theorem TextScope.lookup_default (next : Nat) (aliases : List (String × String)
     TextScope next (aliases.lookup name |>.getD ("%input_" ++ name)) := by
   cases lookup : aliases.lookup name with
   | some text =>
-    exact aliasesScoped name text (ScalarValidation.lookup_member lookup)
+    exact aliasesScoped name text (ScalarValidationMeaning.lookup_member lookup)
   | none =>
     apply input_textScope next name operand
     simpa only [lookup, Option.getD_none] using parsed

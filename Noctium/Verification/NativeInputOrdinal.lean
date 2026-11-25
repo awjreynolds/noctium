@@ -495,7 +495,8 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
     (decoded : NativeRelationJson.decodeInstruction raw =
       .ok (.input visibility output)) :
     Backend.Native.stringField raw "output" = .ok output ∧
-      raw.getObjVal? "guard" = .ok Json.null := by
+      raw.getObjVal? "guard" = .ok Json.null ∧
+      NativeRelationJson.validIdentifier output = true := by
   have nativeJson_stringField_eq (value : Json) (name : String) :
       NativeRelationJson.stringField value name = Backend.Native.stringField value name := rfl
   cases visibility with
@@ -514,14 +515,14 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
       guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
       decodedOutput, outputParsed, validUnit, validChecked, result⟩
     cases result
-    constructor
-    · exact (nativeJson_stringField_eq raw "output").symm.trans outputParsed
+    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_⟩
     · have guardNull : guardJson.isNull = true := by
         cases guardUnit
         cases isNull : guardJson.isNull with
         | false => simp [NativeRelationJson.ensure, isNull] at guardChecked
         | true => rfl
       cases guardJson <;> simp_all [Json.isNull]
+    · exact ScalarValidationMeaning.ensure_ok.mp validChecked
   | «private» =>
     have decoderOpcode : NativeRelationJson.stringField raw "op" = .ok "private_input" := by
       rw [nativeJson_stringField_eq]
@@ -537,14 +538,14 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
       guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
       decodedOutput, outputParsed, validUnit, validChecked, result⟩
     cases result
-    constructor
-    · exact (nativeJson_stringField_eq raw "output").symm.trans outputParsed
+    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_⟩
     · have guardNull : guardJson.isNull = true := by
         cases guardUnit
         cases isNull : guardJson.isNull with
         | false => simp [NativeRelationJson.ensure, isNull] at guardChecked
         | true => rfl
       cases guardJson <;> simp_all [Json.isNull]
+    · exact ScalarValidationMeaning.ensure_ok.mp validChecked
 
 /-- A strictly decoded input exposes the same output string stored in its
 `Instruction.input` constructor. -/
@@ -565,7 +566,18 @@ theorem strict_decoded_input_guard_is_null {raw : Json} {visibility : Visibility
     (decoded : NativeRelationJson.decodeInstruction raw =
       .ok (.input visibility output)) :
     raw.getObjVal? "guard" = .ok Json.null :=
-  (strict_decoded_input_fields opcodeParsed decoded).2
+  (strict_decoded_input_fields opcodeParsed decoded).2.1
+
+/-- Strictly decoded input rows have an identifier accepted by the decoder's
+SSA-name check. -/
+theorem strict_decoded_input_identifier_valid {raw : Json} {visibility : Visibility}
+    {output : String}
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility output)) :
+    NativeRelationJson.validIdentifier output = true :=
+  (strict_decoded_input_fields opcodeParsed decoded).2.2
 
 /-- Producer-accepted guarded public reads cannot satisfy the strict decoder's
 input shape: the producer parses a string guard and the decoder requires null. -/

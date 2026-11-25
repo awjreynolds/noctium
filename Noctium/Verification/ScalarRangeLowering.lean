@@ -83,7 +83,8 @@ theorem power_decode (state : Zkir.LowerState) (maximum : Nat) (text : String) (
 theorem nonpower_decode (state : Zkir.LowerState) (maximum : Nat) (text : String) (value : Operand)
     (prior : List Instruction)
     (nonzero : maximum ≠ 0) (nonpower : maximum + 1 ≠ 2 ^ (maximum.log2 + 1))
-    (admitted : maximum ≤ ScalarPolicy.maxUint) (budget : state.next ≤ Native.maxInstructions)
+    (admitted : maximum ≤ ScalarPolicy.maxUint)
+    (budget : state.next ≤ Native.maxInstructions * Native.maxVectorLength)
     (operand : NativeRelationJson.decodeOperand (toJson text) = .ok value)
     (priorDecoded : state.instructions.toList.mapM NativeRelationJson.decodeInstruction = .ok prior) :
     ((Zkir.constrainUnsigned maximum text).run state).2.instructions.toList.mapM
@@ -92,7 +93,10 @@ theorem nonpower_decode (state : Zkir.LowerState) (maximum : Nat) (text : String
          .lessThan value (.immediate (scalar (maximum + 1))) (maximum.log2 + 1) s!"%v{state.next}",
          .assert (.reference s!"%v{state.next}")]) := by
   have width := unsigned_width maximum nonzero admitted
-  have valid := fresh_identifier state.next budget
+  have identifierLimit : Native.maxInstructions * Native.maxVectorLength < 10 ^ 8 := by decide
+  have valid : NativeRelationJson.validIdentifier s!"%v{state.next}" = true := by
+    apply NativeRelationJson.generatedIdentifier_valid
+    omega
   have threshold := ScalarImmediate.decodeOperand_fieldImmediate_exact (maximum + 1)
     (threshold_canonical maximum admitted)
   have less := decode_lessThan_instruction _ operand threshold valid width.1 width.2.1
@@ -145,7 +149,8 @@ theorem constrainUnsigned_complete (hash : Hash) (witness : Assignment)
     (priorDecoded : state.instructions.toList.mapM NativeRelationJson.decodeInstruction = .ok prior)
     (priorHolds : ∀ instruction ∈ prior, instruction.Holds hash witness)
     (range : (value.read witness).val ≤ maximum)
-    (admitted : maximum ≤ ScalarPolicy.maxUint) (budget : state.next ≤ Native.maxInstructions)
+    (admitted : maximum ≤ ScalarPolicy.maxUint)
+    (budget : state.next ≤ Native.maxInstructions * Native.maxVectorLength)
     (independent : OperandIndependent s!"%v{state.next}" value)
     (priorIndependent : ∀ instruction ∈ prior, InstructionIndependent s!"%v{state.next}" instruction) :
     ∃ afterWitness : Assignment, ∃ instructions : List Instruction,
