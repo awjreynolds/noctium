@@ -16,10 +16,18 @@ private theorem define_inputCount {state next : State} {name : String} {fact : F
   cases result
   rfl
 
-/-- Every accepted unguarded native input consumes exactly the live expected
-input ordinal. The selected row and visibility checks are shared with the
-active producer input bridge. -/
-theorem accepted_unguarded_input_count_increment {expected : Expected}
+private theorem define_assertionCount {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  unfold define at accepted
+  rcases bind_ok.mp accepted with ⟨_, _, accepted⟩
+  rcases bind_ok.mp accepted with ⟨_, _, result⟩
+  cases result
+  rfl
+
+/-- The unguarded public and private branches expose both input and assertion
+counters from one producer inversion. -/
+private theorem accepted_unguarded_input_count_frame {expected : Expected}
     {state next : State} {raw : Json} {requirement : InputRequirement}
     (visibility : Visibility)
     (selected : expected.inputs[state.inputCount]? = some requirement)
@@ -28,7 +36,8 @@ theorem accepted_unguarded_input_count_increment {expected : Expected}
     (opcodeParsed : Backend.Native.stringField raw "op" =
       .ok (inputOpcode visibility))
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.inputCount = state.inputCount + 1 := by
+    next.inputCount = state.inputCount + 1 ∧
+      next.assertionCount = state.assertionCount := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
@@ -46,6 +55,7 @@ theorem accepted_unguarded_input_count_increment {expected : Expected}
         valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
         output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
       have definedCount := define_inputCount defined
+      have definedAssertions := define_assertionCount defined
       have resultEq :
           {definedState with inputCount := definedState.inputCount + 1} = next := by
         change Except.ok {definedState with inputCount := definedState.inputCount + 1} =
@@ -55,7 +65,11 @@ theorem accepted_unguarded_input_count_increment {expected : Expected}
         simpa only [State.inputCount] using
           (congrArg State.inputCount resultEq).symm
       rw [definedCount] at countEq
-      exact countEq
+      have assertionEq : next.assertionCount = definedState.assertionCount := by
+        simpa only [State.assertionCount] using
+          (congrArg State.assertionCount resultEq).symm
+      rw [definedAssertions] at assertionEq
+      exact ⟨countEq, assertionEq⟩
   | «private» =>
     have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
     subst opcode
@@ -68,6 +82,7 @@ theorem accepted_unguarded_input_count_increment {expected : Expected}
         valueType, valueParsed, guardJson, guardParsed, guardUnit, guardChecked,
         output, outputParsed, schemaUnit, schemaChecked, definedState, defined, result⟩
       have definedCount := define_inputCount defined
+      have definedAssertions := define_assertionCount defined
       have resultEq :
           {definedState with inputCount := definedState.inputCount + 1} = next := by
         change Except.ok {definedState with inputCount := definedState.inputCount + 1} =
@@ -77,11 +92,31 @@ theorem accepted_unguarded_input_count_increment {expected : Expected}
         simpa only [State.inputCount] using
           (congrArg State.inputCount resultEq).symm
       rw [definedCount] at countEq
-      exact countEq
+      have assertionEq : next.assertionCount = definedState.assertionCount := by
+        simpa only [State.assertionCount] using
+          (congrArg State.assertionCount resultEq).symm
+      rw [definedAssertions] at assertionEq
+      exact ⟨countEq, assertionEq⟩
+
+/-- Every accepted unguarded native input consumes exactly the live expected
+input ordinal. The selected row and visibility checks are shared with the
+active producer input bridge. -/
+theorem accepted_unguarded_input_count_increment {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    (visibility : Visibility)
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (unguarded : requirement.activityGuard = none)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.inputCount = state.inputCount + 1 := by
+  exact (accepted_unguarded_input_count_frame visibility selected nonforeignInput
+    unguarded opcodeParsed accepted).1
 
 /-- A guarded public ledger read consumes one input ordinal after the pinned
 producer validates its source-bound guard and schema. -/
-theorem accepted_guarded_public_input_count_increment {expected : Expected}
+private theorem accepted_guarded_public_input_count_frame {expected : Expected}
     {state next : State} {raw : Json} {requirement : InputRequirement}
     {guardTerm : Backend.Native.Term}
     (selected : expected.inputs[state.inputCount]? = some requirement)
@@ -89,7 +124,8 @@ theorem accepted_guarded_public_input_count_increment {expected : Expected}
     (guarded : requirement.activityGuard = some guardTerm)
     (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
     (accepted : validateInstruction expected state raw = .ok next) :
-    next.inputCount = state.inputCount + 1 := by
+    next.inputCount = state.inputCount + 1 ∧
+      next.assertionCount = state.assertionCount := by
   unfold validateInstruction at accepted
   simp only [bind_ok] at accepted
   rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
@@ -106,6 +142,7 @@ theorem accepted_guarded_public_input_count_increment {expected : Expected}
       guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
       definedState, defined, result⟩
     have definedCount := define_inputCount defined
+    have definedAssertions := define_assertionCount defined
     have resultEq :
         {definedState with inputCount := definedState.inputCount + 1} = next := by
       change Except.ok {definedState with inputCount := definedState.inputCount + 1} =
@@ -115,7 +152,25 @@ theorem accepted_guarded_public_input_count_increment {expected : Expected}
       simpa only [State.inputCount] using
         (congrArg State.inputCount resultEq).symm
     rw [definedCount] at countEq
-    exact countEq
+    have assertionEq : next.assertionCount = definedState.assertionCount := by
+      simpa only [State.assertionCount] using
+        (congrArg State.assertionCount resultEq).symm
+    rw [definedAssertions] at assertionEq
+    exact ⟨countEq, assertionEq⟩
+
+/-- A guarded public ledger read consumes one input ordinal after the pinned
+producer validates its source-bound guard and schema. -/
+theorem accepted_guarded_public_input_count_increment {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.inputCount = state.inputCount + 1 := by
+  exact (accepted_guarded_public_input_count_frame selected nonforeignInput
+    guarded opcodeParsed accepted).1
 
 /-- Every accepted input row selects the next expected producer requirement
 and advances the native input cursor exactly once. -/
@@ -150,6 +205,33 @@ theorem accepted_input_row_step {expected : Expected}
         rw [guard] at unguarded
         cases unguarded
   exact ⟨requirement, selected, count⟩
+
+/-- An accepted public or private input row preserves the checked assertion
+ordinal. The selected and nonforeign row evidence matches the input-count
+step lemmas above, including the guarded public-read case. -/
+theorem accepted_input_row_assertion_count_unchanged {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.assertionCount = state.assertionCount := by
+  cases guarded : requirement.activityGuard with
+  | none =>
+    exact (accepted_unguarded_input_count_frame visibility selected nonforeignInput
+      guarded opcodeParsed accepted).2
+  | some guardTerm =>
+    cases visibility with
+    | «public» =>
+      exact (accepted_guarded_public_input_count_frame selected nonforeignInput guarded
+        (by simpa [inputOpcode] using opcodeParsed) accepted).2
+    | «private» =>
+      have unguarded := accepted_private_input_unguarded selected
+        (by simpa [inputOpcode] using opcodeParsed) accepted
+      rw [guarded] at unguarded
+      cases unguarded
 
 /-- For the production ledger-call constructor, each accepted producer row is
 the next element of the same ordered input list built from source inputs and
