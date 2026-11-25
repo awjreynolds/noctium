@@ -566,6 +566,38 @@ theorem accepted_input_groupCount {expected : Expected} {state next : State}
       subst next
       simpa using groupCountEq
 
+/-- A source-bound public input advances only the live input cursor. The
+guard check and definition insertion leave the Impact group ordinal intact. -/
+theorem accepted_guarded_public_input_groupCount {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {guardTerm : Backend.Native.Term}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (nonforeignInput : requirement.ty.isForeign = false)
+    (guarded : requirement.activityGuard = some guardTerm)
+    (opcodeParsed : Backend.Native.stringField raw "op" = .ok "public_input")
+    (accepted : validateInstruction expected state raw = .ok next) :
+    next.groupCount = state.groupCount := by
+  unfold validateInstruction at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq : opcode = "public_input" := Except.ok.inj (op.symm.trans opcodeParsed)
+  simp only [opcodeEq, selected, guarded] at accepted
+  cases ty : requirement.ty <;> try simp [Ty.isForeign, ty] at nonforeignInput
+  all_goals
+    simp only [ty] at accepted
+    simp only [bind_ok] at accepted
+    rcases accepted with ⟨typeJson, typeParsed, nativeTypeValue, nativeTypeParsed,
+      valueType, valueParsed, guardModeUnit, guardModeChecked, guardText,
+      guardTextParsed, guardFact, guardOperand, guardBoolean, guardBooleanChecked,
+      guardMatchUnit, guardMatch, output, outputParsed, schemaUnit, schemaChecked,
+      definedState, defined, result⟩
+    have groupCountEq := define_groupCount defined
+    have resultEq :
+        {definedState with inputCount := definedState.inputCount + 1} = next :=
+      Except.ok.inj result
+    subst next
+    simpa using groupCountEq
+
 theorem accepted_constrainEq_groupCount {expected : Expected} {state next : State}
     {raw : Json}
     (definitions : NativeDefinitions state)

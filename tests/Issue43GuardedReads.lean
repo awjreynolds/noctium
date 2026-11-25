@@ -198,8 +198,13 @@ private theorem acceptedIssue43SkippedCellSuffix
       prelude.zipIdx prefixInstructions = Bool.true)
     (holds : ∀ instruction ∈ prefixInstructions,
       Verification.NativeRelation.Instruction.Holds hash assignment instruction)
+    (preludeImpactCount :
+      Verification.RangeDedupAcceptedArray.impactOpcodeCount prelude = 0)
     (mixedSuffixCheck : issue43MixedRowsCheck
       (rest.take issue43RowsBeforeDynamicImpact) = Bool.true)
+    (mixedSuffixImpactCount :
+      Verification.RangeDedupAcceptedArray.impactOpcodeCount
+        (rest.take issue43RowsBeforeDynamicImpact) = 9)
     (mixedSuffixHolds : ∀ item, item ∈ (rest.take issue43RowsBeforeDynamicImpact).zipIdx →
       ∀ instruction, Verification.NativeRelationJson.decodeInstruction item.1 = .ok instruction →
         Verification.NativeRelation.Instruction.Holds hash assignment instruction)
@@ -245,13 +250,15 @@ private theorem acceptedIssue43SkippedCellSuffix
         Verification.ScalarValidationMeaning.StateMeaning hash inputs assignment impactBefore ∧
         Verification.ScalarValidationOutputMeaning.sourceImpactGuard expected impactBefore =
           some guardTerm ∧
+        (expected.groupGuards.isEmpty ∨ expected.groupGuards[9]? = some guardTerm) ∧
         expected.groups[impactBefore.groupCount]? = some group ∧
         impactAfter = {impactBefore with groupCount := impactBefore.groupCount + 1} ∧
         Verification.GuardedImpactObservation.sourceObservation hash inputs guardTerm group =
           some observation ∧
         Verification.GuardedImpactObservation.observeImpact (impactGuard.read assignment)
           (impactValues.map (·.read assignment)) = some observation ∧
-        observation.payload.length = group.length) := by
+        observation.payload.length = group.length ∧
+        impactBefore.groupCount = 9 ∧ expected.groups[9]? = some group) := by
   obtain ⟨_, expected, _, expectedAccepted, validated, _⟩ :=
     Backend.Zkir.lowerEntrypoint_validation_and_instructions
       Issue43GuardedReads.state issue43GuardedEntry program lowered
@@ -350,19 +357,52 @@ private theorem acceptedIssue43SkippedCellSuffix
           List.all_eq_true.mp mixedSuffixCheck item.1 suffixMember
         exact issue43MixedRow_acceptedMeaningStep
           (issue43MixedRow_of_check checkedRow (mixedSuffixHolds (item.1, index) indexMember))
-  obtain ⟨impactBefore, impactAfter, _, impactAccepted, impactMeaning, _⟩ :=
+  obtain ⟨impactBefore, impactAfter, impactPrefixAccepted, impactAccepted,
+      impactMeaning, _⟩ :=
     Verification.RangeDedupAcceptedArray.accepted_prefix_meaning
       (Verification.ScalarValidationMeaning.empty_meaning hash inputs assignment)
       Verification.ScalarValidationNativeDefinitions.empty_nativeDefinitions
       schema agreement mixedPrefixSteps driver.instructionTrace impactSourceSplit
+  have impactCounter :=
+    Verification.RangeDedupAcceptedArray.accepted_loop_groupCount_at_steps
+      (Verification.ScalarValidationMeaning.empty_meaning hash inputs assignment)
+      Verification.ScalarValidationNativeDefinitions.empty_nativeDefinitions
+      schema agreement mixedPrefixSteps impactPrefixAccepted
+  have impactPrefixCount :
+      Verification.RangeDedupAcceptedArray.impactOpcodeCount
+        (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact) = 9 := by
+    rw [Verification.RangeDedupAcceptedArray.impactOpcodeCount_append,
+      preludeImpactCount]
+    simp only [Nat.zero_add]
+    simp [Verification.RangeDedupAcceptedArray.impactOpcodeCount,
+      Verification.RangeDedupAcceptedArray.impactOpcodeRow, targetOpcode,
+      mixedSuffixImpactCount]
+  have impactOrdinal : impactBefore.groupCount = 9 := by
+    have counterRows : impactBefore.groupCount =
+        ({} : Backend.Native.State).groupCount +
+          Verification.RangeDedupAcceptedArray.impactOpcodeCount
+            (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact) := by
+      simpa only [List.zipIdx_map_fst] using impactCounter
+    rw [impactPrefixCount] at counterRows
+    simpa using counterRows
   obtain ⟨guardTerm, group, observation, sourceGuard, sourceGroup, impactNext,
       sourceObservation, emittedObservation, width⟩ :=
     Verification.GuardedImpactObservation.accepted_impact_observation
       impactMeaning impactAccepted impactOpcode impactGuardDecoded impactPayloadDecoded
+  have sourceGuardAtOrdinal :
+      expected.groupGuards.isEmpty ∨ expected.groupGuards[9]? = some guardTerm := by
+    unfold Verification.ScalarValidationOutputMeaning.sourceImpactGuard at sourceGuard
+    by_cases empty : expected.groupGuards.isEmpty
+    · exact Or.inl empty
+    · simp only [empty] at sourceGuard
+      rw [impactOrdinal] at sourceGuard
+      exact Or.inr sourceGuard
   exact ⟨expected, before, after, requirement, rowAccepted, requirementId, guarded,
     beforeMeaning, beforeDefinitions, afterMeaning, afterDefinitions, transcript,
     ⟨impactBefore, impactAfter, guardTerm, group, observation, impactAccepted, impactMeaning,
-      sourceGuard, sourceGroup, impactNext, sourceObservation, emittedObservation, width⟩⟩
+      sourceGuard, sourceGuardAtOrdinal, sourceGroup, impactNext, sourceObservation,
+      emittedObservation, width,
+      impactOrdinal, by simpa [impactOrdinal] using sourceGroup⟩⟩
 
 /-- Continue meaning from the accepted guarded input across a mixed producer
 prefix, then relate the next Impact row to the source-selected observation.
@@ -373,8 +413,11 @@ private def issue43MixedSuffixCheck : _root_.Bool :=
   | .error _ => Bool.false
   | .ok program =>
     let rows := (program.getObjValD "instructions").getArr?.toOption.getD #[]
-    issue43MixedRowsCheck ((rows.toList.drop (issue43SkippedInputIndex + 1)).take
-      issue43RowsBeforeDynamicImpact) && rows.size > issue43FirstDynamicImpactIndex &&
+    let mixedPrefixRows := (rows.toList.drop (issue43SkippedInputIndex + 1)).take
+      issue43RowsBeforeDynamicImpact
+    issue43MixedRowsCheck mixedPrefixRows &&
+      Verification.RangeDedupAcceptedArray.impactOpcodeCount mixedPrefixRows == 9 &&
+      rows.size > issue43FirstDynamicImpactIndex &&
       (rows[issue43FirstDynamicImpactIndex]!.getObjValD "op").getStr?.toOption ==
         some "impact" &&
       (rows[issue43FirstDynamicImpactIndex]!.getObjValD "guard").getStr?.toOption ==
@@ -468,6 +511,7 @@ private def emittedSkippedCellPrefixMatches : Except String _root_.Bool := do
   let some requirement := expected.inputs[before.inputCount]? | throw "missing skippedCell input"
   return profile && prelude.map Backend.Native.opcode == ["public_input", "public_input",
       "constrain_to_boolean", "public_input", "constrain_to_boolean"] &&
+    Verification.RangeDedupAcceptedArray.impactOpcodeCount prelude == 0 &&
     requirement.identifier == "%input_skippedCell" &&
     requirement.activityGuard == some (.input "%input_existed")
 
