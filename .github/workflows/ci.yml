@@ -678,6 +678,7 @@ jobs:
             Noctium.Verification.RangeDedupAcceptedEntrypoint \
             Noctium.Verification.ScalarTranslationSoundness \
             Noctium.Verification.ScalarStateExtensions \
+            Noctium.Verification.ScalarExpressionNativeTree \
             Noctium.Verification.ScalarRangeLowering \
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.ScalarValidationProjection \
