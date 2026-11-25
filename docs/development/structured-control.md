@@ -109,9 +109,13 @@ freshly compiled 3.2.1 artifacts, the official k=8 SRS and the verified Dust
 parameter cache. The SDK proves, funds and submits from Rust and checks the
 deployment and call receipts against the predicted native state bytes.
 The statement fixture records Noop costs from the node snapshot used to
-prepare the proof. Ledger 9 localnet finalized the deployment at block 150
-and the call at block 153. The finalized state kept marker 23 and stored 99
-for account 7. Lean matched all 107 public fields from the same call.
+prepare the proof. Ledger 9 localnet finalized the deployment at block 220
+and the call at block 223. The finalized state kept marker 23 and
+stored 99 for account 7. Lean matched all 107 public fields from the same call.
+The receipt includes the inclusion and finality identifiers, the runtime code
+hash and version 16 metadata digest, and digests of the artifacts, verifier
+key, V3 proof and checked SRS. `publicFieldsSha256` hashes the compact UTF-8
+JSON array of the ordered decimal field strings from the attached call.
 [Localnet receipt](native-guarded-read-localnet-receipt.json)
 
 ```sh

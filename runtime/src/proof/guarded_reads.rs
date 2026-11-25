@@ -184,14 +184,14 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         .public_transcript_outputs
         .len();
 
+    let statement = crate::proof::guarded_partials::native_statement(
+        &source_call,
+        source_binding,
+        &attached_fields,
+        &prepared.material.parameters.cost_model.runtime_cost_model,
+    );
     let statement_path = env::var_os("NOCTIUM_GUARDED_READS_STATEMENT_FILE");
     if let Some(path) = statement_path {
-        let statement = crate::proof::guarded_partials::native_statement(
-            &source_call,
-            source_binding,
-            &attached_fields,
-            &prepared.material.parameters.cost_model.runtime_cost_model,
-        );
         fs::write(
             path,
             serde_json::to_vec_pretty(&statement).expect("native statement serializes as JSON"),
@@ -199,6 +199,11 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         .expect("write native statement fixture to requested path");
     }
 
+    let impact_sha256 = crate::artifacts::digest(&impact);
+    let zkir_sha256 = crate::artifacts::digest(&prepared.material.native.ir_source);
+    let verifier_key_sha256 = crate::artifacts::digest(&prepared.material.native.verifier_key);
+    let proof_sha256 = crate::artifacts::digest(&attached_proof.0);
+    let srs_sha256 = parameters.sha256();
     eprintln!(
         "guarded-read native proof passed: k={k}, fields={}, active_reads={}, active_ops={}, skipped_ops={}, proof_bytes={}",
         attached_fields.len(),
@@ -217,11 +222,11 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
     );
     eprintln!(
         "guarded-read artifact SHA-256: impact={}, zkir={}, verifier_key={}, proof={}, srs={}",
-        crate::artifacts::digest(&impact),
-        crate::artifacts::digest(&prepared.material.native.ir_source),
-        crate::artifacts::digest(&prepared.material.native.verifier_key),
-        crate::artifacts::digest(&attached_proof.0),
-        parameters.sha256(),
+        impact_sha256,
+        zkir_sha256,
+        verifier_key_sha256,
+        proof_sha256,
+        srs_sha256,
     );
 
     #[cfg(feature = "localnet")]
@@ -229,10 +234,28 @@ fn guarded_reads_generate_and_bind_a_native_v3_proof() {
         let mut receipt =
             futures::executor::block_on(localnet::finalize(context, &deployment, proved.native()))
                 .expect("guarded-read proof finalizes on the pinned localnet");
-        receipt["impactSha256"] = json!(crate::artifacts::digest(&impact));
-        receipt["zkirSha256"] = json!(crate::artifacts::digest(
-            &prepared.material.native.ir_source
-        ));
+        let entry_point = std::str::from_utf8(&attached_call.entry_point.0)
+            .expect("attached ledger entry point is UTF-8");
+        assert_eq!(
+            entry_point, plan.entrypoint,
+            "attached ledger entry point matches the checked plan"
+        );
+        let public_fields = statement["fields"]
+            .as_array()
+            .expect("native statement exposes ordered public fields");
+        let public_fields_json =
+            serde_json::to_vec(public_fields).expect("ordered public fields serialize as JSON");
+        receipt["impactSha256"] = json!(impact_sha256);
+        receipt["zkirSha256"] = json!(zkir_sha256);
+        receipt["proof"] = json!({
+            "version": 3,
+            "entryPoint": entry_point,
+            "publicFieldCount": public_fields.len(),
+            "publicFieldsSha256": crate::artifacts::digest(&public_fields_json),
+            "verifierKeySha256": verifier_key_sha256,
+            "proofSha256": proof_sha256,
+            "srsSha256": srs_sha256,
+        });
         if let Some(path) = env::var_os("NOCTIUM_GUARDED_READS_LOCALNET_RECEIPT") {
             fs::write(
                 path,
