@@ -33,7 +33,7 @@ try {
 
   const runtime = await import(pathToFileURL(join(runtimeDirectory, 'dist/index.js')).href);
   assert.equal(runtime.versionString, '0.21.0');
-  const { Contract } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
+  const { Contract, ledger } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   const contract = new Contract({});
   const wallet = '00'.repeat(32);
   const initial = await contract.initialState(runtime.createConstructorContext(null, wallet));
@@ -86,6 +86,27 @@ try {
   await assert.rejects(run('insertNestedOneByteSet', stateNestedSibling, Uint8Array.of(0), key1));
   await assert.rejects(run('insertNestedOneByteSet', stateNestedSibling, key0, Uint8Array.of(167, 168)));
 
+  const pageInitial = await contract.initialState(runtime.createConstructorContext(null, wallet));
+  let pageState = pageInitial.currentContractState.data;
+  const prefix = Array.from({ length: 32 }, (_, index) => index + 1);
+  const pageKey = suffix => Uint8Array.from([...prefix, suffix]);
+  for (const [suffix, value] of [[128, 80], [1, 10], [255, 255], [1, 11]]) {
+    const [inserted, nextState] = await run('insertBytes33', pageState, pageKey(suffix), BigInt(value));
+    assert.equal(inserted, BigInt(value));
+    pageState = nextState;
+  }
+
+  await assert.rejects(run('insertBytes33', pageState, Uint8Array.from(prefix), 1n));
+  const bytes33PageIterator = [...ledger(pageState).bytes33_values];
+  const bytes33PageEntries = bytes33PageIterator
+    .map(([key, value]) => ({ key: Array.from(key), value: value.toString() }))
+    .sort((left, right) => Buffer.compare(Buffer.from(left.key), Buffer.from(right.key)));
+  assert.deepEqual(bytes33PageEntries, [
+    { key: [...prefix, 1], value: '11' },
+    { key: [...prefix, 128], value: '80' },
+    { key: [...prefix, 255], value: '255' },
+  ]);
+
   console.log(JSON.stringify({
     fixture: 'FixedByteCollectionKeys',
     compact: compilerVersion,
@@ -103,6 +124,7 @@ try {
       siblingInsert: nestedSibling,
       rejectedLengths: { parent: 1, member: 2 },
     },
+    bytes33PageEntries,
     rejectedLengths: { bytes0: 1, bytes1: 2, bytes33: 32 },
   }, null, 2));
 } finally {

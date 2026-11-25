@@ -269,6 +269,48 @@ serializes each tagged snapshot. The C ABI replay checks all ten pages
 and rejects a tampered plan or snapshot hash. The Compact oracle derives
 the canonical page values independently by running the collection circuits.
 
+## Read Map pages with Bytes33 keys
+
+The paired replay uses the existing `Map<Bytes33, Native>` source state.
+The native test seeds it through the emitted `putWide` entrypoint and
+reads one tagged snapshot through `noctium_ledger_collection_page`.
+The replay sorts the entries from Compact's generated Map iterator by
+all 33 key bytes, then compares them with the two native pages in offset
+order.
+
+All keys share the first 32 bytes `01` through `20` in hex. The replay
+inserts suffix `80` with value 80, `01` with 10, and `ff` with 255, then
+overwrites `01` with 11. With limit 2, the first page returns `01` and
+`80` with `nextOffset: 2`. The second returns `ff` with `nextOffset: null`.
+Offset 3 returns an empty page with `nextOffset: null`. Each result
+retains the exact key width and the overwritten value. A wrong snapshot
+hash or malformed lookup key rejects.
+
+The replay uses Compact 0.36.1 (`7fa3a117c`) and Runtime 0.21.0, and
+Noctium Ledger 9.1.0.1 / ZKIR 3.2.1. It checks the existing native ABI
+on fresh source-generated artifacts and in-process state.
+[Lean fixture](../../tests/FixedByteCollectionKeys.lean) ·
+[Compact reference](../../tests/compact/fixed-byte-collection-keys.mjs) ·
+[Native check](../../runtime/tests/collection_reads.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/bytes33-map-pages.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/fixed-byte-collection-keys.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/FixedByteCollectionKeys.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_FIXED_BYTE_KEYS_DIR="$scratch/native" \
+NOCTIUM_BYTES33_PAGE_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test collection_reads \
+  bytes33_map_pages_match_compact_after_overwrite -- --ignored --exact
+```
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to

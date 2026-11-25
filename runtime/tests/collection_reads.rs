@@ -2402,3 +2402,114 @@ fn retained_collection_snapshot_pages_match_c_abi() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh FixedByteCollectionKeys artifacts and pinned Compact output"]
+fn bytes33_map_pages_match_compact_after_overwrite() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let artifact_directory =
+        std::path::PathBuf::from(std::env::var("NOCTIUM_FIXED_BYTE_KEYS_DIR")?);
+    let compact_path = std::path::PathBuf::from(std::env::var("NOCTIUM_BYTES33_PAGE_COMPACT")?);
+    let plan_path = artifact_directory.join("FixedByteGenericCollectionKeys.putWide.impact.json");
+    let plan_bytes = std::fs::read(&plan_path)?;
+    let put_plan: Plan = serde_json::from_slice(&plan_bytes)?;
+    let put_circuit = IrSource::load(std::fs::File::open(
+        artifact_directory.join("FixedByteGenericCollectionKeys.putWide.zkir"),
+    )?)?;
+    let compact: Value = serde_json::from_slice(&std::fs::read(compact_path)?)?;
+    assert_eq!(compact["compact"], "0.36.1 (7fa3a117c 2026-11-11)");
+    assert_eq!(compact["runtime"], "0.21.0");
+
+    let wide_slots: Vec<_> = put_plan
+        .state
+        .iter()
+        .enumerate()
+        .filter(|(_, declaration)| {
+            declaration.kind.get("map") == Some(&json!(["Bytes<33>", "Native"]))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(wide_slots.len(), 1, "putWide must target one Bytes<33> map");
+    let wide_slot = wide_slots[0];
+    let wide_state_name = &put_plan.state[wide_slot].name;
+
+    let empty_config = put_plan
+        .state
+        .iter()
+        .map(|declaration| (declaration.name.clone(), json!([])))
+        .collect();
+    let mut state = create_state(&put_plan, &empty_config)?;
+    let prefix: Vec<u8> = (1..=32).collect();
+    for (suffix, value) in [(128u8, 80u8), (1, 10), (255, 255), (1, 11)] {
+        let key: Vec<u8> = prefix
+            .iter()
+            .copied()
+            .chain(std::iter::once(suffix))
+            .collect();
+        let mut inputs: BTreeMap<String, Value> = key
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| (format!("key.{index}"), json!(byte.to_string())))
+            .collect();
+        inputs.insert("enabled".into(), json!(true));
+        inputs.insert("next".into(), json!(value.to_string()));
+
+        let execution = prepare(
+            &put_plan,
+            &inputs,
+            &state,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )?;
+        assert_eq!(
+            check(&execution, &put_circuit)?,
+            execution.activity_schedule
+        );
+        state = execution.after.state;
+    }
+
+    let snapshot = Snapshot::from_plan_bytes(plan_bytes, state);
+    let first_page = snapshot.page(wide_state_name, 0, 2);
+    assert_eq!(first_page["kind"], "map");
+    assert_eq!(first_page["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(first_page["nextOffset"], 2);
+    let next_offset = first_page["nextOffset"].as_u64().unwrap() as usize;
+    let second_page = snapshot.page(wide_state_name, next_offset, 2);
+    assert_eq!(second_page["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(second_page["nextOffset"], Value::Null);
+    let empty_page = snapshot.page(wide_state_name, 3, 2);
+    assert_eq!(empty_page["entries"], json!([]));
+    assert_eq!(empty_page["nextOffset"], Value::Null);
+
+    let native_entries: Vec<Value> = [&first_page, &second_page]
+        .into_iter()
+        .flat_map(|page| page["entries"].as_array().unwrap().iter())
+        .map(|entry| {
+            assert_eq!(entry["key"]["kind"], "bytes");
+            let key = entry["key"]["values"]
+                .as_array()
+                .expect("native Bytes key values");
+            assert_eq!(key.len(), 33, "native page key must retain all 33 bytes");
+            json!({"key": key, "value": entry["value"]})
+        })
+        .collect();
+    assert_eq!(json!(native_entries), compact["bytes33PageEntries"]);
+
+    let state_digest = artifacts::digest(&snapshot.state);
+    assert_eq!(
+        snapshot.status(wide_state_name, 0, 2, &"0".repeat(64)),
+        INVALID_ARGUMENT,
+        "reject a mismatched snapshot digest"
+    );
+    assert_eq!(
+        snapshot.lookup_status_at(
+            wide_state_name,
+            Vec::new(),
+            Some(json!({"kind":"bytes","values":vec![1u8;32]})),
+            &state_digest,
+        ),
+        INVALID_ARGUMENT,
+        "reject a 32-byte key for the Bytes<33> map"
+    );
+    Ok(())
+}
