@@ -858,6 +858,57 @@ theorem expectedEntrypoint_guards (state : List StateDecl) (entry : Entrypoint)
   exact ⟨outputFrame, guards, outputsAccepted, normalizedGuards,
     assertionMembers, boundMembers⟩
 
+/-- The checked native activity schedule is the normalized guard source of
+the exact lowered plan. Each guard's constraints and bounds remain in the
+accepted expected relation. -/
+theorem expectedEntrypoint_activity (state : List StateDecl) (entry : Entrypoint)
+    (expected : Expected) (plan : Backend.Impact.Plan)
+    (lowered : Backend.Impact.lower state entry = .ok plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty) :
+    ∃ (outputFrame : OutputFrame) (activity : List Normalized),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs =
+        .ok outputFrame ∧
+      (activityGuardSources plan).mapM
+        (normalizeActivityGuard entry outputFrame.1) = .ok activity ∧
+      expected.groupGuards = activity.map (·.term) ∧
+      (∀ term ∈ activity.flatMap (·.assertions), term ∈ expected.assertions) ∧
+      (∀ bound ∈ activity.flatMap (·.bounds), bound ∈ expected.bounds) := by
+  obtain ⟨partsPlan, outputFrame, aliases, inputState, conditions, guards,
+      constraintCollection, guardCollection, operationFrame, returns, activity,
+      planAccepted, outputsAccepted, aliasesAccepted, inputStateAccepted,
+      conditionsAccepted, guardsAccepted, constraintCollectionAccepted,
+      guardCollectionAccepted, operationAccepted, returnsAccepted, activityAccepted,
+      inputsShape, groupsShape, returnsShape, modeShape, rawInputsShape,
+      groupGuardsShape, assertionsShape, boundsShape⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : partsPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst partsPlan
+  have aliasesEq : aliases = outputFrame.1 :=
+    readAliasFold_preserves_outputFrame entry plan aliases outputFrame scalarReads aliasesAccepted
+  have normalizedActivity :
+      (activityGuardSources plan).mapM
+        (normalizeActivityGuard entry outputFrame.1) = .ok activity := by
+    simpa only [← aliasesEq] using activityAccepted
+  have expectedAssertionMembers :
+      ∀ term ∈ activity.flatMap (·.assertions), term ∈ expected.assertions := by
+    intro term member
+    rw [assertionsShape]
+    repeat apply List.mem_append_right
+    exact List.mem_flatMap.mpr (List.mem_flatMap.mp member)
+  have expectedBoundMembers :
+      ∀ bound ∈ activity.flatMap (·.bounds), bound ∈ expected.bounds := by
+    intro bound member
+    obtain ⟨item, itemMember, boundMember⟩ := List.mem_flatMap.mp member
+    rw [boundsShape]
+    repeat apply List.mem_append_right
+    exact List.mem_flatMap.mpr ⟨item, itemMember, boundMember⟩
+  exact ⟨outputFrame, activity, outputsAccepted, normalizedActivity,
+    groupGuardsShape, expectedAssertionMembers, expectedBoundMembers⟩
+
 /-- A checked expected entrypoint retains every normalized inactive default
 from a selected post-public read in its assertions and bounds. -/
 theorem expectedEntrypoint_inactiveDefault (state : List StateDecl) (entry : Entrypoint)

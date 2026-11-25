@@ -1,5 +1,5 @@
 import Noctium.Verification.ImpactReferenceEvaluation
-import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.ScalarNormalizationSoundness
 
 namespace Noctium.Verification.ImpactTypedEnvironment
 
@@ -117,6 +117,43 @@ private theorem lookup_mem (bindings : TypeEnv) {name : String} {ty : Ty}
         simp [List.lookup_cons, different] at found
         have inTail := ih found
         simp [inTail, same]
+
+private theorem scalarType_of_canonical {ty : Ty} {value : ty.Denote}
+    (canonical : Canonical ty value) : Nonempty (ScalarType ty) := by
+  cases ty with
+  | native => exact ⟨.native⟩
+  | bool => exact ⟨.bool⟩
+  | uint maximum => exact ⟨.uint maximum⟩
+  | bytes length => simp [Canonical, sourceNumber?] at canonical
+  | opaqueBytes => simp [Canonical, sourceNumber?] at canonical
+  | opaqueString => simp [Canonical, sourceNumber?] at canonical
+  | jubjubScalar => simp [Canonical, sourceNumber?] at canonical
+  | jubjubPoint => simp [Canonical, sourceNumber?] at canonical
+  | foreign kind => simp [Canonical, sourceNumber?] at canonical
+
+private theorem typed_value_eq_pack {ty : Ty} (support : ScalarType ty)
+    (raw : Value) (value : ty.Denote) (typed : raw.as ty = some value) :
+    raw = Value.pack ty value := by
+  cases support with
+  | native => cases raw <;> simp_all [Value.as, Value.pack]
+  | bool => cases raw <;> simp_all [Value.as, Value.pack]
+  | uint maximum => cases raw <;> simp_all [Value.as, Value.pack]
+
+/-- A typed source environment supplies canonical values for the native
+Impact reference semantics. -/
+theorem of_normalization {hash : NativeRelation.Hash} {inputs : NativeRelation.Assignment}
+    {aliases : Backend.Native.AliasEnvironment} {env : EvalEnv} {types : TypeEnv}
+    (environment : TypedEnvironment hash inputs aliases env types) :
+    ImpactReferenceEvaluation.TypedScalarEnv types env := by
+  intro name ty declared
+  obtain ⟨raw, value, found, typed⟩ := environment.complete name ty declared
+  have canonical : Canonical ty value :=
+    (environment.aliases name ty raw value found typed).1
+  obtain ⟨support⟩ := scalarType_of_canonical canonical
+  have packed := typed_value_eq_pack support raw value typed
+  refine ⟨value, ?_, canonical⟩
+  rw [← packed]
+  exact found
 
 /-- Every visible declaration has a canonical packed scalar value in the
 environment. The type and value lookups both use their first matching entry. -/

@@ -11,6 +11,127 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private def collectGroup (span : SourceSpan) (aliases : Native.AliasEnvironment)
+    (fields : List Impact.Scalar) :
+    Except Diagnostic (List Native.Term × List (Native.Term × Nat) × List Native.Term) :=
+  (do
+    let normalized ← fields.mapM (Native.normalize aliases)
+    pure (normalized.map Native.Normalized.term,
+      normalized.flatMap Native.Normalized.bounds,
+      normalized.flatMap Native.Normalized.assertions)).mapError
+        (fun message => {span, message})
+
+private theorem listMapM_length {α β} {items : List α} {values : List β}
+    {f : α → Except ε β} (accepted : items.mapM f = .ok values) :
+    values.length = items.length := by
+  induction items generalizing values with
+  | nil =>
+    simp only [List.mapM_nil, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+    cases accepted
+    rfl
+  | cons item rest ih =>
+    cases first : f item with
+    | error message =>
+      simp [List.mapM_cons, first, Bind.bind, Except.bind] at accepted
+    | ok head =>
+      cases tail : rest.mapM f with
+      | error message =>
+        simp [List.mapM_cons, first, tail, Bind.bind, Except.bind] at accepted
+      | ok tailValues =>
+        simp [List.mapM_cons, first, tail, Bind.bind, Except.bind] at accepted
+        cases accepted
+        simp [ih tail]
+
+private theorem collectGroup_width (span : SourceSpan) (aliases : Native.AliasEnvironment)
+    (fields : List Impact.Scalar) (terms : List Native.Term)
+    (bounds : List (Native.Term × Nat)) (assertions : List Native.Term)
+    (accepted : collectGroup span aliases fields = .ok (terms, bounds, assertions)) :
+    terms.length = fields.length := by
+  unfold collectGroup at accepted
+  cases normalizationResult : fields.mapM (Native.normalize aliases) with
+  | error message => simp [normalizationResult, Functor.map, Except.map, Except.mapError] at accepted
+  | ok normalized =>
+    simp [normalizationResult, Functor.map, Except.map, Except.mapError] at accepted
+    have termsShape : terms = normalized.map Native.Normalized.term := accepted.1.symm
+    rw [termsShape]
+    simpa using listMapM_length normalizationResult
+
+private theorem collectGroup_widths (span : SourceSpan) (aliases : Native.AliasEnvironment)
+    (fieldGroups : List (List Impact.Scalar))
+    (pieces : List (List Native.Term × List (Native.Term × Nat) × List Native.Term))
+    (accepted : fieldGroups.mapM (collectGroup span aliases) = .ok pieces) :
+    pieces.map (fun piece => piece.1.length) = fieldGroups.map List.length := by
+  induction fieldGroups generalizing pieces with
+  | nil =>
+    simp only [List.mapM_nil, Pure.pure, Except.pure, Except.ok.injEq] at accepted
+    cases accepted
+    rfl
+  | cons fields rest ih =>
+    simp only [List.mapM_cons, bind_ok] at accepted
+    obtain ⟨head, headAccepted, tail, tailAccepted, shape⟩ := accepted
+    cases shape
+    have headWidth := collectGroup_width span aliases fields head.1 head.2.1 head.2.2
+      headAccepted
+    have tailWidths := ih tail tailAccepted
+    simp [headWidth, tailWidths]
+
+private theorem collectOperation_group_widths (span : SourceSpan)
+    (aliases : Native.AliasEnvironment) (operation : Impact.Op)
+    (groups : List (List Native.Term)) (bounds : List (Native.Term × Nat))
+    (assertions : List Native.Term)
+    (accepted : Native.collectOperation span aliases operation =
+      .ok (groups, bounds, assertions)) :
+    groups.map List.length = operation.fieldGroups.map List.length := by
+  unfold Native.collectOperation at accepted
+  simp only [bind_ok] at accepted
+  simp only [Native.convert_eq_mapError, Native.collect_eq] at accepted
+  obtain ⟨pieces, piecesAccepted, shape⟩ := accepted
+  cases shape
+  have exactPieces : operation.fieldGroups.mapM (collectGroup span aliases) = .ok pieces := by
+    change operation.fieldGroups.mapM (collectGroup span aliases) = .ok pieces
+    exact piecesAccepted
+  have collectedWidths := collectGroup_widths span aliases operation.fieldGroups pieces exactPieces
+  simpa only [List.map_map, Function.comp_def] using collectedWidths
+
+/-- Successful native field collection preserves every operation group width
+and its order, independent of the scalar VM's admitted opcode fragment. -/
+theorem collectOperations_group_widths (span : SourceSpan)
+    (aliases : Native.AliasEnvironment) (operations : List Impact.Op)
+    (initialBounds : List (Native.Term × Nat)) (groups : List (List Native.Term))
+    (bounds : List (Native.Term × Nat)) (assertions : List Native.Term)
+    (accepted : Native.collectOperations span aliases operations initialBounds =
+      .ok (groups, bounds, assertions)) :
+    groups.map List.length = operations.flatMap
+      (fun operation => operation.fieldGroups.map List.length) := by
+  unfold Native.collectOperations at accepted
+  simp only [bind_ok] at accepted
+  obtain ⟨pieces, piecesAccepted, shape⟩ := accepted
+  cases shape
+  have collectedWidths : ∀ (operations : List Impact.Op)
+      (pieces : List (List (List Native.Term) × List (Native.Term × Nat) × List Native.Term)),
+      operations.mapM (Native.collectOperation span aliases) = .ok pieces →
+      (pieces.flatMap (·.1)).map List.length =
+        operations.flatMap (fun operation => operation.fieldGroups.map List.length) := by
+    intro operations
+    induction operations with
+    | nil =>
+      intro pieces piecesAccepted
+      simp only [List.mapM_nil, Pure.pure, Except.pure, Except.ok.injEq] at piecesAccepted
+      cases piecesAccepted
+      rfl
+    | cons operation rest ih =>
+      intro pieces piecesAccepted
+      simp only [List.mapM_cons, bind_ok] at piecesAccepted
+      obtain ⟨head, headAccepted, tail, tailAccepted, shape⟩ := piecesAccepted
+      cases shape
+      have headWidths := collectOperation_group_widths span aliases operation
+        head.1 head.2.1 head.2.2 headAccepted
+      have tailWidths := ih tail tailAccepted
+      simp only [List.flatMap_cons, List.map_append]
+      rw [headWidths, tailWidths]
+  simpa only [List.flatMap_map, Function.comp_def] using
+    collectedWidths operations pieces piecesAccepted
+
 /-- Each supported scalar VM operation has one ordered public field group. -/
 private theorem fieldGroups_eq_singleton {operation : Impact.Op}
     (supported : GenericStateOps.ScalarOperation operation) :

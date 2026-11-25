@@ -58,6 +58,16 @@ def admitsScalarPlan (keyWidth : Nat → Option Nat) (plan : Impact.Plan) : _roo
     (project? op).isSome && operandsSupported op && keyWidthSupported keyWidth op) &&
   plan.activityGuards.all (Option.all (fun guard => (ScalarExpressionAdmission.certify guard).isSome))
 
+theorem admitsScalarPlan_single_groups {keyWidth : Nat → Option Nat} {plan : Impact.Plan}
+    (admitted : admitsScalarPlan keyWidth plan = Bool.true) :
+    ∀ op ∈ plan.operations, op.fieldGroups = [op.fields] := by
+  intro op inside
+  have checked := List.all_eq_true.mp (Bool.and_eq_true_iff.mp admitted).1 op inside
+  have projects := (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).1).1
+  cases projected : project? op with
+  | none => simp [projected] at projects
+  | some wire => cases project?_sound projected <;> simp [Impact.Op.fieldGroups]
+
 private theorem guard_mem_of_at (plan : Impact.Plan) (index : Nat) (guard : Expr .bool)
     (selected : plan.activityGuards[index]?.getD none = some guard) :
     some guard ∈ plan.activityGuards := by
@@ -77,7 +87,7 @@ theorem evaluations_fromBytes_agree
     (ctor : Option Constructor) (ep : Entrypoint) (plan : Impact.Plan)
     (standaloneFile : _root_.Bool)
     (ctx : EvalContext) (modulus : ctx.modulus = Field.modulus)
-    {env : EvalEnv} (environmentChecked : ImpactTypedEnvironment.check (plan.typeEnvironment ep) env = Bool.true)
+    {env : EvalEnv} (typed : TypedScalarEnv (plan.typeEnvironment ep) env)
     (keyWidth : Nat → Option Nat)
     (admitted : admitsScalarPlan keyWidth plan = Bool.true)
     (budget : Nat) (bytes : ArtifactBytes.Bytes)
@@ -93,7 +103,6 @@ theorem evaluations_fromBytes_agree
             List.flatten := by
   let emitted := Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile
   let projected := projectedOperation plan
-  have typed := ImpactTypedEnvironment.check_sound environmentChecked
   obtain ⟨operationCheck, guardCheck⟩ := Bool.and_eq_true_iff.mp admitted
   have checkedOp (op : Impact.Op) (inside : op ∈ plan.operations) :=
     Bool.and_eq_true_iff.mp (List.all_eq_true.mp operationCheck op inside)
@@ -195,7 +204,8 @@ theorem fromBytes_nativePlanJson_agrees
     ∃ minimum, ∀ fuel, minimum ≤ fuel →
       fromBytes fuel ctx env keyWidth bytes inputs = fromEntrypoint ctx env state ep inputs := by
   obtain ⟨minimum, agrees⟩ := evaluations_fromBytes_agree profile contractName state ctor ep plan
-    standaloneFile ctx modulus environmentChecked keyWidth admitted budget bytes lowered matched
+    standaloneFile ctx modulus (ImpactTypedEnvironment.check_sound environmentChecked)
+    keyWidth admitted budget bytes lowered matched
   refine ⟨minimum, ?_⟩
   intro fuel enough
   obtain ⟨raw, parsed, operationsMatch, activityMatches⟩ := agrees fuel enough
