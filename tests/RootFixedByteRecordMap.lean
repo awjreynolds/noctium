@@ -38,10 +38,19 @@ noctium_contract RootFixedByteRecordMap where
     return lateRemaining : Bool := lateAfter
     return retained : UInt 16 := retainedValue
   end
+
+  entry insertPair uses rootFixedByteRecordMapInputs where
+    insert memos[fields(disclose(tag), disclose(firstId))] := disclose(firstValue)
+    insert memos[fields(disclose(tag), disclose(lateId))] := disclose(lateValue)
+  end
 end
 
 private def rootFixedByteRecordMapEntry : Entrypoint :=
   (RootFixedByteRecordMap.entrypoints.find? (·.name == "update")).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+private def rootFixedByteRecordMapInsertPairEntry : Entrypoint :=
+  (RootFixedByteRecordMap.entrypoints.find? (·.name == "insertPair")).getD
     {name := "missing", circuit := {name := "missing"}}
 
 private def rootFixedByteRecordMapContext : EvalContext := {
@@ -88,6 +97,26 @@ private def rootFixedByteRecordMapRun (tag : List Nat) (firstId lateId : List Na
       state.trees.lookup "memos" == some (.map [
         (.record [(.bytes 1, [7]), (.bytes 33, byteRange 32 3 ++ [4])],
           .scalar (.uint 65535 303))])
+  | .error _ => _root_.Bool.false
+
+#guard match rootFixedByteRecordMapInsertPairEntry.run rootFixedByteRecordMapContext [
+    ("tag", .bytes 1 [7]), ("firstId", .bytes 33 (byteRange 33 3)),
+    ("lateId", .bytes 33 (byteRange 32 3 ++ [4])),
+    ("firstValue", .uint 65535 101), ("lateValue", .uint 65535 303)] {
+      trees := [("memos", .map [])]
+    } with
+  | .ok (_, state) =>
+      match state.trees.lookup "memos" with
+      | some (.map [first, second]) =>
+          (first == (.record [(.bytes 1, [7]), (.bytes 33, byteRange 33 3)],
+            .scalar (.uint 65535 101)) &&
+            second == (.record [(.bytes 1, [7]), (.bytes 33, byteRange 32 3 ++ [4])],
+              .scalar (.uint 65535 303))) ||
+          (second == (.record [(.bytes 1, [7]), (.bytes 33, byteRange 33 3)],
+            .scalar (.uint 65535 101)) &&
+            first == (.record [(.bytes 1, [7]), (.bytes 33, byteRange 32 3 ++ [4])],
+              .scalar (.uint 65535 303)))
+      | _ => _root_.Bool.false
   | .error _ => _root_.Bool.false
 
 #guard match rootFixedByteRecordMapEntry.run rootFixedByteRecordMapContext [

@@ -172,7 +172,8 @@ int32_t noctium_native_composition_owner_free(uint64_t owner);
    ascending typed order. Numeric values sort numerically, Bool sorts false before
    true, byte values sort lexicographically, and foreign keys sort by canonical
    bytes. Record Map and Set keys sort lexicographically by declared field order.
-   Supported record key fields are Native, Bool, UInt and Bytes32. Qualified shielded coin Set members return record JSON and sort by
+   Supported record key fields are Native, Bool, UInt and checked fixed-width
+   Bytes. Qualified shielded coin Set members return record JSON and sort by
    nonce bytes, color bytes, numeric value, then numeric mtIndex. Use an empty keys
    array for a root collection. To read a nested collection, provide one typed
    key per enclosing Map. The path must resolve to a supported Map, Set, or List. List pages validate each linked node's count and empty sentinel.

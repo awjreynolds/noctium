@@ -1887,6 +1887,126 @@ fn record_key_map_pages_sort_and_validate_typed_keys() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires fresh RootFixedByteRecordMap.insertPair outputs and pinned Compact output"]
+fn record_key_map_pages_with_fixed_bytes_match_compact() -> anyhow::Result<()> {
+    let _guard = PAGE_TESTS.lock().unwrap();
+    let directory =
+        std::path::PathBuf::from(std::env::var("NOCTIUM_FIXED_RECORD_MAP_PAGE_DIR")?);
+    let compact_path =
+        std::path::PathBuf::from(std::env::var("NOCTIUM_FIXED_RECORD_MAP_PAGE_COMPACT")?);
+    let stem = "RootFixedByteRecordMap.insertPair";
+    let plan_bytes = std::fs::read(directory.join(format!("{stem}.impact.json")))?;
+    let plan: Plan = serde_json::from_slice(&plan_bytes)?;
+    let circuit = IrSource::load(std::fs::File::open(directory.join(format!("{stem}.zkir")))?)?;
+    let compact: Value = serde_json::from_slice(&std::fs::read(compact_path)?)?;
+    assert_eq!(compact["compact"], "0.36.1 (7fa3a117c 2026-11-11)");
+    assert_eq!(compact["runtime"], "0.21.0");
+
+    let tag = [7u8];
+    let first_id = [3u8; 33];
+    let mut late_id = first_id;
+    late_id[32] = 4;
+    let empty = create_state(&plan, &BTreeMap::from([("memos".into(), json!([]))]))?;
+    let snapshot = |reverse: bool| -> anyhow::Result<Snapshot> {
+        let (first_id, first_value, late_id, late_value) = if reverse {
+            (&late_id, 303u16, &first_id, 101u16)
+        } else {
+            (&first_id, 101u16, &late_id, 303u16)
+        };
+        let arguments = BTreeMap::from([
+            (
+                "tag".into(),
+                json!({"kind":"bytes", "values":tag.as_slice()}),
+            ),
+            (
+                "firstId".into(),
+                json!({"kind":"bytes", "values":first_id.as_slice()}),
+            ),
+            (
+                "lateId".into(),
+                json!({"kind":"bytes", "values":late_id.as_slice()}),
+            ),
+            ("firstValue".into(), json!(first_value.to_string())),
+            ("lateValue".into(), json!(late_value.to_string())),
+        ]);
+        let execution = prepare(
+            &plan,
+            &arguments,
+            &empty,
+            &ledger::structure::INITIAL_PARAMETERS,
+            coin_structure::contract::ContractAddress::default(),
+        )?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        Ok(Snapshot::from_plan_bytes(
+            plan_bytes.clone(),
+            execution.after.state,
+        ))
+    };
+
+    let forward = snapshot(false)?;
+    let reverse = snapshot(true)?;
+    let compact_entries = compact["recordMapPageEntries"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Compact output is missing recordMapPageEntries"))?;
+    assert_eq!(compact_entries.len(), 2);
+    for snapshot in [&forward, &reverse] {
+        let first_page = snapshot.page("memos", 0, 1);
+        let next_offset = first_page["nextOffset"].as_u64().unwrap() as usize;
+        assert_eq!(next_offset, 1);
+        let late_page = snapshot.page("memos", next_offset, 1);
+        for (page, expected_offset) in [(&first_page, json!(1)), (&late_page, Value::Null)] {
+            assert_eq!(page["abiVersion"], 1);
+            assert_eq!(page["kind"], "map");
+            assert_eq!(page["entries"].as_array().unwrap().len(), 1);
+            assert_eq!(page["nextOffset"], expected_offset);
+        }
+        assert_eq!(
+            snapshot.page("memos", 2, 1),
+            json!({
+                "abiVersion": 1,
+                "kind": "map",
+                "entries": [],
+                "nextOffset": null
+            })
+        );
+
+        assert_eq!(
+            [&first_page["entries"][0], &late_page["entries"][0]],
+            [&compact_entries[0], &compact_entries[1]]
+        );
+    }
+
+    fn aligned_bytes(value: &[u8]) -> AlignedValue {
+        AlignedValue::new(
+            FabValue(vec![ValueAtom::from(value)]),
+            Alignment::singleton(AlignmentAtom::Bytes {
+                length: value.len() as u32,
+            }),
+        )
+        .unwrap()
+    }
+    let malformed_key = AlignedValue::concat(&[
+        aligned_bytes(&tag),
+        aligned_bytes(&first_id[..32]),
+    ]);
+    let malformed_map = HashMap::new().insert(
+        malformed_key,
+        StateValue::Cell(Sp::new(field_value(Fr::from(101u64)))),
+    );
+    let malformed = Snapshot::from_plan_bytes(
+        plan_bytes,
+        ChargedState::new(StateValue::Array(
+            vec![StateValue::Map(malformed_map)].into(),
+        )),
+    );
+    assert_eq!(
+        malformed.status("memos", 0, 1, &artifacts::digest(&malformed.state)),
+        INVALID_ARGUMENT
+    );
+    Ok(())
+}
+
+#[test]
 fn nested_scalar_collection_pages_follow_typed_paths() {
     let _guard = PAGE_TESTS.lock().unwrap();
     let snapshot = nested_collection_snapshot();
