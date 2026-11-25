@@ -3004,6 +3004,7 @@
       ],
       "observedEvidence": [
         "runtime/tests/collection_reads.rs",
+        "tests/fixtures/native-collection-pages/manifest.json",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs",
@@ -3512,6 +3513,7 @@
       "observedEvidence": [
         "tests/TypedRecordMapKey.lean",
         "runtime/tests/collection_reads.rs",
+        "tests/fixtures/native-collection-pages/manifest.json",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs"
@@ -3813,6 +3815,7 @@
       ],
       "observedEvidence": [
         "runtime/tests/collection_reads.rs",
+        "tests/fixtures/native-collection-pages/manifest.json",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs"

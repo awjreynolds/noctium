@@ -51,6 +51,10 @@ export circuit add(tag: Bytes<32>): [] {
   members.insert(disclose(tag));
 }
 
+export circuit remove(tag: Bytes<32>): [] {
+  members.remove(disclose(tag));
+}
+
 export circuit prepend(value: Field): [] {
   values.pushFront(disclose(value));
 }

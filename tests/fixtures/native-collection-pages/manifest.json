@@ -1,0 +1,350 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [],
+        "kind": "map",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "flags",
+      "offset": 0,
+      "snapshot": "empty"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [],
+        "kind": "set",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "members",
+      "offset": 0,
+      "snapshot": "empty"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [],
+        "kind": "list",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "values",
+      "offset": 0,
+      "snapshot": "empty"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          {
+            "key": "1",
+            "value": true
+          },
+          {
+            "key": "2",
+            "value": false
+          }
+        ],
+        "kind": "map",
+        "nextOffset": 2
+      },
+      "limit": 2,
+      "name": "flags",
+      "offset": 0,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          {
+            "key": "10",
+            "value": true
+          }
+        ],
+        "kind": "map",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "flags",
+      "offset": 2,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          {
+            "kind": "bytes",
+            "values": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          {
+            "kind": "bytes",
+            "values": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ]
+          }
+        ],
+        "kind": "set",
+        "nextOffset": 2
+      },
+      "limit": 2,
+      "name": "members",
+      "offset": 0,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          {
+            "kind": "bytes",
+            "values": [
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9
+            ]
+          }
+        ],
+        "kind": "set",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "members",
+      "offset": 2,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          "11",
+          "22"
+        ],
+        "kind": "list",
+        "nextOffset": 2
+      },
+      "limit": 2,
+      "name": "values",
+      "offset": 0,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          "33"
+        ],
+        "kind": "list",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "values",
+      "offset": 2,
+      "snapshot": "populated"
+    },
+    {
+      "expected": {
+        "abiVersion": 1,
+        "entries": [
+          {
+            "kind": "bytes",
+            "values": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          {
+            "kind": "bytes",
+            "values": [
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9,
+              9
+            ]
+          }
+        ],
+        "kind": "set",
+        "nextOffset": null
+      },
+      "limit": 2,
+      "name": "members",
+      "offset": 0,
+      "snapshot": "removed"
+    }
+  ],
+  "plan": {
+    "file": "plan.impact.json",
+    "sha256": "b118fa296c5dadc9bd2bc709762ae7f8aaf7d50c4771ebb4fbc0f6aca7c697ab"
+  },
+  "schemaVersion": 1,
+  "snapshots": {
+    "empty": {
+      "file": "empty.state",
+      "sha256": "dcaddae632fe51a9cf078590bc57684fd9d2031d5692ee8c4d5a9a9fb09c7998"
+    },
+    "populated": {
+      "file": "populated.state",
+      "sha256": "93cac1198dfeb5849e9f9e648a8cbff029080ec8625143db93c01651dadfd965"
+    },
+    "removed": {
+      "file": "removed.state",
+      "sha256": "96f40179e5eb22e12c282796b13ba9263f8e6d845afcc76f42d5c6abb28d437c"
+    }
+  }
+}

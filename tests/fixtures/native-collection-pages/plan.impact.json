@@ -1,0 +1,52 @@
+{
+  "operations": [],
+  "schemaVersion": 1,
+  "state": [
+    {
+      "kind": {
+        "map": [
+          "Native",
+          "Bool"
+        ]
+      },
+      "name": "flags"
+    },
+    {
+      "kind": {
+        "tree": {
+          "set": "Bytes<32>"
+        }
+      },
+      "name": "members"
+    },
+    {
+      "kind": {
+        "tree": {
+          "list": {
+            "scalar": "Native"
+          }
+        }
+      },
+      "name": "values"
+    }
+  ],
+  "target": "midnight-ledger-9-zkir-3.2.1",
+  "targetProfile": {
+    "circuits": "7.3.0",
+    "ledger": "9.1.0.1",
+    "name": "midnight-ledger-9-zkir-3.2.1",
+    "nativeSource": {
+      "declaredCrateVersion": "3.2.0",
+      "reportedCliVersion": "midnight-zkir 3.2.0",
+      "repository": "https://github.com/midnightntwrk/midnight-zkir",
+      "revision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+      "tag": "zkir-3.2.1"
+    },
+    "onchainRuntime": "4.0.1",
+    "proofServer": "9.0.0",
+    "qualification": "selected-native-subset-qualified",
+    "schemaVersion": 1,
+    "zkStdlib": "2.4.0",
+    "zkir": "3.2.1"
+  }
+}
