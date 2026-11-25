@@ -398,7 +398,7 @@
       "layer": "language",
       "surface": "Bytes<n>",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed byte lengths 0 through 1024, literals with right padding, typed operations and bounded FAB chunks. Readable packBytes constructs ordinary Bytes from checked octets and sequence spreads. The paired Compact 0.36.1 and native cases match the reversed payload and witness order, including the zero-width callback. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open.",
+      "notes": "Lean supports fixed byte lengths 0 through 1024, literals with right padding, typed operations and bounded FAB chunks. Readable packBytes constructs ordinary Bytes from checked octets and sequence spreads. The paired Compact 0.36.1 and native cases match the reversed payload and witness order, including the zero-width callback. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open. A matched Bytes33 Map replay distinguishes keys sharing 32 bytes and preserves the full 33-byte keys through an overwrite and native pagination.",
       "source": [
         "reference"
       ],
@@ -407,6 +407,10 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/FixedByteCollectionKeys.lean",
+        "tests/compact/fixed-byte-collection-keys.mjs",
+        "runtime/tests/collection_reads.rs",
+        "docs/development/native-client-abi.md",
         "docs/development/fixed-bytes.md",
         "tests/ReadableRecordConstruction.lean",
         "tests/compact/readable-record-construction.mjs",
@@ -3533,7 +3537,7 @@
       "layer": "host-ledger-view",
       "surface": "Map.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. Wider compound keys and SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. Wider compound keys and SDK adapters remain open. The pinned Compact iterator for a Bytes33 Map matches two joined native pages after sorting by all 33 key bytes. Three shared-prefix keys stay distinct through an overwrite. The native reader checks an empty end page and rejects a mismatched snapshot digest.",
       "source": [
         "adt"
       ],
@@ -3542,6 +3546,9 @@
         "HOST"
       ],
       "observedEvidence": [
+        "tests/FixedByteCollectionKeys.lean",
+        "tests/compact/fixed-byte-collection-keys.mjs",
+        "docs/development/native-client-abi.md",
         "tests/TypedRecordMapKey.lean",
         "runtime/tests/collection_reads.rs",
         "tests/fixtures/native-collection-pages/manifest.json",
