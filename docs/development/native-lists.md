@@ -199,6 +199,45 @@ rejects. The native relation also rejects a changed Compress field.
 [Compact oracle](../../tests/compact/nested-opaque-lists.mjs) ·
 [Native checker](../../runtime/tests/nested_opaque_lists.rs)
 
+### Opaque strings below two Bytes32 parents
+
+Declare `tree deepTexts : Bytes32 => Bytes32 => List OpaqueString` to
+select a List by owner and group. The fixture initializes each group as
+an empty List before writing. `headOrDefault` returns the typed Maybe
+`{is_some: false, value: ""}` for a present empty List. A strict read of
+a missing owner or group rejects.
+
+The paired fixture uses owner `0x51` and groups `0x52` and `0x53`, each
+byte repeated 32 times. The first group receives `A\0夜\0B` followed by
+`deep-second`. The sibling receives `group-b`. After two pops the first
+group returns to the canonical empty head and the sibling retains its
+exact head. Noctium checks the raw UTF-8 FAB Compress atom and the ZKIR
+relation for each stage. `\0` denotes an embedded NUL. Missing owner
+`0x54` and missing group `0x55` both reject.
+
+Replay against Compact 0.36.1 (`7fa3a117c`) and Runtime 0.21.0. The
+Compact reference uses the generated contract with `--skip-zk`. Both
+replays include the one-parent case. The native run uses the in-process
+ledger checker with the Ledger 9.1.0.1 / ZKIR 3.2.1 profile.
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/nested-opaque-lists.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/nested-opaque-lists.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/NestedOpaqueLists.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_NESTED_OPAQUE_LISTS_DIR="$scratch/native" \
+NOCTIUM_NESTED_OPAQUE_LISTS_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test nested_opaque_lists \
+  nested_opaque_string_lists_match_compact_and_preserve_map_siblings -- --ignored --exact
+```
+
 ## Check emptiness for zero-width and nested record Lists
 
 The paired fixture compares an empty `List<Bytes<0>>` with a List containing

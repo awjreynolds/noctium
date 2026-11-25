@@ -14,8 +14,20 @@ noctium_circuit nestedOpaqueStringWrite where
   public text : OpaqueString
 end
 
+noctium_circuit nestedOpaqueDeepStringPath where
+  public owner : Bytes32
+  public group : Bytes32
+end
+
+noctium_circuit nestedOpaqueDeepStringWrite where
+  public owner : Bytes32
+  public group : Bytes32
+  public text : OpaqueString
+end
+
 noctium_contract NestedOpaqueLists where
   tree texts : Bytes32 => List OpaqueString
+  tree deepTexts : Bytes32 => Bytes32 => List OpaqueString
 
   entry clear uses nestedOpaqueStringPath where
     reset texts[disclose(owner)]
@@ -33,6 +45,28 @@ noctium_contract NestedOpaqueLists where
   entry pop uses nestedOpaqueStringPath where
     popFront texts[disclose(owner)]
   end
+
+  entry clearDeep uses nestedOpaqueDeepStringPath where
+    member deepTexts[disclose(owner)] as ownerPresent
+    if eq(ownerPresent, false) then {
+      insert deepTexts[disclose(owner)] := emptyMap
+    } else {
+    }
+    reset deepTexts[disclose(owner)][disclose(group)]
+  end
+
+  entry pushDeep uses nestedOpaqueDeepStringWrite where
+    pushFront deepTexts[disclose(owner)][disclose(group)] := disclose(text)
+  end
+
+  entry inspectDeep uses nestedOpaqueDeepStringPath where
+    headOrDefault deepTexts[disclose(owner)][disclose(group)] as (present, currentText)
+    returnMaybe textHead as (present, currentText)
+  end
+
+  entry popDeep uses nestedOpaqueDeepStringPath where
+    popFront deepTexts[disclose(owner)][disclose(group)]
+  end
 end
 
 private def nestedOpaqueStringEntry (name : String) : Entrypoint :=
@@ -40,7 +74,9 @@ private def nestedOpaqueStringEntry (name : String) : Entrypoint :=
     {name := "missing", circuit := {name := "missing"}}
 
 #guard match NestedOpaqueLists.state with
-  | [{name := "texts", kind := .tree (.map (.bytes 32) (.list _ (.scalar .opaqueString))), ..}] => Bool.true
+  | [{name := "texts", kind := .tree (.map (.bytes 32) (.list _ (.scalar .opaqueString))), ..},
+     {name := "deepTexts", kind := .tree (.map (.bytes 32)
+       (.map (.bytes 32) (.list _ (.scalar .opaqueString)))), ..}] => Bool.true
   | _ => Bool.false
 
 #guard match LedgerValueType.validate Capabilities.source
@@ -50,6 +86,12 @@ private def nestedOpaqueStringEntry (name : String) : Entrypoint :=
 
 #guard match LedgerValueType.validate Capabilities.source
     (.map (.bytes 32) (.map (.bytes 32) (.list {} (.scalar .opaqueString)))) with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard match LedgerValueType.validate Capabilities.source
+    (.map (.bytes 32) (.map (.bytes 32)
+      (.map (.bytes 32) (.list {} (.scalar .opaqueString))))) with
   | .error _ => Bool.true
   | .ok _ => Bool.false
 
@@ -81,5 +123,16 @@ private def nestedOpaqueStringEntry (name : String) : Entrypoint :=
 
 #guard match Backend.Zkir.lowerPrunedEntrypoint NestedOpaqueLists.state
     (nestedOpaqueStringEntry "pop") with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard ["clearDeep", "pushDeep", "inspectDeep", "popDeep"].all fun name =>
+  match Backend.Impact.lower NestedOpaqueLists.state (nestedOpaqueStringEntry name) with
+  | .ok _ => Bool.true
+  | .error _ => Bool.false
+
+#guard ["clearDeep", "pushDeep", "inspectDeep", "popDeep"].all fun name =>
+  match Backend.Zkir.lowerPrunedEntrypoint NestedOpaqueLists.state
+      (nestedOpaqueStringEntry name) with
   | .ok _ => Bool.true
   | .error _ => Bool.false

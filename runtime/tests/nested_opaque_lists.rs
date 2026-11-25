@@ -3,9 +3,9 @@
 use anyhow::Result;
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue, ValueAtom};
 use coin_structure::contract::ContractAddress;
-use noctium_runtime::{check, create_state, prepare, zkir::IrSource, Execution, Plan};
+use noctium_runtime::{Execution, Plan, check, create_state, prepare, zkir::IrSource};
 use onchain_runtime::state::{ChargedState, StateValue};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use transient_crypto::curve::Fr;
 use transient_crypto::fab::AlignedValueExt;
@@ -22,10 +22,12 @@ fn compact_oracle() -> Json {
         .expect("set pinned Compact output in NOCTIUM_NESTED_OPAQUE_LISTS_COMPACT");
     let oracle: Json = serde_json::from_slice(&fs::read(path).expect("read Compact output"))
         .expect("parse Compact output");
-    assert!(oracle["compact"]
-        .as_str()
-        .unwrap()
-        .starts_with("0.36.1 (7fa3a117c"));
+    assert!(
+        oracle["compact"]
+            .as_str()
+            .unwrap()
+            .starts_with("0.36.1 (7fa3a117c")
+    );
     assert_eq!(oracle["runtime"], "0.21.0");
     oracle
 }
@@ -51,13 +53,14 @@ fn owner_bytes(oracle: &Json, name: &str) -> [u8; 32] {
         .unwrap()
 }
 
-fn inputs(plan: &Plan, owner: [u8; 32], text: &str) -> BTreeMap<String, Json> {
+fn inputs(plan: &Plan, keys: &[[u8; 32]], text: &str) -> BTreeMap<String, Json> {
     plan.circuit
         .inputs
         .iter()
         .map(|input| {
             let value = match input.name.as_str() {
-                "owner" => json!({"kind":"bytes", "values":owner}),
+                "owner" => json!({"kind":"bytes", "values":keys[0]}),
+                "group" => json!({"kind":"bytes", "values":keys[1]}),
                 "text" => json!({"kind":"opaqueString", "value":text}),
                 other => panic!("unexpected input {other}"),
             };
@@ -77,13 +80,13 @@ fn compressed(bytes: &[u8]) -> AlignedValue {
 fn run(
     plan: &Plan,
     circuit: &IrSource,
-    owner: [u8; 32],
+    keys: &[[u8; 32]],
     text: &str,
     state: &ChargedState<noctium_runtime::Db>,
 ) -> Execution {
     let execution = prepare(
         plan,
-        &inputs(plan, owner, text),
+        &inputs(plan, keys, text),
         state,
         &ledger::structure::INITIAL_PARAMETERS,
         ContractAddress::default(),
@@ -110,7 +113,8 @@ fn assert_head(execution: &Execution, compact_expected: &Json) {
 fn assert_map_list(
     state: &ChargedState<noctium_runtime::Db>,
     plan: &Plan,
-    owner: [u8; 32],
+    name: &str,
+    keys: &[[u8; 32]],
     expected: Option<&[u8]>,
 ) {
     let StateValue::Array(root) = state.get_ref() else {
@@ -119,17 +123,16 @@ fn assert_map_list(
     let slot = plan
         .state
         .iter()
-        .position(|declaration| declaration.name == "texts")
-        .expect("texts Map declaration");
-    let StateValue::Map(map) = root.get(slot).expect("texts Map slot") else {
-        panic!("expected root Map")
-    };
-    let key: AlignedValue = owner.into();
-    let Some(value) = map.get(&key) else {
-        assert!(expected.is_none(), "expected owner Map entry");
-        return;
-    };
-    let StateValue::Array(list) = &*value else {
+        .position(|declaration| declaration.name == name)
+        .expect("List Map declaration");
+    let mut value = root.get(slot).expect("List Map slot").clone();
+    for key in keys {
+        let StateValue::Map(map) = &value else {
+            panic!("expected a Map on the List path")
+        };
+        value = (*map.get(&AlignedValue::from(*key)).expect("List Map entry")).clone();
+    }
+    let StateValue::Array(list) = &value else {
         panic!("expected nested List node")
     };
     match expected {
@@ -151,13 +154,14 @@ fn nested_opaque_string_lists_match_compact_and_preserve_map_siblings() -> Resul
     let first_text = oracle["first"].as_str().unwrap();
     let second_text = oracle["second"].as_str().unwrap();
     let sibling_text = oracle["siblingValue"].as_str().unwrap();
-    let owner = owner_bytes(&oracle, "owner");
-    let sibling = owner_bytes(&oracle, "sibling");
+    let owner = &[owner_bytes(&oracle, "owner")];
+    let sibling = &[owner_bytes(&oracle, "sibling")];
     let (clear, clear_circuit) = fixture(&directory, "clear");
     let (push, push_circuit) = fixture(&directory, "push");
     let (inspect, inspect_circuit) = fixture(&directory, "inspect");
     let (pop, pop_circuit) = fixture(&directory, "pop");
-    let initial = create_state(&clear, &BTreeMap::from([("texts".into(), json!([]))]))?;
+    let config = BTreeMap::from([("texts".into(), json!([])), ("deepTexts".into(), json!([]))]);
+    let initial = create_state(&clear, &config)?;
 
     assert!(
         prepare(
@@ -244,8 +248,20 @@ fn nested_opaque_string_lists_match_compact_and_preserve_map_siblings() -> Resul
         &run(&inspect, &inspect_circuit, sibling, "", after_pushes),
         &oracle["afterPushes"]["sibling"],
     );
-    assert_map_list(after_pushes, &push, owner, Some(second_text.as_bytes()));
-    assert_map_list(after_pushes, &push, sibling, Some(sibling_text.as_bytes()));
+    assert_map_list(
+        after_pushes,
+        &push,
+        "texts",
+        owner,
+        Some(second_text.as_bytes()),
+    );
+    assert_map_list(
+        after_pushes,
+        &push,
+        "texts",
+        sibling,
+        Some(sibling_text.as_bytes()),
+    );
 
     let first_pop = run(&pop, &pop_circuit, owner, "", after_pushes);
     assert_head(
@@ -271,12 +287,14 @@ fn nested_opaque_string_lists_match_compact_and_preserve_map_siblings() -> Resul
     assert_map_list(
         &first_pop.after.state,
         &push,
+        "texts",
         owner,
         Some(first_text.as_bytes()),
     );
     assert_map_list(
         &first_pop.after.state,
         &push,
+        "texts",
         sibling,
         Some(sibling_text.as_bytes()),
     );
@@ -302,12 +320,93 @@ fn nested_opaque_string_lists_match_compact_and_preserve_map_siblings() -> Resul
         ),
         &oracle["afterFinalPop"]["sibling"],
     );
-    assert_map_list(&final_pop.after.state, &push, owner, None);
+    assert_map_list(&final_pop.after.state, &push, "texts", owner, None);
     assert_map_list(
         &final_pop.after.state,
         &push,
+        "texts",
         sibling,
         Some(sibling_text.as_bytes()),
     );
+
+    let deep = &oracle["deep"];
+    let owner = owner_bytes(deep, "owner");
+    let group_a = owner_bytes(deep, "groupA");
+    let path_a = &[owner, group_a];
+    let path_b = &[owner, owner_bytes(deep, "groupB")];
+    let missing_owner = &[owner_bytes(deep, "missingOwner"), group_a];
+    let missing_group = &[owner, owner_bytes(deep, "missingGroup")];
+    let (clear, clear_circuit) = fixture(&directory, "clearDeep");
+    let (push, push_circuit) = fixture(&directory, "pushDeep");
+    let (inspect, inspect_circuit) = fixture(&directory, "inspectDeep");
+    let (pop, pop_circuit) = fixture(&directory, "popDeep");
+
+    let mut malformed_plan = clear.clone();
+    let deep_map = malformed_plan
+        .state
+        .iter_mut()
+        .find(|declaration| declaration.name == "deepTexts")
+        .expect("two-parent List declaration");
+    deep_map.kind["tree"]["map"][1]["map"][0] = json!("Bytes<31>");
+    let error = create_state(&malformed_plan, &config).expect_err("mixed key width rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("OpaqueString Lists require a root or up to two Bytes32 Map keys")
+    );
+
+    let mut state = final_pop.after.state;
+    let clear_a = run(&clear, &clear_circuit, path_a, "", &state);
+    for (flag, path, state) in [
+        ("missingOwnerRejected", missing_owner, &state),
+        ("missingGroupRejected", missing_group, &clear_a.after.state),
+    ] {
+        assert_eq!(deep[flag].as_bool(), Some(true));
+        assert!(
+            prepare(
+                &inspect,
+                &inputs(&inspect, path, ""),
+                state,
+                &ledger::structure::INITIAL_PARAMETERS,
+                ContractAddress::default(),
+            )
+            .is_err(),
+            "strict inspection through a missing parent must reject"
+        );
+    }
+    state = run(&clear, &clear_circuit, path_b, "", &clear_a.after.state)
+        .after
+        .state;
+    let empty_head = run(&inspect, &inspect_circuit, path_a, "", &state);
+    assert_head(&empty_head, &deep["emptyAfterClear"]);
+    assert_map_list(&state, &inspect, "deepTexts", path_a, None);
+
+    for (path, name, text) in [
+        (path_a, "first", "A\0夜\0B"),
+        (path_b, "siblingValue", "group-b"),
+        (path_a, "second", "deep-second"),
+    ] {
+        assert_eq!(deep[name].as_str(), Some(text));
+        state = run(&push, &push_circuit, path, text, &state).after.state;
+    }
+    let after_pop = run(&pop, &pop_circuit, path_a, "", &state).after.state;
+    let after_final_pop = run(&pop, &pop_circuit, path_a, "", &after_pop).after.state;
+    for (stage, state) in [
+        ("afterPush", &state),
+        ("afterPop", &after_pop),
+        ("afterFinalPop", &after_final_pop),
+    ] {
+        for (group, path) in [("groupA", path_a), ("groupB", path_b)] {
+            let expected = &deep[stage][group];
+            let head = run(&inspect, &inspect_circuit, path, "", state);
+            assert_head(&head, expected);
+            let raw_head = expected["is_some"]
+                .as_bool()
+                .unwrap()
+                .then(|| expected["value"].as_str().unwrap().as_bytes());
+            assert_map_list(state, &inspect, "deepTexts", path, raw_head);
+            assert_eq!(head.after.state.get_ref(), state.get_ref());
+        }
+    }
     Ok(())
 }

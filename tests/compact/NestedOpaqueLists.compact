@@ -2,6 +2,7 @@ pragma language_version 0.28;
 import CompactStandardLibrary;
 
 export ledger texts: Map<Bytes<32>, List<Opaque<"string">>>;
+export ledger deepTexts: Map<Bytes<32>, Map<Bytes<32>, List<Opaque<"string">>>>;
 
 export circuit reset(owner: Bytes<32>): [] {
   const key = disclose(owner);
@@ -24,4 +25,27 @@ export circuit inspect(owner: Bytes<32>): Maybe<Opaque<"string">> {
 
 export circuit pop(owner: Bytes<32>): [] {
   texts.lookup(disclose(owner)).popFront();
+}
+
+export circuit clearDeep(owner: Bytes<32>, group: Bytes<32>): [] {
+  const ownerKey = disclose(owner);
+  const groupKey = disclose(group);
+  if (!deepTexts.member(ownerKey)) { deepTexts.insertDefault(ownerKey); }
+  if (!deepTexts.lookup(ownerKey).member(groupKey)) {
+    deepTexts.lookup(ownerKey).insertDefault(groupKey);
+  } else {
+    deepTexts.lookup(ownerKey).lookup(groupKey).resetToDefault();
+  }
+}
+
+export circuit pushDeep(owner: Bytes<32>, group: Bytes<32>, text: Opaque<"string">): [] {
+  deepTexts.lookup(disclose(owner)).lookup(disclose(group)).pushFront(disclose(text));
+}
+
+export circuit inspectDeep(owner: Bytes<32>, group: Bytes<32>): Maybe<Opaque<"string">> {
+  return deepTexts.lookup(disclose(owner)).lookup(disclose(group)).head();
+}
+
+export circuit popDeep(owner: Bytes<32>, group: Bytes<32>): [] {
+  deepTexts.lookup(disclose(owner)).lookup(disclose(group)).popFront();
 }
