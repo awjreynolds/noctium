@@ -67,11 +67,12 @@ private theorem guard_mem_of_at (plan : Impact.Plan) (index : Nat) (guard : Expr
       have same : value = some guard := by simpa [found] using selected
       exact List.mem_of_getElem? (found.trans (congrArg some same))
 
-/-- A checked scalar plan and matching artifact yield the same modeled public
-statement. Operand and guard validation follow from successful production
-lowering under the actual plan's type environment. Circuit assertions and
-native acceptance have their own proof obligations. -/
-theorem fromBytes_nativePlanJson_agrees
+/-- A checked scalar plan and matching artifact preserve both the evaluated
+Impact operations and their public transcript activity. Operand and guard
+validation follow from successful production lowering under the actual plan's
+type environment. Circuit assertions and native acceptance have separate
+proof obligations. -/
+theorem evaluations_fromBytes_agree
     (profile : TargetProfile) (contractName : Name) (state : List StateDecl)
     (ctor : Option Constructor) (ep : Entrypoint) (plan : Impact.Plan)
     (standaloneFile : _root_.Bool)
@@ -79,12 +80,17 @@ theorem fromBytes_nativePlanJson_agrees
     {env : EvalEnv} (environmentChecked : ImpactTypedEnvironment.check (plan.typeEnvironment ep) env = Bool.true)
     (keyWidth : Nat → Option Nat)
     (admitted : admitsScalarPlan keyWidth plan = Bool.true)
-    (budget : Nat) (bytes : ArtifactBytes.Bytes) (inputs : ImpactPlanStatement.Inputs)
+    (budget : Nat) (bytes : ArtifactBytes.Bytes)
     (lowered : Impact.lower state ep = .ok plan)
     (matched : matchesBytes budget bytes
       (Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile) = Bool.true) :
     ∃ minimum, ∀ fuel, minimum ≤ fuel →
-      fromBytes fuel ctx env keyWidth bytes inputs = fromEntrypoint ctx env state ep inputs := by
+      ∃ raw, ArtifactBytes.parse bytes = .ok raw ∧
+        ImpactPlanAgreement.evaluatePlan fuel ctx env raw =
+          (GuardedPlanExecution.evalPlan ctx env plan).toOption ∧
+        ImpactTranscriptSchedule.evaluateSchedule fuel ctx env keyWidth raw =
+          (plan.operations.zipIdx.mapM (ImpactTranscriptSchedule.sourceGroups ctx env plan)).map
+            List.flatten := by
   let emitted := Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile
   let projected := projectedOperation plan
   have typed := ImpactTypedEnvironment.check_sound environmentChecked
@@ -151,14 +157,53 @@ theorem fromBytes_nativePlanJson_agrees
   obtain ⟨raw, parsed, scheduleMatches⟩ := compared
   obtain ⟨operationsMatch, activityMatches⟩ :=
     ImpactScheduleComparison.evaluations_eq_of_matches scheduleMatches fuel ctx env keyWidth
+  have operationsSource : ImpactPlanAgreement.evaluatePlan fuel ctx env raw =
+      (GuardedPlanExecution.evalPlan ctx env plan).toOption := by
+    calc
+      ImpactPlanAgreement.evaluatePlan fuel ctx env raw =
+          ImpactPlanAgreement.evaluatePlan fuel ctx env emitted := operationsMatch
+      _ = (GuardedPlanExecution.evalPlan ctx env plan).toOption := by
+        dsimp only [emitted]
+        exact operationsAgree fuel operationFuel
+  have activitySource : ImpactTranscriptSchedule.evaluateSchedule fuel ctx env keyWidth raw =
+      (plan.operations.zipIdx.mapM (ImpactTranscriptSchedule.sourceGroups ctx env plan)).map
+        List.flatten := by
+    calc
+      ImpactTranscriptSchedule.evaluateSchedule fuel ctx env keyWidth raw =
+          ImpactTranscriptSchedule.evaluateSchedule fuel ctx env keyWidth emitted := activityMatches
+      _ = (plan.operations.zipIdx.mapM (ImpactTranscriptSchedule.sourceGroups ctx env plan)).map
+          List.flatten := by
+        dsimp only [emitted]
+        exact activityAgree fuel activityFuel
+  exact ⟨raw, parsed, operationsSource, activitySource⟩
+
+/-- A checked scalar plan and matching artifact yield the same modeled public
+statement. Operand and guard validation follow from successful production
+lowering under the actual plan's type environment. -/
+theorem fromBytes_nativePlanJson_agrees
+    (profile : TargetProfile) (contractName : Name) (state : List StateDecl)
+    (ctor : Option Constructor) (ep : Entrypoint) (plan : Impact.Plan)
+    (standaloneFile : _root_.Bool)
+    (ctx : EvalContext) (modulus : ctx.modulus = Field.modulus)
+    {env : EvalEnv} (environmentChecked : ImpactTypedEnvironment.check (plan.typeEnvironment ep) env = Bool.true)
+    (keyWidth : Nat → Option Nat)
+    (admitted : admitsScalarPlan keyWidth plan = Bool.true)
+    (budget : Nat) (bytes : ArtifactBytes.Bytes) (inputs : ImpactPlanStatement.Inputs)
+    (lowered : Impact.lower state ep = .ok plan)
+    (matched : matchesBytes budget bytes
+      (Compiler.nativePlanJson profile contractName state ctor ep plan standaloneFile) = Bool.true) :
+    ∃ minimum, ∀ fuel, minimum ≤ fuel →
+      fromBytes fuel ctx env keyWidth bytes inputs = fromEntrypoint ctx env state ep inputs := by
+  obtain ⟨minimum, agrees⟩ := evaluations_fromBytes_agree profile contractName state ctor ep plan
+    standaloneFile ctx modulus environmentChecked keyWidth admitted budget bytes lowered matched
+  refine ⟨minimum, ?_⟩
+  intro fuel enough
+  obtain ⟨raw, parsed, operationsMatch, activityMatches⟩ := agrees fuel enough
   unfold ImpactPlanStatement.fromBytes
   rw [parsed]
   simp only [Except.toOption, Bind.bind, Option.bind_some]
   rw [operationsMatch, activityMatches,
     fromEntrypoint_eq_fromSource ctx env state ep plan inputs lowered]
-  dsimp only [emitted]
-  unfold fromSource
-  rw [operationsAgree fuel operationFuel, activityAgree fuel activityFuel]
   rfl
 
 end Noctium.Verification.ImpactPlanStatementAgreement

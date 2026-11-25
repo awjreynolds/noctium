@@ -1,4 +1,5 @@
 import Noctium.Verification.ImpactNativeStatementFixture
+import Noctium.Verification.GuardedStatementConsumption
 
 open Noctium Noctium.Verification
 
@@ -26,16 +27,18 @@ private def machine (values : List Nat) : NativeState.Machine :=
   | some ⟨some ⟨[.noop 2], 14⟩, some ⟨[.active 9, .noop 3], 20⟩⟩ => Bool.true
   | _ => Bool.false
 
-private def checkNative (path : String) (env : EvalEnv) (bytes : ArtifactBytes.Bytes) : IO Unit := do
+private def checkNative (path : String) (env : EvalEnv) (bytes : ArtifactBytes.Bytes) :
+    IO ImpactNativeStatementFixture.NativeStatementFixture := do
   let fixture ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile path) >>=
     ImpactNativeStatementFixture.decode)
   IO.ofExcept (ImpactNativeStatementFixture.checkBytes fixture 64 context env (fun _ => none) bytes)
+  return fixture
 
 def main (args : List String) : IO Unit := do
   let (artifact, nativeStatements) ← match args with
     | [artifact] => pure (artifact, none)
-    | [artifact, active, inactive] => pure (artifact, some (active, inactive))
-    | _ => throw (IO.userError "expected the Impact plan and optional active and inactive statements")
+    | [artifact, circuit, active, inactive] => pure (artifact, some (circuit, active, inactive))
+    | _ => throw (IO.userError "expected the Impact plan and optionally the ZKIR and both statements")
   let bytes := (← IO.FS.readBinFile artifact).data.toList
   let raw ← IO.ofExcept (ArtifactBytes.parse bytes)
   let initial := machine [0, 0, 0, 0, 0]
@@ -99,6 +102,19 @@ def main (args : List String) : IO Unit := do
       (runWith (inputs Bool.true 3 2 8 Bool.true)).isNone &&
       (runWith (inputs Bool.true 3 2 3 Bool.false)).isNone do
     throw (IO.userError "decoded schedule accepted a partial scalar failure")
-  if let some (active, inactive) := nativeStatements then
-    checkNative active enabled bytes
-    checkNative inactive disabled bytes
+  if let some (circuit, active, inactive) := nativeStatements then
+    discard <| checkNative active enabled bytes
+    let fixture ← checkNative inactive disabled bytes
+    let some binding := fixture.fields.head? |
+      throw (IO.userError "inactive statement lacks its binding input")
+    let some operations := ImpactPlanAgreement.evaluatePlan 64 context disabled raw |
+      throw (IO.userError "inactive Impact plan rejected")
+    let some final := NativeState.run operations initial |
+      throw (IO.userError "inactive Impact VM run rejected")
+    let circuitBytes := (← IO.FS.readBinFile circuit).data.toList
+    let some projection := GuardedStatementConsumption.fromArtifact circuitBytes
+        (fun _ => NativeRelation.zero) ⟨binding, fixture.communication⟩
+        ⟨operations.flatMap ImpactStatementScalar.opFields, final.reads.map NativeState.Cell.value⟩ |
+      throw (IO.userError "inactive ZKIR rejected the modeled VM transcript streams")
+    unless decide (projection.fields = fixture.fields ∧ projection.activity = inactiveActivity) do
+      throw (IO.userError "inactive ZKIR differs from the native statement or Impact activity")
