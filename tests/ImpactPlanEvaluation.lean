@@ -1,3 +1,4 @@
+import Noctium.Verification.ImpactCallPreview
 import Noctium.Verification.ImpactPlanAgreement
 import Noctium.Verification.ImpactTranscriptSchedule
 
@@ -20,6 +21,13 @@ private def fieldCell (value : Nat) : NativeState.Cell :=
 private def machine (values : List Nat) : NativeState.Machine :=
   ⟨[.vector (values.map fun value => .cell (fieldCell value))], []⟩
 
+-- A present empty partition consumes leading skips before the fallible program.
+#guard
+  match ImpactCallPreview.previewCall ⟨3, 2⟩
+      ⟨some ⟨([] : List Nat), 7⟩, some ⟨[9], 11⟩⟩ [some 2, none, some 3] with
+  | some ⟨some ⟨[.noop 2], 14⟩, some ⟨[.active 9, .noop 3], 20⟩⟩ => Bool.true
+  | _ => Bool.false
+
 def main (args : List String) : IO Unit := do
   let [artifact] := args | throw (IO.userError "expected the guarded partial-write Impact plan")
   let bytes := (← IO.FS.readBinFile artifact).data.toList
@@ -36,10 +44,12 @@ def main (args : List String) : IO Unit := do
   let inactivePreview := do
     let activity ← transcript disabled
     let program ← ImpactPlanAgreement.evaluatePlan 64 context disabled raw
-    ImpactNoopPreview.previewProgram program activity
+    ImpactCallPreview.previewCall
+      {noopConstant := 3, noopCoefficient := 2}
+      {guaranteed := some ⟨program, 7⟩, fallible := none} activity
   match inactivePreview with
-  | some [.noop 55] => pure ()
-  | _ => throw (IO.userError "inactive preview does not coalesce all 55 skipped fields")
+  | some ⟨some ⟨[.noop 55], 120⟩, none⟩ => pure ()
+  | _ => throw (IO.userError "inactive preview differs in skipped width or compute time")
   let expected : List Nat := [1, 3, 7, 1, 3]
   let operations : List NativeState.Op := expected.zipIdx.flatMap fun (value, index) =>
     [.push (fieldCell index) Bool.false, .push (fieldCell value) Bool.true, .insert 1]
