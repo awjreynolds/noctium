@@ -1,11 +1,13 @@
 import Noctium.Verification.RangeDedupComparisonMeaning
 import Noctium.Verification.ScalarValidationArithmeticLoop
+import Noctium.Verification.ScalarValidationHashMeaning
 import Noctium.Verification.ScalarValidationNativeLoop
 
 namespace Noctium.Verification.ScalarValidationNativeDefinitions
 
 open Lean Backend.Native NativeRelation NativeRelationJson
 open Noctium.Verification.ScalarValidationArithmeticLoop
+open Noctium.Verification.ScalarValidationHashMeaning
 open Noctium.Verification.ScalarValidationNativeLoop
 
 private theorem bind_ok {α β : Type} {value : Except String α} {next : α → Except String β}
@@ -691,6 +693,9 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | output (values : List Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "output") :
       SupportedScalarOpcode raw (.output values)
+  | hash (inputs : List Operand) (output : String)
+      (opcode : Backend.Native.stringField raw "op" = .ok "transient_hash") :
+      SupportedScalarOpcode raw (.hash inputs output)
   | constrainEq (a b : Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq") :
       SupportedScalarOpcode raw (.equal a b)
@@ -759,6 +764,10 @@ theorem accepted_supportedScalarOpcode_groupCount_step
   | impact _ _ opcode =>
     rw [accepted_impact_state opcode accepted]
     simp [impactGroupIncrement]
+  | hash _ _ opcode =>
+    obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+    rw [(defineResult_counters defined).1]
+    simp [impactGroupIncrement]
   | output _ opcode =>
     rw [(accepted_output_counters opcode accepted).1]
     simp [impactGroupIncrement]
@@ -789,6 +798,9 @@ theorem accepted_supportedScalarOpcode_noninput_inputCount_preserved
   | testEq _ _ _ opcode => exact (accepted_testEq_counters definitions opcode accepted).2
   | copy _ _ opcode => exact (accepted_copy_counters definitions opcode accepted).2
   | impact _ _ opcode => exact accepted_impact_inputCount opcode accepted
+  | hash _ _ opcode =>
+    obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+    exact (defineResult_counters defined).2
   | output _ opcode => exact (accepted_output_counters opcode accepted).2
   | constrainEq _ _ opcode => exact (accepted_constrainEq_counters definitions opcode accepted).2
 
@@ -876,6 +888,10 @@ theorem nativeDefinitions_step {expected : Expected} {state next : State}
     exact input_nativeDefinitions_step (visibility := .private) nativeDefinitions selected
       nonforeignInput unguarded parsedOpcode accepted
   | add _ _ _ opcode => exact accepted_add_nativeDefinitions nativeDefinitions opcode accepted
+  | hash _ _ opcode =>
+      obtain ⟨_, fact, _, _, combined, defined⟩ :=
+        accepted_hash_definition opcode accepted
+      exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
   | mul _ _ _ opcode =>
       obtain ⟨_, _, _, _, _, _, _, combined, defined⟩ :=
         accepted_mul_components nativeDefinitions opcode accepted

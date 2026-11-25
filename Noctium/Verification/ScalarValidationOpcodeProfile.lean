@@ -49,7 +49,8 @@ def supportedScalarOpcodeProfile (raw : Json) : Instruction → Bool
   | .equal _ _ => rawHasOpcode raw "constrain_eq"
   | .impact _ _ => rawHasOpcode raw "impact"
   | .output _ => rawHasOpcode raw "output"
-  | .not _ _ | .select _ _ _ _ | .hash _ _ => false
+  | .hash _ _ => rawHasOpcode raw "transient_hash"
+  | .not _ _ | .select _ _ _ _ => false
 
 /-- A successful check yields the corresponding producer-tagged opcode proof. -/
 theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction}
@@ -117,9 +118,11 @@ theorem supportedScalarOpcode_of_profile {raw : Json} {instruction : Instruction
   | output values =>
     change rawHasOpcode raw "output" = true at checked
     exact .output values (rawHasOpcode_eq checked)
+  | hash inputs output =>
+    change rawHasOpcode raw "transient_hash" = true at checked
+    exact .hash inputs output (rawHasOpcode_eq checked)
   | not _ _ => simp [supportedScalarOpcodeProfile] at checked
   | select _ _ _ _ => simp [supportedScalarOpcodeProfile] at checked
-  | hash _ _ => simp [supportedScalarOpcodeProfile] at checked
 
 /-- The gate accepts every constructor in the scalar opcode profile. This
 includes both equality spellings and each operation used by BoundedScalars.apply. -/
@@ -166,6 +169,9 @@ theorem profile_of_supportedScalarOpcode {raw : Json} {instruction : Instruction
     exact rawHasOpcode_of_eq opcode
   | output values opcode =>
     change rawHasOpcode raw "output" = true
+    exact rawHasOpcode_of_eq opcode
+  | hash inputs output opcode =>
+    change rawHasOpcode raw "transient_hash" = true
     exact rawHasOpcode_of_eq opcode
   | constrainEq a b opcode =>
     cases a with

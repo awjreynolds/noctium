@@ -345,6 +345,32 @@ theorem decodeInstruction_copyFields {raw : Json} {source destination : String}
     exact outputParsed
   · exact sourceIdentifierValid
 
+/-- A decoded transient hash exposes the exact decoded input payload and the
+producer's output name. -/
+theorem decodeInstruction_hashFields {raw : Json} {inputs : List Operand} {output : String}
+    (opcode : Backend.Native.stringField raw "op" = .ok "transient_hash")
+    (decoded : decodeInstruction raw = .ok (.hash inputs output)) :
+    (do decodeOperands (← raw.getObjVal? "inputs")) = .ok inputs ∧
+      Backend.Native.stringField raw "output" = .ok output := by
+  have opcodeParsed : stringField raw "op" = .ok "transient_hash" := opcode
+  unfold decodeInstruction at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨opcodeName, opcodeChecked, body⟩
+  have opcodeEq := Except.ok.inj (opcodeChecked.symm.trans opcodeParsed)
+  subst opcodeName
+  simp only [bind_ok] at body
+  rcases body with ⟨_, _, inputsJson, inputsJsonParsed, decodedInputs, inputsParsed,
+    outputName, outputParsed, _, outputValid, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
+  injection resultEq with inputsEq outputEq
+  constructor
+  · change (do decodeOperands (← raw.getObjVal? "inputs")) = .ok inputs
+    simp only [Bind.bind, Except.bind, inputsJsonParsed, inputsParsed, inputsEq]
+  · change stringField raw "output" = .ok output
+    rw [← outputEq]
+    exact outputParsed
+
 theorem decodeOperandField_reference_of_stringField {raw : Json} {name text : String}
     (parsed : stringField raw name = .ok text)
     (reference : validIdentifier text = true) :

@@ -397,4 +397,26 @@ theorem boundedApply_acceptedImpactPayloads :
   simpa only [List.take_length, Native.State.groupCount, List.take_zero,
     List.map_nil, List.nil_append, decodedGroups, sat.groups] using ordered
 
+/-- The profile admits the real emitted hash row in an assertion-bearing
+entrypoint. The explicit row check keeps the fixture from passing without it. -/
+private def hashAssertionProfile : _root_.Bool :=
+  let hashEntry : Entrypoint := {name := "hashAssertion", circuit := {
+    name := "hashAssertion"
+    inputs := [{name := "left", ty := .native, visibility := .private},
+      {name := "right", ty := .native, visibility := .private},
+      {name := "digest", ty := .native, visibility := .«public»}]
+    constraints := [.eq (.poseidon2 7 (.ref "left") (.ref "right")) (.ref "digest")] }}
+  match Zkir.lowerEntrypoint [] hashEntry .rangeAndAssertions with
+  | .error _ => Bool.false
+  | .ok artifact =>
+    match Noctium.Verification.NativeRelationJson.decode artifact, Native.arrayField artifact "instructions" with
+    | .ok relation, .ok rows =>
+      checkedScalarOpcodeProfile rows.toList.zipIdx relation.instructions &&
+        relation.instructions.any (fun instruction => match instruction with
+          | .hash _ _ => Bool.true
+          | _ => Bool.false)
+    | _, _ => Bool.false
+
+#guard hashAssertionProfile
+
 end BoundedScalarsOpcodeProfile
