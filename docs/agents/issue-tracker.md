@@ -17,7 +17,7 @@ The public map is [issue #1](https://github.com/awjreynolds/noctium/issues/1). A
 2. Give each issue one demonstrable outcome. For compiler work, pick one source behavior and carry it through the affected lowering, runtime and verification boundaries. For SDK work, pick one host and one complete flow. State the success check, the relevant rejection or recovery check, and the environment or fixture needed to run them.
 3. Keep broad work as a parent and link its implementation slices as sub-issues. Add `ready` to a reviewed slice with a bounded outcome, reproducible acceptance checks and explicit prerequisites. Link open implementation prerequisites as `Blocked by` dependencies. Both queue views filter them out until all such issues close. Leave work waiting on an external prerequisite out of `ready` until the prerequisite is available. Matt Pocock's `ready-for-agent` role maps to `ready`. Apply `compact-parity` to slices comparing Compact behavior or evidence.
 4. Resume the supplied issue if your contributor owns it. With no issue supplied, take the first eligible result in the [Compact parity view](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+label%3Acompact-parity+no%3Aassignee+-is%3Ablocked), then use the [full ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked) if the first view is empty. Recheck that the issue is open, ready, unassigned and unblocked, then claim it under your contributor's account. Refresh to confirm the sole assignee. If a competing claim appeared, remove only your own assignment and move to the next eligible result. If your account already has active work on the issue, resume it or coordinate before starting another session. Report an empty queue, an ownership conflict on a supplied issue, or a failed claim before editing.
-5. Start a branch and worktree named for the issue from the checked base, or reuse the existing branch when resuming. Record the branch and planned write scope on the issue or linked draft PR. If two issues need the same code path or evidence, agree on the write boundary or sequence them with a dependency. Keep the assignment through review and unassign yourself if you return the work to the queue.
+5. Start a branch and worktree named for the issue from the checked base, or reuse the existing branch when resuming. Record the branch and planned write scope on the issue. If two issues need the same code path or evidence, agree on the write boundary or sequence them with a dependency. Keep the assignment through review and unassign yourself if you return the work to the queue.
 
 List Compact parity first from either a direct clone or a fork. If this returns no issues, repeat the query without `label:compact-parity`.
 
@@ -33,10 +33,10 @@ dispatch. Keep the exact pending check and its expected result alongside
 completed results. Put local process handles and scratch paths in an ignored
 handoff note under the main checkout's `.lake/` directory. Link the note when
 delegating locally. For a contributor handoff, leave the branch, head revision,
-checks and remaining work on the issue or linked PR. Change the assignee after
-the next contributor accepts the handoff.
+checks and remaining work on the issue. Include the PR link if one already
+exists. Change the assignee after the next contributor accepts the handoff.
 
-On recovery and before marking a PR ready, fetch canonical `main` again and
+On recovery and before requesting PR review, fetch canonical `main` again and
 check the issue, current diff and any live process. Incorporate relevant upstream
 changes on your own branch. Reuse a passing check while its tested inputs remain
 unchanged. If upstream work satisfies the issue or changes its scope, reconcile
@@ -66,9 +66,17 @@ when the variants need different lowering or ledger behavior.
 
 ## Pull requests
 
-Pull requests are not a request surface for triage.
+Use the issue and branch for work in progress. Once the change is ready for
+review and the required local checks pass, the orchestrator opens one linked PR or
+updates the existing PR for that change. Use a draft PR only when the human
+contributor requests early feedback or integration on that change.
 
-Use `Closes #123` in the PR description when the change fulfills the issue, so GitHub closes it on merge into `main`. For partial work, link the issue and leave it open. This keeps downstream work blocked until the prerequisite lands.
+The orchestrator follows the change through CI, review fixes and authorized merge.
+Use `Closes #123` when the PR fulfills the issue, then verify closure after
+merge into `main` before taking another issue. When a PR completes a child
+slice, close the child and keep its wider parent open. If a dependency, decision
+or required approval blocks completion, keep the issue open and record the
+current branch and revision, what passed, the blocker and the exact next action.
 
 Keep parallel implementation in separate worktrees. Sequence merges that touch
 the same compiler path or change the same evidence. Reuse the recorded check
