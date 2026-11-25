@@ -27,8 +27,12 @@ issue from the full queue. Claim it under my GitHub account before editing.
 Report an empty queue, an ownership conflict or a failed claim before editing.
 Check current main, the issue's acceptance criteria and active PRs for overlap.
 Use one orchestrator and up to six bounded subagents. Implement the slice in
-its own worktree, run the required checks, and leave a linked draft PR with
-the exact revision, reproducible evidence and any remaining work.
+its own worktree. Track unfinished work on the issue and branch. Once the
+required local checks pass and the change is ready for review, have the
+orchestrator open or update one linked PR with the exact revision and
+reproduction steps. Follow CI and review through fixes, merge when authorized,
+and verify the issue closed before taking another. If blocked, record what
+blocks completion and the exact next action on the issue.
 ```
 
 ## Set up your agent
@@ -74,7 +78,7 @@ PONYTAIL_DEFAULT_MODE=full claude --model sonnet --effort high
 
 Use one orchestrator per active ticket. In Codex, use Sol High to claim the issue, set scope, assign bounded work, integrate, verify and hand off. Use up to six subagents at a time when work is independent. Give each worker the issue, acceptance check, base revision, worktree and owned files or symbols. Use explorers and reviewers for read-only work and give implementation workers disjoint writes. Route GitHub updates and integration through the orchestrator. If a tool lacks subagents, the orchestrator performs the same steps in sequence.
 
-Before editing or resuming, follow the [issue claim and worktree workflow](docs/agents/issue-tracker.md#review-and-claim-implementation-issues). GitHub records the human owner. The worktree and linked PR identify the active implementation. Keep the issue scope, latest checked revision and reproduction command on GitHub so another contributor needs only those links to continue.
+Before editing or resuming, follow the [issue claim and worktree workflow](docs/agents/issue-tracker.md#review-and-claim-implementation-issues). GitHub records the human owner. Record the branch, latest checked revision and reproduction command on the issue for handoff. Follow the [pull request workflow](docs/agents/issue-tracker.md#pull-requests) once the change is ready for review.
 
 ## Technical direction
 
