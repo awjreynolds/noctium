@@ -62,6 +62,117 @@ private theorem issue43ExpectedInputFactsCheck_passes :
     issue43ExpectedInputFactsCheck = Bool.true := by
   decide +kernel
 
+private def issue43SkippedInputIndex : Nat := 5
+private def issue43RowsBeforeDynamicImpact : Nat := 31
+private def issue43FirstDynamicImpactIndex : Nat :=
+  issue43SkippedInputIndex + 1 + issue43RowsBeforeDynamicImpact
+
+private def issue43MixedOpcodeProfile (raw : Json) :
+    Verification.NativeRelation.Instruction → _root_.Bool
+  | .input .«public» _ =>
+      Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "public_input"
+  | .input .«private» _ =>
+      Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "private_input"
+  | .boolean _ =>
+      Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "constrain_to_boolean"
+  | .assert _ => Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "assert"
+  | .testEq _ _ _ => Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "test_eq"
+  | .select _ _ _ _ =>
+      Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "cond_select"
+  | .impact _ _ => Verification.ScalarValidationOpcodeProfile.rawHasOpcode raw "impact"
+  | _ => _root_.Bool.false
+
+private def issue43MixedRowCheck (raw : Json) : _root_.Bool :=
+  match Backend.Native.stringField raw "op" with
+  | .ok "public_input" => _root_.Bool.true
+  | .ok _ =>
+    match Verification.NativeRelationJson.decodeInstruction raw with
+    | .ok instruction => issue43MixedOpcodeProfile raw instruction
+    | .error _ => _root_.Bool.false
+  | .error _ => _root_.Bool.false
+
+private def issue43MixedRowsCheck (rows : List Json) : _root_.Bool :=
+  rows.all issue43MixedRowCheck
+
+/-- A mixed row either has a producer-classified public input opcode or a
+strictly decoded instruction with a matching raw opcode and actual Holds fact.
+This keeps guarded public reads outside the strict decoder. -/
+private inductive Issue43MixedRow (hash : Verification.NativeRelation.Hash)
+    (assignment : Verification.NativeRelation.Assignment) (raw : Json) : Prop where
+  | publicInput
+      (opcode : Backend.Native.stringField raw "op" = .ok "public_input") :
+      Issue43MixedRow hash assignment raw
+  | decoded {instruction : Verification.NativeRelation.Instruction}
+      (decoded : Verification.NativeRelationJson.decodeInstruction raw = .ok instruction)
+      (opcode : issue43MixedOpcodeProfile raw instruction = Bool.true)
+      (holds : Verification.NativeRelation.Instruction.Holds hash assignment instruction) :
+      Issue43MixedRow hash assignment raw
+
+private theorem issue43MixedRow_of_check
+    {hash : Verification.NativeRelation.Hash}
+    {assignment : Verification.NativeRelation.Assignment} {raw : Json}
+    (checked : issue43MixedRowCheck raw = Bool.true)
+    (holds : ∀ instruction,
+      Verification.NativeRelationJson.decodeInstruction raw = .ok instruction →
+      Verification.NativeRelation.Instruction.Holds hash assignment instruction) :
+    Issue43MixedRow hash assignment raw := by
+  cases opcode : Backend.Native.stringField raw "op" with
+  | error message => simp [issue43MixedRowCheck, opcode] at checked
+  | ok text =>
+    by_cases publicInput : text == "public_input"
+    · have textEq : text = "public_input" := (beq_iff_eq.mp publicInput)
+      subst text
+      have opcodeEq : Backend.Native.stringField raw "op" = .ok "public_input" := opcode
+      exact .publicInput opcodeEq
+    · have notPublicInput : text ≠ "public_input" := by
+        intro textEq
+        subst text
+        exact publicInput rfl
+      have checkedDecode :
+          (match Verification.NativeRelationJson.decodeInstruction raw with
+          | .ok instruction => issue43MixedOpcodeProfile raw instruction
+          | .error _ => Bool.false) = Bool.true := by
+        simpa [issue43MixedRowCheck, opcode, notPublicInput] using checked
+      cases decoded : Verification.NativeRelationJson.decodeInstruction raw with
+      | error message => simp [decoded] at checkedDecode
+      | ok instruction =>
+        have opcodeProfile : issue43MixedOpcodeProfile raw instruction = Bool.true := by
+          simpa [decoded] using checkedDecode
+        exact .decoded decoded opcodeProfile (holds instruction decoded)
+private theorem issue43MixedRow_acceptedMeaningStep
+    {hash : Verification.NativeRelation.Hash}
+    {assignment : Verification.NativeRelation.Assignment} {raw : Json}
+    (classified : Issue43MixedRow hash assignment raw) :
+    Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash assignment raw := by
+  cases classified with
+  | publicInput opcode => exact .native (.publicInput opcode)
+  | @decoded instruction decoded opcode holds =>
+    cases instruction with
+    | input visibility destination =>
+      cases visibility with
+      | «public» =>
+        have rawOpcode := Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode
+        exact .native (.publicInput rawOpcode)
+      | «private» =>
+        have rawOpcode := Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode
+        exact .native (.privateInput rawOpcode)
+    | boolean value =>
+      exact .boolean
+        (Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode) decoded holds
+    | «assert» condition =>
+      exact .assertion
+        (Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode) decoded holds
+    | testEq left right destination =>
+      exact .testEq
+        (Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode) decoded holds
+    | select condition yes no destination =>
+      exact .nativeSelect
+        (Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode) decoded holds
+    | impact guard values =>
+      exact .impact
+        (Verification.ScalarValidationOpcodeProfile.rawHasOpcode_eq opcode) decoded
+    | _ => simp [issue43MixedOpcodeProfile] at opcode
+
 /-- The actual lowered Issue 43 producer trace proves meaning through the
 five strict prefix rows, then validates the exact guarded public input. -/
 private theorem acceptedIssue43SkippedCellSuffix
@@ -87,10 +198,14 @@ private theorem acceptedIssue43SkippedCellSuffix
       prelude.zipIdx prefixInstructions = Bool.true)
     (holds : ∀ instruction ∈ prefixInstructions,
       Verification.NativeRelation.Instruction.Holds hash assignment instruction)
-    (mixedSuffixSteps : ∀ item ∈ (rest.take 31).zipIdx,
-      Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash assignment item.1)
+    (mixedSuffixCheck : issue43MixedRowsCheck
+      (rest.take issue43RowsBeforeDynamicImpact) = Bool.true)
+    (mixedSuffixHolds : ∀ item, item ∈ (rest.take issue43RowsBeforeDynamicImpact).zipIdx →
+      ∀ instruction, Verification.NativeRelationJson.decodeInstruction item.1 = .ok instruction →
+        Verification.NativeRelation.Instruction.Holds hash assignment instruction)
     {impactRaw : Json}
-    (impactSplit : rest = rest.take 31 ++ impactRaw :: rest.drop 32)
+    (impactSplit : rest = rest.take issue43RowsBeforeDynamicImpact ++ impactRaw ::
+      rest.drop (issue43RowsBeforeDynamicImpact + 1))
     (impactOpcode : Backend.Native.stringField impactRaw "op" = .ok "impact")
     {impactGuard : Verification.NativeRelation.Operand}
     (impactGuardDecoded : Verification.NativeRelationJson.decodeOperandField impactRaw "guard" =
@@ -196,18 +311,24 @@ private theorem acceptedIssue43SkippedCellSuffix
   have transcript := Verification.GuardedScalarInput.consume_accepted_public_read
     stream beforeMeaning selected nonforeign guarded targetOpcode rowAccepted targetGuard
   have impactSourceSplit : instructions.toList =
-      (prelude ++ raw :: rest.take 31) ++ impactRaw :: rest.drop 32 := by
+      (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact) ++ impactRaw ::
+        rest.drop (issue43RowsBeforeDynamicImpact + 1) := by
     have suffixSplit := congrArg (fun suffix => prelude ++ raw :: suffix) impactSplit
     calc
       instructions.toList = prelude ++ raw :: rest := splitRows
-      _ = prelude ++ raw :: (rest.take 31 ++ impactRaw :: rest.drop 32) := suffixSplit
-      _ = (prelude ++ raw :: rest.take 31) ++ impactRaw :: rest.drop 32 := by
+      _ = prelude ++ raw :: (rest.take issue43RowsBeforeDynamicImpact ++ impactRaw ::
+        rest.drop (issue43RowsBeforeDynamicImpact + 1)) := suffixSplit
+      _ = (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact) ++ impactRaw ::
+        rest.drop (issue43RowsBeforeDynamicImpact + 1) := by
         simp [List.append_assoc]
-  have mixedPrefixSteps : ∀ item ∈ (prelude ++ raw :: rest.take 31).zipIdx,
+  have mixedPrefixSteps : ∀ item ∈
+      (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact).zipIdx,
       Verification.RangeDedupAcceptedArray.AcceptedMeaningStep hash assignment item.1 := by
     intro item itemMem
-    have rawMember : item.1 ∈ prelude ++ raw :: rest.take 31 := by
-      rw [← List.zipIdx_map_fst 0 (prelude ++ raw :: rest.take 31)]
+    have rawMember : item.1 ∈
+        prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact := by
+      rw [← List.zipIdx_map_fst 0
+        (prelude ++ raw :: rest.take issue43RowsBeforeDynamicImpact)]
       exact List.mem_map_of_mem itemMem
     rcases List.mem_append.mp rawMember with preludeMember | afterPrelude
     · have indexedMember : item.1 ∈ (prelude.zipIdx).map Prod.fst := by
@@ -219,12 +340,16 @@ private theorem acceptedIssue43SkippedCellSuffix
     · rcases List.mem_cons.mp afterPrelude with targetMember | suffixMember
       · cases targetMember
         exact .native (.publicInput targetOpcode)
-      · have indexedMember : item.1 ∈ ((rest.take 31).zipIdx).map Prod.fst := by
+      · have indexedMember : item.1 ∈
+          ((rest.take issue43RowsBeforeDynamicImpact).zipIdx).map Prod.fst := by
           simpa only [List.zipIdx_map_fst] using suffixMember
         obtain ⟨⟨row, index⟩, indexMember, sameRow⟩ := List.mem_map.mp indexedMember
         have rowEq : row = item.1 := by simpa using sameRow
         cases rowEq
-        exact mixedSuffixSteps (item.1, index) indexMember
+        have checkedRow : issue43MixedRowCheck item.1 = Bool.true :=
+          List.all_eq_true.mp mixedSuffixCheck item.1 suffixMember
+        exact issue43MixedRow_acceptedMeaningStep
+          (issue43MixedRow_of_check checkedRow (mixedSuffixHolds (item.1, index) indexMember))
   obtain ⟨impactBefore, impactAfter, _, impactAccepted, impactMeaning, _⟩ :=
     Verification.RangeDedupAcceptedArray.accepted_prefix_meaning
       (Verification.ScalarValidationMeaning.empty_meaning hash inputs assignment)
@@ -243,25 +368,21 @@ private theorem acceptedIssue43SkippedCellSuffix
 prefix, then relate the next Impact row to the source-selected observation.
 The prefix admissions are explicit so guarded public inputs use the producer
 opcode classifier even though the strict scalar decoder rejects them. -/
-private def issue43MixedPrefixShape : _root_.Bool :=
+private def issue43MixedSuffixCheck : _root_.Bool :=
   match Backend.Zkir.lowerEntrypoint Issue43GuardedReads.state issue43GuardedEntry with
   | .error _ => Bool.false
   | .ok program =>
     let rows := (program.getObjValD "instructions").getArr?.toOption.getD #[]
-    let opcodes := (rows.toList.drop 6).take 31 |>.map fun row =>
-      (row.getObjValD "op").getStr?.toOption.getD ""
-    opcodes == [
-      "cond_select", "test_eq", "assert", "public_input", "cond_select", "test_eq", "assert",
-      "test_eq", "public_input", "constrain_to_boolean", "cond_select", "test_eq", "assert",
-      "public_input", "cond_select", "test_eq", "assert", "public_input", "cond_select",
-      "test_eq", "assert", "impact", "impact", "impact", "impact", "impact", "impact",
-      "impact", "impact", "cond_select", "impact"] &&
-      rows.size > 37 &&
-      (rows[37]!.getObjValD "op").getStr?.toOption == some "impact" &&
-      (rows[37]!.getObjValD "guard").getStr?.toOption == some "%input_existed" &&
-      (rows[37]!.getObjValD "inputs").getArr?.toOption == some #[toJson ("0x30" : String)]
+    issue43MixedRowsCheck ((rows.toList.drop (issue43SkippedInputIndex + 1)).take
+      issue43RowsBeforeDynamicImpact) && rows.size > issue43FirstDynamicImpactIndex &&
+      (rows[issue43FirstDynamicImpactIndex]!.getObjValD "op").getStr?.toOption ==
+        some "impact" &&
+      (rows[issue43FirstDynamicImpactIndex]!.getObjValD "guard").getStr?.toOption ==
+        some "%input_existed" &&
+      (rows[issue43FirstDynamicImpactIndex]!.getObjValD "inputs").getArr?.toOption ==
+        some #[toJson ("0x30" : String)]
 
-#guard issue43MixedPrefixShape == Bool.true
+#guard issue43MixedSuffixCheck == Bool.true
 
 
 #guard match issue43GuardedEntry.run issue43GuardedContext issue43GuardedInputs issue43GuardedState with
