@@ -1,8 +1,96 @@
 # Contributing to Noctium
 
-Start with the [public issue map](https://github.com/awjreynolds/noctium/issues/1). GitHub Issues track decisions, research, implementation and dependencies. Open or join an issue before substantial work so the proposed scope and required evidence are clear.
+Noctium expects AI agents to implement and verify changes. The human contributor owns the GitHub issue, makes product and design decisions, and reviews the evidence. Use Codex or Claude Code from your checkout.
 
-Follow the [issue review and claim workflow](docs/agents/issue-tracker.md#review-and-claim-implementation-issues) when choosing or splitting work.
+## Clone and start
+
+Install Git, the [GitHub CLI](https://cli.github.com/), and Node.js for the Ponytail hooks. Sign in as the human contributor who will own the work.
+
+```sh
+gh auth login
+gh auth status
+git clone https://github.com/awjreynolds/noctium.git
+cd noctium
+```
+
+If you contribute through a fork, replace `git clone` with `gh repo fork awjreynolds/noctium --clone`. Your fork is `origin` and Noctium is `upstream`. Ask a maintainer to assign your issue if you lack permission to claim it. [Set up your agent](#set-up-your-agent), then open it from the repository root.
+
+Give your agent this prompt. Add an issue URL if you already have one.
+
+```text
+Read CONTRIBUTING.md and AGENTS.md. Use the ticket workflow to start or
+resume one issue I own. If I supplied no issue, pick an unclaimed, unblocked
+slice from the ready queue and claim it under my GitHub account before editing.
+If the queue is empty, review the active roadmap for an independent slice
+using the readiness rules. If no slice is ready, report the missing decision
+or dependency before editing.
+Check current main, the issue's acceptance criteria and active PRs for overlap.
+Use one orchestrator and up to six bounded subagents. Implement the slice in
+its own worktree, run the required checks, and leave a linked draft PR with
+the exact revision, reproducible evidence and any remaining work.
+```
+
+## Set up your agent
+
+Install and sign in to [Codex](https://learn.chatgpt.com/docs/cli#get-started-with-codex-cli) or [Claude Code](https://code.claude.com/docs/en/quickstart). Install the [Matt Pocock skills](https://github.com/mattpocock/skills#installation-30-second-setup) and [Ponytail](https://github.com/DietrichGebert/ponytail/blob/main/INSTALL.md) once for your chosen host. Restart the agent or open a new session after installing.
+
+### Codex
+
+```sh
+codex plugin marketplace add mattpocock/skills
+codex plugin add mattpocock-skills@mattpocock
+codex plugin marketplace add DietrichGebert/ponytail
+codex plugin add ponytail@ponytail
+```
+
+In Codex, use `/hooks` to review and trust Ponytail's lifecycle hooks, then start a new thread. For the CLI, launch the Noctium orchestrator with these session settings.
+
+```sh
+PONYTAIL_DEFAULT_MODE=full codex -m gpt-6.2-sol -c 'model_reasoning_effort="high"' \
+  -c agents.enabled=true -c agents.max_concurrent_threads_per_session=6
+```
+
+In the app, choose GPT-6.2 Sol with High reasoning and use the starter prompt to bound delegation. The six [Codex subagent slots](https://learn.chatgpt.com/docs/agent-configuration/subagents#global-settings) exclude the orchestrator. If your model picker offers another model, use an available high-reasoning model for the same role.
+
+### Claude Code
+
+```sh
+claude plugin install mattpocock-skills@claude-plugins-official
+claude plugin marketplace add DietrichGebert/ponytail
+claude plugin install ponytail@ponytail
+PONYTAIL_DEFAULT_MODE=full claude --model sonnet --effort high
+```
+
+[Claude Code loads the shared repo rules through `CLAUDE.md`](CLAUDE.md). Use the same starter prompt and six-worker limit with [Claude Code subagents](https://code.claude.com/docs/en/sub-agents).
+
+### Skills for a ticket
+
+- Use `wayfinder` when the route to a roadmap goal still needs decisions. Use `to-tickets` once the outcome is clear enough to split into independently verifiable implementation issues.
+- Noctium already has a [GitHub tracker and label mapping](docs/agents/issue-tracker.md). Give those settings to the skills. Skip `setup-matt-pocock-skills` for an ordinary clone. The mapping uses `ready` for the upstream `ready-for-agent` role.
+- Use Ponytail at `full` for implementation. Reuse existing paths and make the smallest change covering the issue and its checks. Follow these same rules if the plugin is unavailable.
+
+## Work in parallel
+
+Use one orchestrator per active ticket. In Codex, use Sol High to claim the issue, set scope, assign bounded work, integrate, verify and hand off. Use up to six subagents at a time when work is independent. Give each worker the issue, acceptance check, base revision, worktree and owned files or symbols. Use explorers and reviewers for read-only work and give implementation workers disjoint writes. Route GitHub updates and integration through the orchestrator. If a tool lacks subagents, the orchestrator performs the same steps in sequence.
+
+Before editing or resuming, follow the [issue claim and worktree workflow](docs/agents/issue-tracker.md#review-and-claim-implementation-issues). GitHub records the human owner. The worktree and linked PR identify the active implementation. Keep the issue scope, latest checked revision and reproduction command on GitHub so another contributor needs only those links to continue.
+
+## Technical direction
+
+Noctium keeps contract authoring, typed IR, reference semantics and native lowering in Lean. It emits Midnight ZKIR constraints and Impact ledger plans. Rust owns native witness, proof and transaction execution and the shared runtime used by SDKs. The release goal is for an author to prove properties of the actual Lean contract and give an auditor evidence linking those properties to the exact operation on Midnight, with the remaining assumptions stated.
+
+1. For the next deliverable, read the [public issue map](https://github.com/awjreynolds/noctium/issues/1), the ticket's parent and blockers, and the [ready queue](https://github.com/awjreynolds/noctium/issues?q=is%3Aopen+is%3Aissue+label%3Aready+no%3Aassignee+-is%3Ablocked). Confirm the current status against `main` and any active PRs.
+2. For the medium and long term, read the [one-year assurance roadmap](https://github.com/awjreynolds/noctium/issues/94) and [native capability goal](docs/compatibility/GOAL.md). The roadmap progresses from proof reports and a coverage baseline to reusable Lean checks, integrated contract pilots and independent release review.
+3. Before implementation, read the relevant design and follow its references to code and checks. Use the issue and the current source for details that have changed since the design was written.
+
+| Work | Start here |
+| --- | --- |
+| Lean authoring and compiler | [Architecture and boundaries](docs/designs/architecture.md), [example contracts](examples/README.md) and the matching [language implementation guide](docs/README.md#language-and-capability-references) |
+| Runtime, SDKs and private state | [Portable runtime](docs/designs/portable-runtime.md), [private-state lifecycle](docs/designs/private-state-lifecycle.md) and [native client](docs/development/native-client.md) |
+| Proof and release evidence | [Proof chain and reproduction](docs/README.md#follow-the-proof-chain), [proof registration](docs/development/proof-registration.md) and [native deployment audit](docs/development/private-claim-deployment-audit.md) |
+| Native coverage and Compact conformance | [Capability register and target profiles](docs/compatibility/comparison.md) and [conformance work](https://github.com/awjreynolds/noctium/issues/35) |
+
+If a behavior or boundary is unspecified, capture the decision and proposed acceptance check in a linked Wayfinder issue. Once agreed, record the design in `docs/designs/` when later tickets will depend on it. Link the implementation issue and its focused evidence back to the design.
 
 ## Development checks
 

@@ -167,6 +167,6 @@ The recipient-bound disclosure example binds ciphertext to a sealed Jubjub key. 
 
 A [confidential-token milestone](docs/development/confidential-token.md) now combines registration, pending mint, authenticated sweep, transfer, burn, self-moves, epoch-checked memo clearing, encrypted escrow approval/replacement, delegated transfer/burn and checked views in one source module. Its Rust host completed 17 finalized localnet calls across all sixteen reference circuit entrypoints, using native proofs, source witness callbacks and committed private journals. The final checks cover two wallets, encrypted balances, supply, escrow, memos and counters. [Public receipts](tests/confidential-token-localnet-evidence.json)
 
-Start with the [public issue map](https://github.com/awjreynolds/noctium/issues/1) and [contribution guide](CONTRIBUTING.md). The [documentation index](docs/README.md) connects authoring, runtime integration, proof reproduction and capability research.
+To contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md) for clone, Codex or Claude Code setup, and your first ticket. The [public issue map](https://github.com/awjreynolds/noctium/issues/1) tracks project work. The [documentation index](docs/README.md) connects authoring, runtime integration, proof reproduction and capability research.
 
 [MIT license](LICENSE) · [Security reporting](SECURITY.md) · [Shareable project card](docs/README.md#project-visual)
