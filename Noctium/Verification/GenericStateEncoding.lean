@@ -23,6 +23,11 @@ rejects them before constructing a field. -/
   | .bytes _, _ | .opaqueBytes, _ | .opaqueString, _ | .jubjubScalar, _ |
     .jubjubPoint, _ | .foreign _, _ => 0
 
+theorem sourceScalar_eq_field {ty : Ty} (support : ScalarType ty)
+    (value : ty.Denote) :
+    sourceScalar? ty value = some (scalar (number ty value)) := by
+  cases support <;> rfl
+
 /-- A native field cell retains the source type in the declaration schema.
 Boolean cells use field alignment; membership results use bit alignment. -/
 @[simp] private def encodeScalarValue : (ty : Ty) → ty.Denote → Option Cell
@@ -1001,6 +1006,23 @@ theorem sourceMap_absent (keyTy valueTy : Ty)
             headMissing
         simpa only [List.any_cons, nativeMissing, Bool.false_or] using ih remaining later tailMissing
 
+/-- Every successful lookup in a checked scalar map yields an encodable value. -/
+theorem encodedMap_lookup_value (keyTy valueTy : Ty)
+    (entries : List (Value × Value)) (encoded : List (Scalar × Scalar))
+    (key raw : Value)
+    (mapped : entries.mapM (encodeMapEntry keyTy valueTy) = some encoded)
+    (found : entries.lookup key = some raw) :
+    ∃ cell, encodeValue valueTy raw = some cell := by
+  obtain ⟨entry, entryEncoded, _⟩ := option_mapM_member (encodeMapEntry keyTy valueTy)
+    entries encoded (key, raw) mapped (lookup_member_value entries key raw found)
+  unfold encodeMapEntry at entryEncoded
+  cases keyEncoding : encodeValue keyTy key with
+  | none => simp [keyEncoding] at entryEncoded
+  | some keyCell =>
+    cases valueEncoding : encodeValue valueTy raw with
+    | none => simp [keyEncoding, valueEncoding] at entryEncoded
+    | some cell => exact ⟨cell, rfl⟩
+
 /-- The ordered encoding preserves the first exact lookup result, including
 missing keys. This connects a successful native index to a source map value. -/
 theorem sourceMap_lookup (keyTy valueTy : Ty)
@@ -1351,5 +1373,37 @@ theorem encodedMapEntries_typed (keyTy valueTy : Ty)
   obtain ⟨key, value, keyTyped, valueTyped, _, _⟩ :=
     encodedMapEntry_typed keyTy valueTy entry pair encodedPair
   exact ⟨key, value, keyTyped, valueTyped⟩
+
+/-- The declared map retains its ordered encoded entries at the same slot. -/
+theorem encoded_map_slot (declarations : List StateDecl)
+    (current : LedgerState) (slots : List Slot) (slot : Nat)
+    (declaration : StateDecl) (name : String) (keyTy valueTy : Ty)
+    (entries : List (Value × Value))
+    (declared : declarations[slot]? = some declaration)
+    (named : declaration.name = name)
+    (kind : declaration.kind = .map keyTy valueTy)
+    (encoded : encodeState declarations current = some slots)
+    (lookup : current.maps.lookup name = some entries) :
+    ∃ nativeEntries, entries.mapM (encodeMapEntry keyTy valueTy) = some nativeEntries ∧
+      slots[slot]? = some (.map nativeEntries) := by
+  have inRange : slot < declarations.length := List.getElem?_eq_some_iff.mp declared |>.1
+  have slotsRange : slot < slots.length := by
+    rw [encodeState_length declarations current slots encoded]
+    exact inRange
+  have slotEncoding := encodeState_slot declarations current slots slot encoded
+  rw [declared] at slotEncoding
+  simp only [Option.bind_some] at slotEncoding
+  cases mapped : entries.mapM (encodeMapEntry keyTy valueTy) with
+  | none =>
+    have absent : slots[slot]? = none := by
+      simpa [encodeDeclaration, named, kind, lookup, mapped] using slotEncoding
+    exact False.elim (Nat.not_le_of_gt slotsRange (List.getElem?_eq_none_iff.mp absent))
+  | some nativeEntries =>
+    by_cases unique : (nativeEntries.map Prod.fst).eraseDups.length = nativeEntries.length
+    · refine ⟨nativeEntries, rfl, ?_⟩
+      simpa [encodeDeclaration, named, kind, lookup, mapped, unique] using slotEncoding
+    · have absent : slots[slot]? = none := by
+        simpa [encodeDeclaration, named, kind, lookup, mapped, unique] using slotEncoding
+      exact False.elim (Nat.not_le_of_gt slotsRange (List.getElem?_eq_none_iff.mp absent))
 
 end Noctium.Verification.GenericStateEncoding

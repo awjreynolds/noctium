@@ -47,27 +47,29 @@ def ScalarReadEffects (effects : List Effect) : Prop :=
 inductive GuardedScalarReadEffect : Option (Expr .bool) → Effect → Prop where
   | unguarded {effect : Effect} (scope : ScalarReadEffect effect) :
       GuardedScalarReadEffect none effect
+  | require (condition required : Expr .bool) :
+      GuardedScalarReadEffect (some condition) (.require required)
   | readCell (condition : Expr .bool) (name destination : String) (ty : Ty) :
       GuardedScalarReadEffect (some condition) (.readCell name destination ty)
+  | readMap (condition : Expr .bool) (name destination : String)
+      (keyTy valueTy : Ty) (key : Expr keyTy) :
+      GuardedScalarReadEffect (some condition)
+        (.readMap name destination keyTy valueTy key)
+  | writeCell (condition : Expr .bool) (name : String) (ty : Ty)
+      (value : Expr ty) :
+      GuardedScalarReadEffect (some condition) (.writeCell name ty value)
+  | writeMap (condition : Expr .bool) (name : String) (keyTy valueTy : Ty)
+      (key : Expr keyTy) (value : Expr valueTy) :
+      GuardedScalarReadEffect (some condition)
+        (.writeMap name keyTy valueTy key value)
 
 /-- Tie the guard to each indexed effect from the production fold. Guard
-metadata is handled for cell reads. The decoder checks their types separately. -/
+metadata is handled for cell and plain map reads. Guarded writes and
+requirements preserve the read list. The decoder checks read types separately. -/
 def GuardedScalarReadEffects (guards : List (Option (Expr .bool)))
     (items : List (Effect × Nat)) : Prop :=
   ∀ item ∈ items,
     GuardedScalarReadEffect (guards[item.2]?.getD none) item.1
-
-private theorem appendEffectWithActivity_none_shape (state : List StateDecl)
-    (effect : Effect) (scope : ScalarReadEffect effect) (before : Impact.Plan) :
-    Impact.appendEffectWithActivity state effect none before = (do
-      let result ← Impact.appendEffect state effect before
-      if before.activityGuards.isEmpty then
-        pure result
-      else
-        let activityGuards := before.activityGuards ++
-          List.replicate (result.operations.length - before.operations.length) none
-        pure ({result with activityGuards := activityGuards} : Impact.Plan)) := by
-  cases scope <;> rfl
 
 private theorem appendEffect_read_chunk (state : List StateDecl) (effect : Effect)
     (scope : ScalarReadEffect effect) (before after : Impact.Plan)
@@ -85,40 +87,14 @@ private theorem appendEffect_read_chunk (state : List StateDecl) (effect : Effec
   rw [accepted] at same
   exact Except.ok.inj same
 
-private theorem appendEffectWithActivity_preservesReadMetadata (state : List StateDecl)
-    (effect : Effect) (scope : ScalarReadEffect effect) (before after : Impact.Plan)
-    (accepted : Impact.appendEffectWithActivity state effect none before = .ok after) :
-    ∃ middle, Impact.appendEffect state effect before = .ok middle ∧
-      planReadMetadata after = planReadMetadata middle := by
-  rw [appendEffectWithActivity_none_shape state effect scope before] at accepted
-  cases lower : Impact.appendEffect state effect before with
-  | error message =>
-    simp [lower, bind, Except.bind] at accepted
-  | ok middle =>
-    refine ⟨middle, rfl, ?_⟩
-    by_cases empty : before.activityGuards.isEmpty = true
-    · have equal : middle = after := by
-        simpa [lower, empty, bind, Except.bind, pure, Except.pure] using accepted
-      exact congrArg planReadMetadata equal.symm
-    · have equal :
-          {middle with activityGuards := before.activityGuards ++
-            List.replicate (middle.operations.length - before.operations.length) none} =
-            after := by
-        simpa [lower, empty, bind, Except.bind, pure, Except.pure] using accepted
-      calc
-        planReadMetadata after = planReadMetadata
-            {middle with activityGuards := before.activityGuards ++
-              List.replicate (middle.operations.length - before.operations.length) none} :=
-          congrArg planReadMetadata equal.symm
-        _ = planReadMetadata middle := rfl
-
 private theorem appendEffectWithActivity_read_chunk (state : List StateDecl)
     (effect : Effect) (scope : ScalarReadEffect effect) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state effect none before = .ok after) :
     planReadMetadata after =
       planReadMetadata before ++ effectReadChunk effect before.reads.length := by
-  obtain ⟨middle, lower, sameReads⟩ :=
-    appendEffectWithActivity_preservesReadMetadata state effect scope before after accepted
+  obtain ⟨middle, lower, _, sameReads⟩ :=
+    GuardedEffectPrefix.appendEffectWithActivity_none_result state effect before after accepted
+  change after.reads.map readMetadata = _
   rw [sameReads]
   exact appendEffect_read_chunk state effect scope before middle lower
 
@@ -138,6 +114,30 @@ theorem appendEffectWithActivity_guarded_read_chunk (state : List StateDecl)
     change after.reads.map readMetadata = _
     rw [reads]
     simp [planReadMetadata, readMetadata, effectReadChunk, readName, readTy]
+  | readMap condition name destination keyTy valueTy key =>
+    have reads := GuardedEffectPrefix.appendEffectWithActivity_readMap_read_suffix
+      state name destination keyTy valueTy key condition before after accepted
+    change after.reads.map readMetadata = _
+    rw [reads]
+    simp [planReadMetadata, readMetadata, effectReadChunk]
+  | writeCell condition name ty value =>
+    have reads := GuardedEffectPrefix.appendEffectWithActivity_guarded_writeCell_no_reads
+      state name ty value condition before after accepted
+    change after.reads.map readMetadata = _
+    rw [reads]
+    simp [planReadMetadata, effectReadChunk]
+  | writeMap condition name keyTy valueTy key value =>
+    have reads := GuardedEffectPrefix.appendEffectWithActivity_guarded_writeMap_no_reads
+      state name keyTy valueTy key value condition before after accepted
+    change after.reads.map readMetadata = _
+    rw [reads]
+    simp [planReadMetadata, effectReadChunk]
+  | require condition required =>
+    have reads := GuardedEffectPrefix.appendEffectWithActivity_guarded_require_no_reads
+      state condition required before after accepted
+    change after.reads.map readMetadata = _
+    rw [reads]
+    simp [planReadMetadata, effectReadChunk]
 
 private theorem trace_guarded_read_metadata (state : List StateDecl)
     (guards : List (Option (Expr .bool))) (items : List (Effect × Nat))
@@ -173,8 +173,9 @@ private theorem trace_guarded_read_metadata (state : List StateDecl)
       simp [readChunks, List.flatten_cons, List.append_assoc]
 
 /-- The production guarded effect trace preserves projected read metadata for
-the supported guarded scalar fragment. A guarded cell read keeps its source
-name and type while its ordinal follows the preceding emitted reads. -/
+the supported guarded scalar fragment. Guarded cell and plain map reads keep
+their source names and types. Guarded writes and requirements add no read
+descriptors, and ordinals follow preceding reads. -/
 theorem lowerWithEffectBoundaries_guarded_read_metadata (state : List StateDecl)
     (entry : Entrypoint) (plan : Impact.Plan) (boundaries : List Nat)
     (accepted : Impact.lowerWithEffectBoundaries state entry = .ok (plan, boundaries))

@@ -37,15 +37,6 @@ private theorem sourceCanonical (ctx : EvalContext) {ty : Ty}
     have fieldBound : value < Field.modulus := by simpa [GenericStateEncoding.number] using bound
     simp [SourceEffects.canonicalValue, modulus, fieldBound, maximumBound, valueBound]
 
-private def scalarCellTypeOfCanonical {ty : Ty} {value : ty.Denote}
-    (canonical : Canonical ty value) : ScalarCellType ty := by
-  cases ty with
-  | native => exact .native
-  | bool => exact .bool
-  | uint maximum => exact .uint maximum canonical.2.1
-  | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
-    simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
-
 private theorem encodeDeclaration_cell_result (state : LedgerState)
     (declaration : StateDecl) (ty : Ty) (slot : NativeState.Slot)
     (kind : declaration.kind = .cell ty)
@@ -158,7 +149,7 @@ theorem source_readCell_native (ctx : EvalContext)
       rw [ScalarNormalization.number_pack_as ty encodedValue valueCanonical] at sourceTyped
       exact (Option.some.inj sourceTyped).symm
     subst encodedValue
-    let scalarType := scalarCellTypeOfCanonical valueCanonical
+    let scalarType := GenericStateReadCellEvaluation.scalarCellTypeOfCanonical valueCanonical
     rw [rawEqual] at sourceLookup sourceTyped
     have sourceCanonicalValue := sourceCanonical ctx scalarType modulus valueCanonical
     have sourceShape : sourceAfter =

@@ -6,6 +6,15 @@ namespace Noctium.Verification.GenericStateReadCellEvaluation
 open Backend GenericStateCellAdmission GenericStateEncoding NativeRelation
   NativeState ScalarNormalization
 
+def scalarCellTypeOfCanonical {ty : Ty} {value : ty.Denote}
+    (canonical : Canonical ty value) : ScalarCellType ty := by
+  cases ty with
+  | native => exact .native
+  | bool => exact .bool
+  | uint maximum => exact .uint maximum canonical.2.1
+  | bytes _ | opaqueBytes | opaqueString | jubjubScalar | jubjubPoint | foreign _ =>
+    simp [Canonical, ScalarNormalization.sourceNumber?] at canonical
+
 /-- Proof-facing spelling of the exact private nativeRead implementation.
 Only checked scalar cell types have a native field projection. -/
 def readExpression {ty : Ty} (scalar : ScalarCellType ty)

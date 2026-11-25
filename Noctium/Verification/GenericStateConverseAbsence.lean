@@ -4,37 +4,6 @@ import Noctium.Verification.GenericStateAbsenceAuthentication
 namespace Noctium.Verification.GenericStateConverseAbsence
 open Backend NativeRelation ScalarNormalization NativeState GenericStateEncoding
 
-private theorem encoded_map_slot (declarations : List StateDecl)
-    (current : LedgerState) (slots : List Slot) (slot : Nat)
-    (declaration : StateDecl) (name : String) (keyTy valueTy : Ty)
-    (entries : List (Value × Value))
-    (declared : declarations[slot]? = some declaration)
-    (named : declaration.name = name)
-    (kind : declaration.kind = .map keyTy valueTy)
-    (encoded : encodeState declarations current = some slots)
-    (lookup : current.maps.lookup name = some entries) :
-    ∃ nativeEntries, entries.mapM (encodeMapEntry keyTy valueTy) = some nativeEntries ∧
-      slots[slot]? = some (.map nativeEntries) := by
-  have inRange : slot < declarations.length := List.getElem?_eq_some_iff.mp declared |>.1
-  have slotsRange : slot < slots.length := by
-    rw [encodeState_length declarations current slots encoded]
-    exact inRange
-  have slotEncoding := encodeState_slot declarations current slots slot encoded
-  rw [declared] at slotEncoding
-  simp only [Option.bind_some] at slotEncoding
-  cases mapped : entries.mapM (encodeMapEntry keyTy valueTy) with
-  | none =>
-    have absent : slots[slot]? = none := by
-      simpa [encodeDeclaration, named, kind, lookup, mapped] using slotEncoding
-    exact False.elim (Nat.not_le_of_gt slotsRange (List.getElem?_eq_none_iff.mp absent))
-  | some nativeEntries =>
-    by_cases unique : (nativeEntries.map Prod.fst).eraseDups.length = nativeEntries.length
-    · refine ⟨nativeEntries, rfl, ?_⟩
-      simpa [encodeDeclaration, named, kind, lookup, mapped, unique] using slotEncoding
-    · have absent : slots[slot]? = none := by
-        simpa [encodeDeclaration, named, kind, lookup, mapped, unique] using slotEncoding
-      exact False.elim (Nat.not_le_of_gt slotsRange (List.getElem?_eq_none_iff.mp absent))
-
 /-- Original source absence drives the exact compiled segment and a successful
 native missing-key check, with arbitrary source declaration spans. -/
 theorem source_requireAbsent_native (ctx : EvalContext)

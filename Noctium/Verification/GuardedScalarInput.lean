@@ -239,6 +239,24 @@ theorem run_inactive_scalarCell_read (ctx : EvalContext) (env : EvalEnv)
   rw [inactive]
   cases supported <;> rfl
 
+open GenericStateInputValues ScalarNormalization in
+/-- An inactive scalar Map read binds the decoded default and leaves the
+ledger intact, without evaluating its key or looking up the map. -/
+theorem run_inactive_scalarMap_read (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (name destination : String) {keyTy valueTy : Ty}
+    (key : Expr keyTy) (supported : ScalarType valueTy) (guard : Expr .bool)
+    (inactive : guard.eval ctx env = .ok false) :
+    runEffectsWithGuardsAndEnv ctx [.readMap name destination keyTy valueTy key] [some guard]
+      env ledger = .ok ((destination, Value.pack valueTy (sourceValue supported zero)) :: env, ledger) := by
+  dsimp [runEffectsWithGuardsAndEnv, List.zipIdx, List.all,
+    List.isEmpty, List.length, Option.isNone, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [List.forIn_cons]
+  dsimp [List.getElem?_cons_zero, Option.getD, Option.isSome,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rw [inactive]
+  cases supported <;> rfl
+
 open Backend GenericStateInputValues ScalarNormalization in
 /-- The compiled read descriptor ties an inactive preprocessing row to the
 same typed default bound by the production source evaluator. The source
@@ -266,8 +284,32 @@ theorem inactive_guardedCell_read_agreement (ctx : EvalContext) (env : EvalEnv)
     run_inactive_scalarCell_read ctx env ledger cell destination supported condition inactive⟩
   subst destination
   subst ty
-  have supportedLookup {ty : Ty} (support : ScalarType ty) :
-      scalarType? ty = some support := by cases support <;> rfl
-  simp [decodeRead, supportedLookup supported, ← observed.1]
+  simp [decodeRead, scalarType?_supported supported, ← observed.1]
+
+open Backend GenericStateInputValues ScalarNormalization in
+/-- The exact guarded Map-read descriptor and the inactive source step use
+the same zero candidate. The row's zero guard leaves the transcript untouched. -/
+theorem inactive_guardedMap_read_agreement (ctx : EvalContext) (env : EvalEnv)
+    (ledger : LedgerState) (state : List StateDecl) (name destination : String)
+    {keyTy valueTy : Ty} (key : Expr keyTy) (supported : ScalarType valueTy)
+    (condition : Expr .bool) (before after : Impact.Plan)
+    (witness : Assignment) (stream remaining : List Scalar)
+    (lowered : Impact.appendEffectWithActivity state (.readMap name destination keyTy valueTy key)
+      (some condition) before = .ok after)
+    (inactive : condition.eval ctx env = .ok false)
+    (observed : consume zero stream =
+      some (witness ("%input_" ++ destination), remaining)) :
+    let read : Impact.Read := {name := destination, ty := valueTy, guard := some condition}
+    after.reads = before.reads ++ [read] ∧ remaining = stream ∧
+      decodeRead read witness = .ok (destination, Value.pack valueTy (sourceValue supported zero)) ∧
+      runEffectsWithGuardsAndEnv ctx [.readMap name destination keyTy valueTy key] [some condition]
+        env ledger = .ok ((destination, Value.pack valueTy (sourceValue supported zero)) :: env, ledger) := by
+  dsimp only
+  have exactReads := GuardedEffectPrefix.appendEffectWithActivity_readMap_read_suffix
+    state name destination keyTy valueTy key condition before after lowered
+  simp only [consume_inactive, Option.some.injEq, Prod.mk.injEq] at observed
+  refine ⟨exactReads, observed.2.symm, ?_,
+    run_inactive_scalarMap_read ctx env ledger name destination key supported condition inactive⟩
+  simp [decodeRead, scalarType?_supported supported, ← observed.1]
 
 end Noctium.Verification.GuardedScalarInput

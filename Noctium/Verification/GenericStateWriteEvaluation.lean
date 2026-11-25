@@ -12,7 +12,7 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
-private theorem stateSlot_found (state : List StateDecl) (name : String)
+theorem stateSlot_found (state : List StateDecl) (name : String)
     (slot : Nat)
     (accepted : (match state.findIdx? (·.name == name) with
       | some index => (pure index : Except String Nat)
