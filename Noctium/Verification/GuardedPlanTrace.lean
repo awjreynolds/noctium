@@ -1,5 +1,8 @@
 import Noctium.Verification.GuardedOperationAlignment
 import Noctium.Verification.GuardedPlanExecution
+import Noctium.Verification.GuardedEffectChunkShape
+import Noctium.Verification.GuardedOperationActivity
+import Noctium.Verification.GuardedRequireActivity
 
 namespace Noctium.Verification.GuardedPlanTrace
 open Backend GenericStateCheckedReadTrace GuardedEffectEvaluation
@@ -25,6 +28,21 @@ private theorem chunks_length
   induction trace with
   | nil _ => rfl
   | cons _ _ _ ih => simp [ih]
+
+private theorem selected_chunk_step
+    (trace : GuardedEffectOperationChunks state guards items before plan offsets chunks)
+    (pair : (Effect × Nat) × List Impact.Op) (present : pair ∈ items.zip chunks) :
+    ∃ start stop,
+      Impact.appendEffectWithActivity state pair.1.1 (guards[pair.1.2]?.getD none)
+        start = .ok stop ∧ stop.operations = start.operations ++ pair.2 := by
+  induction trace with
+  | nil _ => simp at present
+  | @cons item rest start stop plan offsets chunk chunks step operations tail ih =>
+    rw [List.zip_cons_cons] at present
+    rcases List.mem_cons.mp present with same | later
+    · subst pair
+      exact ⟨start, stop, step, operations⟩
+    · exact ih later
 
 private theorem eval_chunks (ctx : EvalContext) (env : EvalEnv)
     (guards : List (Option (Expr .bool)))
@@ -67,15 +85,15 @@ private theorem eval_chunks (ctx : EvalContext) (env : EvalEnv)
     · rw [← Except.ok.inj sameOps, List.flatten_append, tailOrder]
       rfl
 
-/-- The guard-aware VM sequence partitions at the actual compiler effect
-boundaries. Empty operation groups retain their source guard result. -/
+/-- The guard-aware VM sequence partitions at the compiler's effect
+boundaries. The operation schedule and successful plan assertions determine
+the activity of every source effect, including empty operation groups. -/
 theorem lower_scoped_active_chunks (state : List StateDecl) (entry : Entrypoint)
     (plan : Impact.Plan) (ctx : EvalContext) (env : EvalEnv) (native : List NativeState.Op)
     (lowered : Impact.lower state entry = .ok plan)
     (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
     (evaluated : evalPlan ctx env plan = .ok native)
-    (guardsEvaluate : ∀ item ∈ entry.effects.zipIdx, ∃ activity,
-      (entry.effectGuardAt item.2).mapM (Expr.eval ctx env) = .ok activity) :
+    (assertions : ∀ expression ∈ plan.guards, expression.eval ctx env = .ok true) :
     ∃ offsets inputPlan chunks publicNative groups,
       Impact.lowerWithEffectBoundaries state entry = .ok (plan, offsets) ∧
       Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
@@ -90,7 +108,9 @@ theorem lower_scoped_active_chunks (state : List StateDecl) (entry : Entrypoint)
   have empty := Impact.publicInputPlan_activity_guards entry.circuit.inputs {} inputPlan publicAccepted
   have inputGuards : operationGuards inputPlan = List.replicate inputPlan.operations.length none := by
     simp [operationGuards, empty]
-  have ⟨guardShape, _⟩ := operationGuards_of_chunks scope compiled (by simp [inputGuards])
+  have prefixAligned : (operationGuards inputPlan).length = inputPlan.operations.length := by
+    simp [inputGuards]
+  have ⟨guardShape, _⟩ := operationGuards_of_chunks scope compiled prefixAligned
   have operations := guarded_chunks_plan_operations compiled
   obtain ⟨_, activities, perOp, guardEval, opEval, result⟩ := evalPlan_success ctx env plan native evaluated
   change (operationGuards plan).mapM (evalActivity ctx env) = .ok activities at guardEval
@@ -115,7 +135,31 @@ theorem lower_scoped_active_chunks (state : List StateDecl) (entry : Entrypoint)
     intro pair member
     have present : pair.1 ∈ entry.effects.zipIdx := by
       simpa only [pairedItems] using List.mem_map_of_mem (f := Prod.fst) member
-    exact guardsEvaluate pair.1 present
+    change ∃ activity, evalActivity ctx env (entry.effectGuardAt pair.1.2) = .ok activity
+    by_cases noOps : pair.2 = []
+    · cases selected : entry.effectGuardAt pair.1.2 with
+      | none => exact ⟨none, rfl⟩
+      | some condition =>
+        obtain ⟨start, stop, compiledStep, operationShape⟩ :=
+          selected_chunk_step compiled pair member
+        have selectedGuard : entry.effectGuards[pair.1.2]?.getD none = some condition := selected
+        have headScope : GuardedScalarReadEffect (some condition) pair.1.1 := by
+          simpa only [selectedGuard] using scope pair.1 present
+        have headCompiled :
+            Impact.appendEffectWithActivity state pair.1.1 (some condition) start = .ok stop := by
+          simpa only [selectedGuard] using compiledStep
+        obtain ⟨required, effectShape⟩ := GuardedEffectChunkShape.guarded_empty_effect_is_require
+          state pair.1.1 condition headScope start stop headCompiled
+          (by simpa only [noOps, List.append_nil] using operationShape)
+        have requireMember : (Effect.require required, pair.1.2) ∈ entry.effects.zipIdx := by
+          rw [show (Effect.require required, pair.1.2) = pair.1 from Prod.ext effectShape.symm rfl]
+          exact present
+        obtain ⟨active, gate⟩ := GuardedRequireActivity.lower_guarded_require_activity
+          state entry plan ctx env required condition pair.1.2 lowered scope requireMember selected assertions
+        exact ⟨some active, by simp [evalActivity, gate, Except.map, Functor.map]⟩
+    · exact (GuardedOperationActivity.compiled_nonempty_chunk_guard_eval_success
+        scope compiled prefixAligned ctx env native evaluated
+        (item := pair.1) (chunk := pair.2) member noOps).2
   obtain ⟨groups, effectEval, effectSequence⟩ := eval_chunks ctx env entry.effectGuards
     (entry.effects.zipIdx.zip chunks) effectActs effectOps pairedGuards effectGuardEval
     (by simpa only [pairedOps] using evalEffects)
