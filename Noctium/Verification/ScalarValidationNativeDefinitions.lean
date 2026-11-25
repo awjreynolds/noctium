@@ -696,6 +696,12 @@ inductive SupportedScalarOpcode (raw : Json) : Instruction → Prop where
   | hash (inputs : List Operand) (output : String)
       (opcode : Backend.Native.stringField raw "op" = .ok "transient_hash") :
       SupportedScalarOpcode raw (.hash inputs output)
+  | not (value : Operand) (output : String)
+      (opcode : Backend.Native.stringField raw "op" = .ok "not") :
+      SupportedScalarOpcode raw (.not value output)
+  | select (condition a b : Operand) (output : String)
+      (opcode : Backend.Native.stringField raw "op" = .ok "cond_select") :
+      SupportedScalarOpcode raw (.select condition a b output)
   | constrainEq (a b : Operand)
       (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq") :
       SupportedScalarOpcode raw (.equal a b)
@@ -768,6 +774,16 @@ theorem accepted_supportedScalarOpcode_groupCount_step
     obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
     rw [(defineResult_counters defined).1]
     simp [impactGroupIncrement]
+  | not _ _ opcode =>
+    obtain ⟨_, _, _, _, _, _, defined⟩ :=
+      accepted_not_components definitions opcode accepted
+    rw [(defineResult_counters defined).1]
+    simp [impactGroupIncrement]
+  | select _ _ _ _ opcode =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+      accepted_native_select_components definitions opcode accepted
+    rw [(defineResult_counters defined).1]
+    simp [impactGroupIncrement]
   | output _ opcode =>
     rw [(accepted_output_counters opcode accepted).1]
     simp [impactGroupIncrement]
@@ -800,6 +816,14 @@ theorem accepted_supportedScalarOpcode_noninput_inputCount_preserved
   | impact _ _ opcode => exact accepted_impact_inputCount opcode accepted
   | hash _ _ opcode =>
     obtain ⟨_, _, _, _, _, defined⟩ := accepted_hash_definition opcode accepted
+    exact (defineResult_counters defined).2
+  | not _ _ opcode =>
+    obtain ⟨_, _, _, _, _, _, defined⟩ :=
+      accepted_not_components definitions opcode accepted
+    exact (defineResult_counters defined).2
+  | select _ _ _ _ opcode =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+      accepted_native_select_components definitions opcode accepted
     exact (defineResult_counters defined).2
   | output _ opcode => exact (accepted_output_counters opcode accepted).2
   | constrainEq _ _ opcode => exact (accepted_constrainEq_counters definitions opcode accepted).2
@@ -891,6 +915,14 @@ theorem nativeDefinitions_step {expected : Expected} {state next : State}
   | hash _ _ opcode =>
       obtain ⟨_, fact, _, _, combined, defined⟩ :=
         accepted_hash_definition opcode accepted
+      exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
+  | not _ _ opcode =>
+      obtain ⟨_, _, _, _, _, combined, defined⟩ :=
+        accepted_not_components nativeDefinitions opcode accepted
+      exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
+  | select _ _ _ _ opcode =>
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, _, combined, defined⟩ :=
+        accepted_native_select_components nativeDefinitions opcode accepted
       exact defineResult_nativeDefinitions nativeDefinitions (combine_native combined) defined
   | mul _ _ _ opcode =>
       obtain ⟨_, _, _, _, _, _, _, combined, defined⟩ :=

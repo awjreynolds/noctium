@@ -397,15 +397,21 @@ theorem boundedApply_acceptedImpactPayloads :
   simpa only [List.take_length, Native.State.groupCount, List.take_zero,
     List.map_nil, List.nil_append, decodedGroups, sat.groups] using ordered
 
-/-- The profile admits the real emitted hash row in an assertion-bearing
-entrypoint. The explicit row check keeps the fixture from passing without it. -/
+/-- The profile admits the emitted Boolean negation, conditional swap, and
+hash rows. Each opcode must appear in the decoded entrypoint. -/
 private def hashAssertionProfile : _root_.Bool :=
   let hashEntry : Entrypoint := {name := "hashAssertion", circuit := {
     name := "hashAssertion"
     inputs := [{name := "left", ty := .native, visibility := .private},
       {name := "right", ty := .native, visibility := .private},
+      {name := "swap", ty := .bool, visibility := .private},
+      {name := "disabled", ty := .bool, visibility := .private},
       {name := "digest", ty := .native, visibility := .«public»}]
-    constraints := [.eq (.poseidon2 7 (.ref "left") (.ref "right")) (.ref "digest")] }}
+    constraints := [
+      .boolXor (.ref "disabled") (.bool Bool.true),
+      .eq (.transientHash [
+        .select (.ref "swap") (.ref "right") (.ref "left"),
+        .select (.ref "swap") (.ref "left") (.ref "right")]) (.ref "digest")] }}
   match Zkir.lowerEntrypoint [] hashEntry .rangeAndAssertions with
   | .error _ => Bool.false
   | .ok artifact =>
@@ -414,6 +420,12 @@ private def hashAssertionProfile : _root_.Bool :=
       checkedScalarOpcodeProfile rows.toList.zipIdx relation.instructions &&
         relation.instructions.any (fun instruction => match instruction with
           | .hash _ _ => Bool.true
+          | _ => Bool.false) &&
+        relation.instructions.any (fun instruction => match instruction with
+          | .not _ _ => Bool.true
+          | _ => Bool.false) &&
+        relation.instructions.any (fun instruction => match instruction with
+          | .select _ _ _ _ => Bool.true
           | _ => Bool.false)
     | _, _ => Bool.false
 

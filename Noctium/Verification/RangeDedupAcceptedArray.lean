@@ -1180,6 +1180,8 @@ theorem nativeDefinitionStep_supportsMeaning {raw : Json} {instruction : Instruc
     | assertion condition opcode => exact .assertion opcode decoded (holds _ decoded)
     | testEq a b output opcode => exact .testEq opcode decoded (holds _ decoded)
     | hash values output opcode => exact .transientHash opcode decoded (holds _ decoded)
+    | not value output opcode => exact .logicalNot opcode decoded (holds _ decoded)
+    | select condition yes no output opcode => exact .nativeSelect opcode decoded (holds _ decoded)
     | copy source destination opcode => exact .copy opcode decoded (holds _ decoded)
     | impact guard inputs opcode => exact .impact opcode decoded
     | output values opcode => exact .output opcode decoded

@@ -105,6 +105,18 @@ theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expect
       have unchanged := (defineResult_counters defined).2
       rw [unchanged]
       simp [strictInstructionInputDescriptors]
+    | not _ _ opcode =>
+      obtain ⟨_, _, _, _, _, _, defined⟩ :=
+        accepted_not_components definitions opcode accepted
+      have unchanged := (defineResult_counters defined).2
+      rw [unchanged]
+      simp [strictInstructionInputDescriptors]
+    | select _ _ _ _ opcode =>
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, defined⟩ :=
+        accepted_native_select_components definitions opcode accepted
+      have unchanged := (defineResult_counters defined).2
+      rw [unchanged]
+      simp [strictInstructionInputDescriptors]
     | output _ opcode =>
       have unchanged := (accepted_output_counters opcode accepted).2
       rw [unchanged]
