@@ -113,6 +113,28 @@ bash sdk/swift/package.sh "$scratch/package" aarch64-apple-darwin
 swift test --package-path "$scratch/package" --filter LedgerSnapshotTests
 ```
 
+### Read a Field/Bool Map
+
+Use `fieldBoolMapPage` for a request that targets a
+`Map<Field, Bool>` in the supplied plan. Entries expose Field keys as
+canonical decimal strings and values as Swift `Bool`. The adapter
+checks the page format and returns the native continuation offset.
+
+```swift
+let flags = try LedgerSnapshot.fieldBoolMapPage(
+    request: flagsRequest, plan: impactPlan, snapshot: taggedSnapshot
+)
+```
+
+The same `LedgerSnapshotTests` command replays two `flags` pages from the
+pinned collection fixture. It follows offset `2` and joins `1 → true`,
+`2 → false`, and `10 → true` in numeric key order. The Compact fixture
+writes `true` at key `2` before overwriting it with `false`. The Swift
+reader preserves the stored Boolean and rejects a mismatched snapshot
+digest with native status `1`.
+[Compact overwrite case](../../tests/compact/native-collection-pages.mjs) ·
+[Pinned fixture rows](../../tests/fixtures/native-collection-pages/manifest.json)
+
 ## Qualification
 
 ```sh

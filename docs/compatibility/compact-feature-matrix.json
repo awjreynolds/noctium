@@ -3538,7 +3538,7 @@
       "layer": "host-ledger-view",
       "surface": "Map.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. Wider compound keys and SDK adapters remain open. The pinned Compact iterator for a Bytes33 Map matches two joined native pages after sorting by all 33 key bytes. Three shared-prefix keys stay distinct through an overwrite. The native reader checks an empty end page and rejects a mismatched snapshot digest.",
+      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. The pinned Compact iterator for a Bytes33 Map matches two joined native pages after sorting by all 33 key bytes. Three shared-prefix keys stay distinct through an overwrite. The native reader checks an empty end page and rejects a mismatched snapshot digest. The packaged macOS ARM64 Swift SDK joins two Field/Bool pages with exact decimal keys and the stored false overwrite value, follows the returned continuation, and rejects a mismatched digest. Wider compound keys and SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -3553,6 +3553,8 @@
         "tests/TypedRecordMapKey.lean",
         "runtime/tests/collection_reads.rs",
         "tests/fixtures/native-collection-pages/manifest.json",
+        "sdk/swift/Tests/NoctiumTests/LedgerSnapshotTests.swift",
+        "docs/development/swift-witness-sdk.md",
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs"
