@@ -663,6 +663,7 @@ jobs:
             Noctium.Verification.GenericStateCheckedReadDecode \
             Noctium.Verification.GenericStateReadAuthentication \
             Noctium.Verification.GenericStateConverseRead \
+            Noctium.Verification.GenericStatePrefixEnvironment \
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
