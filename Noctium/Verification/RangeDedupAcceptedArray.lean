@@ -92,6 +92,12 @@ inductive AcceptedMeaningStep (hash : Hash) (witness : Assignment) (raw : Json) 
       (opcode : Backend.Native.stringField raw "op" = .ok "impact")
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.impact guard values)) :
       AcceptedMeaningStep hash witness raw
+  | guardedImpact {guard : Operand} {values : List Operand}
+      (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+      (decodedGuard : NativeRelationJson.decodeOperandField raw "guard" = .ok guard)
+      (decodedPayload : (do NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")) =
+        .ok values) :
+      AcceptedMeaningStep hash witness raw
   | output {values : List Operand}
       (opcode : Backend.Native.stringField raw "op" = .ok "output")
       (decoded : NativeRelationJson.decodeInstruction raw = .ok (.output values)) :
@@ -277,7 +283,9 @@ theorem accepted_guarded_public_input_preserves
     guarded_public_input_nativeDefinitions_step definitions selected nonforeignInput guarded
       opcode accepted⟩
 
-private theorem acceptedMeaningStep_preserves
+/-- Every accepted meaning step preserves source meaning, native definitions,
+and the checked assertion prefix. -/
+theorem acceptedMeaningStep_preserves
     {hash : Hash} {inputs witness : Assignment} {expected : Backend.Native.Expected}
     {state next : Backend.Native.State} {raw : Json}
     (meaning : StateMeaning hash inputs witness state)
@@ -675,6 +683,9 @@ private theorem acceptedMeaningStep_preserves
   | impact opcode _ =>
     rw [accepted_impact_state opcode accepted]
     exact ⟨meaning, definitions, id⟩
+  | guardedImpact opcode _ _ =>
+    rw [accepted_impact_state opcode accepted]
+    exact ⟨meaning, definitions, id⟩
   | output opcode decoded =>
     have outputMeaning := accepted_output_meaning meaning accepted opcode decoded
     rw [outputMeaning.1]
@@ -785,6 +796,9 @@ theorem acceptedMeaningStep_groupCount_step
     rw [accepted_copy_groupCount definitions opcode accepted]
     simp [impactOpcodeRow, opcode]
   | @impact _ _ opcode _ =>
+    rw [accepted_impact_state opcode accepted]
+    simp [impactOpcodeRow, opcode]
+  | @guardedImpact _ _ opcode _ _ =>
     rw [accepted_impact_state opcode accepted]
     simp [impactOpcodeRow, opcode]
   | @output _ opcode _ =>
