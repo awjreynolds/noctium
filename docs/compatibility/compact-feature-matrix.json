@@ -3028,7 +3028,7 @@
       "layer": "host-ledger-view",
       "surface": "Set.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path and decodes qualified shielded coin records from a root Set. Qualified records page deterministically by nonce, color, numeric value and Merkle tree index. Root flat record Set pages return named typed fields in declared field order. The pinned Compact Bool/UInt16 reference and the native ABI agree on member values for empty, inserted and removed states. The ABI returns its own stable order and rejects a malformed record or marker anywhere in the selected Set. Wider composite layouts and SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar Set members at the root or through a typed Map path and decodes qualified shielded coin records from a root Set. Qualified records page deterministically by nonce, color, numeric value and Merkle tree index. Root flat record Set pages return named typed fields in declared field order. The pinned Compact Bool/UInt16 reference and the native ABI agree on member values for empty, inserted and removed states. The ABI returns its own stable order and rejects a malformed record or marker anywhere in the selected Set. The packaged macOS ARM64 Swift SDK matches the pinned Bytes32 Set rows in native order for an empty Set and states after duplicate insertion and removal. It follows the returned continuation, compares all 32 bytes per member, and rejects a truncated tagged snapshot with a matching test digest. Wider composite layouts and SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -3042,7 +3042,9 @@
         "runtime/include/noctium_native.h",
         "tests/compact/NativeCollectionPages.compact",
         "tests/compact/native-collection-pages.mjs",
-        "tests/compact/qualified-coin-collections.mjs"
+        "tests/compact/qualified-coin-collections.mjs",
+        "sdk/swift/Tests/NoctiumTests/LedgerSnapshotTests.swift",
+        "docs/development/swift-witness-sdk.md"
       ],
       "equivalence": "unverified"
     },
