@@ -200,11 +200,17 @@ private def boundedApplyScalarInputs : _root_.Bool :=
 private theorem boundedApplyScalarInputs_checked : boundedApplyScalarInputs = Bool.true := by
   decide +kernel
 
-/-- A satisfying assignment for the emitted fixture has the source bound of
-the ledger read. The bound comes from the final producer input check. -/
-theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
+open Noctium.Verification.ScalarNormalization (interpret) in
+/-- The final producer checks give the ledger-read bound and each range
+requirement in the exact typed schedule of the emitted fixture. -/
+theorem boundedApply_checkedRanges {hash : Hash} {assignment : Assignment}
     (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
-    (assignment "%input_old").val ≤ 510 := by
+    (assignment "%input_old").val ≤ 510 ∧
+      ∃ expected, Native.expectedEntrypoint BoundedScalars.state
+        (Passes.pruneEntrypoint selectedEntrypoint) = .ok expected ∧
+        ∀ requirement ∈ expected.bounds,
+          ∃ value, interpret hash assignment requirement.1 = some value ∧
+            value.val ≤ requirement.2 := by
   obtain ⟨_, expected, _, seed, final, _, schedule, _, driver, trace⟩ :=
     boundedApply_nativeValidationTrace
   have checked := boundedApplyScalarInputs_checked
@@ -224,7 +230,13 @@ theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
   obtain ⟨⟨name, ty⟩, ordinary⟩ := fieldChecks
   have bound := driver.inputBound meaning (List.mem_append_right _ inList)
     (schema requirement inList) ordinary
+  refine ⟨?_, expected, schedule, driver.rangeRequirements meaning⟩
   simpa [eq_of_beq name, ty, Native.sourceMaximum] using bound
+
+theorem boundedApply_oldReadBound {hash : Hash} {assignment : Assignment}
+    (holds : ∀ instruction ∈ decodedProgram.instructions, Instruction.Holds hash assignment instruction) :
+    (assignment "%input_old").val ≤ 510 :=
+  (boundedApply_checkedRanges holds).1
 
 /-- The decoded input rows of the accepted fixture preserve source visibility,
 names and order for the strict scalar input fragment. Its empty producer seed
