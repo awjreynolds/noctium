@@ -1,5 +1,5 @@
 import Noctium.Frontend
-import Noctium.Verification.GenericStateOps
+import Noctium.Verification.GenericStateScalarPrefix
 
 open scoped Noctium
 open Noctium
@@ -54,6 +54,21 @@ private def scalarImpactExpected : List NativeState.Op := [
   .push (NativeState.field (scalar 23)) Bool.false,
   .popeq (NativeState.field (scalar 23))
 ]
+
+private theorem scalarImpact_lowered_operations_supported :
+    ∀ plan, Backend.Impact.lower [] scalarImpactEntry = .ok plan →
+      ∀ operation ∈ plan.operations, GenericStateOps.ScalarOperation operation := by
+  have noEffects : scalarImpactEntry.effects = [] := by
+    simp [scalarImpactEntry, ScalarImpactInputAdmission]
+  have compatible : ∀ input ∈ scalarImpactEntry.circuit.inputs,
+      Backend.Impact.publicInputScalarCompatible input := by
+    intro input hmem
+    simp [scalarImpactEntry, ScalarImpactInputAdmission, scalarImpactInputs] at hmem
+    rcases hmem with h | h | h <;> subst input <;>
+      simp [Backend.Impact.publicInputScalarCompatible]
+  intro plan lowered
+  exact GenericStateScalarPrefix.lower_public_input_only_scalar_supported
+    [] scalarImpactEntry plan lowered noEffects compatible
 
 #guard match Backend.Impact.publicInputPlan scalarImpactEntry.circuit.inputs with
   | .ok _ => Bool.true
