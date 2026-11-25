@@ -46,6 +46,13 @@ try {
     }), tag, suppliedFirstId, suppliedLateId, firstValue, lateValue);
     return [result, context.callContext.currentQueryContext.state];
   };
+  const runInsertPair = async state => {
+    const { result, context } = await contract.circuits.insertPair(createCircuitContext({
+      circuitId: 'insertPair', contractAddress: dummyContractAddress(),
+      coinPublicKeyOrZswapState: wallet, contractState: state, privateState: null,
+    }), tag, firstId, lateId, firstValue, lateValue);
+    return [result, context.callContext.currentQueryContext.state];
+  };
 
   const initial = currentContractState.data;
   assert.equal(ledger(initial).memos.size(), 0n);
@@ -58,6 +65,45 @@ try {
   assert.equal(memos.member(key(lateId)), true);
   assert.equal(memos.lookup(key(lateId)), lateValue);
   await assert.rejects(() => run(initial, firstId.slice(0, 32), lateId));
+
+  const [insertPairResult, insertPairState] = await runInsertPair(initial);
+  assert.deepEqual(insertPairResult, []);
+  const insertedMemos = ledger(insertPairState).memos;
+  assert.equal(insertedMemos.size(), 2n);
+  const compareBytes = (left, right) => {
+    for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+      if (left[index] !== right[index]) return left[index] - right[index];
+    }
+    return left.length - right.length;
+  };
+  const recordMapPageEntries = [...insertedMemos]
+    .map(([recordKey, value]) => ({
+      key: {
+        tag: { kind: 'bytes', values: Array.from(recordKey.tag) },
+        id: { kind: 'bytes', values: Array.from(recordKey.id) },
+      },
+      value: value.toString(),
+    }))
+    .sort((left, right) => compareBytes(left.key.tag.values, right.key.tag.values)
+      || compareBytes(left.key.id.values, right.key.id.values));
+  const firstIdBytes = Array(33).fill(3);
+  const lateIdBytes = [...Array(32).fill(3), 4];
+  assert.deepEqual(recordMapPageEntries, [
+    {
+      key: {
+        tag: { kind: 'bytes', values: [7] },
+        id: { kind: 'bytes', values: firstIdBytes },
+      },
+      value: firstValue.toString(),
+    },
+    {
+      key: {
+        tag: { kind: 'bytes', values: [7] },
+        id: { kind: 'bytes', values: lateIdBytes },
+      },
+      value: lateValue.toString(),
+    },
+  ]);
 
   console.log(JSON.stringify({
     fixture: 'RootFixedByteRecordMap',
@@ -76,6 +122,7 @@ try {
     },
     remainingEntries: 1,
     wrongKeyWidthRejected: true,
+    recordMapPageEntries,
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

@@ -3540,7 +3540,7 @@
       "layer": "host-ledger-view",
       "surface": "Map.[Symbol.iterator]",
       "noctiumStatus": "subset",
-      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. The pinned Compact iterator for a Bytes33 Map matches two joined native pages after sorting by all 33 key bytes. Three shared-prefix keys stay distinct through an overwrite. The native reader checks an empty end page and rejects a mismatched snapshot digest. The packaged macOS ARM64 Swift SDK joins two Field/Bool pages with exact decimal keys and the stored false overwrite value, follows the returned continuation, and rejects a mismatched digest. Wider compound keys and SDK adapters remain open.",
+      "notes": "The native snapshot ABI pages scalar keys with scalar or checked composite record values. The pinned Compact fixture matches scalar entries and the checked four-field record contents. The root Bool/UInt16 record-key case matches pinned Compact after sorting the same entries. Noctium pages by declared key fields in ascending typed order. The pinned Compact iterator for a Bytes33 Map matches two joined native pages after sorting by all 33 key bytes. Three shared-prefix keys stay distinct through an overwrite. The native reader checks an empty end page and rejects a mismatched snapshot digest. A root Bytes1/Bytes33 record-key Map matches the sorted Compact iterator at page size one after either insertion order. Its two keys differ only in the last ID byte. The reader rejects a stored key with a 32-byte FAB field under the 33-byte declaration. The packaged macOS ARM64 Swift SDK joins two Field/Bool pages with exact decimal keys and the stored false overwrite value, follows the returned continuation, and rejects a mismatched digest. Wider compound keys and SDK adapters remain open.",
       "source": [
         "adt"
       ],
@@ -3553,6 +3553,8 @@
         "tests/compact/fixed-byte-collection-keys.mjs",
         "docs/development/native-client-abi.md",
         "tests/TypedRecordMapKey.lean",
+        "tests/RootFixedByteRecordMap.lean",
+        "tests/compact/root-fixed-byte-record-map.mjs",
         "runtime/tests/collection_reads.rs",
         "tests/fixtures/native-collection-pages/manifest.json",
         "sdk/swift/Tests/NoctiumTests/LedgerSnapshotTests.swift",

@@ -311,6 +311,47 @@ NOCTIUM_BYTES33_PAGE_COMPACT="$scratch/compact.json" \
   bytes33_map_pages_match_compact_after_overwrite -- --ignored --exact
 ```
 
+## Read Map pages with fixed-byte record keys
+
+The paired replay uses the root `memos` Map from
+`RootFixedByteRecordMap`. The key fields are `tag: Bytes<1>` and
+`id: Bytes<33>`, and the value is `UInt<16>`. Both keys have tag
+`[7]` and the first 32 ID bytes are `03` in hex. The record ending in
+`03` has value 101 and the record ending in `04` has value 303.
+
+Compact inserts the later record first. The comparison sorts the
+generated Map iterator by tag and all 33 ID bytes. The native ABI
+returns the two exact records in that order at page size one after
+either insertion order. The first page reports offset `1`, the
+second reports `null`, and offset `2` returns an empty page. A
+separately tagged snapshot with a 32-byte FAB field in place of
+the 33-byte ID rejects with `NOCTIUM_NATIVE_INVALID_ARGUMENT`
+even when supplied with its correct test digest.
+
+The replay uses Compact 0.36.1 (`7fa3a117c`), Runtime 0.21.0 and
+Noctium Ledger 9.1.0.1 / ZKIR 3.2.1.
+[Lean fixture](../../tests/RootFixedByteRecordMap.lean) ·
+[Compact reference](../../tests/compact/root-fixed-byte-record-map.mjs) ·
+[Native replay](../../runtime/tests/collection_reads.rs)
+
+```sh
+set -eu
+mkdir -p build/experiments
+scratch=$(mktemp -d "$PWD/build/experiments/record-map-pages.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+lake build Noctium.Cli Noctium.Compiler Noctium.Frontend
+node tests/compact/root-fixed-byte-record-map.mjs \
+  "$COMPACTC_0361" "$COMPACT_RUNTIME_0210" > "$scratch/compact.json"
+lake env lean --run NoctiumMain.lean compile tests/RootFixedByteRecordMap.lean \
+  --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+  --emit ledger --output "$scratch/native"
+NOCTIUM_FIXED_RECORD_MAP_PAGE_DIR="$scratch/native" \
+NOCTIUM_FIXED_RECORD_MAP_PAGE_COMPACT="$scratch/compact.json" \
+  cargo +1.100.0 test --locked --manifest-path runtime/Cargo.toml \
+  --no-default-features --features zkir-321 --test collection_reads \
+  record_key_map_pages_with_fixed_bytes_match_compact -- --ignored --exact
+```
+
 ## Read qualified coin Set pages
 
 Pass the emitted plan and tagged contract snapshot to
