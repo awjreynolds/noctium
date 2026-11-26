@@ -1,7 +1,5 @@
 import Noctium.Frontend
-import Noctium.Verification.GuardedScalarCandidateSchedule
-import Noctium.Verification.GuardedScalarCandidateState
-import Noctium.Verification.ScalarGuardedReadAdmission
+import Noctium.Verification.GuardedScalarCandidateTranscript
 
 open scoped Noctium
 open Noctium
@@ -266,6 +264,38 @@ private def mutatedAssignment : Assignment := fun identifier =>
   | some slots =>
       (GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
         values mutatedAssignment slots).isNone
+  | none => _root_.Bool.false
+
+private def fixtureTranscript : Option
+    (ArtifactBytes.Bytes × GuardedStatementConsumption.Inputs ×
+      List GuardedImpactObservation.Observation) := do
+  let json ← (Backend.Zkir.lowerEntrypoint state fixtureEntry).toOption
+  let bytes := json.compress.toUTF8.data.toList
+  let rows ← (GuardedZkirArtifact.check bytes json).toOption
+  let observations ← GuardedImpactTranscript.emittedObservations assignment rows
+  let slots ← GenericStateEncoding.encodeInitialState state matchingLedger
+  let result ← (fixtureEntry.circuit.run context values).toOption
+  let candidates ← (decodeReads reads assignment).toOption
+  let operations ← (GuardedPlanExecution.evalPlan context
+    ((result ++ values) ++ candidates) plan).toOption
+  let final ← GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry
+    plan values assignment slots
+  if NativeState.run operations ⟨[.vector slots], []⟩ != some final then none else
+    pure (bytes, ⟨operations.flatMap ImpactStatementScalar.opFields,
+      final.reads.map NativeState.Cell.value⟩, observations)
+
+#guard match fixtureTranscript with
+  | some (bytes, inputs, observations) =>
+      (inputs.transcriptOutputs == [scalar 1, scalar 41]) &&
+      (inputs.transcriptInputs == GuardedImpactObservation.activePayloads observations) &&
+      decide (GuardedStatementConsumption.consumeArtifact bytes assignment inputs = some observations)
+  | none => _root_.Bool.false
+
+-- Reordering the VM read tape leaves the Impact fields and witness fixed.
+#guard match fixtureTranscript with
+  | some (bytes, inputs, _) =>
+      let reordered := {inputs with transcriptOutputs := inputs.transcriptOutputs.reverse}
+      (GuardedStatementConsumption.consumeArtifact bytes assignment reordered).isNone
   | none => _root_.Bool.false
 
 end GuardedScalarCandidateFrameProof

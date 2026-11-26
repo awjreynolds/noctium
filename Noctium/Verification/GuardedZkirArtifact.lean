@@ -1,6 +1,7 @@
 import Noctium.Verification.ArtifactBytes
 import Noctium.Verification.GuardedScalarRows
 import Noctium.Verification.NativeRelationJson
+import Noctium.Backend.Zkir
 
 namespace Noctium.Verification.GuardedZkirArtifact
 
@@ -60,11 +61,101 @@ def check (bytes : ArtifactBytes.Bytes) (expected : Lean.Json) :
   let pinned ← decodeView expected
   compareViews actual pinned
 
-private theorem bind_ok {α β : Type} {first : Except String α}
-    {next : α → Except String β} {result : β} :
+private theorem bind_ok {ε α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
     (first >>= next) = .ok result ↔
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem decode_commitment_projection {json : Json}
+    {program : NativeRelation.Program}
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    (json.getObjVal? "do_communications_commitment" >>= Json.getBool?) =
+      .ok program.communicationsCommitment := by
+  unfold NativeRelationJson.decode at decoded
+  simp only [bind_ok] at decoded
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, outputs, _, _, _,
+      flagJSON, flagField, flag, flagDecoded, _, _, instructions, _, finished⟩ := decoded
+  have programEq :
+      (⟨instructions, outputs.size, flag⟩ : NativeRelation.Program) = program :=
+    Except.ok.inj finished
+  rw [← programEq]
+  rw [flagField]
+  exact flagDecoded
+
+/-- A successful ledger lowering emits its commitment-enabled root object.
+Producer validation returns the exact JSON built by the lowerer. -/
+private theorem lowerEntrypoint_rootJson {state : List StateDecl}
+    {entry : Entrypoint} {rewrites : Zkir.Rewrites} {json : Json}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json) :
+    ∃ version inputs outputs instructions : Json,
+      json = Json.mkObj
+        [("version", version), ("inputs", inputs), ("outputs", outputs),
+         ("do_communications_commitment", toJson true), ("instructions", instructions)] := by
+  simp only [Zkir.lowerEntrypoint, bind_ok] at lowered
+  obtain ⟨⟨resultPlan, relation⟩, prunedAccepted, result⟩ := lowered
+  cases result
+  simp only [Zkir.lowerPrunedEntrypoint, bind_ok] at prunedAccepted
+  rcases prunedAccepted with ⟨plan, planAccepted, gate⟩
+  cases produced : (Zkir.lowerEntrypointBody (Passes.pruneEntrypoint entry) plan).run {} with
+  | mk value result =>
+    simp only [produced] at gate
+    simp only [bind_ok] at gate
+    rcases gate with ⟨expected, expectedAccepted, _, producerAccepted, output⟩
+    cases output
+    obtain ⟨equal, _⟩ := (Zkir.validateProduced_ok _ _ _ _).mp producerAccepted
+    subst relation
+    refine ⟨_, _, _, _, rfl⟩
+
+/-- Successful native decoding returns the commitment bit read from that
+same JSON object. -/
+private theorem decodeHeader_lowered_commitment {state : List StateDecl}
+    {entry : Entrypoint} {rewrites : Zkir.Rewrites} {json : Json}
+    {header : Header}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : decodeHeader json = .ok header) :
+    header.communicationsCommitment = true := by
+  obtain ⟨version, rootInputs, outputs, instructions, jsonEq⟩ :=
+    lowerEntrypoint_rootJson lowered
+  let rootFields := Std.TreeMap.Raw.ofList
+    [("version", version), ("inputs", rootInputs), ("outputs", outputs),
+     ("do_communications_commitment", toJson true), ("instructions", instructions)] compare
+  have modifiedFlag :
+      (Json.obj ((rootFields.insert "instructions" (.arr #[])).insert "inputs" (.arr #[]))).getObjVal?
+          "do_communications_commitment" = .ok (.bool true) := rfl
+  unfold decodeHeader at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨fields, fieldsParsed, call, callParsed, result⟩
+  have fieldsEq : fields = rootFields := by
+    rw [jsonEq] at fieldsParsed
+    change Except.ok rootFields = Except.ok fields at fieldsParsed
+    exact (Except.ok.inj fieldsParsed).symm
+  unfold NativeRelationJson.decodeScalarCall at callParsed
+  simp only [bind_ok] at callParsed
+  rcases callParsed with ⟨callFields, callFieldsParsed, arguments, argumentsParsed,
+    body, bodyParsed, callResult⟩
+  have callFieldsEq :
+      callFields = fields.insert "instructions" (.arr #[]) := by
+    change Except.ok (fields.insert "instructions" (.arr #[])) = Except.ok callFields
+      at callFieldsParsed
+    exact (Except.ok.inj callFieldsParsed).symm
+  have bodyObjectEq :
+      Json.obj (callFields.insert "inputs" (.arr #[])) =
+        Json.obj ((rootFields.insert "instructions" (.arr #[])).insert "inputs" (.arr #[])) := by
+    rw [callFieldsEq, fieldsEq]
+  have bodyFlag := decode_commitment_projection bodyParsed
+  rw [bodyObjectEq, modifiedFlag] at bodyFlag
+  have bodyCommitted : body.communicationsCommitment = true := by
+    simpa using Except.ok.inj bodyFlag
+  have headerEq : header.communicationsCommitment = body.communicationsCommitment := by
+    have scalarEqual :
+        ({ arguments := arguments.2, body := body } : NativeRelationJson.ScalarCall) = call :=
+      Except.ok.inj callResult
+    have equal := Except.ok.inj result
+    rw [← scalarEqual] at equal
+    exact (congrArg Header.communicationsCommitment equal).symm
+  rw [headerEq]
+  exact bodyCommitted
 
 private theorem compareViews_sound {actual pinned : View}
     {rows : List GuardedScalarRows.Row}
@@ -118,5 +209,35 @@ theorem check_sound {bytes : ArtifactBytes.Bytes} {expected : Lean.Json}
     rw [← same]
     exact rowsEq
   exact ⟨exactBytes, instructions, instructionsParsed, pinnedRows.trans (congrArg Except.ok pinnedRowsEq)⟩
+
+private theorem decodeView_header_accepted {json : Json} {view : View}
+    (accepted : decodeView json = .ok view) :
+    decodeHeader json = .ok view.header := by
+  unfold decodeView at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨header, headerAccepted, instructions, instructionsAccepted,
+    rows, rowsAccepted, result⟩
+  have viewEq : ({ header := header, rows := rows } : View) = view :=
+    Except.ok.inj result
+  cases viewEq
+  exact headerAccepted
+
+/-- An exact-byte guarded artifact accepted against an accepted ledger-call
+lowering has the producer's enabled communications commitment in its header. -/
+theorem check_lowerEntrypoint_header {state : List StateDecl} {entry : Entrypoint}
+    {rewrites : Zkir.Rewrites} {bytes : ArtifactBytes.Bytes} {json : Lean.Json}
+    {rows : List GuardedScalarRows.Row}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (checked : check bytes json = .ok rows) :
+    ∃ view, decodeBytes bytes = .ok view ∧ view.rows = rows ∧
+      view.header.communicationsCommitment = true := by
+  unfold check at checked
+  simp only [bind_ok] at checked
+  rcases checked with ⟨actual, actualAccepted, pinned, pinnedAccepted, compared⟩
+  obtain ⟨viewsEqual, rowsEqual⟩ := compareViews_sound compared
+  refine ⟨actual, actualAccepted, rowsEqual, ?_⟩
+  rw [viewsEqual]
+  exact decodeHeader_lowered_commitment lowered
+    (decodeView_header_accepted pinnedAccepted)
 
 end Noctium.Verification.GuardedZkirArtifact
