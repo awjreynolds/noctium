@@ -1,4 +1,5 @@
 import Noctium.Verification
+import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarCellArtifactExecution
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
@@ -174,3 +175,13 @@ private def repeatedHashBody (plan : Impact.Plan) : Zkir.LowerState :=
 
 example : Zkir.OutputCapacityFrame {} (repeatedHashBody {}) := by
   constructor <;> decide +kernel
+
+private def coldHashField : Expr .native :=
+  .bytesField (.persistentHash32 (.bytes32Literal (List.replicate 32 0))) 0
+
+example :
+    let after := ((Zkir.lowerExpr coldHashField).run {}).2
+    after.instructions.size = 2 ∧ after.next = 3 ∧ after.outputDefinitions = 3 ∧
+      ScalarAllocation.Frame {} after := by
+  exact ⟨by decide +kernel, by decide +kernel, by decide +kernel,
+    ScalarAllocation.lowerExpr_preserves coldHashField {}⟩

@@ -6,7 +6,6 @@ import Noctium.Verification.GenericStateOutputCompleteness
 import Noctium.Verification.GenericStateOperationCompleteness
 import Noctium.Verification.ScalarCircuitLowering
 import Noctium.Verification.ScalarExpressionLowering
-import Noctium.Verification.GenericStateExpressionEnvironment
 import Noctium.Verification.GenericStateLedgerIdentifiers
 
 namespace Noctium.Verification.GenericStateLedgerWitness
