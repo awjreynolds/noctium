@@ -1,5 +1,7 @@
 import Noctium.Verification
 import Noctium.Verification.GuardedScalarWitness
+import Noctium.Verification.GenericStateConverseSource
+import Noctium.Verification.GenericStateConverseNativeTrace
 
 open Noctium Noctium.Backend Noctium.Verification
 open NativeRelation
@@ -75,7 +77,10 @@ private def rejectsChangedCopy : Except String _root_.Bool := do
 open Lean Elab Command in
 run_cmd do
   for root in [`Noctium.Verification.GuardedScalarWitness.buildSourceCall,
-      `Noctium.Verification.GuardedScalarWitness.Checked.source_read_values] do
+      `Noctium.Verification.GuardedScalarWitness.Checked.source_read_values,
+      `Noctium.Verification.GenericStateConverseSource.source_assignment_of_entry_run,
+      `Noctium.Verification.GenericStateConverseCheckedPlan.checked_of_constructed_trace,
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace] do
     match Noctium.Verification.Audit.axiomsIn (← getEnv) root with
     | .ok _ => pure ()
     | .error error => throwError error

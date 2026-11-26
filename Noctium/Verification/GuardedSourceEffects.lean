@@ -45,11 +45,25 @@ private theorem forIn_agree_on {α β ε : Type} (items : List α) (current : β
     | done frame => rfl
     | yield frame => exact ih frame (fun item member => same item (by simp [member]))
 
-private theorem singleton_none (ctx : EvalContext) (effect : Effect) (frame : Frame) :
+theorem step_unguarded (ctx : EvalContext) (effect : Effect) (frame : Frame) :
     step ctx none effect frame = SourceEffects.step ctx effect frame := by
   change runEffectsWithEnv ctx [effect] frame.1 frame.2 =
     runEffectWithEnv ctx effect frame.1 frame.2
   simp [runEffectsWithEnv]
+
+theorem step_guard_error (ctx : EvalContext) (condition : Expr .bool) (effect : Effect)
+    (frame : Frame) (message : String)
+    (supported : GuardedScalarReadEffect (some condition) effect)
+    (failed : condition.eval ctx frame.1 = .error message) :
+    step ctx (some condition) effect frame = .error message := by
+  dsimp [step, runEffectsWithGuardsAndEnv, List.zipIdx, List.all, List.isEmpty,
+    List.length, Option.isNone, Option.getD, Option.isSome, Bind.bind, Except.bind,
+    Pure.pure, Except.pure]
+  rw [List.forIn_cons]
+  dsimp [List.getElem?_cons_zero, Option.getD, Option.isSome, Bind.bind, Except.bind,
+    Pure.pure, Except.pure]
+  rw [failed]
+  cases supported <;> rfl
 
 private theorem all_none_guard_at (guards : List (Option (Expr .bool)))
     (allNone : guards.all Option.isNone = true) (index : Nat) :
@@ -70,7 +84,7 @@ private theorem fold_eq_sourceFold (ctx : EvalContext)
   | nil => rfl
   | cons item rest ih =>
     have headGuard := all_none_guard_at guards allNone item.2
-    rw [fold_cons, headGuard, singleton_none]
+    rw [fold_cons, headGuard, step_unguarded]
     simp only [List.map_cons]
     rw [SourceEffects.fold_cons]
     have tailEq : fold ctx guards rest = SourceEffects.fold ctx (List.map Prod.fst rest) := by
@@ -146,7 +160,7 @@ theorem runEffectsWithGuardsAndEnv_eq_fold (ctx : EvalContext)
         generalize gateAt : guards[position]?.getD none = gate at admitted ⊢
         cases admitted with
         | unguarded scalar =>
-          rw [singleton_none]
+          rw [step_unguarded]
           cases scalar with
           | readCell name destination ty =>
             dsimp [SourceEffects.step, runEffectWithEnv, Option.isSome,

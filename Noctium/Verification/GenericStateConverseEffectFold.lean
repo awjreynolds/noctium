@@ -1,145 +1,79 @@
 import Noctium.Verification.GenericStateConverseEffectStep
-import Noctium.Verification.GenericStateSourceReadInputs
-import Noctium.Verification.GenericStateAdmission
-import Noctium.Verification.GenericStateConverseGuardStep
+import Noctium.Verification.GuardedEffectEvaluation
 
 namespace Noctium.Verification.GenericStateConverseEffectFold
-open Backend NativeRelation ScalarNormalization NativeState
-open GenericStatePrefixEnvironment
+open Backend NativeRelation NativeState
+open GenericStatePrefixEnvironment GenericStateEffectValidation GenericStateCheckedReadTrace
+open GuardedEffectEvaluation
+open ScalarGuardedPlanAdmission (ScalarEffect)
+open ScalarSourceReadTape (sourceReadInputs)
+open ScalarCellEffectEvaluation (ReadCandidates)
 
-private theorem read_candidate_of_instrumented_step (ctx : EvalContext)
-    (effect : Effect) (ordinal : Nat)
-    (before after : SourceEffects.Frame)
-    (tail : List (Impact.Read × Scalar)) (complete : EvalEnv)
-    (source : SourceEffects.step ctx effect before = .ok after)
-    (candidate : ∀ read value,
-      (read, value) ∈ GenericStateSourceReadInputs.effectEntries
-        effect ordinal after ++ tail →
-      complete.lookup read.name = some (Value.pack read.ty
-        (GenericStateInputValues.sourceValue read.ty value)))
-    (modulus : ctx.modulus = Field.modulus) :
-    ∀ name destination ty, effect = .readCell name destination ty →
-      complete.lookup destination = after.1.lookup destination := by
-  intro name destination ty equal
-  subst effect
-  rcases before with ⟨env, current⟩
-  obtain ⟨value, _, canonical, frame⟩ :=
-    GenericStateSourceTrace.readCell_step_value ctx env current name destination
-      ty after modulus source
-  subst after
-  have member : (({name := destination, ty} : Impact.Read),
-      scalar (number ty value)) ∈
-      GenericStateSourceReadInputs.effectEntries
-        (.readCell name destination ty) ordinal
-          ((destination, Value.pack ty value) :: env, current) ++ tail := by
-    simp [GenericStateSourceReadInputs.effectEntries, valueNumber_pack]
-  have found := candidate {name := destination, ty}
-    (scalar (number ty value)) member
-  rw [GenericStateSourceReadInputs.sourceValue_roundtrip ty value canonical]
-    at found
-  simpa using found
-
-/-- Source success, accepted effect chunks and the source-derived read tape
-construct a checked native trace in exact effect order. Every intermediate
-machine encodes the original source state at the corresponding prefix. -/
-theorem source_effects_native (ctx : EvalContext) (state : List StateDecl)
-    (effects : List Effect) (types finalTypes : TypeEnv)
-    (sourceEnv complete : EvalEnv) (current : LedgerState)
-    (ordinal : Nat) (entries : List (Impact.Read × Scalar))
-    (sourceAfter : SourceEffects.Frame)
-    (slots : List NativeState.Slot) (reads : List NativeState.Cell)
-    (chunks : List (List Impact.Op))
-    (validated : GenericStateEffectValidation.ValidatedEffects
-      state types effects finalTypes)
-    (aligned : GenericStateAdmission.AlignedChunks state effects chunks)
-    (instrumented : GenericStateSourceReadInputs.sourceReadInputs ctx effects
-      ordinal (sourceEnv, current) = .ok (entries, sourceAfter))
-    (candidate : ∀ read value, (read, value) ∈ entries →
-      complete.lookup read.name = some (Value.pack read.ty
-        (GenericStateInputValues.sourceValue read.ty value)))
-    (agrees : AgreesOnTypes types sourceEnv complete)
-    (encoded : GenericStateEncoding.encodeState state current = some slots)
+/-- The recorded guarded source steps drive the corresponding emitted chunks.
+Each chunk advances the native VM to the encoding of the same source frame. -/
+theorem source_effects_native (ctx : EvalContext) (state : List StateDecl) (entry : Entrypoint)
+    (items : List (Effect × Nat)) (types finalTypes : TypeEnv)
+    (before after : SourceEffects.Frame) (ordinal : Nat) (entries : List (Impact.Read × Scalar))
+    (complete : EvalEnv) (slots : List Slot) (reads : List Cell)
+    (beforePlan afterPlan : Impact.Plan) (offsets : List Nat) (chunks : List (List Impact.Op))
+    (validated : GuardValidatedEffects state entry types items finalTypes)
+    (compiled : GuardedEffectOperationChunks state entry.effectGuards items beforePlan afterPlan offsets chunks)
+    (admitted : ∀ item ∈ items, ScalarEffect state item.1)
+    (scope : GuardedScalarReadEffects entry.effectGuards items)
+    (recorded : sourceReadInputs ctx entry.effectGuards items ordinal before = .ok (entries, after))
+    (candidates : ReadCandidates complete entries)
+    (agrees : AgreesOnTypes types before.1 complete)
+    (encoded : GenericStateEncoding.encodeState state before.2 = some slots)
     (distinct : state.Pairwise (fun left right => left.name ≠ right.name))
-    (stateBound : state.length < Field.modulus)
-    (modulus : ctx.modulus = Field.modulus) :
-    ∃ segments finalSlots finalReads,
-      GenericStateAdmission.EvaluatedChunks state ctx complete effects segments ∧
-      GenericStateVM.RunsChunks segments
-        ⟨[.vector slots], reads⟩
+    (stateBound : state.length < Field.modulus) (modulus : ctx.modulus = Field.modulus) :
+    ∃ groups finalSlots finalReads,
+      (items.zip chunks).mapM (fun (item, chunk) =>
+        GuardedPlanExecution.evalChunk ctx complete (entry.effectGuardAt item.2) chunk) = .ok groups ∧
+      GenericStateVM.RunsChunks (groups.map Prod.snd) ⟨[.vector slots], reads⟩
         ⟨[.vector finalSlots], finalReads⟩ ∧
-      GenericStateEncoding.encodeState state sourceAfter.2 = some finalSlots ∧
-      AgreesOnTypes finalTypes sourceAfter.1 complete ∧
-      (∀ guard ∈ (GenericStateGuardTape.guardChunks effects ordinal).flatten,
-        guard.eval ctx complete = .ok true) := by
-  induction effects generalizing types sourceEnv current ordinal entries
-      sourceAfter slots reads chunks finalTypes with
-  | nil =>
+      GenericStateEncoding.encodeState state after.2 = some finalSlots ∧
+      AgreesOnTypes finalTypes after.1 complete := by
+  induction compiled generalizing types finalTypes before after ordinal entries slots reads with
+  | nil _ =>
     cases validated
-    cases aligned
-    simp only [GenericStateSourceReadInputs.sourceReadInputs,
-      Except.ok.injEq] at instrumented
-    cases instrumented
-    exact ⟨[], slots, reads, .nil, .nil _, encoded, agrees, by simp
-      [GenericStateGuardTape.guardChunks]⟩
-  | cons effect rest ih =>
-    obtain ⟨middle, tailEntries, sourceStep, tailSource, entriesShape⟩ :=
-      GenericStateSourceReadInputs.sourceReadInputs_cons ctx effect rest ordinal
-        (sourceEnv, current) sourceAfter entries instrumented
-    obtain ⟨nextTypes, firstValidated, restValidated⟩ :=
-      GenericStateEffectValidation.ValidatedEffects.uncons validated
-    cases aligned with
-    | cons first remaining =>
-      obtain ⟨base, compiled, chunkShape⟩ := first
-      have firstCandidate := read_candidate_of_instrumented_step ctx effect
-        ordinal (sourceEnv, current) middle tailEntries complete sourceStep
-        (by
-          intro read value member
-          apply candidate read value
-          rw [entriesShape]
-          exact member) modulus
-      obtain ⟨segment, nextSlots, nextReads, evaluated, nativeRun,
-        nextEncoded, nextAgreement⟩ :=
-        GenericStateConverseEffectStep.source_effect_native ctx state types
-          nextTypes effect sourceEnv complete current middle slots reads base
-          firstValidated sourceStep agrees firstCandidate compiled encoded
-          distinct stateBound modulus
-      have firstGuard :=
-        GenericStateConverseGuardStep.source_effect_guard_true ctx state types
-          nextTypes effect sourceEnv complete current middle ordinal tailEntries
-          firstValidated sourceStep agrees
-          (by
-            intro read value member
-            apply candidate read value
-            rw [entriesShape]
-            exact member)
-      have tailCandidate : ∀ read value, (read, value) ∈ tailEntries →
-          complete.lookup read.name = some (Value.pack read.ty
-            (GenericStateInputValues.sourceValue read.ty value)) := by
-        intro read value member
-        apply candidate read value
-        rw [entriesShape]
+    change Except.ok ([], before) = .ok (entries, after) at recorded
+    cases recorded
+    exact ⟨[], slots, reads, rfl, .nil _, encoded, agrees⟩
+  | @cons item rest start middlePlan result offsets chunk chunks compiled operationPrefix tail ih =>
+    cases validated with
+    | cons typed guardValid validatedTail =>
+      obtain ⟨middle, head, remainder, nextOrdinal, sourceStep, _, recordedTail,
+        entryShape, _, _, headValue⟩ := ScalarSourceReadTape.sourceReadInputs_cons_inversion
+          ctx entry.effectGuards item rest ordinal before after entries recorded
+      have headCandidates : ReadCandidates complete head := by
+        intro record member
+        apply candidates record
+        rw [entryShape]
+        exact List.mem_append_left _ member
+      have tailCandidates : ReadCandidates complete remainder := by
+        intro record member
+        apply candidates record
+        rw [entryShape]
         exact List.mem_append_right _ member
-      obtain ⟨tailSegments, finalSlots, finalReads, tailEvaluated,
-        tailTrace, finalEncoded, finalAgreement, tailGuards⟩ :=
-        ih nextTypes finalTypes middle.1 middle.2
-          (ordinal + (GenericStateSourceReadInputs.effectEntries
-            effect ordinal middle).length)
-          tailEntries sourceAfter nextSlots nextReads _ restValidated remaining
-          tailSource tailCandidate nextAgreement nextEncoded
-      refine ⟨segment :: tailSegments, finalSlots, finalReads,
-        .cons base compiled evaluated tailEvaluated,
-        .cons segment tailSegments ⟨[.vector slots], reads⟩
-          ⟨[.vector nextSlots], nextReads⟩
-          ⟨[.vector finalSlots], finalReads⟩ nativeRun tailTrace,
-        finalEncoded, finalAgreement, ?_⟩
-      intro guard member
-      simp only [GenericStateGuardTape.guardChunks,
-        List.flatten_cons, List.mem_append] at member
-      rcases member with head | tail
-      · exact firstGuard guard head
-      · have sameOrdinal := GenericStateSourceReadInputs.effectEntries_length
-          effect ordinal middle
-        rw [← sameOrdinal] at tail
-        exact tailGuards guard tail
+      have matched := GenericStateConverseSource.source_head_candidate_agreement
+        item.1 middle head complete headValue headCandidates
+      obtain ⟨activity, segment, nextSlots, nextReads, evaluated, nativeRun, nextEncoded, nextAgrees⟩ :=
+        GenericStateConverseEffectStep.source_effect_native ctx state _ _ item.1
+          (entry.effectGuards[item.2]?.getD none) before.1 complete before.2 middle slots reads
+          start middlePlan typed guardValid (admitted item (by simp)) (scope item (by simp))
+          sourceStep agrees matched compiled encoded distinct stateBound modulus
+      rw [operationPrefix, List.drop_left] at evaluated
+      obtain ⟨groups, finalSlots, finalReads, evaluatedTail, nativeTail, finalEncoded, finalAgrees⟩ :=
+        ih _ finalTypes middle after nextOrdinal remainder nextSlots nextReads validatedTail
+          (fun found member => admitted found (List.mem_cons_of_mem _ member))
+          (fun found member => scope found (List.mem_cons_of_mem _ member))
+          recordedTail tailCandidates nextAgrees nextEncoded
+      have evaluatedHead : GuardedPlanExecution.evalChunk ctx complete
+          (entry.effectGuardAt item.2) chunk = .ok (activity, segment) := by
+        simpa [Entrypoint.effectGuardAt] using evaluated
+      refine ⟨(activity, segment) :: groups, finalSlots, finalReads, ?_,
+        .cons segment (groups.map Prod.snd) _ _ _ nativeRun nativeTail, finalEncoded, finalAgrees⟩
+      simp [List.zip_cons_cons, List.mapM_cons, evaluatedHead, evaluatedTail,
+        bind, pure, Except.bind, Except.pure]
 
 end Noctium.Verification.GenericStateConverseEffectFold

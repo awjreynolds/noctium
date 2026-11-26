@@ -1,6 +1,7 @@
 import Noctium.Verification.GuardedScalarExpressionScope
 import Noctium.Verification.GuardedScalarTotalization
 import Noctium.Verification.GenericStateConverseRequire
+import Noctium.Verification.GuardedPlanExecution
 
 namespace Noctium.Verification.GuardedRequireSemantics
 
@@ -160,5 +161,79 @@ theorem inactive_guarded_require_step (ctx : EvalContext) (env : EvalEnv)
     (Impact.totalizeActivityCondition gate required)
     (totalizeActivityCondition_inactive_eval ctx env gate required name shape
       gateEval totalizedEval)
+
+private theorem bind_ok {α β : Type} {first : Except ε α} {next : α → Except ε β}
+    {result : β} : (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem require_operations (state : List StateDecl) (required : Expr .bool)
+    (guard : Option (Expr .bool)) (before after : Impact.Plan)
+    (compiled : Impact.appendEffectWithActivity state (.require required) guard before = .ok after) :
+    after.operations = before.operations := by
+  cases guard with
+  | none =>
+    obtain ⟨raw, appended, operations, _⟩ := GuardedEffectPrefix.appendEffectWithActivity_none_result
+      state (.require required) before after compiled
+    have equal := Except.ok.inj appended
+    rw [operations, ← equal]
+  | some condition =>
+    unfold Impact.appendEffectWithActivity at compiled
+    simp only [bind_ok] at compiled
+    obtain ⟨lowered, loweredAccepted, result, appendAccepted, wrapperAccepted⟩ := compiled
+    have effectShape : ∃ guardedRequired : Expr .bool, lowered = .require guardedRequired := by
+      simp only [Pure.pure, Except.pure] at loweredAccepted
+      cases loweredAccepted
+      exact ⟨_, rfl⟩
+    obtain ⟨guardedRequired, rfl⟩ := effectShape
+    have resultAccepted := Except.ok.inj appendAccepted
+    have resultOperations : result.operations = before.operations := by rw [← resultAccepted]
+    have projected := congrArg (Except.map Impact.Plan.operations) wrapperAccepted
+    simp only [Pure.pure, Except.pure, Except.map] at projected
+    exact (Except.ok.inj projected).symm.trans resultOperations
+
+/-- The emitted requirement chunk records the evaluated guard and preserves
+its source frame. The assertion itself occupies no native operations. -/
+theorem source_guarded_require_chunk (ctx : EvalContext) (state : List StateDecl)
+    (env candidate : EvalEnv) (current : LedgerState) (after : SourceEffects.Frame)
+    (required : Expr .bool) (guard : Option (Expr .bool)) (beforePlan afterPlan : Impact.Plan)
+    (agree : ∀ condition, guard = some condition →
+      condition.eval ctx candidate = condition.eval ctx env)
+    (compiled : Impact.appendEffectWithActivity state (.require required) guard beforePlan = .ok afterPlan)
+    (success : GuardedSourceEffects.step ctx guard (.require required) (env, current) = .ok after) :
+    ∃ activity,
+      GuardedPlanExecution.evalChunk ctx candidate guard
+        (afterPlan.operations.drop beforePlan.operations.length) = .ok (activity, []) ∧
+      after = (env, current) := by
+  rw [require_operations state required guard beforePlan afterPlan compiled]
+  simp only [List.drop_length]
+  cases guard with
+  | none =>
+    rw [GuardedSourceEffects.step_unguarded] at success
+    exact ⟨none, rfl, (GenericStateConverseRequire.source_require_true ctx env current required after success).2⟩
+  | some condition =>
+    cases evaluated : condition.eval ctx env with
+    | error message =>
+      rw [GuardedSourceEffects.step_guard_error ctx condition (.require required) (env, current)
+        message (.require condition required) evaluated] at success
+      cases success
+    | ok selected =>
+      have candidateSelected := (agree condition rfl).trans evaluated
+      change runEffectsWithGuardsAndEnv ctx [.require required] [some condition]
+        env current = .ok after at success
+      rw [GuardedRequireSemantics.run_guarded_require ctx env current condition required
+        selected evaluated] at success
+      refine ⟨some selected, ?_, ?_⟩
+      · have activity : (some condition).mapM (fun condition => condition.eval ctx candidate) =
+            Except.ok (some selected) := by
+          change some <$> condition.eval ctx candidate = .ok (some selected)
+          rw [candidateSelected]
+          rfl
+        unfold GuardedPlanExecution.evalChunk
+        rw [activity]
+        cases selected <;> rfl
+      · cases selected with
+        | false => exact (Except.ok.inj success).symm
+        | true => exact (GenericStateConverseRequire.source_require_true ctx env current required after success).2
 
 end Noctium.Verification.GuardedRequireSemantics
