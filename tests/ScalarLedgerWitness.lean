@@ -77,6 +77,17 @@ private def fixtureWitness (program : Program) (seed : Assignment) : Option Assi
 
 private def strictEntry : Entrypoint := {fixtureEntry with callInputs := []}
 
+private def strictScheduleMatches (plan : Impact.Plan) (relation : Program)
+    (assignment : Assignment) : _root_.Bool :=
+  let reads := plan.reads.drop (Impact.publicInputReadCount strictEntry.circuit.inputs)
+  match strictEntry.circuit.run context values, GenericStateInputValues.decodeReads reads assignment with
+  | .ok outputs, .ok candidates =>
+    candidates == [("before", .native 17), ("after", .native 42)] &&
+      match GenericStateOps.evalPlan context ((outputs ++ values) ++ candidates) plan with
+      | .ok operations => relation.groups assignment == NativeState.groups operations
+      | .error _ => _root_.Bool.false
+  | _, _ => _root_.Bool.false
+
 -- The same source calculation also accepts strict scalar decoding when every
 -- input is emitted as a transcript row instead of supplied in the raw header.
 #guard
@@ -107,6 +118,7 @@ private def strictEntry : Entrypoint := {fixtureEntry with callInputs := []}
           relation.inputValues .private assignment == [scalar 24, scalar 50] &&
           (relation.groups assignment).map (List.map some) ==
             expected.groups.map (List.map (ScalarNormalization.interpret (fun _ => zero) seed)) &&
+          strictScheduleMatches plan relation assignment &&
           relation.returns assignment == [scalar 42]
       | none => _root_.Bool.false
     | _, _ => _root_.Bool.false

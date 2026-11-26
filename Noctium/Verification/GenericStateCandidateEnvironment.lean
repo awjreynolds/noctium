@@ -1,87 +1,88 @@
-import Noctium.Verification.GenericStateOutputEnvironment
-import Noctium.Verification.GenericStateReadFreshness
-import Noctium.Verification.GenericStateReadAdmission
-import Noctium.Verification.GenericStateReadAliasLookup
-import Noctium.Verification.GenericStateTypeOrder
+import Noctium.Verification.GuardedScalarCandidateSchedule
+import Noctium.Verification.NativeRelationInstructionProjection
+import Noctium.Verification.ScalarGuardedPlanAdmission
+import Noctium.Verification.ScalarGuardedReadAdmission
+import Noctium.Verification.ScalarValidation
+import Noctium.Verification.ScalarValidationProjection
 
 namespace Noctium.Verification.GenericStateCandidateEnvironment
-open Backend NativeRelation ScalarNormalization Backend.Native
-open GenericStateInputValues GenericStateReadEnvironment
-open GenericStateCircuitParts
 
-/-- An arbitrary satisfying relation supplies a typed environment containing
-the original computed output bindings and every candidate ledger read. The
-checked native tape still has to authenticate those candidates. -/
+open Backend NativeRelation ScalarNormalization Backend.Native
+open GenericStateCircuitParts
+open ScalarGuardedPlanAdmission (ScalarEffect)
+
+/-- An arbitrary satisfying relation witness determines the actual candidate
+frame for the exact plan emitted by the strict ledger lowerer. The caller
+supplies the source circuit and guarded effect admissions used to construct
+that frame. -/
 theorem accepted_candidate_environment (state : List StateDecl)
-    (entry : Entrypoint) (json : Lean.Json) (relation : Program)
+    (sourceEntry : Entrypoint) (json : Lean.Json) (relation : Program)
     (ctx : EvalContext) (hash : Hash)
     (implementation : HashAgreement ctx hash)
-    (values : EvalEnv) (witness : Assignment)
+    (values : EvalEnv) (candidateWitness : Assignment)
     (streams : InputStreams) (publicGroups : List (List Scalar))
-    (admitted : CanonicalInputs entry.circuit values witness)
-    (lowered : Zkir.lowerEntrypoint state entry = .ok json)
+    (admittedInputs : CanonicalInputs sourceEntry.circuit values candidateWitness)
+    (circuitAdmission : ScalarCircuitAdmission sourceEntry.circuit)
+    (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
+    (lowered : Zkir.lowerEntrypoint state sourceEntry = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (satisfies : CircuitSatisfies hash relation streams witness publicGroups) :
-    ∃ plan frame result,
-      Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan ∧
-      entry.circuit.run ctx values = .ok result ∧
-      normalizeOutputs
-        (GenericStateCircuitParts.initialAliases (Passes.pruneEntrypoint entry) plan)
-        (Passes.pruneEntrypoint entry).circuit.outputs = .ok frame ∧
-      TypedEnvironment hash witness frame.1
-        ((result ++ values) ++ decodeReads
-          (plan.reads.drop (((Passes.pruneEntrypoint entry).circuit.inputs.filter
-            (·.visibility == .«public»)).length)) witness)
-        (GenericStateAdmission.planTypes plan (Passes.pruneEntrypoint entry)) := by
-  obtain ⟨plan, frame, result, planAccepted, sourceRun,
-    normalized, sourceEnvironment⟩ :=
-    GenericStateOutputEnvironment.accepted_output_environment state entry json
-      relation ctx hash implementation values witness streams publicGroups
-      admitted lowered decoded satisfies
-  let ep := Passes.pruneEntrypoint entry
-  have prunedAdmission : CanonicalInputs ep.circuit values witness :=
-    ⟨admitted.unique, admitted.declared, admitted.complete, admitted.binding⟩
-  have prunedRun : ep.circuit.run ctx values = .ok result := by
-    simpa only [ep, Passes.pruneEntrypoint, Passes.pruneCircuit_run] using sourceRun
-  have sourceFresh := GenericStateReadFreshness.lower_read_base_fresh
-    state ep plan ctx values result witness prunedAdmission planAccepted prunedRun
-  have distinct := GenericStateReadFreshness.lower_read_pairwise
-    state ep plan planAccepted
-  have aliases := GenericStateReadAliasLookup.normalized_read_alias_lookup
-    state ep plan frame planAccepted normalized
-  have candidates := GenericStateReadAdmission.accepted_read_candidates
-    state entry json relation hash witness streams publicGroups
-    lowered decoded satisfies
-  obtain ⟨candidatePlan, candidateAccepted, typedBounded⟩ := candidates
-  have samePlan : candidatePlan = plan := by
-    rw [planAccepted] at candidateAccepted
-    exact (Except.ok.inj candidateAccepted).symm
-  subst candidatePlan
-  have circuitValid := GenericStateAdmission.lower_circuit_validated
-    state ep plan planAccepted
-  have orderedEnvironment :=
-    GenericStateTypeOrder.typedEnvironment_input_output_order ep.circuit
-      circuitValid hash witness frame.1 (result ++ values)
-      (by simpa only [ep, Passes.pruneEntrypoint, Passes.pruneCircuit]
-        using sourceEnvironment)
-  have extended := appendDecodedReads_existing
-    (plan.reads.drop ((ep.circuit.inputs.filter
-      (·.visibility == .«public»)).length))
-    hash witness frame.1 (result ++ values)
-    (ep.circuit.inputs.map (fun input => (input.name, input.ty)) ++
-      ep.circuit.outputs.map (fun output => (output.name, output.ty)))
-    orderedEnvironment
-    (fun read member => by
-      have fresh := sourceFresh read member
-      refine ⟨fresh.1, ?_⟩
-      rw [← GenericStateTypeOrder.validated_input_output_type_order
-        ep.circuit circuitValid read.name]
-      exact fresh.2)
-    distinct aliases
-    (fun read member => (typedBounded read member).1)
-    (fun read member => (typedBounded read member).2)
-  refine ⟨plan, frame, result, planAccepted, sourceRun, normalized, ?_⟩
-  simpa only [ep, GenericStateAdmission.planTypes, readTypes,
-    List.append_assoc] using extended
+    (satisfies : CircuitSatisfies hash relation streams candidateWitness publicGroups) :
+    ∃ (plan : Impact.Plan) (expected : Native.Expected) (frame : OutputFrame)
+        (result candidates : EvalEnv),
+      let ep := Passes.pruneEntrypoint sourceEntry
+      Impact.lower state ep = .ok plan ∧
+      Native.expectedEntrypoint state ep = .ok expected ∧
+      ScalarValidatedProgram.Sound hash candidateWitness candidateWitness expected relation streams publicGroups ∧
+      normalizeOutputs (entrypointSeedAliases ep plan) ep.circuit.outputs = .ok frame ∧
+      sourceEntry.circuit.run ctx values = .ok result ∧
+      GenericStateInputValues.decodeReads
+        (plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)) candidateWitness = .ok candidates ∧
+      TypedEnvironment hash candidateWitness frame.1 ((result ++ values) ++ candidates)
+        (plan.typeEnvironment ep) ∧
+      forIn ((plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)).flatMap
+        Impact.Read.scalarReads) frame.1 (readAliasStep ep) = .ok frame.1 := by
+  let ep := Passes.pruneEntrypoint sourceEntry
+  obtain ⟨plan, expected, planAccepted, expectedAccepted, validationAccepted,
+    _emittedInstructions⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions state sourceEntry json lowered
+  obtain ⟨_instructionRows, inputHeader, _parsedRows, _decodedRows⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  obtain ⟨rawInputsEmpty, _driverInstructions, _driverFinal, _driverFacts⟩ :=
+    ScalarValidationProjection.validate_driver_result_empty_header
+      validationAccepted inputHeader
+  have sound : ScalarValidatedProgram.Sound hash candidateWitness candidateWitness expected relation
+      streams publicGroups := by
+    exact @ScalarValidation.validate_sound hash candidateWitness candidateWitness expected
+      json relation streams publicGroups (by
+        intro requirement present
+        rfl) validationAccepted decoded satisfies
+  have prunedInputs : CanonicalInputs ep.circuit values candidateWitness :=
+    ⟨admittedInputs.unique, admittedInputs.declared, admittedInputs.complete,
+      admittedInputs.binding⟩
+  have prunedCircuitAdmission : ScalarCircuitAdmission ep.circuit :=
+    ScalarCircuitAdmission.pruneCircuit sourceEntry.circuit circuitAdmission
+  have prunedEffects : ∀ effect ∈ ep.effects, ScalarEffect state effect := by
+    intro effect present
+    exact effects effect (by simpa [ep, Passes.pruneEntrypoint] using present)
+  obtain ⟨plainReads, separateReads, distinctReads⟩ :=
+    ScalarGuardedReadAdmission.lower_read_admission state ep plan planAccepted prunedEffects
+  have inputBounds : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      requirement.ty.isForeign = _root_.Bool.false →
+      requirement.canonicalJubjubScalar = _root_.Bool.false →
+      (candidateWitness requirement.identifier).val ≤ Native.sourceMaximum requirement.ty := by
+    intro requirement present _nonforeign ordinary
+    rw [rawInputsEmpty] at present
+    exact sound.inputBounds requirement present ordinary
+  obtain ⟨frame, result, candidates, normalized, executed, candidatesDecoded,
+    environment, readAliasFold⟩ :=
+    GuardedScalarCandidateSchedule.expected_candidate_frame state ep expected plan ctx hash
+      implementation values candidateWitness planAccepted expectedAccepted prunedInputs
+      prunedCircuitAdmission plainReads separateReads distinctReads sound.assertions
+      sound.bounds inputBounds
+  refine ⟨plan, expected, frame, result, candidates, planAccepted, expectedAccepted,
+    sound, normalized, ?_, ?_, environment, ?_⟩
+  · simpa only [ep, Passes.pruneEntrypoint, Passes.pruneCircuit_run] using executed
+  · simpa only [ep, Passes.pruneEntrypoint, Passes.pruneCircuit] using candidatesDecoded
+  · simpa only [ep, Passes.pruneEntrypoint, Passes.pruneCircuit] using readAliasFold
 
 end Noctium.Verification.GenericStateCandidateEnvironment
