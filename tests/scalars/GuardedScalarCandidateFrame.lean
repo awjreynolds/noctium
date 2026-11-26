@@ -1,4 +1,6 @@
 import Noctium.Frontend
+import Noctium.Verification
+import Noctium.Verification.GenericStateCheckedSchedule
 import Noctium.Verification.GuardedCallArtifacts
 import Noctium.Verification.GuardedOutputRows
 import Noctium.Verification.GuardedScalarCandidateTranscript
@@ -326,6 +328,67 @@ private def mutatedAssignment : Assignment := fun identifier =>
       (GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
         values mutatedAssignment slots).isNone
   | none => _root_.Bool.false
+
+private def mapSlots : List NativeState.Slot := [.map [(scalar 17, scalar 41)]]
+
+private def enabledCell (enabled : _root_.Bool) : NativeState.Cell :=
+  NativeState.field (bit enabled)
+
+private def guardedMapOps (enabled : _root_.Bool) : List NativeState.Op :=
+  [.push (enabledCell enabled) _root_.Bool.false, .popeq (enabledCell enabled)] ++
+    (if enabled then [.dup, .mapIndex 0 (NativeState.field (scalar 17)),
+      .popeq (NativeState.field (scalar 41))]
+      else [])
+
+private def mapFinal (enabled : _root_.Bool) : NativeState.Machine :=
+  ⟨[.vector mapSlots], [enabledCell enabled] ++
+    (if enabled then [NativeState.field (scalar 41)] else [])⟩
+
+-- The same lowered source has a checked effect segment even when activity
+-- is false and the only VM read comes from the public-input prefix.
+private theorem checked_map_segments (enabled : _root_.Bool) :
+    ∃ segments publicReads,
+      GenericStateVM.RunsChunks (segments.map Prod.snd)
+        ⟨[.vector mapSlots], publicReads⟩ (mapFinal enabled) ∧
+      (segments : List (Option _root_.Bool × List NativeState.Op)).length = 1 := by
+  let env : EvalEnv := [("prepared", .native 7), ("enabled", .bool enabled),
+    ("saved", .native (if enabled then 41 else 0))]
+  have compatible : ∀ input ∈ fixtureEntry.circuit.inputs,
+      Noctium.Backend.Impact.publicInputScalarCompatible input :=
+    ScalarCellPublicFields.canonical_inputs_scalar_compatible fixtureEntry.circuit values
+      assignment canonical_inputs
+  have scope := ScalarGuardedActivityAdmission.lower_guarded_scalar_read_scope
+    state fixtureEntry plan plan_accepted effects_admitted
+  have evaluated : GuardedPlanExecution.evalPlan context env plan = .ok (guardedMapOps enabled) := by
+    cases enabled <;> with_unfolding_all rfl
+  have noAssertions : plan.guards = [] := by with_unfolding_all rfl
+  have assertions : ∀ assertion ∈ plan.guards, assertion.eval context env = .ok _root_.Bool.true := by
+    simp [noAssertions]
+  have checked : NativeState.run (guardedMapOps enabled) ⟨[.vector mapSlots], []⟩ =
+      some (mapFinal enabled) := by
+    cases enabled <;> with_unfolding_all rfl
+  obtain ⟨_, _, chunks, _, segments, reads, _, _, compiled, _, effectsEvaluated, _, _, trace⟩ :=
+    GuardedPlanTrace.lower_checked_effect_chunks state fixtureEntry plan context env
+      (guardedMapOps enabled) mapSlots (mapFinal enabled) plan_accepted scope
+      compatible evaluated assertions checked
+  refine ⟨segments, reads, trace, ?_⟩
+  cases compiled with
+  | @cons _ _ _ _ _ _ chunk _ _ _ tail =>
+    cases tail
+    change [chunk].mapM (GuardedPlanExecution.evalChunk context env
+      (fixtureEntry.effectGuardAt 0)) = .ok segments at effectsEvaluated
+    cases evaluatedEffect : GuardedPlanExecution.evalChunk context env
+        (fixtureEntry.effectGuardAt 0) chunk <;>
+      simp [evaluatedEffect, Bind.bind, Except.bind, Pure.pure, Except.pure] at effectsEvaluated
+    subst segments
+    rfl
+
+open Lean Elab Command in
+run_cmd do
+  match Noctium.Verification.Audit.axiomsIn (← getEnv)
+      `Noctium.Verification.GenericStateCheckedSchedule.accepted_checked_trace with
+  | .ok _ => pure ()
+  | .error error => throwError error
 
 private def fixtureTranscript : Option
     (ArtifactBytes.Bytes × GuardedStatementConsumption.Inputs ×

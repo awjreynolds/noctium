@@ -1,93 +1,112 @@
 import Noctium.Verification.GenericStateNativeSchedule
-import Noctium.Verification.GenericStateReadTape
+import Noctium.Verification.GuardedScalarCandidateState
+import Noctium.Verification.ScalarCellPublicFields
 
 namespace Noctium.Verification.GenericStateCheckedSchedule
+
 open Backend NativeRelation ScalarNormalization Backend.Native
+open GenericStateCircuitParts GenericStateInputValues
+open GuardedEffectEvaluation
+open ScalarGuardedPlanAdmission (ScalarEffect)
 
-/-- Computed output values used when checking the exact native schedule.
-Accepted relation soundness later proves the fallback branch unreachable. -/
-def outputCandidates (ctx : EvalContext) (entry : Entrypoint)
+/-- Candidate output frame used by the converse proof. -/
+def outputCandidates (ctx : EvalContext) (sourceEntry : Entrypoint)
     (values : EvalEnv) : EvalEnv :=
-  (entry.circuit.outputs.mapM (evalOutput ctx values)).toOption.getD [] ++ values
+  (sourceEntry.circuit.outputs.mapM (evalOutput ctx values)).toOption.getD [] ++ values
 
-/-- Check the actual Impact plan's evaluated VM operations against the
-generic native state machine. This property asks for a checked trace, not a
-desired source transition or a desired native successor. -/
-def CheckedPlan (ctx : EvalContext) (entry : Entrypoint)
-    (plan : Impact.Plan) (values : EvalEnv) (witness : Assignment)
+/-- Check the accepted plan with the current guard-aware scalar VM. -/
+def CheckedPlan (ctx : EvalContext) (sourceEntry : Entrypoint)
+    (plan : Impact.Plan) (values : EvalEnv) (assignment : Assignment)
     (slots : List NativeState.Slot) (final : NativeState.Machine) : Prop :=
-  ((GenericStateOps.evalPlan ctx
-    (outputCandidates ctx entry values ++ GenericStateInputValues.decodeReads
-      (plan.reads.drop ((entry.circuit.inputs.filter
-        (·.visibility == .«public»)).length)) witness) plan).toOption.bind
-    (fun ops => NativeState.run ops (GenericStateEncoding.initial slots))) = some final
+  GuardedScalarCandidateState.runCheckedCandidates ctx sourceEntry plan values assignment slots = some final
 
-/-- Accepted ZKIR satisfaction and an independent checked VM run recover the
-real compiler's ordered effect segments and every intermediate machine. -/
+/-- A satisfying strictly decoded relation and a checked VM run share one
+accepted plan and candidate frame. The relation supplies the complete ordered
+schedule, and the VM trace records the active operations of each source
+effect after the public-input prefix. -/
 theorem accepted_checked_trace (state : List StateDecl)
-    (entry : Entrypoint) (json : Lean.Json) (relation : Program)
-    (ctx : EvalContext) (hash : Hash)
-    (implementation : HashAgreement ctx hash)
-    (values : EvalEnv) (witness : Assignment)
+    (sourceEntry : Entrypoint) (json : Lean.Json) (relation : Program)
+    (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
+    (values : EvalEnv) (assignment : Assignment)
     (streams : InputStreams) (publicGroups : List (List Scalar))
-    (slots : List NativeState.Slot)
-    (final : NativeState.Machine)
-    (admittedInputs : CanonicalInputs entry.circuit values witness)
-    (lowered : Zkir.lowerEntrypoint state entry = .ok json)
+    (slots : List NativeState.Slot) (final : NativeState.Machine)
+    (admittedInputs : CanonicalInputs sourceEntry.circuit values assignment)
+    (circuitAdmission : ScalarCircuitAdmission sourceEntry.circuit)
+    (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
+    (guardsAdmitted : ∀ condition, some condition ∈ sourceEntry.effectGuards →
+      ScalarExpression condition)
+    (lowered : Zkir.lowerEntrypoint state sourceEntry = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (satisfies : CircuitSatisfies hash relation streams witness publicGroups)
+    (satisfies : CircuitSatisfies hash relation streams assignment publicGroups)
     (plan : Impact.Plan)
-    (planAccepted : Impact.lower state (Passes.pruneEntrypoint entry) = .ok plan)
-    (checked : CheckedPlan ctx (Passes.pruneEntrypoint entry) plan
-      values witness slots final) :
-    ∃ result ops chunks segments publicCells,
-      entry.circuit.run ctx values = .ok result ∧
-      GenericStateOps.evalPlan ctx
-        ((result ++ values) ++ GenericStateInputValues.decodeReads
-          (plan.reads.drop (((Passes.pruneEntrypoint entry).circuit.inputs.filter
-            (·.visibility == .«public»)).length)) witness) plan = .ok ops ∧
-      publicGroups = NativeState.groups ops ∧
-      GenericStateAdmission.effectChunks state
-        (Passes.pruneEntrypoint entry).effects = .ok chunks ∧
-      GenericStateAdmission.AlignedChunks state
-        (Passes.pruneEntrypoint entry).effects chunks ∧
-      GenericStateAdmission.EvaluatedChunks state ctx
-        ((result ++ values) ++ GenericStateInputValues.decodeReads
-          (plan.reads.drop (((Passes.pruneEntrypoint entry).circuit.inputs.filter
-            (·.visibility == .«public»)).length)) witness)
-        (Passes.pruneEntrypoint entry).effects segments ∧
-      GenericStateVM.RunsChunks segments
-        ⟨[.vector slots], publicCells⟩ final := by
-  obtain ⟨schedulePlan, result, ops, scheduleAccepted, sourceRun,
-    evaluated, groups⟩ :=
-    GenericStateNativeSchedule.accepted_native_schedule state entry json relation
-      ctx hash implementation values witness streams publicGroups admittedInputs
-      lowered decoded satisfies
-  have samePlan : schedulePlan = plan := by
-    rw [planAccepted] at scheduleAccepted
-    exact (Except.ok.inj scheduleAccepted).symm
-  subst schedulePlan
-  have outputEval :=
-    (ScalarNormalization.circuit_run_steps ctx entry.circuit values result sourceRun).2
-  have candidateValues :
-      outputCandidates ctx (Passes.pruneEntrypoint entry) values = result ++ values := by
-    simp only [outputCandidates, Passes.pruneEntrypoint, Passes.pruneCircuit]
-    rw [outputEval]
-    rfl
-  have vmChecked : NativeState.run ops
-      (GenericStateEncoding.initial slots) = some final := by
-    unfold CheckedPlan at checked
-    rw [candidateValues, evaluated] at checked
-    simpa only [Except.toOption, Option.bind_some] using checked
-  obtain ⟨chunks, segments, publicCells, chunksAccepted, aligned,
-    _, segmentsAligned, trace⟩ :=
-    GenericStateAdmission.lower_checked_trace state
-      (Passes.pruneEntrypoint entry) plan ctx
-      ((result ++ values) ++ GenericStateInputValues.decodeReads
-        (plan.reads.drop (((Passes.pruneEntrypoint entry).circuit.inputs.filter
-          (·.visibility == .«public»)).length)) witness)
-      ops slots final planAccepted evaluated vmChecked
-  exact ⟨result, ops, chunks, segments, publicCells, sourceRun, evaluated,
-    groups, chunksAccepted, aligned, segmentsAligned, trace⟩
+    (planAccepted : Impact.lower state (Passes.pruneEntrypoint sourceEntry) = .ok plan)
+    (planGuardsAdmitted : ∀ guard ∈ plan.guards, ScalarExpression guard)
+    (checked : CheckedPlan ctx sourceEntry plan values assignment slots final) :
+    ∃ (result candidates : EvalEnv) (scheduled active : List NativeState.Op)
+        (offsets : List Nat) (inputPlan : Impact.Plan) (chunks : List (List Impact.Op))
+        (publicNative : List NativeState.Op)
+        (groups : List (Option _root_.Bool × List NativeState.Op)) (publicReads : List NativeState.Cell),
+      let ep := Passes.pruneEntrypoint sourceEntry
+      let env := (result ++ values) ++ candidates
+      sourceEntry.circuit.run ctx values = .ok result ∧
+      decodeReads (plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs))
+        assignment = .ok candidates ∧
+      GenericStateOps.evalPlan ctx env plan = .ok scheduled ∧
+      publicGroups = NativeState.groups scheduled ∧
+      GuardedPlanExecution.evalPlan ctx env plan = .ok active ∧
+      Impact.lowerWithEffectBoundaries state ep = .ok (plan, offsets) ∧
+      Impact.publicInputPlan ep.circuit.inputs {} = .ok inputPlan ∧
+      GuardedEffectOperationChunks state ep.effectGuards ep.effects.zipIdx
+        inputPlan plan offsets chunks ∧
+      inputPlan.operations.mapM (GenericStateOps.evalOp ctx env) = .ok publicNative ∧
+      (ep.effects.zipIdx.zip chunks).mapM (fun (item, chunk) =>
+        GuardedPlanExecution.evalChunk ctx env (ep.effectGuardAt item.2) chunk) = .ok groups ∧
+      active = publicNative ++ (groups.map Prod.snd).flatten ∧
+      NativeState.run publicNative ⟨[.vector slots], []⟩ = some ⟨[.vector slots], publicReads⟩ ∧
+      GenericStateVM.RunsChunks (groups.map Prod.snd) ⟨[.vector slots], publicReads⟩ final := by
+  let ep := Passes.pruneEntrypoint sourceEntry
+  obtain ⟨actualPlan, expected, frame, result, candidates, scheduled, actualPlanAccepted,
+    expectedAccepted, sound, normalized, sourceRun, candidatesDecoded, environment, _,
+    scheduledEval, scheduledGroups⟩ :=
+    GenericStateNativeSchedule.accepted_native_schedule state sourceEntry json relation
+      ctx hash implementation values assignment streams publicGroups admittedInputs
+      circuitAdmission effects guardsAdmitted lowered decoded satisfies
+  have planEq := Except.ok.inj (actualPlanAccepted.symm.trans planAccepted)
+  subst actualPlan
+  let env := (result ++ values) ++ candidates
+  obtain ⟨active, evaluated, vmRun⟩ :=
+    GuardedScalarCandidateState.run_of_checked_candidates ctx sourceEntry plan values assignment
+      slots result candidates final sourceRun candidatesDecoded checked
+  have prunedEffects : ∀ effect ∈ ep.effects, ScalarEffect state effect := by
+    simpa only [ep, Passes.pruneEntrypoint] using effects
+  have admittedReads :=
+    (ScalarGuardedReadAdmission.lower_read_admission state ep plan planAccepted prunedEffects).1
+  let reads := plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)
+  have scalarReads : ∀ descriptor ∈ reads.flatMap Impact.Read.scalarReads, scalarAliasReadType descriptor.ty := by
+    rw [ScalarPlanGuardSoundness.plain_reads_scalarReads reads
+      (fun descriptor present => (admittedReads descriptor present).1)]
+    exact fun descriptor present =>
+      ScalarPlanGuardSoundness.scalarType_shape descriptor.ty (admittedReads descriptor present).2.1
+  obtain ⟨guardFrame, guards, guardNormalized, normalizeGuards, guardAssertions, guardBounds⟩ :=
+    expectedEntrypoint_guards state ep expected plan planAccepted expectedAccepted scalarReads
+  have frameEq := Except.ok.inj (guardNormalized.symm.trans normalized)
+  subst guardFrame
+  have assertions := ScalarPlanGuardSoundness.checked_plan_guard_truth ctx hash
+    implementation assignment (plan.typeEnvironment ep) frame.1 env plan ep.span expected guards
+    environment (Impact.lower_guards_validate state ep plan planAccepted) planGuardsAdmitted
+    normalizeGuards guardBounds guardAssertions sound.bounds sound.assertions
+  have scope := ScalarGuardedActivityAdmission.lower_guarded_scalar_read_scope
+    state ep plan planAccepted prunedEffects
+  have compatible := ScalarCellPublicFields.canonical_inputs_scalar_compatible
+    sourceEntry.circuit values assignment admittedInputs
+  obtain ⟨offsets, inputPlan, chunks, publicNative, groups, publicReads,
+    boundaries, publicAccepted, compiled, publicEvaluated, effectsEvaluated, sequence,
+    publicRun, trace⟩ :=
+    GuardedPlanTrace.lower_checked_effect_chunks state ep plan ctx env active slots final
+      planAccepted scope compatible evaluated assertions vmRun
+  exact ⟨result, candidates, scheduled, active, offsets, inputPlan, chunks, publicNative, groups,
+    publicReads, sourceRun, candidatesDecoded, scheduledEval, scheduledGroups,
+    evaluated, boundaries, publicAccepted, compiled, publicEvaluated, effectsEvaluated,
+    sequence, publicRun, trace⟩
 
 end Noctium.Verification.GenericStateCheckedSchedule

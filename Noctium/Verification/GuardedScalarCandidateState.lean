@@ -20,7 +20,8 @@ def runCheckedCandidates (ctx : EvalContext) (sourceEntry : Entrypoint)
   let operations ← (GuardedPlanExecution.evalPlan ctx ((result ++ values) ++ candidates) plan).toOption
   NativeState.run operations ⟨[.vector slots], []⟩
 
-private theorem run_of_checkedCandidates
+/-- Recover the exact operation sequence and modeled run from the candidate check. -/
+theorem run_of_checked_candidates
     (ctx : EvalContext) (sourceEntry : Entrypoint) (plan : Impact.Plan)
     (values : EvalEnv) (assignment : Assignment) (slots : List NativeState.Slot)
     (result candidates : EvalEnv) (final : NativeState.Machine)
@@ -114,7 +115,7 @@ theorem lower_checked_guarded_candidate_state
   have sameCandidates := Except.ok.inj (actualDecoded.symm.trans decoded)
   subst actualCandidates
   obtain ⟨operations, evaluated, checkedRun⟩ :=
-    run_of_checkedCandidates ctx sourceEntry plan values assignment slots result candidates final
+    run_of_checked_candidates ctx sourceEntry plan values assignment slots result candidates final
       sourceRun decoded checked
   have initialAgreement := GenericStatePrefixEnvironment.initial_from_typed hash assignment
     frame.1 (GenericStateEffectValidation.initialEffectTypeEnv ep) (result ++ values)
