@@ -1,18 +1,10 @@
+import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarExpressionUIntAdd
 
 namespace Noctium.Verification.ScalarWitnessConstruction
 
 open Lean Backend NativeRelation NativeRelationJson ScalarNormalization ScalarLowering
 open ScalarWitness ScalarAllocationOutputFrame
-
-private theorem bind_middle_output_budget (first : StateM Zkir.LowerState α)
-    (next : α → StateM Zkir.LowerState β) (state : Zkir.LowerState)
-    (remaining : ∀ value, Zkir.PreservesOutputCapacityFrame (next value))
-    (limit : Nat) (bound : ((first >>= next).run state).2.next ≤ limit) :
-    (first.run state).2.next ≤ limit := by
-  have frame := remaining (first.run state).1 (first.run state).2
-  rw [StateT.run_bind] at bound
-  exact Nat.le_trans frame.next bound
 
 private theorem lower_uint_cast (maximum : Nat) {sourceTy : Ty}
     (expression : Expr sourceTy) :
@@ -92,7 +84,7 @@ theorem exprComplete_uintCast {sourceTy : Ty} (maximum : Nat)
     rw [lower_uint_cast] at castBudget
     have childBudget : ((Zkir.lowerExpr expression).run state).2.next ≤
         Native.maxInstructions * Native.maxVectorLength := by
-      exact bind_middle_output_budget (Zkir.lowerExpr expression)
+      exact ScalarAllocation.bind_middle_budget (Zkir.lowerExpr expression)
         (fun text => do Zkir.constrainUnsigned maximum text; pure text)
         state castFrame _ castBudget
     obtain ⟨child⟩ := expressionComplete ctx hash implementation inputs witness state
