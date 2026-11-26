@@ -1,66 +1,48 @@
 import Noctium.Verification.GenericStateCheckedSchedule
-import Noctium.Verification.GenericStateCircuitParts
+import Noctium.Verification.ScalarLedgerSourceIdentifiers
 import Noctium.Verification.ScalarValidation
 
 namespace Noctium.Verification.GenericStateConverseWitnessFrame
 open Backend NativeRelation ScalarNormalization
 
-theorem canonicalInputs_input_frame (entry : Entrypoint)
+theorem canonicalInputs_input_frame (sourceEntry : Entrypoint)
     (values : EvalEnv) (before after : Assignment)
-    (admitted : CanonicalInputs entry.circuit values before)
+    (admitted : CanonicalInputs sourceEntry.circuit values before)
     (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
-    CanonicalInputs entry.circuit values after := by
+    CanonicalInputs sourceEntry.circuit values after := by
   refine ⟨admitted.unique, admitted.declared, admitted.complete, ?_⟩
-  intro input member value found
+  intro input present value found canonical
   rw [frame input.name]
-  exact admitted.binding input member value found
+  exact admitted.binding input present value found canonical
 
-/-- SSA temporary bindings do not alter source candidate reads when the
-ledger relation's `%input_` identifiers retain their assigned field values. -/
-theorem decodeReads_input_frame (reads : List Impact.Read)
-    (before after : Assignment)
-    (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
-    GenericStateInputValues.decodeReads reads after =
-      GenericStateInputValues.decodeReads reads before := by
-  induction reads with
-  | nil => rfl
-  | cons read rest ih =>
-    simp only [GenericStateInputValues.decodeReads, List.map_cons]
-    rw [frame read.name]
-    exact congrArg (List.cons _) ih
-
+/-- Witness extension preserves the exact checked plan when it preserves the
+source input bindings. Candidate decoding and the VM check both stay in place. -/
 theorem checkedPlan_input_frame (ctx : EvalContext)
-    (entry : Entrypoint) (plan : Impact.Plan) (values : EvalEnv)
+    (sourceEntry : Entrypoint) (plan : Impact.Plan) (values : EvalEnv)
     (before after : Assignment) (slots : List NativeState.Slot)
     (final : NativeState.Machine)
     (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name))
-    (checked : GenericStateCheckedSchedule.CheckedPlan ctx entry plan values
+    (checked : GenericStateCheckedSchedule.CheckedPlan ctx sourceEntry plan values
       before slots final) :
-    GenericStateCheckedSchedule.CheckedPlan ctx entry plan values
+    GenericStateCheckedSchedule.CheckedPlan ctx sourceEntry plan values
       after slots final := by
-  unfold GenericStateCheckedSchedule.CheckedPlan at checked ⊢
-  rw [decodeReads_input_frame _ before after frame]
-  exact checked
+  unfold GenericStateCheckedSchedule.CheckedPlan GuardedScalarCandidateState.runCheckedCandidates
+    at checked ⊢
+  rwa [GenericStateInputValues.decodeReads_input_frame _ before after frame]
 
+/-- Actual accepted requirements retain their input names after witness
+extension, including reads that carry activity metadata. -/
 theorem expected_input_agreement (state : List StateDecl)
-    (entry : Entrypoint) (expected : Backend.Native.Expected)
+    (sourceEntry : Entrypoint) (plan : Impact.Plan) (expected : Backend.Native.Expected)
     (before after : Assignment)
-    (accepted : Backend.Native.expectedEntrypoint state entry = .ok expected)
+    (planAccepted : Impact.lower state sourceEntry = .ok plan)
+    (accepted : Backend.Native.expectedEntrypoint state sourceEntry = .ok expected)
+    (scalarInputs : ∀ input ∈ sourceEntry.circuit.inputs, Nonempty (ScalarType input.ty))
     (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
     ScalarValidation.InputAgreement expected before after := by
-  obtain ⟨plan, outputFrame, conditions, guards, operationFrame,
-    lowered, outputs, conditionsAccepted, guardsAccepted,
-    operations, inputShape, groupsShape, returns, mode,
-    assertions, bounds⟩ :=
-    GenericStateCircuitParts.expectedEntrypoint_parts state entry expected accepted
-  intro requirement member
-  rw [inputShape, GenericStateCircuitParts.inputRequirements] at member
-  rcases List.mem_append.mp member with circuitInput | readInput
-  · obtain ⟨input, _, same⟩ := List.mem_map.mp circuitInput
-    subst requirement
-    exact frame input.name
-  · obtain ⟨read, _, same⟩ := List.mem_map.mp readInput
-    subst requirement
-    exact frame read.name
+  intro requirement present
+  exact ScalarLedgerSourceIdentifiers.accepted_scalar_requirements_input_frame
+    state sourceEntry plan expected planAccepted accepted scalarInputs before after frame
+    requirement (List.mem_append_right _ present)
 
 end Noctium.Verification.GenericStateConverseWitnessFrame

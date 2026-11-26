@@ -135,11 +135,17 @@ private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : 
     let planJson := Compiler.nativePlanJson TargetProfile.selected321 `ScalarLedgerFixture
       declarations none (Passes.pruneEntrypoint fixtureEntry) plan _root_.Bool.false
     let bytes := artifactBytes planJson
+    let extended := ScalarWitness.assign assignment "%proof_fixture_temp" one
+    let wrongRead := ScalarWitness.assign assignment "%input_after" (scalar 43)
     (ArtifactBytes.parse bytes).toOption == some planJson &&
       ImpactPlanStatementAgreement.matchesBytes 64 bytes planJson &&
       decide (ImpactPlanAgreement.evaluatePlan 64 context complete planJson = some operations) &&
       decide (ImpactPlanAgreement.runPlanBytes 64 context complete bytes
         (GenericStateEncoding.initial initialSlots) = some expected) &&
+      decide (GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
+        values extended initialSlots = some expected) &&
+      (GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
+        values wrongRead initialSlots).isNone &&
       decide (call.body.groups assignment = NativeState.groups operations) &&
       decide (call.body.returns assignment = [scalar 42])
   | _, _, _, _ => _root_.Bool.false

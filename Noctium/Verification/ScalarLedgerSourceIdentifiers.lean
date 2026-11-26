@@ -237,4 +237,21 @@ theorem accepted_scalar_requirement_source_names (state : List StateDecl)
     obtain ⟨name, sourceEq⟩ := sourcePrefix
     exact ⟨name, identifierEq.trans sourceEq⟩
 
+/-- Accepted scalar requirements keep their source binding across any frame
+that preserves all source input names. -/
+theorem accepted_scalar_requirements_input_frame (state : List StateDecl)
+    (entry : Entrypoint) (plan : Impact.Plan) (expected : Expected)
+    (planAccepted : Impact.lower state entry = .ok plan)
+    (expectedAccepted : Native.expectedEntrypoint state entry = .ok expected)
+    (scalarInputs : ∀ input ∈ entry.circuit.inputs,
+      Nonempty (ScalarType input.ty))
+    (before after : NativeRelation.Assignment)
+    (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
+    ∀ required ∈ expected.rawInputs ++ expected.inputs,
+      after required.identifier = before required.identifier := by
+  intro required member
+  obtain ⟨name, identifierEq⟩ := accepted_scalar_requirement_source_names
+    state entry plan expected planAccepted expectedAccepted scalarInputs required member
+  simpa [identifierEq] using frame name
+
 end Noctium.Verification.ScalarLedgerSourceIdentifiers
