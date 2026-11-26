@@ -1,4 +1,4 @@
-import Noctium.Verification.ScalarValidatedProgram
+import Noctium.Verification.ScalarValidation
 import Noctium.Verification.ScalarCircuit
 import Noctium.Verification.ScalarAdmission
 
@@ -7,7 +7,6 @@ namespace Noctium.Verification.ScalarTranslationSoundness
 open Lean Backend NativeRelation NativeRelationJson
 open Backend.Native
 open ScalarNormalization (interpret)
-open ScalarValidationOpcodeProfile (checkedScalarOpcodeProfile)
 
 /-- The instruction rows produced by the default standalone circuit lowerer. -/
 def defaultLoweredRows (circuit : Circuit) : Array Json :=
@@ -30,10 +29,6 @@ private def scalarType_of_canonical {ty : Ty} {value : ty.Denote}
   | jubjubPoint => simp [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] at canonical
   | foreign kind => simp [ScalarNormalization.Canonical, ScalarNormalization.sourceNumber?] at canonical
 
-private theorem scalarType_notForeign {ty : Ty}
-    (supported : ScalarNormalization.ScalarType ty) : ty.isForeign = false := by
-  cases supported <;> rfl
-
 private theorem scalarInputRequirements (input : Input)
     (supported : ScalarNormalization.ScalarType input.ty) :
     Input.requirements input = [scalarInputRequirement input] := by
@@ -55,32 +50,17 @@ private theorem canonicalInputRequirements (circuit : Circuit) {values : EvalEnv
     {assignment : Assignment} (admitted : ScalarNormalization.CanonicalInputs circuit values assignment)
     {expected : Expected}
     (expectedAccepted : Native.expectedCircuit (Passes.pruneCircuit circuit) = .ok expected) :
-    expected.inputs = circuit.inputs.map scalarInputRequirement ∧
-      (∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false) ∧
-      (∀ requirement ∈ expected.inputs, requirement.activityGuard = none) := by
+    expected.inputs = circuit.inputs.map scalarInputRequirement := by
   have inputTypes : ∀ input ∈ circuit.inputs, Nonempty (ScalarNormalization.ScalarType input.ty) := by
     intro input member
     obtain ⟨_, _, canonical⟩ := admitted.complete input member
     exact ⟨scalarType_of_canonical canonical⟩
   obtain ⟨_, _, _, _, _, _, _, _, shape, _⟩ :=
     ScalarNormalization.expectedCircuit_parts (Passes.pruneCircuit circuit) expected expectedAccepted
-  have requirements : expected.inputs = circuit.inputs.map scalarInputRequirement := by
-    rw [shape]
-    change circuit.inputs.flatMap Input.requirements = _
-    exact scalarInputRequirements_map circuit.inputs
-      (fun input member => Classical.choice (inputTypes input member))
-  refine ⟨requirements, ?_, ?_⟩
-  · intro requirement member
-    rw [requirements] at member
-    obtain ⟨input, inputMember, requirementEqual⟩ := List.mem_map.mp member
-    rw [← congrArg InputRequirement.ty requirementEqual]
-    obtain ⟨supported⟩ := inputTypes input inputMember
-    exact scalarType_notForeign supported
-  · intro requirement member
-    rw [requirements] at member
-    obtain ⟨input, _, requirementEqual⟩ := List.mem_map.mp member
-    rw [← congrArg InputRequirement.activityGuard requirementEqual]
-    rfl
+  rw [shape]
+  change circuit.inputs.flatMap Input.requirements = _
+  exact scalarInputRequirements_map circuit.inputs
+    (fun input member => Classical.choice (inputTypes input member))
 
 private theorem scalarInputValuesMap (inputs : List Input)
     (visibility : Visibility) (witness : Assignment) :
@@ -146,8 +126,6 @@ theorem lowerCircuit_sound (ctx : EvalContext) (hash : Hash)
     (scalarAdmission : ScalarNormalization.ScalarCircuitAdmission circuit)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows circuit).toList.zipIdx relation.instructions = true)
     (satisfies : CircuitSatisfies hash relation streams witness publicGroups) :
     ∃ result, circuit.run ctx values = .ok result ∧
       result.map Prod.fst = circuit.outputs.map (·.name) ∧
@@ -167,15 +145,13 @@ theorem lowerCircuit_sound (ctx : EvalContext) (hash : Hash)
   let pruned := Passes.pruneCircuit circuit
   obtain ⟨expected, expectedAccepted, nativeAccepted⟩ :=
     Zkir.lowerCircuit_validated circuit json lowered
-  have rowsParsed : Native.arrayField json "instructions" = .ok (defaultLoweredRows circuit) := by
-    simpa only [defaultLoweredRows] using Zkir.lowerCircuit_instructions circuit json lowered
-  obtain ⟨expectedInputShape, inputSchema, inputGuards⟩ :=
+  have expectedInputShape :=
     canonicalInputRequirements circuit admitted expectedAccepted
   have prunedInputs :
       ScalarNormalization.CanonicalInputs pruned values witness :=
     ⟨admitted.unique, admitted.declared, admitted.complete, admitted.binding⟩
-  have validated := ScalarValidatedProgram.validate_sound nativeAccepted decoded
-    rowsParsed profile inputSchema inputGuards satisfies
+  have validated := ScalarValidation.validate_sound
+    (inputs := witness) (fun _ _ => rfl) nativeAccepted decoded satisfies
   have source := ScalarNormalization.expectedCircuit_sound ctx hash implementation witness pruned
     values expected prunedInputs expectedAccepted validated.bounds validated.assertions
     (ScalarNormalization.ScalarCircuitAdmission.pruneCircuit circuit scalarAdmission)
@@ -265,7 +241,7 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
       relation.instructions.length ≤ Native.maxInstructions := by
   obtain ⟨expected, expectedAccepted, nativeAccepted⟩ :=
     Zkir.lowerCircuit_validated circuit json lowered
-  obtain ⟨shape, _, _⟩ := canonicalInputRequirements circuit admitted expectedAccepted
+  have shape := canonicalInputRequirements circuit admitted expectedAccepted
   have rowsParsed : Native.arrayField json "instructions" = .ok (defaultLoweredRows circuit) :=
     Zkir.lowerCircuit_instructions circuit json lowered
   have identifiers := ScalarAdmission.input_identifiers nativeAccepted decoded
@@ -289,8 +265,6 @@ theorem lowerCircuit_complete_of_witness (ctx : EvalContext) (hash : Hash)
     (scalarAdmission : ScalarNormalization.ScalarCircuitAdmission circuit)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows circuit).toList.zipIdx relation.instructions = true)
     (success : circuit.run ctx values = .ok result)
     (frame : ∀ name, witness ("%input_" ++ name) = inputs ("%input_" ++ name))
     (holds : ∀ instruction ∈ relation.instructions, instruction.Holds hash witness) :
@@ -316,7 +290,7 @@ theorem lowerCircuit_complete_of_witness (ctx : EvalContext) (hash : Hash)
     ⟨holds, rfl, rfl, rfl⟩
   obtain ⟨observed, observedRun, _, returns, publicInputs, privateInputs, groups, _, _⟩ :=
     lowerCircuit_sound ctx hash implementation circuit values json relation streams witness
-      (relation.groups witness) witnessInputs scalarAdmission lowered decoded profile satisfies
+      (relation.groups witness) witnessInputs scalarAdmission lowered decoded satisfies
   have same := Except.ok.inj (observedRun.symm.trans success)
   subst observed
   refine ⟨holds, ?_, ?_, ?_, returns⟩

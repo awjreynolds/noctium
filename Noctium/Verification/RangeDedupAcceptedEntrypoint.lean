@@ -106,7 +106,8 @@ theorem lowerEntrypoint_scalarCall_returnValues
   intro hash streams witness groups satisfies
   rw [← returnsUnchanged]
   exact ScalarValidatedProgram.returnValues (expected := optimized) accepted rowsParsed
-    (scalarCall_decoded_rows rewrites lowered decoded rowsParsed) profile schemaOptimized satisfies
+    (scalarCall_decoded_rows rewrites lowered decoded rowsParsed) profile schemaOptimized
+    (inputs := witness) (fun _ _ => rfl) satisfies
 
 /-- A decoded scalar call exposes source assertions, checked source ranges,
 and ordinary scalar input bounds for any satisfying body witness. Rewrites
@@ -156,7 +157,8 @@ theorem lowerEntrypoint_scalarCall_sourceRequirements
   have observations := ScalarValidatedProgram.sourceRequirements
     (expected := optimized) (json := json) (program := call.body) (rows := rows)
     accepted rowsParsed bodyRows profile schemaOptimized
-    (hash := hash) (streams := streams) (witness := witness) (groups := groups) satisfies
+    (hash := hash) (streams := streams) (inputs := witness) (witness := witness) (groups := groups)
+    (fun _ _ => rfl) satisfies
   obtain ⟨optimizedAssertions, optimizedBounds, optimizedInputBounds⟩ := observations
   have assertions : ∀ term ∈ expected.assertions,
       interpret hash witness term = some one := by
@@ -225,7 +227,7 @@ theorem lowerEntrypoint_scalarCall_impactPayloads
   rw [← groupsUnchanged]
   exact ScalarValidatedProgram.impactPayloads
     (expected := optimized) accepted rowsParsed bodyRows profile schemaOptimized guardsOptimized
-    satisfies
+    (inputs := witness) (fun _ _ => rfl) satisfies
 
 /-- The comparison rewrite preserves arbitrary-witness satisfaction for the
 two actual emitted ledger relations in the checked scalar opcode profile.

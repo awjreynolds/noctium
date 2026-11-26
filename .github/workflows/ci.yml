@@ -724,6 +724,7 @@ jobs:
             Noctium.Verification.GenericStateCellAdmission
           lake env lean tests/RangeDedupRawCall.lean
           lake env lean tests/ScalarValidatedProgram.lean
+          lake env lean tests/ScalarValidation.lean
           lake env lean tests/ScalarWitnessCapacity.lean
           lake env lean tests/ScalarCircuitWitness.lean
           lake env lean tests/ScalarLedgerWitness.lean
