@@ -329,6 +329,37 @@ def initialEffectTypeEnv (ep : Entrypoint) : TypeEnv :=
   ep.circuit.inputs.map (fun input => (input.name, input.ty)) ++
     ep.circuit.outputs.map (fun output => (output.name, output.ty))
 
+/-- The source bindings introduced by scalar state effects, in effect order. -/
+def effectTypeBindings : Effect → TypeEnv
+  | .readCell _ destination ty => [(destination, ty)]
+  | .readMap _ destination _ ty _ => [(destination, ty)]
+  | _ => []
+
+/-- The validated frame adds the declared read bindings to its initial types. -/
+theorem ValidatedEffects.type_environment_shape {state : List StateDecl}
+    {initial final : TypeEnv} {effects : List Effect}
+    (validated : ValidatedEffects state initial effects final) :
+    final = initial ++ effects.flatMap effectTypeBindings := by
+  induction validated with
+  | nil => simp
+  | @readCell env final rest stateName destination ty declared fresh tail ih =>
+      rw [ih]
+      simp [effectTypeBindings, List.append_assoc]
+  | @readMap env final rest stateName destination keyTy valueTy key
+      declared keyValid fresh tail ih =>
+      rw [ih]
+      simp [effectTypeBindings, List.append_assoc]
+  | @require env final rest condition conditionValid tail ih =>
+      simpa [effectTypeBindings] using ih
+  | @writeCell env final rest stateName ty value declared valueValid tail ih =>
+      simpa [effectTypeBindings] using ih
+  | @writeMap env final rest stateName keyTy valueTy key value
+      declared keyValid valueValid tail ih =>
+      simpa [effectTypeBindings] using ih
+  | @requireAbsent env final rest stateName keyTy valueTy key
+      declared keyValid tail ih =>
+      simpa [effectTypeBindings] using ih
+
 /-- Destination names introduced by scalar source state reads. -/
 def scalarReadDestinations (effects : List Effect) : List String :=
   effects.filterMap fun effect => match effect with

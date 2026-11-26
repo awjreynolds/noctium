@@ -9,41 +9,12 @@ namespace Noctium.Verification.ScalarCellReturnValidation
 open Backend GenericStateEffectValidation GenericStateCellAdmission
 open ScalarCellSourceReads
 
-private def effectTypeBindings : Effect → TypeEnv
-  | .readCell _ destination ty => [(destination, ty)]
-  | .readMap _ destination _ ty _ => [(destination, ty)]
-  | _ => []
-
 private def readSignature (read : Impact.Read) : String × Ty × List (String × Ty) :=
   (read.name, read.ty, read.components)
 
 private def effectReadSignatures : Effect → List (String × Ty × List (String × Ty))
   | .readCell _ destination ty => [(destination, ty, [])]
   | _ => []
-
-private theorem validated_type_environment_shape {state : List StateDecl}
-    {initial final : TypeEnv} {effects : List Effect}
-    (validated : ValidatedEffects state initial effects final) :
-    final = initial ++ effects.flatMap effectTypeBindings := by
-  induction validated with
-  | nil => simp
-  | @readCell env final rest stateName destination ty declared fresh tail ih =>
-      rw [ih]
-      simp [effectTypeBindings, List.append_assoc]
-  | @readMap env final rest stateName destination keyTy valueTy key
-      declared keyValid fresh tail ih =>
-      rw [ih]
-      simp [effectTypeBindings, List.append_assoc]
-  | @require env final rest condition conditionValid tail ih =>
-      simpa [effectTypeBindings] using ih
-  | @writeCell env final rest stateName ty value declared valueValid tail ih =>
-      simpa [effectTypeBindings] using ih
-  | @writeMap env final rest stateName keyTy valueTy key value
-      declared keyValid valueValid tail ih =>
-      simpa [effectTypeBindings] using ih
-  | @requireAbsent env final rest stateName keyTy valueTy key
-      declared keyValid tail ih =>
-      simpa [effectTypeBindings] using ih
 
 private theorem cell_effects_are_scalar_state_effects (state : List StateDecl) :
     ∀ {effects : List Effect}, ScalarCellEffects state effects →
@@ -238,7 +209,7 @@ theorem lower_cell_final_types (state : List StateDecl)
     (validated : ValidatedEffects state (initialEffectTypeEnv entry)
       entry.effects finalTypes) :
     finalTypes = plan.typeEnvironment entry := by
-  have finalShape := validated_type_environment_shape validated
+  have finalShape := validated.type_environment_shape
   have typeBindings := postPublic_typeBindings_eq_effect_bindings
     state entry plan accepted unguarded cellScope
   have planShape : plan.typeEnvironment entry =

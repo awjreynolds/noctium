@@ -36,10 +36,10 @@ private theorem decodeRow_member {items : List Json} {rows : List Row}
     · obtain ⟨row, rowDecoded, rowMember⟩ := ih tailDecoded tailMember
       exact ⟨row, rowDecoded, by simp [rowMember]⟩
 
-/-- Accepted mixed ZKIR rows preserve the source assertions, source bounds,
-and scalar input bounds. Strict rows use their ordinary circuit constraint;
-guarded impact and public input rows pass through the guarded classifier. -/
-theorem lowerEntrypoint_guardedRows_sourceRequirements
+/-- The accepted mixed-row fold exposes source requirements and the producer
+meaning before and after each actual indexed row. Output consumers use the row
+visit to interpret the output at its producer ordinal. -/
+theorem lowerEntrypoint_guardedRows_meaning
     {state : List StateDecl} {entry : Entrypoint} (rewrites : Zkir.Rewrites)
     {json : Json} {instructions : Array Json} {rows : List Row}
     (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
@@ -51,6 +51,7 @@ theorem lowerEntrypoint_guardedRows_sourceRequirements
           requirement.ty.isForeign = false) :
     ∃ expected,
       Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      Native.requireFinalOutput instructions.toList = .ok () ∧
       ∀ {hash : Hash} {witness : Assignment},
         (∀ row ∈ rows, GuardedImpactTranscript.ordinaryHolds hash witness row) →
           (∀ term ∈ expected.assertions, interpret hash witness term = some one) ∧
@@ -60,7 +61,13 @@ theorem lowerEntrypoint_guardedRows_sourceRequirements
           (∀ requirement ∈ expected.rawInputs ++ expected.inputs,
             requirement.ty.isForeign = false →
             requirement.canonicalJubjubScalar = false →
-            (witness requirement.identifier).val ≤ Native.sourceMaximum requirement.ty) := by
+            (witness requirement.identifier).val ≤ Native.sourceMaximum requirement.ty) ∧
+          (∀ raw index, (raw, index) ∈ instructions.toList.zipIdx →
+            ∃ before after,
+              ScalarValidationMeaning.StateMeaning hash witness witness before ∧
+              Native.validateInstruction (Zkir.optimizedExpected rewrites expected)
+                before raw = .ok after ∧
+              ScalarValidationMeaning.StateMeaning hash witness witness after) := by
   obtain ⟨_, expected, _, expectedAccepted, accepted, _⟩ :=
     Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites
       state entry rewrites json lowered
@@ -70,7 +77,7 @@ theorem lowerEntrypoint_guardedRows_sourceRequirements
   have instructionsEq : parsedInstructions = instructions :=
     Except.ok.inj (driver.instructionsParsed.symm.trans instructionsParsed)
   subst parsedInstructions
-  refine ⟨expected, expectedAccepted, ?_⟩
+  refine ⟨expected, expectedAccepted, driver.finalOutput, ?_⟩
   intro hash witness ordinary
   have optimizedInputs : optimized.rawInputs ++ optimized.inputs =
       expected.rawInputs ++ expected.inputs := by
@@ -107,7 +114,7 @@ theorem lowerEntrypoint_guardedRows_sourceRequirements
       simpa only [List.zipIdx_map_fst] using found
     obtain ⟨row, rowDecoded, rowMember⟩ := decodeRow_member decoded rawMember
     exact GuardedImpactTranscript.classify_decoded_row rowDecoded (ordinary row rowMember)
-  obtain ⟨finalMeaning, _, preserveAssertions, _⟩ :=
+  obtain ⟨finalMeaning, _, preserveAssertions, visits⟩ :=
     RangeDedupAcceptedArray.accepted_loop_meaning_assertions_at_steps
       seedMeaning seedDefinitions inputSchema (fun _ _ => rfl) steps driverTrace
   have optimizedAssertions : ∀ term ∈ optimized.assertions,
@@ -136,6 +143,47 @@ theorem lowerEntrypoint_guardedRows_sourceRequirements
     intro requirement member nonforeign ordinaryScalar
     exact driver.inputBound finalMeaning
       (by rw [optimizedInputs]; exact member) nonforeign ordinaryScalar
+  have rowMeanings : ∀ raw index, (raw, index) ∈ instructions.toList.zipIdx →
+      ∃ before after,
+        ScalarValidationMeaning.StateMeaning hash witness witness before ∧
+        Native.validateInstruction optimized before raw = .ok after ∧
+        ScalarValidationMeaning.StateMeaning hash witness witness after := by
+    intro raw index member
+    obtain ⟨before, after, beforeMeaning, _, checked, afterMeaning, _⟩ :=
+      visits raw index member
+    exact ⟨before, after, beforeMeaning, checked, afterMeaning⟩
+  exact ⟨assertions, bounds, inputBounds, rowMeanings⟩
+
+/-- Accepted mixed ZKIR rows preserve the source assertions, source bounds,
+and scalar input bounds. Strict rows use their ordinary circuit constraint;
+guarded impact and public input rows pass through the guarded classifier. -/
+theorem lowerEntrypoint_guardedRows_sourceRequirements
+    {state : List StateDecl} {entry : Entrypoint} (rewrites : Zkir.Rewrites)
+    {json : Json} {instructions : Array Json} {rows : List Row}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (instructionsParsed : Native.arrayField json "instructions" = .ok instructions)
+    (decoded : instructions.toList.mapM GuardedScalarRows.decodeRow = .ok rows)
+    (schema : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected →
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+          requirement.ty.isForeign = false) :
+    ∃ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected ∧
+      ∀ {hash : Hash} {witness : Assignment},
+        (∀ row ∈ rows, GuardedImpactTranscript.ordinaryHolds hash witness row) →
+          (∀ term ∈ expected.assertions, interpret hash witness term = some one) ∧
+          (∀ requirement ∈ expected.bounds,
+            ∃ value, interpret hash witness requirement.1 = some value ∧
+              value.val ≤ requirement.2) ∧
+          (∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+            requirement.ty.isForeign = false →
+            requirement.canonicalJubjubScalar = false →
+            (witness requirement.identifier).val ≤ Native.sourceMaximum requirement.ty) := by
+  obtain ⟨expected, expectedAccepted, _, meaning⟩ :=
+    lowerEntrypoint_guardedRows_meaning rewrites lowered instructionsParsed decoded schema
+  refine ⟨expected, expectedAccepted, ?_⟩
+  intro hash witness ordinary
+  obtain ⟨assertions, bounds, inputBounds, _⟩ := meaning ordinary
   exact ⟨assertions, bounds, inputBounds⟩
 
 end Noctium.Verification.GuardedZkirRequirements
