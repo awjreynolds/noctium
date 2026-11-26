@@ -1,4 +1,5 @@
 import Noctium.Verification
+import Noctium.Verification.GenericStateLedgerAllocation
 import Noctium.Verification.ScalarCellArtifactExecution
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
@@ -174,3 +175,14 @@ private def repeatedHashBody (plan : Impact.Plan) : Zkir.LowerState :=
 
 example : Zkir.OutputCapacityFrame {} (repeatedHashBody {}) := by
   constructor <;> decide +kernel
+
+private def coldHashField : Expr .native :=
+  .bytesField (.persistentHash32 (.bytes32Literal (List.replicate 32 0))) 0
+
+-- A single cold hash field allocates more names than it emits rows.
+example :
+    let after := ((Zkir.lowerExpr coldHashField).run {}).2
+    after.instructions.size = 2 ∧ after.next = 3 ∧ after.outputDefinitions = 3 ∧
+      Zkir.OutputCapacityFrame {} after := by
+  exact ⟨by decide +kernel, by decide +kernel, by decide +kernel,
+    Zkir.lowerExpr_preservesOutputCapacityFrame coldHashField {}⟩

@@ -1,6 +1,6 @@
 import Noctium.Verification.ScalarValidatedProgram
 import Noctium.Verification.ScalarCircuit
-import Noctium.Verification.ScalarAllocationOutputFrame
+import Noctium.Verification.ScalarAdmission
 
 namespace Noctium.Verification.ScalarTranslationSoundness
 
@@ -256,9 +256,7 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
     {inputs : Assignment} {json : Json} {relation : Program}
     (admitted : ScalarNormalization.CanonicalInputs circuit values inputs)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
-    (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows circuit).toList.zipIdx relation.instructions = true) :
+    (decoded : NativeRelationJson.decode json = .ok relation) :
     (∀ input ∈ circuit.inputs, validIdentifier ("%input_" ++ input.name) = true) ∧
       ((Zkir.lowerBody (Passes.pruneCircuit circuit)).run {}).2.next ≤
         Native.maxInstructions * Native.maxVectorLength ∧
@@ -267,17 +265,15 @@ theorem lowerCircuit_witness_preflight (circuit : Circuit) {values : EvalEnv}
       relation.instructions.length ≤ Native.maxInstructions := by
   obtain ⟨expected, expectedAccepted, nativeAccepted⟩ :=
     Zkir.lowerCircuit_validated circuit json lowered
-  obtain ⟨shape, schema, _⟩ := canonicalInputRequirements circuit admitted expectedAccepted
+  obtain ⟨shape, _, _⟩ := canonicalInputRequirements circuit admitted expectedAccepted
   have rowsParsed : Native.arrayField json "instructions" = .ok (defaultLoweredRows circuit) :=
     Zkir.lowerCircuit_instructions circuit json lowered
-  have identifiers := NativeInputOrdinalTrace.validate_decoded_input_identifiers_of_checkedScalarProfile
-    nativeAccepted decoded rowsParsed profile schema
+  have identifiers := ScalarAdmission.input_identifiers nativeAccepted decoded
   obtain ⟨decodedRows, decodedParsed, decoding⟩ :=
     NativeRelationInstructionProjection.decode_instructionProjection decoded
   cases Except.ok.inj (decodedParsed.symm.trans rowsParsed)
-  refine ⟨?_, ScalarAllocationOutputFrame.lowerCircuit_names_fit_producerCapacity
-    circuit lowered, decoding,
-    NativeRelationInstructionProjection.decodedRows_budget nativeAccepted rowsParsed decoding⟩
+  refine ⟨?_, ScalarAdmission.lowerBody_budget circuit json lowered, decoding,
+    ScalarAdmission.instruction_bound nativeAccepted decoded⟩
   intro input member
   apply identifiers (scalarInputRequirement input)
   rw [shape]

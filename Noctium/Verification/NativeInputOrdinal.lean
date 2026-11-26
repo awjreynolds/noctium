@@ -486,8 +486,22 @@ theorem accepted_guarded_public_input_guard_meaning
   · right
     exact Fin.ext active
 
-/-- The strict input decoder preserves its output string and admits only a
-null guard. The opcode premise selects its public or private input branch. -/
+private theorem checked_native_type_string {raw typeJson : Json} {unitValue : Unit}
+    (typeParsed : raw.getObjVal? "type" = .ok typeJson)
+    (typeChecked : NativeRelationJson.checkNativeType typeJson = .ok unitValue) :
+    Backend.Native.stringField raw "type" = .ok "Scalar<BLS12-381>" := by
+  unfold NativeRelationJson.checkNativeType at typeChecked
+  simp only [ScalarValidationMeaning.bind_ok] at typeChecked
+  rcases typeChecked with ⟨typeText, typeTextParsed, typeTextChecked⟩
+  have textEq : typeText = "Scalar<BLS12-381>" :=
+    eq_of_beq (ScalarValidationMeaning.ensure_ok.mp typeTextChecked)
+  unfold Backend.Native.stringField
+  change ((raw.getObjVal? "type") >>= fun value => value.getStr?) =
+    .ok "Scalar<BLS12-381>"
+  simp [typeParsed, typeTextParsed, textEq, Bind.bind, Except.bind]
+
+/-- The strict input decoder preserves its output string, admits only a null
+guard, and checks the native scalar wire type. -/
 private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibility}
     {output : String}
     (opcodeParsed : Backend.Native.stringField raw "op" =
@@ -496,7 +510,8 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
       .ok (.input visibility output)) :
     Backend.Native.stringField raw "output" = .ok output ∧
       raw.getObjVal? "guard" = .ok Json.null ∧
-      NativeRelationJson.validIdentifier output = true := by
+      NativeRelationJson.validIdentifier output = true ∧
+      Backend.Native.stringField raw "type" = .ok "Scalar<BLS12-381>" := by
   have nativeJson_stringField_eq (value : Json) (name : String) :
       NativeRelationJson.stringField value name = Backend.Native.stringField value name := rfl
   cases visibility with
@@ -515,7 +530,7 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
       guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
       decodedOutput, outputParsed, validUnit, validChecked, result⟩
     cases result
-    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_⟩
+    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_, ?_⟩
     · have guardNull : guardJson.isNull = true := by
         cases guardUnit
         cases isNull : guardJson.isNull with
@@ -523,6 +538,8 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
         | true => rfl
       cases guardJson <;> simp_all [Json.isNull]
     · exact ScalarValidationMeaning.ensure_ok.mp validChecked
+    · exact checked_native_type_string typeParsed typeChecked
+
   | «private» =>
     have decoderOpcode : NativeRelationJson.stringField raw "op" = .ok "private_input" := by
       rw [nativeJson_stringField_eq]
@@ -538,7 +555,7 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
       guardUnit, guardChecked, typeJson, typeParsed, typeUnit, typeChecked,
       decodedOutput, outputParsed, validUnit, validChecked, result⟩
     cases result
-    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_⟩
+    refine ⟨(nativeJson_stringField_eq raw "output").symm.trans outputParsed, ?_, ?_, ?_⟩
     · have guardNull : guardJson.isNull = true := by
         cases guardUnit
         cases isNull : guardJson.isNull with
@@ -546,6 +563,7 @@ private theorem strict_decoded_input_fields {raw : Json} {visibility : Visibilit
         | true => rfl
       cases guardJson <;> simp_all [Json.isNull]
     · exact ScalarValidationMeaning.ensure_ok.mp validChecked
+    · exact checked_native_type_string typeParsed typeChecked
 
 /-- A strictly decoded input exposes the same output string stored in its
 `Instruction.input` constructor. -/
@@ -577,7 +595,76 @@ theorem strict_decoded_input_identifier_valid {raw : Json} {visibility : Visibil
     (decoded : NativeRelationJson.decodeInstruction raw =
       .ok (.input visibility output)) :
     NativeRelationJson.validIdentifier output = true :=
-  (strict_decoded_input_fields opcodeParsed decoded).2.2
+  (strict_decoded_input_fields opcodeParsed decoded).2.2.1
+
+private theorem accepted_foreign_input_type_name {expected : Expected}
+    {state next : State} {raw : Json} {requirement : InputRequirement}
+    {kind : Foreign.Kind} {visibility : Visibility}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (typed : requirement.ty = .foreign kind)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next) :
+    Backend.Native.stringField raw "type" = .ok kind.nativeName := by
+  unfold validateInstruction at accepted
+  simp only [ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨opcode, op, descriptor, registry, _, fields, accepted⟩
+  have opcodeEq := Except.ok.inj (op.symm.trans opcodeParsed)
+  cases visibility with
+  | «public» =>
+    have opcodeEq : opcode = "public_input" := by simpa [inputOpcode] using opcodeEq
+    subst opcode
+    simp only [opcodeEq, selected, typed] at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨typeName, typeParsed, typeChecked, rest⟩
+    have check : Backend.Native.ensure (typeName == kind.nativeName)
+        "foreign input type differs from source" = .ok typeChecked := rest.1
+    have textEq : typeName = kind.nativeName :=
+      eq_of_beq (ScalarValidationMeaning.ensure_ok.mp check)
+    rw [typeParsed, textEq]
+  | «private» =>
+    have opcodeEq : opcode = "private_input" := by simpa [inputOpcode] using opcodeEq
+    subst opcode
+    simp only [opcodeEq, selected, typed] at accepted
+    simp only [ScalarValidationMeaning.bind_ok] at accepted
+    rcases accepted with ⟨typeName, typeParsed, typeChecked, rest⟩
+    have check : Backend.Native.ensure (typeName == kind.nativeName)
+        "foreign input type differs from source" = .ok typeChecked := rest.1
+    have textEq : typeName = kind.nativeName :=
+      eq_of_beq (ScalarValidationMeaning.ensure_ok.mp check)
+    rw [typeParsed, textEq]
+
+private theorem foreign_native_name_ne_relation_native_type (kind : Foreign.Kind) :
+    kind.nativeName ≠ "Scalar<BLS12-381>" := by
+  cases kind <;> rename_i curve <;> cases curve <;> decide
+
+/-- Producer admission and the strict decoder agree on a nonforeign selected
+input type, since strict input rows carry the native scalar wire type. -/
+theorem accepted_strict_input_requirement_not_foreign {expected : Expected}
+    {state next : State} {raw : Json} {visibility : Visibility}
+    {decodedOutput : String} {requirement : InputRequirement}
+    (selected : expected.inputs[state.inputCount]? = some requirement)
+    (opcodeParsed : Backend.Native.stringField raw "op" =
+      .ok (inputOpcode visibility))
+    (accepted : validateInstruction expected state raw = .ok next)
+    (decoded : NativeRelationJson.decodeInstruction raw =
+      .ok (.input visibility decodedOutput)) :
+    requirement.ty.isForeign = false := by
+  cases ty : requirement.ty with
+  | native => simp [Ty.isForeign]
+  | bool => simp [Ty.isForeign]
+  | uint maximum => simp [Ty.isForeign]
+  | bytes length => simp [Ty.isForeign]
+  | opaqueBytes => simp [Ty.isForeign]
+  | opaqueString => simp [Ty.isForeign]
+  | jubjubScalar => simp [Ty.isForeign]
+  | jubjubPoint => simp [Ty.isForeign]
+  | foreign kind =>
+    have producerType := accepted_foreign_input_type_name selected ty opcodeParsed accepted
+    have decodedType := (strict_decoded_input_fields opcodeParsed decoded).2.2.2
+    have typeEq : kind.nativeName = "Scalar<BLS12-381>" :=
+      Except.ok.inj (producerType.symm.trans decodedType)
+    exact False.elim ((foreign_native_name_ne_relation_native_type kind) typeEq)
 
 /-- Producer-accepted guarded public reads cannot satisfy the strict decoder's
 input shape: the producer parses a string guard and the decoder requires null. -/

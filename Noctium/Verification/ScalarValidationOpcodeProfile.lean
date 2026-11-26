@@ -194,6 +194,70 @@ def checkedScalarOpcodeProfile : List (Json × Nat) → List Instruction → Boo
       supportedScalarOpcodeProfile raw instruction &&
         checkedScalarOpcodeProfile items instructions
 
+private theorem bind_ok {first : Except String α} {next : α → Except String β}
+    {value : β} : (first >>= next) = .ok value ↔
+    ∃ intermediate, first = .ok intermediate ∧ next intermediate = .ok value := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem supportedScalarOpcodeProfile_of_strict_decode {raw : Json}
+    {instruction : Instruction}
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok instruction) :
+    supportedScalarOpcodeProfile raw instruction = true := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [bind_ok] at decoded
+  obtain ⟨opcode, parsed, decoded⟩ := decoded
+  change Backend.Native.stringField raw "op" = .ok opcode at parsed
+  split at decoded
+  all_goals
+    try simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at decoded
+  all_goals
+    first
+    | grind [supportedScalarOpcodeProfile, rawHasOpcode_of_eq]
+    | skip
+  case h_8 =>
+    change (do
+      exactFields raw ["op", "val", "output"]
+      let source ← decodeOperandField raw "val"
+      let output ← NativeRelationJson.stringField raw "output"
+      NativeRelationJson.ensure (validIdentifier output) "invalid native SSA definition"
+      return Instruction.equal source (.reference output)) = .ok instruction at decoded
+    simp only [bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at decoded
+    obtain ⟨_, _, source, _, output, _, _, _, rfl⟩ := decoded
+    simp [supportedScalarOpcodeProfile, rawHasOpcode_of_eq parsed]
+  case h_10 =>
+    obtain ⟨_, _, left, _, right, _, rfl⟩ := decoded
+    cases right <;> simp [supportedScalarOpcodeProfile, rawHasOpcode_of_eq parsed]
+  case h_16 =>
+    obtain ⟨_, _, guard, _, decoded⟩ := decoded
+    cases guard with
+    | immediate active =>
+      simp only [bind_ok, Except.ok.injEq] at decoded
+      obtain ⟨_, _, _, _, inputs, _, rfl⟩ := decoded
+      exact rawHasOpcode_of_eq parsed
+    | reference _ =>
+      change Except.error _ = .ok instruction at decoded
+      contradiction
+  case h_18 =>
+    change Except.error _ = .ok instruction at decoded
+    contradiction
+
+/-- The strict decoder already checks the producer spelling and decoded shape
+of every row, including copy and constrain_eq. -/
+theorem checkedScalarOpcodeProfile_of_strict_decode
+    {items : List (Json × Nat)} {instructions : List Instruction}
+    (decoded : (items.map Prod.fst).mapM NativeRelationJson.decodeInstruction = .ok instructions) :
+    checkedScalarOpcodeProfile items instructions = true := by
+  induction items generalizing instructions with
+  | nil =>
+    cases decoded
+    rfl
+  | cons item items ih =>
+    rcases item with ⟨raw, index⟩
+    simp only [List.map_cons, List.mapM_cons, bind_ok, Pure.pure, Except.pure, Except.ok.injEq] at decoded
+    obtain ⟨instruction, first, remaining, rest, rfl⟩ := decoded
+    simp only [checkedScalarOpcodeProfile, supportedScalarOpcodeProfile_of_strict_decode first,
+      ih rest, Bool.and_self]
+
 theorem SupportedScalarOpcodeTrace.ofCheckedProfile
     {items : List (Json × Nat)} {instructions : List Instruction}
     (checked : checkedScalarOpcodeProfile items instructions = true) :
