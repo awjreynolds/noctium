@@ -2,6 +2,7 @@ import Noctium.Verification
 import Noctium.Verification.GenericStateLedgerAllocation
 import Noctium.Verification.GenericStateLowering
 import Noctium.Verification.GenericStateConverseLedgerSatisfies
+import Noctium.Verification.GenericStateExpressionEnvironment
 import Noctium.Verification.ScalarCellArtifactExecution
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
@@ -56,6 +57,15 @@ private def context : EvalContext :=
 
 private def values : EvalEnv := [("delta", .native 24), ("enabled", .bool _root_.Bool.true), ("limit", .uint 63 50)]
 
+#guard
+  let bound : Expr .native := .add (.ref "delta") (.letE "delta" (.native 7) (.ref "delta"))
+  let eager : Expr .native :=
+    .letE "delta" (.native 7) (.select (.bool _root_.Bool.true) (.ref "delta") (.ref "absent"))
+  let shadowed := values ++ [("delta", .native 99)]
+  match bound.eval context shadowed, eager.eval context shadowed with
+  | .ok value, .error message => value == 31 && message == "missing value 'absent'"
+  | _, _ => _root_.Bool.false
+
 private def initial : LedgerState := {cells := [("counter", .native 17)]}
 
 private def fixtureWitness (program : Program) (seed : Assignment) : Option Assignment :=
@@ -78,20 +88,29 @@ private def strictEntry : Entrypoint := {fixtureEntry with callInputs := []}
     | "%input_after" => scalar 42
     | _ => zero
   match Zkir.lowerEntrypoint declarations strictEntry,
-      Native.expectedEntrypoint declarations (Passes.pruneEntrypoint strictEntry) with
-  | .ok json, .ok expected =>
+      Native.expectedEntrypoint declarations (Passes.pruneEntrypoint strictEntry),
+      Impact.lower declarations (Passes.pruneEntrypoint strictEntry) with
+  | .ok json, .ok expected, .ok plan =>
     match NativeRelationJson.decode json, Native.arrayField json "inputs" with
     | .ok relation, .ok rawInputs =>
       match fixtureWitness relation seed with
       | some assignment =>
-        rawInputs.isEmpty &&
+        let body := ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint strictEntry) plan).run {}).2
+        rawInputs.isEmpty && expected.rawInputs.isEmpty &&
+          relation.instructions.flatMap NativeInputOrdinalTrace.strictInstructionInputDescriptors ==
+            expected.inputs.map NativeInputOrdinalTrace.expectedInputDescriptor &&
+          expected.inputs.map (·.identifier) ==
+            ["%input_delta", "%input_enabled", "%input_limit", "%input_before", "%input_after"] &&
+          expected.inputs.all (fun requirement => validIdentifier requirement.identifier) &&
+          body.instructions.size == relation.instructions.length &&
+          decide (body.next ≤ body.outputDefinitions) &&
           relation.inputValues .private assignment == [scalar 24, scalar 50] &&
           (relation.groups assignment).map (List.map some) ==
             expected.groups.map (List.map (ScalarNormalization.interpret (fun _ => zero) seed)) &&
           relation.returns assignment == [scalar 42]
       | none => _root_.Bool.false
     | _, _ => _root_.Bool.false
-  | _, _ => _root_.Bool.false
+  | _, _, _ => _root_.Bool.false
 
 private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState)
     (call : ScalarCall) (seed : Assignment) : _root_.Bool :=
@@ -161,7 +180,9 @@ run_cmd do
       `Noctium.Verification.GenericStateLedgerAllocation.lowerEntrypoint_allocation_bounds,
       `Noctium.Verification.GenericStateLowering.accepted_relation_groups,
       `Noctium.Verification.GenericStateConverseLedgerSatisfies.lowered_body_authenticated_groups,
+      `Noctium.Verification.GenericStateExpressionEnvironment.eval_lookup_ext,
       `Noctium.Verification.ScalarLedgerWitnessPreflight.lowerEntrypoint_witness_preflight,
+      `Noctium.Verification.ScalarLedgerWitnessPreflight.lowerEntrypoint_strict_witness_preflight,
       `Noctium.Verification.ScalarLedgerWitnessSource.lowerEntrypoint_source_cell_read_tape,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_prelude,
       `Noctium.Verification.ScalarWitnessConstruction.completes_lowerLedgerReads_plain,

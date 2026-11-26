@@ -700,6 +700,7 @@ jobs:
             Noctium.Verification.ScalarAllocationOutputFrame \
             Noctium.Verification.GenericStateLowering \
             Noctium.Verification.GenericStateConverseLedgerSatisfies \
+            Noctium.Verification.GenericStateExpressionEnvironment \
             Noctium.Verification.ScalarValidationProjection \
             Noctium.Verification.ScalarValidationProjectionComparison \
             Noctium.Verification.GuardedEffectEvaluation \
