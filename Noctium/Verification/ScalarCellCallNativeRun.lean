@@ -86,19 +86,6 @@ theorem lowerEntrypoint_run_scalar_cell_native (ctx : EvalContext)
     sourceCircuit, sourceReturn, outputShape, tape, decodedReads, evaluated, encoded,
     by simpa [publicCells] using nativeRun⟩
 
-private theorem decode_reads_from_frame (reads : List Impact.Read) (seed witness : NativeRelation.Assignment)
-    (frame : InputFrame seed witness) :
-    GenericStateInputValues.decodeReads reads witness =
-      GenericStateInputValues.decodeReads reads seed := by
-  unfold GenericStateInputValues.decodeReads
-  induction reads with
-  | nil => rfl
-  | cons read rest ih =>
-    have sameRead : GenericStateInputValues.decodeRead read witness =
-        GenericStateInputValues.decodeRead read seed := by
-      simp only [GenericStateInputValues.decodeRead, frame read.name]
-    simp only [List.mapM_cons, sameRead, ih]
-
 /-- The same successful source call supplies both the decoded ZKIR witness
 and the exact evaluated Impact plan. The typed ledger-read candidates are
 decoded from that witness, whose input frame preserves the source tape. -/
@@ -165,7 +152,8 @@ theorem lowerEntrypoint_construct_scalar_cell_execution
   have sameEntries : nativeEntries = entries :=
     congrArg Prod.fst (Except.ok.inj (nativeTape.symm.trans sourceTape))
   subst nativeEntries
-  have witnessReads := (decode_reads_from_frame _ _ witness frame).trans readDecoded
+  have witnessReads :=
+    (GenericStateInputValues.decodeReads_input_frame _ _ witness frame).trans readDecoded
   exact ⟨expected, outputs, finalEnv, entries, witness, readValues, native, finalSlots,
     expectedAccepted, circuitRun, sourceTape, bindings, satisfies, arguments,
     witnessReads, evaluated, encoded, nativeRun⟩

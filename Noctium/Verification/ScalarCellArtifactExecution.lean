@@ -1,4 +1,5 @@
 import Noctium.Verification.ArtifactCertificate
+import Noctium.Verification.GenericStateCheckedSchedule
 import Noctium.Verification.ImpactTypedEnvironment
 import Noctium.Verification.ScalarCellImpactByteEvaluation
 import Noctium.Verification.ScalarCellNativeTranscript
@@ -67,6 +68,10 @@ theorem lowerEntrypoint_checked_artifact_execution
         (fun input => ScalarCellWitnessReadSeed.seedReadValues inputs entries input.identifier) ∧
       GenericStateInputValues.decodeReads
         (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)) assignment = .ok readValues ∧
+      GenericStateCheckedSchedule.CheckedPlan ctx ep plan values assignment initialSlots
+        ⟨[.vector finalSlots],
+          ScalarCellNativePublicPrefix.sourcePublicCells ep.circuit.inputs inputs ++
+            ScalarCellNativeTrace.tapeCells entries⟩ ∧
       (∃ minimum, ∀ fuel, minimum ≤ fuel →
         ImpactPlanAgreement.evaluatePlan fuel ctx ((outputs ++ values) ++ readValues) planTree =
           some operations ∧
@@ -87,13 +92,24 @@ theorem lowerEntrypoint_checked_artifact_execution
       lowered decoded planAccepted opcodeProfile admittedInputs circuitAdmission returnScope
       unguarded cellScope cellOperands admittedState success
   obtain ⟨_, typedEnvironment⟩ := typedFrame
+  have guardedEval := ScalarCellImpactByteEvaluation.guarded_evalPlan_eq_scalarCell
+    declarations (Passes.pruneEntrypoint ep) plan ctx ((outputs ++ values) ++ readValues)
+    planAccepted unguarded cellScope
+  rw [evaluated] at guardedEval
+  have checkedCandidates : GenericStateCheckedSchedule.CheckedPlan ctx ep plan values assignment
+      initialSlots ⟨[.vector finalSlots],
+        ScalarCellNativePublicPrefix.sourcePublicCells ep.circuit.inputs inputs ++
+          ScalarCellNativeTrace.tapeCells entries⟩ := by
+    simpa [GenericStateCheckedSchedule.CheckedPlan, GuardedScalarCandidateState.runCheckedCandidates,
+      circuitRun, readDecoded, guardedEval, Except.toOption, GenericStateEncoding.initial,
+      -List.append_assoc] using nativeRun
   obtain ⟨minimum, byteAgrees⟩ := ScalarCellImpactByteEvaluation.evaluations_fromBytes_agree
     profile contractName declarations ctor (Passes.pruneEntrypoint ep) plan standaloneFile
     ctx implementation.modulus (ImpactTypedEnvironment.of_normalization typedEnvironment)
     keyWidth planAdmitted budget planBytes planAccepted unguarded cellScope planMatched evaluated
   refine ⟨⟨planParsed, callParsed, authenticated⟩, expected, outputs, finalEnv, entries, assignment,
     readValues, operations, finalSlots, returned, expectedAccepted, tape, ?_, arguments, readDecoded,
-    ⟨minimum, ?_⟩, encoded, returnEvaluated, resultShape, returns⟩
+    checkedCandidates, ⟨minimum, ?_⟩, encoded, returnEvaluated, resultShape, returns⟩
   · rw [← groups]
     exact satisfies
   · intro fuel enough

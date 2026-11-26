@@ -85,6 +85,20 @@ def decodeRead (read : Backend.Impact.Read) (witness : Assignment) :
 def decodeReads (reads : List Backend.Impact.Read) (witness : Assignment) : Except String EvalEnv :=
   reads.mapM (fun read => decodeRead read witness)
 
+/-- Decoded reads are unchanged when an assignment preserves every `%input_`
+binding. The equality covers both successful decoding and the first error. -/
+theorem decodeReads_input_frame (reads : List Backend.Impact.Read)
+    (before after : Assignment)
+    (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
+    decodeReads reads after = decodeReads reads before := by
+  unfold decodeReads
+  induction reads with
+  | nil => rfl
+  | cons read rest ih =>
+    have sameRead : decodeRead read after = decodeRead read before := by
+      simp only [decodeRead, frame read.name]
+    simp only [List.mapM_cons, sameRead, ih]
+
 theorem decodeRead_success (read : Backend.Impact.Read) (witness : Assignment)
     (entry : String × Value) (success : decodeRead read witness = .ok entry) :
     ∃ supported : ScalarType read.ty,

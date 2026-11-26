@@ -132,13 +132,10 @@ theorem lowerEntrypoint_construct_scalar_cell_witness
     planEvaluation.returnsValid ⟨returned, planEvaluation.returns⟩ capacity
   have inputAgreement (requirement : Native.InputRequirement)
       (member : requirement ∈ expected.rawInputs ++ expected.inputs) :
-      witness requirement.identifier = seed requirement.identifier := by
-    obtain ⟨name, equal⟩ :=
-      ScalarLedgerSourceIdentifiers.accepted_scalar_requirement_source_names
-        declarations ep plan expected planAccepted expectedAccepted
-        scalarInputs requirement member
-    rw [equal]
-    exact frame name
+      witness requirement.identifier = seed requirement.identifier :=
+    ScalarLedgerSourceIdentifiers.accepted_scalar_requirements_input_frame
+      declarations ep plan expected planAccepted expectedAccepted scalarInputs
+      seed witness frame requirement member
   obtain ⟨satisfies, arguments⟩ := ScalarLedgerWitnessProjection.call_satisfies_seeded_inputs
     entry plan hash seed witness expected call rows header descriptors inputAgreement meaning
   exact ⟨expected, outputs, finalEnv, entries, witness, expectedAccepted, circuitSuccess, tape, frame,
