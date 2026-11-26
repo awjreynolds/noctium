@@ -1,5 +1,6 @@
 import Noctium.Verification.ScalarEffectReadFacts
 import Noctium.Verification.ScalarReadNames
+import Noctium.Verification.GenericStateSourceNames
 
 namespace Noctium.Verification.ScalarReadNameAdmission
 
@@ -7,25 +8,13 @@ open Backend
 open GenericStateCheckedReadTrace
 open GenericStateEffectValidation
 
-private theorem lower_source_names_unreserved (state : List StateDecl)
-    (ep : Entrypoint) (plan : Impact.Plan)
-    (lowered : Impact.lower state ep = .ok plan) :
-    ∀ name ∈ Impact.sourceNames ep, name.startsWith "_noctium_" = false := by
-  obtain ⟨boundaries, _, boundedLowering, _, _⟩ :=
-    GenericStateAdmissionPrefix.lower_guarded_effect_trace state ep plan lowered
-  have clear := Impact.lowerWithEffectBoundaries_sourceNamesChecked
-    state ep plan boundaries boundedLowering
-  intro name member
-  cases reserved : name.startsWith "_noctium_" with
-  | false => rfl
-  | true => exact False.elim (List.any_eq_false.mp clear name member reserved)
-
 private theorem lower_circuit_names_unreserved (state : List StateDecl)
     (ep : Entrypoint) (plan : Impact.Plan)
     (lowered : Impact.lower state ep = .ok plan) :
     ∀ name ∈ ep.circuit.inputs.map (·.name) ++ ep.circuit.outputs.map (·.name),
       name.startsWith "_noctium_" = false := by
-  have clear := lower_source_names_unreserved state ep plan lowered
+  have clear := GenericStateSourceNames.lower_production_source_names_unreserved
+    state ep plan lowered
   intro name member
   have sourceMember : name ∈ Impact.sourceNames ep := by
     unfold Impact.sourceNames
@@ -40,7 +29,8 @@ private theorem lower_scalar_destinations_unreserved (state : List StateDecl)
     (lowered : Impact.lower state ep = .ok plan) :
     ∀ name ∈ scalarReadDestinations ep.effects,
       name.startsWith "_noctium_" = false := by
-  have clear := lower_source_names_unreserved state ep plan lowered
+  have clear := GenericStateSourceNames.lower_production_source_names_unreserved
+    state ep plan lowered
   intro name member
   have sourceMember : name ∈ Impact.sourceNames ep := by
     unfold Impact.sourceNames

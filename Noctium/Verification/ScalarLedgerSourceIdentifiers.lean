@@ -1,6 +1,5 @@
 import Noctium.Verification.GenericStateCircuitParts
-import Noctium.Verification.GenericStateEffectValidation
-import Noctium.Verification.GenericStateKeys
+import Noctium.Verification.GenericStateSourceNames
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarNormalization
 
@@ -88,16 +87,8 @@ private theorem circuitInput_mem_callArguments (state : List StateDecl)
     (inputMember : input ∈ entry.circuit.inputs)
     (callMember : input.name ∈ entry.callInputs) :
     input ∈ entry.callArguments := by
-  have validated := GenericStateEffectValidation.lower_circuit_validated_source
+  have namesNodup := GenericStateSourceNames.lower_input_names_unique
     state entry plan planAccepted
-  have namesUnique : uniqueNames (entry.circuit.inputs.map (·.name)) = true := by
-    cases unique : uniqueNames (entry.circuit.inputs.map (·.name)) with
-    | true => rfl
-    | false => simp [Circuit.validate, unique, Bind.bind, Except.bind] at validated
-  have namesNodup : (entry.circuit.inputs.map (·.name)).Nodup := by
-    apply GenericStateKeys.nodup_of_eraseDups_length_eq
-    apply beq_iff_eq.mp
-    simpa [uniqueNames] using namesUnique
   have found : entry.circuit.inputs.find? (·.name == input.name) = some input :=
     find_input_of_nodupNames input namesNodup inputMember
   unfold Entrypoint.callArguments
