@@ -27,16 +27,22 @@ private def inputSlot (witness : Assignment) : Row → Option (Option ReadObserv
 def emittedPublicReads (witness : Assignment) (rows : List Row) : List ReadObservation :=
   (rows.filterMap (inputSlot witness)).filterMap id
 
-/-- Every body input ordinal occupies a slot. A private input contributes an
-empty slot, distinct from a missing or uninterpretable source requirement. -/
-def expectedInputAt (hash : Hash) (inputs witness : Assignment) (expected : Native.Expected)
-    (ordinal : Nat) : Option (Option ReadObservation) := do
-  let requirement ← expected.inputs[ordinal]?
+/-- Interpret one source input requirement as its transcript slot. A private
+input contributes an empty slot, distinct from a missing or uninterpretable
+source requirement. -/
+def requirementObservation (hash : Hash) (inputs witness : Assignment)
+    (requirement : Native.InputRequirement) : Option (Option ReadObservation) := do
   match requirement.visibility with
   | .private => pure none
   | .«public» =>
     let guard ← sourceReadGuard hash inputs requirement
     pure (some ⟨guard, witness requirement.identifier⟩)
+
+/-- Every body input ordinal occupies a slot. -/
+def expectedInputAt (hash : Hash) (inputs witness : Assignment) (expected : Native.Expected)
+    (ordinal : Nat) : Option (Option ReadObservation) := do
+  let requirement ← expected.inputs[ordinal]?
+  requirementObservation hash inputs witness requirement
 
 /-- Recover the source public read schedule by walking body input ordinals, then
 remove the private input slots. Raw call arguments seed meaning separately. -/
@@ -44,6 +50,27 @@ def expectedPublicReads (hash : Hash) (inputs witness : Assignment) (expected : 
     Option (List ReadObservation) :=
   ((List.range expected.inputs.length).mapM (expectedInputAt hash inputs witness expected)).map
     (List.filterMap id)
+
+/-- Enumerating body input ordinals yields the same observations as traversing
+the requirement list directly. -/
+theorem expectedPublicReads_eq_requirements
+    (hash : Hash) (inputs witness : Assignment) (expected : Native.Expected) :
+    expectedPublicReads hash inputs witness expected =
+      (expected.inputs.mapM (requirementObservation hash inputs witness)).map
+        (List.filterMap id) := by
+  have enumerate (requirements : List Native.InputRequirement)
+      (observe : Native.InputRequirement → Option (Option ReadObservation)) :
+      (List.range requirements.length).mapM
+          (fun ordinal => (requirements[ordinal]?).bind observe) = requirements.mapM observe := by
+    induction requirements with
+    | nil => simp
+    | cons requirement requirements ih =>
+      simp [List.range_succ_eq_map, List.getElem?_cons_succ, Function.comp_def, ih]
+  unfold expectedPublicReads
+  change (((List.range expected.inputs.length).mapM
+      (fun ordinal => (expected.inputs[ordinal]?).bind
+        (requirementObservation hash inputs witness))).map (List.filterMap id)) = _
+  rw [enumerate]
 
 /-- The accepted producer assigns each decoded input the next static source
 ordinal, independently of whether its guard consumes a transcript value. -/
@@ -115,7 +142,7 @@ theorem checked_public_read_schedule
         obtain ⟨requirement, selected, visibility, outputEq, guardMeaning, _⟩ :=
           accepted_publicInput_meaning meaning inputSchema rowDecoded checked
         apply advanced rfl (by simp [inputOpcodeRow, opcode, inputOpcode])
-        simp [expectedInputAt, selected, visibility, guardMeaning, outputEq]
+        simp [expectedInputAt, requirementObservation, selected, visibility, guardMeaning, outputEq]
       | impact guard values =>
         have opcode := (decodeRow_impact_fields rowDecoded).1
         exact unchanged rfl (by simp [inputOpcodeRow, opcode, inputOpcode])
@@ -130,7 +157,7 @@ theorem checked_public_read_schedule
           have nonforeign := inputSchema requirement (List.mem_of_getElem? selected)
           have visibility := (accepted_input_output_descriptor selected nonforeign tagged checked).2
           apply advanced rfl (by simp [inputOpcodeRow, opcode, inputOpcode])
-          simp [expectedInputAt, selected, visibility]
+          simp [expectedInputAt, requirementObservation, selected, visibility]
         | _ =>
           exact unchanged rfl (by simp_all [inputOpcodeRow, inputOpcode])
 

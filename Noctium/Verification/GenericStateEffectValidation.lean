@@ -644,7 +644,9 @@ private theorem effectPrefix_env_shape (state : List StateDecl) (ep : Entrypoint
   simpa [initialEffectTypeEnv, List.map_append, List.map_map,
     Function.comp_def] using shape
 
-private theorem lower_source_validated (state : List StateDecl) (ep : Entrypoint)
+/-- Successful production Impact lowering first completed the source
+entrypoint validator used by the guarded effect projections below. -/
+theorem lower_source_validated (state : List StateDecl) (ep : Entrypoint)
     (plan : Impact.Plan) (accepted : Impact.lower state ep = .ok plan) :
     ep.validate stateEffectCaps state = .ok () := by
   unfold Impact.lower at accepted

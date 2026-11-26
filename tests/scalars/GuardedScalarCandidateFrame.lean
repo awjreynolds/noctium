@@ -1,5 +1,6 @@
 import Noctium.Frontend
 import Noctium.Verification.GuardedScalarCandidateTranscript
+import Noctium.Verification.GuardedSourceReadTranscript
 
 open scoped Noctium
 open Noctium
@@ -148,6 +149,59 @@ private theorem unguarded_absence_read_ordinal :
         fun (descriptor : Backend.Impact.Read) => (descriptor.name, descriptor.ty)) =
       some [("_noctium_absence_1", .bool), ("saved", .native)] := by
   with_unfolding_all rfl
+
+private def rawCallerInput : Input := {
+  name := "caller"
+  ty := .native
+  visibility := .private
+}
+
+private def sourceReadEntry : Entrypoint := { fixtureEntry with
+  circuit := {fixtureEntry.circuit with
+    inputs := fixtureEntry.circuit.inputs ++ [rawCallerInput]}
+  callInputs := ["caller"]
+}
+
+private def sourceReadExpected : Option Backend.Native.Expected :=
+  (Backend.Native.expectedEntrypoint state sourceReadEntry).toOption
+
+private def checkedSourceReadArtifact : Except String
+    (Verification.GuardedZkirArtifact.View × List Verification.GuardedScalarRows.Row) := do
+  let json ← (Backend.Zkir.lowerEntrypoint state sourceReadEntry).mapError (·.message)
+  let bytes := json.compress.toUTF8.data.toList
+  let rows ← Verification.GuardedZkirArtifact.check bytes json
+  let view ← Verification.GuardedZkirArtifact.decodeBytes bytes
+  pure (view, rows)
+
+private def publicInputRows (rows : List GuardedScalarRows.Row) : List GuardedScalarRows.Row :=
+  rows.filter fun row => match row with
+    | .publicInput .. => _root_.Bool.true
+    | _ => _root_.Bool.false
+
+private def sourceReadAssignment (enabled : _root_.Bool) : Assignment := fun identifier =>
+  if identifier == "%input_enabled" then scalar (if enabled then 1 else 0) else
+  if identifier == "%input_saved" then scalar (if enabled then 41 else 0) else zero
+
+#guard match sourceReadExpected with
+  | some accepted =>
+      accepted.rawInputs.map (·.identifier) == ["%input_caller"] &&
+      accepted.rawInputs.map (·.visibility) == [.private] &&
+      accepted.inputs.map (·.identifier) == ["%input_enabled", "%input_saved"] &&
+      accepted.inputs.map (·.activityGuard) ==
+        [none, some (Term.input "%input_enabled")]
+  | none => _root_.Bool.false
+
+#guard match checkedSourceReadArtifact with
+  | .ok (view, rows) =>
+      view.header.arguments == ["%input_caller"] &&
+      publicInputRows rows == [
+        .publicInput "%input_enabled" none,
+        .publicInput "%input_saved" (some (.reference "%input_enabled"))] &&
+      GuardedInputTranscript.emittedPublicReads (sourceReadAssignment .true) rows ==
+        [⟨one, scalar 1⟩, ⟨one, scalar 41⟩] &&
+      GuardedInputTranscript.emittedPublicReads (sourceReadAssignment .false) rows ==
+        [⟨one, zero⟩, ⟨zero, zero⟩]
+  | .error _ => _root_.Bool.false
 
 private def guardAssertion : Term :=
   .binary "test_eq" (.input "%input_saved")
