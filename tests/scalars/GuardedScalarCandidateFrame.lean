@@ -1,7 +1,11 @@
 import Noctium.Frontend
+import Noctium.Verification.GuardedCallArtifacts
 import Noctium.Verification.GuardedScalarCandidateTranscript
 import Noctium.Verification.GuardedSourceReadTranscript
 import Noctium.Verification.GuardedVmReadTranscript
+import Noctium.Verification.GuardedStatementConsumption
+import Noctium.Verification.ImpactPlanStatement
+import Noctium.Verification.ImpactPlanStatementAgreement
 
 open scoped Noctium
 open Noctium
@@ -392,8 +396,10 @@ private def fixtureEntry : Entrypoint := { sourceEntry with
 
 private def state : List StateDecl := MixedGuardedScalarCandidateFrame.state
 
+private def prunedEntry : Entrypoint := Passes.pruneEntrypoint fixtureEntry
+
 private def plan : Backend.Impact.Plan :=
-  match Backend.Impact.lower state fixtureEntry with
+  match Backend.Impact.lower state prunedEntry with
   | .ok lowered => lowered
   | .error _ => {}
 
@@ -401,6 +407,40 @@ private def context : EvalContext := {
   modulus := Field.modulus
   poseidon2 := fun _ _ _ => .ok zero
 }
+
+private def impactJson : Lean.Json :=
+  Compiler.nativePlanJson TargetProfile.selected321 `MixedGuardedScalarCandidateFrame
+    state none prunedEntry plan _root_.Bool.false
+
+private def impactBytes : ArtifactBytes.Bytes :=
+  impactJson.compress.toUTF8.data.toList
+
+private def changedImpactBytes : ArtifactBytes.Bytes :=
+  let operations := (impactJson.getObjVal? "operations" >>= Lean.Json.getArr?).toOption.getD #[]
+  (impactJson.setObjVal! "operations" (.arr operations.pop)).compress.toUTF8.data.toList
+
+private def callMetadata (operationCount : Nat) : ImpactPlanStatement.Inputs := {
+  cost := ⟨3, 2⟩
+  metadata := {
+    address := ByteArray.mk (Array.replicate 32 0)
+    entryPoint := "observe".toUTF8
+    guaranteed := some ⟨1, 2, 3, ByteArray.mk #[13, 14]⟩
+    fallible := none
+    parentPedersen := ByteArray.mk (#[1] ++ Array.replicate 31 0)
+  }
+  communication := scalar 5
+  guaranteed := some ⟨operationCount, 7⟩
+  fallible := none
+}
+
+private def impactKeyWidth (slot : Nat) : Option Nat :=
+  if slot = 1 then some 3 else none
+
+#guard ImpactPlanStatementAgreement.admitsScalarPlan impactKeyWidth plan
+#guard (ArtifactBytes.parse changedImpactBytes).isOk
+#guard ImpactPlanStatementAgreement.matchesBytes 64 impactBytes impactJson
+#guard (ImpactPlanStatementAgreement.matchesBytes 64 changedImpactBytes impactJson) ==
+  _root_.Bool.false
 
 private def assignmentFor (enabled : _root_.Bool) : Assignment := fun identifier =>
   if identifier == "%input_enabled" then scalar (if enabled then 1 else 0) else
@@ -421,7 +461,7 @@ private def ledger : LedgerState := {
 
 private def transcript (enabled : _root_.Bool) : Option
     (ArtifactBytes.Bytes × GuardedStatementConsumption.Inputs ×
-      List GuardedImpactObservation.Observation) := do
+      List GuardedImpactObservation.Observation × GuardedStatementConsumption.Projection) := do
   let json ← (Backend.Zkir.lowerEntrypoint state fixtureEntry).toOption
   let bytes := json.compress.toUTF8.data.toList
   let rows ← (GuardedZkirArtifact.check bytes json).toOption
@@ -437,12 +477,30 @@ private def transcript (enabled : _root_.Bool) : Option
   let final ← GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry
     plan values assignment slots
   if NativeState.run operations ⟨[.vector slots], []⟩ != some final then none else
-    pure (bytes, ⟨operations.flatMap ImpactStatementScalar.opFields,
-      final.reads.map NativeState.Cell.value⟩, observations)
+    let streams : GuardedStatementConsumption.Inputs := ⟨
+      operations.flatMap ImpactStatementScalar.opFields,
+      final.reads.map NativeState.Cell.value⟩
+    let complete := (result ++ values) ++ candidates
+    let impactRaw ← (ArtifactBytes.parse impactBytes).toOption
+    let impactOperations ← ImpactPlanAgreement.evaluatePlan 64 context complete impactRaw
+    if impactOperations != operations then none else
+      let activity ← ImpactTranscriptSchedule.evaluateSchedule 64 context complete
+        impactKeyWidth impactRaw
+      let metadata := callMetadata operations.length
+      let publicFields ← ImpactPlanStatement.fromBytes 64 context complete impactKeyWidth
+        impactBytes metadata
+      let sourceFields ← ImpactPlanStatementAgreement.fromEntrypoint context complete state
+        prunedEntry metadata
+      let header ← ImpactPlanStatement.headerFor metadata operations activity
+      let projection ← GuardedStatementConsumption.fromArtifact bytes assignment header streams
+      if projection.fields != publicFields || sourceFields != publicFields ||
+          projection.activity != activity ||
+          activity != GuardedStatementConsumption.observationActivity observations then none else
+        pure (bytes, streams, observations, projection)
 
 private def consumeAltered (enabled : _root_.Bool) : _root_.Bool :=
   match transcript enabled with
-  | some (bytes, inputs, _) =>
+  | some (bytes, inputs, _, _) =>
       let reordered := match inputs.transcriptOutputs with
         | first :: second :: rest => second :: first :: rest
         | values => values.reverse
@@ -452,22 +510,24 @@ private def consumeAltered (enabled : _root_.Bool) : _root_.Bool :=
 
 #guard fixtureEntry.circuit.inputs.map (·.name) == ["enabled", "caller"]
 #guard fixtureEntry.circuit.inputs.map (·.visibility) == [.«public», .private]
-#guard ((Backend.Impact.lower state fixtureEntry).toOption.map fun lowered =>
+#guard ((Backend.Impact.lower state prunedEntry).toOption.map fun lowered =>
     lowered.reads.map (·.name)) ==
   some ["enabled", "observedNonce", "saved", "_noctium_absence_3"]
 #guard match transcript _root_.Bool.true with
-  | some (bytes, inputs, observations) =>
+  | some (bytes, inputs, observations, projection) =>
       (GuardedZkirArtifact.decodeBytes bytes).toOption.map (·.header.arguments) ==
         some ["%input_caller"] &&
       inputs.transcriptOutputs == [scalar 1, scalar 9, scalar 41, zero] &&
+      projection.activity.all Option.isNone &&
       decide (GuardedStatementConsumption.consumeArtifact bytes
         (assignmentFor _root_.Bool.true) inputs = some observations)
   | none => _root_.Bool.false
 #guard match transcript _root_.Bool.false with
-  | some (bytes, inputs, observations) =>
+  | some (bytes, inputs, observations, projection) =>
       (GuardedZkirArtifact.decodeBytes bytes).toOption.map (·.header.arguments) ==
         some ["%input_caller"] &&
       inputs.transcriptOutputs == [zero, scalar 9, zero] &&
+      projection.activity.any Option.isSome &&
       decide (GuardedStatementConsumption.consumeArtifact bytes
         (assignmentFor _root_.Bool.false) inputs = some observations)
   | none => _root_.Bool.false
