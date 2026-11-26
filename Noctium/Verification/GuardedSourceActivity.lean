@@ -175,6 +175,65 @@ private theorem observation_shapes (hash : Hash) (inputs : Assignment)
     simp [List.getElem?_zipWith,
       List.getElem?_eq_none obsOutside, List.getElem?_eq_none (Nat.le_of_not_gt inside)]
 
+/-- Evaluate the production operation guard schedule from the checked source
+activity terms and typed candidate environment. The result preserves operation
+order and gives each operation its exact expected guard meaning. -/
+theorem lower_activity_schedule (state : List StateDecl) (ep : Entrypoint)
+    (ctx : EvalContext) (hash : Hash) (inputs : Assignment) (env : EvalEnv)
+    (implementation : HashAgreement ctx hash)
+    (plan : Impact.Plan) (expected : Native.Expected) (frame : OutputFrame)
+    (planAccepted : Impact.lower state ep = .ok plan)
+    (expectedAccepted : Native.expectedEntrypoint state ep = .ok expected)
+    (frameAccepted : normalizeOutputs (entrypointSeedAliases ep plan)
+      ep.circuit.outputs = .ok frame)
+    (environment : TypedEnvironment hash inputs frame.1 env (plan.typeEnvironment ep))
+    (reads : ∀ readSpec ∈
+      (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)).flatMap
+        Impact.Read.scalarReads, scalarAliasReadType readSpec.ty)
+    (guardAdmission : ∀ guard, some guard ∈ plan.activityGuards → ScalarExpression guard)
+    (single : ∀ op ∈ plan.operations, op.fieldGroups = [op.fields])
+    (assertions : ∀ term ∈ expected.assertions, interpret hash inputs term = some one)
+    (bounds : ∀ bound ∈ expected.bounds,
+      ∃ value, interpret hash inputs bound.1 = some value ∧ value.val ≤ bound.2) :
+    ∃ activities : List (Option _root_.Bool),
+      (GuardedPlanActivity.operationGuards plan).length = plan.operations.length ∧
+      (GuardedPlanActivity.operationGuards plan).mapM
+        (GuardedPlanExecution.evalActivity ctx env) = .ok activities ∧
+      activities.length = plan.operations.length ∧
+      expected.groupGuards.map (interpret hash inputs) =
+        activities.map (fun activity => some (bit (activity.getD _root_.Bool.true))) := by
+  obtain ⟨activityFrame, terms, activityFrameAccepted, normalized, guardShape,
+    guardAssertions, guardBounds⟩ :=
+    expectedEntrypoint_activity state ep expected plan planAccepted expectedAccepted reads
+  have sameFrame := Except.ok.inj (activityFrameAccepted.symm.trans frameAccepted)
+  subst activityFrame
+  obtain ⟨aligned, guardValid⟩ := plan.validate_activity_success ep
+    (Impact.lower_validated state ep plan planAccepted)
+  obtain ⟨activities, evaluated, activityLength, termMeaning⟩ := normalize_guards_eval
+    ep ctx hash inputs frame.1 env (plan.typeEnvironment ep) implementation environment
+    (activityGuardSources plan) terms (fun guard inside =>
+      ⟨guardAdmission guard (sourceGuard_mem inside), guardValid guard (sourceGuard_mem inside)⟩)
+    normalized (fun item inside =>
+      ⟨fun bound present => bounds bound (guardBounds bound (List.mem_flatMap.mpr ⟨item, inside, present⟩)),
+       fun term present => assertions term
+         (guardAssertions term (List.mem_flatMap.mpr ⟨item, inside, present⟩))⟩)
+  have meaning : expected.groupGuards.map (interpret hash inputs) =
+      activities.map (fun activity => some (bit (activity.getD _root_.Bool.true))) := by
+    simpa only [guardShape, List.map_map, Function.comp_def] using termMeaning
+  obtain ⟨guardCount, _, sourceGuards, _⟩ :=
+    ImpactTranscriptSchedule.scalar_source_shapes plan aligned single
+  have evaluatedGuards : (GuardedPlanActivity.operationGuards plan).mapM
+      (GuardedPlanExecution.evalActivity ctx env) = .ok activities := by
+    rw [← sourceGuards]
+    exact evaluated
+  have operationActivityLength : activities.length = plan.operations.length := by
+    calc
+      activities.length = (activityGuardSources plan).length := activityLength
+      _ = (GuardedPlanActivity.operationGuards plan).length :=
+        congrArg List.length sourceGuards
+      _ = plan.operations.length := guardCount
+  exact ⟨activities, guardCount, evaluatedGuards, operationActivityLength, meaning⟩
+
 /-- The checked ZKIR rows follow the exact Impact plan's activity and field
 widths. Each active group retains the width of the native operation at that ordinal. -/
 theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
@@ -201,11 +260,10 @@ theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
       List.flatten = some (GuardedStatementConsumption.observationActivity observations) ∧
     native.map (fun op => (ImpactStatementScalar.opFields op).length) =
       (observations.filter (·.active)).map (fun row => row.payload.length) := by
-  obtain ⟨activityFrame, terms, activityFrameAccepted, normalized, guardShape,
-    guardAssertions, guardBounds⟩ :=
-    expectedEntrypoint_activity state ep expected plan planAccepted expectedAccepted reads
-  have sameFrame := Except.ok.inj (activityFrameAccepted.symm.trans frameAccepted)
-  subst activityFrame
+  obtain ⟨activities, _, evaluatedGuards, activityLength, meaning⟩ :=
+    lower_activity_schedule state ep ctx hash inputs env implementation plan expected frame
+      planAccepted expectedAccepted frameAccepted environment reads guardAdmission single
+      assertions bounds
   obtain ⟨operationFrame, operationBounds, operationAssertions, operationFrameAccepted,
     collected, _, _⟩ :=
     expectedEntrypoint_operations state ep expected plan planAccepted expectedAccepted reads
@@ -213,23 +271,26 @@ theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
   subst operationFrame
   have widths := ScalarImpactOperationMeaning.collectOperations_group_widths ep.span frame.1
     plan.operations frame.2.1 expected.groups operationBounds operationAssertions collected
-  obtain ⟨aligned, guardValid⟩ := plan.validate_activity_success ep
+  obtain ⟨aligned, _guardValid⟩ := plan.validate_activity_success ep
     (Impact.lower_validated state ep plan planAccepted)
-  obtain ⟨activities, evaluated, activityLength, termMeaning⟩ := normalize_guards_eval
-    ep ctx hash inputs frame.1 env (plan.typeEnvironment ep) implementation environment
-    (activityGuardSources plan) terms (fun guard inside =>
-      ⟨guardAdmission guard (sourceGuard_mem inside), guardValid guard (sourceGuard_mem inside)⟩)
-    normalized (fun item inside =>
-      ⟨fun bound present => bounds bound (guardBounds bound (List.mem_flatMap.mpr ⟨item, inside, present⟩)),
-       fun term present => assertions term
-         (guardAssertions term (List.mem_flatMap.mpr ⟨item, inside, present⟩))⟩)
-  have meaning : expected.groupGuards.map (interpret hash inputs) =
-      activities.map (fun activity => some (bit (activity.getD _root_.Bool.true))) := by
-    simpa only [guardShape, List.map_map, Function.comp_def] using termMeaning
   have widthLength := (congrArg List.length widths)
+  obtain ⟨_, _, sourceGuards, operationWidths⟩ :=
+    ImpactTranscriptSchedule.scalar_source_shapes plan aligned single
+  have groupedWidthLength :
+      (plan.operations.flatMap fun op => op.fieldGroups.map List.length).length =
+        plan.operations.length := by
+    rw [operationWidths]
+    simp
   have activityAligned : activities.length = expected.groups.length := by
-    rw [activityLength, ImpactTranscriptSchedule.sourceGroupGuards_length plan aligned single]
-    simpa using widthLength.symm
+    calc
+      activities.length = plan.operations.length := activityLength
+      _ = (plan.operations.flatMap fun op => op.fieldGroups.map List.length).length :=
+        groupedWidthLength.symm
+      _ = expected.groups.length := by simpa using widthLength.symm
+  have sourceEvaluation : (activityGuardSources plan).mapM
+      (GuardedPlanExecution.evalActivity ctx env) = .ok activities := by
+    rw [sourceGuards]
+    exact evaluatedGuards
   have observedShapes := observation_shapes hash inputs expected observations activities
     meaning activityAligned observed
   constructor
@@ -245,16 +306,11 @@ theorem lower_observations_activity (state : List StateDecl) (ep : Entrypoint)
         Function.comp_def] using observationSchedule
     rw [ImpactTranscriptSchedule.sourceGroups_flatten ctx env plan aligned single]
     have sourceSchedule := evaluate_groups ctx env (activityGuardSources plan) activities
-      (plan.operations.flatMap (fun op => op.fieldGroups.map List.length)) evaluated
+      (plan.operations.flatMap (fun op => op.fieldGroups.map List.length)) sourceEvaluation
     rw [← widths] at sourceSchedule
     rw [← widths]
     exact sourceSchedule.trans (congrArg some observationActivity.symm)
-  · obtain ⟨_, _, sourceGuards, operationWidths⟩ :=
-      ImpactTranscriptSchedule.scalar_source_shapes plan aligned single
-    have evaluatedGuards : (GuardedPlanActivity.operationGuards plan).mapM
-        (GuardedPlanExecution.evalActivity ctx env) = .ok activities := by
-      rw [← sourceGuards]
-      exact evaluated
+  ·
     have opShapes : observations.map (fun row => (row.active, row.payload.length)) =
         (plan.operations.zip activities).map (fun item =>
           (item.2.getD _root_.Bool.true, item.1.fields.length)) := by
