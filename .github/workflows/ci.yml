@@ -718,6 +718,7 @@ jobs:
             Noctium.Verification.ScalarLedgerWitnessPreflight \
             Noctium.Verification.GenericStateConversePublicPrefix \
             Noctium.Verification.GenericStateReadBounds \
+            Noctium.Verification.GenericStateReadAdmission \
             Noctium.Verification.ScalarLedgerWitnessSource \
             Noctium.Verification.ScalarLedgerWitnessComposition \
             Noctium.Verification.ScalarCellCallWitness \
@@ -763,6 +764,9 @@ jobs:
             Noctium.Verification.ScalarStateSoundness \
             Noctium.Verification.GenericStateCellAdmission \
             Noctium.Verification.ScalarSourceReadWitness \
+            Noctium.Verification.GenericStateConverseSource \
+            Noctium.Verification.GenericStateConverseCheckedPlan \
+            Noctium.Verification.GenericStateConverseNativeTrace \
             Noctium.Verification.GuardedScalarWitness
           lake env lean tests/RangeDedupRawCall.lean
           lake env lean tests/ScalarValidatedProgram.lean
