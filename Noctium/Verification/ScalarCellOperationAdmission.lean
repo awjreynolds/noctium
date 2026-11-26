@@ -7,7 +7,7 @@ namespace Noctium.Verification.ScalarCellOperationAdmission
 
 open Backend GenericStateCellAdmission GenericStateOps ScalarNormalization
 
-private theorem scalarCellReadExpression_admitted {ty : Ty}
+theorem scalarCellReadExpression_admitted {ty : Ty}
     (scalar : ScalarCellType ty) (destination : String) :
     ScalarExpression (scalarCellReadExpression scalar destination) := by
   cases scalar with
@@ -19,7 +19,7 @@ private theorem scalarCellReadExpression_admitted {ty : Ty}
     exact ScalarExpression.cast (.ref (ty := .uint maximum) destination) (.uint maximum) .native
       (ScalarExpression.ref destination (.uint maximum))
 
-private theorem scalarCellWriteExpression_admitted {ty : Ty}
+theorem scalarCellWriteExpression_admitted {ty : Ty}
     (scalar : ScalarCellType ty) (expression : Expr ty)
     (admitted : ScalarExpression expression) :
     ScalarExpression (scalarCellWriteExpression scalar expression) := by
@@ -38,7 +38,7 @@ private theorem native_list_admitted (values : List Nat) :
   obtain ⟨value, _, rfl⟩ := List.mem_map.mp member
   exact ScalarExpression.native value
 
-private theorem native_prefix_expression_admitted (values : List Nat)
+theorem native_prefix_expression_admitted (values : List Nat)
     (expression : Expr .native) (expressionAdmitted : ScalarExpression expression) :
     ∀ field ∈ values.map (fun value => (Expr.native value : Impact.Scalar)) ++ [expression],
       ScalarExpression field := by
@@ -49,20 +49,20 @@ private theorem native_prefix_expression_admitted (values : List Nat)
     subst field
     exact expressionAdmitted
 
-private theorem index_fields_admitted (slot : Nat) (pushPath : Bool) :
+theorem index_fields_admitted (slot : Nat) (pushPath : Bool) :
     ∀ field ∈ (Impact.Op.index slot pushPath).fields, ScalarExpression field := by
   simpa [Impact.Op.fields, Impact.Aligned.fields] using
     (native_list_admitted
       [if pushPath then 0x70 else 0x50, 1, Field.modulus - 2, slot])
 
-private theorem dup_fields_admitted :
+theorem dup_fields_admitted :
     ∀ field ∈ Impact.Op.dup.fields, ScalarExpression field := by
   intro field member
   simp only [Impact.Op.fields, List.mem_singleton] at member
   subst field
   exact ScalarExpression.native 0x30
 
-private theorem popeq_field_fields_admitted (expression : Expr .native)
+theorem popeq_field_fields_admitted (expression : Expr .native)
     (expressionAdmitted : ScalarExpression expression) :
     ∀ field ∈ (Impact.Op.popeq (.field expression)).fields,
       ScalarExpression field := by
@@ -70,7 +70,7 @@ private theorem popeq_field_fields_admitted (expression : Expr .native)
     (native_prefix_expression_admitted [0x0c, 1, Field.modulus - 2]
       expression expressionAdmitted)
 
-private theorem push_field_fields_admitted (expression : Expr .native) (storage : Bool)
+theorem push_field_fields_admitted (expression : Expr .native) (storage : Bool)
     (expressionAdmitted : ScalarExpression expression) :
     ∀ field ∈ (Impact.Op.push (.field expression) storage).fields,
       ScalarExpression field := by
@@ -79,7 +79,7 @@ private theorem push_field_fields_admitted (expression : Expr .native) (storage 
       [if storage then 0x11 else 0x10, 1, 1, Field.modulus - 2]
       expression expressionAdmitted)
 
-private theorem insert_fields_admitted (levels : Nat) :
+theorem insert_fields_admitted (levels : Nat) :
     ∀ field ∈ (Impact.Op.insert levels).fields, ScalarExpression field := by
   intro field member
   simp only [Impact.Op.fields, List.mem_singleton] at member
@@ -91,7 +91,7 @@ private theorem scalarOperation_groups_singleton {operation : Impact.Op}
     operation.fieldGroups = [operation.fields] := by
   cases operation <;> simp_all [ScalarOperation, Impact.Op.fieldGroups]
 
-private theorem operation_groups_admitted (operation : Impact.Op)
+theorem operation_groups_admitted (operation : Impact.Op)
     (supported : ScalarOperation operation)
     (fieldsAdmitted : ∀ field ∈ operation.fields, ScalarExpression field) :
     ∀ group ∈ operation.fieldGroups, ∀ field ∈ group, ScalarExpression field := by
