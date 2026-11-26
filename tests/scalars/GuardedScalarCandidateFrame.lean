@@ -1,6 +1,7 @@
 import Noctium.Frontend
 import Noctium.Verification.GuardedScalarCandidateTranscript
 import Noctium.Verification.GuardedSourceReadTranscript
+import Noctium.Verification.GuardedVmReadTranscript
 
 open scoped Noctium
 open Noctium
@@ -353,3 +354,124 @@ private def fixtureTranscript : Option
   | none => _root_.Bool.false
 
 end GuardedScalarCandidateFrameProof
+
+/-! A mixed ordered tape exercises a native Cell read, an activity-guarded
+Map read, and a trailing unconditional absence check. -/
+
+noctium_circuit mixedGuardedCandidateInputs where
+  public enabled : Bool
+  private caller : Native
+end
+
+noctium_contract MixedGuardedScalarCandidateFrame where
+  cell nonce : Native
+  map balances : Native => Native
+
+  entry observe uses mixedGuardedCandidateInputs where
+    read nonce as observedNonce
+    when enabled read balances[17] as saved
+    return prepared : Native := 7
+  end
+end
+
+namespace MixedGuardedScalarCandidateFrameProof
+
+open Noctium.Backend.Native
+open Noctium.Verification.GenericStateCircuitParts
+
+private def sourceEntry : Entrypoint :=
+  (MixedGuardedScalarCandidateFrame.entrypoints.find? (·.name == "observe")).getD
+    {name := "missing", circuit := {name := "missing"}}
+
+private def fixtureEntry : Entrypoint := { sourceEntry with
+  callInputs := ["caller"]
+  effects := sourceEntry.effects ++ [.requireAbsent "balances" .native (.native 88)]
+  effectGuards := sourceEntry.effectGuards ++ [none]
+  effectSpans := sourceEntry.effectSpans ++ [sourceEntry.span]
+}
+
+private def state : List StateDecl := MixedGuardedScalarCandidateFrame.state
+
+private def plan : Backend.Impact.Plan :=
+  match Backend.Impact.lower state fixtureEntry with
+  | .ok lowered => lowered
+  | .error _ => {}
+
+private def context : EvalContext := {
+  modulus := Field.modulus
+  poseidon2 := fun _ _ _ => .ok zero
+}
+
+private def assignmentFor (enabled : _root_.Bool) : Assignment := fun identifier =>
+  if identifier == "%input_enabled" then scalar (if enabled then 1 else 0) else
+  if identifier == "%input_observedNonce" then scalar 9 else
+  if identifier == "%input_saved" then scalar (if enabled then 41 else 0) else
+  if identifier == "%input__noctium_absence_3" then zero else
+  if identifier == "%input_caller" then scalar 23 else zero
+
+private def valuesFor (enabled : _root_.Bool) : EvalEnv := [
+  ("enabled", .bool enabled),
+  ("caller", .native 23)
+]
+
+private def ledger : LedgerState := {
+  cells := [("nonce", .native 9)]
+  maps := [("balances", [(.native 17, .native 41)])]
+}
+
+private def transcript (enabled : _root_.Bool) : Option
+    (ArtifactBytes.Bytes × GuardedStatementConsumption.Inputs ×
+      List GuardedImpactObservation.Observation) := do
+  let json ← (Backend.Zkir.lowerEntrypoint state fixtureEntry).toOption
+  let bytes := json.compress.toUTF8.data.toList
+  let rows ← (GuardedZkirArtifact.check bytes json).toOption
+  let assignment := assignmentFor enabled
+  let values := valuesFor enabled
+  let observations ← GuardedImpactTranscript.emittedObservations assignment rows
+  let slots ← GenericStateEncoding.encodeInitialState state ledger
+  let result ← (fixtureEntry.circuit.run context values).toOption
+  let reads := plan.reads.drop (Backend.Impact.publicInputReadCount fixtureEntry.circuit.inputs)
+  let candidates ← (decodeReads reads assignment).toOption
+  let operations ← (GuardedPlanExecution.evalPlan context
+    ((result ++ values) ++ candidates) plan).toOption
+  let final ← GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry
+    plan values assignment slots
+  if NativeState.run operations ⟨[.vector slots], []⟩ != some final then none else
+    pure (bytes, ⟨operations.flatMap ImpactStatementScalar.opFields,
+      final.reads.map NativeState.Cell.value⟩, observations)
+
+private def consumeAltered (enabled : _root_.Bool) : _root_.Bool :=
+  match transcript enabled with
+  | some (bytes, inputs, _) =>
+      let reordered := match inputs.transcriptOutputs with
+        | first :: second :: rest => second :: first :: rest
+        | values => values.reverse
+      let altered := {inputs with transcriptOutputs := reordered}
+      (GuardedStatementConsumption.consumeArtifact bytes (assignmentFor enabled) altered).isNone
+  | none => _root_.Bool.false
+
+#guard fixtureEntry.circuit.inputs.map (·.name) == ["enabled", "caller"]
+#guard fixtureEntry.circuit.inputs.map (·.visibility) == [.«public», .private]
+#guard ((Backend.Impact.lower state fixtureEntry).toOption.map fun lowered =>
+    lowered.reads.map (·.name)) ==
+  some ["enabled", "observedNonce", "saved", "_noctium_absence_3"]
+#guard match transcript _root_.Bool.true with
+  | some (bytes, inputs, observations) =>
+      (GuardedZkirArtifact.decodeBytes bytes).toOption.map (·.header.arguments) ==
+        some ["%input_caller"] &&
+      inputs.transcriptOutputs == [scalar 1, scalar 9, scalar 41, zero] &&
+      decide (GuardedStatementConsumption.consumeArtifact bytes
+        (assignmentFor _root_.Bool.true) inputs = some observations)
+  | none => _root_.Bool.false
+#guard match transcript _root_.Bool.false with
+  | some (bytes, inputs, observations) =>
+      (GuardedZkirArtifact.decodeBytes bytes).toOption.map (·.header.arguments) ==
+        some ["%input_caller"] &&
+      inputs.transcriptOutputs == [zero, scalar 9, zero] &&
+      decide (GuardedStatementConsumption.consumeArtifact bytes
+        (assignmentFor _root_.Bool.false) inputs = some observations)
+  | none => _root_.Bool.false
+#guard consumeAltered _root_.Bool.true
+#guard consumeAltered _root_.Bool.false
+
+end MixedGuardedScalarCandidateFrameProof

@@ -23,7 +23,7 @@ private theorem selected_guard_mem (guards : List (Option (Expr .bool)))
 
 /-- Every supported source effect preserves the current read tape as a prefix.
 The suffix may contain an absence witness as well as scalar read descriptors. -/
-private theorem appendEffectWithActivity_guarded_reads_append
+theorem appendEffectWithActivity_guarded_reads_append
     (state : List StateDecl) (effect : Effect) (guard : Option (Expr .bool))
     (scope : GuardedScalarReadEffect guard effect) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state effect guard before = .ok after) :

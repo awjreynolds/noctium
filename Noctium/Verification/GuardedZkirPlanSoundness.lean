@@ -35,7 +35,8 @@ private theorem asserted_evaluation_true (ctx : EvalContext) (hash : Hash)
   | false => exact False.elim (zero_ne_one (Option.some.inj asserted))
   | true => rfl
 
-private theorem checked_inactive_read (state : List StateDecl) (entry : Entrypoint)
+/-- A false descriptor guard forces its checked scalar read assignment to zero. -/
+theorem checked_inactive_read (state : List StateDecl) (entry : Entrypoint)
     (ctx : EvalContext) (hash : Hash) (implementation : HashAgreement ctx hash)
     (witness : Assignment) (plan : Impact.Plan) (expected : Native.Expected)
     (frame : OutputFrame) (base decoded : EvalEnv) (read : Impact.Read) (guard : Expr .bool)
