@@ -53,8 +53,41 @@ jobs:
               "toolchainSha256": measure["sha256"],
           }, sort_keys=True))
           PY
+      - name: Restore Lake compiler snapshot
+        id: compiler-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/noctium-compiler-snapshot
+          key: noctium-lake-v1-ubuntu24-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            noctium-lake-v1-ubuntu24-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}-
+      - name: Import Lake compiler snapshot
+        if: steps.compiler-cache.outputs.cache-matched-key != ''
+        env:
+          LAKE_CACHE_DIR: ${{ runner.temp }}/noctium-lake-cache
+        run: lake cache unstage "$RUNNER_TEMP/noctium-compiler-snapshot"
       - name: Build the POC compiler
-        run: lake build noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup Noctium.Witness.HostCasCorrelation
+        env:
+          LAKE_CACHE_DIR: ${{ runner.temp }}/noctium-lake-cache
+          LAKE_ARTIFACT_CACHE: 'true'
+          LAKE_RESTORE_ARTIFACTS: 'true'
+        run: |
+          lake build -o "$RUNNER_TEMP/noctium-compiler-outputs.jsonl" \
+            noctium Noctium.Compiler Noctium.Foreign Noctium.Claim Noctium.Verification.RangeDedup Noctium.Witness.HostCasCorrelation
+      - name: Stage Lake compiler snapshot
+        if: steps.compiler-cache.outputs.cache-hit != 'true'
+        env:
+          LAKE_CACHE_DIR: ${{ runner.temp }}/noctium-lake-cache
+        run: |
+          snapshot="$RUNNER_TEMP/noctium-compiler-snapshot"
+          rm -rf -- "$snapshot"
+          lake cache stage "$RUNNER_TEMP/noctium-compiler-outputs.jsonl" "$snapshot"
+      - name: Save Lake compiler snapshot
+        if: steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/noctium-compiler-snapshot
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - name: Check bounded witness recording and replay
         run: |
           lake build Noctium.Witness.Semantics
