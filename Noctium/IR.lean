@@ -2406,21 +2406,117 @@ theorem Entrypoint.requireState_succeeded (decls : List StateDecl) (name : Strin
         | false => simp [found, matching] at success
         | true =>
           exact ⟨_, rfl, matching⟩
+private def validateCallArgumentStep (inputs : List Input) (span : SourceSpan)
+    (name : String) (fieldCount : Nat) : Except Diagnostic (ForInStep Nat) := do
+  let some input := inputs.find? (·.name == name)
+    | throw {span := span, message := s!"unknown circuit call argument '{name}'"}
+  unless input.visibility == .private do
+    throw {span := input.span, message := s!"call argument '{name}' must be a private circuit input"}
+  pure (.yield (fieldCount + input.ty.nativeCallFieldCount))
+
 private def validateCallArguments (inputs : List Input) (names : List String)
     (span : SourceSpan) : Except Diagnostic Unit := do
   unless uniqueNames names do
     throw {span := span, message := "duplicate native call argument"}
   if names.length > 256 then
     throw {span := span, message := "too many native call arguments"}
-  let mut fieldCount := 0
-  for name in names do
-    let some input := inputs.find? (·.name == name)
-      | throw {span := span, message := s!"unknown circuit call argument '{name}'"}
-    unless input.visibility == .private do
-      throw {span := input.span, message := s!"call argument '{name}' must be a private circuit input"}
-    fieldCount := fieldCount + input.ty.nativeCallFieldCount
+  let fieldCount ← forIn names 0 (validateCallArgumentStep inputs span)
   if fieldCount > 256 then
     throw {span := span, message := "too many native call argument fields"}
+
+private theorem except_bind_ok {α β : Type} {first : Except ε α}
+    {next : α → Except ε β} {result : β} :
+    (first >>= next) = .ok result ↔
+      ∃ value, first = .ok value ∧ next value = .ok result := by
+  cases first <;> simp [Bind.bind, Except.bind]
+
+private theorem validateCallArguments_loop_private (inputs : List Input)
+    (span : SourceSpan) :
+    ∀ (names : List String) (initial final : Nat),
+      (forIn names initial (validateCallArgumentStep inputs span) = .ok final) →
+      ∀ name ∈ names, ∃ input,
+        inputs.find? (·.name == name) = some input ∧ input.visibility = .private := by
+  intro names
+  induction names with
+  | nil =>
+    intro initial final success name member
+    simp at member
+  | cons head tail ih =>
+    intro initial final success name member
+    simp only [List.forIn_cons] at success
+    cases found : inputs.find? (·.name == head) with
+    | none =>
+      simp [validateCallArgumentStep, found, Bind.bind, Except.bind,
+        Pure.pure, Except.pure, throw, throwThe] at success
+    | some input =>
+      cases privateCheck : (input.visibility == .private) with
+      | false =>
+        simp [validateCallArgumentStep, found, privateCheck,
+          Bind.bind, Except.bind] at success
+      | true =>
+        simp only [validateCallArgumentStep, found, privateCheck,
+          Bind.bind, Except.bind] at success
+        rcases List.mem_cons.mp member with same | member
+        · subst name
+          refine ⟨input, found, ?_⟩
+          cases visibility : input.visibility with
+          | «public» =>
+            have invalid : (input.visibility == .private) = false := by
+              rw [visibility]
+              rfl
+            rw [invalid] at privateCheck
+            cases privateCheck
+          | «private» => rfl
+        · exact ih _ _ success name member
+
+private theorem find_input_of_nodupNames {inputs : List Input} (input : Input)
+    (distinct : (inputs.map (·.name)).Nodup) (member : input ∈ inputs) :
+    inputs.find? (·.name == input.name) = some input := by
+  induction inputs with
+  | nil => simp at member
+  | cons head tail ih =>
+    simp only [List.map_cons, List.nodup_cons] at distinct
+    rcases List.mem_cons.mp member with equal | member
+    · subst input
+      simp
+    · cases sameName : (head.name == input.name) with
+      | true =>
+        have nameEq : head.name = input.name := beq_iff_eq.mp sameName
+        have inputNameMember : input.name ∈ tail.map (·.name) :=
+          List.mem_map.mpr ⟨input, member, rfl⟩
+        have headNameMember : head.name ∈ tail.map (·.name) := by
+          simpa [nameEq] using inputNameMember
+        exact False.elim (distinct.1 headNameMember)
+      | false =>
+        simp only [List.find?_cons, sameName]
+        exact ih distinct.2 member
+
+private theorem validateCallArguments_members_private (inputs : List Input)
+    (names : List String) (span : SourceSpan)
+    (inputNamesNodup : (inputs.map (·.name)).Nodup)
+    (accepted : validateCallArguments inputs names span = .ok ()) :
+    ∀ input ∈ inputs, input.name ∈ names → input.visibility = .private := by
+  have loopAccepted : ∃ finalCount,
+      forIn names 0 (validateCallArgumentStep inputs span) = .ok finalCount := by
+    unfold validateCallArguments at accepted
+    by_cases namesValid : uniqueNames names = true
+    · by_cases countValid : names.length > 256
+      · simp [namesValid, countValid, Bind.bind, Except.bind,
+          Pure.pure, Except.pure, throw, throwThe] at accepted
+      · simp [namesValid, countValid] at accepted
+        rcases except_bind_ok.mp accepted with ⟨finalCount, loopAccepted, _⟩
+        exact ⟨finalCount, loopAccepted⟩
+    · simp [namesValid, Bind.bind, Except.bind,
+        Pure.pure, Except.pure, throw, throwThe] at accepted
+  obtain ⟨finalCount, loopAccepted⟩ := loopAccepted
+  intro input inputMember nameMember
+  obtain ⟨found, foundAccepted, foundPrivate⟩ :=
+    validateCallArguments_loop_private inputs span names 0 finalCount loopAccepted
+      input.name nameMember
+  have lookupInput := find_input_of_nodupNames input inputNamesNodup inputMember
+  rw [lookupInput] at foundAccepted
+  cases foundAccepted
+  exact foundPrivate
 
 /-- Run the entrypoint checks that precede the source binding environment. -/
 def Entrypoint.validateEffectPrechecks (caps : Capabilities) (decls : List StateDecl)
@@ -2462,6 +2558,22 @@ def Entrypoint.validateEffectPrechecks (caps : Capabilities) (decls : List State
     groupedInputs := groupedInputs ++ fields
   unless e.effectGuards.isEmpty || e.effectGuards.length == e.effects.length do
     throw {span := e.span, message := "effect guard metadata length mismatch"}
+
+/-- A successful entrypoint precheck proves every declared native call
+argument names a private circuit input. -/
+theorem Entrypoint.validateEffectPrechecks_callInputs_private (caps : Capabilities)
+    (decls : List StateDecl) (e : Entrypoint)
+    (inputNamesNodup : (e.circuit.inputs.map (·.name)).Nodup)
+    (accepted : Entrypoint.validateEffectPrechecks caps decls e = .ok ()) :
+    ∀ input ∈ e.circuit.inputs, input.name ∈ e.callInputs →
+      input.visibility = .private := by
+  unfold Entrypoint.validateEffectPrechecks at accepted
+  simp only [except_bind_ok] at accepted
+  rcases accepted with ⟨_, _, accepted⟩
+  rcases accepted with ⟨_, circuitAccepted, accepted⟩
+  rcases accepted with ⟨_, callArgumentsAccepted, _⟩
+  exact validateCallArguments_members_private e.circuit.inputs e.callInputs e.span
+    inputNamesNodup callArgumentsAccepted
 
 /-- Validate one output binding in the source environment. -/
 def Entrypoint.validateOutputStep (e : Entrypoint) (output : Output) (env : TypeEnv) :
@@ -3275,11 +3387,20 @@ def Entrypoint.validate (caps : Capabilities) (decls : List StateDecl)
   let final ← Entrypoint.validateEffectLoop caps decls e env
   Entrypoint.validateEffectSuffix caps e final
 
-private theorem except_bind_ok {α β : Type} {first : Except ε α}
-    {next : α → Except ε β} {result : β} :
-    (first >>= next) = .ok result ↔
-      ∃ value, first = .ok value ∧ next value = .ok result := by
-  cases first <;> simp [Bind.bind, Except.bind]
+/-- A successful entrypoint validation proves every declared native call
+argument names a private circuit input. -/
+theorem Entrypoint.validate_callInputs_private (caps : Capabilities)
+    (decls : List StateDecl) (e : Entrypoint)
+    (inputNamesNodup : (e.circuit.inputs.map (·.name)).Nodup)
+    (accepted : Entrypoint.validate caps decls e = .ok ()) :
+    ∀ input ∈ e.circuit.inputs, input.name ∈ e.callInputs →
+      input.visibility = .private := by
+  unfold Entrypoint.validate at accepted
+  rcases except_bind_ok.mp accepted with ⟨initial, prefixAccepted, _⟩
+  unfold Entrypoint.validateEffectPrefix at prefixAccepted
+  rcases except_bind_ok.mp prefixAccepted with ⟨_, prechecksAccepted, _⟩
+  exact Entrypoint.validateEffectPrechecks_callInputs_private caps decls e
+    inputNamesNodup prechecksAccepted
 
 private theorem validateEffectBindingEnvironment_succeeded (e : Entrypoint)
     (incoming : TypeEnv) (bindings : List (String × Ty)) (final : TypeEnv)

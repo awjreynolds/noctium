@@ -1,4 +1,5 @@
 import Noctium.Backend.NativeExpected
+import Noctium.Verification.InputRequirementRange
 import Noctium.Verification.ScalarCircuit
 
 namespace Noctium.Verification.GenericStateCircuitParts
@@ -79,6 +80,28 @@ def inputRequirementCore (input : InputRequirement) : String × Visibility × Ty
 def sourceInitialInputRequirements (entry : Entrypoint) : List InputRequirement :=
   (entry.circuit.inputs.filter fun input =>
     !entry.callInputs.contains input.name).flatMap Input.requirements
+
+def sourceReadInputRequirements (read : Backend.Impact.Read) : List InputRequirement :=
+  read.bindings.map fun (name, ty) =>
+    match ty with
+    | Ty.jubjubScalar =>
+      ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native,
+        canonicalJubjubScalar := true} : InputRequirement)
+    | Ty.opaqueBytes | Ty.opaqueString =>
+      ({identifier := "%input_" ++ name, visibility := .«public», ty := Ty.native} : InputRequirement)
+    | _ => ({identifier := "%input_" ++ name, visibility := .«public», ty} : InputRequirement)
+
+/-- Source descriptor requirements for one public read, with the normalized
+activity guard attached to this read's bindings only. -/
+def guardedReadRequirements (aliases : AliasEnvironment) (read : Backend.Impact.Read) :
+    Except String (List InputRequirement) := do
+  let requirements := sourceReadInputRequirements read
+  match read.guard with
+  | none => pure requirements
+  | some guard => do
+    let normalized ← normalize aliases guard
+    pure (requirements.map fun requirement =>
+      {requirement with activityGuard := some normalized.term})
 
 def sourcePostReadRequirements (entry : Entrypoint) (plan : Backend.Impact.Plan) :
     List InputRequirement :=
@@ -652,6 +675,127 @@ private theorem inputStateStep_yields (entry : Entrypoint) (aliases : AliasEnvir
           values.1, values.2, current.2.2.2 +
             (Backend.Impact.Read.bindings read).length), ?_⟩
         exact (Except.ok.inj accepted).symm
+
+private theorem inputStateStep_guardedBlock (entry : Entrypoint)
+    (aliases : AliasEnvironment) (read : Backend.Impact.Read)
+    (current next : InputState) (pre suffix : List InputRequirement)
+    (inputShape : current.1 = pre ++ sourceReadInputRequirements read ++ suffix)
+    (cursorShape : current.2.2.2 = pre.length)
+    (accepted : inputStateStep entry aliases read current = .ok (.yield next)) :
+    ∃ block, guardedReadRequirements aliases read = .ok block ∧
+      next.1 = pre ++ block ++ suffix ∧
+      next.2.2.2 = (pre ++ block).length := by
+  unfold inputStateStep at accepted
+  cases guardEq : read.guard with
+  | none =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases defaultsEq : inactiveDefaultResults entry aliases read
+        (current.2.1, current.2.2.1) with
+    | error message => simp [defaultsEq] at accepted
+    | ok values =>
+      simp only [defaultsEq] at accepted
+      have stateEq : (current.1, values.1, values.2,
+          current.2.2.2 + (Backend.Impact.Read.bindings read).length) = next := by
+        injection accepted with yieldEq
+        injection yieldEq with stateEq
+      refine ⟨sourceReadInputRequirements read, ?_, ?_, ?_⟩
+      · simp [guardedReadRequirements, guardEq, Pure.pure, Except.pure]
+      · have inputsEq := congrArg (fun state : InputState => state.1) stateEq
+        simpa [inputShape, List.append_assoc] using inputsEq.symm
+      · have cursorEq := congrArg (fun state : InputState => state.2.2.2) stateEq
+        simpa [cursorShape, sourceReadInputRequirements] using cursorEq.symm
+  | some guard =>
+    simp only [guardEq, Bind.bind, Except.bind] at accepted
+    cases normalizedEq : (normalize aliases guard).mapError
+        (fun message => ({span := entry.span, message} : Diagnostic)) with
+    | error message => simp [normalizedEq] at accepted
+    | ok normalizedValue =>
+      simp only [normalizedEq] at accepted
+      cases defaultsEq : inactiveDefaultResults entry aliases read
+          (current.2.1 ++ normalizedValue.assertions,
+            current.2.2.1 ++ normalizedValue.bounds) with
+      | error message => simp [defaultsEq] at accepted
+      | ok values =>
+        simp only [defaultsEq] at accepted
+        have stateEq : (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+            if current.2.2.2 ≤ position && position < current.2.2.2 +
+                (Backend.Impact.Read.bindings read).length then
+              {input with activityGuard := some normalizedValue.term} else input,
+            values.1, values.2, current.2.2.2 +
+              (Backend.Impact.Read.bindings read).length) = next := by
+          injection accepted with yieldEq
+          injection yieldEq with stateEq
+        have normalized : normalize aliases guard = .ok normalizedValue :=
+          (convert_ok entry.span _ normalizedValue).mp
+            (by simpa [convert_eq_mapError] using normalizedEq)
+        let block := (sourceReadInputRequirements read).map fun requirement =>
+          {requirement with activityGuard := some normalizedValue.term}
+        have blockAccepted : guardedReadRequirements aliases read = .ok block := by
+          simp [guardedReadRequirements, guardEq, normalized, block,
+            Bind.bind, Except.bind, Pure.pure, Except.pure]
+        refine ⟨block, blockAccepted, ?_, ?_⟩
+        · have inputUpdate := InputRequirementRange.attach_guard pre
+            (sourceReadInputRequirements read) suffix normalizedValue.term
+          have updatedInputs :
+              (current.1.zipIdx.map fun ((input, position) : InputRequirement × Nat) =>
+                if current.2.2.2 ≤ position && position < current.2.2.2 +
+                    (Backend.Impact.Read.bindings read).length then
+                  {input with activityGuard := some normalizedValue.term} else input) =
+                pre ++ block ++ suffix := by
+            rw [inputShape]
+            simpa [cursorShape, sourceReadInputRequirements, block] using inputUpdate
+          have inputsEq := congrArg (fun state : InputState => state.1) stateEq
+          simpa only [updatedInputs] using inputsEq.symm
+        · have cursorEq := congrArg (fun state : InputState => state.2.2.2) stateEq
+          simpa [cursorShape, sourceReadInputRequirements, block] using cursorEq.symm
+
+private theorem inputStateFold_guardedRequirements (entry : Entrypoint)
+    (aliases : AliasEnvironment) (reads : List Backend.Impact.Read)
+    (pre : List InputRequirement) (initial final : InputState)
+    (inputShape : initial.1 = pre ++ reads.flatMap sourceReadInputRequirements)
+    (cursorShape : initial.2.2.2 = pre.length)
+    (accepted : forIn reads initial (inputStateStep entry aliases) = .ok final) :
+    ∃ blocks, reads.mapM (guardedReadRequirements aliases) = .ok blocks ∧
+      final.1 = pre ++ blocks.flatten := by
+  induction reads generalizing pre initial final with
+  | nil =>
+    simp only [List.forIn_nil] at accepted
+    have finalEq := Except.ok.inj accepted
+    subst final
+    refine ⟨[], ?_, ?_⟩
+    · rfl
+    · simpa using inputShape
+  | cons read rest ih =>
+    rw [List.forIn_cons] at accepted
+    cases stepAccepted : inputStateStep entry aliases read initial with
+    | error message => simp [stepAccepted, Bind.bind, Except.bind] at accepted
+    | ok step =>
+      simp only [stepAccepted, Bind.bind, Except.bind] at accepted
+      obtain ⟨next, stepEq⟩ :=
+        inputStateStep_yields entry aliases read initial step stepAccepted
+      subst step
+      have inputShape' :
+          initial.1 = pre ++ sourceReadInputRequirements read ++
+            rest.flatMap sourceReadInputRequirements := by
+        simpa only [List.flatMap_cons, List.append_assoc] using inputShape
+      obtain ⟨readBlock, readAccepted, nextInputShape, nextCursorShape⟩ :=
+        inputStateStep_guardedBlock entry aliases read initial next pre
+          (rest.flatMap sourceReadInputRequirements) inputShape' cursorShape stepAccepted
+      have restAccepted : forIn rest next (inputStateStep entry aliases) = .ok final :=
+        accepted
+      have restInputShape :
+          next.1 = (pre ++ readBlock) ++ rest.flatMap sourceReadInputRequirements := by
+        simpa [List.append_assoc] using nextInputShape
+      obtain ⟨restBlocks, restMapAccepted, finalShape⟩ :=
+        ih (pre := pre ++ readBlock) (initial := next) (final := final)
+          restInputShape nextCursorShape restAccepted
+      refine ⟨readBlock :: restBlocks, ?_, ?_⟩
+      · simp [List.mapM_cons, readAccepted, restMapAccepted,
+          Bind.bind, Except.bind, Pure.pure, Except.pure]
+      · calc
+          final.1 = (pre ++ readBlock) ++ restBlocks.flatten := finalShape
+          _ = pre ++ (readBlock :: restBlocks).flatten := by
+            simp [List.flatten_cons, List.append_assoc]
 
 private theorem inputStateStep_preserves (entry : Entrypoint) (aliases : AliasEnvironment)
     (read : Backend.Impact.Read) (current next : InputState)
@@ -1385,12 +1529,58 @@ theorem expectedEntrypoint_inputs_of_unguarded_reads (state : List StateDecl)
       (Backend.Impact.publicInputReadCount entry.circuit.inputs)) initial
       (inputStateStep entry aliases) = .ok inputState := by
     simpa [initial, initialInputs, readInputs, sourceInitialInputRequirements,
-      sourcePostReadRequirements, Backend.Native.readInputRequirements_eq,
+      sourcePostReadRequirements, sourceReadInputRequirements,
+      Backend.Native.readInputRequirements_eq,
       List.length_flatMap] using inputStateAccepted
   have inputShapeExact : inputState.1 = initial.1 :=
     inputStateFold_preserves_inputList entry aliases _ initial inputState unguarded inputFold
   rw [inputShape, inputShapeExact]
   rfl
+
+/-- Project the source-ordered expected-input fold from an accepted entrypoint.
+Each normalized read guard is attached only to that descriptor's own bindings. -/
+theorem expectedEntrypoint_guardedInputRequirements (state : List StateDecl)
+    (entry : Entrypoint) (expected : Expected) (plan : Backend.Impact.Plan)
+    (accepted : expectedEntrypoint state entry = .ok expected)
+    (lowered : Backend.Impact.lower state entry = .ok plan) :
+    ∃ (frame : OutputFrame) (aliases : AliasEnvironment)
+      (blocks : List (List InputRequirement)),
+      normalizeOutputs (entrypointSeedAliases entry plan) entry.circuit.outputs = .ok frame ∧
+      forIn ((plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).flatMap
+          Backend.Impact.Read.scalarReads) frame.1 (readAliasStep entry) = .ok aliases ∧
+      (plan.reads.drop (Backend.Impact.publicInputReadCount entry.circuit.inputs)).mapM
+          (guardedReadRequirements aliases) = .ok blocks ∧
+      expected.inputs = sourceInitialInputRequirements entry ++ blocks.flatten := by
+  obtain ⟨actualPlan, frame, aliases, inputState, _, _, _, _, _, _, _,
+      lowerAccepted, frameAccepted, aliasesAccepted, inputStateAccepted,
+      _, _, _, _, _, _, _, expectedInputsShape, _, _, _, _, _, _⟩ :=
+    expectedEntrypoint_parts state entry expected accepted
+  have samePlan : actualPlan = plan := Except.ok.inj (lowerAccepted.symm.trans lowered)
+  subst actualPlan
+  let postReads := plan.reads.drop
+    (Backend.Impact.publicInputReadCount entry.circuit.inputs)
+  let initialInputs := sourceInitialInputRequirements entry
+  let readInputs := sourcePostReadRequirements entry plan
+  let initial : InputState := (initialInputs ++ readInputs, [], [], initialInputs.length)
+  have loopAccepted : forIn postReads initial (inputStateStep entry aliases) = .ok inputState := by
+    simpa [initial, initialInputs, readInputs, sourceInitialInputRequirements,
+      sourcePostReadRequirements, Backend.Native.readInputRequirements_eq,
+      List.length_flatMap] using inputStateAccepted
+  have postReadShape : sourcePostReadRequirements entry plan =
+      postReads.flatMap sourceReadInputRequirements := by
+    unfold sourcePostReadRequirements
+    simp only [postReads]
+    congr 1
+  have initialInputShape :
+      initial.1 = initialInputs ++ postReads.flatMap sourceReadInputRequirements := by
+    simp only [initial, initialInputs, readInputs]
+    rw [postReadShape]
+  have initialCursorShape : initial.2.2.2 = initialInputs.length := rfl
+  obtain ⟨blocks, blocksAccepted, finalInputShape⟩ :=
+    inputStateFold_guardedRequirements entry aliases postReads initialInputs initial inputState
+      initialInputShape initialCursorShape loopAccepted
+  refine ⟨frame, aliases, blocks, frameAccepted, aliasesAccepted, blocksAccepted, ?_⟩
+  rw [expectedInputsShape, finalInputShape]
 
 /-- Every unmodified circuit-input requirement remains represented in the
 accepted expected input list. The descriptor projection forgets only the
