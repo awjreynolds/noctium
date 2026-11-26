@@ -8,7 +8,7 @@ open ImpactReferenceEvaluation ScalarNormalization
 
 /-- A packed scalar value is accepted only when its dynamic representation
 matches the declared type and its source value is canonical. -/
-private def packedCanonical? (ty : Ty) (raw : Value) :
+def packedCanonical? (ty : Ty) (raw : Value) :
     Option { value : ty.Denote // raw = Value.pack ty value ∧ Canonical ty value } :=
   match ty with
   | .native =>

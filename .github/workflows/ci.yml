@@ -759,7 +759,8 @@ jobs:
             Noctium.Verification.ScalarPlanGuardSoundness \
             Noctium.Verification.ScalarSourceFrame \
             Noctium.Verification.ScalarStateSoundness \
-            Noctium.Verification.GenericStateCellAdmission
+            Noctium.Verification.GenericStateCellAdmission \
+            Noctium.Verification.ScalarSourceReadWitness
           lake env lean tests/RangeDedupRawCall.lean
           lake env lean tests/ScalarValidatedProgram.lean
           lake env lean tests/ScalarValidation.lean
@@ -774,6 +775,7 @@ jobs:
           lake env lean tests/ScalarTranslation.lean
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
+          lake env lean tests/scalars/ScalarSourceReadWitness.lean
           lake env lean tests/GuardedScalarCellAdmission.lean
           lake env lean tests/Verification.lean
           lake env lean proofs/BoundedScalarsVerification.lean

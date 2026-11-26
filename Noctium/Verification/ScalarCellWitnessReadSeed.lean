@@ -127,6 +127,21 @@ private theorem seedReadValues_preserves_circuit_inputs (inputs : NativeRelation
   exact fresh record recordMember
     (List.mem_map.mpr ⟨input, member, sameName.symm⟩)
 
+/-- Seeding a checked source tape leaves the separate circuit input bindings
+intact when the accepted post-public read names are fresh. -/
+theorem seedReadValues_preserves_lowered_inputs (inputs : NativeRelation.Assignment)
+    (entry : Entrypoint) (plan : Impact.Plan) (entries : List (Impact.Read × Scalar))
+    (metadata : (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)).map
+        GenericStateCheckedReadTrace.readMetadata =
+      (entries.map Prod.fst).map GenericStateCheckedReadTrace.readMetadata)
+    (fresh : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs),
+      read.name ∉ entry.circuit.inputs.map (·.name)) :
+    ∀ input ∈ entry.circuit.inputs,
+      seedReadValues inputs entries ("%input_" ++ input.name) =
+        inputs ("%input_" ++ input.name) :=
+  seedReadValues_preserves_circuit_inputs inputs entry entries
+    (record_names_fresh entry plan entries metadata fresh)
+
 private theorem scalarNumber_eq_stateEncoding {ty : Ty}
     (scalarType : ScalarType ty) (value : ty.Denote) :
     ScalarNormalization.number scalarType value = GenericStateEncoding.number ty value := by
@@ -298,8 +313,8 @@ theorem seed_source_cell_read_assignment
   have recordsDistinct : (entries.map (fun item => item.1.name)).Nodup := by
     rw [recordNames]
     exact readNamesDistinct
-  have recordsFresh := record_names_fresh entry plan entries metadata readNamesFresh
-  have preserved := seedReadValues_preserves_circuit_inputs inputs entry entries recordsFresh
+  have preserved := seedReadValues_preserves_lowered_inputs inputs entry plan entries
+    metadata readNamesFresh
   have facts := seedReadValues_facts inputs entry plan entries metadata recordsDistinct canonical
   exact ⟨preserved, facts⟩
 
