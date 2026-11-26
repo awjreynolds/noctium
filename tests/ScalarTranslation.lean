@@ -1,11 +1,11 @@
-import Noctium.Verification.ScalarCircuitWitness
+import Noctium.Verification.ScalarTranslation
 
 namespace ScalarTranslationTests
 open Lean Noctium Noctium.Backend Noctium.Verification
 open NativeRelation ScalarNormalization
-open ScalarTranslationSoundness (defaultLoweredRows lowerCircuit_sound)
+open ScalarTranslationSoundness (defaultLoweredRows)
 open ScalarValidationOpcodeProfile (checkedScalarOpcodeProfile)
-open ScalarWitnessConstruction (lowerCircuit_complete)
+open ScalarTranslation (lowerCircuit_complete lowerCircuit_satisfiable_iff)
 
 private def ctx : EvalContext := {modulus := Field.modulus, poseidon2 := fun _ _ _ => .ok 0}
 private def hash : Hash := fun _ => zero
@@ -75,9 +75,12 @@ example (json : Json) (program : Program) (streams : InputStreams) (witness : As
     (lowered : Zkir.lowerCircuit discardedUnderflow = .ok json)
     (decoded : NativeRelationJson.decode json = .ok program)
     (satisfies : CircuitSatisfies hash program streams witness groups) : False := by
-  obtain ⟨result, successful, _⟩ := lowerCircuit_sound ctx hash implementation discardedUnderflow []
-    json program streams witness groups (emptyInputs discardedUnderflow rfl witness)
-    discardedUnderflowAdmission lowered decoded satisfies
+  have nativeWitness : ∃ assignment, ScalarWitnessConstruction.InputFrame witness assignment ∧
+      ∀ instruction ∈ program.instructions, instruction.Holds hash assignment :=
+    ⟨witness, fun _ => rfl, satisfies.instructions⟩
+  obtain ⟨result, successful⟩ := (lowerCircuit_satisfiable_iff ctx hash implementation
+    discardedUnderflow [] witness json program (emptyInputs discardedUnderflow rfl witness)
+    discardedUnderflowAdmission lowered decoded).mpr nativeWitness
   rw [discardedUnderflowRun] at successful
   cases successful
 

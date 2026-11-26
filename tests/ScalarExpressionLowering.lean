@@ -1,5 +1,5 @@
 import Noctium.Verification
-import Noctium.Verification.ScalarCircuitWitness
+import Noctium.Verification.ScalarTranslation
 
 namespace ScalarExpressionLoweringTests
 
@@ -27,7 +27,8 @@ run_cmd do
   for proof in [
       `Noctium.Verification.ScalarExpressionLowering.lowerExpr_complete,
       `Noctium.Verification.ScalarTranslationSoundness.lowerCircuit_sound,
-      `Noctium.Verification.ScalarWitnessConstruction.lowerCircuit_complete] do
+      `Noctium.Verification.ScalarWitnessConstruction.lowerCircuit_complete,
+      `Noctium.Verification.ScalarTranslation.lowerCircuit_satisfiable_iff] do
     match Noctium.Verification.Audit.axiomsIn environment proof with
     | .ok _ => pure ()
     | .error error => throwError "{proof}: {error}"

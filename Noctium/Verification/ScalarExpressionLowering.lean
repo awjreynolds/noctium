@@ -1,3 +1,4 @@
+import Noctium.Verification.ScalarExpressionArithmetic
 import Noctium.Verification.ScalarExpressionAssert
 import Noctium.Verification.ScalarExpressionBoolCast
 import Noctium.Verification.ScalarExpressionCopy
@@ -6,10 +7,6 @@ import Noctium.Verification.ScalarExpressionLet
 import Noctium.Verification.ScalarExpressionNativeTree
 import Noctium.Verification.ScalarExpressionPoseidon
 import Noctium.Verification.ScalarExpressionSelect
-import Noctium.Verification.ScalarExpressionUIntAdd
-import Noctium.Verification.ScalarExpressionUIntCast
-import Noctium.Verification.ScalarExpressionUIntMul
-import Noctium.Verification.ScalarExpressionUIntSub
 import Noctium.Verification.ScalarWitnessReturnProjection
 
 namespace Noctium.Verification.ScalarExpressionLowering
