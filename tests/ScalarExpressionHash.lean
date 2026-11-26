@@ -1,21 +1,30 @@
-import Noctium.Verification.ScalarExpressionHash
+import Noctium.Verification.ScalarExpressionLowering
 
 namespace ScalarExpressionHashTests
 
-open Noctium Noctium.Verification ScalarLowering
-open ScalarExpressionArithmetic ScalarExpressionHash
+open Noctium Noctium.Verification ScalarLowering ScalarNormalization
+open ScalarExpressionLowering
 
-example : ExprComplete (.poseidon2 11 (.native 5) (.native 7)) :=
-  exprComplete_poseidon2 11 (.native 5) (.native 7)
-    (complete_native 5) (complete_native 7)
+private def hashInput : Expr .native := .poseidon2 11 (.native 5) (.native 7)
 
-example : ExprComplete (.poseidon2 11 (.add (.native 3) (.native 4))
-    (.add (.native 3) (.native 4))) :=
-  exprComplete_poseidon2 11
-    (.add (.native 3) (.native 4)) (.add (.native 3) (.native 4))
-    (complete_add _ _ (complete_native 3) (complete_native 4))
-    (complete_add _ _ (complete_native 3) (complete_native 4))
+private theorem hashInputAdmission : ScalarExpression hashInput := by
+  unfold hashInput
+  exact ScalarExpression.poseidon2 _ _ _ (ScalarExpression.native 5) (ScalarExpression.native 7)
 
-#print axioms ScalarExpressionHash.exprComplete_poseidon2
+example : ExprComplete hashInput := lowerExpr_complete hashInput hashInputAdmission
+
+private def repeatedHashInput : Expr .native :=
+  .poseidon2 11 (.add (.native 3) (.native 4)) (.add (.native 3) (.native 4))
+
+private theorem repeatedHashInputAdmission : ScalarExpression repeatedHashInput := by
+  unfold repeatedHashInput
+  exact ScalarExpression.poseidon2 _ _ _
+    (ScalarExpression.add _ _ (ScalarExpression.native 3) (ScalarExpression.native 4))
+    (ScalarExpression.add _ _ (ScalarExpression.native 3) (ScalarExpression.native 4))
+
+example : ExprComplete repeatedHashInput :=
+  lowerExpr_complete repeatedHashInput repeatedHashInputAdmission
+
+#print axioms ScalarWitnessConstruction.complete_poseidon2
 
 end ScalarExpressionHashTests

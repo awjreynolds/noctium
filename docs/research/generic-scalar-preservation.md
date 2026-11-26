@@ -2,6 +2,10 @@
 
 This proof package concerns the straight-line Native, Bool and UInt scalar relation backend at the recorded source pin. Issue #64 records the qualified source and audit evidence. The newer byte, curve and nested expression constructors still require an updated normalization model and proof. The range-pass preservation theorem builds independently against the current scalar instruction decoder. [Proof assurance ticket](https://github.com/awjreynolds/noctium/issues/21) · [Range preservation](../../Noctium/Verification/RangeDedup.lean)
 
+## Current standalone proof
+
+`ScalarTranslation.lowerCircuit_satisfiable_iff` connects successful source execution to a satisfying witness for the exact accepted and strictly decoded ZKIR. The witness preserves the source input bindings. The theorem requires scalar circuit admission, canonical source inputs and field/hash model agreement. The current arithmetic proof modules feed `ScalarExpressionLowering.lowerExpr_complete`, which covers the expressions admitted by that scalar model. The published qualification below records the earlier source and evidence pins. [Current scalar translation proofs](../../Noctium/Verification/ScalarTranslation.lean)
+
 ## Reused implementation
 
 - `Noctium/IR.lean` defines the typed scalar expression and circuit syntax and its actual entry checks.
@@ -58,7 +62,7 @@ The conclusion derives successful original `Circuit.run`, exact named output val
 
 The theorem does not assume normalization preservation, a cache invariant, source assertion satisfaction beyond the successful source execution, arbitrary validator completeness or any compiler correctness conclusion. Arbitrary validator acceptance alone does not establish completeness, since validator acceptance permits additional constraints which preserve soundness and restrict satisfying assignments.
 
-`ScalarExpressionLowering.lowerExpr_complete` proves every current expression constructor against the actual lowering computation. Its subsidiary proofs cover fresh names, cached/fresh primitive branches, eager arms, let alias restoration, assertion sequencing, casts and qualified hashes. `ScalarCircuitLowering` extends the actual typed-input, constraint, output-loop and footer prefixes, constructs all decoded instruction satisfaction, then derives observations through the independent validator. The witness exists before validator soundness identifies those observations.
+`ScalarExpressionLowering.lowerExpr_complete` proves the scalar expression constructors in the pinned source against the actual lowering computation. Its subsidiary proofs cover fresh names, cached/fresh primitive branches, eager arms, let alias restoration, assertion sequencing, casts and qualified hashes. `ScalarCircuitLowering` extends the actual typed-input, constraint, output-loop and footer prefixes, constructs all decoded instruction satisfaction, then derives observations through the independent validator. The witness exists before validator soundness identifies those observations.
 
 `ScalarImmediate.fieldImmediate_exact` proves exact emitted-constant parsing. `ScalarInstructionEncoding` proves actual emitted instruction encodings. `ScalarRangeLowering` proves actual UInt constraint-emission witness extension. `ScalarAllocation` proves actual allocation/count monotonicity. `ScalarAdmission` derives identifier and resource facts from actual entry checks, including the final allocation budget used for every recursive subtree. `ScalarStateExtensions`, `ScalarCache` and `ScalarWitness` establish alias, cache and old-assignment frames from the actual empty initial state.
 

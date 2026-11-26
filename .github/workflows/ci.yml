@@ -680,6 +680,8 @@ jobs:
             Noctium.Verification.ScalarStateExtensions \
             Noctium.Verification.ScalarExpressionNativeTree \
             Noctium.Verification.ScalarCircuitWitness \
+            Noctium.Verification.ScalarCircuitLowering \
+            Noctium.Verification.ScalarTranslation \
             Noctium.Verification.ScalarLedgerWitnessPreflight \
             Noctium.Verification.ScalarLedgerWitnessSource \
             Noctium.Verification.ScalarLedgerWitnessComposition \
@@ -729,6 +731,10 @@ jobs:
           lake env lean tests/ScalarCircuitWitness.lean
           lake env lean tests/ScalarLedgerWitness.lean
           lake env lean tests/ScalarExpressionLowering.lean
+          lake env lean tests/ScalarExpressionArithmetic.lean
+          lake env lean tests/ScalarExpressionAssertion.lean
+          lake env lean tests/ScalarExpressionHash.lean
+          lake env lean tests/ScalarExpressionSelect.lean
           lake env lean tests/ScalarTranslation.lean
           lake env lean tests/ScalarImpactInputAdmission.lean
           lake env lean tests/ScalarLedgerReadDecoder.lean
