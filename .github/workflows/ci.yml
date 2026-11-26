@@ -716,6 +716,8 @@ jobs:
             Noctium.Verification.ScalarCircuitLowering \
             Noctium.Verification.ScalarTranslation \
             Noctium.Verification.ScalarLedgerWitnessPreflight \
+            Noctium.Verification.GenericStateConversePublicPrefix \
+            Noctium.Verification.GenericStateReadBounds \
             Noctium.Verification.ScalarLedgerWitnessSource \
             Noctium.Verification.ScalarLedgerWitnessComposition \
             Noctium.Verification.ScalarCellCallWitness \

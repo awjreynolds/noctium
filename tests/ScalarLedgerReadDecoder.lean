@@ -1,4 +1,5 @@
 import Noctium.Verification.GenericStateReadAuthentication
+import Noctium.Verification.GenericStateReadBounds
 
 open Noctium Noctium.Backend Noctium.Verification
 
@@ -41,3 +42,22 @@ private def checkedCounterRead (candidate : Nat) : Option (List NativeState.Cell
 
 #guard checkedCounterRead 23 == some [NativeState.field (scalar 23)]
 #guard (checkedCounterRead 24).isNone
+
+-- A zero-width public input has no wire read. The next descriptor belongs
+-- to the ledger effect even though the source declares a public input.
+#guard
+  let declarations : List StateDecl := [{name := "counter", kind := .cell (.uint 31)}]
+  let entry : Entrypoint := {
+    name := "readCounter"
+    circuit := {name := "emptyPublicPrefix", inputs := [
+      {name := "empty", ty := .bytes 0, visibility := .public}]}
+    effects := [.readCell "counter" "before" (.uint 31)]
+    returns := [{name := "result", ty := .uint 31, value := .ref "before"}]
+  }
+  match Zkir.lowerEntrypoint declarations entry, Impact.lower declarations entry with
+  | .ok json, .ok plan =>
+    let cutoff := Impact.publicInputReadCount entry.circuit.inputs
+    (NativeRelationJson.decode json).isOk && cutoff == 0 &&
+      (plan.reads.drop cutoff).map GenericStateCheckedReadTrace.readMetadata ==
+        [("before", .uint 31)]
+  | _, _ => false
