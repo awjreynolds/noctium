@@ -35,13 +35,16 @@ private theorem outputEval_ok (ctx : EvalContext) (values : EvalEnv)
   cases produced
   exact ⟨value, evaluated, rfl⟩
 
-/-- Completeness of the actual production output fold. The normalized alias
-stack prepends outputs, so its value environment is `results.reverse ++
-accumulatedBindings`; `results` itself stays in source order. -/
+/-- Successful evaluation of scalar-admitted outputs establishes the
+requirements of the production output fold. The normalized alias stack
+prepends outputs, so its value environment is `results.reverse ++
+accumulatedBindings`. The results stay in source order. -/
 theorem outputFold_complete (ctx : EvalContext) (hash : Hash)
     (implementation : HashAgreement ctx hash) (inputs : Assignment)
     (originalValues accumulatedBindings : EvalEnv)
-    (outputs : List Output) (frame final : OutputFrame)
+    (outputs : List Output)
+    (admitted : ∀ output ∈ outputs, ScalarExpression output.value)
+    (frame final : OutputFrame)
     (results : List (String × Value))
     (originalAgreement : AliasAgreement hash inputs frame.1 originalValues)
     (bindingAgreement : AliasAgreement hash inputs frame.1 accumulatedBindings)
@@ -49,12 +52,14 @@ theorem outputFold_complete (ctx : EvalContext) (hash : Hash)
     (source : outputs.mapM (evalOutput ctx originalValues) = .ok results)
     (accepted : outputFold frame outputs = .ok final)
     (beforeBounds : ∀ requirement ∈ frame.2.1,
-      (interpret hash inputs requirement.1).val ≤ requirement.2)
+      ∃ value, interpret hash inputs requirement.1 = some value ∧
+        value.val ≤ requirement.2)
     (beforeAssertions : ∀ term ∈ frame.2.2,
-      interpret hash inputs term = one) :
+      interpret hash inputs term = some one) :
     (∀ requirement ∈ final.2.1,
-      (interpret hash inputs requirement.1).val ≤ requirement.2) ∧
-    (∀ term ∈ final.2.2, interpret hash inputs term = one) ∧
+      ∃ value, interpret hash inputs requirement.1 = some value ∧
+        value.val ≤ requirement.2) ∧
+    (∀ term ∈ final.2.2, interpret hash inputs term = some one) ∧
     AliasAgreement hash inputs final.1 originalValues ∧
     AliasAgreement hash inputs final.1 (results.reverse ++ accumulatedBindings) := by
   induction outputs generalizing frame final results accumulatedBindings with
@@ -96,20 +101,22 @@ theorem outputFold_complete (ctx : EvalContext) (hash : Hash)
       outputEval_ok ctx originalValues output pair pairAccepted
     subst pair
     have represented := normalize_success ctx hash implementation inputs
-      frame.1 originalValues originalAgreement output.value value evaluated
+      frame.1 originalValues originalAgreement output.value
+      (admitted output (by simp)) value evaluated
     obtain ⟨normalizedSource, normalizedEval, represented⟩ := represented
     rw [normal] at normalizedEval
     cases normalizedEval
     obtain ⟨canonical, requirements, meaning⟩ := represented
     have middleBounds : ∀ requirement ∈ nextFrame.2.1,
-        (interpret hash inputs requirement.1).val ≤ requirement.2 := by
+        ∃ value, interpret hash inputs requirement.1 = some value ∧
+          value.val ≤ requirement.2 := by
       intro requirement member
       simp [nextFrame] at member
       rcases member with prior | generated
       · exact beforeBounds requirement prior
       · exact requirements.1 requirement generated
     have middleAssertions : ∀ term ∈ nextFrame.2.2,
-        interpret hash inputs term = one := by
+        interpret hash inputs term = some one := by
       intro term member
       simp [nextFrame] at member
       rcases member with prior | generated
@@ -126,6 +133,7 @@ theorem outputFold_complete (ctx : EvalContext) (hash : Hash)
         bindingAgreement canonical meaning
     obtain ⟨bounds, assertions, original, bindings⟩ :=
       ih ((output.name, Value.pack output.ty value) :: accumulatedBindings)
+        (fun item member => admitted item (by simp [member]))
         nextFrame final tailResults
         nextOriginal nextBindings
         (fun item member => unused item (by simp [member]))
@@ -138,19 +146,22 @@ initial alias agreement for original inputs and the empty binding stack. -/
 theorem normalizeOutputs_complete (ctx : EvalContext) (hash : Hash)
     (implementation : HashAgreement ctx hash) (inputs : Assignment)
     (aliases : AliasEnvironment) (values : EvalEnv)
-    (outputs : List Output) (final : OutputFrame)
+    (outputs : List Output)
+    (admitted : ∀ output ∈ outputs, ScalarExpression output.value)
+    (final : OutputFrame)
     (results : List (String × Value))
     (agreement : AliasAgreement hash inputs aliases values)
     (unused : ∀ output ∈ outputs, values.lookup output.name = none)
     (source : outputs.mapM (evalOutput ctx values) = .ok results)
     (accepted : normalizeOutputs aliases outputs = .ok final) :
     (∀ requirement ∈ final.2.1,
-      (interpret hash inputs requirement.1).val ≤ requirement.2) ∧
-    (∀ term ∈ final.2.2, interpret hash inputs term = one) ∧
+      ∃ value, interpret hash inputs requirement.1 = some value ∧
+        value.val ≤ requirement.2) ∧
+    (∀ term ∈ final.2.2, interpret hash inputs term = some one) ∧
     AliasAgreement hash inputs final.1 values ∧
     AliasAgreement hash inputs final.1 (results.reverse ++ values) := by
   exact outputFold_complete ctx hash implementation inputs values values outputs
-    (aliases, [], []) final results agreement agreement unused source
+    admitted (aliases, [], []) final results agreement agreement unused source
     (by simpa [normalizeOutputs] using accepted)
     (by simp) (by simp)
 
