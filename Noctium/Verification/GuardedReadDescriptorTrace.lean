@@ -17,7 +17,8 @@ private theorem appendEffectWithActivity_guarded_reads_append
     (state : List StateDecl) (effect : Effect) (guard : Option (Expr .bool))
     (scope : GuardedScalarReadEffect guard effect) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state effect guard before = .ok after) :
-    ∃ added, after.reads = before.reads ++ added := by
+    ∃ added, after.reads = before.reads ++ added ∧
+      ∀ read ∈ added, read.components = [] := by
   cases scope with
   | unguarded sourceScope =>
     obtain ⟨raw, appended, _, sameReads⟩ :=
@@ -32,11 +33,20 @@ private theorem appendEffectWithActivity_guarded_reads_append
       let read := raw.reads[before.reads.length]?.getD {name := destination, ty}
       have readsShape : raw.reads = before.reads ++ [read] := by
         simp [read, stateEq.symm]
-      exact ⟨[read], sameReads.trans readsShape⟩
+      have componentsEmpty : read.components = [] := by simp [read, stateEq.symm]
+      exact ⟨[read], sameReads.trans readsShape, by
+        intro item member
+        have itemEq := List.mem_singleton.mp member
+        subst item
+        exact componentsEmpty⟩
     | readMap name destination keyTy valueTy key =>
       have readsShape := GuardedEffectPrefix.appendEffect_readMap_read_suffix
         state name destination keyTy valueTy key before raw appended
-      exact ⟨[{name := destination, ty := valueTy}], sameReads.trans readsShape⟩
+      exact ⟨[{name := destination, ty := valueTy}], sameReads.trans readsShape, by
+        intro item member
+        have itemEq := List.mem_singleton.mp member
+        subst item
+        rfl⟩
     | requireAbsent name keyTy key =>
       simp only [Impact.appendEffect, bind_ok] at appended
       obtain ⟨_, _, _, _, resultAccepted⟩ := appended
@@ -46,7 +56,12 @@ private theorem appendEffectWithActivity_guarded_reads_append
         {name := "_noctium_absence_" ++ toString before.reads.length, ty := .bool}
       have readsShape : raw.reads = before.reads ++ [read] := by
         simp [read, stateEq.symm]
-      exact ⟨[read], sameReads.trans readsShape⟩
+      have componentsEmpty : read.components = [] := by simp [read, stateEq.symm]
+      exact ⟨[read], sameReads.trans readsShape, by
+        intro item member
+        have itemEq := List.mem_singleton.mp member
+        subst item
+        exact componentsEmpty⟩
     | require condition =>
       simp only [Impact.appendEffect] at appended
       have resultEq := Except.ok.inj appended
@@ -56,7 +71,9 @@ private theorem appendEffectWithActivity_guarded_reads_append
         calc
           after.reads = raw.reads := sameReads
           _ = before.reads := readsSame
-          _ = before.reads ++ [] := by simp⟩
+          _ = before.reads ++ [] := by simp, by
+        intro read member
+        simp at member⟩
     | writeCell name ty value =>
       simp only [Impact.appendEffect, bind_ok] at appended
       obtain ⟨_, _, _, _, resultAccepted⟩ := appended
@@ -67,7 +84,9 @@ private theorem appendEffectWithActivity_guarded_reads_append
         calc
           after.reads = raw.reads := sameReads
           _ = before.reads := readsSame
-          _ = before.reads ++ [] := by simp⟩
+          _ = before.reads ++ [] := by simp, by
+        intro read member
+        simp at member⟩
     | writeMap name keyTy valueTy key value =>
       simp only [Impact.appendEffect, bind_ok] at appended
       obtain ⟨_, _, _, _, _, _, resultAccepted⟩ := appended
@@ -78,44 +97,61 @@ private theorem appendEffectWithActivity_guarded_reads_append
         calc
           after.reads = raw.reads := sameReads
           _ = before.reads := readsSame
-          _ = before.reads ++ [] := by simp⟩
+          _ = before.reads ++ [] := by simp, by
+        intro read member
+        simp at member⟩
   | readCell condition name destination ty =>
-    obtain ⟨_, _, read, _, _, _, readsShape, _, _⟩ :=
-      GuardedEffectPrefix.appendEffectWithActivity_readCell_provenance
+    obtain ⟨read, readsShape, componentsEmpty⟩ :=
+      GuardedEffectPrefix.appendEffectWithActivity_readCell_components_empty
         state name destination ty condition before after accepted
-    exact ⟨[read], readsShape⟩
+    exact ⟨[read], readsShape, by
+      intro item member
+      have itemEq := List.mem_singleton.mp member
+      subst item
+      exact componentsEmpty⟩
   | readMap condition name destination keyTy valueTy key =>
     have readsShape := GuardedEffectPrefix.appendEffectWithActivity_readMap_read_suffix
       state name destination keyTy valueTy key condition before after accepted
-    exact ⟨[{name := destination, ty := valueTy, guard := some condition}], readsShape⟩
+    exact ⟨[{name := destination, ty := valueTy, guard := some condition}], readsShape, by
+      intro item member
+      have itemEq := List.mem_singleton.mp member
+      subst item
+      rfl⟩
   | writeCell condition name ty value =>
     have readsSame := GuardedEffectPrefix.appendEffectWithActivity_guarded_writeCell_no_reads
       state name ty value condition before after accepted
     exact ⟨[], by
       calc
         after.reads = before.reads := readsSame
-        _ = before.reads ++ [] := by simp⟩
+        _ = before.reads ++ [] := by simp, by
+      intro read member
+      simp at member⟩
   | writeMap condition name keyTy valueTy key value =>
     have readsSame := GuardedEffectPrefix.appendEffectWithActivity_guarded_writeMap_no_reads
       state name keyTy valueTy key value condition before after accepted
     exact ⟨[], by
       calc
         after.reads = before.reads := readsSame
-        _ = before.reads ++ [] := by simp⟩
+        _ = before.reads ++ [] := by simp, by
+      intro read member
+      simp at member⟩
   | require condition required =>
     have readsSame := GuardedEffectPrefix.appendEffectWithActivity_guarded_require_no_reads
       state condition required before after accepted
     exact ⟨[], by
       calc
         after.reads = before.reads := readsSame
-        _ = before.reads ++ [] := by simp⟩
+        _ = before.reads ++ [] := by simp, by
+      intro read member
+      simp at member⟩
 
 private theorem guardedTrace_reads_append
     (state : List StateDecl) (guards : List (Option (Expr .bool)))
     (items : List (Effect × Nat)) (initial result : Impact.Plan) (offsets : List Nat)
     (scope : GuardedScalarReadEffects guards items)
     (trace : Impact.GuardedEffectTrace state guards items initial result offsets) :
-    ∃ added, result.reads = initial.reads ++ added := by
+    ∃ added, result.reads = initial.reads ++ added ∧
+      ∀ read ∈ added, read.components = [] := by
   induction trace with
   | nil => exact ⟨[], by simp⟩
   | @cons item rest before next result offsets step tail ih =>
@@ -127,12 +163,17 @@ private theorem guardedTrace_reads_append
       intro later member
       apply scope later
       simp [member]
-    obtain ⟨added, headReads⟩ := appendEffectWithActivity_guarded_reads_append
+    obtain ⟨added, headReads, headComponents⟩ := appendEffectWithActivity_guarded_reads_append
       state item.1 (guards[item.2]?.getD none) headScope before next step
-    obtain ⟨later, tailReads⟩ := ih tailScope
+    obtain ⟨later, tailReads, tailComponents⟩ := ih tailScope
     refine ⟨added ++ later, ?_⟩
-    rw [tailReads, headReads]
-    simp [List.append_assoc]
+    constructor
+    · rw [tailReads, headReads]
+      simp [List.append_assoc]
+    · intro read member
+      rcases List.mem_append.mp member with head | tail
+      · exact headComponents read head
+      · exact tailComponents read tail
 
 private theorem guardedTrace_read_descriptor
     (state : List StateDecl) (guards : List (Option (Expr .bool)))
@@ -161,7 +202,7 @@ private theorem guardedTrace_read_descriptor
         intro later member
         apply scope later
         simp [member]
-      obtain ⟨afterTarget, tailReads⟩ := guardedTrace_reads_append
+      obtain ⟨afterTarget, tailReads, _⟩ := guardedTrace_reads_append
         state guards rest next result offsets tailScope tail
       refine ⟨[], afterTarget, read, ?_, readSelected⟩
       rw [tailReads, headReads]
@@ -175,7 +216,7 @@ private theorem guardedTrace_read_descriptor
           (guards[item.2]?.getD none) item.1 := by
         apply scope
         simp
-      obtain ⟨added, headReads⟩ := appendEffectWithActivity_guarded_reads_append
+      obtain ⟨added, headReads, _⟩ := appendEffectWithActivity_guarded_reads_append
         state item.1 (guards[item.2]?.getD none) headScope before next step
       refine ⟨added ++ beforeTarget, suffix, read, ?_, readSelected⟩
       rw [readsShape, headReads]
@@ -188,6 +229,30 @@ private theorem descriptor_mem_after_public_prefix
     read ∈ result.reads.drop initial.reads.length := by
   rw [readsShape]
   simp
+
+/-- Every descriptor emitted by the accepted scoped effect trace after the
+public-input prefix has an empty component list. This includes generated
+absence witnesses from unguarded requireAbsent effects. -/
+theorem lower_post_public_read_components
+    (state : List StateDecl) (ep : Entrypoint) (plan : Impact.Plan)
+    (lowered : Impact.lower state ep = .ok plan)
+    (scope : GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx) :
+    ∀ readSpec ∈ plan.reads.drop
+      (Impact.publicInputReadCount ep.circuit.inputs), readSpec.components = [] := by
+  obtain ⟨_, inputPlan, _, prefixAccepted, trace⟩ :=
+    GenericStateAdmissionPrefix.lower_guarded_effect_trace state ep plan lowered
+  obtain ⟨added, readsShape, componentsEmpty⟩ :=
+    guardedTrace_reads_append state ep.effectGuards ep.effects.zipIdx inputPlan plan _
+      scope trace
+  have inputCount := GenericStateAdmissionPrefix.publicInputPlan_readCount
+    ep.circuit.inputs inputPlan prefixAccepted
+  have postReads :
+      plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs) = added := by
+    rw [readsShape, ← inputCount]
+    simp
+  intro readSpec member
+  rw [postReads] at member
+  exact componentsEmpty readSpec member
 
 /-- An indexed guarded Cell read in the scoped source fragment has the exact
 descriptor emitted by accepted production lowering, after the public-input

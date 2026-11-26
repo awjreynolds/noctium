@@ -1,5 +1,6 @@
 import Noctium.Frontend
 import Noctium.Verification.GuardedScalarCandidateSchedule
+import Noctium.Verification.ScalarGuardedReadAdmission
 
 open scoped Noctium
 open Noctium
@@ -40,6 +41,15 @@ private def plan : Backend.Impact.Plan :=
 
 private theorem plan_accepted : Backend.Impact.lower state fixtureEntry = .ok plan := by
   with_unfolding_all rfl
+
+private theorem effects_admitted :
+    ∀ effect ∈ fixtureEntry.effects,
+      ScalarGuardedPlanAdmission.ScalarEffect state effect := by
+  intro effect present
+  simp [fixtureEntry, guardedCandidateInputs, GuardedScalarCandidateFrame] at present
+  subst effect
+  exact .readMap "balances" "saved" .native .native (.native 17)
+    .native .native (.native 17)
 
 private def expected : Expected :=
   match Noctium.Backend.Native.expectedEntrypoint state fixtureEntry with
@@ -114,34 +124,31 @@ private theorem circuit_admitted : ScalarCircuitAdmission fixtureEntry.circuit :
 private def reads : List Backend.Impact.Read :=
   plan.reads.drop (Backend.Impact.publicInputReadCount fixtureEntry.circuit.inputs)
 
-private theorem exact_reads : reads =
-    [{name := "saved", ty := .native, components := [], schema := none,
-      guard := some (.ref "enabled"), rootCellRead := none}] := by
+private theorem read_admission :
+    (∀ readSpec ∈ reads,
+      readSpec.components = [] ∧ (scalarType? readSpec.ty).isSome = _root_.Bool.true ∧
+        readSpec.ty.validate
+          {poseidon2 := _root_.Bool.true, stateCells := _root_.Bool.true,
+            stateMaps := _root_.Bool.true} = .ok ()) ∧
+    (∀ readSpec ∈ reads,
+      readSpec.name ∉ fixtureEntry.circuit.inputs.map (·.name) ++
+        fixtureEntry.circuit.outputs.map (·.name)) ∧
+    reads.Pairwise (fun left right => left.name ≠ right.name) := by
+  simpa [reads] using ScalarGuardedReadAdmission.lower_read_admission
+    state fixtureEntry plan plan_accepted effects_admitted
+
+private def absenceEntry : Entrypoint := { fixtureEntry with
+  effects := .requireAbsent "balances" .native (.native 88) :: fixtureEntry.effects
+  effectGuards := none :: fixtureEntry.effectGuards
+  effectSpans := []
+}
+
+private theorem unguarded_absence_read_ordinal :
+    ((Backend.Impact.lower state absenceEntry).toOption.map fun lowered =>
+      (lowered.reads.drop (Backend.Impact.publicInputReadCount absenceEntry.circuit.inputs)).map
+        fun (descriptor : Backend.Impact.Read) => (descriptor.name, descriptor.ty)) =
+      some [("_noctium_absence_1", .bool), ("saved", .native)] := by
   with_unfolding_all rfl
-
-private theorem plain_reads : ∀ readSpec ∈ reads,
-    readSpec.components = [] ∧ (scalarType? readSpec.ty).isSome = _root_.Bool.true ∧
-      readSpec.ty.validate
-        {poseidon2 := _root_.Bool.true, stateCells := _root_.Bool.true,
-          stateMaps := _root_.Bool.true} = .ok () := by
-  intro readSpec present
-  rw [exact_reads] at present
-  simp only [List.mem_singleton] at present
-  subst readSpec
-  simp [scalarType?, Ty.validate, Ty.scalarKind, ScalarPolicy.validate, pure, Except.pure]
-
-private theorem separate_reads : ∀ readSpec ∈ reads,
-    readSpec.name ∉ fixtureEntry.circuit.inputs.map (·.name) ++
-      fixtureEntry.circuit.outputs.map (·.name) := by
-  intro readSpec present
-  rw [exact_reads] at present
-  simp only [List.mem_singleton] at present
-  subst readSpec
-  simp [fixtureEntry, guardedCandidateInputs, GuardedScalarCandidateFrame]
-
-private theorem distinct_reads : reads.Pairwise (fun left right => left.name ≠ right.name) := by
-  rw [exact_reads]
-  simp
 
 private def guardAssertion : Term :=
   .binary "test_eq" (.input "%input_saved")
@@ -220,7 +227,8 @@ theorem guarded_candidate_frame_exact :
   obtain ⟨frame, result, candidates, normalized, executed, decoded, environment, aliases⟩ :=
     GuardedScalarCandidateSchedule.expected_candidate_frame state fixtureEntry expected plan
       context hash hash_agrees values assignment plan_accepted expected_accepted canonical_inputs
-      circuit_admitted plain_reads separate_reads distinct_reads assertions bounds input_bounds
+      circuit_admitted read_admission.1 read_admission.2.1 read_admission.2.2
+      assertions bounds input_bounds
   have frameExact := Except.ok.inj (normalized.symm.trans normalized_frame)
   have resultExact := Except.ok.inj (executed.symm.trans circuit_run)
   have candidatesExact := Except.ok.inj (decoded.symm.trans decoded_reads)

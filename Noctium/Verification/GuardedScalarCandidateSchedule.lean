@@ -1,5 +1,6 @@
 import Noctium.Verification.GuardedScalarSchedule
 import Noctium.Verification.GenericStateWriteEvaluation
+import Noctium.Verification.ScalarGuardedReadAdmission
 import Noctium.Verification.ScalarLedgerScalarSchema
 import Noctium.Verification.ScalarSourceFrame
 
@@ -60,7 +61,7 @@ theorem expected_candidate_frame
 
 /-- A checked guarded artifact and canonical source inputs determine a source
 result, decoded candidate reads, and the exact active native groups. The
-admission of the accepted read descriptors and row satisfaction are explicit. -/
+accepted scalar lowering supplies the read admission and name facts. -/
 theorem lower_checked_guarded_candidate_schedule
     (state : List StateDecl) (sourceEntry : Entrypoint) (rewrites : Zkir.Rewrites)
     (expected : Native.Expected) (plan : Impact.Plan)
@@ -77,18 +78,7 @@ theorem lower_checked_guarded_candidate_schedule
     (admitted : ScalarCircuitAdmission sourceEntry.circuit)
     (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
     (guardsAdmitted : ∀ condition, some condition ∈ sourceEntry.effectGuards →
-      ScalarExpression condition)
-    (plainReads : ∀ readSpec ∈ plan.reads.drop
-        (Impact.publicInputReadCount sourceEntry.circuit.inputs),
-      readSpec.components = [] ∧ (scalarType? readSpec.ty).isSome = _root_.Bool.true ∧
-        readSpec.ty.validate {poseidon2 := _root_.Bool.true, stateCells := _root_.Bool.true, stateMaps := _root_.Bool.true} = .ok ())
-    (separateReads : ∀ readSpec ∈ plan.reads.drop
-        (Impact.publicInputReadCount sourceEntry.circuit.inputs),
-      readSpec.name ∉ sourceEntry.circuit.inputs.map (·.name) ++
-        sourceEntry.circuit.outputs.map (·.name))
-    (distinctReads : (plan.reads.drop
-      (Impact.publicInputReadCount sourceEntry.circuit.inputs)).Pairwise
-      (fun left right => left.name ≠ right.name)) :
+      ScalarExpression condition) :
     let ep := Passes.pruneEntrypoint sourceEntry
     let reads := plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)
     (GuardedZkirArtifact.decodeBytes bytes).map GuardedZkirArtifact.View.rows = .ok rows ∧
@@ -104,6 +94,8 @@ theorem lower_checked_guarded_candidate_schedule
       NativeState.groups active = (observations.filter (·.active)).map (·.payload) := by
   let ep := Passes.pruneEntrypoint sourceEntry
   let reads := plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)
+  obtain ⟨plainReads, separateReads, distinctReads⟩ :=
+    ScalarGuardedReadAdmission.lower_read_admission state ep plan planAccepted effects
   have inputScope : ∀ input ∈ ep.circuit.inputs, Nonempty (ScalarType input.ty) := by
     intro input present
     obtain ⟨_, _, canonical⟩ := inputs.complete input present
