@@ -25,7 +25,7 @@ private theorem appendEffect_readCell_read_suffix (state : List StateDecl)
     (step : Impact.appendEffect state (.readCell name destination ty) before =
       .ok after) :
     ∃ read, after.reads = before.reads ++ [read] ∧
-      read.name = destination ∧ read.ty = ty := by
+      read.name = destination ∧ read.ty = ty ∧ read.components = [] := by
   simp only [Impact.appendEffect, bind_ok] at step
   rcases step with ⟨slot, slotAccepted, value, valueAccepted, resultAccepted⟩
   simp only [Pure.pure, Except.pure] at resultAccepted
@@ -35,7 +35,7 @@ private theorem appendEffect_readCell_read_suffix (state : List StateDecl)
   have readsShape : after.reads = before.reads ++ [read] := by
     simp [read, stateEq.symm]
   exact ⟨read, readsShape, by simp [read, stateEq.symm],
-    by simp [read, stateEq.symm]⟩
+    by simp [read, stateEq.symm], by simp [read, stateEq.symm]⟩
 
 private theorem appendEffectWithActivity_readCell_wrapper_shape
     (state : List StateDecl) (name destination : String) (ty : Ty)
@@ -291,7 +291,7 @@ theorem appendEffectWithActivity_readCell_provenance
   obtain ⟨result, wrapperRead, appendAccepted, wrapperReadAt, wrapperShape⟩ :=
     appendEffectWithActivity_readCell_wrapper_shape state name destination ty condition
       before after step
-  obtain ⟨sourceRead, readsShape, sourceName, sourceTy⟩ :=
+  obtain ⟨sourceRead, readsShape, sourceName, sourceTy, _⟩ :=
     appendEffect_readCell_read_suffix state name destination ty before result appendAccepted
   have sourceReadAt : result.reads[before.reads.length]? = some sourceRead := by
     rw [readsShape]
@@ -338,6 +338,33 @@ theorem appendEffectWithActivity_readCell_provenance
           List.replicate 3 (some condition) := by rw [appendedCount]
   exact ⟨slot, value, read, readFields.1, readFields.2.1, readFields.2.2,
     readsOut, operationsOut, guardsOut⟩
+
+theorem appendEffectWithActivity_readCell_components_empty
+    (state : List StateDecl) (name destination : String) (ty : Ty)
+    (condition : Expr .bool) (before after : Impact.Plan)
+    (step : Impact.appendEffectWithActivity state (.readCell name destination ty)
+      (some condition) before = .ok after) :
+    ∃ read, after.reads = before.reads ++ [read] ∧ read.components = [] := by
+  obtain ⟨result, wrapperRead, appendAccepted, wrapperReadAt, wrapperShape⟩ :=
+    appendEffectWithActivity_readCell_wrapper_shape state name destination ty condition
+      before after step
+  obtain ⟨sourceRead, readsShape, _, _, sourceComponents⟩ :=
+    appendEffect_readCell_read_suffix state name destination ty before result appendAccepted
+  have sourceReadAt : result.reads[before.reads.length]? = some sourceRead := by
+    rw [readsShape]
+    simp
+  have wrapperReadEq : wrapperRead = sourceRead :=
+    Option.some.inj (wrapperReadAt.symm.trans sourceReadAt)
+  let read : Impact.Read := {sourceRead with guard := some condition}
+  have readsOut : after.reads = before.reads ++ [read] := by
+    have projected := congrArg (fun plan : Impact.Plan => plan.reads) wrapperShape
+    have updatedReads :
+        result.reads.take before.reads.length ++
+          [{wrapperRead with guard := some condition}] = before.reads ++ [read] := by
+      rw [wrapperReadEq, readsShape]
+      simp [read]
+    exact projected.symm.trans updatedReads
+  exact ⟨read, readsOut, by simp [read, sourceComponents]⟩
 
 /-- A guarded cell read appends the same operations as an unguarded
 empty-plan read, with the source guard attached to its read descriptor. -/

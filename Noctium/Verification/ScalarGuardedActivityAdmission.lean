@@ -1,5 +1,6 @@
 import Noctium.Verification.ScalarGuardedPlanAdmission
 import Noctium.Verification.GuardedPlanActivity
+import Noctium.Verification.GenericStateEffectValidation
 
 namespace Noctium.Verification.ScalarGuardedActivityAdmission
 
@@ -45,6 +46,65 @@ private theorem scalar_effect_guarded_read_effect
     | requireAbsent name keyTy key keyScalar keyAdmitted =>
       exact False.elim (ScalarRequireOperationAdmission.append_requireAbsent_guarded_rejected
         state name keyTy key condition before after accepted)
+
+private theorem guarded_scalar_read_scope_of_trace
+    {state : List StateDecl} {guards : List (Option (Expr .bool))}
+    {items : List (Effect × Nat)} {initial final : Impact.Plan} {offsets : List Nat}
+    (trace : Impact.GuardedEffectTrace state guards items initial final offsets)
+    (effects : ∀ item ∈ items, ScalarEffect state item.1) :
+    GuardedScalarReadEffects guards items := by
+  induction trace with
+  | nil plan =>
+    intro item member
+    simp at member
+  | @cons item rest before next final offsets step tail ih =>
+    intro found member
+    rcases List.mem_cons.mp member with head | later
+    · cases head
+      exact scalar_effect_guarded_read_effect state item.1
+        (guards[item.2]?.getD none) before next (effects item (by simp)) step
+    · exact ih (fun remaining remainingMember =>
+        effects remaining (List.mem_cons_of_mem item remainingMember)) found later
+
+/-- Accepted scalar lowering ties every indexed effect's read scope to the
+actual guard used by the production append. Guarded absence remains excluded
+by the accepted append check in `scalar_effect_guarded_read_effect`. -/
+theorem lower_guarded_scalar_read_scope (state : List StateDecl) (ep : Entrypoint)
+    (plan : Impact.Plan) (lowered : Impact.lower state ep = .ok plan)
+    (effects : ∀ effect ∈ ep.effects, ScalarEffect state effect) :
+    GenericStateCheckedReadTrace.GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx := by
+  obtain ⟨_, inputPlan, _, _, trace⟩ :=
+    GenericStateAdmissionPrefix.lower_guarded_effect_trace state ep plan lowered
+  apply guarded_scalar_read_scope_of_trace trace
+  intro item member
+  apply effects item.1
+  rw [← List.zipIdx_map_fst 0 ep.effects]
+  exact List.mem_map_of_mem member
+
+/-- Scalar guarded-plan admission provides the shape needed by generic
+state-effect folds. -/
+theorem scalar_state_effects_of_admitted (state : List StateDecl) (effects : List Effect)
+    (admitted : ∀ effect ∈ effects, ScalarEffect state effect) :
+    GenericStateEffectValidation.ScalarStateEffects effects := by
+  induction effects with
+  | nil => exact .nil
+  | cons effect rest ih =>
+    apply GenericStateEffectValidation.ScalarStateEffects.cons
+    · have source := admitted effect (by simp)
+      cases source with
+      | cell effect cell operand =>
+        cases cell <;> constructor
+      | readMap name destination keyTy valueTy key keyScalar valueScalar keyAdmitted =>
+        exact GenericStateEffectValidation.ScalarStateEffect.readMap ..
+      | writeMap name keyTy valueTy key value keyScalar valueScalar keyAdmitted valueAdmitted =>
+        exact GenericStateEffectValidation.ScalarStateEffect.writeMap ..
+      | require condition conditionAdmitted =>
+        exact GenericStateEffectValidation.ScalarStateEffect.require ..
+      | requireAbsent name keyTy key keyScalar keyAdmitted =>
+        exact GenericStateEffectValidation.ScalarStateEffect.requireAbsent ..
+    · apply ih
+      intro remaining member
+      exact admitted remaining (List.mem_cons_of_mem effect member)
 
 private theorem trace_operation_guard_mem
     {state : List StateDecl} {guards : List (Option (Expr .bool))}
