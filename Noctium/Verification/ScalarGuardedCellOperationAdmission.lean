@@ -14,7 +14,8 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
-private theorem appendEffectWithActivity_readCell_raw
+/-- A guarded Cell read keeps the operations of its accepted raw append. -/
+theorem appendEffectWithActivity_readCell_raw
     (state : List StateDecl) (name destination : String) (ty : Ty)
     (condition : Expr .bool) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state

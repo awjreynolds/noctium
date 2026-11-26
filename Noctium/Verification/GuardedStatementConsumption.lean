@@ -343,7 +343,8 @@ private theorem scheduledPayload_aligned (encode : α → List Scalar)
           simp [observationFields]
           exact zeroPayload.symm
 
-private theorem activePayloads_filter (observations : List Observation) :
+/-- Flatten only the active groups, preserving their original order. -/
+theorem activePayloads_filter (observations : List Observation) :
     activePayloads observations =
       ((observations.filter (·.active)).map Observation.payload).flatten := by
   induction observations with
