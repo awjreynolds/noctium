@@ -133,7 +133,7 @@ theorem collectOperations_group_widths (span : SourceSpan)
     collectedWidths operations pieces piecesAccepted
 
 /-- Each supported scalar VM operation has one ordered public field group. -/
-private theorem fieldGroups_eq_singleton {operation : Impact.Op}
+theorem fieldGroups_eq_singleton {operation : Impact.Op}
     (supported : GenericStateOps.ScalarOperation operation) :
     operation.fieldGroups = [operation.fields] := by
   cases operation <;> simp_all [GenericStateOps.ScalarOperation, Impact.Op.fieldGroups]

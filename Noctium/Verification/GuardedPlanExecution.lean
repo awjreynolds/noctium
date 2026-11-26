@@ -92,6 +92,117 @@ def evalPlan (ctx : EvalContext) (complete : EvalEnv) (plan : Impact.Plan) :
     evalPlanBody ctx complete plan
   else .error "Impact operation activity guard count mismatch"
 
+/-- Keep native operations whose corresponding activity is true or absent. -/
+def activeOperations (native : List NativeState.Op)
+    (activities : List (Option Bool)) : List NativeState.Op :=
+  (native.zip activities).filterMap fun item =>
+    if item.2.getD true then some item.1 else none
+
+/-- A successful scalar plan evaluation emits one native operation per source
+operation, which lets downstream proofs align native values with activities. -/
+theorem scalar_evalPlan_length (ctx : EvalContext) (complete : EvalEnv)
+    (plan : Impact.Plan) (unfiltered : List NativeState.Op)
+    (scalar : GenericStateOps.evalPlan ctx complete plan = .ok unfiltered) :
+    unfiltered.length = plan.operations.length := by
+  have operationLength (operations : List Impact.Op) (native : List NativeState.Op)
+      (accepted : operations.mapM (GenericStateOps.evalOp ctx complete) = .ok native) :
+      native.length = operations.length := by
+    induction operations generalizing native with
+    | nil =>
+        simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at accepted
+        subst native
+        simp
+    | cons operation operations ih =>
+        simp only [List.mapM_cons] at accepted
+        change (GenericStateOps.evalOp ctx complete operation >>= fun head =>
+          (operations.mapM (GenericStateOps.evalOp ctx complete) >>= fun tail =>
+            pure (head :: tail))) = .ok native at accepted
+        simp only [bind_ok] at accepted
+        obtain ⟨head, headAccepted, tailValues, tailAccepted, result⟩ := accepted
+        cases result
+        have tailLength := ih tailValues tailAccepted
+        simp [tailLength]
+  exact operationLength plan.operations unfiltered
+    (by simpa only [GenericStateOps.evalPlan] using scalar)
+
+private theorem evalOperations_active (ctx : EvalContext) (complete : EvalEnv)
+    (operations : List Impact.Op) (activities : List (Option Bool))
+    (unfiltered : List NativeState.Op)
+    (scalar : operations.mapM (GenericStateOps.evalOp ctx complete) = .ok unfiltered) :
+    ∃ groups,
+      (operations.zip activities).mapM (fun (operation, activity) =>
+        evalOperation ctx complete activity operation) = .ok groups ∧
+      groups.flatten = activeOperations unfiltered activities := by
+  induction operations generalizing activities unfiltered with
+  | nil =>
+      simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at scalar
+      subst unfiltered
+      exact ⟨[], by cases activities <;> rfl,
+        by simp [activeOperations]⟩
+  | cons operation operations ih =>
+      cases activities with
+      | nil => exact ⟨[], by simp only [List.zip_nil_right, List.mapM_nil]; rfl,
+        by simp [activeOperations]⟩
+      | cons activity activities =>
+          simp only [List.mapM_cons] at scalar
+          change (GenericStateOps.evalOp ctx complete operation >>= fun head =>
+            (operations.mapM (GenericStateOps.evalOp ctx complete) >>= fun tail =>
+              pure (head :: tail))) = .ok unfiltered at scalar
+          simp only [bind_ok] at scalar
+          obtain ⟨value, headEval, values, tailEval, result⟩ := scalar
+          cases result
+          obtain ⟨tailGroups, groupsEvalTail, tailFlatten⟩ :=
+            ih activities values tailEval
+          cases active : activity.getD true with
+          | false =>
+              have operationEval :
+                  evalOperation ctx complete activity operation = .ok [] := by
+                simp [evalOperation, active]
+              have groupsEval :
+                  ((operation :: operations).zip (activity :: activities)).mapM
+                    (fun (operation, activity) =>
+                      evalOperation ctx complete activity operation) =
+                    .ok ([] :: tailGroups) := by
+                simp only [List.zip_cons_cons, List.mapM_cons,
+                  operationEval, groupsEvalTail]
+                rfl
+              refine ⟨[] :: tailGroups, groupsEval, ?_⟩
+              simpa [activeOperations, active] using tailFlatten
+          | true =>
+              have operationEval :
+                  evalOperation ctx complete activity operation = .ok [value] := by
+                simp only [evalOperation, active, headEval, Except.map]
+                rfl
+              have groupsEval :
+                  ((operation :: operations).zip (activity :: activities)).mapM
+                    (fun (operation, activity) =>
+                      evalOperation ctx complete activity operation) =
+                    .ok ([value] :: tailGroups) := by
+                simp only [List.zip_cons_cons, List.mapM_cons,
+                  operationEval, groupsEvalTail]
+                rfl
+              refine ⟨[value] :: tailGroups, groupsEval, ?_⟩
+              simpa [activeOperations, active] using tailFlatten
+
+/-- A successful scalar plan schedule followed by its evaluated guards keeps
+exactly the active native operations in source order. -/
+theorem evalPlan_of_scalar_schedule (ctx : EvalContext) (complete : EvalEnv)
+    (plan : Impact.Plan) (unfiltered : List NativeState.Op)
+    (activities : List (Option Bool))
+    (aligned : (GuardedPlanActivity.operationGuards plan).length = plan.operations.length)
+    (scalar : GenericStateOps.evalPlan ctx complete plan = .ok unfiltered)
+    (guards : (GuardedPlanActivity.operationGuards plan).mapM
+      (evalActivity ctx complete) = .ok activities) :
+    evalPlan ctx complete plan = .ok (activeOperations unfiltered activities) := by
+  have ⟨groups, groupEval, groupFlatten⟩ :=
+    evalOperations_active ctx complete plan.operations activities unfiltered
+      (by simpa only [GenericStateOps.evalPlan] using scalar)
+  unfold evalPlan
+  rw [ite_eq_left aligned]
+  unfold evalPlanBody
+  simp only [guards, groupEval]
+  rw [groupFlatten]
+
 /-- With an unconditional activity schedule, the guard-aware evaluator
 performs exactly the same ordered operations and errors as the scalar evaluator. -/
 theorem evalPlan_eq_scalar_of_unguarded (ctx : EvalContext) (complete : EvalEnv)
