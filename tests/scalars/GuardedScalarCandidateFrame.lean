@@ -1,5 +1,6 @@
 import Noctium.Frontend
 import Noctium.Verification.GuardedScalarCandidateSchedule
+import Noctium.Verification.GuardedScalarCandidateState
 import Noctium.Verification.ScalarGuardedReadAdmission
 
 open scoped Noctium
@@ -236,5 +237,35 @@ theorem guarded_candidate_frame_exact :
   subst result
   subst candidates
   exact ⟨expectedFrame, normalized_frame, rfl, circuit_run, decoded_reads, environment⟩
+
+private def matchingLedger : LedgerState := {
+  maps := [("balances", [(.native 17, .native 41)])]
+}
+
+private def matchingMachine : NativeState.Machine := {
+  stack := [.vector [.map [(scalar 17, scalar 41)]]]
+  reads := [NativeState.field (scalar 1), NativeState.field (scalar 41)]
+}
+
+private def mutatedAssignment : Assignment := fun identifier =>
+  if identifier == "%input_enabled" then scalar 1 else
+  if identifier == "%input_saved" then scalar 42 else zero
+
+#guard GenericStateEncoding.encodeInitialState state matchingLedger ==
+  some [.map [(scalar 17, scalar 41)]]
+
+#guard match GenericStateEncoding.encodeInitialState state matchingLedger with
+  | some slots =>
+      GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
+        values assignment slots == some matchingMachine
+  | none => _root_.Bool.false
+
+-- The active key stays 17. A candidate value of 42 must fail against the
+-- encoded map entry, which stores 41.
+#guard match GenericStateEncoding.encodeInitialState state matchingLedger with
+  | some slots =>
+      (GuardedScalarCandidateState.runCheckedCandidates context fixtureEntry plan
+        values mutatedAssignment slots).isNone
+  | none => _root_.Bool.false
 
 end GuardedScalarCandidateFrameProof

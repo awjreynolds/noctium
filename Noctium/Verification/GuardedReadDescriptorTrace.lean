@@ -11,6 +11,16 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
+private theorem selected_guard_mem (guards : List (Option (Expr .bool)))
+    (index : Nat) (condition : Expr .bool)
+    (selected : guards[index]?.getD none = some condition) :
+    some condition ∈ guards := by
+  cases found : guards[index]? with
+  | none => simp [found] at selected
+  | some guard =>
+    have same : guard = some condition := by simpa [found] using selected
+    exact same ▸ List.mem_of_getElem? found
+
 /-- Every supported source effect preserves the current read tape as a prefix.
 The suffix may contain an absence witness as well as scalar read descriptors. -/
 private theorem appendEffectWithActivity_guarded_reads_append
@@ -18,7 +28,7 @@ private theorem appendEffectWithActivity_guarded_reads_append
     (scope : GuardedScalarReadEffect guard effect) (before after : Impact.Plan)
     (accepted : Impact.appendEffectWithActivity state effect guard before = .ok after) :
     ∃ added, after.reads = before.reads ++ added ∧
-      ∀ read ∈ added, read.components = [] := by
+      ∀ read ∈ added, read.components = [] ∧ read.guard = guard := by
   cases scope with
   | unguarded sourceScope =>
     obtain ⟨raw, appended, _, sameReads⟩ :=
@@ -38,7 +48,7 @@ private theorem appendEffectWithActivity_guarded_reads_append
         intro item member
         have itemEq := List.mem_singleton.mp member
         subst item
-        exact componentsEmpty⟩
+        exact ⟨componentsEmpty, by simp [read, stateEq.symm]⟩⟩
     | readMap name destination keyTy valueTy key =>
       have readsShape := GuardedEffectPrefix.appendEffect_readMap_read_suffix
         state name destination keyTy valueTy key before raw appended
@@ -46,7 +56,7 @@ private theorem appendEffectWithActivity_guarded_reads_append
         intro item member
         have itemEq := List.mem_singleton.mp member
         subst item
-        rfl⟩
+        exact ⟨rfl, rfl⟩⟩
     | requireAbsent name keyTy key =>
       simp only [Impact.appendEffect, bind_ok] at appended
       obtain ⟨_, _, _, _, resultAccepted⟩ := appended
@@ -61,7 +71,7 @@ private theorem appendEffectWithActivity_guarded_reads_append
         intro item member
         have itemEq := List.mem_singleton.mp member
         subst item
-        exact componentsEmpty⟩
+        exact ⟨componentsEmpty, by simp [read, stateEq.symm]⟩⟩
     | require condition =>
       simp only [Impact.appendEffect] at appended
       have resultEq := Except.ok.inj appended
@@ -101,14 +111,20 @@ private theorem appendEffectWithActivity_guarded_reads_append
         intro read member
         simp at member⟩
   | readCell condition name destination ty =>
-    obtain ⟨read, readsShape, componentsEmpty⟩ :=
+    obtain ⟨_, _, read, _, _, readGuard, readsShape, _, _⟩ :=
+      GuardedEffectPrefix.appendEffectWithActivity_readCell_provenance
+        state name destination ty condition before after accepted
+    obtain ⟨componentRead, componentReadsShape, componentsEmpty⟩ :=
       GuardedEffectPrefix.appendEffectWithActivity_readCell_components_empty
         state name destination ty condition before after accepted
+    have suffixEq := List.append_cancel_left (readsShape.symm.trans componentReadsShape)
+    have readEq : read = componentRead := by
+      exact (List.cons.inj suffixEq).1
     exact ⟨[read], readsShape, by
       intro item member
       have itemEq := List.mem_singleton.mp member
       subst item
-      exact componentsEmpty⟩
+      exact ⟨readEq ▸ componentsEmpty, readGuard⟩⟩
   | readMap condition name destination keyTy valueTy key =>
     have readsShape := GuardedEffectPrefix.appendEffectWithActivity_readMap_read_suffix
       state name destination keyTy valueTy key condition before after accepted
@@ -116,7 +132,7 @@ private theorem appendEffectWithActivity_guarded_reads_append
       intro item member
       have itemEq := List.mem_singleton.mp member
       subst item
-      rfl⟩
+      exact ⟨rfl, rfl⟩⟩
   | writeCell condition name ty value =>
     have readsSame := GuardedEffectPrefix.appendEffectWithActivity_guarded_writeCell_no_reads
       state name ty value condition before after accepted
@@ -151,7 +167,8 @@ private theorem guardedTrace_reads_append
     (scope : GuardedScalarReadEffects guards items)
     (trace : Impact.GuardedEffectTrace state guards items initial result offsets) :
     ∃ added, result.reads = initial.reads ++ added ∧
-      ∀ read ∈ added, read.components = [] := by
+      ∀ read ∈ added, read.components = [] ∧
+        ∀ condition, read.guard = some condition → some condition ∈ guards := by
   induction trace with
   | nil => exact ⟨[], by simp⟩
   | @cons item rest before next result offsets step tail ih =>
@@ -172,7 +189,12 @@ private theorem guardedTrace_reads_append
       simp [List.append_assoc]
     · intro read member
       rcases List.mem_append.mp member with head | tail
-      · exact headComponents read head
+      · rcases headComponents read head with ⟨components, guardShape⟩
+        refine ⟨components, ?_⟩
+        intro condition readGuard
+        have selected : guards[item.2]?.getD none = some condition :=
+          guardShape.symm.trans readGuard
+        exact selected_guard_mem guards item.2 condition selected
       · exact tailComponents read tail
 
 private theorem guardedTrace_read_descriptor
@@ -230,18 +252,16 @@ private theorem descriptor_mem_after_public_prefix
   rw [readsShape]
   simp
 
-/-- Every descriptor emitted by the accepted scoped effect trace after the
-public-input prefix has an empty component list. This includes generated
-absence witnesses from unguarded requireAbsent effects. -/
-theorem lower_post_public_read_components
+private theorem lower_post_public_read_facts
     (state : List StateDecl) (ep : Entrypoint) (plan : Impact.Plan)
     (lowered : Impact.lower state ep = .ok plan)
     (scope : GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx) :
-    ∀ readSpec ∈ plan.reads.drop
-      (Impact.publicInputReadCount ep.circuit.inputs), readSpec.components = [] := by
+    ∀ readSpec ∈ plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs),
+      readSpec.components = [] ∧
+        ∀ guard, readSpec.guard = some guard → some guard ∈ ep.effectGuards := by
   obtain ⟨_, inputPlan, _, prefixAccepted, trace⟩ :=
     GenericStateAdmissionPrefix.lower_guarded_effect_trace state ep plan lowered
-  obtain ⟨added, readsShape, componentsEmpty⟩ :=
+  obtain ⟨added, readsShape, readFacts⟩ :=
     guardedTrace_reads_append state ep.effectGuards ep.effects.zipIdx inputPlan plan _
       scope trace
   have inputCount := GenericStateAdmissionPrefix.publicInputPlan_readCount
@@ -252,7 +272,33 @@ theorem lower_post_public_read_components
     simp
   intro readSpec member
   rw [postReads] at member
-  exact componentsEmpty readSpec member
+  exact readFacts readSpec member
+
+/-- Every descriptor emitted by the accepted scoped effect trace after the
+public-input prefix has an empty component list. This includes generated
+absence witnesses from unguarded requireAbsent effects. -/
+theorem lower_post_public_read_components
+    (state : List StateDecl) (ep : Entrypoint) (plan : Impact.Plan)
+    (lowered : Impact.lower state ep = .ok plan)
+    (scope : GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx) :
+    ∀ readSpec ∈ plan.reads.drop
+      (Impact.publicInputReadCount ep.circuit.inputs), readSpec.components = [] := by
+  intro readSpec member
+  exact (lower_post_public_read_facts state ep plan lowered scope readSpec member).1
+
+/-- Every guarded descriptor after the public-input prefix carries a guard
+from the source entrypoint's effect guards. Unguarded generated absence
+witnesses retain `none` through the same accepted read trace. -/
+theorem lower_post_public_read_guard_mem
+    (state : List StateDecl) (ep : Entrypoint) (plan : Impact.Plan)
+    (lowered : Impact.lower state ep = .ok plan)
+    (scope : GuardedScalarReadEffects ep.effectGuards ep.effects.zipIdx) :
+    ∀ readSpec ∈ plan.reads.drop
+      (Impact.publicInputReadCount ep.circuit.inputs),
+        ∀ guard, readSpec.guard = some guard → some guard ∈ ep.effectGuards := by
+  intro readSpec member guard guarded
+  exact (lower_post_public_read_facts state ep plan lowered scope readSpec member).2
+    guard guarded
 
 /-- An indexed guarded Cell read in the scoped source fragment has the exact
 descriptor emitted by accepted production lowering, after the public-input
