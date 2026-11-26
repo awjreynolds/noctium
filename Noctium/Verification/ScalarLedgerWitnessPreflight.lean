@@ -1,4 +1,4 @@
-import Noctium.Verification.ScalarAllocationOutputFrame
+import Noctium.Verification.GenericStateLedgerAllocation
 import Noctium.Verification.ScalarCallHeaderProjection
 import Noctium.Verification.ScalarCallInstructionProjection
 import Noctium.Verification.NativeInputOrdinalTrace
@@ -7,7 +7,7 @@ import Noctium.Verification.ScalarValidationRawSeedMeaning
 namespace Noctium.Verification.ScalarLedgerWitnessPreflight
 
 open Lean Backend Backend.Native NativeRelation NativeRelationJson ScalarNormalization
-open NativeInputOrdinalTrace ScalarAllocationOutputFrame ScalarValidationOpcodeProfile
+open NativeInputOrdinalTrace ScalarValidationOpcodeProfile
 open ScalarValidationArithmeticLoop
 
 /-- The default raw call uses the actual instruction array of the pruned
@@ -106,8 +106,8 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
   obtain ⟨header, body, identifiers⟩ :=
     validate_scalarCall_input_schedule nativeAccepted decoded parsed decodedRows profile
       (schema expected expectedAccepted)
-  obtain ⟨boundedPlan, boundedAccepted, budget, _⟩ :=
-    lowerEntrypoint_names_fit_outputCapacity state entry json lowered
+  obtain ⟨boundedPlan, boundedAccepted, budget⟩ :=
+    GenericStateLedgerAllocation.lowerEntrypoint_budget state entry json lowered
   have sameBounded := Except.ok.inj (boundedAccepted.symm.trans planAccepted)
   subst boundedPlan
   have instructionBudget :=

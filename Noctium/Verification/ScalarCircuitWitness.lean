@@ -45,8 +45,6 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
     (scalarAdmission : ScalarCircuitAdmission circuit)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows circuit).toList.zipIdx relation.instructions = true)
     (success : circuit.run ctx values = .ok result) :
     ∃ witness, InputFrame inputs witness ∧
       ∀ instruction ∈ relation.instructions, instruction.Holds hash witness := by
@@ -66,7 +64,7 @@ theorem lowerCircuit_construct_witness (ctx : EvalContext) (hash : Hash)
   have acceptedSource := (expectedCircuit_parts pruned expected expectedAccepted).1
   have validation := circuit_validation_parts pruned acceptedSource
   obtain ⟨names, capacity, rows, _⟩ := ScalarTranslationSoundness.lowerCircuit_witness_preflight
-    circuit admitted lowered decoded profile
+    circuit admitted lowered decoded
   have inputCompletion := completes_circuit_inputs hash inputs pruned values prunedInputs names
   have constraintCompletion := completes_circuit_constraints ctx hash implementation pruned values inputs
     prunedInputs names prunedAdmission prunedConditions validation.1 steps.1
@@ -118,7 +116,7 @@ theorem lowerCircuit_complete (ctx : EvalContext) (hash : Hash)
         (result.map (fun pair => scalar (valueNumber pair.2))) := by
   obtain ⟨witness, frame, holds⟩ := lowerCircuit_construct_witness ctx hash implementation
     circuit values result inputs json relation admitted scalarAdmission
-    lowered decoded profile success
+    lowered decoded success
   exact ⟨witness, frame, ScalarTranslationSoundness.lowerCircuit_complete_of_witness
     ctx hash implementation circuit values result json relation inputs witness admitted scalarAdmission
     lowered decoded profile success frame holds⟩

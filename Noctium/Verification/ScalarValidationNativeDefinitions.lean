@@ -879,9 +879,12 @@ theorem empty_nativeDefinitions : NativeDefinitions ({} : State) := by
   intro identifier fact found
   simp at found
 
-theorem nativeDefinitions_step {expected : Expected} {state next : State}
+theorem nativeDefinitions_step_of_selected_schema
+    {expected : Expected} {state next : State}
     {raw : Json} {instruction : Instruction}
-    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (inputSchema : ∀ {visibility output}, instruction = .input visibility output →
+      ∀ requirement, expected.inputs[state.inputCount]? = some requirement →
+        requirement.ty.isForeign = false)
     (nativeDefinitions : NativeDefinitions state)
     (step : NativeDefinitionStep raw instruction)
     (accepted : validateInstruction expected state raw = .ok next) :
@@ -892,8 +895,7 @@ theorem nativeDefinitions_step {expected : Expected} {state next : State}
         .ok (inputOpcode .public) := by simpa [inputOpcode] using opcode
     obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
       (visibility := .public) parsedOpcode accepted
-    have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-    have nonforeignInput := inputSchema requirement member
+    have nonforeignInput := inputSchema rfl requirement selected
     cases guarded : requirement.activityGuard with
     | none =>
       exact input_nativeDefinitions_step (visibility := .public) nativeDefinitions selected
@@ -906,8 +908,7 @@ theorem nativeDefinitions_step {expected : Expected} {state next : State}
         .ok (inputOpcode .private) := by simpa [inputOpcode] using opcode
     obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
       (visibility := .private) parsedOpcode accepted
-    have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
-    have nonforeignInput := inputSchema requirement member
+    have nonforeignInput := inputSchema rfl requirement selected
     have unguarded := accepted_private_input_unguarded selected parsedOpcode accepted
     exact input_nativeDefinitions_step (visibility := .private) nativeDefinitions selected
       nonforeignInput unguarded parsedOpcode accepted
@@ -947,6 +948,17 @@ theorem nativeDefinitions_step {expected : Expected} {state next : State}
   | output _ opcode => exact accepted_output_nativeDefinitions nativeDefinitions opcode accepted
   | constrainEq _ _ opcode =>
       exact accepted_constrainEq_nativeDefinitions nativeDefinitions opcode accepted
+
+theorem nativeDefinitions_step {expected : Expected} {state next : State}
+    {raw : Json} {instruction : Instruction}
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (nativeDefinitions : NativeDefinitions state)
+    (step : NativeDefinitionStep raw instruction)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    NativeDefinitions next := by
+  apply nativeDefinitions_step_of_selected_schema
+    (fun _ requirement selected => inputSchema requirement (List.mem_of_getElem? selected))
+    nativeDefinitions step accepted
 
 /-- Derive the final native-definition invariant from the actual decoded
 instruction list and the producer's ordered validation fold. -/

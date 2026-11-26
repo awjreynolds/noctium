@@ -2,6 +2,7 @@ import Noctium.Compiler
 import Noctium.Backend.Zkir
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarWitness
+import Noctium.Verification.ScalarAdmission
 import Noctium.Verification.ScalarExpressionNativeTree
 
 open Lean Noctium Noctium.Backend Noctium.Verification
@@ -64,3 +65,26 @@ theorem twoInputAddition_witness (hash : Hash) (base : Assignment)
     · simp [Instruction.Holds, Operand.read, assign]
     · simp [Instruction.Holds, Operand.read]
     · simp [Instruction.Holds]
+
+private def emptyPrivateInput : Circuit := {
+  name := "emptyPrivateInput"
+  inputs := [{name := "empty", ty := .bytes 0, visibility := .private}]
+  outputs := [{name := "constant", ty := .native, value := .native 1}]
+}
+
+-- A declared Bytes0 input has no native input descriptor.
+#guard match Zkir.lowerCircuit emptyPrivateInput with
+  | .ok json =>
+    match NativeRelationJson.decode json with
+    | .ok program =>
+      (program.instructions.flatMap NativeInputOrdinalTrace.strictInstructionInputDescriptors).isEmpty
+    | .error _ => Bool.false
+  | .error _ => Bool.false
+
+example (json : Json) (program : Program)
+    (lowered : Zkir.lowerCircuit emptyPrivateInput = .ok json)
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    program.instructions.flatMap NativeInputOrdinalTrace.strictInstructionInputDescriptors = [] := by
+  have noRequirements : emptyPrivateInput.inputs.flatMap Native.Input.requirements = [] := rfl
+  simpa only [noRequirements, List.map_nil] using
+    (ScalarAdmission.lowerCircuit_admission emptyPrivateInput json program lowered decoded).2.1

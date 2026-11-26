@@ -91,6 +91,11 @@ private theorem mapM_length {function : α → Except String β} {values : List 
         have tailSuccess : rest.mapM function = .ok tail := tailResult
         simp only [List.length_cons, ih tailSuccess]
 
+theorem decodedRows_count {rows : Array Json} {instructions : List Instruction}
+    (decoded : rows.toList.mapM NativeRelationJson.decodeInstruction = .ok instructions) :
+    rows.size = instructions.length := by
+  simpa using (mapM_length decoded).symm
+
 /-- Bounds from the accepted row array apply after decoding, including
 call decoders that project the raw header separately. -/
 theorem decodedRows_budget {expected : Native.Expected} {json : Json}
@@ -102,8 +107,8 @@ theorem decodedRows_budget {expected : Native.Expected} {json : Json}
   obtain ⟨acceptedRows, acceptedParsed, rowCount, _⟩ :=
     Native.validate_instruction_and_output_bounds validated
   have sameRows : rows = acceptedRows := Except.ok.inj (parsed.symm.trans acceptedParsed)
-  rw [mapM_length decoded, sameRows]
-  simpa using rowCount
+  rw [← decodedRows_count decoded, sameRows]
+  exact rowCount
 
 /-- The production resource limit bounds exactly the rows consumed by
 the strict relation decoder, independently of allocated SSA names. -/

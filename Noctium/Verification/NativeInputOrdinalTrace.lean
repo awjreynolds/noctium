@@ -25,11 +25,13 @@ def strictInstructionInputDescriptors : Instruction → List (Visibility × Stri
 
 /-- A decoded strict-profile row either consumes the next expected input with
 the same visibility and name, or preserves the producer input cursor. -/
-theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expected}
+private theorem accepted_supportedScalarOpcode_input_descriptors_step_of_selected_schema
+    {expected : Expected}
     {state next : State} {raw : Json} {instruction : Instruction}
     (definitions : NativeDefinitions state)
-    (inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = false)
+    (inputSchema : ∀ {visibility output}, instruction = .input visibility output →
+      ∀ requirement, expected.inputs[state.inputCount]? = some requirement →
+        requirement.ty.isForeign = false)
     (step : NativeDefinitionStep raw instruction)
     (accepted : validateInstruction expected state raw = .ok next) :
     (expected.inputs.take next.inputCount).map expectedInputDescriptor =
@@ -42,22 +44,34 @@ theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expect
       have opcodeParsed : Backend.Native.stringField raw "op" =
           .ok (inputOpcode .public) := by
         simpa [inputOpcode] using opcode
-      obtain ⟨requirement, selected, increment⟩ :=
-        accepted_input_row_step inputSchema opcodeParsed accepted
-      have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+      obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+        (visibility := .public) opcodeParsed accepted
+      have nonforeign := inputSchema rfl requirement selected
+      have increment : next.inputCount = state.inputCount + 1 := by
+        cases guard : requirement.activityGuard with
+        | none =>
+          exact accepted_unguarded_input_count_increment .public selected nonforeign
+            guard opcodeParsed accepted
+        | some guardTerm =>
+          exact accepted_guarded_public_input_count_increment selected nonforeign
+            guard opcodeParsed accepted
       obtain ⟨_, decodedDescriptor⟩ := accepted_input_row_descriptor_agrees selected
-        (inputSchema requirement member) opcodeParsed accepted decoded
+        nonforeign opcodeParsed accepted decoded
       rw [increment, List.take_add_one, selected]
       simp [expectedInputDescriptor, strictInstructionInputDescriptors, decodedDescriptor]
     | privateInput output opcode =>
       have opcodeParsed : Backend.Native.stringField raw "op" =
           .ok (inputOpcode .private) := by
         simpa [inputOpcode] using opcode
-      obtain ⟨requirement, selected, increment⟩ :=
-        accepted_input_row_step inputSchema opcodeParsed accepted
-      have member : requirement ∈ expected.inputs := List.mem_of_getElem? selected
+      obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+        (visibility := .private) opcodeParsed accepted
+      have nonforeign := inputSchema rfl requirement selected
+      have unguarded := accepted_private_input_unguarded selected opcodeParsed accepted
+      have increment : next.inputCount = state.inputCount + 1 :=
+        accepted_unguarded_input_count_increment .private selected nonforeign
+          unguarded opcodeParsed accepted
       obtain ⟨_, decodedDescriptor⟩ := accepted_input_row_descriptor_agrees selected
-        (inputSchema requirement member) opcodeParsed accepted decoded
+        nonforeign opcodeParsed accepted decoded
       rw [increment, List.take_add_one, selected]
       simp [expectedInputDescriptor, strictInstructionInputDescriptors, decodedDescriptor]
     | add _ _ _ opcode =>
@@ -126,14 +140,32 @@ theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expect
       rw [unchanged]
       simp [strictInstructionInputDescriptors]
 
-/-- Checked input descriptors compose over the full accepted strict-profile
-trace. Non-input rows preserve the live cursor through producer-specific
-counter lemmas, while input rows advance once and match visibility and name. -/
-theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
-    {items : List (Json × Nat)} {instructions : List Instruction}
-    {initial final : State}
+theorem accepted_supportedScalarOpcode_input_descriptors_step {expected : Expected}
+    {state next : State} {raw : Json} {instruction : Instruction}
+    (definitions : NativeDefinitions state)
     (inputSchema : ∀ requirement ∈ expected.inputs,
       requirement.ty.isForeign = false)
+    (step : NativeDefinitionStep raw instruction)
+    (accepted : validateInstruction expected state raw = .ok next) :
+    (expected.inputs.take next.inputCount).map expectedInputDescriptor =
+      (expected.inputs.take state.inputCount).map expectedInputDescriptor ++
+        strictInstructionInputDescriptors instruction := by
+  apply accepted_supportedScalarOpcode_input_descriptors_step_of_selected_schema
+    definitions (fun _ requirement selected =>
+      inputSchema requirement (List.mem_of_getElem? selected)) step accepted
+
+/-- Accepted input descriptors compose over the full trace when each consumed
+input row supplies its nonforeign fact locally. -/
+private theorem validateInstructionLoop_input_descriptors_of_resolver
+    {expected : Expected}
+    {items : List (Json × Nat)} {instructions : List Instruction}
+    {initial final : State}
+    (inputSchema : ∀ {state next raw instruction},
+      (step : NativeDefinitionStep raw instruction) →
+      validateInstruction expected state raw = .ok next →
+      ∀ {visibility output}, instruction = .input visibility output →
+      ∀ requirement, expected.inputs[state.inputCount]? = some requirement →
+        requirement.ty.isForeign = false)
     (initialDefinitions : NativeDefinitions initial)
     (trace : NativeDefinitionTrace items instructions)
     (accepted : validateInstructionLoop expected items initial = .ok final) :
@@ -151,13 +183,66 @@ theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
     | error message => simp [checked, Bind.bind, Except.bind] at accepted
     | ok next =>
       simp only [checked, bind_pure_comp] at accepted
-      have nextDefinitions := nativeDefinitions_step inputSchema initialDefinitions
-        head checked
-      have headDescriptors := accepted_supportedScalarOpcode_input_descriptors_step
-        initialDefinitions inputSchema head checked
+      have nextDefinitions := nativeDefinitions_step_of_selected_schema
+        (inputSchema head checked) initialDefinitions head checked
+      have headDescriptors := accepted_supportedScalarOpcode_input_descriptors_step_of_selected_schema
+        initialDefinitions (inputSchema head checked) head checked
       have restDescriptors := ih nextDefinitions accepted
       rw [restDescriptors, headDescriptors]
       simp [strictInstructionInputDescriptors, List.append_assoc]
+
+/-- The existing schema-based form specializes the row resolver using its
+global nonforeign premise. -/
+theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
+    {items : List (Json × Nat)} {instructions : List Instruction}
+    {initial final : State}
+    (inputSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false)
+    (initialDefinitions : NativeDefinitions initial)
+    (trace : NativeDefinitionTrace items instructions)
+    (accepted : validateInstructionLoop expected items initial = .ok final) :
+    (expected.inputs.take final.inputCount).map expectedInputDescriptor =
+      (expected.inputs.take initial.inputCount).map expectedInputDescriptor ++
+        instructions.flatMap strictInstructionInputDescriptors := by
+  exact validateInstructionLoop_input_descriptors_of_resolver
+    (fun {_state _next _raw _instruction} _step _accepted {_visibility _output}
+        _instructionEq requirement selected => inputSchema requirement
+      (List.mem_of_getElem? selected)) initialDefinitions trace accepted
+
+private theorem validateInstructionLoop_input_descriptors_of_strict_trace
+    {expected : Expected} {items : List (Json × Nat)} {instructions : List Instruction}
+    {initial final : State}
+    (initialDefinitions : NativeDefinitions initial)
+    (trace : NativeDefinitionTrace items instructions)
+    (accepted : validateInstructionLoop expected items initial = .ok final) :
+    (expected.inputs.take final.inputCount).map expectedInputDescriptor =
+      (expected.inputs.take initial.inputCount).map expectedInputDescriptor ++
+        instructions.flatMap strictInstructionInputDescriptors := by
+  apply validateInstructionLoop_input_descriptors_of_resolver
+    (inputSchema := ?_) initialDefinitions trace accepted
+  intro state next raw instruction step acceptedStep visibility output isInput requirement selected
+  cases isInput
+  cases visibility with
+  | «public» =>
+    cases step with
+    | mk supported decoded =>
+      cases supported with
+      | publicInput output opcode =>
+        have opcodeParsed : Backend.Native.stringField raw "op" =
+            .ok (inputOpcode .public) := by
+          simpa [inputOpcode] using opcode
+        exact accepted_strict_input_requirement_not_foreign selected
+          opcodeParsed acceptedStep decoded
+  | «private» =>
+    cases step with
+    | mk supported decoded =>
+      cases supported with
+      | privateInput output opcode =>
+        have opcodeParsed : Backend.Native.stringField raw "op" =
+            .ok (inputOpcode .private) := by
+          simpa [inputOpcode] using opcode
+        exact accepted_strict_input_requirement_not_foreign selected
+          opcodeParsed acceptedStep decoded
 
 /-- An actually lowered entrypoint whose JSON also passes the strict relation
 decoder and checked scalar opcode profile exposes exactly the producer's
@@ -350,6 +435,58 @@ theorem validate_decoded_input_identifiers_of_checkedScalarProfile
     nativeAccepted decoded rowsParsed profile schema
   obtain ⟨_, trace, _, _⟩ := validate_decoded_input_trace_of_checkedScalarProfile
     nativeAccepted decoded rowsParsed profile
+  have validDescriptors := input_descriptor_identifiers_valid_of_trace trace
+  intro requirement member
+  have descriptorMember : expectedInputDescriptor requirement ∈
+      program.instructions.flatMap strictInstructionInputDescriptors := by
+    rw [descriptors]
+    exact List.mem_map.mpr ⟨requirement, member, rfl⟩
+  change NativeRelationJson.validIdentifier
+    (expectedInputDescriptor requirement).2 = true
+  exact validDescriptors _ descriptorMember
+
+/-- Successful native validation and strict relation decoding fix the exact
+ordered visibility/name list for the expected transcript inputs. The strict
+decoder itself supplies the supported opcode profile, and accepted input rows
+derive their nonforeign type fact from the strict native type spelling. -/
+theorem validate_decoded_input_descriptors
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    program.instructions.flatMap strictInstructionInputDescriptors =
+      expected.inputs.map expectedInputDescriptor := by
+  obtain ⟨rows, _, rowsParsed, decodedRows⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  have decodedItems : ((rows.toList.zipIdx).map Prod.fst).mapM
+      NativeRelationJson.decodeInstruction = .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRows
+  have profile := checkedScalarOpcodeProfile_of_strict_decode decodedItems
+  obtain ⟨final, trace, accepted, finalCount⟩ :=
+    validate_decoded_input_trace_of_checkedScalarProfile
+      nativeAccepted decoded rowsParsed profile
+  have descriptors := validateInstructionLoop_input_descriptors_of_strict_trace
+    empty_nativeDefinitions trace accepted
+  rw [finalCount, (show ({} : State).inputCount = 0 from rfl)] at descriptors
+  simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
+    using descriptors.symm
+
+/-- Every expected input identifier passes the strict decoder's name check,
+as a consequence of actual native validation and successful strict decoding. -/
+theorem validate_decoded_input_identifiers
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    ∀ requirement ∈ expected.inputs,
+      NativeRelationJson.validIdentifier requirement.identifier = true := by
+  have descriptors := validate_decoded_input_descriptors nativeAccepted decoded
+  obtain ⟨rows, _, _, decodedRows⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  have decodedItems : ((rows.toList.zipIdx).map Prod.fst).mapM
+      NativeRelationJson.decodeInstruction = .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRows
+  have profile := checkedScalarOpcodeProfile_of_strict_decode decodedItems
+  have trace : NativeDefinitionTrace (rows.toList.zipIdx) program.instructions := by
+    exact NativeDefinitionTrace.ofDecodedCheckedProfile decodedItems profile
   have validDescriptors := input_descriptor_identifiers_valid_of_trace trace
   intro requirement member
   have descriptorMember : expectedInputDescriptor requirement ∈
