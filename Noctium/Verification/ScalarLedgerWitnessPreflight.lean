@@ -1,4 +1,5 @@
 import Noctium.Verification.GenericStateLedgerAllocation
+import Noctium.Verification.GenericStateLedgerIdentifiers
 import Noctium.Verification.ScalarCallHeaderProjection
 import Noctium.Verification.ScalarCallInstructionProjection
 import Noctium.Verification.NativeInputOrdinalTrace
@@ -114,5 +115,47 @@ theorem lowerEntrypoint_witness_preflight (state : List StateDecl) (entry : Entr
     NativeRelationInstructionProjection.decodedRows_budget nativeAccepted parsed decodedRows
   exact ⟨expected, expectedAccepted, nativeAccepted, parsed, decodedRows, header, body,
     identifiers, budget, instructionBudget⟩
+
+/-- Assemble the admission facts for constructing a witness of the default
+strict ledger relation. Source names are checked for ordinary scalar inputs
+and plain scalar reads, and allocations are bounded by emitted output slots. -/
+theorem lowerEntrypoint_strict_witness_preflight (state : List StateDecl)
+    (entry : Entrypoint) {json : Json} {program : Program}
+    (lowered : Zkir.lowerEntrypoint state entry = .ok json)
+    (decoded : decode json = .ok program) :
+    ∃ plan expected,
+      let ep := Passes.pruneEntrypoint entry
+      Impact.lower state ep = .ok plan ∧
+      Native.expectedEntrypoint state ep = .ok expected ∧
+      Native.validate expected json = .ok () ∧
+      (defaultEntrypointRows entry plan).toList.mapM decodeInstruction =
+        .ok program.instructions ∧
+      expected.rawInputs = [] ∧
+      program.instructions.flatMap strictInstructionInputDescriptors =
+        expected.inputs.map expectedInputDescriptor ∧
+      (∀ input ∈ ep.circuit.inputs, ScalarType input.ty →
+        validIdentifier ("%input_" ++ input.name) = true) ∧
+      (∀ read ∈ plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs),
+        read.components = [] → read.guard = none → ScalarType read.ty →
+          validIdentifier ("%input_" ++ read.name) = true) ∧
+      ((Zkir.lowerEntrypointBody ep plan).run {}).2.next ≤
+        Native.maxInstructions * Native.maxVectorLength ∧
+      program.instructions.length ≤ Native.maxInstructions := by
+  obtain ⟨plan, expected, rows, accepted, expectedAccepted, validated, parsed,
+    exactRows, decodedRows⟩ :=
+    NativeRelationInstructionProjection.lowerEntrypoint_instructionProjection
+      state entry json program lowered decoded
+  have instructionBudget :=
+    NativeRelationInstructionProjection.decodedRows_budget validated parsed decodedRows
+  subst rows
+  obtain ⟨noRawInputs, inputs, reads⟩ := GenericStateLedgerIdentifiers.accepted_input_identifiers
+    state (Passes.pruneEntrypoint entry) plan expected json program accepted
+    expectedAccepted validated decoded
+  obtain ⟨boundedPlan, bounded, capacity⟩ :=
+    GenericStateLedgerAllocation.lowerEntrypoint_budget state entry json lowered
+  have samePlan := Except.ok.inj (bounded.symm.trans accepted)
+  subst boundedPlan
+  exact ⟨plan, expected, accepted, expectedAccepted, validated, decodedRows, noRawInputs,
+    ScalarAdmission.input_schema validated decoded, inputs, reads, capacity, instructionBudget⟩
 
 end Noctium.Verification.ScalarLedgerWitnessPreflight

@@ -1,12 +1,13 @@
 import Noctium.Verification.GenericStateCircuitParts
 import Noctium.Verification.ScalarAdmission
+import Noctium.Verification.ScalarLedgerSourceIdentifiers
 
 namespace Noctium.Verification.GenericStateLedgerIdentifiers
 open Backend NativeRelationJson
 
-/-- The mandatory producer gate and strict decoder admit every emitted input
-identifier, including the state-read suffix. The claim concerns actual names
-in the accepted plan, not arbitrary strings. -/
+/-- Strict native decoding admits actual scalar source inputs and plain
+post-public scalar reads, and confirms that the accepted call has no raw
+header inputs. -/
 theorem accepted_input_identifiers (state : List StateDecl)
     (entry : Entrypoint) (plan : Impact.Plan)
     (expected : Native.Expected) (json : Lean.Json)
@@ -15,33 +16,25 @@ theorem accepted_input_identifiers (state : List StateDecl)
     (expectedAccepted : Native.expectedEntrypoint state entry = .ok expected)
     (validated : Native.validate expected json = .ok ())
     (decoded : NativeRelationJson.decode json = .ok relation) :
-    (∀ input ∈ entry.circuit.inputs,
+    expected.rawInputs = [] ∧
+    (∀ input ∈ entry.circuit.inputs, ScalarNormalization.ScalarType input.ty →
       validIdentifier ("%input_" ++ input.name) = true) ∧
     (∀ read ∈ plan.reads.drop
-      ((entry.circuit.inputs.filter (·.visibility == .«public»)).length),
-      validIdentifier ("%input_" ++ read.name) = true) := by
-  obtain ⟨samePlan, _, _, _, _, lowered, _, _, _, _, inputShape,
-    _, _, _, _, _⟩ :=
-    GenericStateCircuitParts.expectedEntrypoint_parts state entry expected
-      expectedAccepted
-  have planEq : samePlan = plan := by
-    rw [planAccepted] at lowered
-    exact (Except.ok.inj lowered).symm
-  subst samePlan
+      (Impact.publicInputReadCount entry.circuit.inputs),
+      read.components = [] → read.guard = none → ScalarNormalization.ScalarType read.ty →
+        validIdentifier ("%input_" ++ read.name) = true) := by
   have admitted := ScalarAdmission.input_identifiers validated decoded
-  rw [inputShape, GenericStateCircuitParts.inputRequirements] at admitted
-  constructor
-  · intro input member
-    have found := admitted
-      ({identifier := "%input_" ++ input.name,
-        visibility := input.visibility, ty := input.ty} : Native.InputRequirement)
-    apply found
-    exact List.mem_append_left _ (List.mem_map.mpr ⟨input, member, rfl⟩)
-  · intro read member
-    have found := admitted
-      ({identifier := "%input_" ++ read.name,
-        visibility := .«public», ty := read.ty} : Native.InputRequirement)
-    apply found
-    exact List.mem_append_right _ (List.mem_map.mpr ⟨read, member, rfl⟩)
+  obtain ⟨_, headerEmpty, _, _⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  have rawEmpty := ScalarValidationProjection.validate_driver_result_empty_header
+    validated headerEmpty
+  have identifiers : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      validIdentifier requirement.identifier = true := by
+    intro requirement member
+    rw [rawEmpty.1] at member
+    exact admitted requirement member
+  have sourceAndRead := ScalarLedgerSourceIdentifiers.accepted_source_identifiers
+    state entry plan expected planAccepted expectedAccepted identifiers
+  exact ⟨rawEmpty.1, sourceAndRead⟩
 
 end Noctium.Verification.GenericStateLedgerIdentifiers
