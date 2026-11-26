@@ -1,5 +1,7 @@
 import Noctium.Verification
 import Noctium.Verification.GenericStateLedgerAllocation
+import Noctium.Verification.GenericStateLowering
+import Noctium.Verification.GenericStateConverseLedgerSatisfies
 import Noctium.Verification.ScalarCellArtifactExecution
 import Noctium.Verification.ScalarLedgerReturnObservation
 import Noctium.Verification.ScalarLedgerSourceReturns
@@ -41,6 +43,7 @@ private def artifactBytes (json : Lean.Json) : ArtifactBytes.Bytes :=
     match ScalarCellZkirByteBinding.decodeScalarCallBytes bytes, Native.arrayField json "instructions" with
     | .ok call, .ok rows =>
       (ArtifactBytes.parse bytes).toOption == some json &&
+        !(NativeRelationJson.decode json).isOk &&
         call.arguments == ["%input_delta"] &&
         call.body.instructions.flatMap NativeInputOrdinalTrace.strictInstructionInputDescriptors ==
           [(.public, "%input_enabled"), (.private, "%input_limit"),
@@ -61,6 +64,34 @@ private def fixtureWitness (program : Program) (seed : Assignment) : Option Assi
       some (ScalarWitness.assign assignment dest (scalar ((left.read assignment).val + (right.read assignment).val)))
     | .input .. | .boolean .. | .bits .. | .assert .. | .impact .. | .output .. => some assignment
     | _ => none) seed
+
+private def strictEntry : Entrypoint := {fixtureEntry with callInputs := []}
+
+-- The same source calculation also accepts strict scalar decoding when every
+-- input is emitted as a transcript row instead of supplied in the raw header.
+#guard
+  let seed : Assignment := fun
+    | "%input_delta" => scalar 24
+    | "%input_enabled" => one
+    | "%input_limit" => scalar 50
+    | "%input_before" => scalar 17
+    | "%input_after" => scalar 42
+    | _ => zero
+  match Zkir.lowerEntrypoint declarations strictEntry,
+      Native.expectedEntrypoint declarations (Passes.pruneEntrypoint strictEntry) with
+  | .ok json, .ok expected =>
+    match NativeRelationJson.decode json, Native.arrayField json "inputs" with
+    | .ok relation, .ok rawInputs =>
+      match fixtureWitness relation seed with
+      | some assignment =>
+        rawInputs.isEmpty &&
+          relation.inputValues .private assignment == [scalar 24, scalar 50] &&
+          (relation.groups assignment).map (List.map some) ==
+            expected.groups.map (List.map (ScalarNormalization.interpret (fun _ => zero) seed)) &&
+          relation.returns assignment == [scalar 42]
+      | none => _root_.Bool.false
+    | _, _ => _root_.Bool.false
+  | _, _ => _root_.Bool.false
 
 private def nativeCallMatches (plan : Impact.Plan) (complete : EvalEnv) (next : LedgerState)
     (call : ScalarCall) (seed : Assignment) : _root_.Bool :=
@@ -127,6 +158,9 @@ open Lean Elab Command in
 run_cmd do
   let environment ← getEnv
   for proof in [
+      `Noctium.Verification.GenericStateLedgerAllocation.lowerEntrypoint_allocation_bounds,
+      `Noctium.Verification.GenericStateLowering.accepted_relation_groups,
+      `Noctium.Verification.GenericStateConverseLedgerSatisfies.lowered_body_authenticated_groups,
       `Noctium.Verification.ScalarLedgerWitnessPreflight.lowerEntrypoint_witness_preflight,
       `Noctium.Verification.ScalarLedgerWitnessSource.lowerEntrypoint_source_cell_read_tape,
       `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_prelude,

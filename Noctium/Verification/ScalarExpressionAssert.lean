@@ -1,3 +1,4 @@
+import Noctium.Verification.ScalarAllocation
 import Noctium.Verification.ScalarWitnessAssembly
 import Noctium.Verification.ScalarAllocationOutputFrame
 
@@ -5,15 +6,6 @@ namespace Noctium.Verification.ScalarWitnessConstruction
 
 open Lean Backend NativeRelation NativeRelationJson ScalarNormalization ScalarLowering
 open ScalarInstructionEncoding ScalarWitness ScalarAllocationOutputFrame
-
-private theorem bind_middle_output_budget (first : StateM Zkir.LowerState α)
-    (next : α → StateM Zkir.LowerState β) (state : Zkir.LowerState)
-    (remaining : ∀ value, Zkir.PreservesOutputCapacityFrame (next value))
-    (limit : Nat) (bound : ((first >>= next).run state).2.next ≤ limit) :
-    (first.run state).2.next ≤ limit := by
-  have frame := remaining (first.run state).1 (first.run state).2
-  rw [StateT.run_bind] at bound
-  exact Nat.le_trans frame.next bound
 
 private theorem lower_assertE (condition : Expr .bool) (body : Expr ty) :
     Zkir.lowerExpr (.assertE condition body) =
@@ -64,7 +56,7 @@ theorem exprComplete_assertE (condition : Expr .bool) (body : Expr ty)
       (fun _ => lowerExpr_admitted_preservesOutputCapacityFrame body bodyAdmitted)
   have conditionBudget : ((Zkir.lowerExpr condition).run state).2.next ≤
       Native.maxInstructions * Native.maxVectorLength := by
-    apply bind_middle_output_budget (Zkir.lowerExpr condition)
+    apply ScalarAllocation.bind_middle_budget (Zkir.lowerExpr condition)
       (fun text => do
         Zkir.emit "assert" [("cond", toJson text)]
         Zkir.lowerExpr body) state suffixFrame _

@@ -698,6 +698,8 @@ jobs:
             Noctium.Verification.ScalarExpressionUIntAdd \
             Noctium.Verification.ScalarRangeLowering \
             Noctium.Verification.ScalarAllocationOutputFrame \
+            Noctium.Verification.GenericStateLowering \
+            Noctium.Verification.GenericStateConverseLedgerSatisfies \
             Noctium.Verification.ScalarValidationProjection \
             Noctium.Verification.ScalarValidationProjectionComparison \
             Noctium.Verification.GuardedEffectEvaluation \
