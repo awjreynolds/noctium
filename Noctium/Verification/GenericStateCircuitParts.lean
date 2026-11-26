@@ -1034,6 +1034,33 @@ theorem expectedEntrypoint_operations (state : List StateDecl) (entry : Entrypoi
     rw [assertionsShape]
     simp [member]
 
+/-- Supported scalar reads leave the accepted expected entrypoint's normalized
+output frame unchanged in the production post-public read-alias fold. -/
+theorem expectedEntrypoint_scalar_read_aliases (state : List StateDecl)
+    (ep : Entrypoint) (expected : Expected) (plan : Backend.Impact.Plan)
+    (frame : OutputFrame)
+    (lowered : Backend.Impact.lower state ep = .ok plan)
+    (accepted : expectedEntrypoint state ep = .ok expected)
+    (normalized : normalizeOutputs (entrypointSeedAliases ep plan) ep.circuit.outputs =
+      .ok frame)
+    (scalarReads : ∀ read ∈
+      (plan.reads.drop (Backend.Impact.publicInputReadCount ep.circuit.inputs)).flatMap
+        Backend.Impact.Read.scalarReads,
+      scalarAliasReadType read.ty) :
+    forIn ((plan.reads.drop (Backend.Impact.publicInputReadCount ep.circuit.inputs)).flatMap
+      Backend.Impact.Read.scalarReads) frame.1 (readAliasStep ep) = .ok frame.1 := by
+  obtain ⟨actualPlan, outputFrame, aliases, _, _, _, _, _, _, _, _,
+      planAccepted, outputsAccepted, aliasesAccepted, _, _, _, _, _, _, _, _,
+      _, _, _, _, _, _, _, _⟩ :=
+    expectedEntrypoint_parts state ep expected accepted
+  have samePlan : actualPlan = plan := Except.ok.inj (planAccepted.symm.trans lowered)
+  subst actualPlan
+  have sameFrame : outputFrame = frame := Except.ok.inj (outputsAccepted.symm.trans normalized)
+  subst outputFrame
+  have aliasesEq := readAliasFold_preserves_outputFrame ep plan aliases frame scalarReads
+    aliasesAccepted
+  simpa only [aliasesEq] using aliasesAccepted
+
 private theorem returnFrameStep_scalar (aliases : AliasEnvironment) (output : Output)
     (frame : ReturnFrame) (scalarType : ScalarNormalization.ScalarType output.ty) :
     returnFrameStep aliases output frame = (do

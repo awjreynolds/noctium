@@ -93,6 +93,59 @@ private theorem scalar_plan_types (entry : Entrypoint) (plan : Impact.Plan)
     List.append_assoc, reads] using congrArg
       (fun suffix => GenericStateEffectValidation.initialEffectTypeEnv entry ++ suffix) suffix
 
+/-- Build the typed candidate frame for supported reads from the accepted
+expected relation's input bounds. -/
+theorem typed_candidates_of_input_bounds
+    (state : List StateDecl) (ep : Entrypoint)
+    (hash : Hash) (assignment : Assignment) (plan : Impact.Plan) (expected : Expected)
+    (frame : OutputFrame) (base : EvalEnv)
+    (planAccepted : Impact.lower state ep = .ok plan)
+    (expectedAccepted : Native.expectedEntrypoint state ep = .ok expected)
+    (baseEnvironment : TypedEnvironment hash assignment frame.1 base
+      (GenericStateEffectValidation.initialEffectTypeEnv ep))
+    (readAdmitted : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs),
+      read.components = [] ∧ (scalarType? read.ty).isSome = true ∧
+        read.ty.validate {poseidon2 := true, stateCells := true, stateMaps := true} = .ok ())
+    (readFresh : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs),
+      base.lookup read.name = none ∧
+        (GenericStateEffectValidation.initialEffectTypeEnv ep).lookup read.name = none)
+    (readDistinct : (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)).Pairwise
+      (fun left right => left.name ≠ right.name))
+    (readAliases : ∀ read ∈ plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs),
+      frame.1.lookup read.name = some (.input ("%input_" ++ read.name)))
+    (inputBounds : ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+      requirement.ty.isForeign = false → requirement.canonicalJubjubScalar = false →
+      (assignment requirement.identifier).val ≤ Native.sourceMaximum requirement.ty) :
+    let reads := plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)
+    ∃ readValues, decodeReads reads assignment = .ok readValues ∧
+      TypedEnvironment hash assignment frame.1 (base ++ readValues) (plan.typeEnvironment ep) ∧
+      (∀ read ∈ reads,
+        (assignment ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty) := by
+  let reads := plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)
+  have scalarReads : ∀ read ∈ reads, scalarAliasReadType read.ty := by
+    intro read member
+    exact scalarType_shape read.ty (readAdmitted read member).2.1
+  have readBounds : ∀ read ∈ reads,
+      (assignment ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty := by
+    intro read member
+    obtain ⟨plain, supported, _⟩ := readAdmitted read member
+    have singleton := GenericStateCheckedReadDecode.supported_plain_read_bindings read plain supported
+    exact GenericStateCheckedReadDecode.accepted_scalarRead_inputBound_of_requirements
+      state ep expected expectedAccepted plan planAccepted read read.name read.ty member singleton
+      (scalarReads read member) inputBounds
+  obtain ⟨readValues, readDecoded, environment⟩ :=
+    GenericStateCandidateDecode.appendSupportedReads_existing reads hash assignment frame.1 base
+      (GenericStateEffectValidation.initialEffectTypeEnv ep) baseEnvironment
+      (fun read member => (readAdmitted read member).2.1) readFresh readDistinct readAliases
+      (fun read member => (readAdmitted read member).2.2) readBounds
+  have shape := scalar_plan_types ep plan (fun read member =>
+    ⟨(readAdmitted read member).1, (readAdmitted read member).2.1⟩)
+  change TypedEnvironment hash assignment frame.1 (base ++ readValues)
+    (GenericStateEffectValidation.initialEffectTypeEnv ep ++
+      readTypes (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs))) at environment
+  rw [← shape] at environment
+  exact ⟨readValues, readDecoded, environment, readBounds⟩
+
 /-- Recover the typed read frame and check the plan guards using the
 requirements proved for its accepted expected relation. -/
 theorem plan_guards_sound_of_requirements
@@ -130,28 +183,13 @@ theorem plan_guards_sound_of_requirements
         (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty) ∧
       (∀ guard ∈ plan.guards, guard.eval ctx (base ++ readValues) = .ok true) := by
   let reads := plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs)
+  obtain ⟨readValues, readDecoded, environment, readBounds⟩ :=
+    typed_candidates_of_input_bounds state entry hash witness plan expected frame base
+      planAccepted expectedAccepted baseEnvironment readAdmitted readFresh readDistinct
+      readAliases inputBounds
   have scalarReads : ∀ read ∈ reads, scalarAliasReadType read.ty := by
     intro read member
     exact scalarType_shape read.ty (readAdmitted read member).2.1
-  have readBounds : ∀ read ∈ reads,
-      (witness ("%input_" ++ read.name)).val ≤ Native.sourceMaximum read.ty := by
-    intro read member
-    obtain ⟨plain, supported, _⟩ := readAdmitted read member
-    have singleton := GenericStateCheckedReadDecode.supported_plain_read_bindings read plain supported
-    exact GenericStateCheckedReadDecode.accepted_scalarRead_inputBound_of_requirements
-      state entry expected expectedAccepted plan planAccepted read read.name read.ty member singleton
-      (scalarReads read member) inputBounds
-  obtain ⟨readValues, readDecoded, environment⟩ :=
-    GenericStateCandidateDecode.appendSupportedReads_existing reads hash witness frame.1 base
-      (GenericStateEffectValidation.initialEffectTypeEnv entry) baseEnvironment
-      (fun read member => (readAdmitted read member).2.1) readFresh readDistinct readAliases
-      (fun read member => (readAdmitted read member).2.2) readBounds
-  have shape := scalar_plan_types entry plan (fun read member =>
-    ⟨(readAdmitted read member).1, (readAdmitted read member).2.1⟩)
-  change TypedEnvironment hash witness frame.1 (base ++ readValues)
-    (GenericStateEffectValidation.initialEffectTypeEnv entry ++
-      readTypes (plan.reads.drop (Impact.publicInputReadCount entry.circuit.inputs))) at environment
-  rw [← shape] at environment
   have flattened := plain_reads_scalarReads reads (fun read member => (readAdmitted read member).1)
   obtain ⟨actualFrame, guards, actualFrameAccepted, normalized, guardAssertions, guardBounds⟩ :=
     expectedEntrypoint_guards state entry expected plan planAccepted expectedAccepted
