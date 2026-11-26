@@ -3,6 +3,7 @@ import Noctium.Verification.GuardedPlanExecution
 import Noctium.Verification.GuardedEffectChunkShape
 import Noctium.Verification.GuardedOperationActivity
 import Noctium.Verification.GuardedRequireActivity
+import Noctium.Verification.GenericStateAdmissionPrefix
 
 namespace Noctium.Verification.GuardedPlanTrace
 open Backend GenericStateCheckedReadTrace GuardedEffectEvaluation
@@ -166,5 +167,38 @@ theorem lower_scoped_active_chunks (state : List StateDecl) (entry : Entrypoint)
   refine ⟨offsets, inputPlan, chunks, publicOps.flatten, groups, accepted, publicAccepted,
     compiled, publicNative, effectEval, ?_⟩
   rw [result, ← Except.ok.inj outputEq, List.flatten_append, effectSequence]
+
+/-- One successful scalar VM run provides a checked segment for each source
+effect. Start at the machine left by the actual public-input prefix. -/
+theorem lower_checked_effect_chunks (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (ctx : EvalContext) (env : EvalEnv)
+    (native : List NativeState.Op) (slots : List NativeState.Slot) (final : NativeState.Machine)
+    (lowered : Impact.lower state entry = .ok plan)
+    (scope : GuardedScalarReadEffects entry.effectGuards entry.effects.zipIdx)
+    (compatible : ∀ input ∈ entry.circuit.inputs, Impact.publicInputScalarCompatible input)
+    (evaluated : evalPlan ctx env plan = .ok native)
+    (assertions : ∀ expression ∈ plan.guards, expression.eval ctx env = .ok true)
+    (checked : NativeState.run native ⟨[.vector slots], []⟩ = some final) :
+    ∃ offsets inputPlan chunks publicNative groups publicReads,
+      Impact.lowerWithEffectBoundaries state entry = .ok (plan, offsets) ∧
+      Impact.publicInputPlan entry.circuit.inputs {} = .ok inputPlan ∧
+      GuardedEffectOperationChunks state entry.effectGuards entry.effects.zipIdx
+        inputPlan plan offsets chunks ∧
+      inputPlan.operations.mapM (GenericStateOps.evalOp ctx env) = .ok publicNative ∧
+      (entry.effects.zipIdx.zip chunks).mapM (fun (item, chunk) =>
+        evalChunk ctx env (entry.effectGuardAt item.2) chunk) = .ok groups ∧
+      native = publicNative ++ (groups.map Prod.snd).flatten ∧
+      NativeState.run publicNative ⟨[.vector slots], []⟩ = some ⟨[.vector slots], publicReads⟩ ∧
+      GenericStateVM.RunsChunks (groups.map Prod.snd) ⟨[.vector slots], publicReads⟩ final := by
+  obtain ⟨offsets, inputPlan, chunks, publicNative, groups, boundaries, publicAccepted,
+    compiled, publicEvaluated, effectsEvaluated, sequence⟩ :=
+    lower_scoped_active_chunks state entry plan ctx env native lowered scope evaluated assertions
+  obtain ⟨publicReads, _, publicRun⟩ := GenericStateAdmissionPrefix.public_prefix_run
+    entry.circuit.inputs inputPlan ctx env publicNative [.vector slots] []
+    publicAccepted compatible publicEvaluated
+  rw [sequence, NativeState.run_append, publicRun, Option.bind_some] at checked
+  exact ⟨offsets, inputPlan, chunks, publicNative, groups, publicReads,
+    boundaries, publicAccepted, compiled, publicEvaluated, effectsEvaluated, sequence,
+    publicRun, (GenericStateVM.run_chunks_iff (groups.map Prod.snd) _ final).mp checked⟩
 
 end Noctium.Verification.GuardedPlanTrace

@@ -461,15 +461,10 @@ theorem lower_checked_guarded_effects (ctx : EvalContext) (state : List StateDec
       ∀ output ∈ entry.returns, output.value.validate stateEffectCaps finalTypes = .ok () := by
   obtain ⟨finalTypes, validated, returns⟩ :=
     lower_validated_guarded_effects_and_returns state entry plan lowered admitted
-  obtain ⟨offsets, inputPlan, chunks, publicNative, groups, _, publicAccepted,
-    compiled, publicEvaluated, effectEvaluated, sequence⟩ :=
-    GuardedPlanTrace.lower_scoped_active_chunks state entry plan ctx (base ++ decoded)
-      native lowered scope evaluated assertions
-  obtain ⟨publicReads, _, publicRun⟩ := GenericStateAdmissionPrefix.public_prefix_run
-    entry.circuit.inputs inputPlan ctx (base ++ decoded) publicNative [.vector slots] []
-    publicAccepted publicCompatible publicEvaluated
-  rw [sequence, NativeState.run_append, publicRun, Option.bind_some] at checked
-  have trace := (GenericStateVM.run_chunks_iff (groups.map Prod.snd) _ final).mp checked
+  obtain ⟨offsets, inputPlan, chunks, _, groups, publicReads, _, _, compiled, _,
+    effectEvaluated, _, _, trace⟩ :=
+    GuardedPlanTrace.lower_checked_effect_chunks state entry plan ctx (base ++ decoded)
+      native slots final lowered scope publicCompatible evaluated assertions checked
   have admittedOperand : ∀ item ∈ entry.effects.zipIdx, ScalarOperands item.1 := by
     intro item present
     apply operands
