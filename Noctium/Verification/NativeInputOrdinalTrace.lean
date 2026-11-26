@@ -209,6 +209,46 @@ theorem validateInstructionLoop_input_descriptors_of_trace {expected : Expected}
         _instructionEq requirement selected => inputSchema requirement
       (List.mem_of_getElem? selected)) initialDefinitions trace accepted
 
+private theorem strict_input_step_opcode {raw : Json} {visibility : Visibility}
+    {output : String} (step : NativeDefinitionStep raw (.input visibility output)) :
+    Backend.Native.stringField raw "op" = .ok (inputOpcode visibility) := by
+  cases visibility with
+  | «public» =>
+    cases step.supported with
+    | publicInput output opcode => simpa [inputOpcode] using opcode
+  | «private» =>
+    cases step.supported with
+    | privateInput output opcode => simpa [inputOpcode] using opcode
+
+private theorem accepted_strict_selected_input_schema
+    {expected : Expected} {state next : State} {raw : Json} {instruction : Instruction}
+    (step : NativeDefinitionStep raw instruction)
+    (accepted : validateInstruction expected state raw = .ok next)
+    {visibility : Visibility} {output : String}
+    (isInput : instruction = .input visibility output)
+    (requirement : InputRequirement)
+    (selected : expected.inputs[state.inputCount]? = some requirement) :
+    requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+  cases isInput
+  have opcodeParsed := strict_input_step_opcode step
+  have nonforeign := accepted_strict_input_requirement_not_foreign
+    selected opcodeParsed accepted step.decoded
+  have unguarded : requirement.activityGuard = none := by
+    cases visibility with
+    | «public» =>
+      cases guarded : requirement.activityGuard with
+      | none => rfl
+      | some guardTerm =>
+        have publicOpcode : Backend.Native.stringField raw "op" = .ok "public_input" := by
+          simpa [inputOpcode] using opcodeParsed
+        exact False.elim ((accepted_guarded_public_input_rejected_by_strict_decoder
+          selected nonforeign guarded publicOpcode accepted) ⟨output, step.decoded⟩)
+    | «private» =>
+      have privateOpcode : Backend.Native.stringField raw "op" = .ok "private_input" := by
+        simpa [inputOpcode] using opcodeParsed
+      exact accepted_private_input_unguarded selected privateOpcode accepted
+  exact ⟨nonforeign, unguarded⟩
+
 private theorem validateInstructionLoop_input_descriptors_of_strict_trace
     {expected : Expected} {items : List (Json × Nat)} {instructions : List Instruction}
     {initial final : State}
@@ -222,27 +262,96 @@ private theorem validateInstructionLoop_input_descriptors_of_strict_trace
     (inputSchema := ?_) initialDefinitions trace accepted
   intro state next raw instruction step acceptedStep visibility output isInput requirement selected
   cases isInput
-  cases visibility with
-  | «public» =>
-    cases step with
-    | mk supported decoded =>
-      cases supported with
-      | publicInput output opcode =>
-        have opcodeParsed : Backend.Native.stringField raw "op" =
-            .ok (inputOpcode .public) := by
-          simpa [inputOpcode] using opcode
-        exact accepted_strict_input_requirement_not_foreign selected
-          opcodeParsed acceptedStep decoded
-  | «private» =>
-    cases step with
-    | mk supported decoded =>
-      cases supported with
-      | privateInput output opcode =>
-        have opcodeParsed : Backend.Native.stringField raw "op" =
-            .ok (inputOpcode .private) := by
-          simpa [inputOpcode] using opcode
-        exact accepted_strict_input_requirement_not_foreign selected
-          opcodeParsed acceptedStep decoded
+  exact (accepted_strict_selected_input_schema step acceptedStep rfl requirement selected).1
+
+private theorem take_eq_of_take_length_eq {α : Type} (items : List α)
+    {left right : Nat}
+    (lengths : (items.take left).length = (items.take right).length) :
+    items.take left = items.take right := by
+  induction items generalizing left right with
+  | nil => simp
+  | cons head tail ih =>
+    cases left <;> cases right <;> simp_all [List.take]
+
+/-- A strict decoded trace carries the nonforeign and unguarded facts for each
+expected input already consumed by its producer input cursor. The prior schema
+is preserved over noninput instructions by the descriptor-prefix relation. -/
+private theorem validateInstructionLoop_input_schema_of_strict_trace
+    {expected : Expected} {items : List (Json × Nat)} {instructions : List Instruction}
+    {initial final : State}
+    (priorSchema : ∀ requirement ∈ expected.inputs.take initial.inputCount,
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none)
+    (initialDefinitions : NativeDefinitions initial)
+    (trace : NativeDefinitionTrace items instructions)
+    (accepted : validateInstructionLoop expected items initial = .ok final) :
+    ∀ requirement ∈ expected.inputs.take final.inputCount,
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+  induction trace generalizing initial final priorSchema with
+  | nil =>
+    have stateEq : initial = final := by injection accepted
+    subst final
+    exact priorSchema
+  | @cons raw index instruction tailItems tailInstructions head tail ih =>
+    rw [validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : validateInstruction expected initial raw with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have selectedSchema : ∀ {visibility output}, instruction = .input visibility output →
+          ∀ requirement, expected.inputs[initial.inputCount]? = some requirement →
+            requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+        intro visibility output isInput requirement selected
+        exact accepted_strict_selected_input_schema head checked isInput requirement selected
+      have nextDefinitions := nativeDefinitions_step_of_selected_schema
+        (fun {_visibility _output} isInput requirement selected =>
+          (selectedSchema isInput requirement selected).1) initialDefinitions head checked
+      have headDescriptors := accepted_supportedScalarOpcode_input_descriptors_step_of_selected_schema
+        initialDefinitions
+        (fun {_visibility _output} isInput requirement selected =>
+          (selectedSchema isInput requirement selected).1)
+        head checked
+      by_cases hasInput : ∃ visibility output, instruction = .input visibility output
+      · obtain ⟨visibility, output, isInput⟩ := hasInput
+        cases isInput
+        have opcodeParsed := strict_input_step_opcode head
+        obtain ⟨requirement, selected⟩ := accepted_input_requirement_selected
+          opcodeParsed checked
+        have schema := selectedSchema rfl requirement selected
+        have increment := accepted_unguarded_input_count_increment visibility selected
+          schema.1 schema.2 opcodeParsed checked
+        have prefixEq : expected.inputs.take next.inputCount =
+            expected.inputs.take initial.inputCount ++ [requirement] := by
+          rw [increment, List.take_add_one]
+          simp [selected]
+        have nextSchema : ∀ requirement ∈ expected.inputs.take next.inputCount,
+            requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+          intro item member
+          rw [prefixEq] at member
+          simp only [List.mem_append, List.mem_singleton] at member
+          rcases member with old | same
+          · exact priorSchema item old
+          · cases same
+            exact schema
+        exact ih nextSchema nextDefinitions accepted
+      · have nonInput : ∀ visibility output, instruction ≠ .input visibility output := by
+          intro visibility output equality
+          exact hasInput ⟨visibility, output, equality⟩
+        have noInputDescriptors : strictInstructionInputDescriptors instruction = [] := by
+          cases instruction <;> simp_all [strictInstructionInputDescriptors]
+        have takeLengths :
+            (expected.inputs.take next.inputCount).length =
+              (expected.inputs.take initial.inputCount).length := by
+          have mappedLengths := congrArg List.length headDescriptors
+          simpa [noInputDescriptors, List.length_map] using mappedLengths
+        have takePrefix : expected.inputs.take next.inputCount =
+            expected.inputs.take initial.inputCount :=
+          take_eq_of_take_length_eq expected.inputs takeLengths
+        have nextSchema : ∀ requirement ∈ expected.inputs.take next.inputCount,
+            requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+          intro requirement member
+          rw [takePrefix] at member
+          exact priorSchema requirement member
+        exact ih nextSchema nextDefinitions accepted
 
 /-- An actually lowered entrypoint whose JSON also passes the strict relation
 decoder and checked scalar opcode profile exposes exactly the producer's
@@ -469,6 +578,36 @@ theorem validate_decoded_input_descriptors
   rw [finalCount, (show ({} : State).inputCount = 0 from rfl)] at descriptors
   simpa only [List.take_length, List.take_zero, List.map_nil, List.nil_append]
     using descriptors.symm
+
+/-- Successful native validation and strict relation decoding establish the
+nonforeign, unguarded schema required by scalar input traces. The theorem uses
+the actual producer input cursor and the strict decoder's per-row input shape. -/
+theorem validate_decoded_input_schema
+    {expected : Expected} {json : Lean.Json} {program : NativeRelation.Program}
+    (nativeAccepted : Backend.Native.validate expected json = .ok ())
+    (decoded : NativeRelationJson.decode json = .ok program) :
+    (∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false) ∧
+      (∀ requirement ∈ expected.inputs, requirement.activityGuard = none) := by
+  obtain ⟨rows, _, rowsParsed, decodedRows⟩ :=
+    NativeRelationInstructionProjection.decode_headerAndInstructions decoded
+  have decodedItems : ((rows.toList.zipIdx).map Prod.fst).mapM
+      NativeRelationJson.decodeInstruction = .ok program.instructions := by
+    simpa only [List.zipIdx_map_fst] using decodedRows
+  have profile := checkedScalarOpcodeProfile_of_strict_decode decodedItems
+  obtain ⟨final, trace, accepted, finalCount⟩ :=
+    validate_decoded_input_trace_of_checkedScalarProfile
+      nativeAccepted decoded rowsParsed profile
+  have initialSchema : ∀ requirement ∈ expected.inputs.take ({} : State).inputCount,
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+    simp
+  have consumedSchema := validateInstructionLoop_input_schema_of_strict_trace
+    initialSchema empty_nativeDefinitions trace accepted
+  rw [finalCount] at consumedSchema
+  have fullSchema : ∀ requirement ∈ expected.inputs,
+      requirement.ty.isForeign = false ∧ requirement.activityGuard = none := by
+    simpa only [List.take_length] using consumedSchema
+  exact ⟨(fun requirement member => (fullSchema requirement member).1),
+    (fun requirement member => (fullSchema requirement member).2)⟩
 
 /-- Every expected input identifier passes the strict decoder's name check,
 as a consequence of actual native validation and successful strict decoding. -/

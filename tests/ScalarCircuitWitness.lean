@@ -69,8 +69,6 @@ theorem scalarCircuitWitnessExample_complete (ctx : EvalContext) (hash : Hash)
     (admitted : CanonicalInputs scalarCircuitWitnessExample values inputs)
     (lowered : Zkir.lowerCircuit scalarCircuitWitnessExample = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows scalarCircuitWitnessExample).toList.zipIdx relation.instructions = Bool.true)
     (success : scalarCircuitWitnessExample.run ctx values = .ok result) :
     ∃ assignment, InputFrame inputs assignment ∧
       Satisfies hash relation
@@ -83,4 +81,4 @@ theorem scalarCircuitWitnessExample_complete (ctx : EvalContext) (hash : Hash)
   simpa [scalarCircuitWitnessExample] using
     lowerCircuit_complete ctx hash implementation scalarCircuitWitnessExample values result
       inputs json relation admitted exampleAdmission
-      lowered decoded profile success
+      lowered decoded success

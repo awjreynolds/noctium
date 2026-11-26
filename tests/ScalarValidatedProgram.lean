@@ -70,27 +70,10 @@ theorem compiledScalarCircuit_is_sound
       Native.expectedCircuit (Passes.pruneCircuit scalarValidatedProgramExample) =
         .ok expected ∧
       Noctium.Verification.ScalarValidatedProgram.Sound
-        hash assignment expected decodedArtifact streams groups := by
+        hash assignment assignment expected decodedArtifact streams groups := by
   obtain ⟨expected, expectedAccepted, producerAccepted⟩ :=
     Zkir.lowerCircuit_validated scalarValidatedProgramExample compiledArtifact
       compiledArtifactAccepted
-  have sourceParts := ScalarNormalization.expectedCircuit_parts
-    (Passes.pruneCircuit scalarValidatedProgramExample) expected expectedAccepted
-  obtain ⟨_, _, _, _, _, _, _, _, inputsMatchSource, _⟩ := sourceParts
-  have inputSchema : ∀ requirement ∈ expected.inputs,
-      requirement.ty.isForeign = Bool.false := by
-    intro requirement present
-    rw [inputsMatchSource] at present
-    simp [scalarValidatedProgramExample, Passes.pruneCircuit,
-      Noctium.Backend.Native.Input.requirements] at present
-    rcases present with rfl | rfl <;> rfl
-  have inputGuards : ∀ requirement ∈ expected.inputs, requirement.activityGuard = none := by
-    intro requirement present
-    rw [inputsMatchSource] at present
-    simp [scalarValidatedProgramExample, Passes.pruneCircuit,
-      Noctium.Backend.Native.Input.requirements] at present
-    rcases present with rfl | rfl <;> rfl
   refine ⟨expected, expectedAccepted, ?_⟩
   exact Noctium.Verification.ScalarValidatedProgram.validate_sound
-    producerAccepted compiledArtifactDecoded compiledArtifactRows
-    compiledArtifactHasScalarProfile inputSchema inputGuards satisfies
+    producerAccepted compiledArtifactDecoded (fun _ _ => rfl) satisfies

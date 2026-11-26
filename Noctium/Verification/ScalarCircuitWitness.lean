@@ -9,8 +9,6 @@ namespace Noctium.Verification.ScalarWitnessConstruction
 
 open Lean Backend NativeRelation NativeRelationJson ScalarNormalization ScalarLowering
 open ScalarAllocationOutputFrame
-open ScalarTranslationSoundness (defaultLoweredRows)
-open ScalarValidationOpcodeProfile (checkedScalarOpcodeProfile)
 
 private theorem returnSuffix_capacity (circuit : Circuit)
     (admitted : ScalarCircuitAdmission circuit) :
@@ -100,8 +98,6 @@ theorem lowerCircuit_complete (ctx : EvalContext) (hash : Hash)
     (scalarAdmission : ScalarCircuitAdmission circuit)
     (lowered : Zkir.lowerCircuit circuit = .ok json)
     (decoded : NativeRelationJson.decode json = .ok relation)
-    (profile : checkedScalarOpcodeProfile
-      (defaultLoweredRows circuit).toList.zipIdx relation.instructions = true)
     (success : circuit.run ctx values = .ok result) :
     ∃ witness, InputFrame inputs witness ∧
       Satisfies hash relation
@@ -119,6 +115,6 @@ theorem lowerCircuit_complete (ctx : EvalContext) (hash : Hash)
     lowered decoded success
   exact ⟨witness, frame, ScalarTranslationSoundness.lowerCircuit_complete_of_witness
     ctx hash implementation circuit values result json relation inputs witness admitted scalarAdmission
-    lowered decoded profile success frame holds⟩
+    lowered decoded success frame holds⟩
 
 end Noctium.Verification.ScalarWitnessConstruction

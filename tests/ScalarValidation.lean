@@ -8,6 +8,12 @@ open Noctium.Verification NativeRelation ScalarNormalization ScalarValidation
 private def accepted (result : Except String α) : Bool :=
   match result with | .ok _ => true | .error _ => false
 
+private theorem observedGroups {groups expected : List (List Scalar)}
+    (observed : groups.map (List.map some) = expected.map (List.map some)) : groups = expected := by
+  have recovered := congrArg (List.map (List.filterMap id)) observed
+  simpa only [List.map_map, Function.comp_def, List.filterMap_map, id, List.filterMap_some,
+    List.map_id'] using recovered
+
 private def flagExpected : Expected := {
   mode := .relation
   inputs := [{identifier := "%flag", visibility := .private, ty := .bool}]
@@ -39,16 +45,19 @@ private def flagJson : Json := NativeRelationJson.encode flagRelation
 /-- A private Boolean input obtains its range from the native constraint.
 Native Assert alone contributes only nonzero, so the producer's range gate matters. -/
 example (hash : Hash) (inputs witness : Assignment) (streams : InputStreams)
-    (groups : List (List Scalar))
+    (groups : List (List Scalar)) (returns : List Scalar)
     (agreement : InputAgreement flagExpected inputs witness)
     (checked : validate flagExpected flagJson = .ok ())
     (decoded : NativeRelationJson.decode flagJson = .ok flagRelation)
-    (satisfies : CircuitSatisfies hash flagRelation streams witness groups) :
-    inputs "%flag" = one ∧ groups = [[inputs "%flag"]] := by
-  have sound := validate_sound agreement checked decoded satisfies
-  have assertion := sound.requirements.assertions (.input "%flag") (by simp [flagExpected])
-  exact ⟨by simpa only [interpret] using assertion,
-    by simpa [flagExpected, interpret] using sound.groups⟩
+    (satisfies : Satisfies hash flagRelation streams witness groups returns) :
+    inputs "%flag" = one ∧ groups = [[inputs "%flag"]] ∧ returns = [inputs "%flag"] := by
+  obtain ⟨sound, returned⟩ := validate_observed_returns agreement checked decoded satisfies
+  have assertion := sound.assertions (.input "%flag") (by simp [flagExpected])
+  have returnedValues := congrArg (List.filterMap id) returned
+  have flagValue : inputs "%flag" = one :=
+    Option.some.inj (by simpa only [ScalarTermMeaning.interpret_input] using assertion)
+  exact ⟨flagValue, observedGroups (by simpa [flagExpected, interpret] using sound.impact),
+    by simpa [flagExpected, interpret, List.filterMap_map, Function.comp_def] using returnedValues⟩
 
 private def rangeExpected : Expected := {
   mode := .relation
@@ -93,9 +102,12 @@ example (hash : Hash) (inputs witness : Assignment) (streams : InputStreams)
     (satisfies : CircuitSatisfies hash rangeRelation streams witness groups) :
     (inputs "%value").val ≤ 200 ∧ groups = [[inputs "%value"]] := by
   have sound := validate_sound agreement checked decoded satisfies
-  have bound := sound.requirements.bounds (.input "%value", 200) (by simp [rangeExpected])
-  exact ⟨by simpa only [interpret] using bound,
-    by simpa [rangeExpected, interpret] using sound.groups⟩
+  obtain ⟨value, valueMeaning, bound⟩ :=
+    sound.bounds (.input "%value", 200) (by simp [rangeExpected])
+  have exactValue : inputs "%value" = value :=
+    Option.some.inj (by simpa only [ScalarTermMeaning.interpret_input] using valueMeaning)
+  exact ⟨exactValue.symm ▸ bound,
+    observedGroups (by simpa [rangeExpected, interpret] using sound.impact)⟩
 
 #print axioms Noctium.Verification.ScalarValidation.validate_sound
 #print axioms Noctium.Verification.ScalarValidation.validate_observed_returns

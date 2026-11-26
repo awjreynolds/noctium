@@ -74,12 +74,10 @@ example (json : Json) (program : Program) (streams : InputStreams) (witness : As
     (groups : List (List Scalar))
     (lowered : Zkir.lowerCircuit discardedUnderflow = .ok json)
     (decoded : NativeRelationJson.decode json = .ok program)
-    (profile : checkedScalarOpcodeProfile (defaultLoweredRows discardedUnderflow).toList.zipIdx
-      program.instructions = true)
     (satisfies : CircuitSatisfies hash program streams witness groups) : False := by
   obtain ⟨result, successful, _⟩ := lowerCircuit_sound ctx hash implementation discardedUnderflow []
     json program streams witness groups (emptyInputs discardedUnderflow rfl witness)
-    discardedUnderflowAdmission lowered decoded profile satisfies
+    discardedUnderflowAdmission lowered decoded satisfies
   rw [discardedUnderflowRun] at successful
   cases successful
 
@@ -87,14 +85,12 @@ example (json : Json) (program : Program) (streams : InputStreams) (witness : As
 with an authenticated final Impact vector and exact host returns. -/
 example (json : Json) (program : Program)
     (lowered : Zkir.lowerCircuit shadowed = .ok json)
-    (decoded : NativeRelationJson.decode json = .ok program)
-    (profile : checkedScalarOpcodeProfile (defaultLoweredRows shadowed).toList.zipIdx
-      program.instructions = true) :
+    (decoded : NativeRelationJson.decode json = .ok program) :
     ∃ witness, Satisfies hash program {publicValues := [], privateValues := []}
       witness [[scalar 25]] [scalar 25] := by
   obtain ⟨witness, frame, satisfies⟩ := lowerCircuit_complete ctx hash implementation shadowed []
     [("result", .native 25)] (fun _ => zero) json program
-    (emptyInputs shadowed rfl _) shadowedAdmission lowered decoded profile shadowedRun
+    (emptyInputs shadowed rfl _) shadowedAdmission lowered decoded shadowedRun
   exact ⟨witness, by simpa [shadowed, valueNumber] using satisfies⟩
 
 end ScalarTranslationTests
