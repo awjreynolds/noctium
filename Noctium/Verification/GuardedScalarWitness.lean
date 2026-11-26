@@ -10,6 +10,7 @@ namespace Noctium.Verification.GuardedScalarWitness
 open Lean Backend NativeRelation
 open GuardedStatementConsumption (Inputs)
 open ScalarCellWitnessReadSeed (seedReadValues)
+open ScalarNormalization
 
 /-- An assignment to the exact guarded scalar rows accepted by the artifact
 checker. The ordinary constraints and both transcript streams are checked
@@ -61,6 +62,132 @@ private def sourceInput (values : EvalEnv) (input : Input) :
   let some packed := ImpactTypedEnvironment.packedCanonical? input.ty raw
     | throw s!"invalid scalar input '{input.name}'"
   pure ("%input_" ++ input.name, scalar (GenericStateEncoding.number input.ty packed.val))
+
+private theorem packedCanonical_complete {ty : Ty} (value : ty.Denote)
+    (canonical : Canonical ty value) :
+    ∃ packed,
+      ImpactTypedEnvironment.packedCanonical? ty (Value.pack ty value) = some packed := by
+  cases ty with
+  | native =>
+    refine ⟨⟨value, rfl, canonical⟩, ?_⟩
+    change value < Field.modulus ∧ True at canonical
+    have bound : value < Field.modulus := canonical.1
+    simp [ImpactTypedEnvironment.packedCanonical?, Value.pack, bound]
+  | bool =>
+    refine ⟨⟨value, rfl, canonical⟩, ?_⟩
+    simp [ImpactTypedEnvironment.packedCanonical?, Value.pack]
+  | uint maximum =>
+    refine ⟨⟨value, rfl, canonical⟩, ?_⟩
+    change value < Field.modulus ∧
+      (maximum ≤ ScalarPolicy.maxUint ∧ value ≤ maximum) at canonical
+    have bounds := canonical
+    simp [ImpactTypedEnvironment.packedCanonical?, Value.pack,
+      bounds.1, bounds.2.1, bounds.2.2]
+  | bytes length => simp [Canonical, sourceNumber?] at canonical
+  | opaqueBytes => simp [Canonical, sourceNumber?] at canonical
+  | opaqueString => simp [Canonical, sourceNumber?] at canonical
+  | jubjubScalar => simp [Canonical, sourceNumber?] at canonical
+  | jubjubPoint => simp [Canonical, sourceNumber?] at canonical
+  | foreign kind => simp [Canonical, sourceNumber?] at canonical
+
+private theorem sourceInput_complete (values : EvalEnv) (input : Input)
+    (value : input.ty.Denote) (lookup : values.lookup input.name = some (Value.pack input.ty value))
+    (canonical : Canonical input.ty value) :
+    sourceInput values input = .ok
+      ("%input_" ++ input.name, scalar (GenericStateEncoding.number input.ty value)) := by
+  obtain ⟨packed, packedSuccess⟩ := packedCanonical_complete value canonical
+  have packedValue : packed.val = value := by
+    have same : Value.pack input.ty packed.val = Value.pack input.ty value := by
+      exact packed.property.1.symm
+    have packedTyped : (Value.pack input.ty packed.val).as input.ty = some packed.val :=
+      ScalarNormalization.number_pack_as input.ty packed.val packed.property.2
+    have valueTyped : (Value.pack input.ty value).as input.ty = some value :=
+      ScalarNormalization.number_pack_as input.ty value canonical
+    have typedEq := congrArg (fun raw : Value => raw.as input.ty) same
+    rw [packedTyped, valueTyped] at typedEq
+    exact Option.some.inj typedEq
+  simp [sourceInput, lookup, packedSuccess, packedValue, pure, Except.pure]
+
+private theorem scalarNumber_generic {ty : Ty} (support : ScalarType ty)
+    (value : ty.Denote) :
+    scalar (ScalarNormalization.number support value) =
+      scalar (GenericStateEncoding.number ty value) :=
+  Option.some.inj <| (ScalarNormalization.sourceScalar_number support value).symm.trans
+    (GenericStateEncoding.sourceScalar_eq_field support value)
+
+private theorem sourceInputs_success_and_binding (inputs : List Input) (values : EvalEnv)
+    (arbitraryAssignment : Assignment)
+    (complete : ∀ input ∈ inputs, ∃ value : input.ty.Denote,
+      values.lookup input.name = some (Value.pack input.ty value) ∧ Canonical input.ty value)
+    (binding : ∀ input ∈ inputs, ∀ value : input.ty.Denote,
+      values.lookup input.name = some (Value.pack input.ty value) →
+        ∀ (_canonical : Canonical input.ty value),
+          arbitraryAssignment ("%input_" ++ input.name) =
+            scalar (GenericStateEncoding.number input.ty value)) :
+    ∃ sourceInputs,
+      inputs.mapM (sourceInput values) = .ok sourceInputs ∧
+      ∀ input ∈ inputs, arbitraryAssignment ("%input_" ++ input.name) =
+        (sourceInputs.lookup ("%input_" ++ input.name)).getD zero := by
+  induction inputs with
+  | nil =>
+    refine ⟨[], rfl, ?_⟩
+    intro input member
+    simp at member
+  | cons head tail ih =>
+    obtain ⟨headValue, headLookup, headCanonical⟩ := complete head (by simp)
+    have headSuccess := sourceInput_complete values head headValue headLookup headCanonical
+    obtain ⟨tailInputs, tailSuccess, tailBinding⟩ := ih
+      (fun input member => complete input (by simp [member]))
+      (fun input member value lookup canonical => binding input (by simp [member]) value lookup canonical)
+    refine ⟨("%input_" ++ head.name,
+      scalar (GenericStateEncoding.number head.ty headValue)) :: tailInputs, ?_, ?_⟩
+    · simp [List.mapM_cons, headSuccess, tailSuccess,
+        bind, Except.bind, pure, Except.pure]
+    · intro input member
+      rcases List.mem_cons.mp member with same | member
+      · subst input
+        have headBinding := binding head (by simp) headValue headLookup headCanonical
+        simp [headBinding]
+      · by_cases sameKey : ("%input_" ++ input.name) = ("%input_" ++ head.name)
+        · obtain ⟨value, lookup, canonical⟩ := complete input (by simp [member])
+          have targetBinding := binding input (by simp [member]) value lookup canonical
+          have headBinding := binding head (by simp) headValue headLookup headCanonical
+          have bindingsEqual := congrArg arbitraryAssignment sameKey
+          rw [targetBinding, headBinding] at bindingsEqual
+          calc
+            arbitraryAssignment ("%input_" ++ input.name) =
+                scalar (GenericStateEncoding.number input.ty value) := targetBinding
+            _ = scalar (GenericStateEncoding.number head.ty headValue) := bindingsEqual
+            _ = ((("%input_" ++ head.name,
+                scalar (GenericStateEncoding.number head.ty headValue)) :: tailInputs).lookup
+                  ("%input_" ++ input.name)).getD zero := by
+              simp [sameKey]
+        · have keyDifferent : ("%input_" ++ input.name) ≠ ("%input_" ++ head.name) := sameKey
+          have unequal : (("%input_" ++ input.name) == ("%input_" ++ head.name)) = false :=
+            beq_eq_false_iff_ne.mpr keyDifferent
+          simpa [List.lookup_cons, unequal] using tailBinding input member
+
+/-- Canonical source inputs make the executable public-input collection
+succeed. The exact lookup seed used by `buildSourceCall` retains canonical
+input admission. -/
+theorem source_inputs_seed_canonical (ep : Entrypoint) (values : EvalEnv)
+    (arbitraryAssignment : Assignment)
+    (admitted : CanonicalInputs ep.circuit values arbitraryAssignment) :
+    ∃ sourceInputs,
+      ep.circuit.inputs.mapM (sourceInput values) = .ok sourceInputs ∧
+      CanonicalInputs ep.circuit values
+        (fun name => (sourceInputs.lookup name).getD zero) := by
+  obtain ⟨sourceInputs, success, sourceBinding⟩ := sourceInputs_success_and_binding
+    ep.circuit.inputs values arbitraryAssignment admitted.complete (by
+      intro input member value lookup canonical
+      have assigned := admitted.binding input member value lookup canonical
+      rw [scalarNumber_generic] at assigned
+      cases input with
+      | mk name ty visibility span => exact assigned)
+  refine ⟨sourceInputs, success, ⟨admitted.unique, admitted.declared, admitted.complete, ?_⟩⟩
+  intro input member value lookup canonical
+  exact (sourceBinding input member).symm.trans
+    (admitted.binding input member value lookup canonical)
 
 structure SourceCall (hash : Hash) (bytes : ArtifactBytes.Bytes) where
   expected : Json

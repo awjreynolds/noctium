@@ -80,7 +80,8 @@ run_cmd do
       `Noctium.Verification.GuardedScalarWitness.Checked.source_read_values,
       `Noctium.Verification.GenericStateConverseSource.source_assignment_of_entry_run,
       `Noctium.Verification.GenericStateConverseCheckedPlan.checked_of_constructed_trace,
-      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace] do
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace,
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_reduces_to_artifact] do
     match Noctium.Verification.Audit.axiomsIn (← getEnv) root with
     | .ok _ => pure ()
     | .error error => throwError error
