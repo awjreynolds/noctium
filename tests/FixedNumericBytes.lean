@@ -59,9 +59,10 @@ private def fixedNumericBytesContext : EvalContext := {
 #guard readableUIntOne.__observation.generatedValidity ==
   ["checked byte fit toBytes(value, 1)"]
 #guard readableUIntOne.__observation.explicitReleases == ["toBytes(value, 1)"]
-#guard match Noctium.Wire.numericBytesTarget .native Noctium.maxBytesLength with
+#guard match Noctium.Wire.numericBytesTarget .native Noctium.maxByteOperationLength with
   | .ok .native => _root_.Bool.true
   | _ => _root_.Bool.false
+#guard !(Noctium.Wire.numericBytesTarget .native (Noctium.maxByteOperationLength + 1)).isOk
 
 #guard match fieldOne.run fixedNumericBytesContext [("value", .native 255)] with
   | .ok [("oneByte", .bytes 1 [255])] => _root_.Bool.true
