@@ -1,10 +1,14 @@
 import Noctium.Verification.GenericStateCheckedReadTrace
 import Noctium.Verification.GenericStateAdmissionPrefix
+import Noctium.Verification.ScalarGuardedActivityAdmission
+import Noctium.Verification.GuardedScalarExpressionAdmission
 
 namespace Noctium.Verification.GuardedPlanAssertions
 
 open Backend
 open GenericStateCheckedReadTrace
+open ScalarNormalization
+open ScalarGuardedPlanAdmission (ScalarEffect)
 
 /-- Assertions emitted by the raw effect compiler. The generated absence
 name matches Impact's production spelling. -/
@@ -247,6 +251,126 @@ theorem guarded_trace_plan_assertions (state : List StateDecl)
     result.guards = initial.guards ++
       (guardedAssertionChunks guards items initial.reads.length).flatten :=
   trace_guarded_plan_assertions state guards items initial result offsets scope trace
+
+private theorem totalizeActivityCondition_scalar (guard condition : Expr .bool)
+    (guardAdmitted : ScalarExpression guard) (conditionAdmitted : ScalarExpression condition) :
+    ScalarExpression (Impact.totalizeActivityCondition guard condition) := by
+  obtain ⟨name, shape, _, _⟩ := Impact.totalizeActivityCondition_shape guard condition
+  rw [shape]
+  exact ScalarExpression.letE name guard _ .bool guardAdmitted
+    (ScalarExpression.select (.ref name)
+      (GuardedExpression.totalize (.ref name) condition) (.bool true) .bool
+      (ScalarExpression.ref name .bool)
+      (GuardedScalarExpressionAdmission.totalize_scalarExpression (.ref name)
+        (ScalarExpression.ref name .bool) condition conditionAdmitted)
+      (ScalarExpression.bool true))
+
+private theorem guardedEffectAssertionChunk_scalar (state : List StateDecl)
+    (guard : Option (Expr .bool)) (effect : Effect) (ordinal : Nat)
+    (source : ScalarEffect state effect)
+    (guardsAdmitted : ∀ condition, guard = some condition → ScalarExpression condition) :
+    ∀ condition ∈ guardedEffectAssertionChunk guard effect ordinal,
+      ScalarExpression condition := by
+  cases source with
+  | cell effect cell operand =>
+    cases cell with
+    | readCell name destination ty scalar declaration =>
+      cases guard <;> intro condition present <;>
+        simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+    | writeCell name ty value scalar declaration =>
+      cases guard <;> intro condition present <;>
+        simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+  | readMap name destination keyTy valueTy key keyScalar valueScalar keyAdmitted =>
+    cases guard <;> intro condition present <;>
+      simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+  | writeMap name keyTy valueTy key value keyScalar valueScalar keyAdmitted valueAdmitted =>
+    cases guard <;> intro condition present <;>
+      simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+  | require required requiredAdmitted =>
+    cases guard with
+    | none =>
+      intro condition present
+      simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+      simpa [present] using requiredAdmitted
+    | some gate =>
+      intro condition present
+      simp [guardedEffectAssertionChunk] at present
+      simpa [present] using totalizeActivityCondition_scalar gate required
+        (guardsAdmitted gate rfl) requiredAdmitted
+  | requireAbsent name keyTy key keyScalar keyAdmitted =>
+    cases guard with
+    | none =>
+      intro condition present
+      simp [guardedEffectAssertionChunk, sourceEffectAssertionChunk] at present
+      subst condition
+      exact ScalarExpression.eq _ _ .bool
+        (ScalarExpression.ref _ .bool) (ScalarExpression.bool false)
+    | some gate =>
+      intro condition present
+      simp [guardedEffectAssertionChunk] at present
+
+private theorem guardedAssertionChunks_scalar (state : List StateDecl)
+    (guards : List (Option (Expr .bool))) (items : List (Effect × Nat)) (ordinal : Nat)
+    (effects : ∀ item ∈ items, ScalarEffect state item.1)
+    (guardsAdmitted : ∀ condition, some condition ∈ guards → ScalarExpression condition) :
+    ∀ condition ∈ (guardedAssertionChunks guards items ordinal).flatten,
+      ScalarExpression condition := by
+  induction items generalizing ordinal with
+  | nil => simp [guardedAssertionChunks]
+  | cons item rest ih =>
+    intro condition present
+    simp only [guardedAssertionChunks, List.flatten_cons, List.mem_append] at present
+    rcases present with head | tail
+    · have effectAdmitted := effects item (by simp)
+      have selectedGuardAdmitted (gate : Expr .bool)
+          (selected : guards[item.2]?.getD none = some gate) : ScalarExpression gate := by
+        have member : some gate ∈ guards := by
+          cases found : guards[item.2]? with
+          | none => simp [found] at selected
+          | some value =>
+            have same : value = some gate := by simpa [found] using selected
+            exact same ▸ List.mem_of_getElem? found
+        exact guardsAdmitted gate member
+      exact guardedEffectAssertionChunk_scalar state
+        (guards[item.2]?.getD none) item.1 ordinal effectAdmitted
+        (by
+          intro gate selected
+          exact selectedGuardAdmitted gate selected) condition head
+    · have remainingEffects : ∀ later ∈ rest, ScalarEffect state later.1 := by
+        intro later member
+        exact effects later (List.mem_cons_of_mem item member)
+      exact ih (ordinal +
+        (GenericStateCheckedReadTrace.effectReadChunk item.1 ordinal).length)
+        remainingEffects condition tail
+
+/-- Every guard in an accepted source plan belongs to the scalar expression
+fragment when source effects and source activity guards satisfy scalar
+admission. The public-input prefix contributes no guards, each source effect
+contributes its exact assertion chunk, and guarded absence is rejected by the
+accepted activity trace. -/
+theorem lower_plan_guards_scalar (state : List StateDecl) (entry : Entrypoint)
+    (plan : Impact.Plan) (lowered : Impact.lower state entry = .ok plan)
+    (effects : ∀ effect ∈ entry.effects, ScalarEffect state effect)
+    (guardsAdmitted : ∀ condition, some condition ∈ entry.effectGuards →
+      ScalarExpression condition) :
+    ∀ condition ∈ plan.guards, ScalarExpression condition := by
+  obtain ⟨_, inputPlan, _, inputAccepted, trace⟩ :=
+    GenericStateAdmissionPrefix.lower_guarded_effect_trace state entry plan lowered
+  have scope := ScalarGuardedActivityAdmission.lower_guarded_scalar_read_scope
+    state entry plan lowered effects
+  have assertions := guarded_trace_plan_assertions state entry.effectGuards
+    entry.effects.zipIdx inputPlan plan _ scope trace
+  have prefixGuards := Impact.publicInputPlan_guards entry.circuit.inputs {}
+    inputPlan inputAccepted
+  have prefixEmpty : inputPlan.guards = [] := by simpa using prefixGuards
+  intro condition present
+  rw [assertions, prefixEmpty] at present
+  exact guardedAssertionChunks_scalar state entry.effectGuards entry.effects.zipIdx
+    inputPlan.reads.length (by
+      intro item member
+      apply effects item.1
+      rw [← List.zipIdx_map_fst 0 entry.effects]
+      exact List.mem_map_of_mem member) guardsAdmitted condition present
 
 private theorem unguarded_require_occurrence_guard_chunk
     (guards : List (Option (Expr .bool))) (items : List (Effect × Nat))

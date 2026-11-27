@@ -37,7 +37,8 @@ private theorem forIn_all (body : α → PUnit → Except ε (ForInStep PUnit)) 
 
 private theorem forIn_extract (body : α → PUnit → Except ε (ForInStep PUnit))
     (property : α → Prop) (values : List α)
-    (actions : ∀ value step, body value .unit = .ok step → step = .yield .unit ∧ property value)
+    (actions : ∀ value ∈ values, ∀ step, body value .unit = .ok step →
+      step = .yield .unit ∧ property value)
     (success : forIn values PUnit.unit body = .ok .unit) : ∀ value ∈ values, property value := by
   induction values with
   | nil => simp
@@ -46,13 +47,14 @@ private theorem forIn_extract (body : α → PUnit → Except ε (ForInStep PUni
     cases checked : body value .unit with
     | error message => simp [checked, bind, Except.bind] at success
     | ok step =>
-      obtain ⟨equal, holds⟩ := actions value step checked
+      obtain ⟨equal, holds⟩ := actions value (by simp) step checked
       subst step
       simp only [checked, bind, Except.bind] at success
       intro found member
       rcases List.mem_cons.mp member with equal | member
       · simpa [equal] using holds
-      · exact ih success found member
+      · exact ih (fun value present => actions value (List.mem_cons_of_mem _ present))
+          success found member
 
 def circuitAliases (circuit : Circuit) : AliasEnvironment :=
   circuit.inputs.map (fun input => (input.name, .input ("%input_" ++ input.name)))
@@ -394,7 +396,7 @@ theorem circuit_validation_parts_with_capabilities (caps : Capabilities) (circui
             refine forIn_extract _ (fun output => output.value.validate caps
               (circuit.inputs.map (fun input => (input.name, input.ty))) = .ok ())
               circuit.outputs ?_ outputsValid
-            intro output step success
+            intro output _ step success
             cases typeCheck : output.ty.validate caps with
             | error message => simp [typeCheck, bind, Except.bind, throw_eq_error] at success
             | ok checkedType =>
@@ -729,6 +731,96 @@ theorem circuit_run_steps (ctx : EvalContext) (circuit : Circuit) (values result
       rcases success with ⟨_, declared, _, checked, unit, constraints, output⟩
       cases unit
       exact ⟨constraints, output⟩
+
+private theorem scalar_input_seed_lookup (values : EvalEnv) (name : String) :
+    (values.map (fun binding => ("%input_" ++ binding.1, scalar (valueNumber binding.2)))).lookup
+      ("%input_" ++ name) = (values.lookup name).map (fun value => scalar (valueNumber value)) := by
+  induction values with
+  | nil => rfl
+  | cons binding rest ih =>
+    rcases binding with ⟨key, value⟩
+    by_cases same : name = key
+    · subst key
+      simp
+    · have encodedNe : "%input_" ++ name ≠ "%input_" ++ key := by
+        intro collision
+        exact same ((String.append_right_inj "%input_").mp collision)
+      simp [List.lookup_cons, beq_eq_false_iff_ne.mpr same,
+        beq_eq_false_iff_ne.mpr encodedNe, ih]
+
+private theorem scalar_pack_of_as {ty : Ty} (scalarType : ScalarType ty)
+    {raw : Value} {value : ty.Denote} (typed : raw.as ty = some value) :
+    raw = Value.pack ty value := by
+  cases scalarType <;> cases raw <;> simp_all [Value.as, Value.pack]
+
+/-- Successful source evaluation supplies the canonical input frame for
+admitted scalar input types, including the exact source value in each lane. -/
+theorem canonicalInputs_of_run (ctx : EvalContext) (circuit : Circuit) (values result : EvalEnv)
+    (modulus : ctx.modulus = Field.modulus)
+    (inputTypes : ∀ input ∈ circuit.inputs, Nonempty (ScalarType input.ty))
+    (success : circuit.run ctx values = .ok result) :
+    ∃ assignment : Assignment, CanonicalInputs circuit values assignment := by
+  cases validation : circuit.validate (evaluationCapabilities ctx) with
+  | error diagnostic => simp [Circuit.run, validation, bind, Except.bind] at success
+  | ok validated =>
+    cases unique : uniqueNames (values.map Prod.fst) with
+    | false => simp [Circuit.run, validation, unique, bind, Except.bind] at success
+    | true =>
+      simp only [Circuit.run, validation, unique, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+        bind, bind_ok] at success
+      obtain ⟨_, declared, _, checked, _, _, _⟩ := success
+      let assignment : Assignment := fun name =>
+        ((values.map (fun binding => ("%input_" ++ binding.1, scalar (valueNumber binding.2)))).lookup
+          name).getD zero
+      refine ⟨assignment, unique, ?_, ?_, ?_⟩
+      · have known := forIn_extract _ (fun binding : String × Value =>
+          ∃ input ∈ circuit.inputs, input.name = binding.1) values (by
+            intro binding _ step accepted
+            cases found : (circuit.inputs.any (·.name == binding.1)) with
+            | false => simp [found, throw_eq_error, Except.bind] at accepted
+            | true =>
+              have stepEq : step = .yield .unit := by
+                simpa [found, Pure.pure, Except.pure] using accepted.symm
+              obtain ⟨input, present, equal⟩ := List.any_eq_true.mp found
+              exact ⟨stepEq, input, present, beq_iff_eq.mp equal⟩) declared
+        intro name raw present
+        exact known (name, raw) present
+      · refine forIn_extract _ (fun input : Input => ∃ value : input.ty.Denote,
+          values.lookup input.name = some (Value.pack input.ty value) ∧ Canonical input.ty value)
+          circuit.inputs ?_ checked
+        intro input present step accepted
+        cases found : values.lookup input.name with
+        | none => simp [found, throw_eq_error, Except.bind] at accepted
+        | some raw =>
+          cases typed : raw.as input.ty with
+          | none => simp [found, typed, throw_eq_error, Except.bind] at accepted
+          | some value =>
+            simp only [found, typed] at accepted
+            split at accepted
+            next _ => simp [throw_eq_error, Except.bind] at accepted
+            next valid =>
+              have stepEq : step = .yield .unit := by
+                simpa [Pure.pure, Except.pure] using accepted.symm
+              obtain ⟨supported⟩ := inputTypes input present
+              have packed := scalar_pack_of_as supported typed
+              have fieldValue : Canonical input.ty value := by
+                rw [canonical_eq, modulus] at valid
+                cases input with
+                | mk name ty visibility span =>
+                  change ScalarType ty at supported
+                  cases supported with
+                  | native => simpa [Canonical, sourceNumber?] using valid
+                  | bool =>
+                    change Canonical .bool value
+                    cases value <;> simp [Canonical, sourceNumber?, Field.modulus]
+                  | uint maximum =>
+                    have bounds : (maximum ≤ ScalarPolicy.maxUint ∧ value ≤ maximum) ∧
+                        value < Field.modulus := by simpa using valid
+                    exact ⟨bounds.2, bounds.1.1, bounds.1.2⟩
+              exact ⟨stepEq, value, congrArg some packed, fieldValue⟩
+      · intro input _ value lookup canonicalValue
+        simp [assignment, scalar_input_seed_lookup, lookup,
+          valueNumber_pack_scalar _ _ (scalarTypeOfCanonical canonicalValue)]
 
 theorem constraints_complete (ctx : EvalContext) (hash : Hash)
     (implementation : HashAgreement ctx hash) (inputs : Assignment)

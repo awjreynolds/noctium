@@ -89,3 +89,47 @@ def certify {ty : Ty} (expression : Expr ty) :
   | _ => none
 termination_by sizeOf expression
 decreasing_by all_goals simp_wf; all_goals omega
+
+private theorem type_some (witness : ScalarType ty) : type? ty = some witness := by
+  cases witness <;> rfl
+
+/-- Every structurally admitted expression passes the executable certifier. -/
+theorem certify_complete {expression : Expr ty} (supported : ScalarExpression expression) :
+    (certify expression).isSome = true := by
+  apply Option.isSome_iff_exists.mpr
+  induction supported with
+  | native value => exact ⟨_, by simp [certify] <;> rfl⟩
+  | bool value => exact ⟨_, by simp [certify] <;> rfl⟩
+  | uint maximum value => exact ⟨_, by simp [certify] <;> rfl⟩
+  | ref name witness => exact ⟨_, by simp [certify, type_some witness] <;> rfl⟩
+  | add _ _ _ _ left right
+  | mul _ _ _ _ left right
+  | sub _ _ _ _ left right
+  | uadd _ _ _ _ left right
+  | usub _ _ _ _ left right
+  | umul _ _ _ _ left right
+  | assertE _ _ _ _ left right
+  | poseidon2 _ _ _ _ _ left right =>
+    obtain ⟨_, left⟩ := left
+    obtain ⟨_, right⟩ := right
+    exact ⟨_, by simp [certify, left, right] <;> rfl⟩
+  | cast _ sourceType targetType _ child =>
+    obtain ⟨_, child⟩ := child
+    exact ⟨_, by simp [certify, type_some sourceType, type_some targetType, child] <;> rfl⟩
+  | letE _ _ _ sourceType _ _ val body =>
+    obtain ⟨_, val⟩ := val
+    obtain ⟨_, body⟩ := body
+    exact ⟨_, by simp [certify, type_some sourceType, val, body] <;> rfl⟩
+  | copyValue _ _ child
+  | disclose _ _ _ child =>
+    obtain ⟨_, child⟩ := child
+    exact ⟨_, by simp [certify, child] <;> rfl⟩
+  | eq _ _ witness _ _ left right =>
+    obtain ⟨_, left⟩ := left
+    obtain ⟨_, right⟩ := right
+    exact ⟨_, by simp [certify, type_some witness, left, right] <;> rfl⟩
+  | select _ _ _ witness _ _ _ condition yes no =>
+    obtain ⟨_, condition⟩ := condition
+    obtain ⟨_, yes⟩ := yes
+    obtain ⟨_, no⟩ := no
+    exact ⟨_, by simp [certify, type_some witness, condition, yes, no] <;> rfl⟩

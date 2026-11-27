@@ -3181,18 +3181,18 @@ theorem Plan.validate_activity_success (plan : Plan) (entry : Entrypoint)
   exact Plan.validateAfterGuards_activity_success plan (plan.typeEnvironment entry)
     afterAccepted
 
-private theorem folded_activity_guards {α : Type} (items : List α) (initial : Plan)
-    (step : Plan → α → Plan)
-    (preserves : ∀ plan item, (step plan item).activityGuards = plan.activityGuards) :
-    (items.foldl step initial).activityGuards = initial.activityGuards := by
+private theorem folded_plan_projection {α β : Type} (items : List α) (initial : Plan)
+    (step : Plan → α → Plan) (projection : Plan → β)
+    (preserves : ∀ plan item, projection (step plan item) = projection plan) :
+    projection (items.foldl step initial) = projection initial := by
   induction items generalizing initial with
   | nil => rfl
   | cons head tail ih =>
     rw [List.foldl_cons, ih, preserves]
 
-private theorem publicInputStep_activity_guards (input : Input) (before after : Plan)
+private theorem publicInputStep_guard_frames (input : Input) (before after : Plan)
     (accepted : publicInputStep input before = .ok after) :
-    after.activityGuards = before.activityGuards := by
+    after.guards = before.guards ∧ after.activityGuards = before.activityGuards := by
   cases input with
   | mk name ty visibility span =>
     cases visibility <;> cases ty
@@ -3201,42 +3201,63 @@ private theorem publicInputStep_activity_guards (input : Input) (before after : 
       · subst length
         simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
         cases accepted
-        rfl
+        exact ⟨rfl, rfl⟩
       · by_cases isZero : length = 0
         · subst length
           simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
           cases accepted
-          rfl
+          exact ⟨rfl, rfl⟩
         · simp [publicInputStep, visibilityNePublic, visibilityEqPrivate] at accepted
           cases accepted
-          rfl
+          exact ⟨rfl, rfl⟩
     case public.foreign kind =>
       simp [publicInputStep, Input.publicProjectionIdentifiers, visibilityNePublic,
         visibilityEqPrivate] at accepted
       cases accepted
-      apply folded_activity_guards
-      intro plan index
-      rfl
+      constructor
+      · apply folded_plan_projection
+        intro plan index
+        rfl
+      · apply folded_plan_projection
+        intro plan index
+        rfl
     all_goals
       simp [publicInputStep, nativeRead, visibilityNePublic, visibilityEqPrivate] at accepted <;>
-        cases accepted <;> rfl
+        cases accepted <;> exact ⟨rfl, rfl⟩
 
-/-- Public input lowering leaves the stored activity guard list unchanged. An
-empty initial plan therefore starts the source effect trace unconditionally. -/
-theorem publicInputPlan_activity_guards (inputs : List Input) (before after : Plan)
+private theorem publicInputStep_activity_guards (input : Input) (before after : Plan)
+    (accepted : publicInputStep input before = .ok after) :
+    after.activityGuards = before.activityGuards :=
+  (publicInputStep_guard_frames input before after accepted).2
+
+private theorem publicInputPlan_guard_frames (inputs : List Input) (before after : Plan)
     (accepted : publicInputPlan inputs before = .ok after) :
-    after.activityGuards = before.activityGuards := by
+    after.guards = before.guards ∧ after.activityGuards = before.activityGuards := by
   induction inputs generalizing before with
   | nil =>
     simp [publicInputPlan] at accepted
     cases accepted
-    rfl
+    exact ⟨rfl, rfl⟩
   | cons input rest ih =>
     change (publicInputStep input before >>= fun next => publicInputPlan rest next) = .ok after
       at accepted
     rw [exceptBindOk] at accepted
     obtain ⟨next, step, tail⟩ := accepted
-    exact (ih next tail).trans (publicInputStep_activity_guards input before next step)
+    exact ⟨(ih next tail).1.trans (publicInputStep_guard_frames input before next step).1,
+      (ih next tail).2.trans (publicInputStep_guard_frames input before next step).2⟩
+
+/-- Public input lowering leaves the source assertion list unchanged. -/
+theorem publicInputPlan_guards (inputs : List Input) (before after : Plan)
+    (accepted : publicInputPlan inputs before = .ok after) :
+    after.guards = before.guards :=
+  (publicInputPlan_guard_frames inputs before after accepted).1
+
+/-- Public input lowering leaves the stored activity guard list unchanged. An
+empty initial plan therefore starts the source effect trace unconditionally. -/
+theorem publicInputPlan_activity_guards (inputs : List Input) (before after : Plan)
+    (accepted : publicInputPlan inputs before = .ok after) :
+    after.activityGuards = before.activityGuards :=
+  (publicInputPlan_guard_frames inputs before after accepted).2
 
 /-- An accepted guarded non-foreign Map read emits the operations of the
 exact rewritten key. Its activity binder is absent from the source key. -/

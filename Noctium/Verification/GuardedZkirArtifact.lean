@@ -266,6 +266,29 @@ theorem lowered_view_arguments {state : List StateDecl} {entry : Entrypoint}
     exact List.all_eq_true.mpr
       (ScalarCallHeaderProjection.decodeScalarCall_argument_identifiers callParsed)
 
+/-- The lowered guarded header uses the ordered raw names from the expected
+source arguments. The native producer checks each header and its count. -/
+theorem lowered_view_arguments_expected {state : List StateDecl} {entry : Entrypoint}
+    {rewrites : Zkir.Rewrites} {json : Json} {view : View} {expected : Native.Expected}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : decodeView json = .ok view)
+    (accepted : Native.expectedEntrypoint state (Passes.pruneEntrypoint entry) = .ok expected) :
+    view.header.arguments = expected.rawInputs.map (·.identifier) := by
+  obtain ⟨_, actual, _, actualAccepted, validated, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state entry rewrites json lowered
+  have same := Except.ok.inj (actualAccepted.symm.trans accepted)
+  subst actual
+  obtain ⟨rawInputs, parsed, names, _⟩ := lowered_view_arguments lowered decoded
+  obtain ⟨_, validatedInputs, _, _, driver⟩ := ScalarValidationProjection.validate_driver_result validated
+  have sameInputs := Except.ok.inj (driver.rawInputsParsed.symm.trans parsed)
+  subst validatedInputs
+  have expectedNames := Native.seedRawInputs_header_names
+    driver.seededRawInputs driver.rawInputCount
+  have unchanged : (Zkir.optimizedExpected rewrites expected).rawInputs = expected.rawInputs := by
+    cases rewrites <;> rfl
+  rw [unchanged] at expectedNames
+  exact Except.ok.inj (names.symm.trans expectedNames)
+
 /-- An exact-byte guarded artifact accepted against an accepted ledger-call
 lowering has the producer's enabled communications commitment in its header. -/
 theorem check_lowerEntrypoint_header {state : List StateDecl} {entry : Entrypoint}

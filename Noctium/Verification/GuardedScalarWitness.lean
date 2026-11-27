@@ -166,9 +166,8 @@ theorem build_of_lowered_scalar_artifact (hash : Hash) (seed target : Assignment
     (pinned : GuardedZkirArtifact.decodeView json = .ok view)
     (raw : Native.arrayField json "instructions" = .ok rawRows)
     (temporary : GuardedScalarWitnessAssembly.TemporaryNamespace rawRows.toList view.rows)
-    (inputAgreement : ∀ name ∈
-      view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows,
-      seed name = target name)
+    (inputAgreement : ∀ requirement ∈ shape.rawInputs ++ shape.inputs,
+      seed requirement.identifier = target requirement.identifier)
     (holds : ∀ instruction, GuardedScalarRows.Row.strict instruction ∈ view.rows →
       Instruction.Holds hash target instruction)
     (observations : List GuardedImpactObservation.Observation)
@@ -226,6 +225,20 @@ theorem build_of_lowered_scalar_artifact (hash : Hash) (seed target : Assignment
     bodySchema typed (by simpa only [List.zipIdx_map_fst] using decoded) driver.instructionTrace
     (by simpa only [List.zipIdx_map_fst] using temporary)
   rw [List.zipIdx_map_fst, argumentNames] at producer
+  have bodyNames := GuardedScalarWitnessAssembly.inputOutputs_eq_expectedInputs
+    bodySchema typed (by simpa only [List.zipIdx_map_fst] using decoded)
+    driver.instructionTrace driver.seedInputCount driver.inputCount
+  have unchangedInputs : optimized.inputs = shape.inputs := by
+    cases rewrites <;> rfl
+  rw [unchangedInputs] at bodyNames
+  have headerNames := GuardedZkirArtifact.lowered_view_arguments_expected lowered pinned expected
+  have seedAgreement : ∀ name ∈
+      view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows,
+      seed name = target name := by
+    intro name present
+    rw [headerNames, bodyNames, ← List.map_append] at present
+    obtain ⟨requirement, required, rfl⟩ := List.mem_map.mp present
+    exact inputAgreement requirement required
   have distinctArgs : view.header.arguments.Nodup := argumentNames ▸ distinctSeed
   have distinct := producer.input_lanes_nodup distinctArgs
   obtain ⟨finalNames, scope⟩ := producer.assemble_scope
@@ -233,7 +246,7 @@ theorem build_of_lowered_scalar_artifact (hash : Hash) (seed target : Assignment
     (GenericStateEncoding.eraseDups_eq_self_of_nodup _ distinct)
   obtain ⟨built, assembled, sameObservations, agrees⟩ :=
     build_of_scope hash seed target bytes json transcript view rawRows finalNames parsed
-      checked pinned raw validArgs distinctLength scope inputAgreement holds widths
+      checked pinned raw validArgs distinctLength scope seedAgreement holds widths
       observations targetConsumed
   exact ⟨finalNames, built, scope, assembled, sameObservations, agrees⟩
 

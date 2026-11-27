@@ -1151,6 +1151,138 @@ theorem ProducerScope.of_validation_loop
         (temporary (raw, row) (List.mem_cons_self ..))
         (ih nextTyped restDecoded accepted tailNamespace)
 
+private theorem inputOutputs_cursor_noninput
+    {expected : Backend.Native.Expected} {raw : Json}
+    {initial next : Backend.Native.State} {instruction : Instruction}
+    (initialTyped : ScalarValidationArithmeticLoop.NativeDefinitions initial)
+    (supported : ScalarValidationNativeDefinitions.SupportedScalarOpcode raw instruction)
+    (notInput : ∀ visibility output, instruction ≠ .input visibility output)
+    (_inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (accepted : Backend.Native.validateInstruction expected initial raw = .ok next)
+    {final : Backend.Native.State} {tailRows : List Row}
+    (tailSequence : (expected.inputs.take final.inputCount).map (·.identifier) =
+      (expected.inputs.take next.inputCount).map (·.identifier) ++ inputOutputs tailRows) :
+    (expected.inputs.take final.inputCount).map (·.identifier) =
+      (expected.inputs.take initial.inputCount).map (·.identifier) ++
+        inputOutputs (.strict instruction :: tailRows) := by
+  have inputCount :=
+    ScalarValidationNativeDefinitions.accepted_supportedScalarOpcode_noninput_inputCount_preserved
+      initialTyped supported notInput accepted
+  have outputNone : inputOutput (.strict instruction) = none := by
+    cases instruction with
+    | input visibility output => exact False.elim (notInput visibility output rfl)
+    | _ => rfl
+  rw [tailSequence, inputCount, inputOutputs_cons, outputNone]
+  simp
+
+private theorem inputOutputs_cursor
+    {expected : Backend.Native.Expected} {items : List (Json × Nat)}
+    {rows : List Row} {initial final : Backend.Native.State}
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (initialTyped : ScalarValidationArithmeticLoop.NativeDefinitions initial)
+    (decoded : (items.map Prod.fst).mapM decodeRow = .ok rows)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
+    (expected.inputs.take final.inputCount).map (·.identifier) =
+      (expected.inputs.take initial.inputCount).map (·.identifier) ++ inputOutputs rows := by
+  induction items generalizing initial final rows with
+  | nil =>
+    change (Except.ok [] : Except String (List Row)) = .ok rows at decoded
+    cases decoded
+    have stateEq : initial = final := by injection accepted
+    subst final
+    simp [inputOutputs]
+  | cons item items ih =>
+    rcases item with ⟨raw, ordinal⟩
+    simp only [List.map_cons, List.mapM_cons, ScalarValidationMeaning.bind_ok] at decoded
+    obtain ⟨row, head, rest, restDecoded, rowsEq⟩ := decoded
+    cases rowsEq
+    rw [Backend.Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Backend.Native.validateInstruction expected initial raw with
+    | error message => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      cases row with
+      | publicInput output guard =>
+        have nextTyped := guarded_row_nativeDefinitions inputSchema initialTyped checked head
+        have tailSequence := ih nextTyped restDecoded accepted
+        have fields := decodeRow_publicInput_fields head
+        have inputOpcode : Backend.Native.stringField raw "op" =
+            .ok (ScalarValidationNativeLoop.inputOpcode .public) := by
+          simpa [ScalarValidationNativeLoop.inputOpcode] using fields.1
+        obtain ⟨requirement, selected, increment⟩ :=
+          NativeInputOrdinal.accepted_input_row_step inputSchema inputOpcode checked
+        have descriptor := NativeInputOrdinal.accepted_input_output_descriptor
+          selected (inputSchema requirement (List.mem_of_getElem? selected)) inputOpcode checked
+        have outputEq : output = requirement.identifier :=
+          Except.ok.inj (fields.2.1.symm.trans descriptor.1)
+        have takeStep : expected.inputs.take next.inputCount =
+            expected.inputs.take initial.inputCount ++ [requirement] := by
+          rw [increment, List.take_add_one, selected]
+          simp
+        rw [tailSequence, takeStep]
+        simp [inputOutputs_cons, inputOutput, outputEq, List.map_append]
+      | impact guard inputs =>
+        have nextTyped := guarded_row_nativeDefinitions inputSchema initialTyped checked head
+        have tailSequence := ih nextTyped restDecoded accepted
+        have fields := decodeRow_impact_fields head
+        have inputCount :=
+          ScalarValidationNativeDefinitions.accepted_impact_inputCount fields.1 checked
+        rw [tailSequence, inputCount]
+        simp [inputOutputs_cons, inputOutput]
+      | strict instruction =>
+        have nextTyped := guarded_row_nativeDefinitions inputSchema initialTyped checked head
+        have tailSequence := ih nextTyped restDecoded accepted
+        obtain ⟨step, _notImpact⟩ := decodeRow_strict head
+        have notPublicInput := decodeRow_strict_not_publicInput head
+        cases instruction with
+        | input visibility output =>
+          cases visibility with
+          | «public» =>
+            cases step.supported with
+            | publicInput _ opcode =>
+              exact False.elim (notPublicInput (by
+                simpa [ScalarValidationNativeLoop.inputOpcode] using opcode))
+          | «private» =>
+            cases step.supported with
+            | privateInput _ opcode =>
+              have inputOpcode : Backend.Native.stringField raw "op" =
+                  .ok (ScalarValidationNativeLoop.inputOpcode .private) := by
+                simpa [ScalarValidationNativeLoop.inputOpcode] using opcode
+              obtain ⟨requirement, selected, increment⟩ :=
+                NativeInputOrdinal.accepted_input_row_step inputSchema inputOpcode checked
+              have descriptor := NativeInputOrdinal.accepted_input_row_descriptor_agrees
+                selected (inputSchema requirement (List.mem_of_getElem? selected))
+                inputOpcode checked step.decoded
+              have outputEq : output = requirement.identifier := by
+                have equality := congrArg Prod.snd descriptor.2
+                simpa using equality
+              have takeStep : expected.inputs.take next.inputCount =
+                  expected.inputs.take initial.inputCount ++ [requirement] := by
+                rw [increment, List.take_add_one, selected]
+                simp
+              rw [tailSequence, takeStep]
+              simp [inputOutputs_cons, inputOutput, outputEq, List.map_append]
+        | _ =>
+          exact inputOutputs_cursor_noninput initialTyped step.supported
+            (by intro visibility output same; cases same) inputSchema checked tailSequence
+
+/-- The decoded input lane sequence is exactly the descriptor prefix consumed
+by the accepted producer trace. In particular, a completed zero-based input
+cursor yields every expected input identifier in order. -/
+theorem inputOutputs_eq_expectedInputs
+    {expected : Backend.Native.Expected} {items : List (Json × Nat)}
+    {rows : List Row} {initial final : Backend.Native.State}
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (initialTyped : ScalarValidationArithmeticLoop.NativeDefinitions initial)
+    (decoded : (items.map Prod.fst).mapM decodeRow = .ok rows)
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final)
+    (initialInputCount : initial.inputCount = 0)
+    (finalInputCount : final.inputCount = expected.inputs.length) :
+    inputOutputs rows = expected.inputs.map (·.identifier) := by
+  have sequence := inputOutputs_cursor inputSchema initialTyped decoded accepted
+  rw [initialInputCount, finalInputCount, List.take_length, List.take_zero] at sequence
+  simpa using sequence.symm
+
 private def FramedAssignment (seed : Assignment) :=
   { witness : Assignment // ∀ name, witness ("%input_" ++ name) = seed ("%input_" ++ name) }
 
@@ -1218,56 +1350,62 @@ def assemble (hash : NativeRelation.Hash) (seed : NativeRelation.Assignment)
   let initial : FramedAssignment seed := ⟨seed, by intro name; rfl⟩
   assembleRows hash seed rawRows rows registered initial
 
-private theorem assembleRows_of_scope (hash : Hash) (seed target : Assignment)
+private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
     {registered : List String} {rawRows : List Json} {rows : List Row} {finalNames : List String}
-    (scope : Scope registered rawRows rows finalNames) (initial : FramedAssignment seed)
-    (seedAgreement : ∀ name ∈ registered, initial.val name = target name)
-    (holds : ∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction)
-    (widths : ∀ left right width destination,
-      .strict (.lessThan left right width destination) ∈ rows →
-        (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) :
+    (scope : Scope registered rawRows rows finalNames) (initial : FramedAssignment seed) :
     ∃ witness : FramedAssignment seed,
       assembleRows hash seed rawRows rows registered initial = .ok witness ∧
-      ∀ name ∈ finalNames, witness.val name = target name := by
+      ∀ target : Assignment,
+        (∀ name ∈ registered, initial.val name = target name) →
+        (∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction) →
+        (∀ left right width destination,
+          .strict (.lessThan left right width destination) ∈ rows →
+          (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) →
+        ∀ name ∈ finalNames, witness.val name = target name := by
   induction scope generalizing initial with
-  | nil => exact ⟨initial, rfl, seedAgreement⟩
+  | nil => exact ⟨initial, rfl, fun _ agrees _ _ => agrees⟩
   | @cons registered raw row rawTail rowTail finalNames refs fresh tail ih =>
     have referenced : ((rowReferences raw row).all registered.contains) = true := by
       apply List.all_eq_true.mpr
       intro name used
       simp [refs name used]
-    have values := definitionValue_agrees (hash := hash) (raw := raw) (row := row)
-      (left := initial.val) (right := target) (fun name used => seedAgreement name (refs name used))
-    have tailHolds : ∀ instruction, .strict instruction ∈ rowTail →
-        Instruction.Holds hash target instruction :=
-      fun instruction present => holds instruction (List.mem_cons_of_mem _ present)
-    have tailWidths : ∀ left right width destination,
-        .strict (.lessThan left right width destination) ∈ rowTail →
-          (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width :=
-      fun left right width destination present =>
-        widths left right width destination (List.mem_cons_of_mem _ present)
-    cases defined : definitionValue hash raw target row with
+    cases defined : definitionValue hash raw initial.val row with
     | none =>
       have destinationEq : rowDestination raw row = none := by
-        rw [← definition_destination hash target, defined]
+        rw [← definition_destination hash initial.val, defined]
         rfl
       simp only [destinationEq, Option.toList_none, List.nil_append] at ih
-      obtain ⟨witness, runs, agrees⟩ := ih initial seedAgreement tailHolds tailWidths
-      exact ⟨witness, by simpa [assembleRows, referenced, values, defined, ensure, Bind.bind, Except.bind] using runs, agrees⟩
+      obtain ⟨witness, runs, agrees⟩ := ih initial
+      refine ⟨witness, ?_, fun target seedAgreement holds widths => agrees target seedAgreement
+        (fun instruction present => holds instruction (List.mem_cons_of_mem _ present))
+        (fun left right width destination present =>
+          widths left right width destination (List.mem_cons_of_mem _ present))⟩
+      simpa [assembleRows, referenced, defined, ensure, Bind.bind, Except.bind] using runs
     | some pair =>
       rcases pair with ⟨destination, value⟩
       have destinationEq : rowDestination raw row = some destination := by
-        rw [← definition_destination hash target, defined]
+        rw [← definition_destination hash initial.val, defined]
         rfl
       have admitted := fresh destination (by simp [destinationEq])
-      have outputEq := definitionValue_holds defined
-        (fun instruction same => holds instruction (by simp [same]))
-        (fun left right width output same => widths left right width output (by simp [same]))
       let next : FramedAssignment seed := ⟨assign initial.val destination value, by
         intro name
         rw [assign_other _ _ _ _ (different_from_inputName destination name admitted.2).symm]
         exact initial.property name⟩
-      have nextAgreement : ∀ name ∈ destination :: registered, next.val name = target name := by
+      simp only [destinationEq, Option.toList_some, List.singleton_append] at ih
+      obtain ⟨witness, runs, agrees⟩ := ih next
+      refine ⟨witness, ?_, ?_⟩
+      · simpa [assembleRows, referenced, defined, admitted.1, admitted.2, next,
+          ensure, Bind.bind, Except.bind] using runs
+      · intro target seedAgreement holds widths
+        have targetDefined : definitionValue hash raw target row = some (destination, value) := by
+          rw [← definitionValue_agrees (hash := hash) (raw := raw) (row := row)
+            (left := initial.val) (right := target) (fun name used => seedAgreement name (refs name used))]
+          exact defined
+        have outputEq := definitionValue_holds targetDefined
+          (fun instruction same => holds instruction (by simp [same]))
+          (fun left right width output same => widths left right width output (by simp [same]))
+        apply agrees target _ (fun instruction present => holds instruction (List.mem_cons_of_mem _ present))
+          (fun left right width dest present => widths left right width dest (List.mem_cons_of_mem _ present))
         intro name present
         rcases List.mem_cons.mp present with same | present
         · subst name
@@ -1275,13 +1413,32 @@ private theorem assembleRows_of_scope (hash : Hash) (seed target : Assignment)
         · have different : name ≠ destination := by
             intro same
             exact admitted.1 (same ▸ present)
-          exact (assign_other initial.val destination name value different).trans
-            (seedAgreement name present)
-      simp only [destinationEq, Option.toList_some, List.singleton_append] at ih
-      obtain ⟨witness, runs, agrees⟩ := ih next nextAgreement tailHolds tailWidths
-      refine ⟨witness, ?_, agrees⟩
-      simpa [assembleRows, referenced, values, defined, admitted.1, admitted.2, next,
-        ensure, Bind.bind, Except.bind] using runs
+          exact (assign_other initial.val destination name value different).trans (seedAgreement name present)
+
+/-- Once the decoded names and ordering are valid, the assembler produces an
+assignment for any seed. An independently satisfying extension determines
+the resulting values on all names in the validated scope. -/
+theorem assemble_with_scope (hash : Hash) (seed : Assignment)
+    (arguments : List String) (rawRows : List Json) (rows : List Row) (finalNames : List String)
+    (decoded : rawRows.mapM GuardedScalarRows.decodeRow = .ok rows)
+    (validArguments : arguments.all validIdentifier = true)
+    (distinctInputs : (arguments ++ inputOutputs rows).eraseDups.length =
+      (arguments ++ inputOutputs rows).length)
+    (scope : Scope (arguments ++ inputOutputs rows) rawRows rows finalNames) :
+    ∃ witness : FramedAssignment seed,
+      assemble hash seed arguments rawRows = .ok witness ∧
+      ∀ target : Assignment,
+        (∀ name ∈ arguments ++ inputOutputs rows, seed name = target name) →
+        (∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction) →
+        (∀ left right width destination, .strict (.lessThan left right width destination) ∈ rows →
+          (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) →
+        ∀ name ∈ finalNames, witness.val name = target name := by
+  obtain ⟨witness, runs, agreement⟩ := assembleRows_of_scope hash seed scope ⟨seed, fun _ => rfl⟩
+  have noCollision : ((arguments ++ inputOutputs rows).eraseDups.length ==
+      (arguments ++ inputOutputs rows).length) = true := by simp [distinctInputs]
+  refine ⟨witness, ?_, agreement⟩
+  simpa only [assemble, validArguments, decoded, noCollision, ensure, ite_true,
+    Bind.bind, Except.bind, FramedAssignment] using runs
 
 /-- Replay the exact guarded scalar rows from the runtime seed. Given an
 ordered scope and an independent satisfying assignment with the checked
@@ -1302,17 +1459,15 @@ theorem assemble_of_scope (hash : Hash) (seed target : Assignment)
       assemble hash seed arguments rawRows = .ok witness ∧
       (∀ name ∈ finalNames, witness.val name = target name) ∧
       ∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash witness.val instruction := by
-  obtain ⟨witness, runs, agreement⟩ :=
-    assembleRows_of_scope hash seed target scope ⟨seed, fun _ => rfl⟩ inputsAgree holds widths
-  refine ⟨witness, ?_, agreement, ?_⟩
-  · have noCollision : ((arguments ++ inputOutputs rows).eraseDups.length ==
-        (arguments ++ inputOutputs rows).length) = true := by simp [distinctInputs]
-    simpa only [assemble, validArguments, decoded, noCollision, ensure, ite_true,
-      Bind.bind, Except.bind, FramedAssignment] using runs
-  · intro instruction present
-    apply (Instruction.Holds.agrees hash instruction (fun name used => agreement name
-      (scope.strict_identifiers (fun name lane => List.mem_append_right _ lane)
-        instruction present name used))).mpr
-    exact holds instruction present
+  obtain ⟨witness, runs, agrees⟩ :=
+    assemble_with_scope hash seed arguments rawRows rows finalNames decoded validArguments
+      distinctInputs scope
+  have agreement := agrees target inputsAgree holds widths
+  refine ⟨witness, runs, agreement, ?_⟩
+  intro instruction present
+  apply (Instruction.Holds.agrees hash instruction (fun name used => agreement name
+    (scope.strict_identifiers (fun name lane => List.mem_append_right _ lane)
+      instruction present name used))).mpr
+  exact holds instruction present
 
 end Noctium.Verification.GuardedScalarWitnessAssembly

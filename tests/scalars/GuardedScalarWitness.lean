@@ -83,6 +83,7 @@ run_cmd do
       `Noctium.Verification.GenericStateConverseCheckedPlan.checked_of_constructed_trace,
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace,
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_reduces_to_artifact,
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_of_satisfying_extension,
       `Noctium.Verification.GuardedScalarWitness.build_of_scope,
       `Noctium.Verification.GuardedScalarWitness.build_of_lowered_scalar_artifact,
       `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.of_validation_loop,
