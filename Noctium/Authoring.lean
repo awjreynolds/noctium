@@ -194,14 +194,6 @@ scoped syntax "enumTag(" nlexpr ")" : nlexpr
 scoped syntax "enumMember(" ident "," ident ")" : nlexpr
 scoped syntax "invoke(" ident "," "[" nlexpr,* "]" ")" : nlexpr
 
-declare_syntax_cat noctium_bind_pattern
-declare_syntax_cat noctium_bind_field
-scoped syntax ident : noctium_bind_pattern
-scoped syntax "_" : noctium_bind_pattern
-scoped syntax "[" noctium_bind_pattern,* "]" : noctium_bind_pattern
-scoped syntax "{" noctium_bind_field,* "}" : noctium_bind_pattern
-scoped syntax ident (":=" noctium_bind_pattern)? : noctium_bind_field
-
 declare_syntax_cat noctium_witness_statement
 scoped syntax "public" ident ":" noctium_witness_input_type ("as" noctium_bind_pattern)? :
   noctium_witness_statement

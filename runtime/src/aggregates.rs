@@ -1655,6 +1655,33 @@ impl Schema {
         Ok(result)
     }
 
+    /// Ensure a constructor Composite uses a named record root and only nested
+    /// records, tuples, and scalar Native, Bool, or UInt leaves.
+    pub fn validate_constructor_schema(&self) -> Result<()> {
+        ensure!(
+            matches!(&self.nodes[self.root], LayoutNode::Struct { .. }),
+            "constructor Composite schema requires a struct root"
+        );
+        let mut pending = vec![self.root];
+        while let Some(index) = pending.pop() {
+            ensure!(
+                pending.len() <= MAX_NODES * 2,
+                "constructor Composite schema traversal limit exceeded"
+            );
+            match &self.nodes[index] {
+                LayoutNode::Scalar(Leaf::Native | Leaf::Bool | Leaf::UInt(_)) => {}
+                LayoutNode::Tuple(items) => pending.extend(items.iter().rev().copied()),
+                LayoutNode::Struct { fields, .. } => {
+                    pending.extend(fields.iter().rev().map(|field| field.layout));
+                }
+                _ => bail!(
+                    "constructor Composite schema supports only nested records, tuples, and Native, Bool, or UInt leaves"
+                ),
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn byte_leaf_ranges(&self) -> Result<Vec<(usize, usize)>> {
         let mut pending = vec![(self.root, 0usize)];
         let mut ranges = Vec::new();

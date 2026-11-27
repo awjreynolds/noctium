@@ -1446,12 +1446,13 @@ private def validateConstructorParameter (span : SourceSpan) (name : String) :
 private def resolveScalarConstructorInput (span : SourceSpan) (fieldName parameterName : String)
     (ty : Ty) : Except Diagnostic (ConstructorParameter × ConstructorInitializer) := do
   validateConstructorParameter span parameterName
-  let (parameterType, initializerValue) : ConstructorType × ConstructorValue := match ty with
-    | .opaqueString => (.opaqueString, .opaqueStringParameter parameterName)
-    | _ => (.scalar ty, .scalar (.ref parameterName : Expr ty))
+  let (parameterType, initializerType, initializerValue) :
+      ConstructorParameterType × ConstructorType × ConstructorValue := match ty with
+    | .opaqueString => (.opaqueString, .opaqueString, .opaqueStringParameter parameterName)
+    | _ => (.scalar ty, .scalar ty, .scalar (.ref parameterName : Expr ty))
   pure (
     {name := parameterName, type := parameterType},
-    {state := fieldName, type := parameterType, value := initializerValue})
+    {state := fieldName, type := initializerType, value := initializerValue})
 
 private def orderRecordFields (span : SourceSpan) (fields : List (String × Ty))
     (values : List (String × α)) : Except Diagnostic (List (Ty × α)) := do

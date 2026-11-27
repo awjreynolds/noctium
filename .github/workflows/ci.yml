@@ -586,6 +586,9 @@ jobs:
           .lake/build/bin/noctium compile tests/RecordConstructor.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/record-constructor"
+          .lake/build/bin/noctium compile tests/NamedCompositeConstructor.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/named-composite-constructor"
           .lake/build/bin/noctium compile tests/SealedRecordCell.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/sealed-record-cell"
@@ -752,6 +755,10 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_record_cell --test record_constructor \
               record_constructor_initializes_cell_and_map -- --ignored
+          NOCTIUM_NAMED_COMPOSITE_CONSTRUCTOR_DIR="$artifacts/named-composite-constructor" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test named_composite_constructor \
+              named_composite_constructor_preserves_one_checked_argument -- --exact --ignored
           NOCTIUM_SEALED_RECORD_CELL_DIR="$artifacts/sealed-record-cell" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test record_constructor \

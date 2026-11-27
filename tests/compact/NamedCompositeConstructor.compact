@@ -1,0 +1,27 @@
+pragma language_version >= 0.28;
+import CompactStandardLibrary;
+
+struct Position {
+  amount: Uint<8>;
+  enabled: Boolean;
+  ignored: Uint<8>;
+}
+
+struct Payload {
+  position: Position;
+  extras: [Uint<16>, Uint<8>];
+}
+
+export ledger amount: Uint<8>;
+export ledger enabled: Boolean;
+export ledger count: Uint<16>;
+
+constructor(seed: Payload) {
+  amount = disclose(seed.position.amount);
+  enabled = disclose(seed.position.enabled);
+  count = disclose(seed.extras[0]);
+}
+
+export circuit inspect(): [Uint<8>, Boolean, Uint<16>] {
+  return [amount, enabled, count];
+}

@@ -39,6 +39,32 @@ for each binding. The pinned Compact case uses indexing and initializes the
 same cells. [Lean fixture](../../tests/ConstructorBytePattern.lean) ·
 [Compact fixture](../../tests/compact/ConstructorBytePattern.compact)
 
+## Bind a named record argument
+
+Use the checked payload declaration to bind fields from one constructor
+argument. A record pattern selects by name. A tuple pattern lists positions
+in order, with `_` for an unused value.
+
+```lean
+constructor(seed : Payload seedWire as {
+  position := {amount := seededAmount, enabled := seededEnabled},
+  extras := [seededCount, _]
+}) where
+  initialize amount := seededAmount
+  initialize enabled := seededEnabled
+  initialize count := seededCount
+end
+```
+
+Pass one `seed` argument in the same typed JSON encoding the runtime uses
+for aggregate values. The record carries its declared identity and ordered
+`position` and `extras` fields. The runtime checks the whole value, including
+unused fields and tuple positions, before initializing any state. Each
+selected field keeps its declared Native, Bool or bounded UInt type.
+[Lean fixture](../../tests/NamedCompositeConstructor.lean) ·
+[Compact replay](../../tests/compact/named-composite-constructor.mjs) ·
+[Native replay](../../runtime/tests/named_composite_constructor.rs)
+
 ## Seed a flat Map
 
 ```lean

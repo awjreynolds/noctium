@@ -895,6 +895,30 @@ private def constructorTypeName : ConstructorType → String
   | .scalar ty => typeName ty
   | .opaqueString => "OpaqueString"
 
+private def constructorParameterJson (parameter : ConstructorParameter) : Except String Json := do
+  let baseFields := [("name", toJson parameter.name)]
+  match parameter.type with
+  | .scalar ty =>
+    pure (Json.mkObj (baseFields ++ [("type", toJson (typeName ty))]))
+  | .opaqueString =>
+    pure (Json.mkObj (baseFields ++ [("type", toJson ("OpaqueString" : String))]))
+  | .aggregate environment type projections => do
+    let (_, leafTypes) ← ConstructorParameterType.checkedAggregateLeafTypes environment type
+    let compiled ← (Types.compileType environment type).mapError (·.message)
+    let schema ← Types.schemaJson compiled
+    for projection in projections do
+      let some expectedType := leafTypes[projection.index]? |
+        throw s!"constructor projection '{projection.name}' has an out-of-range leaf index"
+      unless expectedType == projection.type do
+        throw s!"constructor projection '{projection.name}' type does not match its aggregate leaf"
+    pure (Json.mkObj (baseFields ++ [
+      ("type", toJson ("Composite" : String)),
+      ("schema", schema),
+      ("projections", toJson (projections.map fun projection => Json.mkObj [
+        ("name", toJson projection.name),
+        ("index", toJson projection.index),
+        ("type", toJson (typeName projection.type))]))]))
+
 private def constructorValueJson : ConstructorValue → Json
   | .scalar value => Json.mkObj [
       ("kind", toJson ("scalarExpression" : String)),
@@ -985,9 +1009,10 @@ private def constructorActionJson (action : ConstructorAction) : Json :=
       ("fields", toJson (fields.map ledgerFieldExprJson))] ++
       guard.toList.map fun expression => ("guard", nativeExpressionJson expression))
 
-private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
-  ("parameters", toJson (ctor.parameters.map fun parameter => Json.mkObj [
-    ("name", toJson parameter.name), ("type", toJson (constructorTypeName parameter.type))])),
+private def constructorJsonChecked (ctor : Constructor) : Except String Json := do
+  let parameters ← ctor.parameters.mapM constructorParameterJson
+  pure (Json.mkObj ([
+  ("parameters", toJson parameters),
   ("initializers", toJson (ctor.initializers.map fun initializer => Json.mkObj [
     ("state", toJson initializer.state),
     ("type", toJson (constructorTypeName initializer.type)),
@@ -1001,7 +1026,12 @@ private def constructorJson (ctor : Constructor) : Json := Json.mkObj ([
   (if ctor.setInserts.isEmpty then [] else [
     ("setInserts", toJson (ctor.setInserts.map constructorSetInsertJson))]) ++
   (if ctor.actions.isEmpty then [] else [
-    ("actions", toJson (ctor.actions.map constructorActionJson))]))
+    ("actions", toJson (ctor.actions.map constructorActionJson))])))
+
+private def constructorJson (ctor : Constructor) : Json :=
+  match constructorJsonChecked ctor with
+  | .ok json => json
+  | .error message => panic! s!"invalid constructor metadata: {message}"
 
 private def jsonLetParts (expression : Json) : Except String (Array Json × Json) := do
   let tag ← (← expression.getObjVal? "tag").getStr?
@@ -1374,6 +1404,16 @@ def nativePlanJson (profile : TargetProfile) (contractName : Name)
     ("reads", toJson reads),
     ("guards", toJson (plan.guards.map nativeExpressionJson))])
 
+/-- Checked artifact boundary for plans whose constructor carries logical schemas. -/
+def nativePlanJsonChecked (profile : TargetProfile) (contractName : Name)
+    (state : List StateDecl) (ctor : Option Constructor)
+    (ep : Entrypoint) (plan : Backend.Impact.Plan)
+    (standaloneFile : _root_.Bool := Bool.true) : Except String Json := do
+  match ctor with
+  | none => pure ()
+  | some value => discard (constructorJsonChecked value)
+  pure (nativePlanJson profile contractName state ctor ep plan standaloneFile)
+
 theorem nativePlanJson_operations (profile : TargetProfile) (contractName : Name)
     (state : List StateDecl) (ctor : Option Constructor)
     (ep : Entrypoint) (plan : Backend.Impact.Plan) (standaloneFile : _root_.Bool) :
@@ -1598,7 +1638,9 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           ("bindingFile", toJson (witnessPrefix ++ ".witness.json")), ("controlFile", toJson (witnessPrefix ++ ".witness.control.json")),
           ("target", toJson ("entrypoint" : String)), ("contract", toJson name.toString),
           ("entrypoint", toJson ep.name), ("nativeWitnessQualified", toJson Bool.false)])
-      let planJson := nativePlanJson profile name contract.state contract.constructor ep plan (emit .standalone)
+      let planJson ← match nativePlanJsonChecked profile name contract.state contract.constructor ep plan (emit .standalone) with
+        | .ok value => pure value
+        | .error message => throwError "invalid constructor metadata: {message}"
       let file := nativePlanFile name ep
       let content := if bindPlanBytes then planJson.compress else planJson.pretty
       if bindPlanBytes then
@@ -1611,7 +1653,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
     throwError "--bindings rust requires a ledger entrypoint with a host witness"
   unless uniqueNames (lowered.toList.map (·.2.1)) do
     throwError "generated artifact filenames collide; rename the circuit or contract entrypoint"
-  let contractMetadata := contracts.map fun (name, contract) =>
+  let contractMetadata ← contracts.mapM fun (name, contract) => do
     let entrypoints := contract.entrypoints.map fun ep => Id.run do
       let baseFields : List (String × Json) := [
         ("name", toJson ep.name), ("circuit", toJson ep.circuit.name),
@@ -1634,13 +1676,17 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       let boundFields := (ledgerReadAssumptions[nativeCircuitFile name ep]?).toList.map
         fun assumption => ("ledgerReadBound", assumption)
       pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++ returnFields ++ returnViewFields))
-    let constructorFields := match contract.constructor with
-      | none => []
-      | some ctor => [("constructor", constructorJson ctor)]
-    Json.mkObj ([
+    let constructorFields ← match contract.constructor with
+      | none => pure []
+      | some ctor => do
+        let encoded ← match constructorJsonChecked ctor with
+          | .ok value => pure value
+          | .error message => throwError "invalid constructor metadata: {message}"
+        pure [("constructor", encoded)]
+    pure (Json.mkObj ([
       ("name", toJson name.toString),
       ("state", toJson (contract.state.map stateJson)),
-      ("entrypoints", toJson entrypoints)] ++ constructorFields)
+      ("entrypoints", toJson entrypoints)] ++ constructorFields))
   let controlFields := if controls.isEmpty then [] else [
     ("hostControlPlans", toJson (controls.toList.map fun name => Json.mkObj [
       ("name", toJson name.toString), ("file", toJson (artifactName name ++ ".control.json")),

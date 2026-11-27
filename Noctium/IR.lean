@@ -1058,9 +1058,57 @@ inductive ConstructorType where
   | opaqueString
   deriving Repr, BEq, DecidableEq
 
+structure ConstructorProjection where
+  name : String
+  /-- Expanded checked leaf ordinal in the aggregate's declaration order. -/
+  index : Nat
+  type : Ty
+  deriving Repr, BEq, DecidableEq
+
+inductive ConstructorParameterType where
+  | scalar (ty : Ty)
+  | opaqueString
+  | aggregate (environment : Types.CompositeEnv) (type : Types.CompositeType)
+      (projections : List ConstructorProjection)
+  deriving Repr, BEq, DecidableEq
+
+private def constructorAggregateLayoutLeafTypes : Nat → Types.Layout → Except String (List Ty)
+  | 0, _ => throw "constructor aggregate traversal exhausted checked fuel"
+  | fuel + 1, layout => do
+    match layout with
+    | .structure _ fields =>
+      pure (← fields.mapM fun (_, field) => constructorAggregateLayoutLeafTypes fuel field).flatten
+    | .tuple items =>
+      pure (← items.mapM (constructorAggregateLayoutLeafTypes fuel)).flatten
+    | .scalar .nativeField => pure [.native]
+    | .scalar .booleanField => pure [.bool]
+    | .scalar (.boundedUnsignedField maximum) => pure [.uint maximum]
+    | .unit | .scalar (.enumTagField _) | .scalar .byteField | .opaque _ | .curve _ |
+      .vector _ _ | .bytes _ _ | .enumeration .. =>
+      throw "constructor aggregate supports only nested records, tuples, Native, Bool, and UInt leaves"
+
+namespace ConstructorParameterType
+
+/-- Compile a named constructor record through the complete composite checker,
+then return its scalar leaf types in expanded declaration order. -/
+def checkedAggregateLeafTypes (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) :
+    Except String (Types.CheckedLayout Types.defaultLimits × List Ty) := do
+  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+  match checked.value with
+  | .structure _ _ => pure ()
+  | _ => throw "constructor aggregate parameter must be a named record"
+  let leafTypes ← constructorAggregateLayoutLeafTypes
+    (checked.layoutNodes + 1) checked.value
+  unless leafTypes.length == checked.expandedLeaves do
+    throw "constructor aggregate leaf count differs from its checked layout"
+  pure (checked, leafTypes)
+
+end ConstructorParameterType
+
 structure ConstructorParameter where
   name : String
-  type : ConstructorType
+  type : ConstructorParameterType
   deriving Repr
 
 inductive ConstructorValue where
@@ -2080,6 +2128,8 @@ private def validateCounterEffect (decls : List StateDecl) (state : String)
 
 def uniqueNames (names : List String) : Bool := names.eraseDups.length == names.length
 
+def maxConstructorParameters : Nat := 64
+
 private def validateConstructorRecordFields (caps : Capabilities)
     (env : TypeEnv) (fields : List (String × Ty)) (values : List LedgerFieldExpr) :
     Except String Unit := do
@@ -2096,6 +2146,16 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
   let parameterNames := constructor.parameters.map (·.name)
   unless uniqueNames parameterNames do
     throw {span, message := "duplicate constructor parameter"}
+  if constructor.parameters.length > maxConstructorParameters then
+    throw {span, message := "constructor parameter limit exceeded"}
+  let projectionNames := constructor.parameters.flatMap fun parameter =>
+    match parameter.type with
+    | .aggregate _ _ projections => projections.map (·.name)
+    | .scalar _ | .opaqueString => []
+  unless uniqueNames projectionNames do
+    throw {span, message := "duplicate constructor projection"}
+  unless uniqueNames (parameterNames ++ projectionNames) do
+    throw {span, message := "constructor projection conflicts with a parameter name"}
   for parameter in constructor.parameters do
     unless Types.validFieldName parameter.name do
       throw {span, message := s!"invalid constructor parameter '{parameter.name}'"}
@@ -2105,10 +2165,32 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
       | .error message => throw {span, message}
       | .ok _ => pure ()
     | .opaqueString => pure ()
-  let scalarEnvironment := constructor.parameters.filterMap fun parameter =>
+    | .aggregate environment type projections => do
+      unless (projections.map (·.index)).eraseDups.length == projections.length do
+        throw {span, message := "duplicate constructor projection leaf index"}
+      let leafTypes ← match ConstructorParameterType.checkedAggregateLeafTypes environment type with
+        | .ok (_, leaves) => pure leaves
+        | .error message => throw {span, message}
+      for projection in projections do
+        unless Types.validFieldName projection.name do
+          throw {span, message := s!"invalid constructor projection '{projection.name}'"}
+        let some expectedType := leafTypes[projection.index]? |
+          throw {span, message := s!"constructor projection '{projection.name}' has an out-of-range leaf index"}
+        unless projection.type == expectedType do
+          throw {span, message := s!"constructor projection '{projection.name}' type does not match its aggregate leaf"}
+        match projection.type.validate caps with
+        | .error message => throw {span, message}
+        | .ok _ => pure ()
+  let scalarParameterEnvironment := constructor.parameters.filterMap fun parameter =>
     match parameter.type with
     | .scalar ty => some (parameter.name, ty)
     | .opaqueString => none
+    | .aggregate _ _ _ => none
+  let projectionEnvironment := constructor.parameters.flatMap fun parameter =>
+    match parameter.type with
+    | .aggregate _ _ projections => projections.map fun projection => (projection.name, projection.type)
+    | .scalar _ | .opaqueString => []
+  let scalarEnvironment := scalarParameterEnvironment ++ projectionEnvironment
   let initializerNames := constructor.initializers.map (·.state)
   unless uniqueNames initializerNames do
     throw {span, message := "duplicate constructor state initializer"}
@@ -2141,12 +2223,16 @@ private def Constructor.validate (caps : Capabilities) (states : List StateDecl)
     | .opaqueString, .opaqueString, .opaqueStringLiteral _ => pure ()
     | .opaqueString, .opaqueString, .opaqueStringParameter parameterName =>
       unless constructor.parameters.any (fun parameter =>
-        parameter.name == parameterName && parameter.type == .opaqueString) do
+        parameter.name == parameterName && (match parameter.type with
+          | .opaqueString => true
+          | _ => false)) do
         throw {span, message := s!"unknown OpaqueString constructor parameter '{parameterName}'"}
     | .cell .opaqueString, .opaqueString, .opaqueStringLiteral _ => pure ()
     | .cell .opaqueString, .opaqueString, .opaqueStringParameter parameterName =>
       unless constructor.parameters.any (fun parameter =>
-        parameter.name == parameterName && parameter.type == .opaqueString) do
+        parameter.name == parameterName && (match parameter.type with
+          | .opaqueString => true
+          | _ => false)) do
         throw {span, message := s!"unknown OpaqueString constructor parameter '{parameterName}'"}
     | _, _, _ =>
       throw {span := state.span, message := s!"constructor initializer does not match cell '{initializer.state}'"}
