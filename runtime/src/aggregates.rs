@@ -1236,6 +1236,15 @@ impl Schema {
         Ok(fields)
     }
 
+    /// Flatten a FAB commitment payload, which also permits a single Native
+    /// scalar root. Other root layouts retain the aggregate hash policy.
+    pub(crate) fn fab_commit_fields(&self, operand_limit: usize) -> Result<Vec<FabHashField>> {
+        if matches!(&self.nodes[self.root], LayoutNode::Scalar(Leaf::Native)) {
+            return self.collect_fab_hash_fields(operand_limit);
+        }
+        self.fab_hash_nested_fields(operand_limit)
+    }
+
     /// Flatten a checked layout for transient hashing in struct, tuple, and
     /// fixed-vector order. Unit contributes no input fields.
     pub(crate) fn transient_hash_fields(&self) -> Result<Vec<FabHashField>> {

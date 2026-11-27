@@ -54,6 +54,15 @@ vector order, and an empty preimage against the same Compact release.
 [Lean fixture](../../tests/NestedTransientHash.lean) · [Native
 test](../../runtime/tests/nested_transient_hash.rs) · [Compact oracle](../../tests/compact/nested-transient-hash.mjs)
 
+`persistentCommitFab` and `transientCommitFab` accept a checked
+`CompositeType.scalar .native` layout with one Native payload value.
+The pinned Compact `Field` overloads agree on both digests for payload 41,
+a Bytes32 opening filled with 9 and Native opening 19. The checked output
+still requires explicit disclosure when a payload or opening is private.
+[Lean fixture](../../tests/BoundedFabHashCommit.lean) ·
+[Native check](../../runtime/tests/bounded_fab_hash_commit.rs) ·
+[Compact replay](../../tests/compact/bounded-fab-hash-commit.mjs)
+
 Readable circuits use `transientHashValue(payload)` directly on a checked
 composite value. The payload evaluates once. Its fields use the same FAB
 order and fixed-byte chunk packing as the ordinary route. A private

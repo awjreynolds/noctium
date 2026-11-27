@@ -210,6 +210,13 @@ def fabHashLayoutFields (layout : Types.Layout) : Except String (List (String ×
   | _ => throw "mixed FAB hashing requires a structure, tuple or root vector"
   flattenFabHashLayoutFields (layout.nodeCount + 1) "" layout
 
+/-- Commitments also accept a single Native FAB value. Keep this separate from
+general FAB hashing so the scalar route does not widen the other hash APIs. -/
+def fabCommitHashLayoutFields (layout : Types.Layout) : Except String (List (String × Types.Layout)) := do
+  match layout with
+  | .scalar .nativeField => pure [("payload", layout)]
+  | _ => fabHashLayoutFields layout
+
 def fabHashEncodedFieldCount (fields : List (String × Types.Layout)) : Nat :=
   fields.foldl (fun count field => count + match field.2 with
     | .bytes length .byteField => (length + 30) / 31
@@ -317,11 +324,13 @@ private def validateFabHashFields (fields : List (String × Types.Layout))
         throw s!"mixed FAB enum field '{field.1}' exceeds the supported one-byte tag width"
     | _ => pure ()
 
-/-- Check the flat mixed-FAB subset for the other hash and commitment operations. -/
-def validateFabHashLayoutWithLimit (fieldLimit : Nat) (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) (values : List (Sigma Expr)) : Except String Types.Layout := do
+/-- Validate a checked FAB layout with the caller's root-field policy. -/
+private def validateFabHashLayoutUsing (fieldLimit : Nat)
+    (layoutFields : Types.Layout → Except String (List (String × Types.Layout)))
+    (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (values : List (Sigma Expr)) : Except String Types.Layout := do
   let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
-  let fields ← fabHashLayoutFields checked.value
+  let fields ← layoutFields checked.value
   let emptyRootVector := match checked.value with
     | .vector 0 _ => true
     | _ => false
@@ -334,10 +343,22 @@ def validateFabHashLayoutWithLimit (fieldLimit : Nat) (environment : Types.Compo
   validateFabHashFields fields values
   pure checked.value
 
+/-- Check the flat mixed-FAB subset for the other hash and commitment operations. -/
+def validateFabHashLayoutWithLimit (fieldLimit : Nat) (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) (values : List (Sigma Expr)) : Except String Types.Layout :=
+  validateFabHashLayoutUsing fieldLimit fabHashLayoutFields environment type values
+
 /-- General checked FAB preimages use the checked layout-node budget. -/
 def validateFabHashLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
     (values : List (Sigma Expr)) : Except String Types.Layout :=
   validateFabHashLayoutWithLimit Types.defaultLimits.maxExpandedNodes environment type values
+
+/-- Validate the mixed-FAB subset accepted by persistent and transient
+commitments, including their one-Field scalar overload. -/
+def validateFabCommitLayout (environment : Types.CompositeEnv) (type : Types.CompositeType)
+    (values : List (Sigma Expr)) : Except String Types.Layout :=
+  validateFabHashLayoutUsing Types.defaultLimits.maxExpandedNodes
+    fabCommitHashLayoutFields environment type values
 
 def validateTransientFabHashFields (environment : Types.CompositeEnv) (type : Types.CompositeType)
     (values : List (Sigma Expr)) : Except String (List (String × Types.Layout)) := do
@@ -1583,16 +1604,16 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     validateFabHashValues caps env values
   | .persistentCommitFab compositeEnv type opening values => do
     unless caps.persistentHash32 do throw "target lacks qualified FAB persistent-commit support"
-    let layout ← validateFabHashLayout compositeEnv type values
-    let fields ← fabHashLayoutFields layout
+    let layout ← validateFabCommitLayout compositeEnv type values
+    let fields ← fabCommitHashLayoutFields layout
     unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
       throw "mixed FAB persistent commitment exceeds the native operand-vector budget"
     opening.validate caps env
     validateFabHashValues caps env values
   | .transientCommitFab compositeEnv type opening values => do
     unless caps.poseidon2 do throw "target lacks qualified FAB transient-commit support"
-    let layout ← validateFabHashLayout compositeEnv type values
-    let fields ← fabHashLayoutFields layout
+    let layout ← validateFabCommitLayout compositeEnv type values
+    let fields ← fabCommitHashLayoutFields layout
     unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
       throw "mixed FAB transient commitment exceeds the native field-vector budget"
     opening.validate caps env

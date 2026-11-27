@@ -775,8 +775,8 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
       throw "hashToCurveFab exceeds the source field-vector bound"
     pure (Normalized.mk (hashToCurveTerm payload.operands) payload.bounds payload.assertions)
   | .persistentCommitFab compositeEnv compositeType opening values => do
-    let compiled ← validateFabHashLayout compositeEnv compositeType values
-    let fields ← fabHashLayoutFields compiled
+    let compiled ← validateFabCommitLayout compositeEnv compositeType values
+    let fields ← fabCommitHashLayoutFields compiled
     unless fabHashEncodedFieldCount fields + 2 ≤ fabHashNativeOperandLimit do
       throw "mixed FAB persistent commitment exceeds the native operand-vector budget"
     let normalizedOpening ← normalize env opening
@@ -790,8 +790,8 @@ def normalize (env : AliasEnvironment) : (value : Expr ty) → Except String Nor
     pure (Normalized.mk term (normalizedOpening.bounds ++ payloadBounds)
       (normalizedOpening.assertions ++ payloadAssertions))
   | .transientCommitFab compositeEnv compositeType opening values => do
-    let compiled ← validateFabHashLayout compositeEnv compositeType values
-    let fields ← fabHashLayoutFields compiled
+    let compiled ← validateFabCommitLayout compositeEnv compositeType values
+    let fields ← fabCommitHashLayoutFields compiled
     unless fabHashEncodedFieldCount fields + 1 ≤ Types.defaultLimits.maxVectorLength do
       throw "mixed FAB transient commitment exceeds the native field-vector budget"
     let opening ← normalize env opening
