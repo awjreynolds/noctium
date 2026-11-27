@@ -278,3 +278,63 @@ fn bounded_fab_hash_commit_matches_compact_and_rejects_out_of_range_count() -> a
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_BOUNDED_FAB_HASH_COMMIT_DIR"]
+fn empty_fab_commitments_match_compact() -> anyhow::Result<()> {
+    let directory = artifacts();
+    let plan: Plan = serde_json::from_slice(&fs::read(
+        directory.join("BoundedFabHashCommit.emptyCommit.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(fs::File::open(
+        directory.join("BoundedFabHashCommit.emptyCommit.zkir"),
+    )?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let opening_forward = (1u8..=32).collect::<Vec<_>>();
+    let opening_high = (224u8..=255).rev().collect::<Vec<_>>();
+    let cases = [
+        (
+            &opening_forward,
+            19,
+            "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9",
+            "12794700850233960416233463732843894202025917954986491544046826947248899317573",
+        ),
+        (
+            &opening_high,
+            19,
+            "1865c00831e73f7ee23fc13cb2d0f588b9c341835ca7472f8ec035aba4b789d6",
+            "12794700850233960416233463732843894202025917954986491544046826947248899317573",
+        ),
+        (
+            &opening_forward,
+            20,
+            "ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9",
+            "14450191916591004564031280932146803085578924438601728208718421638496337348179",
+        ),
+    ];
+
+    for (persistent_opening, transient_opening, expected_persistent, expected_transient) in cases {
+        let inputs = BTreeMap::from([
+            ("persistentOpening".into(), bytes(persistent_opening)),
+            ("transientOpening".into(), json!(transient_opening.to_string())),
+        ]);
+        let execution = prepare(&plan, &inputs, &initial, parameters, address)?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([
+                ("persistentCommitResult".into(), bytes(&hex::decode(expected_persistent)?)),
+                ("transientCommitResult".into(), json!(expected_transient)),
+            ])
+        );
+    }
+
+    let malformed_inputs = BTreeMap::from([
+        ("persistentOpening".into(), bytes(&[1; 31])),
+        ("transientOpening".into(), json!("19")),
+    ]);
+    assert!(prepare(&plan, &malformed_inputs, &initial, parameters, address).is_err());
+    Ok(())
+}

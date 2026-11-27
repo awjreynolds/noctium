@@ -28,3 +28,14 @@ export pure circuit scalarCommit(
     transientCommit<Field>(payload, transientOpening),
   ];
 }
+
+export pure circuit emptyCommit(
+  persistentOpening: Bytes<32>,
+  transientOpening: Field,
+): [Bytes<32>, Field] {
+  const empty: Vector<0, Field> = [];
+  return [
+    persistentCommit<Vector<0, Field>>(empty, persistentOpening),
+    transientCommit<Vector<0, Field>>(empty, transientOpening),
+  ];
+}

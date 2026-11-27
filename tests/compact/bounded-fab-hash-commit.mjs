@@ -105,6 +105,37 @@ try {
   assert.throws(() => pureCircuits.scalarCommit(41n, scalarOpening.slice(1), 19n));
   assert.throws(() => pureCircuits.scalarCommit(-1n, scalarOpening, 19n));
 
+  const emptyPersistentOpening = openingForward;
+  const changedPersistentOpening = Uint8Array.from(
+    { length: 32 }, (_, index) => 255 - index,
+  );
+  async function emptyCommit(persistentOpening, transientOpening) {
+    const [persistentResult, transientResult] = pureCircuits.emptyCommit(
+      persistentOpening,
+      transientOpening,
+    );
+    return {
+      persistentCommit: Buffer.from(persistentResult).toString('hex'),
+      transientCommit: transientResult.toString(),
+    };
+  }
+  const emptyBase = await emptyCommit(emptyPersistentOpening, 19n);
+  const emptyChangedPersistent = await emptyCommit(changedPersistentOpening, 19n);
+  const emptyChangedTransient = await emptyCommit(emptyPersistentOpening, 20n);
+  assert.deepEqual(emptyBase, {
+    persistentCommit: 'ae216c2ef5247a3782c135efa279a3e4cdc61094270f5d2be58c6204b7a612c9',
+    transientCommit: '12794700850233960416233463732843894202025917954986491544046826947248899317573',
+  });
+  assert.deepEqual(emptyChangedPersistent, {
+    persistentCommit: '1865c00831e73f7ee23fc13cb2d0f588b9c341835ca7472f8ec035aba4b789d6',
+    transientCommit: emptyBase.transientCommit,
+  });
+  assert.deepEqual(emptyChangedTransient, {
+    persistentCommit: emptyBase.persistentCommit,
+    transientCommit: '14450191916591004564031280932146803085578924438601728208718421638496337348179',
+  });
+  assert.throws(() => pureCircuits.emptyCommit(emptyPersistentOpening.slice(1), 19n));
+
   console.log(JSON.stringify({
     compiler: compilerVersion,
     runtime: runtime.versionString,
@@ -116,6 +147,13 @@ try {
     outputs: { countFive, countSix, countFiveSecondOpening },
     rejectedCount: 7,
     scalarCommit: { persistent: Buffer.from(persistent).toString('hex'), transient: transient.toString() },
+    emptyCommit: {
+      opening: [...emptyPersistentOpening],
+      transientOpening: '19',
+      changedOpening: [...changedPersistentOpening],
+      changedTransientOpening: '20',
+      outputs: { emptyBase, emptyChangedPersistent, emptyChangedTransient },
+    },
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
