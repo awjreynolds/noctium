@@ -4039,8 +4039,8 @@
       "id": "C-ADT-MERKLETREE-CHECKROOT",
       "layer": "language-ledger",
       "surface": "MerkleTree.checkRoot",
-      "noctiumStatus": "subset",
-      "notes": "Ordinary root-only checks compare a Field against the current Merkle root. The guarded read returns false when skipped. Depth-two native results match Compact for empty, populated and same-call append cases. The nested ledger ADT row covers the depth-two typed path fixtures.",
+      "noctiumStatus": "equivalent",
+      "notes": "Ordinary root-only checks compare a Field against the current Merkle root. The guarded read returns false when skipped. The depth-two fixture matches Compact 0.36.1 for empty and populated roots, stale roots, inactive guards and same-call append. The native checker rejects a changed Boolean result. A funded standalone checkCurrent finalized on Ledger 9.1.0.1 with true and identical contract state bytes before and after the call. The same read lowering covers the admitted ordinary tree depths 2 through 32. Nested ledger layouts and derived path functions have their own rows.",
       "source": [
         "adt"
       ],
@@ -4050,12 +4050,16 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "SEM",
+        "ZK",
+        "LEDGER",
         "tests/MerkleTree.lean",
         "runtime/tests/ordinary_merkle.rs",
         "tests/compact/ordinary-merkle.mjs",
-        "docs/development/ordinary-merkle-root-check-localnet-receipt.json"
+        "docs/development/ordinary-merkle-root-check-localnet-receipt.json",
+        "docs/development/standalone-ordinary-merkle-root-localnet-receipt.json"
       ],
-      "equivalence": "unverified"
+      "equivalence": "verified"
     },
     {
       "id": "C-ADT-MERKLETREE-INSERT",

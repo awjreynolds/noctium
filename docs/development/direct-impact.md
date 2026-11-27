@@ -123,6 +123,30 @@ and root check at height 7 on Ledger 9 localnet. Both receipts matched the
 predicted state bytes. The combined relation used k=8 and 232 rows.
 [Localnet receipt](ordinary-merkle-root-check-localnet-receipt.json)
 
+The standalone `checkCurrent` call also finalized on the funded development
+ledger. It returned true for the empty depth-two tree root and preserved
+the 7,144-byte deployed contract state exactly. The pinned ZKIR 3.2.1 tool
+reported K7 and 63 rows for this standalone relation.
+[Standalone receipt](standalone-ordinary-merkle-root-localnet-receipt.json)
+
+To replay the standalone check, assemble one authenticated public bundle for
+each operation exported by `NativeMerkleTree`. Use the compiled source above
+and the pinned ZKIR 3.2.1 tool, with the current development ledger parameters.
+Put the five bundles in directories named for the operations. The manifest
+pin map is a JSON object from operation names to trusted SHA-256 digests.
+[Public bundle recipe](portable-artifacts.md)
+
+```sh
+NOCTIUM_STANDALONE_MERKLE_ROOT_NODE=http://127.0.0.1:19944 \
+NOCTIUM_STANDALONE_MERKLE_ROOT_BUNDLES="$scratch/bundles" \
+NOCTIUM_STANDALONE_MERKLE_ROOT_MANIFESTS="$(cat "$scratch/pins.json")" \
+NOCTIUM_STANDALONE_MERKLE_ROOT_PARAMETER_CACHE=/private/tmp/noctium-proof-params \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib \
+  localnet::tests::standalone_merkle_root_check_finalizes_without_state_change \
+  -- --ignored --exact --nocapture
+```
+
 ## Write an ordinary Merkle tree at an index
 
 A root Merkle tree accepts both a prehashed Bytes32 leaf and a Field leaf at a

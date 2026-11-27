@@ -1,0 +1,49 @@
+{
+  "bundleManifestSha256": "9d111deba43e3a530d090173217e8c6300d61cbbf05d11e6b54d92eb293795dd",
+  "call": {
+    "blockHash": "cfabb476273fc9115792efd679b1d7a5138745f55c83789b6453d0274c429c85",
+    "finalizedHash": "cfabb476273fc9115792efd679b1d7a5138745f55c83789b6453d0274c429c85",
+    "finalizedHeight": 577,
+    "height": 577,
+    "stateBytes": 7144,
+    "stateSha256": "e77d885813b7861ec0550b060e34a84b440308ac73c73b4094ef84562fd11820",
+    "transactionId": "34b4cd9ee20164a6644aebe94b72e2cd50713e60538875b67d1181b7746c8bd6"
+  },
+  "circuitSha256": "13f0c917b69ff0ceeef6f76683d2b965b50cc39ace07458f0bc3faeccaa868ce",
+  "contractAddress": "df8196c6f3265c83dcc0a03659672cd4c342fcf7f67ed2de53d644e15efa5feb",
+  "deployment": {
+    "blockHash": "4e20360265e33888f4d7a53b15b9534157e792283eb4cfe63d74e60238d500d9",
+    "finalizedHash": "4e20360265e33888f4d7a53b15b9534157e792283eb4cfe63d74e60238d500d9",
+    "finalizedHeight": 574,
+    "height": 574,
+    "stateBytes": 7144,
+    "stateSha256": "e77d885813b7861ec0550b060e34a84b440308ac73c73b4094ef84562fd11820",
+    "transactionId": "b98cf8d5e4effc5079f450900f035beffc57d572e784540ec230b2638aaa7b36"
+  },
+  "entrypoint": "checkCurrent",
+  "expectedRoot": "0",
+  "genesis": "823383ec0302be8417cfcbcc62f21df08f4047bca37aaea89e3f54b550ebae1d",
+  "isValid": true,
+  "k": 7,
+  "operationManifestSha256": {
+    "append": "9298baab15cc7050ff67ddf41dcef2cfd43ecb7c6b01ad04d362e10467c40b60",
+    "appendAndCheck": "372960db6381f8770597dc3d414e9fe1c08c5670b302b85b917b2ed61884a15c",
+    "checkCurrent": "9d111deba43e3a530d090173217e8c6300d61cbbf05d11e6b54d92eb293795dd",
+    "fullStatus": "2cd473f5f2a1b0c638df263fb9e1c7e8a902f0df50638c7f7fc147387b783fba",
+    "resetAndCheck": "4e96384bf442d789dbdef5fa0732d6de164f35fa3f0b8704afe1e23388ca6231"
+  },
+  "planSha256": "21ddec73d6fa6eeb816621166dc4e4805fa875912cda22284514eddf5ec97c32",
+  "profile": "midnight-ledger-9-zkir-3.2.1",
+  "schemaVersion": 1,
+  "scope": "standalone active checkCurrent against the empty depth-two ordinary Merkle root",
+  "stateUnchanged": true,
+  "sourceSha256": "91d0a2e4cb59b1bddba02b0c803d779520ef7e50eb92fcaef9f915c0f4f8d833",
+  "ledgerParametersSha256": "dd3b97aa1311b64a6137aadaffa8d11c04a456ee68e544721991aa557b2e459e",
+  "proverKeySha256": "b9422d3b4265c3bc51098b9bc1cd6640fe9211aaa6ff5a36b6d4602bbc6f385b",
+  "verifierKeySha256": "1a2cce4b6f894530bdfb0e86b648c53357f8acb4e3c332ce289d8d0a20d72226",
+  "compilerRevision": "733e6b13611ff0027422b19aed74adba167d0d58",
+  "nativeZkirRevision": "7a51b3385bbf4bce3604df87a7c70867c9ab43c0",
+  "nativeZkirBinarySha256": "0acb4a68adea80f679fd3f2b10626d73a1f4b8267934656fea21f8ac80871fa8",
+  "rows": 63,
+  "nodeImage": "midnightntwrk/midnight-node@sha256:0c1ad548d523c1109aa1f16daab1bf72dcb78c7e17b8a8c6d97424ad0eba7b8a"
+}
