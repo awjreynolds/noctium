@@ -405,6 +405,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableRecordConstruction.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --emit specialization --output "$artifacts/readable-record-construction"
+          .lake/build/bin/noctium compile tests/MixedSequenceJoin.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/mixed-sequence-join"
           .lake/build/bin/noctium compile tests/ReadableLinkedHelpers.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-linked-helpers"
@@ -600,6 +603,7 @@ jobs:
               --no-default-features --features zkir-321 --test pure_helpers -- \
               --ignored --exact linked_readable_helpers_preserve_native_argument_order
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
+            NOCTIUM_MIXED_SEQUENCE_JOIN_DIR="$artifacts/mixed-sequence-join" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \
             NOCTIUM_OPAQUE_MAYBE_DIR="$artifacts/opaque-maybe" \
