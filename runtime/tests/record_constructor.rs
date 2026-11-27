@@ -1,5 +1,6 @@
 #![cfg(feature = "zkir-321")]
 
+use anyhow::Context as _;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
     Expr, Instruction, Plan, check, construct_state, constructor::ConstructorAction, field_value,
@@ -10,6 +11,99 @@ use serde_json::json;
 use serialize::Serializable;
 use std::{collections::BTreeMap, fs::File, path::PathBuf};
 use transient_crypto::curve::Fr;
+
+#[test]
+#[ignore = "requires fresh NestedRecordCell artifacts in NOCTIUM_NESTED_RECORD_CELL_DIR"]
+fn nested_record_cell_matches_compact() -> anyhow::Result<()> {
+    let directory = PathBuf::from(std::env::var("NOCTIUM_NESTED_RECORD_CELL_DIR")?);
+    let artifacts = |entry: &str| -> anyhow::Result<(Plan, IrSource)> {
+        let stem = format!("NestedRecordCell.{entry}");
+        Ok((
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?,
+            IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?,
+        ))
+    };
+    let (inspect, inspect_relation) = artifacts("inspect")?;
+    let (replace, replace_relation) = artifacts("replacePosition")?;
+    let record = |total: &str, count: &str, active: bool| {
+        BTreeMap::from([
+            ("totalArg".into(), json!(total)),
+            ("countArg".into(), json!(count)),
+            ("activeArg".into(), json!(active)),
+        ])
+    };
+    let expected = |total: &str, count: &str, active: bool| {
+        BTreeMap::from([
+            ("totalResult".into(), json!(total)),
+            ("countResult".into(), json!(count)),
+            ("activeResult".into(), json!(active)),
+        ])
+    };
+    let initial = construct_state(&inspect, &record("241", "513", true))
+        .context("initialize the nested record")?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let run_inspect = |state: &_| -> anyhow::Result<_> {
+        let exec = prepare(&inspect, &BTreeMap::new(), state, params, address)?;
+        check(&exec, &inspect_relation)?;
+        assert_eq!(&exec.after.state, state);
+        Ok(exec.returns_json())
+    };
+    assert_eq!(
+        run_inspect(&initial).context("inspect constructor state")?,
+        expected("241", "513", true)
+    );
+    let updated = prepare(
+        &replace,
+        &record("19", "97", false),
+        &initial,
+        params,
+        address,
+    )
+    .context("replace the nested record")?;
+    check(&updated, &replace_relation)?;
+    assert_eq!(
+        run_inspect(&updated.after.state)?,
+        expected("19", "97", false)
+    );
+    assert!(
+        prepare(
+            &replace,
+            &record("19", "65536", false),
+            &updated.after.state,
+            params,
+            address
+        )
+        .is_err()
+    );
+
+    let mut forged = replace;
+    let schema = forged
+        .operations
+        .iter_mut()
+        .find_map(|operation| match operation {
+            Instruction::PushFields { schema, .. } => Some(schema),
+            _ => None,
+        })
+        .expect("record write schema");
+    let details = &mut schema["layout"]["fields"][1];
+    assert_eq!(details["name"], "details");
+    details["name"] = json!("wrongDetails");
+    let error = prepare(
+        &forged,
+        &record("19", "97", false),
+        &initial,
+        params,
+        address,
+    )
+    .err()
+    .expect("mismatched Cell layout must reject");
+    assert!(
+        error.to_string().contains("differs from state schema"),
+        "{error:#}"
+    );
+    Ok(())
+}
 
 #[test]
 #[ignore = "requires fresh SealedRecordCell artifacts in NOCTIUM_SEALED_RECORD_CELL_DIR"]

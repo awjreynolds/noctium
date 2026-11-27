@@ -175,6 +175,20 @@ rejects an entrypoint write to the sealed record. The native checker also
 rejects an Impact plan that writes the sealed slot.
 [Lean fixture](../../tests/SealedRecordCell.lean) · [Compact comparison](../../tests/compact/sealed-record-cell.mjs) · [Native replay](../../runtime/tests/record_constructor.rs)
 
+## Initialize a nested record Cell
+
+A root record Cell accepts a named struct one level deep with Native, Bool
+and bounded UInt fields. Use `initialize position := fields(...)` and
+`write position := fields(...)` in declaration order. Reading a nested field
+binds its path with underscores. For example, `read position as observed`
+binds `observed_details_count` for `position.details.count`. The emitted schema
+retains the inner record identity.
+
+The matched Compact and native case reads both the original and replaced
+record. The native checker rejects an out-of-range UInt16 and a changed
+operation schema. The source also enforces sealing for the nested layout.
+[Lean fixture](../../tests/NestedRecordCell.lean) · [Compact replay](../../tests/compact/nested-record-cell.mjs) · [Native replay](../../runtime/tests/record_constructor.rs)
+
 ## Initialize an opaque string
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one
