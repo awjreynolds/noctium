@@ -49,8 +49,15 @@ theorem ref_lookup (caps : Capabilities) (env : TypeEnv) {ty : Ty}
     (name : String) (scalarType : ScalarType ty)
     (valid : (Expr.ref (ty := ty) name).validate caps env = .ok ()) :
     env.lookup name = some ty := by
-  simp only [Expr.validate, bind, validate_bind_ok] at valid
-  rcases valid with ⟨_, typeValid, lookupValid⟩
+  have lookupValid : (match env.lookup name with
+      | none => Except.error s!"unknown reference '{name}'"
+      | some found =>
+          if found == ty then pure () else Except.error s!"type mismatch for '{name}'") =
+      .ok () := by
+    cases scalarType <;> simp only [Expr.validate, bind, validate_bind_ok] at valid
+    all_goals
+      rcases valid with ⟨_, _, lookupValid⟩
+      exact lookupValid
   cases lookup : env.lookup name with
   | none => simp [lookup] at lookupValid
   | some found =>

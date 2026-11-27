@@ -1218,8 +1218,8 @@ private def Plan.validateBeforeGuards (entry : Entrypoint) : Except String Unit 
   unless entry.returnViews.length ≤ maxEntrypointReturnFields do
     throw "entrypoint logical return view limit exceeded"
   for view in entry.returnViews do
-    let compiled ← (Types.compileType view.environment view.type).mapError (·.message)
-    unless compiled.checked.expandedLeaves ≤ maxEntrypointReturnFields do
+    let compiled ← (Types.compileType view.environment view.type Types.publicBytesLimits).mapError (·.message)
+    unless view.physicalFieldCount compiled.checked.expandedLeaves ≤ maxEntrypointReturnFields do
       throw "entrypoint return field limit exceeded"
     unless view.fields.length == view.physicalFieldCount compiled.checked.expandedLeaves do
       throw s!"logical return '{view.name}' field count does not match its type"

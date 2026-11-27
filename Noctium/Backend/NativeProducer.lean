@@ -252,17 +252,24 @@ private def defineByteChunks (state : State) (input : Fact) (length : Nat)
     state ← define state name fact
   pure state
 
+private theorem publicBytesChunkCount_le_maxVectorLength {length : Nat}
+    (lengthBound : length ≤ Noctium.maxPublicBytesLength) :
+    bytesChunkCount length ≤ maxVectorLength := by
+  have chunks_le_133 : bytesChunkCount length ≤ 133 := by
+    have lengthBound' : length ≤ 4096 := by
+      simpa [Noctium.maxPublicBytesLength, Types.maxPublicBytesLength,
+        Types.defaultLimits] using lengthBound
+    unfold bytesChunkCount
+    omega
+  have chunks_fit_native : 133 ≤ maxVectorLength := by
+    decide
+  exact Nat.le_trans chunks_le_133 chunks_fit_native
+
 private theorem bytesChunkCount_le_maxVectorLength {length : Nat}
     (lengthBound : length ≤ Noctium.maxBytesLength) :
     bytesChunkCount length ≤ maxVectorLength := by
-  have chunks_le_34 : bytesChunkCount length ≤ 34 := by
-    have lengthBound' : length ≤ 1054 := by
-      simpa [Noctium.maxBytesLength, Types.defaultLimits] using lengthBound
-    unfold bytesChunkCount
-    omega
-  have chunks_fit_native : 34 ≤ maxVectorLength := by
-    decide
-  exact Nat.le_trans chunks_le_34 chunks_fit_native
+  have byteLimit : Noctium.maxBytesLength ≤ Noctium.maxPublicBytesLength := by decide
+  exact publicBytesChunkCount_le_maxVectorLength (Nat.le_trans lengthBound byteLimit)
 
 private theorem foreignEncodedFieldCount_le_maxVectorLength (kind : Foreign.Kind) :
     kind.encodedFieldCount ≤ maxVectorLength := by

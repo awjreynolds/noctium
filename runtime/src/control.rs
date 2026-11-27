@@ -91,6 +91,18 @@ fn parse_type(text: &str, registry: &witness::Registry) -> Result<Type> {
     }
 }
 
+fn validate_legacy_private_type(ty: &Type) -> Result<()> {
+    if let Type::Scalar(scalar) = ty {
+        ensure!(
+            scalar.bytes_length().is_none_or(|length| {
+                length <= scalars::MAX_LEGACY_BYTE_INPUT_LENGTH
+            }),
+            "private fixed byte value exceeds the native input limit"
+        );
+    }
+    Ok(())
+}
+
 impl Type {
     fn coerce(&self, mut value: Tracked) -> Result<Tracked> {
         match self {
@@ -762,7 +774,7 @@ fn bytes_operation(
             None => (32, canonical_index(encoded)?),
         };
         ensure!(
-            count == 1 && length <= scalars::MAX_BYTES_LENGTH && index < length,
+            count == 1 && length <= scalars::MAX_BYTE_INDEX_LENGTH && index < length,
             "control byte index"
         );
         return Ok((
@@ -1772,7 +1784,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_LITERAL_LENGTH)
                     .ok_or_else(|| anyhow!("control byte literal length"))?;
                 let values = list(v, "values")?;
                 ensure!(values.len() == length, "control byte literal length");
@@ -2358,7 +2370,8 @@ fn witness_signature(v: &Json, registry: &witness::Registry) -> Result<witness::
             "invalid or duplicate typed witness parameter"
         );
         let type_token = text(parameter, "type")?.to_owned();
-        parse_type(&type_token, registry)?;
+        let parameter_type = parse_type(&type_token, registry)?;
+        validate_legacy_private_type(&parameter_type)?;
         parameters.push(witness::Parameter {
             name: parameter_name,
             type_token,
@@ -2380,7 +2393,8 @@ fn witness_signature(v: &Json, registry: &witness::Registry) -> Result<witness::
         );
     }
     let result_type = text(v, "resultType")?.to_owned();
-    parse_type(&result_type, registry)?;
+    let result_type_value = parse_type(&result_type, registry)?;
+    validate_legacy_private_type(&result_type_value)?;
     Ok(witness::WitnessSignature {
         name: signature_name,
         operation,
@@ -2478,12 +2492,19 @@ fn public_byte_relation_fields(
     relation_names: &BTreeSet<String>,
 ) -> Result<(PublicBytesAbi, Vec<(String, u64)>)> {
     let packed = byte_relation_fields(name, length, PublicBytesAbi::PackedFields);
-    let legacy = byte_relation_fields(name, length, PublicBytesAbi::LegacyBytes);
     let present = |fields: &[(String, u64)]| {
         fields
             .iter()
             .all(|(field, _)| relation_names.contains(field))
     };
+    if length > scalars::MAX_LEGACY_BYTE_INPUT_LENGTH {
+        ensure!(
+            present(&packed),
+            "wide public byte input requires packed FAB fields"
+        );
+        return Ok((PublicBytesAbi::PackedFields, packed));
+    }
+    let legacy = byte_relation_fields(name, length, PublicBytesAbi::LegacyBytes);
     ensure!(
         present(&packed) ^ present(&legacy),
         "native public byte input has an unsupported field shape"
@@ -2574,6 +2595,14 @@ fn validate_relation_inputs(
             .get(name)
             .ok_or_else(|| anyhow!("unknown native circuit input"))?;
         let scalar = ScalarType::parse(token)?;
+        if visibility == "private" {
+            ensure!(
+                scalar.bytes_length().is_none_or(|length| {
+                    length <= scalars::MAX_LEGACY_BYTE_INPUT_LENGTH
+                }),
+                "native private byte input exceeds the input limit"
+            );
+        }
         if call_inputs.contains(name) {
             if let Some(length) = scalar.bytes_length() {
                 byte_constraints.extend(crate::call_byte_input_fields(name, length));
@@ -3653,7 +3682,19 @@ fn public_source_read_prologue_len(impact_plan: &Json) -> Result<usize> {
                 );
                 if packed { 1 } else { 32 }
             }
-            ScalarType::Bytes(length) => length,
+            ScalarType::Bytes(length) => {
+                let packed = reads.get(count).is_some_and(|read| {
+                    matches_public_input_prologue(
+                        std::slice::from_ref(read),
+                        &[(input_name.to_owned(), input_type.to_owned())],
+                    )
+                });
+                ensure!(
+                    packed || length <= scalars::MAX_LEGACY_BYTE_INPUT_LENGTH,
+                    "wide public byte input requires a packed Impact input"
+                );
+                if packed { 1 } else { length }
+            }
             ScalarType::JubjubScalar => 1,
             ScalarType::JubjubPoint => 2,
             #[cfg(feature = "zkir-321")]
@@ -3903,12 +3944,15 @@ impl Plan {
             let n = name(text(input, "name")?)?;
             ensure!(names.insert(n.clone()), "duplicate control input");
             let t = text(input, "type")?.to_owned();
-            parse_type(&t, &registry)?;
+            let input_type = parse_type(&t, &registry)?;
             let visibility = text(input, "visibility")?;
             ensure!(
                 ["public", "private"].contains(&visibility),
                 "invalid control visibility"
             );
+            if visibility == "private" {
+                validate_legacy_private_type(&input_type)?;
+            }
             inputs.push((n, t, visibility == "private"));
         }
         let mut witnesses = BTreeMap::new();
@@ -3924,7 +3968,8 @@ impl Plan {
                 let n = name(text(witness, "name")?)?;
                 ensure!(host_identifier(&n), "invalid control witness identifier");
                 let t = text(witness, "type")?.to_owned();
-                ScalarType::parse(&t)?;
+                let witness_type = Type::Scalar(ScalarType::parse(&t)?);
+                validate_legacy_private_type(&witness_type)?;
                 ensure!(
                     witnesses.insert(n, t).is_none(),
                     "duplicate control witness"
@@ -4242,6 +4287,10 @@ fn expected_ledger_inputs(
                         let packed = matches_public_input_prologue(
                             std::slice::from_ref(first_read),
                             &[(input_name.to_owned(), input_type.to_owned())],
+                        );
+                        ensure!(
+                            packed || length <= scalars::MAX_LEGACY_BYTE_INPUT_LENGTH,
+                            "wide public byte input requires a packed Impact input"
                         );
                         let abi = if packed {
                             public_source_inputs

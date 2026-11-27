@@ -29,18 +29,28 @@ try {
   const contract = new Contract({});
   const { currentContractState } = await contract.initialState(
     runtime.createConstructorContext(null, wallet));
-  const context = () => runtime.createCircuitContext({
-    circuitId: 'roundTrip',
+  const context = (circuitId) => runtime.createCircuitContext({
+    circuitId,
     contractAddress: runtime.dummyContractAddress(),
     coinPublicKeyOrZswapState: wallet,
     contractState: currentContractState.data,
     privateState: null,
   });
-  const payload = Uint8Array.from({ length: 1025 }, (_, index) => index % 251);
-  payload.set([0xa5, 0x5a], 1023);
-  assert.deepEqual((await contract.circuits.roundTrip(context(), payload)).result, payload);
-  await assert.rejects(async () => contract.circuits.roundTrip(context(), payload.slice(0, -1)));
-  console.log('1025 bytes round-tripped, including tail a55a. 1024-byte input rejected.');
+  for (const [circuitId, length] of [
+    ['roundTrip', 1025],
+    ['roundTrip1055', 1055],
+    ['roundTrip4096', 4096],
+  ]) {
+    const payload = Uint8Array.from({ length }, (_, index) => index % 251);
+    payload.set([0xa5, 0x5a], length - 2);
+    assert.deepEqual(
+      (await contract.circuits[circuitId](context(circuitId), payload)).result,
+      payload,
+    );
+    await assert.rejects(async () =>
+      contract.circuits[circuitId](context(circuitId), payload.slice(0, -1)));
+  }
+  console.log('1025, 1055, and 4096 bytes round-tripped with tail a55a. Short inputs rejected.');
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

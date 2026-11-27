@@ -598,6 +598,9 @@ jobs:
           .lake/build/bin/noctium compile tests/FixedNumericBytes.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/fixed-numeric-bytes"
+          .lake/build/bin/noctium compile tests/WidePublicBytes.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/wide-public-bytes"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           NOCTIUM_FLAT_WITNESS_RANGE_DIR="$artifacts/flat-witness-range" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
@@ -628,6 +631,9 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test record_merkle_leaves \
               enum_historic_merkle_leaves_match_compact -- --exact --ignored
+          NOCTIUM_WIDE_PUBLIC_BYTES_ARTIFACTS="$artifacts/wide-public-bytes" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test native_bytes -- --ignored
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \

@@ -931,11 +931,15 @@ where
             pure (site :: sites)
         go fuel (children.map SourceNode.term ++ rest) sites
 
-private def checkedComposite (program : Program) (span : SourceSpan)
-    (type : Types.CompositeType) : Except Diagnostic Types.CompiledType :=
-  match Types.compileType program.composites type with
+private def checkedCompositeWithLimits (program : Program) (span : SourceSpan)
+    (type : Types.CompositeType) (limits : Types.Limits) : Except Diagnostic Types.CompiledType :=
+  match Types.compileType program.composites type limits with
   | .ok compiled => pure compiled
   | .error diagnostic => fail (if diagnostic.span.file.isEmpty then span else diagnostic.span) diagnostic.message
+
+private def checkedComposite (program : Program) (span : SourceSpan)
+    (type : Types.CompositeType) : Except Diagnostic Types.CompiledType :=
+  checkedCompositeWithLimits program span type Types.defaultLimits
 
 /-- Select a child type using the same checked layout as projection lowering. -/
 def projectedType (composites : Types.CompositeEnv) (span : SourceSpan)
@@ -4006,9 +4010,9 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
     | _ => none
   let compositeReturnInfo ← match declaration.result with
     | .composite type => do
-      let compiled ← checkedComposite program exported.span type
-      if compiled.checked.expandedLeaves > maxEntrypointReturnFields then
-        fail exported.span "entrypoint return field limit exceeded"
+      let layoutLimits := if exported.packedByteReturnPaths.isEmpty then
+          Types.defaultLimits else Types.publicBytesLimits
+      let compiled ← checkedCompositeWithLimits program exported.span type layoutLimits
       discard (Types.schemaJson compiled |>.mapError fun message =>
         {span := exported.span, message})
       unless uniqueNames (exported.packedByteReturnPaths.map (String.intercalate ".")) do
@@ -4028,6 +4032,8 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
       compiled.checked.expandedLeaves - packed.foldl
         (fun reduction (_, length, widths) => reduction + length - widths.length) 0
     | none => 1
+  if physicalReturnCount > maxEntrypointReturnFields then
+    fail exported.span "entrypoint return field limit exceeded"
   let reservedOutputNames := (inputs ++ lowering.witnessInputs).map (·.name) ++ readNames
   let physicalNames (base : String) := match compositeReturnInfo with
     | some _ => (List.range physicalReturnCount).map fun index => s!"{base}_{index}"
