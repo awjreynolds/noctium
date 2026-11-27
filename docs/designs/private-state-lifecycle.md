@@ -124,7 +124,7 @@ The core cannot roll back arbitrary network, key or callback side effects. A hos
 
 ## Limits, wiping and qualification
 
-The opt-in context limits descriptors, capabilities and bindings to 32 each, typed arguments to 8 per operation, proposed writes to 64 and private buffers to 64 KiB. Request budget includes every private input plus one reserved CAS request, with a maximum of 257. Begin rejects an insufficient budget. Key/identifier lengths are bounded. The registry permits 64 live private buffers independently of the existing public result limit. Quota errors do not consume pending responses or authorize state changes.
+The opt-in context limits descriptors, capabilities and bindings to 32 each, typed arguments to 8 per operation, proposed writes to 64 and private buffers to 64 KiB. The default request budget is 64. The scalar protocol permits up to 257 requests. A typed context can opt in to 1,026 requests for larger callback sequences. The budget includes provider requests and one reserved CAS request. Begin rejects a budget too small for the declared private inputs. Key and identifier lengths are bounded. The registry permits 64 live private buffers independently of the public result limit. Quota errors do not consume pending responses or authorize state changes.
 
 Retained private result bytes are wiped on explicit free. Retained journal values and key strings are wiped best effort on commit acknowledgement, conflict, rejection, failure, cancellation and session release. Temporary parser/serializer/arithmetic copies and caller-owned copies have no complete erasure guarantee. Hosts must protect pending journals and callback arguments as private execution material.
 

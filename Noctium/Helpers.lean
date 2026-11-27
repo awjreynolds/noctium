@@ -593,6 +593,16 @@ private def flatStaticAssertionSequence : List Statement → Bool
     | .assert condition => staticAssertionTerm condition
     | _ => false
 
+private def flatUnitWitnessCallSequence (program : Program) (index : String) :
+    List Statement → Bool
+  | [.evaluate (.witnessCall _ name [.ref argument])] =>
+    if argument != index then false else
+      match program.witnesses.find? (·.name == name) with
+      | some signature =>
+        signature.result == .unit && signature.parameters.map (·.type) == [.scalar .native]
+      | none => false
+  | _ => false
+
 private def validateRangeBounds (span : SourceSpan) (index : String) (start stop : Nat) :
     Except Diagnostic Nat := do
   textMetadata index
@@ -608,10 +618,52 @@ private def validateForRange (span : SourceSpan) (index : String) (start stop : 
     resource span "finite range length"
   pure count
 
-private def validateSourceLoopRange (span : SourceSpan) (index : String)
+private def validateSourceLoopRange (program : Program) (span : SourceSpan) (index : String)
     (start stop : Nat) (body : List Statement) : Except Diagnostic Nat :=
-  if flatStaticAssertionSequence body then validateRangeBounds span index start stop
+  if flatStaticAssertionSequence body || flatUnitWitnessCallSequence program index body then
+    validateRangeBounds span index start stop
   else validateForRange span index start stop
+
+private def flatGeneratedWitnessCall (program : Program) (statement : Statement) :
+    Option (String × String × Nat) :=
+  match statement with
+  | .evaluate (.witnessCall site name [.native value]) =>
+    if !site.startsWith "noctium.loop.call." then none
+    else
+      match program.witnesses.find? (·.name == name) with
+      | some signature =>
+        if signature.result == .unit &&
+            signature.parameters.map (·.type) == [.scalar .native] then
+          some (site, name, value)
+        else none
+      | none => none
+  | _ => none
+
+private def flatWitnessCallPrefix (program : Program) : List Statement →
+    List (String × String × Nat) × List Statement
+  | [] => ([], [])
+  | statement :: rest =>
+    match flatGeneratedWitnessCall program statement with
+    | none => ([], statement :: rest)
+    | some call =>
+      let (calls, suffix) := flatWitnessCallPrefix program rest
+      (call :: calls, suffix)
+
+private partial def flatWitnessCallDepthSavings (program : Program) : List Statement → Nat
+  | [] => 0
+  | statements =>
+    let (run, suffix) := flatWitnessCallPrefix program statements
+    if !run.isEmpty then
+      run.length - 1 + flatWitnessCallDepthSavings program suffix
+    else
+      match statements with
+      | [] => 0
+      | statement :: rest =>
+        let nested := match statement with
+          | .branch _ yes no => flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
+          | .forRange _ _ _ body => flatWitnessCallDepthSavings program body
+          | _ => 0
+        nested + flatWitnessCallDepthSavings program rest
 
 def validWitnessIdentifier (name : String) : Bool :=
   !name.isEmpty && name.utf8ByteSize ≤ 128 && name.toList.all (fun c =>
@@ -716,7 +768,7 @@ private inductive SourceNode where
   | statement (value : Statement)
 
 /-- Branch bodies share the source budget, including inactive and post-return syntax. -/
-private def scanBody (limits : Limits) (span : SourceSpan) (available : Nat)
+private def scanBody (limits : Limits) (program : Program) (span : SourceSpan) (available : Nat)
     (body : List Statement) : Except Diagnostic (Nat × Nat × Nat) :=
   if body.length > available then resource span "source nodes"
   else go available 0 0 0 (body.map fun value => (SourceNode.statement value, 0))
@@ -735,7 +787,7 @@ where
               if yes.length + no.length > fuel then resource span "source nodes"
               pure ((yes ++ no).map SourceNode.statement)
             | .forRange index start stop body => do
-              discard (validateSourceLoopRange span index start stop body)
+              discard (validateSourceLoopRange program span index start stop body)
               if body.length > fuel then resource span "source nodes"
               pure (body.map SourceNode.statement)
             | _ => pure []
@@ -1039,12 +1091,14 @@ private def sourcePreflight (limits : Limits) (program : Program) :
     for parameter in declaration.parameters do
       validateResultType program declaration.span (declaration.parameterType parameter)
     validateResultType program declaration.span declaration.result
-    let (nodes, statements, depth) ← scanBody limits declaration.span available declaration.body
+    let (nodes, statements, depth) ← scanBody limits program declaration.span available declaration.body
     discard (witnessSites declaration.body limits.maxSourceNodes)
     available := available - nodes
+    let repeatedWitnessDepthSavings := flatWitnessCallDepthSavings program declaration.body
     sizes := (declaration.id, {
       nodes := 3 * (nodes + declaration.parameters.length + 2)
-      depth := 3 * (statements + depth + declaration.parameters.length + 2)}) :: sizes
+      depth := 3 * (statements - repeatedWitnessDepthSavings + depth +
+        declaration.parameters.length + 2)}) :: sizes
   pure sizes
 
 private partial def bodyHasForRange : List Statement → Bool
@@ -1097,7 +1151,7 @@ where
       | .statement statement =>
         match statement with
         | .forRange index start stop body => do
-          let iterations ← validateSourceLoopRange {} index start stop body
+          let iterations ← validateSourceLoopRange program {} index start stop body
           let copies := saturatedMultiply cap multiplier iterations
           let count := saturatedSourceAdd cap count (saturatedMultiply cap copies 4)
           let children := body.map fun child => (SourceNode.statement child, copies)
@@ -1213,26 +1267,35 @@ private partial def freshenStatementsWitnessSites (body : List Statement) : Expa
 end
 
 mutual
-private partial def expandRangeStatement (statement : Statement) : ExpansionM (List Statement) := do
+private partial def expandRangeStatement (program : Program) (statement : Statement) : ExpansionM (List Statement) := do
   match statement with
   | .branch condition yes no =>
-    return [.branch condition (← expandRangeBody yes) (← expandRangeBody no)]
+    return [.branch condition (← expandRangeBody program yes) (← expandRangeBody program no)]
   | .forRange index start stop body => do
     if flatStaticAssertionSequence body then
       return [.forRange index start stop body]
+    if flatUnitWitnessCallSequence program index body then
+      match body with
+      | [.evaluate (.witnessCall _ name [.ref _])] => do
+        let mut reversed := []
+        for offset in List.range (stop - start) do
+          let site ← freshLoopWitnessSite
+          reversed := .evaluate (.witnessCall site name [.native (start + offset)]) :: reversed
+        return reversed.reverse
+      | _ => pure ()
     let mut reversed := []
     for offset in List.range (stop - start) do
-      let body ← expandRangeBody body
+      let body ← expandRangeBody program body
       let body ← freshenStatementsWitnessSites body
       let indexValue := Statement.bind index (.scalar .native) (.native (start + offset))
       reversed := .branch (.bool true) (indexValue :: body) [] :: reversed
     return reversed.reverse
   | statement => return [statement]
 
-private partial def expandRangeBody (body : List Statement) : ExpansionM (List Statement) := do
+private partial def expandRangeBody (program : Program) (body : List Statement) : ExpansionM (List Statement) := do
   let mut expanded := []
   for statement in body do
-    expanded := expanded ++ (← expandRangeStatement statement)
+    expanded := expanded ++ (← expandRangeStatement program statement)
   pure expanded
 end
 
@@ -1948,7 +2011,7 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           result := {result with returned := result.returned || (yes.returned && no.returned)}
           pure {ty := some .unit, calls := condition.calls ++ yes.calls ++ no.calls, effects := (condition.effects ++ yes.effects ++ no.effects).eraseDups, guarded := true}
         | .forRange index start stop loopBody => do
-          discard (validateSourceLoopRange span index start stop loopBody)
+          discard (validateSourceLoopRange program span index start stop loopBody)
           rejectLoopReturns span limits.maxSourceNodes loopBody
           let loopNominals := {nominals with uints := (index, none) :: nominals.uints}
           let loopNominals := {loopNominals with fields := (index, none) :: nominals.fields}
@@ -2142,7 +2205,7 @@ private def prepareProgramAndSizes (limits : Limits) (program : Program) :
     let initial : ExpansionState := {reservedSites := originalSites.flatten}
     let expandDeclarations : ExpansionM (List Declaration) := do
       program.declarations.mapM fun (declaration : Declaration) => do
-        let body ← expandRangeBody declaration.body
+        let body ← expandRangeBody program declaration.body
         pure {declaration with body}
     let (declarations, _) := expandDeclarations.run initial
     let prepared := {program with declarations}
@@ -3417,7 +3480,32 @@ mutual
       (env : LowerEnv) (body : List Statement)
       (continuation : LowerEnv → LowerM Lowered) : LowerM Lowered := do
     spendLower declaration.span
-    match body with
+    let (flatCalls, suffix) := flatWitnessCallPrefix program body
+    if !flatCalls.isEmpty then do
+      let entryState ← get
+      let mut reversedConstraints : List (Expr .bool) := []
+      for ((site, name, value), iteration) in flatCalls.zipIdx do
+        -- The entry step above covers the first evaluate; charge later statements too.
+        if iteration > 0 then spendLower declaration.span
+        let result ← lowerTerm program declaration.id.scope env declaration.span
+          (.witnessCall site name [.native value])
+        if (← get).ledgerMode then
+          appendLedgerConstraints declaration.span result.constraints
+        else
+          reversedConstraints := result.constraints.reverse ++ reversedConstraints
+        let _ ← freshTyped .bool
+        -- The literal argument cannot add bindings used by later guards.
+        modify fun state => {state with localBindings := entryState.localBindings}
+      let lowered ← lowerBodyWith program declaration env suffix continuation
+      let finalState ← get
+      modify fun _ => {finalState with
+        guard := entryState.guard, guardActive := entryState.guardActive,
+        localBindings := entryState.localBindings}
+      if entryState.ledgerMode then
+        pure {lowered with constraints := []}
+      else
+        pure {lowered with constraints := reversedConstraints.reverse ++ lowered.constraints}
+    else match body with
     | [] => continuation env
     | .return value :: _ =>
       let value ← match value with
@@ -3587,7 +3675,7 @@ mutual
         unless flatStaticAssertionSequence loopBody do
           liftD (fail declaration.span "unprepared finite range reached helper lowering")
         let iterations ← liftD
-          (validateSourceLoopRange declaration.span index start stop loopBody)
+          (validateSourceLoopRange program declaration.span index start stop loopBody)
         let originalLocalBindings := (← get).localBindings
         let mut reversedIndexBindings : List (String × Lowered) := []
         let mut reversedConstraints : List (Expr .bool) := []
@@ -4113,7 +4201,7 @@ mutual
       unless flatStaticAssertionSequence loopBody do
         liftM (fail declaration.span "unprepared finite range reached helper trace")
       let iterations ← liftM
-        (validateSourceLoopRange declaration.span index start stop loopBody)
+        (validateSourceLoopRange program declaration.span index start stop loopBody)
       for offset in List.range iterations do
         spendTrace declaration.span
         spendTrace declaration.span
