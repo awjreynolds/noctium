@@ -1,6 +1,7 @@
 //! Public constructor evaluation and immutable deployment cells.
 use crate::{
-    Db, Expr, Plan, ScalarType, StateDecl, Value, create_state, evaluate, input_value, scalars,
+    Db, Expr, Plan, ScalarType, StateDecl, Value, aggregates::Schema, create_state, evaluate,
+    input_value, scalars,
 };
 use anyhow::{Result, anyhow, bail, ensure};
 use base_crypto::fab::{AlignedValue, Alignment, AlignmentAtom, Value as FabValue};
@@ -34,6 +35,27 @@ pub struct Constructor {
 #[serde(deny_unknown_fields)]
 pub struct Parameter {
     pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub schema: Option<Json>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub projections: Option<Vec<Projection>>,
+}
+
+fn deserialize_present<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Projection {
+    pub name: String,
+    pub index: usize,
     #[serde(rename = "type")]
     pub ty: String,
 }
@@ -1214,31 +1236,92 @@ pub fn construct_state(
         }
     }
     let mut expected = BTreeSet::new();
+    let mut binding_names = BTreeSet::new();
     let mut scalars = BTreeMap::new();
     let mut strings = BTreeMap::new();
     let mut string_bytes = 0usize;
     for parameter in &constructor.parameters {
         ensure!(
-            !parameter.name.is_empty() && expected.insert(parameter.name.as_str()),
+            !parameter.name.is_empty()
+                && expected.insert(parameter.name.as_str())
+                && binding_names.insert(parameter.name.as_str()),
             "invalid or duplicate constructor parameter"
         );
         let value = arguments
             .get(&parameter.name)
             .ok_or_else(|| anyhow!("missing constructor argument"))?;
-        if parameter.ty == "OpaqueString" {
-            let text = value
-                .as_str()
-                .ok_or_else(|| anyhow!("expected opaque UTF-8 string"))?;
-            string_bytes = string_bytes
-                .checked_add(text.len())
-                .ok_or_else(|| anyhow!("constructor byte size overflow"))?;
+        if parameter.ty != "Composite" {
             ensure!(
-                string_bytes <= scalars::MAX_OPAQUE_STRING_LENGTH,
-                "constructor string byte limit"
+                parameter.schema.is_none() && parameter.projections.is_none(),
+                "scalar constructor parameter cannot have Composite metadata"
             );
-            strings.insert(parameter.name.as_str(), text);
-        } else {
-            scalars.insert(parameter.name.clone(), input_value(&parameter.ty, value)?);
+        }
+        match parameter.ty.as_str() {
+            "Composite" => {
+                let schema_json = parameter
+                    .schema
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("constructor Composite parameter requires a schema"))?;
+                let projections = parameter
+                    .projections
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("constructor Composite parameter requires projections"))?;
+                let schema_bytes = serde_json::to_vec(schema_json)?;
+                let schema = Schema::from_json(&schema_bytes)?;
+                schema.validate_constructor_schema()?;
+                let leaf_types = schema.leaf_types()?;
+                ensure!(
+                    projections.len() <= leaf_types.len(),
+                    "too many constructor Composite projections"
+                );
+                let mut selected_indices = BTreeSet::new();
+                for projection in projections {
+                    ensure!(
+                        !projection.name.is_empty()
+                            && binding_names.insert(projection.name.as_str()),
+                        "invalid or duplicate constructor projection name"
+                    );
+                    let leaf_type = leaf_types
+                        .get(projection.index)
+                        .ok_or_else(|| anyhow!("constructor projection index out of bounds"))?;
+                    ensure!(
+                        ScalarType::parse(&projection.ty)? == ScalarType::parse(leaf_type)?,
+                        "constructor projection type mismatch"
+                    );
+                    ensure!(
+                        selected_indices.insert(projection.index),
+                        "duplicate constructor projection index"
+                    );
+                }
+                let value_bytes = serde_json::to_vec(value)?;
+                let leaves = schema.flatten_leaves_json(&value_bytes)?;
+                ensure!(
+                    leaves.len() == leaf_types.len(),
+                    "constructor Composite leaf count mismatch"
+                );
+                for projection in projections {
+                    let leaf_type = &leaf_types[projection.index];
+                    let scalar = input_value(leaf_type, &leaves[projection.index])?;
+                    scalar.validate()?;
+                    scalars.insert(projection.name.clone(), scalar);
+                }
+            }
+            "OpaqueString" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| anyhow!("expected opaque UTF-8 string"))?;
+                string_bytes = string_bytes
+                    .checked_add(text.len())
+                    .ok_or_else(|| anyhow!("constructor byte size overflow"))?;
+                ensure!(
+                    string_bytes <= scalars::MAX_OPAQUE_STRING_LENGTH,
+                    "constructor string byte limit"
+                );
+                strings.insert(parameter.name.as_str(), text);
+            }
+            _ => {
+                scalars.insert(parameter.name.clone(), input_value(&parameter.ty, value)?);
+            }
         }
     }
     ensure!(

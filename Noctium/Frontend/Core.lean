@@ -459,6 +459,14 @@ scoped syntax "sealed" "set" ident ":" nltype : nlstate
 declare_syntax_cat nlconstructorparam
 scoped syntax ident ":" nltype : nlconstructorparam
 scoped syntax ident ":" nltype "as" "[" (ident <|> "_"),* "]" : nlconstructorparam
+declare_syntax_cat noctium_bind_pattern
+declare_syntax_cat noctium_bind_field
+scoped syntax ident : noctium_bind_pattern
+scoped syntax "_" : noctium_bind_pattern
+scoped syntax "[" noctium_bind_pattern,* "]" : noctium_bind_pattern
+scoped syntax "{" noctium_bind_field,* "}" : noctium_bind_pattern
+scoped syntax ident (":=" noctium_bind_pattern)? : noctium_bind_field
+scoped syntax ident ":" "Payload" ident "as" noctium_bind_pattern : nlconstructorparam
 declare_syntax_cat nlconstructorinit
 scoped syntax "initialize" ident ":=" nlexpr : nlconstructorinit
 scoped syntax "initialize" ident ":=" str : nlconstructorinit
@@ -5936,6 +5944,69 @@ private def elaborateNamedRecord (contractName : Name) (record : TSyntax `ident)
     throwErrorAt owner "nominal UInt record fields are unsupported for this ledger layout"
   pure layout
 
+private structure ConstructorPatternProjection where
+  binding : TSyntax `ident
+  index : Nat
+  type : Ty
+
+private def constructorPatternLeaf (site : Syntax) (binding : TSyntax `ident)
+    (layout : Types.Layout) (index : Nat) (leafTypes : List Ty) :
+    CommandElabM ConstructorPatternProjection := do
+  let .scalar _ := layout
+    | throwErrorAt site "constructor pattern bindings must select scalar leaves"
+  let some type := leafTypes[index]?
+    | throwErrorAt site "constructor pattern leaf index is outside the checked payload"
+  unless (match type with
+      | .native | .bool | .uint _ => _root_.Bool.true
+      | _ => _root_.Bool.false) do
+    throwErrorAt site "constructor pattern bindings require Native, Bool, or UInt leaves"
+  pure {binding, index, type}
+
+private partial def constructorPatternProjections
+    (pattern : TSyntax `noctium_bind_pattern) (layout : Types.Layout)
+    (offset : Nat) (leafTypes : List Ty) :
+    CommandElabM (List ConstructorPatternProjection) := do
+  match pattern with
+  | `(noctium_bind_pattern| $id:ident) =>
+    return [← constructorPatternLeaf pattern id layout offset leafTypes]
+  | `(noctium_bind_pattern| _) => pure []
+  | `(noctium_bind_pattern| [$items,*]) => do
+    let .tuple layouts := layout
+      | throwErrorAt pattern "tuple constructor pattern requires a tuple payload value"
+    unless items.getElems.size == layouts.length do
+      throwErrorAt pattern s!"tuple constructor pattern requires exactly {layouts.length} positions"
+    let mut projections := []
+    let mut index := offset
+    for (item, child) in items.getElems.toList.zip layouts do
+      projections := projections ++ (← constructorPatternProjections item child index leafTypes)
+      index := index + child.leafCount
+    pure projections
+  | `(noctium_bind_pattern| {$fields,*}) => do
+    let .structure _ layouts := layout
+      | throwErrorAt pattern "record constructor pattern requires a named record payload value"
+    let mut seen : List String := []
+    let mut projections := []
+    for field in fields.getElems do
+      let `(noctium_bind_field| $name:ident $[:= $nested:noctium_bind_pattern]?) := field
+        | throwErrorAt field "invalid constructor record pattern field"
+      let key := name.getId.toString
+      if seen.contains key then
+        throwErrorAt name s!"duplicate constructor record pattern field '{key}'"
+      let some fieldIndex := layouts.findIdx? (·.1 == key)
+        | throwErrorAt name s!"unknown constructor record pattern field '{key}'"
+      let some (_, child) := layouts[fieldIndex]?
+        | throwErrorAt name "checked constructor record field index is missing"
+      let childOffset := offset + (layouts.take fieldIndex).foldl
+        (fun total item => total + item.2.leafCount) 0
+      let selected ← match nested with
+        | none => pure [← constructorPatternLeaf name.raw name child childOffset leafTypes]
+        | some nestedPattern =>
+          constructorPatternProjections nestedPattern child childOffset leafTypes
+      seen := seen ++ [key]
+      projections := projections ++ selected
+    pure projections
+  | _ => throwErrorAt pattern "constructor pattern must use a name, wildcard, record, or tuple pattern"
+
 private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy : Ty) :
     CommandElabM (StateKind × TSyntax `term) := do
   let mut valueSchema := LedgerValueType.«list» {} (.scalar elementTy)
@@ -5948,7 +6019,7 @@ private def elaborateScalarListDecl (keys : List (TSyntax `nltype)) (elementTy :
   pure (.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
 
 set_option maxHeartbeats 1000000 in
-private def elaborateConstructor (source : TSyntax `nlstate)
+private unsafe def elaborateConstructor (source : TSyntax `nlstate)
     (schema : List (String × StateKind))
     (nominalUIntCells : List (String × NominalUIntType))
     (nominalFieldCells : List (String × NominalFieldType))
@@ -5971,7 +6042,7 @@ private def elaborateConstructor (source : TSyntax `nlstate)
   let mut opaqueParameters : List String := []
   let mut parameterNames : List String := []
   for parameter in parameters.getElems.toList do
-    let (name, parameterType, typeTerm, bytePattern) ← match parameter with
+    let (name, parameterType, typeTerm, bytePattern, aggregateProjections) ← match parameter with
       | `(nlconstructorparam| $id:ident : $sourceTy:nltype as [$patterns,*]) => do
         let name := id.getId.toString
         let sourceType ← readCircuitSourceType sourceTy
@@ -5986,8 +6057,35 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           if item.raw.isIdent then some item.raw.getId.toString else none
         unless pattern.length == length do
           throwErrorAt parameter s!"byte constructor pattern requires exactly {length} items"
-        pure (name, ConstructorType.scalar ty,
-          ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)), some (length, pattern))
+        pure (name, ConstructorParameterType.scalar ty,
+          ← `(Noctium.ConstructorParameterType.scalar $(← tyTerm ty)), some (length, pattern), [])
+      | `(nlconstructorparam| $id:ident : Payload $codecName:ident as $pattern:noctium_bind_pattern) => do
+        let name := id.getId.toString
+        let codecSource ← liftCoreM <| resolveGlobalConstNoOverload codecName
+        let codec ← evalConstCheck Helpers.Wire.Codec ``Helpers.Wire.Codec codecSource
+        let (checked, leafTypes) ← match ConstructorParameterType.checkedAggregateLeafTypes
+            codec.composites codec.payload with
+          | .ok value => pure value
+          | .error message => throwErrorAt codecName message
+        let aggregateProjections ← constructorPatternProjections pattern checked.value 0 leafTypes
+        let projectionTerms ← aggregateProjections.mapM fun projection => do
+          `(Noctium.ConstructorProjection.mk
+            $(stringTerm projection.binding.getId.toString)
+            $(natTerm projection.index) $(← tyTerm projection.type))
+        let projectionTerms := projectionTerms.toArray
+        let projectionsTerm ←
+          `(([$projectionTerms,*] : List Noctium.ConstructorProjection))
+        let codecTerm : TSyntax `term := ⟨mkIdent codecSource⟩
+        let environmentTerm ← `(Noctium.Helpers.Wire.Codec.composites $codecTerm)
+        let payloadTerm ← `(Noctium.Helpers.Wire.Codec.payload $codecTerm)
+        let typeTerm ← `(Noctium.ConstructorParameterType.aggregate
+          $environmentTerm $payloadTerm $projectionsTerm)
+        pure (name, ConstructorParameterType.aggregate codec.composites codec.payload
+          (aggregateProjections.map fun projection => {
+            name := projection.binding.getId.toString,
+            index := projection.index,
+            type := projection.type
+          }), typeTerm, none, aggregateProjections)
       | `(nlconstructorparam| $id:ident : $sourceTy:nltype) => do
         let name := id.getId.toString
         let sourceType ← readCircuitSourceType sourceTy _root_.Bool.true
@@ -5997,17 +6095,18 @@ private def elaborateConstructor (source : TSyntax `nlstate)
           nominalFieldBindings := (name, sourceType.nominalField) :: nominalFieldBindings
         contractRefs := bindContractRef contractRefs name sourceType.contractRef
         if ty == .opaqueString then
-          pure (name, ConstructorType.opaqueString, ← `(Noctium.ConstructorType.opaqueString), none)
+          pure (name, ConstructorParameterType.opaqueString,
+            ← `(Noctium.ConstructorParameterType.opaqueString), none, [])
         else
-          pure (name, ConstructorType.scalar ty,
-            ← `(Noctium.ConstructorType.scalar $(← tyTerm ty)), none)
+          pure (name, ConstructorParameterType.scalar ty,
+            ← `(Noctium.ConstructorParameterType.scalar $(← tyTerm ty)), none, [])
       | _ => throwErrorAt parameter "unsupported constructor parameter"
     if parameterNames.contains name then throwErrorAt parameter s!"duplicate constructor parameter '{name}'"
     parameterNames := name :: parameterNames
-    if parameterType == .opaqueString then
+    match parameterType with
+    | .opaqueString =>
       opaqueParameters := name :: opaqueParameters
-    else
-      let .scalar ty := parameterType | throwErrorAt parameter "invalid scalar constructor parameter"
+    | .scalar ty => do
       let reference ← `(@Noctium.Expr.ref $(← tyTerm ty) $(stringTerm name))
       scalarBindings := (name, ty, reference) :: scalarBindings
       if let some (_, pattern) := bytePattern then
@@ -6020,6 +6119,15 @@ private def elaborateConstructor (source : TSyntax `nlstate)
             parameterNames := binding :: parameterNames
             let byteReference ← `(Noctium.Expr.bytesAt $(reference) $(natTerm index))
             scalarBindings := (binding, .uint 255, byteReference) :: scalarBindings
+    | .aggregate _ _ _ =>
+      for projection in aggregateProjections do
+        let binding := projection.binding.getId.toString
+        if parameterNames.contains binding then
+          throwErrorAt projection.binding
+            s!"duplicate constructor parameter or aggregate binding '{binding}'"
+        parameterNames := binding :: parameterNames
+        let reference ← `(@Noctium.Expr.ref $(← tyTerm projection.type) $(stringTerm binding))
+        scalarBindings := (binding, projection.type, reference) :: scalarBindings
     parameterTerms := parameterTerms.push (← `(Noctium.ConstructorParameter.mk $(stringTerm name) $typeTerm))
   let mut initializerTerms : Array (TSyntax `term) := #[]
   let mut mapInsertTerms : Array (TSyntax `term) := #[]
