@@ -377,6 +377,20 @@ private def exactGeneratedCallNode : Statement → Bool
   | .evaluate (.witnessCall site _ [.native _]) => site.startsWith "noctium.loop.call."
   | _ => false
 
+private partial def omitExpressionSpans : Json → Json
+  | .arr values => .arr (values.map omitExpressionSpans)
+  | .obj fields => Json.mkObj (fields.toList.filterMap fun (name, value) =>
+      if name == "span" then none else some (name, omitExpressionSpans value))
+  | value => value
+
+private def omitGeneratedAssertionExpressionSpans (statement : Json) : Json :=
+  match statement with
+  | .obj fields =>
+    match (Json.obj fields).getObjVal? "condition" with
+    | .ok condition => Json.obj (fields.insert "condition" (omitExpressionSpans condition))
+    | .error _ => statement
+  | _ => statement
+
 private def emitSpend (span : SourceSpan) : EmitM Unit := do
   let state ← get
   if state.remaining == 0 then liftM (fail span "control emission resource limit exceeded")
@@ -587,7 +601,8 @@ mutual
     let mut env := env
     let mut reversed := []
     for statement in statements do
-      let exactGeneratedCall := exactGeneratedCallNode statement
+      let exactGeneratedAssertion := Helpers.isGeneratedWitnessAssertion checked.program statement
+      let exactGeneratedCall := exactGeneratedCallNode statement || exactGeneratedAssertion
       let priorCallMode := (← get).exactGeneratedCall
       if exactGeneratedCall then
         modify fun state => {state with exactGeneratedCall := true}
@@ -634,6 +649,8 @@ mutual
         | .claimContractCall .. =>
           emitLift (fail target.span "portable control capability unavailable: contract-call claims")
         | .forRange .. => emitLift (fail target.span "unexpanded finite loop reached portable control emission")
+      let item := if exactGeneratedAssertion then
+        omitGeneratedAssertionExpressionSpans item else item
       if exactGeneratedCall then do
         modify fun state => {state with exactGeneratedCall := priorCallMode}
         chargeBytes (item.compress.utf8ByteSize + 1)

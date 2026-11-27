@@ -2,6 +2,7 @@ pragma language_version >= 0.28;
 import CompactStandardLibrary;
 
 witness visitValue(index: Uint<8>): Field;
+witness visitValue16(index: Uint<16>): Field;
 
 circuit witnessLoop<#COUNT>(): Field {
   for (const index of 0..COUNT) {
@@ -17,4 +18,12 @@ export circuit witnessLoop16(): Field {
 
 export circuit witnessLoop32(): Field {
   return witnessLoop<32>();
+}
+
+export circuit witnessLoop1025(): Field {
+  for (const index of 0..1025) {
+    const value = visitValue16(index as Uint<16>);
+    assert(value == (0 as Field), "witness value must be zero");
+  }
+  return 0 as Field;
 }

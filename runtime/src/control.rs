@@ -1174,36 +1174,182 @@ struct Function {
     nodes: usize,
     depth: usize,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FlatLoopStatement {
+    UnitWitnessCall,
+    WitnessAssertion,
+}
+
+fn literal_native_argument(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Literal(Value::Native(_)) => expression.ty == Type::Scalar(ScalarType::Native),
+        ExprKind::Cast(value) => {
+            matches!(&value.kind, ExprKind::Literal(Value::Native(_)))
+                && value.ty == Type::Scalar(ScalarType::Native)
+                && matches!(&expression.ty, Type::Scalar(ScalarType::Native | ScalarType::UInt(_)))
+        }
+        _ => false,
+    }
+}
+
+fn native_literal_or_fixed_cast(expression: &Expr) -> bool {
+    if expression.ty != Type::Scalar(ScalarType::Native) {
+        return false;
+    }
+    match &expression.kind {
+        ExprKind::Literal(Value::Native(_)) => true,
+        ExprKind::Cast(value) => {
+            matches!(&value.ty, Type::Scalar(ScalarType::Native | ScalarType::UInt(_)))
+                && matches!(&value.kind, ExprKind::Literal(_))
+        }
+        _ => false,
+    }
+}
+
+fn generated_loop_witness_call(expression: &Expr) -> bool {
+    matches!(
+        &expression.kind,
+        ExprKind::WitnessCall { site, arguments, .. }
+            if site
+                .strip_prefix("noctium.loop.call.")
+                .is_some_and(|suffix| canonical_u64(suffix).is_ok())
+                && expression.ty == Type::Scalar(ScalarType::Native)
+                && matches!(
+                    arguments.as_slice(),
+                    [argument] if literal_native_argument(argument)
+                )
+    )
+}
+
+fn flat_loop_statement(statement: &Stmt) -> Option<FlatLoopStatement> {
+    match statement {
+        Stmt::Evaluate(expression)
+            if expression.ty == Type::Unit
+                && matches!(
+                    &expression.kind,
+                    ExprKind::WitnessCall { site, arguments, .. }
+                        if site.starts_with("noctium.loop.call.")
+                            && matches!(
+                                arguments.as_slice(),
+                                [argument]
+                                    if argument.ty == Type::Scalar(ScalarType::Native)
+                                        && matches!(
+                                            &argument.kind,
+                                            ExprKind::Literal(Value::Native(_))
+                                        )
+                            )
+                ) =>
+        {
+            Some(FlatLoopStatement::UnitWitnessCall)
+        }
+        Stmt::Assert(condition, _) => {
+            let ExprKind::Eq(operand_type, left, right) = &condition.kind else {
+                return None;
+            };
+            if operand_type != &Type::Scalar(ScalarType::Native) {
+                return None;
+            }
+            let left_is_call = generated_loop_witness_call(left);
+            let right_is_call = generated_loop_witness_call(right);
+            if left_is_call == right_is_call {
+                return None;
+            }
+            let other = if left_is_call {
+                right
+            } else {
+                left
+            };
+            if !native_literal_or_fixed_cast(other) {
+                return None;
+            }
+            Some(FlatLoopStatement::WitnessAssertion)
+        }
+        _ => None,
+    }
+}
+
 fn flat_witness_run_depth_discount(statements: &[Stmt]) -> usize {
+    // Adjacent expanded loop calls and comparisons consume fewer weighted
+    // continuation frames than general statements. Parser nodes and runtime
+    // work remain charged for every statement.
     let mut discount = 0;
-    let mut in_run = false;
+    let mut previous = None;
     for statement in statements {
-        let flat_call = matches!(
-            statement,
-            Stmt::Evaluate(expression)
-                if expression.ty == Type::Unit
-                    && matches!(
-                        &expression.kind,
-                        ExprKind::WitnessCall { site, arguments, .. }
-                            if site.starts_with("noctium.loop.call.")
-                                && matches!(
-                                    arguments.as_slice(),
-                                    [argument]
-                                        if argument.ty == Type::Scalar(ScalarType::Native)
-                                            && matches!(
-                                                &argument.kind,
-                                                ExprKind::Literal(Value::Native(_))
-                                            )
-                                )
-                    )
-        );
-        if flat_call && in_run {
+        let current = flat_loop_statement(statement);
+        if current.is_some() && current == previous {
             discount += 1;
         }
-        in_run = flat_call;
+        previous = current;
     }
     discount
 }
+
+#[cfg(test)]
+mod flat_loop_depth_tests {
+    use super::*;
+
+    fn native(value: &str) -> Arc<Expr> {
+        Arc::new(Expr {
+            ty: Type::Scalar(ScalarType::Native),
+            kind: ExprKind::Literal(Value::Native(canonical_field(value).unwrap())),
+        })
+    }
+
+    fn generated_assert(site: &str, witness_left: bool, peer: Arc<Expr>) -> Stmt {
+        let call = Arc::new(Expr {
+            ty: Type::Scalar(ScalarType::Native),
+            kind: ExprKind::WitnessCall {
+                name: "provider".into(),
+                site: site.into(),
+                arguments: vec![native("0")],
+            },
+        });
+        let (left, right) = if witness_left {
+            (call, peer)
+        } else {
+            (peer, call)
+        };
+        Stmt::Assert(
+            Arc::new(Expr {
+                ty: Type::Scalar(ScalarType::Bool),
+                kind: ExprKind::Eq(Type::Scalar(ScalarType::Native), left, right),
+            }),
+            None,
+        )
+    }
+
+    #[test]
+    fn discounts_only_adjacent_generated_native_witness_assertions() {
+        let assertions = vec![
+            generated_assert("noctium.loop.call.0", true, native("0")),
+            generated_assert("noctium.loop.call.1", false, native("1")),
+            generated_assert("noctium.loop.call.2", true, native("2")),
+        ];
+        assert_eq!(flat_witness_run_depth_discount(&assertions), 2);
+        let noncanonical = vec![
+            generated_assert("noctium.loop.call.0", true, native("0")),
+            generated_assert("noctium.loop.call.01", true, native("1")),
+            generated_assert("noctium.loop.call.2", true, native("2")),
+        ];
+        assert_eq!(flat_witness_run_depth_discount(&noncanonical), 0);
+
+        let callback_free_peer = Arc::new(Expr {
+            ty: Type::Scalar(ScalarType::Native),
+            kind: ExprKind::Ref("expected".into()),
+        });
+        let interrupted = vec![
+            generated_assert("noctium.loop.call.0", true, native("0")),
+            generated_assert("noctium.loop.call.3", true, callback_free_peer),
+            generated_assert("noctium.loop.call.1", true, native("1")),
+        ];
+        assert_eq!(
+            flat_witness_run_depth_discount(&interrupted),
+            0,
+            "a comparison against a reference must break the discounted run"
+        );
+    }
+}
+
 struct Plan {
     schema_version: u32,
     mode: Option<String>,
