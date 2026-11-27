@@ -1784,7 +1784,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_LITERAL_LENGTH)
                     .ok_or_else(|| anyhow!("control byte literal length"))?;
                 let values = list(v, "values")?;
                 ensure!(values.len() == length, "control byte literal length");

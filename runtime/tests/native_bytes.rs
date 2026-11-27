@@ -121,6 +121,8 @@ fn public_bytes_1025_1055_and_4096_preserve_limb_order_and_tail() -> anyhow::Res
     ] {
         assert_wide_public_round_trip(&output, entry, length)?;
     }
+    let oversized_literal = Expr::BytesLiteral { length: 1055, values: vec![0; 1055] };
+    assert!(noctium_runtime::evaluate(&oversized_literal, &BTreeMap::new()).is_err());
     Ok(())
 }
 

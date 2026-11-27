@@ -3,7 +3,7 @@
 Use `Bytes n` for a byte string with a compile-time length. The packed public
 ABI accepts widths from 0 through 4,096, using at most 133 fields at 31 bytes
 per field. The existing expanded-leaf budget sets the 4,096-byte limit.
-Private byte input and fixed-width indexing retain their 1,054-byte limit.
+Private byte input, byte literals and fixed-width indexing accept up to 1,054 bytes.
 Fixed vectors, concatenation, hashes, scalar decoding and ledger storage retain
 their separately checked 1,024 limits.
 `Bytes32` remains an alias for the 32-byte source type, with its existing wire encoding.

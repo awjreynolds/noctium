@@ -1202,7 +1202,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::BytesLiteral { length, values } => {
             ensure!(
-                *length <= scalars::MAX_BYTES_LENGTH,
+                *length <= scalars::MAX_BYTE_LITERAL_LENGTH,
                 "byte length exceeds compiler limit"
             );
             ensure!(values.len() == *length, "byte literal length mismatch");

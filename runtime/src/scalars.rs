@@ -13,6 +13,7 @@ pub const MAX_UINT_BITS: usize = 248;
 pub const MAX_BYTES_LENGTH: usize = 4096;
 pub const MAX_LEGACY_BYTE_INPUT_LENGTH: usize = 34 * 31;
 pub const MAX_BYTE_INDEX_LENGTH: usize = MAX_LEGACY_BYTE_INPUT_LENGTH;
+pub(super) const MAX_BYTE_LITERAL_LENGTH: usize = MAX_LEGACY_BYTE_INPUT_LENGTH;
 pub const MAX_BYTE_OPERATION_LENGTH: usize = 1024;
 pub(super) const MAX_OPAQUE_BYTES_LENGTH: usize = 1_048_576;
 pub(crate) const MAX_OPAQUE_STRING_LENGTH: usize = 1_048_576;
