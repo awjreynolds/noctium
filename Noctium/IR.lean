@@ -3485,9 +3485,9 @@ def Contract.validate (caps : Capabilities) (c : Contract) : Except Diagnostic U
     throw {span := c.span, message := "duplicate contract entrypoint"}
   for decl in c.state do
     if decl.sealed && !(match decl.kind with
-        | .cell _ | .map .. | .opaqueString => true
+        | .cell _ | .map .. | .opaqueString | .tree (.composite ..) => true
         | kind => kind.isDefaultEmptyRoot) then
-      throw {span := decl.span, message := "only cells, maps, root Counters, root scalar Lists and root Sets can be sealed"}
+      throw {span := decl.span, message := "only cells, maps, checked record Cells, root Counters, root scalar Lists and root Sets can be sealed"}
     if decl.kind == .opaqueString && !decl.sealed then
       throw {span := decl.span, message := "OpaqueString state must be sealed"}
     if let some alignment := decl.cellAlignment? then
