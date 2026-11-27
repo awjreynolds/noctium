@@ -88,6 +88,18 @@ validator rejects partial or reordered aggregate groups. Empty aggregates still
 take a label in the call interface and contribute zero fields.
 [Aggregate argument fixture](../../tests/WitnessSource.lean)
 
+An ordinary circuit can declare a scalar tuple such as
+`private pair : [UInt 8, Bool]` and project its fields with
+`tupleAt(pair, 0)` and `tupleAt(pair, 1)`. Select `arguments [pair]`
+to commit the two typed fields in tuple order. Public tuples use the
+same layout with public visibility. Explicit disclosure governs releases
+of private fields. [Ordinary tuple fixture](../../tests/OrdinaryTupleInputs.lean)
+
+Emitted `noctium.json` describes ordered groups in standalone
+`inputViews` and entrypoint `callInputViews`. The corresponding input
+rows retain each field's type and visibility. Native execution uses the
+ordered scalar fields.
+
 Readable witness circuits also declare checked aggregate inputs with `Payload`
 and a codec named in `using`. For example, `private payment : Payload paymentWire`
 takes a typed record. A `public` declaration uses the same layout and includes

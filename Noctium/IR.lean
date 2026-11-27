@@ -2773,8 +2773,9 @@ def Entrypoint.validateEffectPrechecks (caps : Capabilities) (decls : List State
     if let some first := fields.head? then
       unless ((e.callInputs.dropWhile (· != first)).take fields.length) == fields do
         throw {span := e.span, message := "aggregate call argument fields must remain adjacent in layout order"}
-    unless fields.all (fun name => e.circuit.inputs.any (fun input => input.name == name && input.ty == .native)) do
-      throw {span := e.span, message := "aggregate call argument fields must use Native"}
+    unless view.fields.all (fun (name, ty) => e.circuit.inputs.any (fun input =>
+        input.name == name && (input.ty == ty || input.ty == .native))) do
+      throw {span := e.span, message := "aggregate call fields must match their circuit types or use Native slots"}
     groupedInputs := groupedInputs ++ fields
   unless e.effectGuards.isEmpty || e.effectGuards.length == e.effects.length do
     throw {span := e.span, message := "effect guard metadata length mismatch"}

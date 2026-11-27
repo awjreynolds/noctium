@@ -1319,6 +1319,12 @@ private def nativeCircuitFile (contract : Name) (ep : Entrypoint) : String :=
 private def nativePlanFile (contract : Name) (ep : Entrypoint) : String :=
   artifactName contract ++ "." ++ ep.name ++ ".impact.json"
 
+private def inputViewsJson (views : List CallInputView) : Json :=
+  toJson (views.map fun view => Json.mkObj [
+    ("name", toJson view.name),
+    ("fields", toJson (view.fields.map fun (name, ty) => Json.mkObj [
+      ("name", toJson name), ("type", toJson (typeName ty))]))])
+
 private def returnViewsJson (views : List ReturnView) : Json :=
   Json.arr (views.toArray.map fun view =>
     let schema : Except String Json := do
@@ -1664,6 +1670,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           guardedEffectJson (ep.effectGuards[index]?.getD none) effect))]
       let callInputFields : List (String × Json) := if ep.callInputs.isEmpty then [] else [
         ("callInputs", toJson ep.callInputs)]
+      let callInputViewFields := if ep.callInputViews.isEmpty then [] else [
+        ("callInputViews", inputViewsJson ep.callInputViews)]
       let returnFields : List (String × Json) := if ep.returns.isEmpty then [] else [
         ("returns", toJson (ep.returns.map fun returned => Json.mkObj [
           ("name", toJson returned.name), ("type", toJson (typeName returned.ty)),
@@ -1675,7 +1683,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
         ("nativePlanSha256", toJson digest)
       let boundFields := (ledgerReadAssumptions[nativeCircuitFile name ep]?).toList.map
         fun assumption => ("ledgerReadBound", assumption)
-      pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++ returnFields ++ returnViewFields))
+      pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++
+        callInputViewFields ++ returnFields ++ returnViewFields))
     let constructorFields ← match contract.constructor with
       | none => pure []
       | some ctor => do
@@ -1698,7 +1707,13 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       if role == .rustBinding then
         [("sha256", toJson (EntryPointHash.sha256Hex (content ++ "\n").toUTF8))]
       else [])))]
-  let circuitSchemas := if emit .standalone then circuits else #[]
+  let circuitSchemas := (if emit .standalone then circuits else #[]).map fun (name, circuit) =>
+    let info := (circuitRegistry.getState sourceEnv).find? (fun (info : CircuitInfo) => info.declName == name)
+    let views := (info.map CircuitInfo.aggregateInputs).getD []
+    let schema := circuitSchemaJson name circuit
+    match schema with
+    | .obj fields => if views.isEmpty then schema else .obj (fields.insert "inputViews" (inputViewsJson views))
+    | _ => schema
   let schemaVersion : Nat := if bindPlanBytes then 3 else if explicitSelection then 2 else 1
   let metadata := Json.mkObj ([
     ("schemaVersion", toJson schemaVersion), ("target", toJson profile.name),
@@ -1706,7 +1721,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
     ("qualification", toJson ("unqualified-relation-and-state-description" : String)),
     ("deployable", toJson Bool.false),
     ("contracts", Json.arr contractMetadata),
-    ("circuits", toJson (circuitSchemas.map fun (name, circuit) => circuitSchemaJson name circuit (emit .standalone)))] ++
+    ("circuits", toJson circuitSchemas)] ++
     controlFields ++ witnessFields ++ inventory)
   let path : System.FilePath := directory
   liftIO <| IO.FS.createDirAll path
