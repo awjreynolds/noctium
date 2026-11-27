@@ -580,6 +580,9 @@ jobs:
           .lake/build/bin/noctium compile tests/GuardedConstructorListCounter.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-constructor-list-counter"
+          .lake/build/bin/noctium compile tests/ConstructorPreflight.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/constructor-preflight"
           .lake/build/bin/noctium compile tests/GuardedConstructorSet.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/guarded-constructor-set"
@@ -732,6 +735,10 @@ jobs:
                 --skip checked_enum_casts_generates_and_binds_native_proof \
                 --skip lazy_conditional_bounded_join_generates_and_binds_native_proof \
                 --skip module_enum_comparison_generates_and_binds_native_proof
+          NOCTIUM_CONSTRUCTOR_PREFLIGHT_DIR="$artifacts/constructor-preflight" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test constructor_preflight \
+              constructor_preflight_uses_seed_and_rejects_bad_argument -- --exact --ignored
           NOCTIUM_GUARDED_CONSTRUCTOR_SET_DIR="$artifacts/guarded-constructor-set" \
             NOCTIUM_GUARDED_CONSTRUCTOR_LIST_COUNTER_DIR="$artifacts/guarded-constructor-list-counter" \
             NOCTIUM_CONSTRUCTOR_RECORD_LIST_DIR="$artifacts/constructor-record-list" \

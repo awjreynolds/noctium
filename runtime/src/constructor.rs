@@ -1345,7 +1345,8 @@ pub fn construct_state(
     apply_set_inserts(plan, &constructor.set_inserts, &scalars, state)
 }
 
-pub(crate) fn deployment_state(
+/// Construct deployment state from constructor arguments or explicit state values.
+pub fn deployment_state(
     plan: &Plan,
     config: &BTreeMap<String, Json>,
 ) -> Result<ChargedState<Db>> {
