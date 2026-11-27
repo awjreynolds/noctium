@@ -1076,7 +1076,6 @@ private def sourcePreflight (limits : Limits) (program : Program) :
     unless uniqueNames (signature.parameters.map (·.name)) do fail signature.span "duplicate typed witness argument"
     for parameter in signature.parameters do
       unless validWitnessIdentifier parameter.name do fail signature.span "invalid typed witness argument name"
-      if parameter.type == .unit then fail signature.span "typed witness arguments cannot have Unit type"
       validateResultType program signature.span parameter.type
     validateResultType program signature.span signature.result
   for scope in program.scopes do
@@ -3163,16 +3162,17 @@ mutual
       let mut constraints := arguments.flatMap (·.constraints)
       for (argument, parameter) in arguments.zip signature.parameters do
         let argument ← liftD (coerce span argument parameter.type)
-        let argumentComponents := components argument
-        if argumentComponents.isEmpty then
-          let binding ← freshTyped argument.scalar.ty
-          recordLocal binding argument.scalar
-          bindings := bindings ++ [(binding, argument.scalar)]
-        else
-          for component in argumentComponents do
-            let binding ← freshTyped component.ty
-            recordLocal binding component
-            bindings := bindings ++ [(binding, component)]
+        if parameter.type != .unit then
+          let argumentComponents := components argument
+          if argumentComponents.isEmpty then
+            let binding ← freshTyped argument.scalar.ty
+            recordLocal binding argument.scalar
+            bindings := bindings ++ [(binding, argument.scalar)]
+          else
+            for component in argumentComponents do
+              let binding ← freshTyped component.ty
+              recordLocal binding component
+              bindings := bindings ++ [(binding, component)]
       let leafTypes ← match signature.result with
         | .unit => pure []
         | .scalar type => pure [type]

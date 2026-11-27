@@ -483,7 +483,7 @@
       "layer": "language",
       "surface": "Tuple and unit []",
       "noctiumStatus": "subset",
-      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Readable tuple construction supports direct elements and tuple, vector, fixed Bytes and Unit spreads. The paired Compact 0.36.1 case preserves nested tuple values, UInt8 byte order and the zero-width witness callback. Constant slices select checked field types and run the source witness once even when the slice is empty. The pinned Compact case and native relation agree on both tuple slices. Broader constructor and unit-return equivalence remains open. Matching tuple shapes with UInt8 and UInt16 leaves compare through checked widening, as in the pinned Compact reference. A nested tuple preserves the logical Jubjub scalar and Secp256k1 point through Native field encoding and typed Rust reconstruction. The matched mixed-sequence conditional returns a heterogeneous UInt8/UInt16 tuple for both the vector and tuple witness arms and preserves the first field's bound.",
+      "notes": "Readable literal indexing selects a checked heterogeneous tuple field. The payment example proves a private Bool tuple field and keeps it out of the result. Readable statement and circuit input patterns support nested positional bindings, ignored positions and exact arity checks. The selected native fixtures match pinned Compact for one callback in the statement pattern and two returned values in the input pattern. Readable tuple construction supports direct elements and tuple, vector, fixed Bytes and Unit spreads. The paired Compact 0.36.1 case preserves nested tuple values, UInt8 byte order and the zero-width witness callback. Constant slices select checked field types and run the source witness once even when the slice is empty. The pinned Compact case and native relation agree on both tuple slices. Broader constructor and unit-return equivalence remains open. Matching tuple shapes with UInt8 and UInt16 leaves compare through checked widening, as in the pinned Compact reference. A nested tuple preserves the logical Jubjub scalar and Secp256k1 point through Native field encoding and typed Rust reconstruction. The matched mixed-sequence conditional returns a heterogeneous UInt8/UInt16 tuple for both the vector and tuple witness arms and preserves the first field's bound. A readable typed witness receives Unit and Native arguments in declaration order. The Compact 0.36.1 and native cases return the same value. Unit contributes zero native fields and a Bool in its position rejects.",
       "source": [
         "reference"
       ],
@@ -492,6 +492,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/ReadableUnitBindings.lean",
+        "tests/compact/readable-unit-bindings.mjs",
+        "runtime/tests/readable_unit_bindings.rs",
         "tests/MixedSequenceJoin.lean",
         "tests/compact/MixedSequenceJoin.compact",
         "tests/compact/mixed-sequence-join.mjs",
@@ -1454,6 +1457,9 @@
         "ZK"
       ],
       "observedEvidence": [
+        "tests/ReadableUnitBindings.lean",
+        "tests/compact/readable-unit-bindings.mjs",
+        "runtime/tests/readable_unit_bindings.rs",
         "tests/OpaqueWitnessDisclosure.lean",
         "tests/compact/opaque-witness-disclosure.mjs",
         "runtime/tests/opaque_witness_disclosure.rs",
