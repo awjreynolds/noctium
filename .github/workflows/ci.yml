@@ -568,6 +568,9 @@ jobs:
           .lake/build/bin/noctium compile tests/RecordConstructor.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/record-constructor"
+          .lake/build/bin/noctium compile tests/SealedRecordCell.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/sealed-record-cell"
           .lake/build/bin/noctium compile tests/AlignedByteConcat.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/aligned-byte-concat"
@@ -698,6 +701,10 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_record_cell --test record_constructor \
               record_constructor_initializes_cell_and_map -- --ignored
+          NOCTIUM_SEALED_RECORD_CELL_DIR="$artifacts/sealed-record-cell" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test record_constructor \
+              sealed_record_cell_preserves_seeded_fields_and_rejects_mutation -- --exact --ignored
       - name: Check source proof registration
         run: |
           lake build Noctium.Verification Noctium.Verification.ScalarNormalizationSoundness \

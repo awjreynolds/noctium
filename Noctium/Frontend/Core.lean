@@ -475,6 +475,7 @@ declare_syntax_cat nlmapsettail
 scoped syntax "Set" "struct" ident "{" nlcompositefield* "}" : nlmapsettail
 scoped syntax nltype "=>" nlmapsettail : nlmapsettail
 scoped syntax "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
+scoped syntax "sealed" "cell" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "sealed" "set" ident ":" "struct" ident "{" nlcompositefield* "}" : nlstate
 scoped syntax "set" ident ":" "Vector(" num "," nltype ")" : nlstate
@@ -6631,7 +6632,8 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           let valueTerm ← `(Noctium.LedgerValueType.recordMapComposite
             $keyEnvironmentTerm $keyTypeTerm $valueEnvironmentTerm $valueTypeTerm)
           pure (id, StateKind.tree valueSchema, ← `(Noctium.StateKind.tree $valueTerm))
-        | `(nlstate| cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
+        | `(nlstate| cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* })
+        | `(nlstate| sealed cell $id:ident : struct $record:ident { $recordFields:nlcompositefield* }) => do
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
@@ -7110,6 +7112,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
       schema := schema ++ [(id.getId.toString, kind)]
       let isSealed : _root_.Bool := match state with
         | `(nlstate| sealed cell $_:ident : $_:nltype)
+        | `(nlstate| sealed cell $_:ident : struct $_:ident { $_:nlcompositefield* })
         | `(nlstate| sealed map $_:ident : $_:nltype => $_:nltype)
         | `(nlstate| sealed counter $_:ident)
         | `(nlstate| sealed set $_:ident : $_:nltype)

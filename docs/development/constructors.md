@@ -166,6 +166,15 @@ payload expressions. With a false guard the prior record survives. The pinned
 Compact case and native readback agree for both guard values.
 [Guarded record fixture](../../tests/RecordConstructor.lean) · [Compact comparison](../../tests/compact/record-constructor.mjs)
 
+## Seal a record Cell
+
+Declare `sealed cell position : struct Position { ... }` and initialize the
+declared fields once with `initialize position := fields(...)`. Entrypoints
+read the typed fields using the ordinary record Cell syntax. The compiler
+rejects an entrypoint write to the sealed record. The native checker also
+rejects an Impact plan that writes the sealed slot.
+[Lean fixture](../../tests/SealedRecordCell.lean) · [Compact comparison](../../tests/compact/sealed-record-cell.mjs) · [Native replay](../../runtime/tests/record_constructor.rs)
+
 ## Initialize an opaque string
 
 OpaqueString is deployment/host data, outside circuit `Ty`. Its cell contains one

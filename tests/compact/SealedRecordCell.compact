@@ -1,0 +1,22 @@
+pragma language_version >= 0.28;
+
+struct Position {
+  amount: Uint<8>;
+  count: Uint<16>;
+  active: Boolean;
+}
+
+export sealed ledger position: Position;
+export ledger marker: Field;
+
+constructor(amount: Uint<8>, count: Uint<16>, active: Boolean) {
+  position = disclose(Position { amount, count, active });
+}
+
+export circuit inspect(): [Uint<8>, Uint<16>, Boolean] {
+  return [position.amount, position.count, position.active];
+}
+
+export circuit touch(): [] {
+  marker = 37 as Field;
+}
