@@ -31,36 +31,42 @@ try {
   const runtime = await import(pathToFileURL(join(runtimeDirectory, 'dist/index.js')).href);
   assert.equal(runtime.versionString, '0.21.0');
   const { Contract } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
-  const contract = new Contract({});
+  const octets = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+  const payload = (counter) => ({ octets, flag: true, counter, marker: 0, anchor: 42n });
+  const calls = [];
+  const contract = new Contract({
+    loadPayload(context, counter) {
+      calls.push(counter);
+      return [context.privateState, payload(counter === 0n ? 65536n : counter)];
+    },
+  });
   const walletKey = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(
     runtime.createConstructorContext(null, walletKey),
   );
 
-  const octets = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
   const points = [];
+  const context = (circuitId) => runtime.createCircuitContext({
+    circuitId,
+    contractAddress: runtime.dummyContractAddress(),
+    coinPublicKeyOrZswapState: walletKey,
+    contractState: currentContractState.data,
+    privateState: null,
+  });
   async function hash(counter) {
-    const context = runtime.createCircuitContext({
-      circuitId: 'hashToCurveFab',
-      contractAddress: runtime.dummyContractAddress(),
-      coinPublicKeyOrZswapState: walletKey,
-      contractState: currentContractState.data,
-      privateState: null,
-    });
-    const call = await contract.circuits.hashToCurveFab(context, {
-      octets,
-      flag: true,
-      counter,
-      marker: 0,
-      anchor: 42n,
-    });
+    const call = await contract.circuits.hashToCurveFab(context('hashToCurveFab'), payload(counter));
+    const witnessed = await contract.circuits.hashWitnessPayload(context('hashWitnessPayload'), counter);
     assert.ok(Array.isArray(call.result) && call.result.length === 1,
       'expected one hash-to-curve output');
+    assert.deepEqual(witnessed.result, call.result);
     points.push({ x: call.result[0].x.toString(), y: call.result[0].y.toString() });
   }
 
   await hash(257n);
   await hash(258n);
+  await assert.rejects(async () =>
+    contract.circuits.hashWitnessPayload(context('hashWitnessPayload'), 0n));
+  assert.deepEqual(calls, [257n, 258n, 0n]);
   assert.deepEqual(points, [
     {
       x: '28795585433567012869963935944812663991492396026676757706215428925031281335525',

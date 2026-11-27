@@ -9,6 +9,94 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(feature = "zkir-321")]
 #[test]
+#[ignore = "requires fresh MixedFabHashToCurve artifacts in NOCTIUM_HASH_TO_CURVE_FAB_DIR"]
+fn typed_witness_hash_to_curve_matches_compact() -> anyhow::Result<()> {
+    use coin_structure::contract::ContractAddress;
+    use noctium_runtime::{Plan, check, create_state, prepare, zkir::IrSource};
+    use std::{fs, path::PathBuf};
+    use transient_crypto::curve::Fr;
+
+    let root = PathBuf::from(std::env::var("NOCTIUM_HASH_TO_CURVE_FAB_DIR")?);
+    let stem = "MixedFabHashToCurve.hashFromWitness";
+    let control = fs::read_to_string(root.join(format!("{stem}.witness.control.json")))?;
+    let plan: Plan =
+        serde_json::from_reader(fs::File::open(root.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(root.join(format!("{stem}.zkir")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+
+    for (counter, x, y) in [
+        (
+            257u64,
+            "28795585433567012869963935944812663991492396026676757706215428925031281335525",
+            "22332899933082389804809036260506171817896244000051913394706757537977492146276",
+        ),
+        (
+            258,
+            "29703381369117037955354524975024459739721474734473359661960630795432392269544",
+            "27301738739419332019240484823733146733474981258073086105370655572681570990521",
+        ),
+    ] {
+        let attempt = if counter == 257 { "a" } else { "b" }.repeat(64);
+        let (mut session, control) = bound_session(
+            &control,
+            BTreeMap::from([("counterArg".into(), json!(counter.to_string()))]),
+            &attempt,
+        );
+        let pending = session.advance()?;
+        let request = &pending["request"];
+        assert_eq!(pending["status"], "need_host");
+        assert_eq!(request["name"], "loadMixedFabPayload");
+        assert_eq!(
+            session.private_request()?["arguments"]["counterArg"],
+            counter.to_string()
+        );
+        let payload = json!({"kind":"struct", "id":"MixedFabHashToCurve.FabPayload", "fields":[
+            {"name":"octets", "value":{"kind":"bytes", "values": (1u8..=32).collect::<Vec<_>>()}},
+            {"name":"flag", "value":{"kind":"bool", "value":true}},
+            {"name":"counter", "value":{"kind":"uint", "maximum":"65535", "value":counter.to_string()}},
+            {"name":"marker", "value":{"kind":"enum", "id":"MixedFabHashToCurve.LeafMarker",
+                "variant":"Only", "fields":[]}},
+            {"name":"anchor", "value":{"kind":"native", "value":"42"}}
+        ]});
+        let mut malformed = payload.clone();
+        malformed["fields"][2]["value"]["value"] = json!("65536");
+        assert!(
+            session
+                .resume_typed(reply(request, &attempt, "value", Some(malformed)))
+                .is_err()
+        );
+        assert_eq!(session.advance()?, pending);
+        session.resume_typed(reply(request, &attempt, "value", Some(payload)))?;
+        let point = json!({"kind":"jubjubPoint", "x":x, "y":y});
+        let completed = session.advance()?;
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["result"], point);
+
+        let completion = session.private_completion(&binding(&control)["nativeRelation"])?;
+        let inputs = serde_json::from_value(completion["inputs"].clone())?;
+        let mut execution = prepare(
+            &plan,
+            &inputs,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )?;
+        assert_eq!(check(&execution, &circuit)?, execution.activity_schedule);
+        assert_eq!(execution.returns_json()["pointResult"], point);
+        let field = execution
+            .preimage
+            .private_transcript
+            .iter_mut()
+            .find(|field| **field == Fr::from(counter))
+            .expect("bound private provider counter");
+        *field = Fr::from(if counter == 257 { 258u64 } else { 257u64 });
+        assert!(check(&execution, &circuit).is_err());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "zkir-321")]
+#[test]
 #[ignore = "requires fresh Sha512Fab Lean artifacts"]
 fn typed_fab_digests_use_the_provider_record_in_host_and_native_execution() -> anyhow::Result<()> {
     use coin_structure::contract::ContractAddress;

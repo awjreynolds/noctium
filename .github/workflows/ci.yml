@@ -441,6 +441,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableFabHash.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-fab-hash"
+          .lake/build/bin/noctium compile tests/MixedFabHashToCurve.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/witness-fab-curve"
           .lake/build/bin/noctium compile tests/NamedEnumMembers.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-enum-members"
@@ -596,6 +599,10 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \
               --ignored --exact linked_readable_helpers_preserve_native_argument_order
+          NOCTIUM_HASH_TO_CURVE_FAB_DIR="$artifacts/witness-fab-curve" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test witness_control \
+              typed_witness_hash_to_curve_matches_compact -- --exact --ignored
           NOCTIUM_RECORD_CONSTRUCTION_DIR="$artifacts/readable-record-construction" \
             NOCTIUM_SCALAR_TRANSIENT_HASH_DIR="$artifacts/scalar-transient-hash" \
             NOCTIUM_COMPOSITE_MAYBE_INPUT_DIR="$artifacts/composite-maybe-input" \

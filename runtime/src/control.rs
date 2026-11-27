@@ -377,7 +377,7 @@ fn byte_scalar_type(length: usize) -> ScalarType {
     }
 }
 
-fn fab_digest_scalar_type(field: &crate::aggregates::FabHashField) -> ScalarType {
+fn fab_scalar_type(field: &crate::aggregates::FabHashField) -> ScalarType {
     use crate::aggregates::FabHashField;
     match field {
         FabHashField::Bytes(length) => byte_scalar_type(*length),
@@ -391,7 +391,7 @@ fn fab_digest_scalar_type(field: &crate::aggregates::FabHashField) -> ScalarType
 }
 
 #[derive(Clone)]
-enum FabDigestArgumentKind {
+enum FabArgumentKind {
     Scalar,
     AggregateBytes { token: String, length: usize },
 }
@@ -426,10 +426,7 @@ fn fab_curve_source_name(ty: &ScalarType) -> Result<String> {
     }
 }
 
-fn fab_digest_input(
-    field: &crate::aggregates::FabHashField,
-    index: usize,
-) -> Result<crate::FabHashInput> {
+fn fab_input(field: &crate::aggregates::FabHashField, index: usize) -> Result<crate::FabHashInput> {
     use crate::aggregates::FabHashField;
     let value = || {
         Box::new(crate::Expr::Reference {
@@ -459,19 +456,43 @@ fn fab_digest_input(
     })
 }
 
+fn fab_hash_to_curve_operation(
+    schema: Json,
+    fields: &[crate::aggregates::FabHashField],
+) -> Result<(Vec<ScalarType>, ScalarType, crate::Expr)> {
+    let encoded_fields = fields
+        .iter()
+        .try_fold(0usize, |count, field| {
+            count.checked_add(field.encoded_field_count())
+        })
+        .ok_or_else(|| anyhow!("control FAB hash-to-curve field count overflow"))?;
+    ensure!(
+        encoded_fields <= crate::MAX_HASH_TO_CURVE_FIELDS,
+        "control FAB hash-to-curve field limit"
+    );
+    let parameters = fields.iter().map(fab_scalar_type).collect();
+    let values = fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| fab_input(field, index))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((
+        parameters,
+        ScalarType::JubjubPoint,
+        crate::Expr::HashToCurveFab { schema, values },
+    ))
+}
+
 fn fab_digest_operation(
     operation: &str,
     schema: Json,
     fields: &[crate::aggregates::FabHashField],
 ) -> Result<(Vec<ScalarType>, ScalarType, crate::Expr)> {
-    let parameters = fields
-        .iter()
-        .map(fab_digest_scalar_type)
-        .collect::<Vec<_>>();
+    let parameters = fields.iter().map(fab_scalar_type).collect::<Vec<_>>();
     let values = fields
         .iter()
         .enumerate()
-        .map(|(index, field)| fab_digest_input(field, index))
+        .map(|(index, field)| fab_input(field, index))
         .collect::<Result<Vec<_>>>()?;
     match operation {
         "persistentHash" => Ok((
@@ -1086,11 +1107,11 @@ enum ExprKind {
     #[cfg(feature = "zkir-321")]
     ForeignEncodedField(Arc<Expr>, usize),
     Bytes(String, Vec<Arc<Expr>>),
-    FabDigest {
+    FabOperation {
         parameters: Vec<ScalarType>,
         result: ScalarType,
         expression: crate::Expr,
-        argument_kinds: Vec<FabDigestArgumentKind>,
+        argument_kinds: Vec<FabArgumentKind>,
         arguments: Vec<Arc<Expr>>,
     },
     Call(String, Vec<Arc<Expr>>),
@@ -1200,7 +1221,7 @@ struct Parser<'a> {
     typed_witnesses: &'a BTreeMap<String, witness::WitnessSignature>,
     registry: &'a witness::Registry,
     registered_schemas: &'a BTreeMap<String, Json>,
-    fab_digest_layouts: BTreeMap<String, (Json, Vec<crate::aggregates::FabHashField>)>,
+    fab_layouts: BTreeMap<String, (Json, Vec<crate::aggregates::FabHashField>)>,
     aggregate_bytes_lengths: BTreeMap<String, Option<usize>>,
     schema_version: u32,
     nodes: usize,
@@ -1219,11 +1240,8 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn fab_digest_layout(
-        &mut self,
-        token: &str,
-    ) -> Result<(Json, Vec<crate::aggregates::FabHashField>)> {
-        if let Some(layout) = self.fab_digest_layouts.get(token) {
+    fn fab_layout(&mut self, token: &str) -> Result<(Json, Vec<crate::aggregates::FabHashField>)> {
+        if let Some(layout) = self.fab_layouts.get(token) {
             return Ok(layout.clone());
         }
         let schema_json = self
@@ -1235,8 +1253,7 @@ impl Parser<'_> {
         let schema = crate::aggregates::Schema::from_json(&schema_bytes)?;
         let fields = schema.fab_hash_nested_fields(crate::aggregates::MAX_FAB_OPERANDS)?;
         let layout = (schema_json, fields);
-        self.fab_digest_layouts
-            .insert(token.to_owned(), layout.clone());
+        self.fab_layouts.insert(token.to_owned(), layout.clone());
         Ok(layout)
     }
 
@@ -1879,35 +1896,50 @@ impl Parser<'_> {
                     ),
                 )
             }
-            "fabDigest" => {
-                ensure!(self.schema_version == 2, "FAB digests require v2 plan");
-                shape(v, &["tag", "operation", "type", "arguments"], true)?;
-                let operation = text(v, "operation")?.to_owned();
-                ensure!(
-                    matches!(
-                        operation.as_str(),
-                        "persistentHash" | "sha512" | "keccak256"
-                    ),
-                    "unsupported control FAB digest operation"
-                );
+            "fabDigest" | "fabHashToCurve" => {
+                ensure!(self.schema_version == 2, "FAB hashes require v2 plan");
+                let hash_to_curve = tag == "fabHashToCurve";
+                if hash_to_curve {
+                    shape(v, &["tag", "type", "arguments"], true)?;
+                } else {
+                    shape(v, &["tag", "operation", "type", "arguments"], true)?;
+                }
+                let operation = if hash_to_curve {
+                    None
+                } else {
+                    let operation = text(v, "operation")?.to_owned();
+                    ensure!(
+                        matches!(
+                            operation.as_str(),
+                            "persistentHash" | "sha512" | "keccak256"
+                        ),
+                        "unsupported control FAB digest operation"
+                    );
+                    Some(operation)
+                };
+                let description = if hash_to_curve {
+                    "FAB hash-to-curve"
+                } else {
+                    "FAB digest"
+                };
                 let token = text(v, "type")?.to_owned();
                 ensure!(
                     matches!(parse_type(&token, self.registry)?, Type::Aggregate(_)),
-                    "FAB digest requires an aggregate type"
+                    "{description} requires an aggregate type"
                 );
-                let (schema, fields) = self.fab_digest_layout(&token)?;
+                let (schema, fields) = self.fab_layout(&token)?;
                 let raw_arguments = list(v, "arguments")?;
                 ensure!(
                     raw_arguments.len() == fields.len(),
-                    "control FAB digest argument count"
+                    "control {description} argument count"
                 );
                 let mut arguments = Vec::with_capacity(raw_arguments.len());
                 let mut argument_kinds = Vec::with_capacity(raw_arguments.len());
                 for (raw, field) in raw_arguments.iter().zip(&fields) {
                     let argument = self.expr(raw, env, depth + 1)?;
                     let argument_kind = match (&argument.ty, field) {
-                        (Type::Scalar(actual), _) if *actual == fab_digest_scalar_type(field) => {
-                            FabDigestArgumentKind::Scalar
+                        (Type::Scalar(actual), _) if *actual == fab_scalar_type(field) => {
+                            FabArgumentKind::Scalar
                         }
                         (
                             Type::Aggregate(token),
@@ -1915,27 +1947,29 @@ impl Parser<'_> {
                         ) => {
                             ensure!(
                                 self.aggregate_bytes_length(token)? == Some(*length),
-                                "control FAB digest aggregate byte argument type"
+                                "control FAB aggregate byte argument type"
                             );
-                            FabDigestArgumentKind::AggregateBytes {
+                            FabArgumentKind::AggregateBytes {
                                 token: token.clone(),
                                 length: *length,
                             }
                         }
-                        _ => bail!("control FAB digest argument type"),
+                        _ => bail!("control {description} argument type"),
                     };
                     argument_kinds.push(argument_kind);
                     arguments.push(argument);
                 }
-                let (parameters, result, expression) =
-                    fab_digest_operation(&operation, schema, &fields)?;
+                let (parameters, result, expression) = match operation.as_deref() {
+                    Some(operation) => fab_digest_operation(operation, schema, &fields)?,
+                    None => fab_hash_to_curve_operation(schema, &fields)?,
+                };
                 ensure!(
                     parameters.len() == arguments.len(),
-                    "control FAB digest argument count"
+                    "control {description} argument count"
                 );
                 (
                     Type::Scalar(result.clone()),
-                    ExprKind::FabDigest {
+                    ExprKind::FabOperation {
                         parameters,
                         result,
                         expression,
@@ -3946,7 +3980,7 @@ impl Plan {
                 typed_witnesses: &typed_witnesses,
                 registry: &registry,
                 registered_schemas: &registered_schemas,
-                fab_digest_layouts: BTreeMap::new(),
+                fab_layouts: BTreeMap::new(),
                 aggregate_bytes_lengths: BTreeMap::new(),
                 schema_version,
                 nodes: 0,
@@ -4576,7 +4610,7 @@ impl Abstractor<'_> {
             | ExprKind::Hash(_, _, _)
             | ExprKind::Curve(_, _)
             | ExprKind::Bytes(_, _)
-            | ExprKind::FabDigest { .. } => None,
+            | ExprKind::FabOperation { .. } => None,
             #[cfg(feature = "zkir-321")]
             ExprKind::ForeignEncodedField(value, _) => {
                 let _ = self.expression(value, env)?;
@@ -5082,11 +5116,11 @@ enum Task {
     #[cfg(feature = "zkir-321")]
     ForeignEncodedField(usize),
     Bytes(String, usize),
-    FabDigest(
+    FabOperation(
         Vec<ScalarType>,
         ScalarType,
         crate::Expr,
-        Vec<FabDigestArgumentKind>,
+        Vec<FabArgumentKind>,
     ),
     EagerSelect(Type),
     Choose(Arc<Expr>, Arc<Expr>, Type, Env, Arc<Expr>),
@@ -6596,14 +6630,14 @@ impl Session {
                         self.tasks.push(Task::Eval(argument.clone(), env.clone()));
                     }
                 }
-                ExprKind::FabDigest {
+                ExprKind::FabOperation {
                     parameters,
                     result,
                     expression,
                     argument_kinds,
                     arguments,
                 } => {
-                    self.tasks.push(Task::FabDigest(
+                    self.tasks.push(Task::FabOperation(
                         parameters.clone(),
                         result.clone(),
                         expression.clone(),
@@ -6837,7 +6871,7 @@ impl Session {
                     taint,
                 ));
             }
-            Task::FabDigest(parameters, result, expression, argument_kinds) => {
+            Task::FabOperation(parameters, result, expression, argument_kinds) => {
                 let count = argument_kinds.len();
                 ensure!(
                     self.values.len() >= count,
@@ -6851,16 +6885,17 @@ impl Session {
                     .map(|(argument, kind)| {
                         taint |= argument.is_tainted();
                         match kind {
-                            FabDigestArgumentKind::Scalar => argument
+                            FabArgumentKind::Scalar => argument
                                 .value
-                                .ok_or_else(|| anyhow!("control FAB digest scalar required")),
-                            FabDigestArgumentKind::AggregateBytes { token, length } => {
-                                let aggregate = argument.aggregate.as_ref().ok_or_else(|| {
-                                    anyhow!("control FAB digest aggregate required")
-                                })?;
+                                .ok_or_else(|| anyhow!("control FAB scalar required")),
+                            FabArgumentKind::AggregateBytes { token, length } => {
+                                let aggregate = argument
+                                    .aggregate
+                                    .as_ref()
+                                    .ok_or_else(|| anyhow!("control FAB aggregate required"))?;
                                 ensure!(
                                     aggregate.token == token,
-                                    "control FAB digest aggregate type mismatch"
+                                    "control FAB aggregate type mismatch"
                                 );
                                 aggregate_bytes_value(&aggregate.payload.value, length)
                             }
