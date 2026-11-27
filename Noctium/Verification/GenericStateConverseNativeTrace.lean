@@ -2,6 +2,8 @@ import Noctium.Verification.GenericStateConverseEffectFold
 import Noctium.Verification.GenericStateConverseCheckedPlan
 import Noctium.Verification.GenericStateConversePublicPrefix
 import Noctium.Verification.GuardedScalarWitness
+import Noctium.Verification.GuardedVmReadTranscript
+import Noctium.Verification.GuardedPlanAssertions
 
 namespace Noctium.Verification.GenericStateConverseNativeTrace
 
@@ -149,6 +151,8 @@ theorem source_call_build_reduces_to_artifact (state : List StateDecl)
         (Impact.publicInputReadCount ep.circuit.inputs) (outputs ++ values, initial) =
         .ok (records, (finalEnv, next)) ∧
       CanonicalInputs sourceEntry.circuit values base ∧
+      (∀ input ∈ sourceEntry.circuit.inputs,
+        seed ("%input_" ++ input.name) = base ("%input_" ++ input.name)) ∧
       Impact.lower state ep = .ok plan ∧
       GenericStateInputValues.decodeReads
         (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)) seed = .ok readValues ∧
@@ -171,7 +175,7 @@ theorem source_call_build_reduces_to_artifact (state : List StateDecl)
     Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state sourceEntry
       rewrites artifact loweredArtifact
   obtain ⟨outputs, finalEnv, _, records, readValues, finalSlots, finalReads,
-    circuit, _, _, recorded, metadata, _, _, decoded, checked, encoded⟩ :=
+    circuit, _, _, recorded, metadata, _, preserved, decoded, checked, encoded⟩ :=
     source_call_native_trace state sourceEntry plan ctx values result base initial next slots
       baseAdmitted admittedState lowered effects modulus success
   have prunedRun : ep.circuit.run ctx values = .ok outputs := by
@@ -182,7 +186,7 @@ theorem source_call_build_reduces_to_artifact (state : List StateDecl)
       prunedRun decoded checked
   rw [admitted_unshielded_frame state initial slots admittedState] at recorded
   refine ⟨plan, outputs, finalEnv, records, base, readValues, operations, finalSlots, finalReads,
-    circuit, recorded, baseAdmitted, lowered, decoded, evaluated, nativeRun, encoded, ?_⟩
+    circuit, recorded, baseAdmitted, preserved, lowered, decoded, evaluated, nativeRun, encoded, ?_⟩
   change ScalarSourceReadTape.sourceReadInputs ctx ep.effectGuards ep.effects.zipIdx
     (Impact.publicInputReadCount ep.circuit.inputs) (outputs ++ values, initial) =
     .ok (records, (finalEnv, next)) at recorded
@@ -198,5 +202,174 @@ theorem source_call_build_reduces_to_artifact (state : List StateDecl)
     base, decoded, evaluated, admittedState.initialEncoded,
     nativeRun, encoded, Except.mapError, Bind.bind, Except.bind, Pure.pure, Except.pure,
     Except.map, GenericStateEncoding.initial]
+
+private theorem expected_scalar_input_source (state : List StateDecl)
+    (ep : Entrypoint) (plan : Impact.Plan) (shape : Native.Expected)
+    (values : EvalEnv) (base : Assignment)
+    (admitted : CanonicalInputs ep.circuit values base)
+    (lowered : Impact.lower state ep = .ok plan)
+    (expected : Native.expectedEntrypoint state ep = .ok shape)
+    (effects : ∀ effect ∈ ep.effects, ScalarEffect state effect) :
+    ∀ requirement ∈ shape.rawInputs ++ shape.inputs, ∃ name,
+      requirement.identifier = "%input_" ++ name ∧
+      name ∈ ep.circuit.inputs.map (·.name) ++
+        (plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)).map (·.name) := by
+  let reads := plan.reads.drop (Impact.publicInputReadCount ep.circuit.inputs)
+  have initialName (input : Input) (present : input ∈ ep.circuit.inputs)
+      (requirement : Native.InputRequirement)
+      (ordinary : requirement ∈ Native.Input.requirements input ∨
+        requirement ∈ Native.Input.callArgumentRequirements input) :
+      requirement.identifier = "%input_" ++ input.name := by
+    obtain ⟨_, _, canonical⟩ := admitted.complete input present
+    obtain ⟨supported⟩ := GenericStateWriteEvaluation.scalarType_of_canonical canonical
+    cases input with
+    | mk name ty visibility span =>
+      change ScalarType ty at supported
+      cases supported <;>
+        simp only [Native.Input.requirements, Native.Input.callArgumentRequirements,
+          List.mem_singleton, or_self] at ordinary <;>
+        cases ordinary <;> rfl
+  intro requirement present
+  rcases List.mem_append.mp present with raw | body
+  · rw [GenericStateCircuitParts.expectedEntrypoint_rawInputs state ep shape expected] at raw
+    obtain ⟨input, argMember, presentInSource⟩ := List.mem_flatMap.mp raw
+    obtain ⟨_, _, found⟩ := List.mem_filterMap.mp argMember
+    have inputPresent := List.mem_of_find?_eq_some found
+    exact ⟨input.name, initialName input inputPresent requirement (.inr presentInSource),
+      List.mem_append_left _ (List.mem_map_of_mem inputPresent)⟩
+  · let core := GenericStateCircuitParts.inputRequirementCore
+    have included : core requirement ∈ shape.inputs.map core := List.mem_map_of_mem body
+    rw [GenericStateCircuitParts.expectedEntrypoint_inputRequirementCoreMap
+      state ep shape plan expected lowered] at included
+    obtain ⟨source, sourcePresent, equal⟩ := List.mem_map.mp included
+    have identifier : source.identifier = requirement.identifier := congrArg Prod.fst equal
+    rcases List.mem_append.mp sourcePresent with circuit | ledger
+    · obtain ⟨input, filterPresent, presentInSource⟩ := List.mem_flatMap.mp circuit
+      have inputPresent := (List.mem_filter.mp filterPresent).1
+      exact ⟨input.name, identifier.symm.trans (initialName input inputPresent source (.inl presentInSource)),
+        List.mem_append_left _ (List.mem_map_of_mem inputPresent)⟩
+    · obtain ⟨readSpec, readPresent, presentInSource⟩ := List.mem_flatMap.mp ledger
+      obtain ⟨⟨name, ty⟩, binding, sourceEq⟩ := List.mem_map.mp presentInSource
+      have plain := (ScalarGuardedReadAdmission.lower_read_admission state ep plan lowered effects).1
+        readSpec readPresent
+      have singleton := GenericStateCheckedReadDecode.supported_plain_read_bindings
+        readSpec plain.1 plain.2.1
+      rw [singleton] at binding
+      cases List.mem_singleton.mp binding
+      refine ⟨readSpec.name, identifier.symm.trans ?_,
+        List.mem_append_right _ (List.mem_map_of_mem (l := reads) readPresent)⟩
+      rw [← sourceEq]
+      cases readSpec.ty <;> rfl
+
+/-- A satisfying extension of the source read seed also consumes the transcript
+from the actual source and native executions. The source witness builder
+therefore succeeds without a separate transcript acceptance premise. -/
+theorem source_call_build_of_satisfying_extension (state : List StateDecl)
+    (sourceEntry : Entrypoint) (ctx : EvalContext) (hash : Hash)
+    (implementation : HashAgreement ctx hash)
+    (values result : EvalEnv)
+    (initial next : LedgerState) (slots : List Slot) (bytes : ArtifactBytes.Bytes)
+    (rewrites : Zkir.Rewrites) (json : Lean.Json)
+    (view : GuardedZkirArtifact.View) (rawRows : Array Lean.Json)
+    (inputTypes : ∀ input ∈ sourceEntry.circuit.inputs, Nonempty (ScalarType input.ty))
+    (admittedState : GenericStateEncoding.AdmittedState state initial slots)
+    (emitted : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
+    (parsed : (ArtifactBytes.parse bytes).map Lean.Json.compress = .ok json.compress)
+    (artifact : GuardedZkirArtifact.check bytes json = .ok view.rows)
+    (pinned : GuardedZkirArtifact.decodeView json = .ok view)
+    (raw : Native.arrayField json "instructions" = .ok rawRows)
+    (temporary : GuardedScalarWitnessAssembly.TemporaryNamespace rawRows.toList view.rows)
+    (admitted : ScalarCircuitAdmission sourceEntry.circuit)
+    (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
+    (guards : ∀ (condition : Expr .bool), some condition ∈ sourceEntry.effectGuards →
+      ScalarExpression condition)
+    (success : sourceEntry.run ctx values initial = .ok (result, next))
+    (extension : ∀ plan outputs finalEnv records base,
+      Impact.lower state (Passes.pruneEntrypoint sourceEntry) = .ok plan →
+      sourceEntry.circuit.run ctx values = .ok outputs →
+      ScalarSourceReadTape.sourceReadInputs ctx sourceEntry.effectGuards sourceEntry.effects.zipIdx
+        (Impact.publicInputReadCount sourceEntry.circuit.inputs) (outputs ++ values, initial) =
+          .ok (records, (finalEnv, next)) →
+      CanonicalInputs sourceEntry.circuit values base →
+      let seed := seedReadValues base records
+      ∃ target,
+        (∀ row ∈ view.rows, GuardedImpactTranscript.ordinaryHolds hash target row) ∧
+        ∀ name ∈ sourceEntry.circuit.inputs.map (·.name) ++
+          (plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)).map (·.name),
+          target ("%input_" ++ name) = seed ("%input_" ++ name)) :
+    ∃ built,
+      GuardedScalarWitness.buildSourceCall ctx hash state sourceEntry values initial bytes rewrites =
+        .ok built := by
+  obtain ⟨sourceOutputs, _, _, sourceCircuit, _, _, _⟩ :=
+    ScalarLedgerWitnessSource.entrypoint_run_steps ctx sourceEntry values result initial next success
+  obtain ⟨inputs, admittedInputs⟩ := canonicalInputs_of_run ctx sourceEntry.circuit values
+    sourceOutputs implementation.modulus inputTypes sourceCircuit
+  obtain ⟨plan, outputs, finalEnv, records, base, readValues, operations, finalSlots, finalReads,
+    circuit, recorded, baseAdmitted, preserved, lowered, decoded, evaluated, nativeRun, _, build⟩ :=
+    source_call_build_reduces_to_artifact state sourceEntry ctx hash values result inputs initial
+      next slots bytes rewrites json admittedInputs admittedState emitted effects implementation.modulus success
+  obtain ⟨target, ordinary, sourceAgreement⟩ :=
+    extension plan outputs finalEnv records base lowered circuit recorded baseAdmitted
+  let seed := seedReadValues base records
+  have targetInputs : CanonicalInputs sourceEntry.circuit values target := by
+    refine ⟨baseAdmitted.unique, baseAdmitted.declared, baseAdmitted.complete, ?_⟩
+    intro input present value lookup canonical
+    have agrees := sourceAgreement input.name
+      (List.mem_append_left _ (List.mem_map_of_mem present))
+    rw [agrees, preserved input present]
+    exact baseAdmitted.binding input present value lookup canonical
+  have targetDecoded : GenericStateInputValues.decodeReads
+      (plan.reads.drop (Impact.publicInputReadCount sourceEntry.circuit.inputs)) target =
+        .ok readValues :=
+    (GenericStateInputValues.decodeReads_agree_on _ seed target
+      (fun descriptor present => sourceAgreement descriptor.name
+        (List.mem_append_right _ (List.mem_map_of_mem present)))).trans decoded
+  let final : NativeState.Machine := ⟨[.vector finalSlots], finalReads⟩
+  have checked : GuardedScalarCandidateState.runCheckedCandidates ctx sourceEntry plan
+      values target slots = some final := by
+    simpa [GuardedScalarCandidateState.runCheckedCandidates, circuit, targetDecoded, evaluated,
+      Except.toOption, GenericStateEncoding.initial, final, -List.append_assoc] using nativeRun
+  obtain ⟨_, shape, _, expectedAccepted, _, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state sourceEntry rewrites
+      json emitted
+  have schema := (GuardedScalarCandidateSchedule.lower_checked_guarded_source_frame
+    state sourceEntry rewrites shape plan ctx hash implementation values target bytes json view.rows
+    emitted artifact ordinary lowered expectedAccepted targetInputs admitted effects).2.1
+  have scalarGuards := GuardedPlanAssertions.lower_plan_guards_scalar state
+    (Passes.pruneEntrypoint sourceEntry) plan lowered effects guards
+  have guardAdmission : plan.guards.all
+      (fun guard => (ScalarExpressionAdmission.certify guard).isSome) = _root_.Bool.true :=
+    List.all_eq_true.mpr (fun condition present =>
+      ScalarExpressionAdmission.certify_complete (scalarGuards condition present))
+  obtain ⟨_, actualOutputs, actualReads, actualOps, observations, actualCircuit, actualDecoded,
+    actualEvaluated, _, _, _, consumed⟩ :=
+    GuardedVmReadTranscript.lower_checked_guarded_statement_consumes
+      state sourceEntry rewrites shape plan ctx hash implementation values target bytes json view.rows
+      slots final emitted artifact ordinary lowered expectedAccepted targetInputs admitted effects
+      guards guardAdmission checked
+  have sameOutputs := Except.ok.inj (actualCircuit.symm.trans circuit)
+  subst actualOutputs
+  have sameReads := Except.ok.inj (actualDecoded.symm.trans targetDecoded)
+  subst actualReads
+  have sameOps := Except.ok.inj (actualEvaluated.symm.trans evaluated)
+  subst actualOps
+  have prunedBase :
+      CanonicalInputs (Passes.pruneEntrypoint sourceEntry).circuit values base :=
+    ⟨baseAdmitted.unique, baseAdmitted.declared, baseAdmitted.complete, baseAdmitted.binding⟩
+  have inputSources := expected_scalar_input_source state (Passes.pruneEntrypoint sourceEntry)
+    plan shape values base prunedBase lowered expectedAccepted effects
+  have inputAgreement : ∀ requirement ∈ shape.rawInputs ++ shape.inputs,
+      seed requirement.identifier = target requirement.identifier := by
+    intro requirement required
+    obtain ⟨name, identifier, present⟩ := inputSources requirement required
+    rw [identifier]
+    exact (sourceAgreement name present).symm
+  obtain ⟨_, built, _, assembled, _, _⟩ := GuardedScalarWitness.build_of_lowered_scalar_artifact
+    hash seed target state sourceEntry rewrites shape json bytes
+    ⟨operations.flatMap ImpactStatementScalar.opFields, finalReads.map Cell.value⟩ view rawRows
+    emitted expectedAccepted schema parsed artifact pinned raw temporary inputAgreement
+    (fun _ present => ordinary _ present) observations consumed
+  rw [build, assembled]
+  exact ⟨_, rfl⟩
 
 end Noctium.Verification.GenericStateConverseNativeTrace

@@ -85,19 +85,27 @@ def decodeRead (read : Backend.Impact.Read) (witness : Assignment) :
 def decodeReads (reads : List Backend.Impact.Read) (witness : Assignment) : Except String EvalEnv :=
   reads.mapM (fun read => decodeRead read witness)
 
-/-- Decoded reads are unchanged when an assignment preserves every `%input_`
-binding. The equality covers both successful decoding and the first error. -/
-theorem decodeReads_input_frame (reads : List Backend.Impact.Read)
-    (before after : Assignment)
-    (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
+/-- Read decoding observes only the named inputs of these descriptors, in order. -/
+theorem decodeReads_agree_on (reads : List Backend.Impact.Read) (before after : Assignment)
+    (agree : ∀ descriptor ∈ reads,
+      after ("%input_" ++ descriptor.name) = before ("%input_" ++ descriptor.name)) :
     decodeReads reads after = decodeReads reads before := by
   unfold decodeReads
   induction reads with
   | nil => rfl
   | cons read rest ih =>
     have sameRead : decodeRead read after = decodeRead read before := by
-      simp only [decodeRead, frame read.name]
-    simp only [List.mapM_cons, sameRead, ih]
+      simp only [decodeRead, agree read (List.mem_cons_self ..)]
+    have sameRest := ih (fun descriptor present => agree descriptor (List.mem_cons_of_mem _ present))
+    simp only [List.mapM_cons, sameRead, sameRest]
+
+/-- Decoded reads are unchanged when an assignment preserves every `%input_`
+binding. The equality covers both successful decoding and the first error. -/
+theorem decodeReads_input_frame (reads : List Backend.Impact.Read)
+    (before after : Assignment)
+    (frame : ∀ name, after ("%input_" ++ name) = before ("%input_" ++ name)) :
+    decodeReads reads after = decodeReads reads before :=
+  decodeReads_agree_on reads before after (fun descriptor _ => frame descriptor.name)
 
 theorem decodeRead_success (read : Backend.Impact.Read) (witness : Assignment)
     (entry : String × Value) (success : decodeRead read witness = .ok entry) :
