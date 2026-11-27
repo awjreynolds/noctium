@@ -131,27 +131,6 @@ private theorem decodedLessThanFields {raw : Json} {left right : Operand}
   subst left right width output
   exact ⟨leftParsed, rightParsed, bitsParsed⟩
 
-private theorem decodedConstrainEqOperands {raw : Json} {left right : Operand}
-    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
-    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal left right)) :
-    NativeRelationJson.decodeOperandField raw "a" = .ok left ∧
-      NativeRelationJson.decodeOperandField raw "b" = .ok right := by
-  unfold NativeRelationJson.decodeInstruction at decoded
-  simp only [ScalarValidationMeaning.bind_ok,
-    ScalarValidationOutputMeaning.nativeJson_stringField_eq] at decoded
-  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
-  have opcodeEq : opcodeName = "constrain_eq" :=
-    Except.ok.inj (opcodeParsed.symm.trans opcode)
-  subst opcodeName
-  simp only [ScalarValidationMeaning.bind_ok] at body
-  rcases body with ⟨_, _, leftValue, leftParsed, rightValue, result⟩
-  rcases result with ⟨rightParsed, result⟩
-  simp only [Pure.pure, Except.pure] at result
-  have resultEq := Except.ok.inj result
-  injection resultEq with leftEq rightEq
-  subst left right
-  exact ⟨leftParsed, rightParsed⟩
-
 private theorem decodedTestEqFields {raw : Json} {left right : Operand} {output : String}
     (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
     (decoded : NativeRelationJson.decodeInstruction raw =

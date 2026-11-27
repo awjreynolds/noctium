@@ -1,4 +1,5 @@
 import Noctium.Verification.ScalarValidationOpcodeProfile
+import Noctium.Verification.ScalarWitness
 
 namespace Noctium.Verification.GuardedScalarRows
 
@@ -19,6 +20,14 @@ inductive Row where
   | publicInput (output : String) (guard : Option Operand)
   | impact (guard : Operand) (inputs : List Operand)
   deriving Repr, DecidableEq
+
+/-- Assignment lanes observed by guarded transcript preprocessing. -/
+def Row.transcriptIdentifiers : Row → List String
+  | .strict _ => []
+  | .publicInput output guard =>
+      output :: guard.toList.flatMap ScalarWitness.operandIdentifiers
+  | .impact guard inputs =>
+      ScalarWitness.operandIdentifiers guard ++ inputs.flatMap ScalarWitness.operandIdentifiers
 
 private def decodeOptionalGuard (raw : Json) : Except String (Option Operand) := do
   let guardJson ← raw.getObjVal? "guard"

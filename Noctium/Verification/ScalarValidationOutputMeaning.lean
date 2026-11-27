@@ -1,6 +1,7 @@
 import Noctium.Backend.NativeProducer
 import Noctium.Verification.NativeRelationJson
 import Noctium.Verification.ScalarParserAgreement
+import Noctium.Verification.ScalarWitness
 import Noctium.Verification.ScalarValidationMeaning
 import Noctium.Verification.ScalarValidationProjection
 
@@ -8,6 +9,7 @@ namespace Noctium.Verification.ScalarValidationOutputMeaning
 
 open Lean Backend.Native NativeRelation NativeRelationJson ScalarNormalization
 open Noctium.Verification.ScalarValidationMeaning
+open Noctium.Verification.ScalarWitness
 
 theorem map_ok {α β : Type} {value : Except String α} {next : α → β}
     {result : β} : next <$> value = .ok result ↔
@@ -146,6 +148,73 @@ private theorem arguments_decoded_projection_meaning
   exact (agreement (ScalarValidationProjection.scalarType_of_nativeType
     (nativeChecks fact member))).term
 
+private theorem operand_decoded_identifiers_defined
+    {state : State} {json : Json} {text : String} {fact : Fact} {value : Operand}
+    (textParsed : json.getStr? = .ok text)
+    (accepted : operand state text = .ok fact)
+    (decoded : NativeRelationJson.decodeOperand json = .ok value) :
+    ∀ name ∈ ScalarWitness.operandIdentifiers value,
+      name ∈ state.definitions.map Prod.fst := by
+  intro name member
+  cases value with
+  | immediate _ => simp [ScalarWitness.operandIdentifiers] at member
+  | reference reference =>
+    have sameName : name = reference := by
+      simpa [ScalarWitness.operandIdentifiers] using member
+    subst name
+    have found := ScalarValidationMeaning.operand_decoded_reference_lookup
+      textParsed accepted decoded
+    exact List.mem_map_of_mem (ScalarValidationMeaning.lookup_member found)
+
+private theorem decoded_items_identifiers_defined
+    {state : State} {items : List Json} {facts : List Fact} {values : List Operand}
+    (accepted : items.mapM (fun item => do
+      let text ← item.getStr?
+      operand state text) = .ok facts)
+    (decoded : items.mapM NativeRelationJson.decodeOperand = .ok values) :
+    ∀ name ∈ values.flatMap ScalarWitness.operandIdentifiers,
+      name ∈ state.definitions.map Prod.fst := by
+  induction items generalizing facts values with
+  | nil =>
+    simp only [List.mapM_nil] at accepted decoded
+    cases accepted
+    cases decoded
+    simp
+  | cons item items ih =>
+    simp only [List.mapM_cons, bind_ok] at accepted decoded
+    rcases accepted with ⟨fact, factParsed, tailFacts, tailAccepted, acceptedResult⟩
+    rcases decoded with ⟨value, valueParsed, tailValues, tailDecoded, decodedResult⟩
+    cases acceptedResult
+    cases decodedResult
+    intro name member
+    simp only [List.flatMap_cons, List.mem_append] at member
+    rcases member with headMember | tailMember
+    · rcases factParsed with ⟨text, textParsed, factAccepted⟩
+      exact operand_decoded_identifiers_defined textParsed factAccepted valueParsed
+        name headMember
+    · exact ih tailAccepted tailDecoded name tailMember
+
+theorem arguments_decoded_identifiers_defined
+    {state : State} {instruction : Json} {name : String}
+    {facts : List Fact} {values : List Operand}
+    (accepted : arguments state instruction name = .ok facts)
+    (decoded : (do NativeRelationJson.decodeOperands (← instruction.getObjVal? name)) =
+      .ok values) :
+    ∀ identifier ∈ values.flatMap ScalarWitness.operandIdentifiers,
+      identifier ∈ state.definitions.map Prod.fst := by
+  unfold Backend.Native.arguments Backend.Native.arrayField at accepted
+  simp only [bind_ok] at accepted decoded
+  rcases accepted with ⟨array, ⟨json, parsed, arrayParsed⟩, _, _, accepted⟩
+  rcases decoded with ⟨same, sameParsed, decoded⟩
+  rw [parsed] at sameParsed
+  cases sameParsed
+  unfold NativeRelationJson.decodeOperands at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨sameArray, sameParsed, decoded⟩
+  rw [arrayParsed] at sameParsed
+  cases sameParsed
+  exact decoded_items_identifiers_defined accepted decoded
+
 /-- An accepted Native scalar output returns the validated state unchanged.
 Its exact source return terms have checked scalar interpretations equal to the
 decoded witness values in order. The opcode premise pins producer dispatch to the
@@ -160,16 +229,9 @@ theorem accepted_output_meaning
     next = state ∧
       expected.returns.map (interpret hash inputs) =
         (values.map (·.read witness)).map some := by
-  classical
   simp [validateInstruction, opcode, bind_ok, map_ok] at accepted
-  have descriptorSpec := Classical.choose_spec accepted
-  let factsExistence := descriptorSpec.2.2.2
-  let facts := Classical.choose factsExistence
-  have factsSpec := Classical.choose_spec factsExistence
-  have factsAccepted := factsSpec.1
-  let checkedExistence := factsSpec.2.1
-  have equalityCheck := Classical.choose_spec checkedExistence
-  have stateEq := factsSpec.2.2
+  rcases accepted with ⟨_, _, ⟨_, _⟩, ⟨_, _⟩, facts, factsAccepted,
+    ⟨_, equalityCheck⟩, stateEq⟩
   have argumentsAccepted := arguments_of_checked_native_arguments factsAccepted
   have matched : facts.map (·.term) = expected.returns :=
     eq_of_beq (ensure_ok.mp equalityCheck)
@@ -183,6 +245,30 @@ theorem accepted_output_meaning
   · exact stateEq.symm
   · rw [← matched]
     simpa only [List.map_map, Function.comp_def] using valuesMeaning
+
+/-- Output operands decode from the same accepted producer argument list, so
+every reference in the row names a definition already present in its state. -/
+theorem accepted_output_operand_definitions
+    {expected : Expected} {state next : State} {raw : Json} {values : List Operand}
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "output")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.output values)) :
+    next = state ∧
+      ∀ name ∈ values.flatMap ScalarWitness.operandIdentifiers,
+        name ∈ state.definitions.map Prod.fst := by
+  simp [validateInstruction, opcode, bind_ok, map_ok] at accepted
+  rcases accepted with ⟨_, _, ⟨_, _⟩, ⟨_, _⟩, facts, factsAccepted,
+    ⟨_, _⟩, stateEq⟩
+  have argumentsAccepted := arguments_of_checked_native_arguments factsAccepted
+  simp [NativeRelationJson.decodeInstruction, opcode, bind_ok, map_ok,
+    nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨_, json, jsonParsed, valuesDecoded⟩
+  have payloadDecoded :
+      (do NativeRelationJson.decodeOperands (← raw.getObjVal? "vals")) = .ok values := by
+    simp only [jsonParsed]
+    exact valuesDecoded
+  exact ⟨stateEq.symm,
+    arguments_decoded_identifiers_defined argumentsAccepted.1 payloadDecoded⟩
 
 /-- The source activity term for this row, using the producer's unguarded
 default only when the whole activity schedule is empty. -/
@@ -251,6 +337,41 @@ private theorem accepted_impact_operands {expected : Expected}
         (eq_of_beq (ensure_ok.mp guardChecked)).symm,
         argumentsAccepted, factsNative, groupParsed, advanced.symm⟩
   next => contradiction
+
+/-- A validated Impact row reads only declared SSA names from its guard and
+ordered payload operands, and leaves the definition environment unchanged. -/
+theorem accepted_impact_operand_definitions
+    {expected : Expected} {state next : State} {raw : Json}
+    {guard : Operand} {values : List Operand}
+    (accepted : validateInstruction expected state raw = .ok next)
+    (opcode : Backend.Native.stringField raw "op" = .ok "impact")
+    (decodedGuard : NativeRelationJson.decodeOperandField raw "guard" = .ok guard)
+    (decodedPayload : (do NativeRelationJson.decodeOperands (← raw.getObjVal? "inputs")) =
+      .ok values) :
+    (∀ name ∈ ScalarWitness.operandIdentifiers guard ++
+        values.flatMap ScalarWitness.operandIdentifiers,
+      name ∈ state.definitions.map Prod.fst) ∧
+      next.definitions = state.definitions := by
+  obtain ⟨_, guardFact, facts, textParsed, guardAccepted, _, _, _, payloadAccepted,
+    _, _, advanced⟩ := accepted_impact_operands accepted opcode
+  unfold NativeRelationJson.decodeOperandField at decodedGuard
+  simp only [bind_ok] at decodedGuard
+  rcases decodedGuard with ⟨guardJson, guardJsonParsed, guardDecoded⟩
+  unfold Backend.Native.stringField at textParsed
+  simp only [bind_ok] at textParsed
+  rcases textParsed with ⟨actualJson, actualJsonParsed, textDecoded⟩
+  have sameGuardJson : guardJson = actualJson :=
+    Except.ok.inj (guardJsonParsed.symm.trans actualJsonParsed)
+  cases sameGuardJson
+  have guardNames := operand_decoded_identifiers_defined
+    textDecoded guardAccepted guardDecoded
+  have payloadNames := arguments_decoded_identifiers_defined payloadAccepted decodedPayload
+  refine ⟨?_, ?_⟩
+  · intro name member
+    rcases List.mem_append.mp member with guardMember | payloadMember
+    · exact guardNames name guardMember
+    · exact payloadNames name payloadMember
+  · rw [advanced]
 
 /-- The strict decoder and accepted producer read the same ordered Impact
 payload. Each selected source term has a scalar interpretation equal to its
