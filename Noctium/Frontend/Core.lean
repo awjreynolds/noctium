@@ -6637,7 +6637,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
           let contractName := (← getCurrNamespace) ++ name.getId
           let ((environment, compositeType, environmentTerm, compositeTypeTerm), fieldTypes) ←
             elaborateTypedLedgerRecord contractName record recordFields state
-              _root_.Bool.false _root_.Bool.true
+              _root_.Bool.true _root_.Bool.true
           if !fieldTypes.isEmpty then
             recordFieldTypes := (id.getId.toString, fieldTypes) :: recordFieldTypes
           match LedgerValueType.cellRecordFields environment compositeType with

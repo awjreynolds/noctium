@@ -713,6 +713,47 @@ private def flatTypedRecordFields (environment : Types.CompositeEnv)
     throw "typed ledger record layout does not match its flat field declaration"
   pure fields
 
+/-- Describe a checked root Cell record with one nested structure level. Nested
+fields keep their source paths while the ledger uses underscore-joined names. -/
+private def nestedCellRecordFieldPaths (environment : Types.CompositeEnv)
+    (type : Types.CompositeType) : Except String (List (List String × String × Ty)) := do
+  let .structure id := type | throw "nested root Cell records must be named structures"
+  let some declaration := environment.structures.find? (·.id == id)
+    | throw "typed ledger record declaration is missing"
+  unless !declaration.fields.isEmpty do throw "typed ledger records must contain at least one field"
+  unless declaration.fields.any (fun field => match field.type with
+      | .structure _ => true
+      | _ => false) do
+    throw "nested root Cell record path requires a nested structure"
+  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+  let scalarTy (field : Types.Field) : Except String Ty := do
+    match field.type with
+    | .scalar .native => pure .native
+    | .scalar .bool => pure .bool
+    | .scalar (.uint maximum) => do
+      ScalarPolicy.validate (.uint maximum)
+      pure (.uint maximum)
+    | _ => throw "nested root Cell fields must be Native, Bool, or UInt"
+  let groups ← declaration.fields.mapM fun field => do
+    match field.type with
+    | .structure childId => do
+      let some child := environment.structures.find? (·.id == childId)
+        | throw s!"nested root Cell record declaration '{childId}' is missing"
+      unless !child.fields.isEmpty do throw "nested root Cell records must contain at least one field"
+      child.fields.mapM fun nestedField => do
+        let ty ← scalarTy nestedField
+        pure ([field.name, nestedField.name], s!"{field.name}_{nestedField.name}", ty)
+    | _ => do
+      let ty ← scalarTy field
+      pure [([field.name], field.name, ty)]
+  let fields := groups.flatten
+  let names := fields.map (fun (_, name, _) => name)
+  unless names.eraseDups.length == names.length do
+    throw "nested root Cell fields produce duplicate physical names"
+  unless checked.expandedLeaves == fields.length do
+    throw "root Cell leaf count does not match its checked schema"
+  pure fields
+
 def LedgerValueType.shieldedCoinRecordFields (environment : Types.CompositeEnv)
     (type : Types.CompositeType) : Except String (List (String × Ty)) := do
   let .structure id := type | throw "shielded coin map value must be a named flat record"
@@ -727,15 +768,26 @@ def LedgerValueType.shieldedCoinRecordFields (environment : Types.CompositeEnv)
   pure [("nonce", .bytes 32), ("color", .bytes 32),
     ("value", .uint (2 ^ 128 - 1)), ("mtIndex", .uint (2 ^ 64 - 1))]
 
-/-- Describe a root composite Cell. Its checked flat typed path is deliberately
-separate from generic nested composite records. -/
+/-- Describe a root composite Cell as flattened typed ledger fields. -/
 def LedgerValueType.cellRecordFields (environment : Types.CompositeEnv)
-    (type : Types.CompositeType) : Except String (List (String × Ty)) :=
+    (type : Types.CompositeType) : Except String (List (String × Ty)) := do
   match LedgerValueType.recordFields environment type with
   | .ok fields => pure fields
   | .error _ => match LedgerValueType.shieldedCoinRecordFields environment type with
     | .ok fields => pure fields
-    | .error _ => flatTypedRecordFields environment type true
+    | .error _ => do
+      let hasNested : Bool := match type with
+        | .structure id =>
+          (environment.structures.find? (fun item : Types.StructDecl => item.id == id)).any
+            fun declaration : Types.StructDecl =>
+              declaration.fields.any fun field : Types.Field => match field.type with
+                | .structure _ => true
+                | _ => false
+        | _ => false
+      if hasNested then
+        pure ((← nestedCellRecordFieldPaths environment type).map fun (_, name, ty) =>
+          (name, ty))
+      else flatTypedRecordFields environment type true
 
 /-- Read the narrower ledger record layout used by Lists. Qualified coin
 records retain their schema-specific fields for transcript alignment. -/

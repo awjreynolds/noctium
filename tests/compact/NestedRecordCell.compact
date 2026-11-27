@@ -1,0 +1,23 @@
+pragma language_version 0.28;
+
+struct Details { count: Uint<16>; active: Boolean; }
+struct Position { total: Field; details: Details; }
+export ledger position: Position;
+
+constructor(totalArg: Field, countArg: Uint<16>, activeArg: Boolean) {
+  position = Position {
+    total: disclose(totalArg),
+    details: Details { count: disclose(countArg), active: disclose(activeArg) }
+  };
+}
+
+export circuit inspect(): [Field, Uint<16>, Boolean] {
+  return [position.total, position.details.count, position.details.active];
+}
+
+export circuit replacePosition(totalArg: Field, countArg: Uint<16>, activeArg: Boolean): [] {
+  position = Position {
+    total: disclose(totalArg),
+    details: Details { count: disclose(countArg), active: disclose(activeArg) }
+  };
+}

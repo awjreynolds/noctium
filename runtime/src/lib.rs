@@ -2698,7 +2698,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 3 + 2 * expressions.len()
             } else {
                 let schema = if *storage {
-                    checked_cell_record_schema(schema)?
+                    checked_cell_operation_record_schema(schema)?
                 } else {
                     checked_typed_record_schema(schema)?
                 };
@@ -2721,7 +2721,7 @@ fn impact_field_count(instruction: &Instruction, plan: &Plan) -> Result<usize> {
                 );
                 2 + 2 * expressions.len()
             } else {
-                let schema = checked_cell_record_schema(schema)?;
+                let schema = checked_cell_operation_record_schema(schema)?;
                 ensure!(
                     expressions.len() == schema.fields.len(),
                     "aligned value expression count mismatch"
@@ -3137,7 +3137,9 @@ fn validate_tree_schema(schema: &Json, depth: usize, bytes32_parents: bool) -> R
         if is_shielded_coin_record_schema(schema) {
             return Ok(());
         }
-        if depth <= 1 {
+        if depth == 0 {
+            checked_root_cell_record_schema(schema)?;
+        } else if depth == 1 {
             checked_cell_record_schema(schema)?;
         } else {
             // Scalar-key nested Maps store typed records as values. Their
@@ -3355,7 +3357,7 @@ fn validate_record_cell(plan: &Plan, slot: u32, operation_schema: &Json) -> Resu
         record == operation_schema,
         "record Cell write differs from state schema"
     );
-    checked_cell_record_schema(record)?;
+    checked_root_cell_record_schema(record)?;
     Ok(())
 }
 
@@ -3666,6 +3668,114 @@ fn nested_native_bool_aggregate_fields(json: &Json) -> Result<Vec<RecordField>> 
     Ok(result)
 }
 
+fn nested_root_cell_aggregate_fields(
+    json: &Json,
+    schema: &aggregates::Schema,
+) -> Result<Vec<RecordField>> {
+    fn field_name(field: &Json) -> Result<&str> {
+        let name = field
+            .get("name")
+            .and_then(Json::as_str)
+            .ok_or_else(|| anyhow!("nested Cell record field is missing its name"))?;
+        ensure!(
+            valid_record_identifier(name, false),
+            "nested Cell record field has an invalid name"
+        );
+        Ok(name)
+    }
+
+    fn scalar(layout: &Json) -> Result<()> {
+        ensure!(
+            layout.get("kind").and_then(Json::as_str) == Some("scalar"),
+            "nested Cell records support only Native, bounded UInt, and Bool leaves"
+        );
+        Ok(())
+    }
+
+    let layout = json
+        .get("layout")
+        .ok_or_else(|| anyhow!("nested Cell record is missing its layout"))?;
+    ensure!(
+        layout.get("kind").and_then(Json::as_str) == Some("struct"),
+        "nested Cell record must have a struct root"
+    );
+    let fields = layout
+        .get("fields")
+        .and_then(Json::as_array)
+        .ok_or_else(|| anyhow!("nested Cell record fields are missing"))?;
+    let mut physical_names = Vec::new();
+    let mut has_nested_record = false;
+    let mut names = BTreeSet::new();
+    for field in fields {
+        let root_name = field_name(field)?;
+        let child = field
+            .get("layout")
+            .ok_or_else(|| anyhow!("nested Cell record field is missing its layout"))?;
+        match child.get("kind").and_then(Json::as_str) {
+            Some("scalar") => {
+                scalar(child)?;
+                ensure!(
+                    names.insert(root_name.to_owned()),
+                    "nested Cell record has colliding physical field names"
+                );
+                physical_names.push(root_name.to_owned());
+            }
+            Some("struct") => {
+                has_nested_record = true;
+                let nested_fields = child
+                    .get("fields")
+                    .and_then(Json::as_array)
+                    .filter(|fields| !fields.is_empty())
+                    .ok_or_else(|| anyhow!("nested Cell record must contain fields"))?;
+                for nested_field in nested_fields {
+                    let nested_name = field_name(nested_field)?;
+                    let leaf = nested_field
+                        .get("layout")
+                        .ok_or_else(|| anyhow!("nested Cell record field is missing its layout"))?;
+                    scalar(leaf)?;
+                    let physical_name = format!("{root_name}_{nested_name}");
+                    ensure!(
+                        names.insert(physical_name.clone()),
+                        "nested Cell record has colliding physical field names"
+                    );
+                    physical_names.push(physical_name);
+                }
+            }
+            _ => bail!("nested Cell records support one level of named scalar fields"),
+        }
+    }
+    ensure!(
+        has_nested_record && !physical_names.is_empty(),
+        "root Cell extension requires one nested record with scalar leaves"
+    );
+
+    let leaf_types = schema.leaf_types()?;
+    ensure!(
+        physical_names.len() == leaf_types.len(),
+        "nested Cell record leaf count mismatch"
+    );
+    physical_names
+        .into_iter()
+        .zip(leaf_types)
+        .map(|(name, leaf_type)| {
+            let ty = ScalarType::parse(&leaf_type)?;
+            let supported = match &ty {
+                ScalarType::Native | ScalarType::Bool => true,
+                ScalarType::UInt(_) => true,
+                _ => false,
+            };
+            ensure!(
+                supported,
+                "nested Cell records support only Native, bounded UInt, and Bool leaves"
+            );
+            Ok(RecordField {
+                name: Some(name),
+                ty,
+            })
+        })
+        .collect()
+}
+
 fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Legacy)
 }
@@ -3678,11 +3788,23 @@ fn checked_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
     checked_record_schema_fields(json, RecordScope::Cell)
 }
 
+fn checked_root_cell_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    checked_record_schema_fields(json, RecordScope::RootCell)
+}
+
+fn checked_cell_operation_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
+    if json.get("schemaVersion").is_some() {
+        return checked_root_cell_record_schema(json);
+    }
+    checked_cell_record_schema(json)
+}
+
 enum RecordScope {
     Legacy,
     Typed,
     List,
     Cell,
+    RootCell,
 }
 
 fn checked_list_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
@@ -3729,23 +3851,25 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
                 })
                 .collect()
         } else {
-            ensure!(
-                matches!(&scope, RecordScope::List),
-                "record requires Native leaves or a nested Native/Bool List record"
-            );
-            let fields = nested_native_bool_aggregate_fields(json)?;
-            let leaf_types = schema.leaf_types()?;
-            ensure!(
-                fields.len() == leaf_types.len(),
-                "nested List record leaf count mismatch"
-            );
-            for (field, leaf_type) in fields.iter().zip(leaf_types) {
-                ensure!(
-                    record_type_name(&field.ty)?.as_ref() == leaf_type,
-                    "nested List record leaf types differ from its layout"
-                );
+            match scope {
+                RecordScope::List => {
+                    let fields = nested_native_bool_aggregate_fields(json)?;
+                    let leaf_types = schema.leaf_types()?;
+                    ensure!(
+                        fields.len() == leaf_types.len(),
+                        "nested List record leaf count mismatch"
+                    );
+                    for (field, leaf_type) in fields.iter().zip(leaf_types) {
+                        ensure!(
+                            record_type_name(&field.ty)?.as_ref() == leaf_type,
+                            "nested List record leaf types differ from its layout"
+                        );
+                    }
+                    fields
+                }
+                RecordScope::RootCell => nested_root_cell_aggregate_fields(json, &schema)?,
+                _ => bail!("record requires Native leaves or a nested Native/Bool List record"),
             }
-            fields
         };
         return Ok(CheckedRecordSchema {
             fields,
@@ -3800,7 +3924,10 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
         let admitted = match &ty {
             ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint => true,
             ScalarType::Bool | ScalarType::UInt(_) => !matches!(scope, RecordScope::Legacy),
-            ScalarType::Bytes(_) => matches!(scope, RecordScope::Typed | RecordScope::Cell),
+            ScalarType::Bytes(_) => matches!(
+                scope,
+                RecordScope::Typed | RecordScope::Cell | RecordScope::RootCell
+            ),
             _ => false,
         };
         ensure!(
@@ -3836,6 +3963,7 @@ fn validate_record_values(schema: &CheckedRecordSchema, values: &[Value]) -> Res
             .iter()
             .map(|value| match value {
                 Value::Bool(value) => Ok(Json::Bool(*value)),
+                Value::UInt { number, .. } => Ok(Json::String(number.to_str_radix(10))),
                 _ => Ok(Json::String(field_decimal(value.field()?))),
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4591,7 +4719,7 @@ fn validate_record_operation_schemas(plan: &Plan) -> Result<()> {
                         push_path: false,
                     } => {
                         if keys.is_empty() {
-                            checked_cell_record_schema(schema)?;
+                            checked_root_cell_record_schema(schema)?;
                         } else {
                             checked_typed_record_schema(schema)?;
                         }
@@ -4929,11 +5057,20 @@ fn decode_record_value(schema: &CheckedRecordSchema, value: &AlignedValue) -> Re
 }
 
 pub(crate) fn default_record_value(schema: &Json) -> Result<Json> {
-    let schema = checked_cell_record_schema(schema)?;
+    let schema = checked_root_cell_record_schema(schema)?;
     if let Some(aggregate) = schema.aggregate {
-        return Ok(serde_json::from_slice(&aggregate.from_leaf_json(
-            &vec![Json::String("0".into()); aggregate.counts().leaves],
-        )?)?);
+        let leaves = aggregate
+            .leaf_types()?
+            .into_iter()
+            .map(|ty| {
+                if ty == "Bool" {
+                    Json::Bool(false)
+                } else {
+                    Json::String("0".into())
+                }
+            })
+            .collect::<Vec<_>>();
+        return Ok(serde_json::from_slice(&aggregate.from_leaf_json(&leaves)?)?);
     }
     let fields = schema
         .fields
@@ -5049,9 +5186,17 @@ fn record_component_names(
         read.components.iter().zip(&checked.fields).zip(expressions)
     {
         let component_type = ScalarType::parse(&component.ty)?;
+        let expected_name = checked
+            .aggregate
+            .as_ref()
+            .and_then(|_| field.name.as_ref())
+            .map(|name| format!("{}_{}", read.name, name));
         ensure!(
             component_type == field.ty
                 && component.ty == record_type_name(&field.ty)?.as_ref()
+                && expected_name
+                    .as_deref()
+                    .is_none_or(|expected| component.name == expected)
                 && names.insert(component.name.as_str()),
             "invalid record read component"
         );
@@ -5930,7 +6075,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                     &input_value(ty, value)?,
                 )?)));
             } else if let Some(schema) = schema.get("composite") {
-                let schema = checked_cell_record_schema(schema)?;
+                let schema = checked_root_cell_record_schema(schema)?;
                 let fields = record_values_from_json(&schema, value)?;
                 values.push(StateValue::Cell(Sp::new(aligned_record_value(
                     &schema, &fields,
@@ -8892,7 +9037,7 @@ impl PreparationCursor {
                             );
                             event = Some(read_event(read, false, env, vec![read.name.clone()]));
                         } else {
-                            let checked = checked_cell_record_schema(schema)?;
+                            let checked = checked_cell_operation_record_schema(schema)?;
                             record_component_names(read, expressions, schema, &checked)?;
                             let defaults = checked
                                 .fields
@@ -9230,7 +9375,7 @@ impl PreparationCursor {
                     }
                 } else {
                     let schema = if *storage {
-                        checked_cell_record_schema(schema)?
+                        checked_cell_operation_record_schema(schema)?
                     } else {
                         checked_typed_record_schema(schema)?
                     };
@@ -9412,7 +9557,7 @@ impl PreparationCursor {
                         result: value,
                     }
                 } else {
-                    let checked = checked_cell_record_schema(schema)?;
+                    let checked = checked_cell_operation_record_schema(schema)?;
                     record_component_names(read, expressions, schema, &checked)?;
                     let (slot, keys) = previous_index
                         .as_ref()

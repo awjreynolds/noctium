@@ -1407,7 +1407,18 @@ def recordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType)
 def cellRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
     Except String Lean.Json := do
   let fields ← LedgerValueType.cellRecordFields environment type
-  recordSchemaForFields environment type fields
+  let hasNested : Bool := match type with
+    | .structure id =>
+      (environment.structures.find? (fun item : Types.StructDecl => item.id == id)).any
+        fun declaration : Types.StructDecl =>
+        declaration.fields.any fun field : Types.Field => match field.type with
+          | .structure _ => true
+          | _ => false
+    | _ => false
+  if hasNested then do
+    let compiled ← (Types.compileType environment type).mapError Types.LayoutDiagnostic.message
+    Types.schemaJson compiled
+  else recordSchemaForFields environment type fields
 
 /-- Produce the checked key schema used by a root record-key Map. -/
 def ledgerRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeType) :
@@ -1615,7 +1626,8 @@ private def compositeWritePathOps (state : List StateDecl) (name : String)
   unless fields.map Prod.snd == values.map LedgerFieldExpr.ty do
     throw "nested composite write field type mismatch"
   let alignedKeys ← nativePathKeys keys
-  let schema ← recordSchemaForFields environment type fields
+  let schema ← if keys.isEmpty then cellRecordSchema environment type
+    else recordSchemaForFields environment type fields
   if keys.isEmpty then
     pure [.push (.field (.native slot)), .pushFields schema values true, .insert 1]
   else pathWriteCompositeOps slot alignedKeys schema values

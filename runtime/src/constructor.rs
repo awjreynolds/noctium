@@ -479,7 +479,7 @@ fn record_cell_slot(
     let schema = tree
         .get("composite")
         .ok_or_else(|| anyhow!("constructor record Cell initializer requires a root record Cell"))?;
-    Ok((slot, crate::checked_cell_record_schema(schema)?))
+    Ok((slot, crate::checked_root_cell_record_schema(schema)?))
 }
 
 fn record_map_slot(plan: &Plan, name: &str) -> Result<(usize, crate::CheckedRecordSchema)> {
