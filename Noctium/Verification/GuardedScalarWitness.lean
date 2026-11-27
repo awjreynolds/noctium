@@ -4,6 +4,8 @@ import Noctium.Verification.GuardedStatementConsumption
 import Noctium.Verification.GuardedPlanExecution
 import Noctium.Verification.ImpactStatementScalar
 import Noctium.Verification.ScalarSourceReadWitness
+import Noctium.Verification.ScalarValidationRawSeedMeaning
+import Noctium.Verification.GuardedZkirRequirements
 
 namespace Noctium.Verification.GuardedScalarWitness
 
@@ -55,6 +57,185 @@ def build (hash : Hash) (seed : Assignment) (bytes : ArtifactBytes.Bytes)
           throw "guarded witness does not satisfy the emitted scalar constraints"
     else
       throw "guarded artifact JSON differs from the emitted program"
+
+/-- With the ordered producer scope established, the executable builder
+reconstructs any satisfying assignment's values on the observed names and
+consumes the same exact-byte transcript. -/
+theorem build_of_scope (hash : Hash) (seed target : Assignment) (bytes : ArtifactBytes.Bytes)
+    (expected : Json) (transcript : Inputs) (view : GuardedZkirArtifact.View)
+    (rawRows : Array Json) (finalNames : List String)
+    (parsed : (ArtifactBytes.parse bytes).map Json.compress = .ok expected.compress)
+    (checked : GuardedZkirArtifact.check bytes expected = .ok view.rows)
+    (pinned : GuardedZkirArtifact.decodeView expected = .ok view)
+    (raw : Native.arrayField expected "instructions" = .ok rawRows)
+    (validArgs : view.header.arguments.all NativeRelationJson.validIdentifier = true)
+    (distinctInputs :
+      let names := view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows
+      names.eraseDups.length = names.length)
+    (scope : GuardedScalarWitnessAssembly.Scope
+      (view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows)
+      rawRows.toList view.rows finalNames)
+    (inputAgreement : ∀ name ∈
+      view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows,
+      seed name = target name)
+    (holds : ∀ instruction, GuardedScalarRows.Row.strict instruction ∈ view.rows →
+      Instruction.Holds hash target instruction)
+    (widths : ∀ left right width destination,
+      GuardedScalarRows.Row.strict (.lessThan left right width destination) ∈ view.rows →
+      (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width)
+    (observations : List GuardedImpactObservation.Observation)
+    (targetConsumed : GuardedStatementConsumption.consumeArtifact bytes target transcript =
+      some observations) :
+    ∃ built, build hash seed bytes expected transcript = .ok built ∧
+      built.observations = observations ∧
+      ∀ name ∈ finalNames, built.assignment name = target name := by
+  obtain ⟨actualRows, found, foundRaw, decoded⟩ := GuardedZkirArtifact.check_sound checked
+  have sameRaw : found = rawRows := Except.ok.inj (foundRaw.symm.trans raw)
+  subst found
+  obtain ⟨assignment, assembled, agrees, ordinary⟩ :=
+    GuardedScalarWitnessAssembly.assemble_of_scope hash seed target view.header.arguments
+      rawRows.toList view.rows finalNames decoded validArgs distinctInputs scope
+      inputAgreement holds widths
+  have constraints : GuardedScalarWitnessCheck.check hash assignment.val view.rows = true := by
+    apply GuardedScalarWitnessCheck.check_complete
+    intro row present
+    cases row with
+    | strict instruction => exact ordinary instruction present
+    | publicInput => trivial
+    | impact => trivial
+  obtain ⟨actual, actualDecoded, committed, consumedRows⟩ :=
+    GuardedStatementConsumption.consumeArtifact_sound bytes target transcript observations
+      targetConsumed
+  have rowsEq : actual.rows = view.rows := by
+    simpa only [actualDecoded, Except.map, Except.ok.injEq] using actualRows
+  rw [rowsEq] at consumedRows
+  have consumed : GuardedStatementConsumption.consumeArtifact bytes assignment.val transcript =
+      some observations := by
+    have rowsAgreement := GuardedStatementConsumption.consumeRows_agrees view.rows transcript
+      (left := assignment.val) (right := target)
+      (fun row present name used => agrees name (scope.transcript_identifiers row present name used))
+    simp only [GuardedStatementConsumption.consumeArtifact, actualDecoded, Except.toOption,
+      Bind.bind, Option.bind, committed, ite_true, rowsEq, rowsAgreement, consumedRows]
+  cases bytesParsed : ArtifactBytes.parse bytes with
+  | error reason => simp [bytesParsed, Except.map] at parsed
+  | ok json =>
+    have exactJson : json.compress = expected.compress := by
+      simpa only [bytesParsed, Except.map, Except.ok.injEq] using parsed
+    rcases assignment with ⟨witness, inputFrame⟩
+    let built : Checked hash seed bytes expected transcript :=
+      ⟨witness, view.rows, observations, inputFrame, parsed, checked,
+        GuardedScalarWitnessCheck.check_sound hash witness view.rows constraints, consumed⟩
+    refine ⟨built, ?_, rfl, agrees⟩
+    unfold build
+    split
+    · rename_i reason failed
+      cases failed.symm.trans bytesParsed
+    · rename_i decoded accepted
+      have sameJson := Except.ok.inj (accepted.symm.trans bytesParsed)
+      subst decoded
+      rw [dite_eq_left exactJson]
+      split
+      · rename_i reason failed
+        cases failed.symm.trans checked
+      · rename_i decodedRows accepted
+        have sameRows := Except.ok.inj (accepted.symm.trans checked)
+        subst decodedRows
+        simp only [pinned, raw, assembled, Bind.bind, Except.bind]
+        rw [dite_eq_left constraints]
+        split
+        · rename_i rejected
+          cases rejected.symm.trans consumed
+        · rename_i seen accepted
+          have sameObservations := Option.some.inj (accepted.symm.trans consumed)
+          subst seen
+          rfl
+
+/-- The accepted lowering and guarded view determine the assembler's complete
+ordered scope, input lanes and comparison widths. An independent satisfying
+assignment and its transcript describe the computation to replay. -/
+theorem build_of_lowered_scalar_artifact (hash : Hash) (seed target : Assignment)
+    (state : List StateDecl) (sourceEntry : Entrypoint) (rewrites : Zkir.Rewrites)
+    (shape : Native.Expected) (json : Json) (bytes : ArtifactBytes.Bytes)
+    (transcript : Inputs) (view : GuardedZkirArtifact.View) (rawRows : Array Json)
+    (lowered : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
+    (expected : Native.expectedEntrypoint state (Passes.pruneEntrypoint sourceEntry) = .ok shape)
+    (scalarSchema : ∀ requirement ∈ shape.rawInputs ++ shape.inputs,
+      requirement.ty.isForeign = false)
+    (parsed : (ArtifactBytes.parse bytes).map Json.compress = .ok json.compress)
+    (checked : GuardedZkirArtifact.check bytes json = .ok view.rows)
+    (pinned : GuardedZkirArtifact.decodeView json = .ok view)
+    (raw : Native.arrayField json "instructions" = .ok rawRows)
+    (temporary : GuardedScalarWitnessAssembly.TemporaryNamespace rawRows.toList view.rows)
+    (inputAgreement : ∀ name ∈
+      view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows,
+      seed name = target name)
+    (holds : ∀ instruction, GuardedScalarRows.Row.strict instruction ∈ view.rows →
+      Instruction.Holds hash target instruction)
+    (observations : List GuardedImpactObservation.Observation)
+    (targetConsumed : GuardedStatementConsumption.consumeArtifact bytes target transcript =
+      some observations) :
+    ∃ finalNames built,
+      GuardedScalarWitnessAssembly.Scope
+        (view.header.arguments ++ GuardedScalarWitnessAssembly.inputOutputs view.rows)
+        rawRows.toList view.rows finalNames ∧
+      build hash seed bytes json transcript = .ok built ∧
+      built.observations = observations ∧
+      ∀ name ∈ finalNames, built.assignment name = target name := by
+  obtain ⟨_, actualShape, _, shapeAccepted, validated, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state sourceEntry rewrites
+      json lowered
+  have sameShape := Except.ok.inj (shapeAccepted.symm.trans expected)
+  subst actualShape
+  let optimized := Zkir.optimizedExpected rewrites shape
+  have rawSchema : ∀ requirement ∈ optimized.rawInputs, requirement.ty.isForeign = false := by
+    intro requirement present
+    exact scalarSchema requirement (List.mem_append_left _ (by
+      cases rewrites <;> exact present))
+  have bodySchema : ∀ requirement ∈ optimized.inputs, requirement.ty.isForeign = false := by
+    intro requirement present
+    exact scalarSchema requirement (List.mem_append_right _ (by
+      cases rewrites <;> exact present))
+  obtain ⟨rawInputs, inputField, headerNames, validArgs⟩ :=
+    GuardedZkirArtifact.lowered_view_arguments lowered pinned
+  obtain ⟨instructions, driverInputs, initial, final, driver⟩ :=
+    ScalarValidationProjection.validate_driver_result validated
+  have sameRows := Except.ok.inj (driver.instructionsParsed.symm.trans raw)
+  have sameInputs := Except.ok.inj (driver.rawInputsParsed.symm.trans inputField)
+  subst instructions driverInputs
+  obtain ⟨seededNames, distinctSeed⟩ :=
+    ScalarValidationRawSeedMeaning.seedRawInputs_names_and_nodup rawSchema driver.seededRawInputs
+  have argumentNames := Except.ok.inj (seededNames.symm.trans headerNames)
+  have typed := (ScalarValidationRawSeedMeaning.seedRawInputs_meaning_and_nativeDefinitions
+    (hash := hash) (inputs := seed) (witness := seed)
+    rawSchema (fun _ _ => rfl) driver.seededRawInputs).2
+  obtain ⟨_, decodedRows, foundRows, decoded⟩ := GuardedZkirArtifact.check_sound checked
+  have decodedSame := Except.ok.inj (foundRows.symm.trans raw)
+  subst decodedRows
+  have ordinary : ∀ row ∈ view.rows, GuardedImpactTranscript.ordinaryHolds hash target row := by
+    intro row present
+    cases row with
+    | strict instruction => exact holds instruction present
+    | publicInput => trivial
+    | impact => trivial
+  have widths := GuardedZkirRequirements.lowerEntrypoint_guardedRows_comparison_bounds
+    rewrites lowered raw decoded (fun _ accepted => by
+      have same := Except.ok.inj (accepted.symm.trans expected)
+      subst_vars
+      exact scalarSchema) ordinary
+  have producer := GuardedScalarWitnessAssembly.ProducerScope.of_validation_loop
+    bodySchema typed (by simpa only [List.zipIdx_map_fst] using decoded) driver.instructionTrace
+    (by simpa only [List.zipIdx_map_fst] using temporary)
+  rw [List.zipIdx_map_fst, argumentNames] at producer
+  have distinctArgs : view.header.arguments.Nodup := argumentNames ▸ distinctSeed
+  have distinct := producer.input_lanes_nodup distinctArgs
+  obtain ⟨finalNames, scope⟩ := producer.assemble_scope
+  have distinctLength := congrArg List.length
+    (GenericStateEncoding.eraseDups_eq_self_of_nodup _ distinct)
+  obtain ⟨built, assembled, sameObservations, agrees⟩ :=
+    build_of_scope hash seed target bytes json transcript view rawRows finalNames parsed
+      checked pinned raw validArgs distinctLength scope inputAgreement holds widths
+      observations targetConsumed
+  exact ⟨finalNames, built, scope, assembled, sameObservations, agrees⟩
 
 private def sourceInput (values : EvalEnv) (input : Input) :
     Except String (String × Scalar) := do

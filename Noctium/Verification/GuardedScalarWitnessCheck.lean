@@ -39,4 +39,10 @@ theorem check_sound (hash : Hash) (assignment : Assignment) (rows : List Row)
   exact (ordinaryHoldsBool_eq_true_iff hash assignment row).mp
     ((List.all_eq_true.mp accepted) row member)
 
+theorem check_complete (hash : Hash) (assignment : Assignment) (rows : List Row)
+    (holds : ∀ row ∈ rows, ordinaryHolds hash assignment row) :
+    check hash assignment rows = true :=
+  List.all_eq_true.mpr fun row present =>
+    (ordinaryHoldsBool_eq_true_iff hash assignment row).mpr (holds row present)
+
 end Noctium.Verification.GuardedScalarWitnessCheck

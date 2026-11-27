@@ -2,6 +2,7 @@ import Noctium.Verification
 import Noctium.Verification.GuardedScalarWitness
 import Noctium.Verification.GenericStateConverseSource
 import Noctium.Verification.GenericStateConverseNativeTrace
+import Noctium.Verification.ScalarWitnessReturns
 
 open Noctium Noctium.Backend Noctium.Verification
 open NativeRelation
@@ -81,7 +82,16 @@ run_cmd do
       `Noctium.Verification.GenericStateConverseSource.source_assignment_of_entry_run,
       `Noctium.Verification.GenericStateConverseCheckedPlan.checked_of_constructed_trace,
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace,
-      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_reduces_to_artifact] do
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_reduces_to_artifact,
+      `Noctium.Verification.GuardedScalarWitness.build_of_scope,
+      `Noctium.Verification.GuardedScalarWitness.build_of_lowered_scalar_artifact,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.of_validation_loop,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.assemble_scope,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.cons_validated_copy,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.cons_validated_constrain_eq,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.cons_validated_publicInput,
+      `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.cons_validated_impact,
+      `Noctium.Verification.ScalarWitnessConstruction.completes_entrypoint_returns_output_row] do
     match Noctium.Verification.Audit.axiomsIn (← getEnv) root with
     | .ok _ => pure ()
     | .error error => throwError error

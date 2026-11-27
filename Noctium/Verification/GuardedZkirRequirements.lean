@@ -154,6 +154,59 @@ theorem lowerEntrypoint_guardedRows_meaning
     exact ⟨before, after, beforeMeaning, checked, afterMeaning⟩
   exact ⟨assertions, bounds, inputBounds, rowMeanings⟩
 
+private theorem raw_of_decodedRow_member {items : List Json} {rows : List Row}
+    (decoded : items.mapM decodeRow = .ok rows)
+    {row : Row} (present : row ∈ rows) :
+    ∃ raw ∈ items, decodeRow raw = .ok row := by
+  induction items generalizing rows with
+  | nil =>
+    change (Except.ok [] : Except String (List Row)) = .ok rows at decoded
+    cases decoded
+    simp at present
+  | cons head tail ih =>
+    simp only [List.mapM_cons, bind_ok] at decoded
+    obtain ⟨headRow, headDecoded, rest, restDecoded, same⟩ := decoded
+    cases same
+    rcases List.mem_cons.mp present with same | later
+    · subst row
+      exact ⟨head, List.mem_cons_self .., headDecoded⟩
+    · obtain ⟨raw, member, checked⟩ := ih restDecoded later
+      exact ⟨raw, List.mem_cons_of_mem _ member, checked⟩
+
+/-- Each comparison inherits its actual operand bounds from the state reached
+by the accepted producer trace. The row's own result equation cannot establish
+that premise because the equation is conditional on those bounds. -/
+theorem lowerEntrypoint_guardedRows_comparison_bounds
+    {state : List StateDecl} {sourceEntry : Entrypoint} (rewrites : Zkir.Rewrites)
+    {json : Json} {instructions : Array Json} {rows : List Row}
+    {hash : Hash} {witness : Assignment}
+    (lowered : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
+    (instructionsParsed : Native.arrayField json "instructions" = .ok instructions)
+    (decoded : instructions.toList.mapM decodeRow = .ok rows)
+    (schema : ∀ expected,
+      Native.expectedEntrypoint state (Passes.pruneEntrypoint sourceEntry) = .ok expected →
+        ∀ requirement ∈ expected.rawInputs ++ expected.inputs,
+          requirement.ty.isForeign = false)
+    (holds : ∀ row ∈ rows, ordinaryHolds hash witness row) :
+    ∀ left right width destination, .strict (.lessThan left right width destination) ∈ rows →
+      (left.read witness).val < 2 ^ width ∧ (right.read witness).val < 2 ^ width := by
+  obtain ⟨_, _, _, meaning⟩ := lowerEntrypoint_guardedRows_meaning
+    rewrites lowered instructionsParsed decoded schema
+  obtain ⟨_, _, _, visits⟩ := meaning holds
+  intro left right width destination present
+  obtain ⟨raw, rawMember, rowDecoded⟩ := raw_of_decodedRow_member decoded present
+  have indexed : raw ∈ instructions.toList.zipIdx.map Prod.fst := by
+    simpa only [List.zipIdx_map_fst] using rawMember
+  obtain ⟨⟨item, ordinal⟩, visit, same⟩ := List.mem_map.mp indexed
+  change item = raw at same
+  subst item
+  obtain ⟨before, after, beforeMeaning, accepted, _⟩ := visits raw ordinal visit
+  have step := (decodeRow_strict rowDecoded).1
+  cases step.supported with
+  | lessThan _ _ _ _ opcode =>
+    exact RangeDedupAcceptedArray.accepted_lessThan_witnessBounds beforeMeaning opcode
+      step.decoded accepted
+
 /-- Accepted mixed ZKIR rows preserve the source assertions, source bounds,
 and scalar input bounds. Strict rows use their ordinary circuit constraint;
 guarded impact and public input rows pass through the guarded classifier. -/

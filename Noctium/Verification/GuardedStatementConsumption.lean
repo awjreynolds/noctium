@@ -50,6 +50,47 @@ def consumeRows (assignment : Assignment) (rows : List GuardedScalarRows.Row)
   else if inputs.transcriptInputs != activePayloads observations then none
   else some observations
 
+private theorem emittedObservations_agrees (rows : List Row) (left right : Assignment)
+    (agreement : ∀ row ∈ rows, ∀ name ∈ row.transcriptIdentifiers,
+      left name = right name) :
+    emittedObservations left rows = emittedObservations right rows := by
+  induction rows with
+  | nil => rfl
+  | cons row rest ih =>
+    have rowAgreement : ∀ name ∈ row.transcriptIdentifiers, left name = right name :=
+      agreement row (by simp)
+    have tailAgreement : ∀ row ∈ rest, ∀ name ∈ row.transcriptIdentifiers,
+        left name = right name := by
+      intro found member name used
+      exact agreement found (by simp [member]) name used
+    cases row with
+    | strict instruction =>
+      simpa [emittedObservations] using ih tailAgreement
+    | publicInput output guard =>
+      simpa [emittedObservations] using ih tailAgreement
+    | impact guard inputs =>
+      have guardAgreement : ∀ name ∈ ScalarWitness.operandIdentifiers guard,
+          left name = right name := by
+        intro name used
+        exact rowAgreement name (by simp [Row.transcriptIdentifiers, used])
+      have inputsAgreement : ∀ name ∈ inputs.flatMap ScalarWitness.operandIdentifiers,
+          left name = right name := by
+        intro name used
+        exact rowAgreement name (by simp [Row.transcriptIdentifiers, used])
+      have guardEqual := ScalarWitness.Operand.read_agrees guard guardAgreement
+      have inputsEqual := ScalarWitness.operands_read_agree inputs inputsAgreement
+      simp [emittedObservations, guardEqual, inputsEqual, ih tailAgreement]
+
+/-- Consumption of guarded rows depends only on the assignment identifiers
+read by those rows. -/
+theorem consumeRows_agrees (rows : List Row) (inputs : Inputs) {left right : Assignment}
+    (agreement : ∀ row ∈ rows, ∀ name ∈ row.transcriptIdentifiers,
+      left name = right name) :
+    consumeRows left rows inputs = consumeRows right rows inputs := by
+  have observations := emittedObservations_agrees rows left right agreement
+  have reads := GuardedInputTranscript.emittedPublicReads_agrees rows left right agreement
+  simp [consumeRows, observations, reads]
+
 /-- Project consumed rows through a supplied Impact call header. -/
 def fromRows (assignment : Assignment) (rows : List GuardedScalarRows.Row)
     (header : ImpactCallStatement.Header) (inputs : Inputs) : Option Projection :=

@@ -27,6 +27,54 @@ private def inputSlot (witness : Assignment) : Row → Option (Option ReadObserv
 def emittedPublicReads (witness : Assignment) (rows : List Row) : List ReadObservation :=
   (rows.filterMap (inputSlot witness)).filterMap id
 
+/-- One input slot depends only on its row's transcript identifiers. -/
+theorem inputSlot_agrees (row : Row) {left right : Assignment}
+    (agreement : ∀ name ∈ row.transcriptIdentifiers, left name = right name) :
+    inputSlot left row = inputSlot right row := by
+  cases row with
+  | strict instruction =>
+    cases instruction
+    case input visibility output => cases visibility <;> simp [inputSlot]
+    all_goals simp [inputSlot]
+  | impact guard inputs => rfl
+  | publicInput output guard =>
+    have outputAgreement : left output = right output :=
+      agreement output (by simp [Row.transcriptIdentifiers])
+    cases guard with
+    | none => simp [inputSlot, outputAgreement]
+    | some operand =>
+      have guardAgreement : ∀ name ∈ ScalarWitness.operandIdentifiers operand,
+          left name = right name := by
+        intro name used
+        exact agreement name (by simp [Row.transcriptIdentifiers, used])
+      have guardValue := ScalarWitness.Operand.read_agrees operand guardAgreement
+      simp [inputSlot, outputAgreement, guardValue]
+
+/-- The ordered public read stream depends only on the row identifiers it reads. -/
+theorem emittedPublicReads_agrees (rows : List Row) (left right : Assignment)
+    (agreement : ∀ row ∈ rows, ∀ name ∈ row.transcriptIdentifiers,
+      left name = right name) :
+    emittedPublicReads left rows = emittedPublicReads right rows := by
+  induction rows with
+  | nil => rfl
+  | cons row rest ih =>
+    have rowAgreement : ∀ name ∈ row.transcriptIdentifiers, left name = right name :=
+      agreement row (by simp)
+    have tailAgreement : ∀ row ∈ rest, ∀ name ∈ row.transcriptIdentifiers,
+        left name = right name := by
+      intro found member name used
+      exact agreement found (by simp [member]) name used
+    have slotAgreement := inputSlot_agrees row rowAgreement
+    have tailAgreementReads := ih tailAgreement
+    have tailSlots :
+        List.filterMap id (List.filterMap (inputSlot left) rest) =
+          List.filterMap id (List.filterMap (inputSlot right) rest) := by
+      simpa only [emittedPublicReads] using tailAgreementReads
+    simp only [emittedPublicReads, List.filterMap_cons, slotAgreement]
+    cases slot : inputSlot right row with
+    | none => simpa [slot] using tailSlots
+    | some value => cases value <;> simp [tailSlots]
+
 /-- Interpret one source input requirement as its transcript slot. A private
 input contributes an empty slot, distinct from a missing or uninterpretable
 source requirement. -/

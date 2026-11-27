@@ -136,6 +136,58 @@ theorem operand_decoded_meaning
       exact invariant text _ (lookup_member found)
     next => contradiction
 
+/-- A producer operand accepted as a decoded reference came from the exact
+definition lookup in its pre-state. -/
+theorem operand_decoded_reference_lookup
+    {state : State} {json : Lean.Json} {text name : String} {fact : Fact}
+    (textParsed : json.getStr? = .ok text)
+    (accepted : operand state text = .ok fact)
+    (decoded : NativeRelationJson.decodeOperand json = .ok (.reference name)) :
+    state.definitions.lookup name = some fact := by
+  unfold NativeRelationJson.decodeOperand at decoded
+  simp only [bind_ok] at decoded
+  rcases decoded with ⟨foundText, parsedText, decoded⟩
+  rw [textParsed] at parsedText
+  cases parsedText
+  by_cases isImmediate : text.startsWith "0x"
+  · simp only [isImmediate, ↓reduceIte] at decoded
+    simp only [bind_ok] at decoded
+    rcases decoded with ⟨number, parsed, result⟩
+    cases result
+  · simp only [isImmediate, Bool.false_eq_true, ↓reduceIte] at decoded
+    simp only [bind_ok] at decoded
+    rcases decoded with ⟨reference, valid, result⟩
+    cases reference
+    have sameName : text = name := by
+      injection result with operandEq
+      exact Operand.reference.inj operandEq
+    subst name
+    unfold operand at accepted
+    simp only [isImmediate, Bool.false_eq_true, ↓reduceIte, bind_ok] at accepted
+    rcases accepted with ⟨_, _, accepted⟩
+    split at accepted
+    next existing found =>
+      cases accepted
+      exact found
+    next => contradiction
+
+/-- A successful producer definition appends the requested fact and proves
+the name was absent from the prior definition list. -/
+theorem define_appended_and_missing {state next : State} {name : String} {fact : Fact}
+    (accepted : define state name fact = .ok next) :
+    next.definitions = state.definitions ++ [(name, fact)] ∧
+      state.definitions.lookup name = none := by
+  unfold define at accepted
+  simp only [bind_ok] at accepted
+  rcases accepted with ⟨_, _, _, fresh, result⟩
+  have absent := ensure_ok.mp fresh
+  cases result
+  constructor
+  · rfl
+  · cases lookup : state.definitions.lookup name with
+    | none => rfl
+    | some old => simp [lookup] at absent
+
 /-- The argument wrapper preserves that same agreement for named instruction
 fields. -/
 theorem argument_decoded_meaning
@@ -156,6 +208,27 @@ theorem argument_decoded_meaning
 
 theorem nativeJson_stringField_eq (value : Lean.Json) (name : String) :
     NativeRelationJson.stringField value name = stringField value name := rfl
+
+theorem decodedConstrainEqOperands {raw : Lean.Json} {left right : Operand}
+    (opcode : Backend.Native.stringField raw "op" = .ok "constrain_eq")
+    (decoded : NativeRelationJson.decodeInstruction raw = .ok (.equal left right)) :
+    NativeRelationJson.decodeOperandField raw "a" = .ok left ∧
+      NativeRelationJson.decodeOperandField raw "b" = .ok right := by
+  unfold NativeRelationJson.decodeInstruction at decoded
+  simp only [ScalarValidationMeaning.bind_ok,
+    nativeJson_stringField_eq] at decoded
+  rcases decoded with ⟨opcodeName, opcodeParsed, body⟩
+  have opcodeEq : opcodeName = "constrain_eq" :=
+    Except.ok.inj (opcodeParsed.symm.trans opcode)
+  subst opcodeName
+  simp only [ScalarValidationMeaning.bind_ok] at body
+  rcases body with ⟨_, _, leftValue, leftParsed, rightValue, result⟩
+  rcases result with ⟨rightParsed, result⟩
+  simp only [Pure.pure, Except.pure] at result
+  have resultEq := Except.ok.inj result
+  injection resultEq with leftEq rightEq
+  subst left right
+  exact ⟨leftParsed, rightParsed⟩
 
 theorem decoded_add_arguments {raw : Lean.Json} {a b : Operand} {output : String}
     (opcodeParsed : stringField raw "op" = .ok "add")

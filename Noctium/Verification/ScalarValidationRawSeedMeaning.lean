@@ -46,6 +46,122 @@ private theorem define_assertionCount {state next : State} {name : String} {fact
   cases result
   rfl
 
+private theorem lookup_none_fresh {definitions : List (String × Fact)} {name : String}
+    (absent : definitions.lookup name = none) : name ∉ definitions.map Prod.fst := by
+  intro member
+  obtain ⟨pair, present, sameName⟩ := List.mem_map.mp member
+  have different := List.lookup_eq_none_iff.mp absent pair present
+  simp [sameName] at different
+
+private theorem nodup_append_singleton {names : List String} {name : String}
+    (nodup : names.Nodup) (fresh : name ∉ names) : (names ++ [name]).Nodup := by
+  induction names with
+  | nil => simp
+  | cons head tail ih =>
+    have headFreshTail : head ∉ tail := (List.nodup_cons.mp nodup).1
+    have tailNodup : tail.Nodup := (List.nodup_cons.mp nodup).2
+    have nameFreshTail : name ∉ tail := by
+      intro member
+      exact fresh (List.mem_cons_of_mem head member)
+    apply List.nodup_cons.mpr
+    constructor
+    · intro member
+      rcases List.mem_append.mp member with member | member
+      · exact headFreshTail member
+      · simp only [List.mem_singleton] at member
+        subst name
+        exact fresh (List.mem_cons_self)
+    · exact ih tailNodup nameFreshTail
+
+private theorem seedRawInputs_loop_names {expected : Expected}
+    {items : List (Json × Nat)} {initial final : State}
+    {step : (Json × Nat) → State → Except String State}
+    (accepted : forIn items initial (fun item state => do
+      let next ← step item state
+      pure (.yield next)) = .ok final)
+    (nativeParts : ∀ item state next, step item state = .ok next →
+      ∃ required, expected.rawInputs[item.2]? = some required ∧
+        required.visibility = .«private» ∧ required.ty.isBytes = false ∧
+        define state required.identifier
+          ({term := .input required.identifier, maximum := Field.modulus - 1} : Fact) =
+            .ok next)
+    (headerName : ∀ item state next, step item state = .ok next →
+      ∃ required, expected.rawInputs[item.2]? = some required ∧
+        stringField item.1 "name" = .ok required.identifier)
+    (initialNamesNodup : (initial.definitions.map Prod.fst).Nodup) :
+    ∃ names,
+      (items.map Prod.fst).mapM (fun rawInput => stringField rawInput "name") = .ok names ∧
+      final.definitions.map Prod.fst = initial.definitions.map Prod.fst ++ names ∧
+      (final.definitions.map Prod.fst).Nodup := by
+  induction items generalizing initial final with
+  | nil =>
+    simp only [List.forIn_nil] at accepted
+    cases accepted
+    exact ⟨[], by
+      simp only [List.map_nil, List.mapM_nil, Pure.pure, Except.pure], by simp,
+      initialNamesNodup⟩
+  | cons item tail ih =>
+    rw [List.forIn_cons] at accepted
+    cases stepAccepted : step item initial with
+    | error message => simp [stepAccepted, Bind.bind, Except.bind] at accepted
+    | ok middle =>
+      simp only [stepAccepted, bind_pure_comp] at accepted
+      obtain ⟨required, requiredLookup, _, _, defined⟩ :=
+        nativeParts item initial middle stepAccepted
+      obtain ⟨namedRequired, namedLookup, headerName⟩ :=
+        headerName item initial middle stepAccepted
+      have sameRequired : required = namedRequired :=
+        Option.some.inj (requiredLookup.symm.trans namedLookup)
+      subst namedRequired
+      obtain ⟨appended, absent⟩ := define_appended_and_missing defined
+      have freshName : required.identifier ∉ initial.definitions.map Prod.fst :=
+        lookup_none_fresh absent
+      have middleNamesNodup : (middle.definitions.map Prod.fst).Nodup := by
+        rw [appended]
+        simp only [List.map_append, List.map_cons, List.map_nil]
+        exact nodup_append_singleton initialNamesNodup freshName
+      obtain ⟨tailNames, tailNameParse, tailDefinitions, tailNodup⟩ :=
+        ih accepted middleNamesNodup
+      refine ⟨required.identifier :: tailNames, ?_, ?_, tailNodup⟩
+      · simp only [List.map_cons, List.mapM_cons, headerName, tailNameParse,
+          Bind.bind, Except.bind, Pure.pure, Except.pure]
+      · calc
+          final.definitions.map Prod.fst = middle.definitions.map Prod.fst ++ tailNames :=
+            tailDefinitions
+          _ = (initial.definitions.map Prod.fst ++ [required.identifier]) ++ tailNames := by
+            rw [appended]
+            simp
+          _ = initial.definitions.map Prod.fst ++ (required.identifier :: tailNames) := by
+            simp [List.append_assoc]
+
+/-- Successful native-only raw header seeding records each parsed header name
+in the same order as the definitions it appends, with unique definition names. -/
+theorem seedRawInputs_names_and_nodup {expected : Expected}
+    {rawInputs : Array Json} {seed : State}
+    (nativeOnly : ∀ required ∈ expected.rawInputs, required.ty.isForeign = false)
+    (accepted : seedRawInputs expected rawInputs = .ok seed) :
+    rawInputs.toList.mapM (fun rawInput => stringField rawInput "name") =
+        .ok (seed.definitions.map Prod.fst) ∧
+      (seed.definitions.map Prod.fst).Nodup := by
+  unfold seedRawInputs at accepted
+  simp only [Noctium.Verification.ScalarValidationMeaning.bind_ok] at accepted
+  rcases accepted with ⟨loopState, loopAccepted, result⟩
+  cases result
+  obtain ⟨names, parsed, definitions, nodup⟩ :=
+    seedRawInputs_loop_names loopAccepted
+      (by
+        intro item state next stepAccepted
+        exact seedRawInput_native_parts nativeOnly stepAccepted)
+      (by
+        intro item state next stepAccepted
+        exact seedRawInput_header_name stepAccepted)
+      (by simp)
+  constructor
+  · have itemHeaders : (rawInputs.toList.zipIdx).map Prod.fst = rawInputs.toList := by simp
+    rw [itemHeaders] at parsed
+    simpa [definitions] using parsed
+  · simpa [definitions] using nodup
+
 /-- A successful raw header seed establishes scalar meaning and Native typing
 for every fact defined by the producer. Header names use the same assignment
 for source inputs and satisfying witnesses, so each seeded field input has its

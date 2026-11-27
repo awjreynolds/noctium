@@ -1,6 +1,7 @@
 import Noctium.Verification.ArtifactBytes
 import Noctium.Verification.GuardedScalarRows
 import Noctium.Verification.NativeRelationJson
+import Noctium.Verification.ScalarCallHeaderProjection
 import Noctium.Backend.Zkir
 
 namespace Noctium.Verification.GuardedZkirArtifact
@@ -221,6 +222,49 @@ private theorem decodeView_header_accepted {json : Json} {view : View}
     Except.ok.inj result
   cases viewEq
   exact headerAccepted
+
+/-- The guarded view carries the exact ordered raw inputs of the lowered
+program. Stripping the body for header decoding preserves the input array. -/
+theorem lowered_view_arguments {state : List StateDecl} {entry : Entrypoint}
+    {rewrites : Zkir.Rewrites} {json : Json} {view : View}
+    (lowered : Zkir.lowerEntrypoint state entry rewrites = .ok json)
+    (decoded : decodeView json = .ok view) :
+    ∃ rawInputs,
+      Native.arrayField json "inputs" = .ok rawInputs ∧
+      rawInputs.toList.mapM (fun item => Native.stringField item "name") =
+        .ok view.header.arguments ∧
+      view.header.arguments.all validIdentifier = true := by
+  have header := decodeView_header_accepted decoded
+  unfold decodeHeader at header
+  simp only [bind_ok] at header
+  obtain ⟨fields, fieldsParsed, call, callParsed, sameHeader⟩ := header
+  have arguments : view.header.arguments = call.arguments :=
+    congrArg Header.arguments (Except.ok.inj sameHeader).symm
+  obtain ⟨rawInputs, names, inputField, namesParsed, namesEq⟩ :=
+    ScalarCallHeaderProjection.decodeScalarCall_header_names callParsed
+  obtain ⟨version, inputs, outputs, instructions, root⟩ := lowerEntrypoint_rootJson lowered
+  rw [root] at fieldsParsed
+  have wf : fields.WF := by
+    cases fieldsParsed
+    exact Std.TreeMap.Raw.WF.ofList
+  have inputPreserved : Json.getObjVal? (.obj (fields.insert "instructions" (.arr #[]))) "inputs" =
+      Json.getObjVal? (.obj fields) "inputs" := by
+    simp only [Json.getObjVal?, Std.TreeMap.Raw.get?_eq_getElem?]
+    rw [Std.TreeMap.Raw.getElem?_insert wf]
+    have keyNe : compare "instructions" "inputs" ≠ .eq := by decide
+    simp [keyNe]
+  have arrayPreserved :
+      Native.arrayField (.obj (fields.insert "instructions" (.arr #[]))) "inputs" =
+        Native.arrayField json "inputs" := by
+    unfold Native.arrayField
+    rw [inputPreserved, root]
+    cases fieldsParsed
+    rfl
+  refine ⟨rawInputs, arrayPreserved.symm.trans inputField, ?_, ?_⟩
+  · simpa only [arguments, namesEq] using namesParsed
+  · rw [arguments]
+    exact List.all_eq_true.mpr
+      (ScalarCallHeaderProjection.decodeScalarCall_argument_identifiers callParsed)
 
 /-- An exact-byte guarded artifact accepted against an accepted ledger-call
 lowering has the producer's enabled communications commitment in its header. -/
