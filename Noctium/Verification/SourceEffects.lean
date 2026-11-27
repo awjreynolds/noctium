@@ -10,7 +10,7 @@ def canonicalValue (ctx : EvalContext) (ty : Ty) (value : ty.Denote) : Bool :=
   | .bool => true
   | .uint maximum => maximum ≤ ScalarPolicy.maxUint && value ≤ maximum && value < ctx.modulus
   | .bytes length => value.length == length && value.all (· ≤ 255)
-  | .opaqueBytes => value.length ≤ maxBytesLength && value.all (· ≤ 255) &&
+  | .opaqueBytes => value.length ≤ maxByteOperationLength && value.all (· ≤ 255) &&
       (value.isEmpty || value.getLast! != 0)
   | .opaqueString => value.utf8ByteSize ≤ maxOpaqueStringBytes &&
       (value.toUTF8.data.isEmpty || value.toUTF8.data.back! != 0)

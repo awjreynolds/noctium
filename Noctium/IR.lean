@@ -3,7 +3,10 @@ import Noctium.Types.Composite
 
 namespace Noctium
 
-def maxBytesLength : Nat := Types.defaultLimits.maxVectorLength
+def maxBytesLength : Nat := Types.defaultLimits.maxBytesLength
+
+/-- Byte transforms and crypto preimages keep the established 1024-byte source cap. -/
+def maxByteOperationLength : Nat := 1024
 
 /-- Number of canonical 31-byte Native chunks needed for a fixed byte value. -/
 def bytesChunkCount (length : Nat) : Nat := (length + 30) / 31
@@ -171,7 +174,7 @@ def Expr.foreignIdentity (curve : Foreign.Curve) : Expr (.foreign (.point curve)
 private def fabHashFieldMatches (layout : Types.Layout) (value : Sigma Expr) : Bool :=
   match layout, value with
   | .bytes length .byteField, ⟨.bytes actualLength, _⟩ =>
-      length == actualLength && length ≤ maxBytesLength
+      length == actualLength && length ≤ maxByteOperationLength
   | .scalar .nativeField, ⟨.native, _⟩ => true
   | .scalar .booleanField, ⟨.bool, _⟩ => true
   | .scalar (.boundedUnsignedField maximum), ⟨.uint actualMaximum, _⟩ => maximum == actualMaximum
@@ -226,7 +229,7 @@ private def fabHashUnsignedByteWidth (maximum : Nat) : Nat := Id.run do
 expand to their canonical Encode atoms while remaining one typed source value. -/
 def fabHashLayoutAtoms : Types.Layout → Except String (List String)
   | .bytes length .byteField => do
-    unless length ≤ maxBytesLength do throw "unsupported mixed FAB byte width"
+    unless length ≤ maxByteOperationLength do throw "unsupported mixed FAB byte width"
     -- Compact keeps one logical alignment descriptor. Native encoding expands
     -- positive widths into canonical 31-byte chunks.
     pure [s!"bytes:{length}"]
@@ -688,8 +691,8 @@ private def flatTypedRecordFields (environment : Types.CompositeEnv)
     | .scalar (.bytes length) | .bytes length => do
       unless allowFixedBytes do
         throw "typed ledger records must be flat Native, Bool, UInt, Bytes32, or JubjubPoint fields"
-      unless length ≤ maxBytesLength do
-        throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+      unless length ≤ maxByteOperationLength do
+        throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
       pure (field.name, .bytes length)
     | .scalar .jubjubPoint => pure (field.name, Ty.jubjubPoint)
     | _ => throw "typed ledger records must be flat Native, Bool, UInt, fixed Bytes, or JubjubPoint fields"
@@ -1458,29 +1461,31 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
       throw "byte literal must contain exactly its declared number of byte values"
   | .reverseBytes (length := length) value => do
     unless caps.bytes32Conversions do throw "target lacks qualified fixed-byte support"
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     value.validate caps env
   | .sliceBytes (length := length) value start stop => do
     unless caps.bytes32Conversions do throw "target lacks qualified fixed-byte support"
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     unless start ≤ stop && stop ≤ length do throw "byte slice bounds are out of range"
     value.validate caps env
   | .concatBytes (leftLength := leftLength) (rightLength := rightLength) left right => do
     unless caps.bytes32Conversions do throw "target lacks qualified fixed-byte support"
-    unless leftLength + rightLength ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless leftLength + rightLength ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     left.validate caps env
     right.validate caps env
   | .sha256 (length := length) value => do
     unless caps.persistentHash32 do throw "target lacks qualified SHA-256 support"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     (Ty.bytes length).validate caps
     value.validate caps env
   | .sha512 (length := length) value => do
     unless caps.sha512 do throw "target lacks qualified SHA-512 support"
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     value.validate caps env
   | .sha512Fab compositeEnv type values => do
     unless caps.sha512 do throw "target lacks qualified FAB SHA-512 support"
@@ -1492,8 +1497,8 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
     validateFabHashValues caps env values
   | .keccak256 (length := length) value => do
     unless caps.keccak256 do throw "target lacks qualified Keccak-256 support"
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     value.validate caps env
   | .keccak256Secp256k1Point value => do
     unless caps.keccak256 do throw "target lacks qualified Keccak-256 support"
@@ -1557,8 +1562,8 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
   | .fromBytes (target := target) (length := length) value => do
     unless target == .native || target == .jubjubScalar do
       throw "fromBytes supports only Native and JubjubScalar"
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     target.validate caps
     value.validate caps env
   | .jubjubScalarFromNative value => do
@@ -1634,8 +1639,8 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
   | .foreignFromBytes (kind := kind) (length := length) value => do
     unless caps.foreignByteConversions do throw "target lacks foreign-curve byte conversion support"
     (Ty.foreign kind).validate caps
-    unless length ≤ maxBytesLength do
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     if kind.byteLength == 33 then
       unless length == 33 do throw "foreign point decoding requires 33 bytes"
     value.validate caps env
@@ -1749,6 +1754,9 @@ def PathKey.validate (caps : Capabilities) (env : TypeEnv) : PathKey → Except 
 private def validateStateScalar (caps : Capabilities) (ty : Ty) : Except String Unit := do
   if ty.isOpaqueString then
     throw "OpaqueString is only supported as a root Bytes32 tree Map value"
+  if let .bytes length := ty then
+    unless length ≤ maxByteOperationLength do
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
   ty.validate caps
 
 private def validateCellStateScalar (caps : Capabilities) (ty : Ty) : Except String Unit := do

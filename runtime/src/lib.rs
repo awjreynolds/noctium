@@ -284,6 +284,14 @@ fn evaluated_bytes(value: &Expr, length: usize, env: &Environment) -> Result<Vec
     Ok(bytes)
 }
 
+fn evaluated_operation_bytes(value: &Expr, length: usize, env: &Environment) -> Result<Vec<u8>> {
+    ensure!(
+        length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+        "byte operation exceeds compiler limit"
+    );
+    evaluated_bytes(value, length, env)
+}
+
 fn aligned(value: &Value, alignment: &str) -> Result<AlignedValue> {
     if let Some(length) = byte_alignment_length(alignment)? {
         let Value::Bytes(bytes) = value else {
@@ -1100,7 +1108,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         #[cfg(feature = "zkir-321")]
         Expr::ForeignFromBytes { ty, length, value } => {
             ensure!(
-                *length <= scalars::MAX_BYTES_LENGTH,
+                *length <= scalars::MAX_BYTE_OPERATION_LENGTH,
                 "byte length exceeds compiler limit"
             );
             let ScalarType::Foreign(ty) = ScalarType::parse(ty)? else {
@@ -1284,16 +1292,18 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             Value::Bytes(bytes)
         }
         Expr::ReverseBytes { length, value } => {
-            let mut bytes = evaluated_bytes(value, *length, env)?;
+            let mut bytes = evaluated_operation_bytes(value, *length, env)?;
             bytes.reverse();
             Value::Bytes(bytes)
         }
         Expr::Sha256 { length, value } => {
-            let bytes = zeroize::Zeroizing::new(evaluated_bytes(value, *length, env)?);
+            let bytes = zeroize::Zeroizing::new(evaluated_operation_bytes(value, *length, env)?);
             Value::Bytes(Sha256::digest(bytes.as_slice()).to_vec())
         }
         Expr::Sha512 { length, value } => {
-            Value::Bytes(sha2::Sha512::digest(evaluated_bytes(value, *length, env)?).to_vec())
+            Value::Bytes(
+                sha2::Sha512::digest(evaluated_operation_bytes(value, *length, env)?).to_vec(),
+            )
         }
         Expr::Sha512Fab { schema, values } => {
             let preimage = zeroize::Zeroizing::new(
@@ -1321,7 +1331,9 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::HashToCurveFab { schema, values } => hash_to_curve_fab(schema, values, env)?,
         Expr::Keccak256 { length, value } => {
-            Value::Bytes(sha3::Keccak256::digest(evaluated_bytes(value, *length, env)?).to_vec())
+            Value::Bytes(
+                sha3::Keccak256::digest(evaluated_operation_bytes(value, *length, env)?).to_vec(),
+            )
         }
         #[cfg(feature = "zkir-321")]
         Expr::Keccak256Secp256k1Point { value } => {
@@ -1370,7 +1382,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
                 start <= end && *end <= *length,
                 "byte slice bounds are invalid"
             );
-            let bytes = evaluated_bytes(value, *length, env)?;
+            let bytes = evaluated_operation_bytes(value, *length, env)?;
             Value::Bytes(bytes[*start..*end].to_vec())
         }
         Expr::ConcatBytes {
@@ -1382,7 +1394,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             ensure!(
                 left_length
                     .checked_add(*right_length)
-                    .is_some_and(|length| length <= scalars::MAX_BYTES_LENGTH),
+                    .is_some_and(|length| length <= scalars::MAX_BYTE_OPERATION_LENGTH),
                 "concatenated byte length exceeds compiler limit"
             );
             let mut bytes = evaluated_bytes(left, *left_length, env)?;
@@ -1414,7 +1426,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         Expr::FromBytes { ty, length, value } => {
             let value = evaluate(value, env)?;
             ensure!(
-                *length <= scalars::MAX_BYTES_LENGTH,
+                *length <= scalars::MAX_BYTE_OPERATION_LENGTH,
                 "byte length exceeds compiler limit"
             );
             let Value::Bytes(bytes) = value else {
@@ -2212,6 +2224,7 @@ pub(crate) fn ledger_key_type(value: &Json) -> Result<ScalarType> {
             .as_str()
             .ok_or_else(|| anyhow!("invalid ledger key schema"))?,
     )?;
+    validate_storage_scalar_type(&ty)?;
     reject_jubjub_map_key(&ty)?;
     ensure!(
         !matches!(&ty, ScalarType::OpaqueBytes) && ty != ScalarType::OpaqueString,
@@ -2231,6 +2244,7 @@ fn ledger_key_aligned_field_count(ty: &ScalarType) -> usize {
 }
 
 fn validate_ledger_key_value(ty: &ScalarType, value: &Value) -> Result<()> {
+    validate_storage_scalar_type(ty)?;
     value.validate()?;
     if matches!(ty, ScalarType::Bytes(_)) {
         ensure!(value.scalar_type() == *ty, "map key type mismatch");
@@ -2802,7 +2816,18 @@ fn scalar_storage_type_at_path(plan: &Plan, slot: u32, depth: usize) -> Result<S
     } else {
         bail!("typed ledger values require a scalar cell or map value")
     };
-    ScalarType::parse(declared)
+    let ty = ScalarType::parse(declared)?;
+    validate_storage_scalar_type(&ty)?;
+    Ok(ty)
+}
+
+fn validate_storage_scalar_type(ty: &ScalarType) -> Result<()> {
+    ensure!(
+        ty.bytes_length()
+            .is_none_or(|length| length <= scalars::MAX_BYTE_OPERATION_LENGTH),
+        "ledger byte type exceeds the storage limit"
+    );
+    Ok(())
 }
 
 const MAX_OPAQUE_STRING_MAP_DEPTH: usize = 3;
@@ -3448,6 +3473,7 @@ fn validate_shielded_coin_set(plan: &Plan, slot: u32, keys: &[PathPart]) -> Resu
 
 fn validate_tree_scalar_type(ty: &str) -> Result<ScalarType> {
     let ty = ScalarType::parse(ty)?;
+    validate_storage_scalar_type(&ty)?;
     #[cfg(feature = "zkir-321")]
     if !matches!(&ty, ScalarType::Foreign(_)) {
         reject_unqualified_foreign_storage(&ty)?;
@@ -3500,6 +3526,10 @@ impl CheckedRecordSchema {
 
 fn record_projection_bindings(name: &str, ty: &ScalarType) -> Result<Vec<(String, String)>> {
     if let Some(length) = ty.bytes_length() {
+        ensure!(
+            length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+            "record byte field exceeds the storage limit"
+        );
         return byte_projection_bindings(name, length);
     }
     Ok(match ty {
@@ -3797,6 +3827,9 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
             .and_then(Json::as_str)
             .ok_or_else(|| anyhow!("invalid mixed record field type"))?;
         let ty = ScalarType::parse(ty_name)?;
+        if matches!(&scope, RecordScope::Typed | RecordScope::Cell) {
+            validate_storage_scalar_type(&ty)?;
+        }
         let admitted = match &ty {
             ScalarType::Native | ScalarType::Bytes32 | ScalarType::JubjubPoint => true,
             ScalarType::Bool | ScalarType::UInt(_) => !matches!(scope, RecordScope::Legacy),
@@ -5068,6 +5101,10 @@ fn validate_byte_read_projections(read: &Read, ty: &ScalarType) -> Result<()> {
         .bytes_length()
         .ok_or_else(|| anyhow!("byte read requires a byte scalar"))?;
     ensure!(
+        length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+        "byte read exceeds the storage limit"
+    );
+    ensure!(
         read.schema.is_none() && read.components.is_empty(),
         "byte read has record projections"
     );
@@ -5891,6 +5928,7 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                 value,
             )?)));
         } else if let Some(ty) = d.kind.get("cell").and_then(Json::as_str) {
+            validate_storage_scalar_type(&ScalarType::parse(ty)?)?;
             let value = input_value(ty, value)?;
             let aligned = match cell_alignment {
                 Some("u128") => aligned(&value, "u128")?,
@@ -5907,6 +5945,10 @@ pub fn create_state(plan: &Plan, config: &BTreeMap<String, Json>) -> Result<Char
                 "unsupported map schema"
             );
             ledger_key_type(&types[0])?;
+            let value_type = types[1]
+                .as_str()
+                .ok_or_else(|| anyhow!("invalid map value schema"))?;
+            validate_storage_scalar_type(&ScalarType::parse(value_type)?)?;
             ensure!(
                 value.as_array().is_some_and(|a| a.is_empty()),
                 "initial map must be explicitly empty"
@@ -6132,6 +6174,7 @@ fn decode_state_cell(value: &AlignedValue, ty: &str, alignment: &str) -> Result<
         "state cell encoding mismatch"
     );
     let parsed = ScalarType::parse(ty)?;
+    validate_storage_scalar_type(&parsed)?;
     let decoded = if alignment == "u128" {
         ensure!(
             parsed == ScalarType::UInt(BigUint::from(u128::MAX)),
@@ -9142,6 +9185,9 @@ impl PreparationCursor {
                 alignment,
             } => {
                 let value = evaluate(expression, &env)?;
+                if *storage {
+                    validate_storage_scalar_type(&value.scalar_type())?;
+                }
                 if *storage
                     && (alignment == "u128"
                         || plan

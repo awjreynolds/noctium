@@ -127,6 +127,7 @@ structure CompositeEnv where
 structure Limits where
   maxDeclarations : Nat := 1024
   maxVectorLength : Nat := 1024
+  maxBytesLength : Nat := 1054
   maxExpandedLeaves : Nat := 4096
   maxExpandedNodes : Nat := 16384
   maxLayoutNodes : Nat := 16384
@@ -498,6 +499,7 @@ private def diagnostic (span : SourceSpan) (message : String) : LayoutDiagnostic
 def Limits.validate (limits : Limits) : Except LayoutDiagnostic Limits := do
   if limits.maxDeclarations > defaultLimits.maxDeclarations ||
       limits.maxVectorLength > defaultLimits.maxVectorLength ||
+      limits.maxBytesLength > defaultLimits.maxBytesLength ||
       limits.maxExpandedLeaves > defaultLimits.maxExpandedLeaves ||
       limits.maxExpandedNodes > defaultLimits.maxExpandedNodes ||
       limits.maxLayoutNodes > defaultLimits.maxLayoutNodes then
@@ -637,7 +639,7 @@ private def measureType (fuel : Nat) (limits : Limits) (environment : CompositeE
       let layoutNodes := 1 + child.layoutNodes
       checkedMeasure limits span leaves expandedNodes layoutNodes
     | .bytes length => do
-      if length > limits.maxVectorLength then
+      if length > limits.maxBytesLength then
         throw {span, message := "fixed-byte length exceeds local compiler limit"}
       let expandedNodes := length + 1
       checkedMeasure limits span length expandedNodes 1
@@ -700,7 +702,7 @@ private def layoutType (fuel : Nat) (limits : Limits) (environment : CompositeEn
         throw {span, message := "fixed-vector length exceeds local compiler limit"}
       return .vector length (← layoutType fuel limits environment stack span element)
     | .bytes length => do
-      if length > limits.maxVectorLength then
+      if length > limits.maxBytesLength then
         throw {span, message := "fixed-byte length exceeds local compiler limit"}
       return .bytes length .byteField
 

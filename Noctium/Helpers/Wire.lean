@@ -124,8 +124,8 @@ where
         discard (ScalarPolicy.validate (.uint maximum))
         pure [.cast .native value]
       | .bytes length .byteField =>
-        unless length ≤ maxBytesLength do
-          throw s!"transientHashValue byte length exceeds the maximum of {maxBytesLength}"
+        unless length ≤ maxByteOperationLength do
+          throw s!"transientHashValue byte length exceeds the maximum of {maxByteOperationLength}"
         if length == 0 then pure [] else do
           let byte := fun index => Term.cast .native (.project value (.byteIndex index))
           let count := bytesChunkCount length
@@ -164,7 +164,7 @@ private partial def concatenate : List (Nat × Term) → Nat × Term
 A helper argument is evaluated once, and each projected field uses its declared width. -/
 def declarations (compiled : Types.CompiledType) (name : String) (width : Nat)
     (encoder decoder : DeclarationId) : Except String (List Declaration) := do
-  unless width ≤ maxBytesLength do throw "aggregate wire width exceeds the source limit"
+  unless width ≤ maxByteOperationLength do throw "aggregate wire width exceeds the source limit"
   let leaves ← wireLeaves compiled.checked.value
   let mut offset := 0
   let mut encoded := []

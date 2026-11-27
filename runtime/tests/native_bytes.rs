@@ -14,6 +14,49 @@ fn bytes(value: &[u8]) -> Json {
 }
 
 #[test]
+#[ignore = "requires fresh WidePublicBytes artifacts in NOCTIUM_WIDE_PUBLIC_BYTES_ARTIFACTS"]
+fn public_bytes_cross_1024_preserving_the_tail_chunk() -> anyhow::Result<()> {
+    let output = std::path::PathBuf::from(
+        std::env::var_os("NOCTIUM_WIDE_PUBLIC_BYTES_ARTIFACTS")
+            .expect("set NOCTIUM_WIDE_PUBLIC_BYTES_ARTIFACTS"),
+    );
+    let plan: Plan = serde_json::from_slice(&std::fs::read(
+        output.join("WidePublicBytes.roundTrip.impact.json"),
+    )?)?;
+    let relation = std::fs::read(output.join("WidePublicBytes.roundTrip.zkir"))?;
+    let circuit = IrSource::load(relation.as_slice())?;
+    let relation: Json = serde_json::from_slice(&relation)?;
+    let instructions = relation["instructions"].as_array().unwrap();
+    let tail = "%input__noctium_bytes_payload_0";
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|item| item["op"] == "public_input")
+            .count(),
+        34
+    );
+    assert!(instructions.iter().any(|item| {
+        item["op"] == "constrain_bits" && item["val"] == tail && item["bits"] == 16
+    }));
+
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let mut payload: Vec<u8> = (0..1025).map(|index| (index % 251) as u8).collect();
+    payload[1023..].copy_from_slice(&[0xa5, 0x5a]);
+    let mut inputs = BTreeMap::from([("payload".into(), bytes(&payload))]);
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = coin_structure::contract::ContractAddress::default();
+    let execution = prepare(&plan, &inputs, &initial, params, address)?;
+    check(&execution, &circuit)?;
+    assert_eq!(
+        execution.returns_json(),
+        BTreeMap::from([("result".into(), bytes(&payload))])
+    );
+    inputs.insert("payload".into(), bytes(&payload[..1024]));
+    assert!(prepare(&plan, &inputs, &initial, params, address).is_err());
+    Ok(())
+}
+
+#[test]
 fn general_bytes_preserve_chunk_boundaries_types_and_committed_returns() {
     let (plan, circuit): (Plan, IrSource) = if let Some(output) =
         std::env::var_os("NOCTIUM_NATIVE_BYTES_ARTIFACTS")
@@ -134,7 +177,7 @@ fn general_bytes_preserve_chunk_boundaries_types_and_committed_returns() {
     assert!(prepare(&plan, &last_inputs, &initial, params, address).is_err());
 
     let registry = Registry::default();
-    for length in [0, 1, 31, 32, 33, 62, 63, 64, 1024] {
+    for length in [0, 1, 31, 32, 33, 62, 63, 64, 1024, 1025, 1054] {
         let token = format!("Bytes<{length}>");
         let value = vec![255; length];
         assert_eq!(
@@ -150,10 +193,10 @@ fn general_bytes_preserve_chunk_boundaries_types_and_committed_returns() {
         );
     }
     assert_eq!(ScalarType::parse("Bytes<32>").unwrap(), ScalarType::Bytes32);
-    for token in ["Bytes<1025>", "Bytes<01>", "Bytes<-1>", "Bytes<>"] {
+    for token in ["Bytes<1055>", "Bytes<01>", "Bytes<-1>", "Bytes<>"] {
         assert!(ScalarType::parse(token).is_err());
     }
-    assert!(Value::Bytes(vec![0; 1025]).validate().is_err());
+    assert!(Value::Bytes(vec![0; 1055]).validate().is_err());
 
     let empty_plan: Plan = serde_json::from_str(include_str!(
         "fixtures/native-bytes/321/NativeEmptyBytes.inspect.impact.json"

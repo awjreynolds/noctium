@@ -1,8 +1,10 @@
 # Fixed byte values
 
-Use `Bytes n` for a byte string with a compile-time length from 0 through 1024.
-The limit reuses the compiler's existing fixed-vector resource bound. `Bytes32`
-remains an alias for the 32-byte source type, with its existing wire encoding.
+Use `Bytes n` for a byte string with a compile-time length from 0 through 1,054.
+This fills the existing 34-field public byte layout at 31 bytes per field.
+Fixed vectors still have a 1,024-element limit. Operations such as concatenation,
+hashes, scalar decoding, and ledger storage retain their 1,024-byte limits.
+`Bytes32` remains an alias for the 32-byte source type, with its existing wire encoding.
 
 ```lean
 import Noctium.Frontend
@@ -19,7 +21,7 @@ end
 `reverseBytes(value)` preserves the length. `sliceBytes(value, start, stop)` uses
 constant bounds, includes `start` and excludes `stop`. Bounds must satisfy
 `start <= stop <= length`. `concatBytes(left, right)` returns the sum of the two
-lengths, subject to the same resource limit. `eq(left, right)` compares
+lengths, up to 1,024. `eq(left, right)` compares
 equal-length byte values through their checked chunks. `bytes(n, "text")` encodes UTF-8
 and pads on the right with zero bytes. Selection requires matching lengths.
 Private inputs keep their private origins through each operation. Publishing
@@ -84,11 +86,13 @@ An ordinary nonempty public `Bytes n` input uses one Impact push and one readbac
 
 A 256-byte input now has nine public transcript fields and two VM operations. The previous bytewise prologue used 256 fields and 512 operations. The standard event catalog uses an ordinary public memo and matches the same reference payloads after packing. [Catalog benchmark and localnet receipt](standard-events.md#focused-qualification)
 
+The 1,025-byte round-trip fixture uses 34 public fields. Its first physical field holds bytes 1,023 and 1,024 and carries a 16-bit range constraint. Compact 0.36.1 with Runtime 0.21.0 and the Ledger 9.1.0.1 / ZKIR 3.2.1 native host both returned every byte, including the tail `a5 5a`, and rejected a 1,024-byte input for the declared type. [Lean fixture](../../tests/WidePublicBytes.lean) · [Native checker](../../runtime/tests/native_bytes.rs) · [Compact reference runner](../../tests/compact/wide-public-bytes.mjs)
+
 ## Native byte packing
 
 Computed byte values now lower through native `bytes_into_natives`. The operation returns exactly `ceil(n / 31)` Native chunks, ordered from the first input bytes to the last. Each chunk uses little-endian byte order. The final partial chunk keeps its exact range. Source representations, disclosure rules and FAB output ordering stay the same. Other typed values continue using native `encode`.
 
-The source and producer support lengths 1 through 1024. Source `Bytes 0` erases to zero fields without creating a native zero-length byte value. The producer shares checked byte-chunk semantics with `encode` and rejects wrong types, output counts and unsupported lengths.
+The source and producer support packing lengths 1 through 1,054. Source `Bytes 0` erases to zero fields without creating a native zero-length byte value. The producer shares checked byte-chunk semantics with `encode` and rejects wrong types, output counts and unsupported lengths.
 
 The [source example](../../tests/NativeBytePacking.lean) returns reversed private byte strings at lengths 1, 31, 32, 62 and 63, plus an empty value. The [focused Rust case](../../runtime/tests/native_byte_packing.rs) checks the actual opcode and output counts, compares every returned byte and rejects a changed byte in the final chunk. The pinned 3.2.1 checker accepts the generated relation. One case passes in 0.01 seconds.
 

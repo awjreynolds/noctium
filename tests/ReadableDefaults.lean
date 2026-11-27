@@ -92,10 +92,10 @@ private def outputTerms? : Option (List (ResultType × Term)) := do
 #guard (Noctium.Witness.compile curveDefaults.__program
   "noctium.witness-circuit.ReadableDefaults.curveDefaults.v1").isOk
 
-/- error: byte string length exceeds the maximum of 1024 -/
+/- error: byte string length exceeds the maximum of 1054 -/
 #guard_msgs (substring := true) in
 noctium_witness_circuit oversizedBytesDefault where
-  output value := default(Bytes 1025)
+  output value := default(Bytes 1055)
 end
 
 end ReadableDefaults

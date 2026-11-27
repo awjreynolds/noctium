@@ -133,7 +133,10 @@ example : (Expr.reverseBytes (Expr.reverseBytes ascendingBytes64)).eval
     (.bytesLiteral 1 [0])).validate Capabilities.source [] with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false
-#guard match (Ty.bytes 1025).validate Capabilities.source with
+#guard match (Ty.bytes 1054).validate Capabilities.source with
+  | .ok _ => _root_.Bool.true
+  | .error _ => _root_.Bool.false
+#guard match (Ty.bytes 1055).validate Capabilities.source with
   | .error _ => _root_.Bool.true
   | .ok _ => _root_.Bool.false
 #guard match ({name := "bytes31MapKey", state := [

@@ -6,7 +6,7 @@ namespace Noctium.Backend.Native
 open Lean
 
 def maxInstructions : Nat := 8192
--- Keep the bytewise Source Bytes1024 ABI within a bounded aggregate input budget.
+-- Keep the bytewise Source Bytes1054 ABI within a bounded aggregate input budget.
 def maxInputs : Nat := 2048
 def maxVectorLength : Nat := Noctium.fabHashNativeOperandLimit
 def maxSymbolicNodes : Nat := 65536
@@ -241,7 +241,7 @@ private theorem ensure_ok {condition : Bool} {message : String} :
 
 private def defineByteChunks (state : State) (input : Fact) (length : Nat)
     (outputs : Array Json) : Except String State := do
-  ensure (0 < length && length ≤ Types.defaultLimits.maxVectorLength)
+  ensure (0 < length && length ≤ Noctium.maxBytesLength)
     "byte encoding length is unsupported"
   ensure (outputs.size == bytesChunkCount length) "byte encode chunk count mismatch"
   let mut state := state
@@ -253,14 +253,16 @@ private def defineByteChunks (state : State) (input : Fact) (length : Nat)
   pure state
 
 private theorem bytesChunkCount_le_maxVectorLength {length : Nat}
-    (lengthBound : length ≤ Types.defaultLimits.maxVectorLength) :
+    (lengthBound : length ≤ Noctium.maxBytesLength) :
     bytesChunkCount length ≤ maxVectorLength := by
-  have chunks_le_length : bytesChunkCount length ≤ length := by
+  have chunks_le_34 : bytesChunkCount length ≤ 34 := by
+    have lengthBound' : length ≤ 1054 := by
+      simpa [Noctium.maxBytesLength, Types.defaultLimits] using lengthBound
     unfold bytesChunkCount
     omega
-  have default_le_native : Types.defaultLimits.maxVectorLength ≤ maxVectorLength := by
+  have chunks_fit_native : 34 ≤ maxVectorLength := by
     decide
-  exact Nat.le_trans chunks_le_length (Nat.le_trans lengthBound default_le_native)
+  exact Nat.le_trans chunks_le_34 chunks_fit_native
 
 private theorem foreignEncodedFieldCount_le_maxVectorLength (kind : Foreign.Kind) :
     kind.encodedFieldCount ≤ maxVectorLength := by
@@ -824,7 +826,7 @@ def validateInstruction (expected : Expected) (state : State) (instruction : Jso
   | "bytes_from_natives" => do
     let values ← nativeArguments state instruction "inputs"
     let length ← natField instruction "len"
-    ensure (0 < length && length ≤ Types.defaultLimits.maxVectorLength)
+    ensure (0 < length && length ≤ Noctium.maxBytesLength)
       "bytes_from_natives length is unsupported"
     ensure (values.length == bytesChunkCount length) "bytes_from_natives chunk count mismatch"
     for (value, index) in values.zipIdx do

@@ -141,9 +141,17 @@ private def packBytes64 (outputs : List String) : Json :=
   (packBytes64 ["%low", "%middle"]))
 #guard rejected (validateInstruction expected
   (packingState {packedBytes with valueType := .bytes 0}) (packBytes64 []))
+private def chunkNames (count : Nat) : List String :=
+  (List.range count).map fun index => s!"%chunk{index}"
+
+#guard match validateInstruction expected
+    (packingState {packedBytes with valueType := .bytes 1025})
+    (packBytes64 (chunkNames 34)) with
+  | .ok state => (state.definitions.lookup "%chunk33").map Fact.maximum == some (2 ^ 16 - 1)
+  | .error _ => false
 #guard rejected (validateInstruction expected
-  (packingState {packedBytes with valueType := .bytes 1025})
-  (packBytes64 (List.replicate 34 "%chunk")))
+  (packingState {packedBytes with valueType := .bytes 1055})
+  (packBytes64 (chunkNames 35)))
 #guard rejected (validateInstruction expected
   (packingState {packedBytes with valueType := .native})
   (packBytes64 ["%low", "%middle", "%high"]))
