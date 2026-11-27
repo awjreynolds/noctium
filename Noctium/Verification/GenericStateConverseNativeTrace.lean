@@ -373,8 +373,8 @@ theorem source_call_build_of_satisfying_extension (state : List StateDecl)
 
 
 /-- The source and VM trace supply the seed, and the assembler supplies the
-candidate values. Only constraints left after the deterministic SSA equations
-need an independent proof about that candidate. -/
+candidate values. The accepted producer trace establishes Boolean operand
+domains, leaving the explicitly emitted constraints to prove. -/
 theorem source_call_build_of_remaining_constraints (state : List StateDecl)
     (sourceEntry : Entrypoint) (ctx : EvalContext) (hash : Hash)
     (implementation : HashAgreement ctx hash)
@@ -403,7 +403,7 @@ theorem source_call_build_of_remaining_constraints (state : List StateDecl)
       ∀ candidate, GuardedScalarWitnessAssembly.assemble hash (seedReadValues base records)
           view.header.arguments rawRows.toList view.rows = .ok candidate →
         ∀ pair ∈ rawRows.toList.zip view.rows,
-          GuardedScalarWitnessAssembly.RemainingConstraint hash candidate.val pair.1 pair.2) :
+          GuardedScalarWitnessAssembly.ExplicitConstraint hash candidate.val pair.1 pair.2) :
     ∃ built,
       GuardedScalarWitness.buildSourceCall ctx hash state sourceEntry values initial bytes rewrites =
         .ok built := by
