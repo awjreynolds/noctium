@@ -1,6 +1,10 @@
 pragma language_version >= 0.28;
 import CompactStandardLibrary;
 
+pure circuit identityUnit(value: []): [] {
+  return value;
+}
+
 export circuit checkGate(allowed: Boolean): [] {
   return assert(allowed, "gate denied");
 }
@@ -13,4 +17,16 @@ export circuit checkNestedGate(enabled: Boolean, allowed: Boolean, secondAllowed
     const secondAlias = secondChecked;
   }
   return (enabled ? 7 : 9) as Field;
+}
+
+export circuit checkConditionalUnit(choice: Boolean, first: Boolean, second: Boolean): Field {
+  const checked = choice
+    ? assert(first, "positive arm denied")
+    : assert(second, "negative arm denied");
+  return 7 as Field;
+}
+
+export circuit checkUnitHelperArgument(allowed: Boolean): Field {
+  const checked = identityUnit(assert(allowed, "helper argument denied"));
+  return 11 as Field;
 }

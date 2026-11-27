@@ -64,6 +64,27 @@ try {
     assert.match(error.message, /second gate denied/);
     return true;
   });
+
+  const conditionalUnit = (choice, first, second) =>
+    contract.circuits.checkConditionalUnit(context('checkConditionalUnit'), choice, first, second);
+  assert.equal((await conditionalUnit(true, true, false)).result, 7n);
+  assert.equal((await conditionalUnit(false, false, true)).result, 7n);
+  await assert.rejects(conditionalUnit(true, false, true), (error) => {
+    assert.match(error.message, /positive arm denied/);
+    return true;
+  });
+  await assert.rejects(conditionalUnit(false, true, false), (error) => {
+    assert.match(error.message, /negative arm denied/);
+    return true;
+  });
+
+  const unitHelperArgument = (allowed) =>
+    contract.circuits.checkUnitHelperArgument(context('checkUnitHelperArgument'), allowed);
+  assert.equal((await unitHelperArgument(true)).result, 11n);
+  await assert.rejects(unitHelperArgument(false), (error) => {
+    assert.match(error.message, /helper argument denied/);
+    return true;
+  });
   console.log(JSON.stringify({ success: success.result, failure: failureMessage }));
 } finally {
   rmSync(generated, { recursive: true, force: true });
