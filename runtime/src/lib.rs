@@ -3746,12 +3746,52 @@ fn nested_root_cell_aggregate_fields(
         Ok(name)
     }
 
-    fn scalar(layout: &Json) -> Result<()> {
-        ensure!(
-            layout.get("kind").and_then(Json::as_str) == Some("scalar"),
-            "nested Cell records support only Native, bounded UInt, and Bool leaves"
-        );
-        Ok(())
+    fn field_type(
+        layout: &Json,
+        leaf_types: &[String],
+        offset: &mut usize,
+    ) -> Result<ScalarType> {
+        match layout.get("kind").and_then(Json::as_str) {
+            Some("scalar") => {
+                let leaf_type = leaf_types
+                    .get(*offset)
+                    .ok_or_else(|| anyhow!("nested Cell record leaf count mismatch"))?;
+                *offset += 1;
+                let ty = ScalarType::parse(leaf_type)?;
+                ensure!(
+                    matches!(ty, ScalarType::Native | ScalarType::Bool | ScalarType::UInt(_)),
+                    "nested Cell records support only Native, bounded UInt, and Bool scalar leaves"
+                );
+                Ok(ty)
+            }
+            Some("bytes") => {
+                let length = layout
+                    .get("length")
+                    .and_then(Json::as_u64)
+                    .and_then(|length| usize::try_from(length).ok())
+                    .ok_or_else(|| anyhow!("nested Cell record byte length is missing"))?;
+                ensure!(
+                    length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+                    "nested Cell record byte field exceeds the storage limit"
+                );
+                let end = offset
+                    .checked_add(length)
+                    .ok_or_else(|| anyhow!("nested Cell record leaf count overflow"))?;
+                ensure!(
+                    leaf_types.get(*offset..end).is_some_and(|types| {
+                        types.iter().all(|leaf_type| leaf_type == "Native")
+                    }),
+                    "nested Cell record byte leaves differ from its layout"
+                );
+                *offset = end;
+                Ok(if length == 32 {
+                    ScalarType::Bytes32
+                } else {
+                    ScalarType::Bytes(length)
+                })
+            }
+            _ => bail!("nested Cell records support one level of named scalar or Bytes fields"),
+        }
     }
 
     let layout = json
@@ -3765,7 +3805,9 @@ fn nested_root_cell_aggregate_fields(
         .get("fields")
         .and_then(Json::as_array)
         .ok_or_else(|| anyhow!("nested Cell record fields are missing"))?;
-    let mut physical_names = Vec::new();
+    let leaf_types = schema.leaf_types()?;
+    let mut leaf_offset = 0usize;
+    let mut record_fields = Vec::new();
     let mut has_nested_record = false;
     let mut names = BTreeSet::new();
     for field in fields {
@@ -3774,13 +3816,15 @@ fn nested_root_cell_aggregate_fields(
             .get("layout")
             .ok_or_else(|| anyhow!("nested Cell record field is missing its layout"))?;
         match child.get("kind").and_then(Json::as_str) {
-            Some("scalar") => {
-                scalar(child)?;
+            Some("scalar" | "bytes") => {
                 ensure!(
                     names.insert(root_name.to_owned()),
                     "nested Cell record has colliding physical field names"
                 );
-                physical_names.push(root_name.to_owned());
+                record_fields.push(RecordField {
+                    name: Some(root_name.to_owned()),
+                    ty: field_type(child, &leaf_types, &mut leaf_offset)?,
+                });
             }
             Some("struct") => {
                 has_nested_record = true;
@@ -3794,48 +3838,29 @@ fn nested_root_cell_aggregate_fields(
                     let leaf = nested_field
                         .get("layout")
                         .ok_or_else(|| anyhow!("nested Cell record field is missing its layout"))?;
-                    scalar(leaf)?;
                     let physical_name = format!("{root_name}_{nested_name}");
                     ensure!(
                         names.insert(physical_name.clone()),
                         "nested Cell record has colliding physical field names"
                     );
-                    physical_names.push(physical_name);
+                    record_fields.push(RecordField {
+                        name: Some(physical_name),
+                        ty: field_type(leaf, &leaf_types, &mut leaf_offset)?,
+                    });
                 }
             }
-            _ => bail!("nested Cell records support one level of named scalar fields"),
+            _ => bail!("nested Cell records support one level of named scalar or Bytes fields"),
         }
     }
     ensure!(
-        has_nested_record && !physical_names.is_empty(),
+        has_nested_record && !record_fields.is_empty(),
         "root Cell extension requires one nested record with scalar leaves"
     );
-
-    let leaf_types = schema.leaf_types()?;
     ensure!(
-        physical_names.len() == leaf_types.len(),
+        leaf_offset == leaf_types.len(),
         "nested Cell record leaf count mismatch"
     );
-    physical_names
-        .into_iter()
-        .zip(leaf_types)
-        .map(|(name, leaf_type)| {
-            let ty = ScalarType::parse(&leaf_type)?;
-            let supported = match &ty {
-                ScalarType::Native | ScalarType::Bool => true,
-                ScalarType::UInt(_) => true,
-                _ => false,
-            };
-            ensure!(
-                supported,
-                "nested Cell records support only Native, bounded UInt, and Bool leaves"
-            );
-            Ok(RecordField {
-                name: Some(name),
-                ty,
-            })
-        })
-        .collect()
+    Ok(record_fields)
 }
 
 fn checked_record_schema(json: &Json) -> Result<CheckedRecordSchema> {
@@ -4024,14 +4049,25 @@ fn validate_record_values(schema: &CheckedRecordSchema, values: &[Value]) -> Res
         value.validate()?;
     }
     if let Some(aggregate) = &schema.aggregate {
-        let leaves = values
-            .iter()
-            .map(|value| match value {
-                Value::Bool(value) => Ok(Json::Bool(*value)),
-                Value::UInt { number, .. } => Ok(Json::String(number.to_str_radix(10))),
-                _ => Ok(Json::String(field_decimal(value.field()?))),
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut leaves = Vec::with_capacity(aggregate.counts().leaves);
+        for value in values {
+            match value {
+                Value::Bool(value) => leaves.push(Json::Bool(*value)),
+                Value::UInt { number, .. } => {
+                    leaves.push(Json::String(number.to_str_radix(10)))
+                }
+                Value::Bytes(bytes) => leaves.extend(
+                    bytes
+                        .iter()
+                        .map(|byte| Json::String(u64::from(*byte).to_string())),
+                ),
+                _ => leaves.push(Json::String(field_decimal(value.field()?))),
+            }
+        }
+        ensure!(
+            leaves.len() == aggregate.counts().leaves,
+            "aggregate record leaf count mismatch"
+        );
         aggregate.from_leaf_json(&leaves)?;
     }
     Ok(())
@@ -4951,16 +4987,40 @@ fn record_values_from_json(schema: &CheckedRecordSchema, json: &Json) -> Result<
     let values = if let Some(aggregate) = &schema.aggregate {
         let leaves = aggregate.flatten_leaves_json(&serde_json::to_vec(json)?)?;
         ensure!(
-            leaves.len() == schema.fields.len(),
+            leaves.len() == aggregate.counts().leaves,
             "aggregate record leaf count mismatch"
         );
-        leaves
-            .iter()
-            .zip(&schema.fields)
-            .map(|(leaf, field)| {
-                input_value(record_type_name(&field.ty)?.as_ref(), leaf)
-            })
-            .collect::<Result<Vec<_>>>()?
+        let mut offset = 0usize;
+        let mut values = Vec::with_capacity(schema.fields.len());
+        for field in &schema.fields {
+            let width = field.ty.bytes_length().unwrap_or(1);
+            let end = offset
+                .checked_add(width)
+                .ok_or_else(|| anyhow!("aggregate record leaf count overflow"))?;
+            let field_leaves = leaves
+                .get(offset..end)
+                .ok_or_else(|| anyhow!("aggregate record leaf count mismatch"))?;
+            let value = if field.ty.bytes_length().is_some() {
+                let bytes = field_leaves
+                    .iter()
+                    .map(|leaf| {
+                        leaf.as_str()
+                            .and_then(|value| value.parse::<u8>().ok())
+                            .ok_or_else(|| anyhow!("aggregate record byte leaf is invalid"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Value::Bytes(bytes)
+            } else {
+                input_value(record_type_name(&field.ty)?.as_ref(), &field_leaves[0])?
+            };
+            values.push(value);
+            offset = end;
+        }
+        ensure!(
+            offset == leaves.len(),
+            "aggregate record leaf count mismatch"
+        );
+        values
     } else {
         let object = json
             .as_object()

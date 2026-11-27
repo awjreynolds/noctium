@@ -177,8 +177,8 @@ rejects an Impact plan that writes the sealed slot.
 
 ## Initialize a nested record Cell
 
-A root record Cell accepts a named struct one level deep with Native, Bool
-and bounded UInt fields. Use `initialize position := fields(...)` and
+A root record Cell accepts a named struct one level deep with Native, Bool,
+bounded UInt and fixed Bytes fields. Use `initialize position := fields(...)` and
 `write position := fields(...)` in declaration order. Reading a nested field
 binds its path with underscores. For example, `read position as observed`
 binds `observed_details_count` for `position.details.count`. The emitted schema
@@ -188,6 +188,13 @@ The matched Compact and native case reads both the original and replaced
 record. The native checker rejects an out-of-range UInt16 and a changed
 operation schema. The source also enforces sealing for the nested layout.
 [Lean fixture](../../tests/NestedRecordCell.lean) · [Compact replay](../../tests/compact/nested-record-cell.mjs) · [Native replay](../../runtime/tests/record_constructor.rs)
+
+The Bytes40 fixture uses one typed `payload : Bytes 40` field inside the nested
+record. The circuit packs it into two Native chunks. Constructor defaults,
+readback after a write and reset preserve the declared width. The paired case
+checks five trailing zero bytes and rejects a 39-byte input. The native check
+also rejects a changed packed write input.
+[Lean fixture](../../tests/NestedFixedBytesRecordCell.lean) · [Compact replay](../../tests/compact/nested-fixed-bytes-record-cell.mjs) · [Native replay](../../runtime/tests/record_constructor.rs)
 
 ## Initialize an opaque string
 

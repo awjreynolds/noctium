@@ -1,0 +1,33 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+export struct FixedBytesRecord {
+  payload: Bytes<40>;
+  marker: Field;
+}
+
+export struct NestedRecord {
+  nested: FixedBytesRecord;
+  count: Uint<64>;
+}
+
+export ledger record: NestedRecord;
+
+export circuit writeRecord(payload: Bytes<40>, marker: Field, counter: Uint<64>): [] {
+  record = disclose(NestedRecord {
+    nested: FixedBytesRecord {
+      payload: disclose(payload),
+      marker: disclose(marker),
+    },
+    count: disclose(counter),
+  });
+}
+
+export circuit inspect(): [Bytes<40>, Field, Uint<64>] {
+  return [record.nested.payload, record.nested.marker, record.count];
+}
+
+export circuit clearRecord(): [Bytes<40>, Field, Uint<64>] {
+  record.resetToDefault();
+  return [record.nested.payload, record.nested.marker, record.count];
+}
