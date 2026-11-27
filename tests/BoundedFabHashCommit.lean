@@ -31,6 +31,7 @@ end
 private def scalarFabCommitEnvironment : CompositeEnv := {}
 private def scalarFabCommitType : CompositeType := .scalar .native
 private def scalarFabCommitPayload : Sigma Expr := ⟨.native, .native 41⟩
+private def emptyFabCommitType : CompositeType := .vector 0 (.scalar .native)
 
 #guard (validateFabCommitLayout scalarFabCommitEnvironment (.scalar .bool)
   [⟨.bool, .bool Bool.true⟩]).isOk == Bool.false
@@ -38,6 +39,8 @@ private def scalarFabCommitPayload : Sigma Expr := ⟨.native, .native 41⟩
   [scalarFabCommitPayload, scalarFabCommitPayload]).isOk == Bool.false
 #guard (validateFabHashLayout scalarFabCommitEnvironment scalarFabCommitType
   [scalarFabCommitPayload]).isOk == Bool.false
+#guard (validateFabCommitLayout scalarFabCommitEnvironment
+  (.vector 1 (.scalar .native)) []).isOk == Bool.false
 
 noctium_circuit scalarFabCommitInputs where
   private payload : Native
@@ -47,6 +50,15 @@ noctium_circuit scalarFabCommitInputs where
     scalarFabCommitEnvironment, scalarFabCommitType, persistentOpening, [payload]))
   output transientCommitDigest : Native := disclose(transientCommitFab(
     scalarFabCommitEnvironment, scalarFabCommitType, transientOpening, [payload]))
+end
+
+noctium_circuit emptyFabCommitInputs where
+  private persistentOpening : Bytes32
+  private transientOpening : Native
+  output persistentCommitDigest : Bytes32 := disclose(persistentCommitFab(
+    scalarFabCommitEnvironment, emptyFabCommitType, persistentOpening, []))
+  output transientCommitDigest : Native := disclose(transientCommitFab(
+    scalarFabCommitEnvironment, emptyFabCommitType, transientOpening, []))
 end
 
 /- error: undisclosed private -/
@@ -81,6 +93,10 @@ noctium_contract BoundedFabHashCommit where
     return transientCommitResult : Native := transientCommitDigest
   end
   entry scalarCommit uses scalarFabCommitInputs where
+    return persistentCommitResult : Bytes32 := persistentCommitDigest
+    return transientCommitResult : Native := transientCommitDigest
+  end
+  entry emptyCommit uses emptyFabCommitInputs where
     return persistentCommitResult : Bytes32 := persistentCommitDigest
     return transientCommitResult : Native := transientCommitDigest
   end

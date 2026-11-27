@@ -1731,8 +1731,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let opening ← expected env opening (.bytes 32)
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
-      throwErrorAt stx s!"persistentCommitFab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
+    unless sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"persistentCommitFab accepts at most {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
@@ -1746,8 +1746,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let typeTerm : TSyntax `term := ⟨mkIdent typeName⟩
     let opening ← expected env opening .native
     let sourceValues := values.getElems.toList
-    unless !sourceValues.isEmpty && sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
-      throwErrorAt stx s!"transientCommitFab requires 1 to {Types.defaultLimits.maxExpandedNodes} values"
+    unless sourceValues.length ≤ Types.defaultLimits.maxExpandedNodes do
+      throwErrorAt stx s!"transientCommitFab accepts at most {Types.defaultLimits.maxExpandedNodes} values"
     let encodedValues ← sourceValues.mapM fun sourceValue => do
       let (actualType, value) ← expression env sourceValue
       let actualType ← tyTerm actualType
