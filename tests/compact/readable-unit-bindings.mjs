@@ -34,6 +34,7 @@ try {
   const contract = new Contract({
     unitObserve: ({ privateState }, value) => [[...privateState, value.toString()], []],
     unitFinish: ({ privateState }, value) => [[...privateState, value.toString()], value + 1n],
+    echoUnit: ({ privateState }, emptyArg, seed) => [[...privateState, [emptyArg, seed.toString()]], seed + 5n],
   });
   const walletKey = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(createConstructorContext([], walletKey));
@@ -51,6 +52,15 @@ try {
   assert.deepEqual(present, { is_some: true, value: [] });
   assert.deepEqual(absent, { is_some: false, value: [] });
   assert.deepEqual(callbackOrder, ['7', '8', '9', '10']);
+  const unitArgument = await contract.circuits.passUnit(createCircuitContext({
+    circuitId: 'passUnit',
+    contractAddress: dummyContractAddress(),
+    coinPublicKeyOrZswapState: walletKey,
+    contractState: currentContractState.data,
+    privateState: [],
+  }), 17n);
+  assert.equal(unitArgument.result, 22n);
+  assert.deepEqual(unitArgument.context.callContext.currentPrivateState, [[[], '17']]);
   console.log(JSON.stringify({ value: value.toString(), present, absent, callbackOrder }));
 } finally {
   rmSync(generated, { recursive: true, force: true });

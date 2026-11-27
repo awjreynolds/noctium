@@ -15,7 +15,7 @@ not Lean theorems. A private read or calculation needs no `disclose`. A public
 result derived from either needs explicit release.
 
 This source form supports Native, Bool, bounded UInt and Bytes32 values, with Unit
-callback results. Typed callbacks and private cells also support `JubjubScalar`
+callback arguments and results. Typed callbacks and private cells also support `JubjubScalar`
 and `JubjubPoint`. The `.observations.json` records authored proof conditions
 separately from generated validity checks for source review. Composite curve
 schemas and structured source branches remain separate work.
@@ -62,6 +62,12 @@ proof and accepted-state qualification remains tracked in
 [current-state integration](https://github.com/awjreynolds/noctium/issues/67).
 
 [`tests/WitnessSource.lean`](../../tests/WitnessSource.lean) contains the source examples. They cover scalar calls, nominal composite arguments and results, repeated helpers, Unit and empty nominal results, private reads, staged writes and rejected disclosure. The scalar example stages `cache/last = 1`, reads the staged value, calls a helper twice, checks the replies against a public value and stages the final result.
+
+A typed callback declared as `echoUnit(emptyArg : Unit, seed : Native)` receives
+`default(Unit)` in the first logical position as `{"kind":"unit"}`. Unit uses
+zero circuit fields. The paired fixture checks the Unit and Native arguments
+against Compact and rejects a Bool in the Unit position.
+[Lean source](../../tests/ReadableUnitBindings.lean) · [Native replay](../../runtime/tests/readable_unit_bindings.rs)
 
 [`tests/WitnessDisclosure.lean`](../../tests/WitnessDisclosure.lean) checks direct and helper-mediated leaks. Disclosing constants inside a branch does not disclose its private witness guard. The host plan requires explicit disclosure of the guard itself.
 

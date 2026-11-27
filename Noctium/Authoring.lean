@@ -2024,6 +2024,9 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let term := Helpers.Term.composite codec.payload zeros
     pure {type := resultType, term}
   | `(nlexpr| default($target:nltype)) => do
+    if let some name := nominalUIntTypeIdentifier target then
+      if name.getId == `Unit then
+        return {type := .unit, term := .unit}
     let sourceType ← liftM (readSourceScalarType target)
     let term ← zeroScalarTerm target sourceType.type
     pure {
@@ -3092,8 +3095,7 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let signatureName := signature.name
     validIdentity function signatureName
     unless signature.parameters.all (fun p => match p.type with
-      | .scalar _ | .composite _ => _root_.Bool.true
-      | _ => _root_.Bool.false) do
+      | .unit | .scalar _ | .composite _ => _root_.Bool.true) do
       throwErrorAt function "witness callback parameters must use supported scalar or Payload types"
     unless args.getElems.size == signature.parameters.length do
       throwErrorAt stx s!"witness '{function.getId}' argument count does not match its declaration"
@@ -3123,7 +3125,11 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
           unless value.type == .composite parameterType do
             throwErrorAt argument "witness callback aggregate argument must use the declared Payload codec"
           pure value
-        | .unit => throwErrorAt function "Unit witness parameters are unsupported"
+        | .unit => do
+          let value ← lowerExpr programName callPrefix env argument
+          unless value.type == .unit do
+            throwErrorAt argument "witness callback argument type mismatch"
+          pure value
       loweredArgs := loweredArgs ++ [value]
     let callNo ← get
     modify fun state => {state with nextCall := state.nextCall + 1}
@@ -3756,13 +3762,25 @@ private def observationTerm (metadata : ObservationMetadata) : CommandElabM (TSy
     for parameterStx in params.getElems do
       match parameterStx with
       | `(noctium_witness_parameter| $parameter:ident : $type:nltype) => do
-        let sourceType ← readSourceScalarType type
-        parameters := parameters ++ [{
-          name := parameter.getId.toString,
-          type := .scalar sourceType.type,
-          sourceNominal := sourceType.nominalUInt.map (·.name),
-          sourceNominalField := sourceType.nominalField
-        }]
+        if let some unitName := nominalUIntTypeIdentifier type then
+          if unitName.getId == `Unit then
+            parameters := parameters ++ [{name := parameter.getId.toString, type := .unit}]
+          else
+            let sourceType ← readSourceScalarType type
+            parameters := parameters ++ [{
+              name := parameter.getId.toString,
+              type := .scalar sourceType.type,
+              sourceNominal := sourceType.nominalUInt.map (·.name),
+              sourceNominalField := sourceType.nominalField
+            }]
+        else
+          let sourceType ← readSourceScalarType type
+          parameters := parameters ++ [{
+            name := parameter.getId.toString,
+            type := .scalar sourceType.type,
+            sourceNominal := sourceType.nominalUInt.map (·.name),
+            sourceNominalField := sourceType.nominalField
+          }]
       | `(noctium_witness_parameter| $parameter:ident : Payload $codecName:ident) => do
         let source ← liftCoreM <| resolveGlobalConstNoOverload codecName
         let codec ← evalConstCheck Helpers.Wire.Codec ``Helpers.Wire.Codec source

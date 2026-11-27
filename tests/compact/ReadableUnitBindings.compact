@@ -3,6 +3,7 @@ import CompactStandardLibrary;
 
 witness unitObserve(value: Field): [];
 witness unitFinish(value: Field): Field;
+witness echoUnit(emptyArg: [], seed: Field): Field;
 
 export circuit update(seed: Field): [Field, Maybe<[]>, Maybe<[]>] {
   const first = unitObserve(seed);
@@ -10,4 +11,8 @@ export circuit update(seed: Field): [Field, Maybe<[]>, Maybe<[]>] {
   const result = unitFinish(seed + (2 as Field));
   const fourth = unitObserve(seed + (3 as Field));
   return [disclose(result), disclose(some<[]>(fourth)), none<[]>()];
+}
+
+export circuit passUnit(seed: Field): Field {
+  return disclose(echoUnit([], seed));
 }
