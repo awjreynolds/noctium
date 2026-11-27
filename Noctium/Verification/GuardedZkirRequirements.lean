@@ -3,6 +3,7 @@ import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationRawSeedMeaning
 import Noctium.Verification.ScalarNormalization
+import Noctium.Verification.ScalarLowering
 
 namespace Noctium.Verification.GuardedZkirRequirements
 
@@ -20,21 +21,29 @@ private theorem bind_ok {α β : Type} {first : Except String α}
       ∃ value, first = .ok value ∧ next value = .ok result := by
   cases first <;> simp [Bind.bind, Except.bind]
 
-private theorem decodeRow_member {items : List Json} {rows : List Row}
-    (decoded : items.mapM GuardedScalarRows.decodeRow = .ok rows)
-    {raw : Json} (member : raw ∈ items) :
-    ∃ row, GuardedScalarRows.decodeRow raw = .ok row ∧ row ∈ rows := by
-  induction items generalizing rows with
-  | nil => simp at member
+private theorem mapM_decoded_member {items : List α} {decodedValues : List β}
+    (decode : α → Except String β)
+    (decoded : items.mapM decode = .ok decodedValues)
+    {item : α} (present : item ∈ items) :
+    ∃ value ∈ decodedValues, decode item = .ok value := by
+  induction items generalizing decodedValues with
+  | nil => simp at present
   | cons head tail ih =>
-    simp only [List.mapM_cons, bind_ok] at decoded
-    obtain ⟨headRow, headDecoded, tailRows, tailDecoded, rowsEq⟩ := decoded
-    cases rowsEq
-    rcases List.mem_cons.mp member with same | tailMember
-    · subst raw
-      exact ⟨headRow, headDecoded, by simp⟩
-    · obtain ⟨row, rowDecoded, rowMember⟩ := ih tailDecoded tailMember
-      exact ⟨row, rowDecoded, by simp [rowMember]⟩
+    cases headDecoded : decode head with
+    | error reason => simp [List.mapM_cons, headDecoded, Bind.bind, Except.bind] at decoded
+    | ok headValue =>
+      cases tailDecoded : tail.mapM decode with
+      | error reason =>
+        simp [List.mapM_cons, headDecoded, tailDecoded, Bind.bind, Except.bind] at decoded
+      | ok tailValues =>
+        simp [List.mapM_cons, headDecoded, tailDecoded, Bind.bind, Except.bind,
+          Pure.pure, Except.pure] at decoded
+        subst decodedValues
+        rcases List.mem_cons.mp present with same | later
+        · subst item
+          exact ⟨headValue, List.mem_cons_self .., headDecoded⟩
+        · obtain ⟨value, inTail, itemDecoded⟩ := ih tailDecoded later
+          exact ⟨value, List.mem_cons_of_mem _ inTail, itemDecoded⟩
 
 /-- The accepted mixed-row fold exposes source requirements and the producer
 meaning before and after each actual indexed row. Output consumers use the row
@@ -112,7 +121,7 @@ theorem lowerEntrypoint_guardedRows_meaning
       have found : item.1 ∈ (instructions.toList.zipIdx).map Prod.fst :=
         List.mem_map.mpr ⟨item, member, rfl⟩
       simpa only [List.zipIdx_map_fst] using found
-    obtain ⟨row, rowDecoded, rowMember⟩ := decodeRow_member decoded rawMember
+    obtain ⟨row, rowMember, rowDecoded⟩ := mapM_decoded_member decodeRow decoded rawMember
     exact GuardedImpactTranscript.classify_decoded_row rowDecoded (ordinary row rowMember)
   obtain ⟨finalMeaning, _, preserveAssertions, visits⟩ :=
     RangeDedupAcceptedArray.accepted_loop_meaning_assertions_at_steps
@@ -172,6 +181,39 @@ private theorem raw_of_decodedRow_member {items : List Json} {rows : List Row}
       exact ⟨head, List.mem_cons_self .., headDecoded⟩
     · obtain ⟨raw, member, checked⟩ := ih restDecoded later
       exact ⟨raw, List.mem_cons_of_mem _ member, checked⟩
+
+/-- A witness from the actual unoptimized lower body satisfies the strict
+constraints of the same checked guarded relation. The preprocessing rows
+have no ordinary constraint and keep their separate transcript semantics. -/
+theorem lowerEntrypoint_guardedRows_of_body_meaning
+    {state : List StateDecl} {sourceEntry : Entrypoint} {plan : Impact.Plan}
+    {json : Json} {instructions : Array Json} {rows : List Row}
+    {hash : Hash} {witness : Assignment}
+    (lowered : Zkir.lowerEntrypoint state sourceEntry .disabled = .ok json)
+    (planAccepted : Impact.lower state (Passes.pruneEntrypoint sourceEntry) = .ok plan)
+    (parsed : Native.arrayField json "instructions" = .ok instructions)
+    (decoded : instructions.toList.mapM decodeRow = .ok rows)
+    (meaning : ScalarLowering.LowerStateMeaning hash witness
+      ((Zkir.lowerEntrypointBody (Passes.pruneEntrypoint sourceEntry) plan).run {}).2) :
+    ∀ row ∈ rows, ordinaryHolds hash witness row := by
+  obtain ⟨emittedPlan, _, emittedPlanAccepted, _, _, emitted⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions state sourceEntry json lowered
+  have samePlan := Except.ok.inj (emittedPlanAccepted.symm.trans planAccepted)
+  subst emittedPlan
+  have exactArray := Except.ok.inj (emitted.symm.trans parsed)
+  subst instructions
+  obtain ⟨strictRows, strictDecoded⟩ := meaning.decoded
+  intro row present
+  cases row with
+  | publicInput => trivial
+  | impact => trivial
+  | strict instruction =>
+    obtain ⟨raw, rawPresent, rowDecoded⟩ := raw_of_decodedRow_member decoded present
+    obtain ⟨strict, strictPresent, rawDecoded⟩ :=
+      mapM_decoded_member NativeRelationJson.decodeInstruction strictDecoded rawPresent
+    have sameInstruction := Except.ok.inj (rawDecoded.symm.trans (decodeRow_strict rowDecoded).1.decoded)
+    subst strict
+    exact meaning.holds strictRows strictDecoded instruction strictPresent
 
 /-- Each comparison inherits its actual operand bounds from the state reached
 by the accepted producer trace. The row's own result equation cannot establish

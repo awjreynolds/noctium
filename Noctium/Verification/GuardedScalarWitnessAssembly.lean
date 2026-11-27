@@ -97,6 +97,14 @@ private theorem definitionValue_agrees {hash : Hash} {raw : Json} {row : Row}
       simp (disch := (intro name used; apply agree; simp_all [List.mem_flatMap]))
         only [Operand.read_agrees (left := left) (right := right)]
 
+/-- Every defining row computes the value assigned to its output lane in the
+completed witness. -/
+def DefinitionEquations (hash : Hash) (witness : Assignment)
+    (rawRows : List Json) (rows : List Row) : Prop :=
+  ∀ pair ∈ rawRows.zip rows, ∀ destination value,
+    definitionValue hash pair.1 witness pair.2 = some (destination, value) →
+      witness destination = value
+
 /-- A defining row agrees with a satisfying producer witness. The comparison
 equation needs the producer's established operand widths. -/
 private theorem definitionValue_holds {hash : Hash} {raw : Json} {row : Row}
@@ -156,7 +164,7 @@ inductive Scope : List String → List Json → List Row → List String → Pro
   | cons {registered raw row rawTail rowTail finalNames}
       (references : ∀ name ∈ rowReferences raw row, name ∈ registered)
       (fresh : ∀ destination ∈ (rowDestination raw row).toList,
-        destination ∉ registered ∧ destination.startsWith "%input_" = false)
+        destination ∉ registered)
       (tail : Scope ((rowDestination raw row).toList ++ registered) rawTail rowTail finalNames) :
       Scope registered (raw :: rawTail) (row :: rowTail) finalNames
 
@@ -168,6 +176,77 @@ theorem Scope.initial_subset {registered rawRows rows finalNames}
   | cons _ _ _ ih =>
     intro name present
     exact ih name (List.mem_append_right _ present)
+
+/-- The assembler establishes deterministic output equations. Boolean
+selector domains and rows without a definition remain separate obligations. -/
+def RemainingConstraint (hash : Hash) (witness : Assignment) (raw : Json) (row : Row) : Prop :=
+  match row with
+  | .strict (.not value _) | .strict (.select value _ _ _) =>
+    value.read witness = zero ∨ value.read witness = one
+  | .strict instruction =>
+    if (rowDestination raw row).isSome then True else Instruction.Holds hash witness instruction
+  | _ => True
+
+private theorem strict_holds_from_equation (hash : Hash) (witness : Assignment)
+    (raw : Json) (instruction : Instruction)
+    (equation : ∀ destination value,
+      definitionValue hash raw witness (.strict instruction) = some (destination, value) →
+      witness destination = value)
+    (remaining : RemainingConstraint hash witness raw (.strict instruction)) :
+    Instruction.Holds hash witness instruction := by
+  cases instruction <;>
+    first
+    | exact equation _ _ rfl
+    | exact remaining
+    | skip
+  case lessThan left right width destination =>
+    intro _ _
+    exact equation destination _ rfl
+  case not value destination =>
+    exact ⟨remaining, equation destination _ rfl⟩
+  case select condition yes no destination =>
+    exact ⟨remaining, equation destination _ rfl⟩
+  case equal source target =>
+    cases target with
+    | immediate value => exact remaining
+    | reference destination =>
+      by_cases copy : isCopy raw
+      · exact (equation destination (source.read witness) (by simp [definitionValue, copy])).symm
+      · simpa [RemainingConstraint, rowDestination, definitionValue, copy] using remaining
+
+/-- With the deterministic equations established, the remaining checks
+characterize ordinary satisfaction of the aligned rows exactly. -/
+theorem Scope.strict_holds_iff_remaining {registered rawRows rows finalNames}
+    (scope : Scope registered rawRows rows finalNames) (hash : Hash) (witness : Assignment)
+    (equations : DefinitionEquations hash witness rawRows rows) :
+    (∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash witness instruction) ↔
+      ∀ pair ∈ rawRows.zip rows, RemainingConstraint hash witness pair.1 pair.2 := by
+  constructor
+  · intro holds pair present
+    rcases pair with ⟨raw, row⟩
+    cases row with
+    | publicInput => trivial
+    | impact => trivial
+    | strict instruction =>
+      have checked := holds instruction (List.of_mem_zip present).2
+      cases instruction <;> simp only [RemainingConstraint] <;>
+        first
+        | exact checked.1
+        | exact checked
+        | split <;> first | trivial | exact checked
+  · intro remaining
+    have sameLength : rows.length = rawRows.length := by
+      clear equations remaining
+      induction scope <;> simp_all
+    have lengthBound : rows.length ≤ rawRows.length := by simp [sameLength]
+    intro instruction present
+    rw [← List.map_snd_zip (l₁ := rawRows) lengthBound] at present
+    obtain ⟨⟨raw, row⟩, source, shape⟩ := List.mem_map.mp present
+    change row = .strict instruction at shape
+    subst row
+    exact strict_holds_from_equation hash witness raw instruction
+      (equations (raw, .strict instruction) source)
+      (remaining (raw, .strict instruction) source)
 
 private theorem instruction_identifiers_scoped (raw : Json) (instruction : Instruction) :
     ∀ name ∈ instructionIdentifiers instruction,
@@ -250,17 +329,13 @@ private theorem destination_not_input (raw : Json) (row : Row) {name : String}
   | strict instruction =>
     cases instruction <;> simp_all [rowDestination, definitionValue, inputOutput]
 
-/-- The producer registers each input or temporary at its own emitted row.
-The generated-temporary namespace is checked separately from the producer's
-sequential name validation. -/
+/-- The producer registers each input or definition at its emitted row. -/
 inductive ProducerScope : List String → List Json → List Row → Prop where
   | nil (known) : ProducerScope known [] []
   | cons {known raw row rawTail rowTail}
       (references : ∀ name ∈ rowReferences raw row, name ∈ known)
       (fresh : ∀ name ∈ (inputOutput row).toList ++ (rowDestination raw row).toList,
         name ∉ known)
-      (temporary : ∀ destination ∈ (rowDestination raw row).toList,
-        destination.startsWith "%input_" = false)
       (tail : ProducerScope (known ++ (inputOutput row).toList ++ (rowDestination raw row).toList)
         rawTail rowTail) :
       ProducerScope known (raw :: rawTail) (row :: rowTail)
@@ -270,7 +345,7 @@ private theorem ProducerScope.future_inputs_fresh {known rawRows rows}
     ∀ name ∈ inputOutputs rows, name ∉ known := by
   induction scope with
   | nil => simp [inputOutputs]
-  | @cons known raw row rawTail rowTail _ fresh _ _ ih =>
+  | @cons known raw row rawTail rowTail _ fresh _ ih =>
     intro name present
     rw [inputOutputs_cons] at present
     rcases List.mem_append.mp present with head | later
@@ -282,7 +357,7 @@ private theorem ProducerScope.future_inputs_nodup {known rawRows rows}
     (scope : ProducerScope known rawRows rows) : (inputOutputs rows).Nodup := by
   induction scope with
   | nil => simp [inputOutputs]
-  | @cons known raw row rawTail rowTail _ _ _ tail ih =>
+  | @cons known raw row rawTail rowTail _ _ tail ih =>
     rw [inputOutputs_cons]
     cases found : inputOutput row with
     | none => exact ih
@@ -311,7 +386,7 @@ private theorem ProducerScope.assemble_scope_from {known rawRows rows}
     ∃ finalNames, Scope registered rawRows rows finalNames := by
   induction producer generalizing registered with
   | nil => exact ⟨registered, .nil registered⟩
-  | @cons known raw row rawTail rowTail references fresh temporary tail ih =>
+  | @cons known raw row rawTail rowTail references fresh tail ih =>
     have tailNames : ∀ name,
         name ∈ (rowDestination raw row).toList ++ registered ↔
         name ∈ (known ++ (inputOutput row).toList ++ (rowDestination raw row).toList) ++
@@ -321,9 +396,7 @@ private theorem ProducerScope.assemble_scope_from {known rawRows rows}
     obtain ⟨finalNames, rest⟩ := ih _ tailNames
     refine ⟨finalNames, .cons (fun name used => (names name).mpr
       (List.mem_append_left _ (references name used))) ?_ rest⟩
-    intro destination defined
-    refine ⟨?_, temporary destination defined⟩
-    intro already
+    intro destination defined already
     have registeredBefore := (names destination).mp already
     rcases List.mem_append.mp registeredBefore with before | input
     · exact fresh destination (List.mem_append_right _ defined) before
@@ -334,7 +407,7 @@ private theorem ProducerScope.assemble_scope_from {known rawRows rows}
 
 /-- Ledger input lanes are available to the assembler at the start, although
 the producer validated them only at their rows. Sequential freshness ensures
-none of these future lanes collides with a temporary. -/
+none of these future lanes collides with an earlier definition. -/
 theorem ProducerScope.assemble_scope {arguments rawRows rows}
     (producer : ProducerScope arguments rawRows rows) :
     ∃ finalNames, Scope (arguments ++ inputOutputs rows) rawRows rows finalNames :=
@@ -389,7 +462,6 @@ theorem ProducerScope.cons_validated_copy {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "copy")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.equal source (.reference destination))))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst)
       (raw :: rawRows) (.strict (.equal source (.reference destination)) :: rows) := by
@@ -404,7 +476,6 @@ theorem ProducerScope.cons_validated_copy {expected : Backend.Native.Expected}
   apply ProducerScope.cons
   · simpa only [rowReferences, copy, ite_true] using argument_identifiers sourceAccepted parsedSource
   · simpa [inputOutput, rowDestination, definitionValue, copy] using nameFrame.2
-  · simpa [rowDestination, definitionValue, copy] using temporary
   · simpa [inputOutput, rowDestination, definitionValue, copy, nameFrame.1] using tail
 
 private theorem ProducerScope.cons_binary_definition
@@ -420,7 +491,6 @@ private theorem ProducerScope.cons_binary_definition
     (leftAccepted : Backend.Native.argument state raw "a" = .ok leftFact)
     (rightAccepted : Backend.Native.argument state raw "b" = .ok rightFact)
     (defined : Backend.Native.defineResult state raw fact = .ok next)
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows) (row :: rows) := by
   obtain ⟨names, absent⟩ := defineResult_names destinationField defined
@@ -430,7 +500,6 @@ private theorem ProducerScope.cons_binary_definition
     exact (List.mem_append.mp used).elim (argument_identifiers leftAccepted leftField name)
       (argument_identifiers rightAccepted rightField name)
   · simpa [input, definedName] using absent
-  · simpa [definedName] using temporary
   · simpa [input, definedName, names] using tail
 
 theorem ProducerScope.cons_validated_add {expected : Backend.Native.Expected}
@@ -440,7 +509,6 @@ theorem ProducerScope.cons_validated_add {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "add")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.add left right destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.add left right destination) :: rows) := by
@@ -449,7 +517,7 @@ theorem ProducerScope.cons_validated_add {expected : Backend.Native.Expected}
   obtain ⟨_, _, _, leftAccepted, rightAccepted, _, _, _, defined⟩ :=
     ScalarValidationArithmeticLoop.accepted_add_components nativeDefinitions opcode accepted
   exact ProducerScope.cons_binary_definition rfl rfl rfl leftField rightField destinationField
-    leftAccepted rightAccepted defined temporary tail
+    leftAccepted rightAccepted defined tail
 
 theorem ProducerScope.cons_validated_mul {expected : Backend.Native.Expected}
     {state next : Backend.Native.State} {raw : Json} {left right : Operand} {destination : String}
@@ -458,7 +526,6 @@ theorem ProducerScope.cons_validated_mul {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "mul")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.mul left right destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.mul left right destination) :: rows) := by
@@ -467,7 +534,7 @@ theorem ProducerScope.cons_validated_mul {expected : Backend.Native.Expected}
   obtain ⟨_, _, _, leftAccepted, rightAccepted, _, _, _, defined⟩ :=
     ScalarValidationArithmeticLoop.accepted_mul_components nativeDefinitions opcode accepted
   exact ProducerScope.cons_binary_definition rfl rfl rfl leftField rightField destinationField
-    leftAccepted rightAccepted defined temporary tail
+    leftAccepted rightAccepted defined tail
 
 private theorem refine_names {state next : Backend.Native.State} {operand : String}
     {maximum : Nat} (accepted : Backend.Native.refine state operand maximum = .ok next) :
@@ -534,7 +601,6 @@ theorem ProducerScope.cons_validated_constrain_eq {expected : Backend.Native.Exp
       (argument_identifiers acceptedLeft decodedLeft name)
       (argument_identifiers acceptedRight decodedRight name)
   · simp [inputOutput, noneDestination]
-  · simp [noneDestination]
   · simpa [inputOutput, noneDestination, names] using tail
 
 theorem ProducerScope.cons_validated_impact {expected : Backend.Native.Expected}
@@ -552,7 +618,6 @@ theorem ProducerScope.cons_validated_impact {expected : Backend.Native.Expected}
   apply ProducerScope.cons
   · exact references
   · simp [inputOutput, rowDestination, definitionValue]
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, sameDefinitions] using tail
 
 theorem ProducerScope.cons_validated_output {expected : Backend.Native.Expected}
@@ -571,7 +636,6 @@ theorem ProducerScope.cons_validated_output {expected : Backend.Native.Expected}
   apply ProducerScope.cons
   · exact references
   · simp [inputOutput, rowDestination, definitionValue]
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue] using tail
 
 theorem ProducerScope.cons_validated_publicInput {expected : Backend.Native.Expected}
@@ -590,7 +654,6 @@ theorem ProducerScope.cons_validated_publicInput {expected : Backend.Native.Expe
     obtain ⟨fact, lookup⟩ := references name used
     exact List.mem_map_of_mem (ScalarValidationMeaning.lookup_member lookup)
   · simpa [inputOutput, rowDestination, definitionValue] using absent_from_definition_names absent
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, appended] using tail
 
 theorem ProducerScope.cons_validated_privateInput {expected : Backend.Native.Expected}
@@ -632,7 +695,6 @@ theorem ProducerScope.cons_validated_privateInput {expected : Backend.Native.Exp
   apply ProducerScope.cons
   · simp [rowReferences, instructionReferences]
   · simpa [inputOutput, rowDestination, definitionValue] using defined.2
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, defined.1] using tail
 
 private theorem decoded_testEq_arguments {raw : Json} {left right : Operand} {output : String}
@@ -665,7 +727,6 @@ theorem ProducerScope.cons_validated_neg {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "neg")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.neg value destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.neg value destination) :: rows) := by
@@ -680,7 +741,6 @@ theorem ProducerScope.cons_validated_neg {expected : Backend.Native.Expected}
       simpa [rowReferences, instructionReferences] using used
     exact argument_identifiers valueAccepted valueField name present
   · simpa [inputOutput, rowDestination, definitionValue] using absent
-  · simpa [rowDestination, definitionValue] using temporary
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 theorem ProducerScope.cons_validated_not {expected : Backend.Native.Expected}
@@ -690,7 +750,6 @@ theorem ProducerScope.cons_validated_not {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "not")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.not value destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.not value destination) :: rows) := by
@@ -705,7 +764,6 @@ theorem ProducerScope.cons_validated_not {expected : Backend.Native.Expected}
       simpa [rowReferences, instructionReferences] using used
     exact argument_identifiers valueAccepted valueField name present
   · simpa [inputOutput, rowDestination, definitionValue] using absent
-  · simpa [rowDestination, definitionValue] using temporary
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 theorem ProducerScope.cons_validated_testEq {expected : Backend.Native.Expected}
@@ -715,7 +773,6 @@ theorem ProducerScope.cons_validated_testEq {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "test_eq")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.testEq left right destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.testEq left right destination) :: rows) := by
@@ -724,7 +781,7 @@ theorem ProducerScope.cons_validated_testEq {expected : Backend.Native.Expected}
   obtain ⟨_, _, _, leftAccepted, rightAccepted, _, _, _, defined⟩ :=
     ScalarValidationArithmeticLoop.accepted_testEq_components nativeDefinitions opcode accepted
   exact ProducerScope.cons_binary_definition rfl rfl rfl leftField rightField destinationField
-    leftAccepted rightAccepted defined temporary tail
+    leftAccepted rightAccepted defined tail
 
 theorem ProducerScope.cons_validated_select {expected : Backend.Native.Expected}
     {state next : Backend.Native.State} {raw : Json} {condition yes no : Operand}
@@ -733,7 +790,6 @@ theorem ProducerScope.cons_validated_select {expected : Backend.Native.Expected}
     (opcode : Backend.Native.stringField raw "op" = .ok "cond_select")
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok (.strict (.select condition yes no destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.select condition yes no destination) :: rows) := by
@@ -755,7 +811,6 @@ theorem ProducerScope.cons_validated_select {expected : Backend.Native.Expected}
       · exact argument_identifiers yesAccepted yesField name yesPresent
     · exact argument_identifiers noAccepted noField name noPresent
   · simpa [inputOutput, rowDestination, definitionValue] using absent
-  · simpa [rowDestination, definitionValue] using temporary
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 private theorem guarded_row_nativeDefinitions {expected : Backend.Native.Expected}
@@ -783,12 +838,6 @@ private theorem guarded_row_nativeDefinitions {expected : Backend.Native.Expecte
     · have same := List.mem_singleton.mp added
       cases same
       rfl
-
-/-- Defining non-input rows use a separate temporary namespace. Producer
-freshness alone does not distinguish temporary names from unused seed names. -/
-def TemporaryNamespace (items : List Json) (rows : List Row) : Prop :=
-  ∀ pair ∈ items.zip rows, ∀ destination ∈ (rowDestination pair.1 pair.2).toList,
-    destination.startsWith "%input_" = false
 
 private theorem decodedBooleanField {raw : Json} {value : Operand}
     (opcode : Backend.Native.stringField raw "op" = .ok "constrain_to_boolean")
@@ -896,7 +945,6 @@ theorem ProducerScope.cons_validated_boolean {expected : Backend.Native.Expected
   · simpa [rowReferences, instructionReferences] using
       argument_identifiers valueAccepted decodedValue
   · simp [inputOutput, rowDestination, definitionValue]
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 theorem ProducerScope.cons_validated_bits {expected : Backend.Native.Expected}
@@ -933,7 +981,6 @@ theorem ProducerScope.cons_validated_bits {expected : Backend.Native.Expected}
   · simpa [rowReferences, instructionReferences] using
       argument_identifiers valueAccepted decodedValue
   · simp [inputOutput, rowDestination, definitionValue]
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 theorem ProducerScope.cons_validated_assert {expected : Backend.Native.Expected}
@@ -975,7 +1022,6 @@ theorem ProducerScope.cons_validated_assert {expected : Backend.Native.Expected}
   · simpa [rowReferences, instructionReferences] using
       argument_identifiers factArgument.1 decodedCondition
   · simp [inputOutput, rowDestination, definitionValue]
-  · simp [rowDestination, definitionValue]
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 private theorem ProducerScope.decoded_lessThan_fields {raw : Json} {left right : Operand}
     {bits : Nat} {output : String}
@@ -1016,7 +1062,6 @@ theorem ProducerScope.cons_validated_lessThan {expected : Backend.Native.Expecte
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : GuardedScalarRows.decodeRow raw =
       .ok (.strict (.lessThan left right bits destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.lessThan left right bits destination) :: rows) := by
@@ -1026,7 +1071,7 @@ theorem ProducerScope.cons_validated_lessThan {expected : Backend.Native.Expecte
   obtain ⟨_, _, _, _, _, _, leftAccepted, rightAccepted, _, _, _, _, defined⟩ :=
     RangeDedupComparisonMeaning.acceptedLessThanDefinition opcode accepted
   exact ProducerScope.cons_binary_definition rfl rfl rfl leftField rightField
-    destinationField leftAccepted rightAccepted defined temporary tail
+    destinationField leftAccepted rightAccepted defined tail
 
 theorem ProducerScope.cons_validated_hash {expected : Backend.Native.Expected}
     {state next : Backend.Native.State} {raw : Json}
@@ -1036,7 +1081,6 @@ theorem ProducerScope.cons_validated_hash {expected : Backend.Native.Expected}
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : GuardedScalarRows.decodeRow raw =
       .ok (.strict (.hash values destination)))
-    (temporary : destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawRows rows) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawRows)
       (.strict (.hash values destination) :: rows) := by
@@ -1050,7 +1094,6 @@ theorem ProducerScope.cons_validated_hash {expected : Backend.Native.Expected}
   apply ProducerScope.cons
   · simpa [rowReferences, instructionReferences] using references
   · simpa [inputOutput, rowDestination, definitionValue] using absent
-  · simpa [rowDestination, definitionValue] using temporary
   · simpa [inputOutput, rowDestination, definitionValue, names] using tail
 
 private theorem ProducerScope.cons_validated
@@ -1060,8 +1103,6 @@ private theorem ProducerScope.cons_validated
     (typed : ScalarValidationArithmeticLoop.NativeDefinitions state)
     (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
     (decoded : decodeRow raw = .ok row)
-    (temporary : ∀ destination ∈ (rowDestination raw row).toList,
-      destination.startsWith "%input_" = false)
     (tail : ProducerScope (next.definitions.map Prod.fst) rawTail rowTail) :
     ProducerScope (state.definitions.map Prod.fst) (raw :: rawTail) (row :: rowTail) := by
   cases row with
@@ -1070,10 +1111,6 @@ private theorem ProducerScope.cons_validated
   | impact guard values =>
     exact ProducerScope.cons_validated_impact accepted decoded tail
   | strict instruction =>
-    have temporaryName (destination : String)
-        (defined : rowDestination raw (.strict instruction) = some destination) :
-        destination.startsWith "%input_" = false :=
-      temporary destination (by simp [defined])
     obtain ⟨step, notImpact⟩ := decodeRow_strict decoded
     cases step.supported with
     | publicInput _ opcode =>
@@ -1081,37 +1118,26 @@ private theorem ProducerScope.cons_validated
     | privateInput _ opcode =>
       exact ProducerScope.cons_validated_privateInput inputSchema opcode accepted decoded tail
     | add _ _ destination opcode =>
-      exact ProducerScope.cons_validated_add typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_add typed opcode accepted decoded tail
     | mul _ _ destination opcode =>
-      exact ProducerScope.cons_validated_mul typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_mul typed opcode accepted decoded tail
     | neg _ destination opcode =>
-      exact ProducerScope.cons_validated_neg typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_neg typed opcode accepted decoded tail
     | lessThan _ _ _ destination opcode =>
-      exact ProducerScope.cons_validated_lessThan opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_lessThan opcode accepted decoded tail
     | testEq _ _ destination opcode =>
-      exact ProducerScope.cons_validated_testEq typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_testEq typed opcode accepted decoded tail
     | hash _ destination opcode =>
-      exact ProducerScope.cons_validated_hash opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_hash opcode accepted decoded tail
     | not _ destination opcode =>
-      exact ProducerScope.cons_validated_not typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_not typed opcode accepted decoded tail
     | select _ _ _ destination opcode =>
-      exact ProducerScope.cons_validated_select typed opcode accepted decoded
-        (temporaryName destination rfl) tail
+      exact ProducerScope.cons_validated_select typed opcode accepted decoded tail
     | bits _ _ _ => exact ProducerScope.cons_validated_bits accepted decoded tail
     | boolean _ _ => exact ProducerScope.cons_validated_boolean accepted decoded tail
     | assertion _ _ => exact ProducerScope.cons_validated_assert accepted decoded tail
     | copy _ destination opcode =>
-      exact ProducerScope.cons_validated_copy typed opcode accepted decoded
-        (temporaryName destination (by
-          simp [rowDestination, definitionValue, isCopy,
-            ScalarValidationMeaning.nativeJson_stringField_eq, opcode])) tail
+      exact ProducerScope.cons_validated_copy typed opcode accepted decoded tail
     | impact _ _ opcode => exact False.elim (notImpact opcode)
     | output _ opcode => exact ProducerScope.cons_validated_output opcode accepted decoded tail
     | constrainEq _ _ opcode =>
@@ -1125,8 +1151,7 @@ theorem ProducerScope.of_validation_loop
     (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
     (initialTyped : ScalarValidationArithmeticLoop.NativeDefinitions initial)
     (decoded : (items.map Prod.fst).mapM decodeRow = .ok rows)
-    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final)
-    (temporary : TemporaryNamespace (items.map Prod.fst) rows) :
+    (accepted : Backend.Native.validateInstructionLoop expected items initial = .ok final) :
     ProducerScope (initial.definitions.map Prod.fst) (items.map Prod.fst) rows := by
   induction items generalizing initial final rows with
   | nil =>
@@ -1144,12 +1169,8 @@ theorem ProducerScope.of_validation_loop
     | ok next =>
       simp only [checked, bind_pure_comp] at accepted
       have nextTyped := guarded_row_nativeDefinitions inputSchema initialTyped checked head
-      have tailNamespace : TemporaryNamespace (items.map Prod.fst) rest := by
-        intro pair present name defined
-        exact temporary pair (List.mem_cons_of_mem (raw, row) present) name defined
       exact ProducerScope.cons_validated inputSchema initialTyped checked head
-        (temporary (raw, row) (List.mem_cons_self ..))
-        (ih nextTyped restDecoded accepted tailNamespace)
+        (ih nextTyped restDecoded accepted)
 
 private theorem inputOutputs_cursor_noninput
     {expected : Backend.Native.Expected} {raw : Json}
@@ -1283,78 +1304,203 @@ theorem inputOutputs_eq_expectedInputs
   rw [initialInputCount, finalInputCount, List.take_length, List.take_zero] at sequence
   simpa using sequence.symm
 
-private def FramedAssignment (seed : Assignment) :=
-  { witness : Assignment // ∀ name, witness ("%input_" ++ name) = seed ("%input_" ++ name) }
+def FramedAssignment (seed : Assignment) (protectedNames : List String) :=
+  { output : Assignment // ∀ name ∈ protectedNames, output name = seed name }
 
-private theorem inputName_startsWith (name : String) :
-    ("%input_" ++ name).startsWith "%input_" = true := by
-  apply String.startsWith_string_iff.mpr
-  rw [String.toList_append]
-  have marker : "%input_".toList = ['%', 'i', 'n', 'p', 'u', 't', '_'] := by decide
-  rw [marker]
-  exact ⟨name.toList, rfl⟩
-
-private theorem different_from_inputName (output name : String)
-    (notInput : output.startsWith "%input_" = false) :
-    output ≠ "%input_" ++ name := by
-  intro same
-  have starts := congrArg (fun value : String => value.startsWith "%input_") same
-  simp [notInput, inputName_startsWith] at starts
-
-/-- `registered` begins with all caller-supplied arguments and all row input
-outputs. Their values already exist in `seed`, so the order check applies to
-SSA temporaries introduced by defining rows. -/
-private def assembleRows (hash : Hash) (seed : Assignment)
+/-- The running registered list starts with every protected name. Each row
+checks reads and definitions against that eager list before assigning. -/
+private def assembleRows (hash : Hash) (seed : Assignment) (protectedNames : List String)
     (rawRows : List Json) (rows : List Row) (registered : List String)
-    (state : FramedAssignment seed) : Except String (FramedAssignment seed) := do
+    (protectedRegistered : ∀ name ∈ protectedNames, name ∈ registered)
+    (state : FramedAssignment seed protectedNames) :
+    Except String (FramedAssignment seed protectedNames) := do
   match rawRows, rows with
   | [], [] => pure state
   | raw :: rawTail, row :: rowTail => do
-      ensure ((rowReferences raw row).all registered.contains)
+      let _ ← ensure ((rowReferences raw row).all registered.contains)
         "native scalar row references a name before definition"
       match definitionValue hash raw state.1 row with
-      | none => assembleRows hash seed rawTail rowTail registered state
+      | none =>
+          assembleRows hash seed protectedNames rawTail rowTail registered protectedRegistered state
       | some (destination, value) =>
-          if registered.contains destination then
-            throw "repeated native scalar definition"
-          if notInput : destination.startsWith "%input_" = false then
-            let nextState : FramedAssignment seed := ⟨
+          if notRegistered : registered.contains destination = false then
+            have destinationFresh : destination ∉ registered := by
+              intro present
+              have contains := List.contains_iff_mem.mpr present
+              rw [notRegistered] at contains
+              cases contains
+            let nextState : FramedAssignment seed protectedNames := ⟨
               ScalarWitness.assign state.1 destination value,
               by
-                intro name
-                have destinationDifferent : destination ≠ "%input_" ++ name :=
-                  different_from_inputName destination name notInput
+                intro name protectedMem
+                have nameRegistered := protectedRegistered name protectedMem
+                have nameDifferent : name ≠ destination := by
+                  intro same
+                  apply destinationFresh
+                  simpa [same] using nameRegistered
                 calc
-                  ScalarWitness.assign state.1 destination value ("%input_" ++ name) =
-                      state.1 ("%input_" ++ name) :=
-                    ScalarWitness.assign_other state.1 destination ("%input_" ++ name)
-                      value destinationDifferent.symm
-                  _ = seed ("%input_" ++ name) := state.2 name⟩
-            assembleRows hash seed rawTail rowTail (destination :: registered) nextState
-          else throw "native scalar definition overwrites a preseeded input"
+                  ScalarWitness.assign state.1 destination value name = state.1 name :=
+                    ScalarWitness.assign_other state.1 destination name value nameDifferent
+                  _ = seed name := state.2 name protectedMem⟩
+            assembleRows hash seed protectedNames rawTail rowTail (destination :: registered)
+              (fun name protectedMem => List.mem_cons_of_mem destination
+                (protectedRegistered name protectedMem)) nextState
+          else
+            throw "repeated native scalar definition"
   | _, _ => throw "decoded native scalar row count mismatch"
+
+/-- A completed fold preserves the registered prefix and records each actual
+definition. Later rows preserve the current destination and its predecessor
+operands because `Scope` admits only fresh definitions after their inputs. -/
+private theorem assembleRows_definition_equations (hash : Hash) (seed : Assignment)
+    {protectedNames registered : List String} {rawRows : List Json} {rows : List Row}
+    {finalNames : List String}
+    (scope : Scope registered rawRows rows finalNames)
+    (protectedRegistered : ∀ name ∈ protectedNames, name ∈ registered)
+    (initial : FramedAssignment seed protectedNames) {output : FramedAssignment seed protectedNames}
+    (assembled : assembleRows hash seed protectedNames rawRows rows registered
+      protectedRegistered initial = .ok output) :
+    (∀ name ∈ registered, output.val name = initial.val name) ∧
+      DefinitionEquations hash output.val rawRows rows := by
+  induction scope generalizing initial output with
+  | nil =>
+    have outputEq : output = initial := by
+      simpa [assembleRows, Pure.pure, Except.pure] using assembled.symm
+    subst output
+    constructor
+    · intro name _
+      rfl
+    · unfold DefinitionEquations
+      simp
+  | @cons registered raw row rawTail rowTail finalNames references fresh tail ih =>
+    have referenced : ((rowReferences raw row).all registered.contains) = true := by
+      apply List.all_eq_true.mpr
+      intro name present
+      exact List.contains_iff_mem.mpr (references name present)
+    cases defined : definitionValue hash raw initial.val row with
+    | none =>
+      have destinationEq : rowDestination raw row = none := by
+        rw [← definition_destination hash initial.val, defined]
+        rfl
+      simp only [destinationEq, Option.toList_none, List.nil_append] at ih
+      have tailAssembled :
+          assembleRows hash seed protectedNames rawTail rowTail registered
+            protectedRegistered initial = .ok output := by
+        simpa [assembleRows, referenced, defined, ensure, Bind.bind, Except.bind] using assembled
+      have tailEquations := ih protectedRegistered initial tailAssembled
+      constructor
+      · exact tailEquations.1
+      · unfold DefinitionEquations
+        intro pair present destination value pairDefined
+        change pair ∈ (raw, row) :: rawTail.zip rowTail at present
+        rcases List.mem_cons.mp present with head | later
+        · cases head
+          have referencesAgree : ∀ name ∈ rowReferences raw row,
+              initial.val name = output.val name := by
+            intro name used
+            exact (tailEquations.1 name (references name used)).symm
+          have valueAgrees := definitionValue_agrees (hash := hash) (raw := raw) (row := row)
+            (left := initial.val) (right := output.val) referencesAgree
+          have outputNone : definitionValue hash raw output.val row = none := by
+            rw [← valueAgrees]
+            exact defined
+          rw [outputNone] at pairDefined
+          cases pairDefined
+        · exact tailEquations.2 pair later destination value pairDefined
+    | some pair =>
+      rcases pair with ⟨destination, value⟩
+      have destinationEq : rowDestination raw row = some destination := by
+        rw [← definition_destination hash initial.val, defined]
+        rfl
+      have admitted := fresh destination (by simp [destinationEq])
+      let next : FramedAssignment seed protectedNames := ⟨assign initial.val destination value, by
+        intro name protectedMem
+        have present := protectedRegistered name protectedMem
+        have different : name ≠ destination := by
+          intro same
+          exact admitted (same ▸ present)
+        rw [assign_other _ _ _ _ different]
+        exact initial.property name protectedMem⟩
+      have nextProtectedRegistered :
+          ∀ name ∈ protectedNames, name ∈ destination :: registered := by
+        intro name protectedMem
+        exact List.mem_cons_of_mem destination (protectedRegistered name protectedMem)
+      have notRegistered : registered.contains destination = false := by
+        cases contains : registered.contains destination with
+        | false => rfl
+        | true =>
+          have present := List.contains_iff_mem.mp contains
+          exact False.elim (admitted present)
+      simp only [destinationEq, Option.toList_some, List.singleton_append] at ih
+      have tailAssembled :
+          assembleRows hash seed protectedNames rawTail rowTail (destination :: registered)
+            nextProtectedRegistered next = .ok output := by
+        simpa [assembleRows, referenced, defined, notRegistered, admitted, ensure,
+          Bind.bind, Except.bind, next] using assembled
+      have tailEquations := ih nextProtectedRegistered next tailAssembled
+      constructor
+      · intro name present
+        have tailPreserves := tailEquations.1 name (List.mem_cons_of_mem _ present)
+        have different : name ≠ destination := by
+          intro same
+          exact admitted (same ▸ present)
+        calc
+          output.val name = next.val name := tailPreserves
+          _ = initial.val name := assign_other initial.val destination name value different
+      · unfold DefinitionEquations
+        intro pair present foundDestination foundValue pairDefined
+        change pair ∈ (raw, row) :: rawTail.zip rowTail at present
+        rcases List.mem_cons.mp present with head | later
+        · cases head
+          have referencesAgree : ∀ name ∈ rowReferences raw row,
+              initial.val name = output.val name := by
+            intro name used
+            have tailPreserves :=
+              tailEquations.1 name (List.mem_cons_of_mem destination (references name used))
+            have different : name ≠ destination := by
+              intro same
+              exact admitted (same ▸ references name used)
+            calc
+              initial.val name = next.val name :=
+                (assign_other initial.val destination name value different).symm
+              _ = output.val name := tailPreserves.symm
+          have currentDefinition :
+              definitionValue hash raw output.val row = some (destination, value) := by
+            rw [← definitionValue_agrees (hash := hash) (raw := raw) (row := row)
+              (left := initial.val) (right := output.val) referencesAgree]
+            exact defined
+          have samePair : (destination, value) = (foundDestination, foundValue) :=
+            Option.some.inj (currentDefinition.symm.trans pairDefined)
+          cases samePair
+          calc
+            output.val destination = next.val destination :=
+              tailEquations.1 destination (List.mem_cons_self ..)
+            _ = value := assign_same initial.val destination value
+        · exact tailEquations.2 pair later foundDestination foundValue pairDefined
 
 /-- Build witness values for guarded scalar rows. Header arguments and all row
 input outputs read from the seed assignment. Defining scalar opcodes extend the
 assignment in row order; constraint and observation rows leave it unchanged. -/
 def assemble (hash : NativeRelation.Hash) (seed : NativeRelation.Assignment)
-    (arguments : List String) (rawRows : List Lean.Json) :
-    Except String { output : NativeRelation.Assignment //
-      ∀ name, output ("%input_" ++ name) = seed ("%input_" ++ name) } := do
+    (arguments : List String) (rawRows : List Lean.Json) (rows : List Row) :
+    Except String (FramedAssignment seed (arguments ++ inputOutputs rows)) := do
   ensure (arguments.all validIdentifier) "invalid scalar call input identifier"
-  let rows ← rawRows.mapM GuardedScalarRows.decodeRow
-  let seededRows := inputOutputs rows
-  let registered := arguments ++ seededRows
+  let protectedNames := arguments ++ inputOutputs rows
+  let registered := protectedNames
   ensure (registered.eraseDups.length == registered.length)
     "native scalar input names collide or repeat"
-  let initial : FramedAssignment seed := ⟨seed, by intro name; rfl⟩
-  assembleRows hash seed rawRows rows registered initial
+  let initial : FramedAssignment seed protectedNames := ⟨seed, by intro name _; rfl⟩
+  assembleRows hash seed protectedNames rawRows rows registered (fun _ present => present) initial
 
 private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
-    {registered : List String} {rawRows : List Json} {rows : List Row} {finalNames : List String}
-    (scope : Scope registered rawRows rows finalNames) (initial : FramedAssignment seed) :
-    ∃ witness : FramedAssignment seed,
-      assembleRows hash seed rawRows rows registered initial = .ok witness ∧
+    {protectedNames registered : List String} {rawRows : List Json} {rows : List Row}
+    {finalNames : List String}
+    (scope : Scope registered rawRows rows finalNames)
+    (protectedRegistered : ∀ name ∈ protectedNames, name ∈ registered)
+    (initial : FramedAssignment seed protectedNames) :
+    ∃ witness : FramedAssignment seed protectedNames,
+      assembleRows hash seed protectedNames rawRows rows registered protectedRegistered initial =
+        .ok witness ∧
       ∀ target : Assignment,
         (∀ name ∈ registered, initial.val name = target name) →
         (∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction) →
@@ -1363,7 +1509,8 @@ private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
           (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) →
         ∀ name ∈ finalNames, witness.val name = target name := by
   induction scope generalizing initial with
-  | nil => exact ⟨initial, rfl, fun _ agrees _ _ => agrees⟩
+  | nil => exact ⟨initial, by simp [assembleRows, Pure.pure, Except.pure],
+    fun _ agrees _ _ => agrees⟩
   | @cons registered raw row rawTail rowTail finalNames refs fresh tail ih =>
     have referenced : ((rowReferences raw row).all registered.contains) = true := by
       apply List.all_eq_true.mpr
@@ -1375,7 +1522,7 @@ private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
         rw [← definition_destination hash initial.val, defined]
         rfl
       simp only [destinationEq, Option.toList_none, List.nil_append] at ih
-      obtain ⟨witness, runs, agrees⟩ := ih initial
+      obtain ⟨witness, runs, agrees⟩ := ih protectedRegistered initial
       refine ⟨witness, ?_, fun target seedAgreement holds widths => agrees target seedAgreement
         (fun instruction present => holds instruction (List.mem_cons_of_mem _ present))
         (fun left right width destination present =>
@@ -1387,14 +1534,23 @@ private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
         rw [← definition_destination hash initial.val, defined]
         rfl
       have admitted := fresh destination (by simp [destinationEq])
-      let next : FramedAssignment seed := ⟨assign initial.val destination value, by
-        intro name
-        rw [assign_other _ _ _ _ (different_from_inputName destination name admitted.2).symm]
-        exact initial.property name⟩
+      let next : FramedAssignment seed protectedNames := ⟨assign initial.val destination value, by
+        intro name protectedMem
+        have protectedWasRegistered := protectedRegistered name protectedMem
+        have nameDifferent : name ≠ destination := by
+          intro same
+          apply admitted
+          simpa [same] using protectedWasRegistered
+        rw [assign_other _ _ _ _ nameDifferent]
+        exact initial.property name protectedMem⟩
       simp only [destinationEq, Option.toList_some, List.singleton_append] at ih
-      obtain ⟨witness, runs, agrees⟩ := ih next
+      have nextProtectedRegistered :
+          ∀ name ∈ protectedNames, name ∈ destination :: registered := by
+        intro name protectedMem
+        exact List.mem_cons_of_mem destination (protectedRegistered name protectedMem)
+      obtain ⟨witness, runs, agrees⟩ := ih nextProtectedRegistered next
       refine ⟨witness, ?_, ?_⟩
-      · simpa [assembleRows, referenced, defined, admitted.1, admitted.2, next,
+      · simpa [assembleRows, referenced, defined, admitted, next,
           ensure, Bind.bind, Except.bind] using runs
       · intro target seedAgreement holds widths
         have targetDefined : definitionValue hash raw target row = some (destination, value) := by
@@ -1412,7 +1568,7 @@ private theorem assembleRows_of_scope (hash : Hash) (seed : Assignment)
           exact (assign_same initial.val destination value).trans outputEq.symm
         · have different : name ≠ destination := by
             intro same
-            exact admitted.1 (same ▸ present)
+            exact admitted (same ▸ present)
           exact (assign_other initial.val destination name value different).trans (seedAgreement name present)
 
 /-- Once the decoded names and ordering are valid, the assembler produces an
@@ -1420,25 +1576,61 @@ assignment for any seed. An independently satisfying extension determines
 the resulting values on all names in the validated scope. -/
 theorem assemble_with_scope (hash : Hash) (seed : Assignment)
     (arguments : List String) (rawRows : List Json) (rows : List Row) (finalNames : List String)
-    (decoded : rawRows.mapM GuardedScalarRows.decodeRow = .ok rows)
     (validArguments : arguments.all validIdentifier = true)
     (distinctInputs : (arguments ++ inputOutputs rows).eraseDups.length =
       (arguments ++ inputOutputs rows).length)
     (scope : Scope (arguments ++ inputOutputs rows) rawRows rows finalNames) :
-    ∃ witness : FramedAssignment seed,
-      assemble hash seed arguments rawRows = .ok witness ∧
+    ∃ witness : FramedAssignment seed (arguments ++ inputOutputs rows),
+      assemble hash seed arguments rawRows rows = .ok witness ∧
       ∀ target : Assignment,
         (∀ name ∈ arguments ++ inputOutputs rows, seed name = target name) →
         (∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction) →
         (∀ left right width destination, .strict (.lessThan left right width destination) ∈ rows →
           (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) →
         ∀ name ∈ finalNames, witness.val name = target name := by
-  obtain ⟨witness, runs, agreement⟩ := assembleRows_of_scope hash seed scope ⟨seed, fun _ => rfl⟩
+  let protectedNames := arguments ++ inputOutputs rows
+  let protectedRegistered : ∀ name ∈ protectedNames, name ∈ protectedNames :=
+    fun _ present => present
+  let initial : FramedAssignment seed protectedNames := ⟨seed, by intro name _; rfl⟩
+  obtain ⟨witness, runs, agreement⟩ :=
+    assembleRows_of_scope hash seed scope protectedRegistered initial
   have noCollision : ((arguments ++ inputOutputs rows).eraseDups.length ==
       (arguments ++ inputOutputs rows).length) = true := by simp [distinctInputs]
-  refine ⟨witness, ?_, agreement⟩
-  simpa only [assemble, validArguments, decoded, noCollision, ensure, ite_true,
-    Bind.bind, Except.bind, FramedAssignment] using runs
+  refine ⟨witness, ?_, ?_⟩
+  · simpa only [assemble, protectedNames, initial, protectedRegistered,
+      validArguments, noCollision, ensure, ite_true, Bind.bind, Except.bind] using runs
+  · simpa [initial] using agreement
+
+/-- A successful scoped assembly preserves its eagerly registered seed names
+and satisfies the equation for every row definition. -/
+theorem assemble_definition_equations (hash : Hash) (seed : Assignment)
+    (arguments : List String) (rawRows : List Json) (rows : List Row)
+    (finalNames : List String)
+    (validArguments : arguments.all validIdentifier = true)
+    (distinctInputs : (arguments ++ inputOutputs rows).eraseDups.length =
+      (arguments ++ inputOutputs rows).length)
+    (scope : Scope (arguments ++ inputOutputs rows) rawRows rows finalNames)
+    {output : FramedAssignment seed (arguments ++ inputOutputs rows)}
+    (assembled : assemble hash seed arguments rawRows rows = .ok output) :
+    (∀ name ∈ arguments ++ inputOutputs rows, output.val name = seed name) ∧
+      DefinitionEquations hash output.val rawRows rows := by
+  let protectedNames := arguments ++ inputOutputs rows
+  let protectedRegistered : ∀ name ∈ protectedNames, name ∈ protectedNames :=
+    fun _ present => present
+  let initial : FramedAssignment seed protectedNames := ⟨seed, by intro name _; rfl⟩
+  have noCollision : ((arguments ++ inputOutputs rows).eraseDups.length ==
+      (arguments ++ inputOutputs rows).length) = true := by simp [distinctInputs]
+  have innerAssembled :
+      assembleRows hash seed protectedNames rawRows rows protectedNames
+        protectedRegistered initial = .ok output := by
+    simpa only [assemble, protectedNames, protectedRegistered, initial, validArguments,
+      noCollision, ensure, ite_true, Bind.bind, Except.bind] using assembled
+  have equations := assembleRows_definition_equations hash seed scope
+    protectedRegistered initial innerAssembled
+  constructor
+  · intro name present
+    simpa [initial] using equations.1 name present
+  · exact equations.2
 
 /-- Replay the exact guarded scalar rows from the runtime seed. Given an
 ordered scope and an independent satisfying assignment with the checked
@@ -1446,7 +1638,6 @@ comparison widths, assembly reconstructs its values on all defined names
 and preserves every ordinary constraint. -/
 theorem assemble_of_scope (hash : Hash) (seed target : Assignment)
     (arguments : List String) (rawRows : List Json) (rows : List Row) (finalNames : List String)
-    (decoded : rawRows.mapM GuardedScalarRows.decodeRow = .ok rows)
     (validArguments : arguments.all validIdentifier = true)
     (distinctInputs : (arguments ++ inputOutputs rows).eraseDups.length =
       (arguments ++ inputOutputs rows).length)
@@ -1455,12 +1646,12 @@ theorem assemble_of_scope (hash : Hash) (seed target : Assignment)
     (holds : ∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash target instruction)
     (widths : ∀ left right width destination, .strict (.lessThan left right width destination) ∈ rows →
       (left.read target).val < 2 ^ width ∧ (right.read target).val < 2 ^ width) :
-    ∃ (witness : FramedAssignment seed),
-      assemble hash seed arguments rawRows = .ok witness ∧
+    ∃ (witness : FramedAssignment seed (arguments ++ inputOutputs rows)),
+      assemble hash seed arguments rawRows rows = .ok witness ∧
       (∀ name ∈ finalNames, witness.val name = target name) ∧
       ∀ instruction, .strict instruction ∈ rows → Instruction.Holds hash witness.val instruction := by
   obtain ⟨witness, runs, agrees⟩ :=
-    assemble_with_scope hash seed arguments rawRows rows finalNames decoded validArguments
+    assemble_with_scope hash seed arguments rawRows rows finalNames validArguments
       distinctInputs scope
   have agreement := agrees target inputsAgree holds widths
   refine ⟨witness, runs, agreement, ?_⟩

@@ -270,15 +270,13 @@ theorem source_call_build_of_satisfying_extension (state : List StateDecl)
     (values result : EvalEnv)
     (initial next : LedgerState) (slots : List Slot) (bytes : ArtifactBytes.Bytes)
     (rewrites : Zkir.Rewrites) (json : Lean.Json)
-    (view : GuardedZkirArtifact.View) (rawRows : Array Lean.Json)
+    (view : GuardedZkirArtifact.View)
     (inputTypes : ∀ input ∈ sourceEntry.circuit.inputs, Nonempty (ScalarType input.ty))
     (admittedState : GenericStateEncoding.AdmittedState state initial slots)
     (emitted : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
     (parsed : (ArtifactBytes.parse bytes).map Lean.Json.compress = .ok json.compress)
     (artifact : GuardedZkirArtifact.check bytes json = .ok view.rows)
     (pinned : GuardedZkirArtifact.decodeView json = .ok view)
-    (raw : Native.arrayField json "instructions" = .ok rawRows)
-    (temporary : GuardedScalarWitnessAssembly.TemporaryNamespace rawRows.toList view.rows)
     (admitted : ScalarCircuitAdmission sourceEntry.circuit)
     (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
     (guards : ∀ (condition : Expr .bool), some condition ∈ sourceEntry.effectGuards →
@@ -364,12 +362,66 @@ theorem source_call_build_of_satisfying_extension (state : List StateDecl)
     obtain ⟨name, identifier, present⟩ := inputSources requirement required
     rw [identifier]
     exact (sourceAgreement name present).symm
+  obtain ⟨rawRows, raw, _⟩ := GuardedZkirArtifact.decodeView_rows pinned
   obtain ⟨_, built, _, assembled, _, _⟩ := GuardedScalarWitness.build_of_lowered_scalar_artifact
     hash seed target state sourceEntry rewrites shape json bytes
     ⟨operations.flatMap ImpactStatementScalar.opFields, finalReads.map Cell.value⟩ view rawRows
-    emitted expectedAccepted schema parsed artifact pinned raw temporary inputAgreement
+    emitted expectedAccepted schema parsed artifact pinned raw inputAgreement
     (fun _ present => ordinary _ present) observations consumed
   rw [build, assembled]
   exact ⟨_, rfl⟩
+
+
+/-- The source and VM trace supply the seed, and the assembler supplies the
+candidate values. Only constraints left after the deterministic SSA equations
+need an independent proof about that candidate. -/
+theorem source_call_build_of_remaining_constraints (state : List StateDecl)
+    (sourceEntry : Entrypoint) (ctx : EvalContext) (hash : Hash)
+    (implementation : HashAgreement ctx hash)
+    (values result : EvalEnv)
+    (initial next : LedgerState) (slots : List Slot) (bytes : ArtifactBytes.Bytes)
+    (rewrites : Zkir.Rewrites) (json : Lean.Json)
+    (view : GuardedZkirArtifact.View) (rawRows : Array Lean.Json)
+    (inputTypes : ∀ input ∈ sourceEntry.circuit.inputs, Nonempty (ScalarType input.ty))
+    (admittedState : GenericStateEncoding.AdmittedState state initial slots)
+    (emitted : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
+    (parsed : (ArtifactBytes.parse bytes).map Lean.Json.compress = .ok json.compress)
+    (artifact : GuardedZkirArtifact.check bytes json = .ok view.rows)
+    (pinned : GuardedZkirArtifact.decodeView json = .ok view)
+    (raw : Native.arrayField json "instructions" = .ok rawRows)
+    (admitted : ScalarCircuitAdmission sourceEntry.circuit)
+    (effects : ∀ effect ∈ sourceEntry.effects, ScalarEffect state effect)
+    (guards : ∀ (condition : Expr .bool), some condition ∈ sourceEntry.effectGuards →
+      ScalarExpression condition)
+    (success : sourceEntry.run ctx values initial = .ok (result, next))
+    (remaining : ∀ outputs finalEnv records base,
+      sourceEntry.circuit.run ctx values = .ok outputs →
+      ScalarSourceReadTape.sourceReadInputs ctx sourceEntry.effectGuards sourceEntry.effects.zipIdx
+        (Impact.publicInputReadCount sourceEntry.circuit.inputs) (outputs ++ values, initial) =
+          .ok (records, (finalEnv, next)) →
+      CanonicalInputs sourceEntry.circuit values base →
+      ∀ candidate, GuardedScalarWitnessAssembly.assemble hash (seedReadValues base records)
+          view.header.arguments rawRows.toList view.rows = .ok candidate →
+        ∀ pair ∈ rawRows.toList.zip view.rows,
+          GuardedScalarWitnessAssembly.RemainingConstraint hash candidate.val pair.1 pair.2) :
+    ∃ built,
+      GuardedScalarWitness.buildSourceCall ctx hash state sourceEntry values initial bytes rewrites =
+        .ok built := by
+  apply source_call_build_of_satisfying_extension state sourceEntry ctx hash implementation
+    values result initial next slots bytes rewrites json view inputTypes admittedState emitted
+    parsed artifact pinned admitted effects guards success
+  intro plan outputs finalEnv records base lowered circuit recorded baseAdmitted
+  let ep := Passes.pruneEntrypoint sourceEntry
+  obtain ⟨_, shape, _, shapeAccepted, _, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state sourceEntry rewrites
+      json emitted
+  obtain ⟨scalarSchema, sourceLanes⟩ := GuardedScalarWitness.lowered_scalar_descriptor_scope
+    state ep plan shape lowered shapeAccepted effects inputTypes
+  obtain ⟨target, ordinary, frame⟩ := GuardedScalarWitness.assemble_of_lowered_scalar_constraints
+    hash (seedReadValues base records) state sourceEntry rewrites shape json view rawRows emitted
+    shapeAccepted scalarSchema pinned raw (remaining outputs finalEnv records base circuit recorded baseAdmitted)
+  refine ⟨target, ordinary, ?_⟩
+  intro name present
+  exact frame _ (sourceLanes name present)
 
 end Noctium.Verification.GenericStateConverseNativeTrace

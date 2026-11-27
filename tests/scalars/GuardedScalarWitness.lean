@@ -75,6 +75,22 @@ private def rejectsChangedCopy : Except String _root_.Bool := do
 
 #guard rejectsChangedCopy.toOption == some _root_.Bool.true
 
+-- The seed protects the names declared by the relation. A spelling alone
+-- does not make a temporary an input lane.
+private def copyFromArgument (destination : String) : Except String (Scalar × Scalar) := do
+  let argument := "%input_argument"
+  let raw := Lean.Json.mkObj [("op", Lean.toJson "copy"), ("val", Lean.toJson argument),
+    ("output", Lean.toJson destination)]
+  let row ← GuardedScalarRows.decodeRow raw
+  let seed : Assignment := fun name => if name == argument then scalar 37 else zero
+  let assignment ← GuardedScalarWitnessAssembly.assemble (fun _ => zero) seed [argument] [raw] [row]
+  pure (assignment.val argument, assignment.val destination)
+
+#guard (copyFromArgument "%input_temporary").toOption == some (scalar 37, scalar 37)
+#guard match copyFromArgument "%input_argument" with
+  | .error reason => reason == "repeated native scalar definition"
+  | .ok _ => _root_.Bool.false
+
 open Lean Elab Command in
 run_cmd do
   for root in [`Noctium.Verification.GuardedScalarWitness.buildSourceCall,
@@ -84,8 +100,10 @@ run_cmd do
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_native_trace,
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_reduces_to_artifact,
       `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_of_satisfying_extension,
+      `Noctium.Verification.GenericStateConverseNativeTrace.source_call_build_of_remaining_constraints,
       `Noctium.Verification.GuardedScalarWitness.build_of_scope,
       `Noctium.Verification.GuardedScalarWitness.build_of_lowered_scalar_artifact,
+      `Noctium.Verification.GuardedZkirRequirements.lowerEntrypoint_guardedRows_of_body_meaning,
       `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.of_validation_loop,
       `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.assemble_scope,
       `Noctium.Verification.GuardedScalarWitnessAssembly.ProducerScope.cons_validated_copy,
