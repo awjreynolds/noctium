@@ -2,9 +2,9 @@ use anyhow::{Context, Result, anyhow, ensure};
 use base_crypto::hash::HashOutput;
 use coin_structure::contract::ContractAddress;
 use noctium_runtime::{
-    Db, LEDGER_REVISION, Plan, ZKIR_REVISION, check, create_state, environment,
-    parse_private_config, prepare,
+    Db, LEDGER_REVISION, Plan, ZKIR_REVISION, check, environment, parse_private_config, prepare,
 };
+use noctium_runtime::constructor::deployment_state;
 use onchain_runtime::state::ContractState;
 use serialize::{tagged_deserialize, tagged_serialize};
 use sha2::{Digest, Sha256};
@@ -93,7 +93,7 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
-    let state = create_state(&plan, &config.state)?;
+    let state = deployment_state(&plan, &config.state)?;
     let golden_initial: ContractState<Db> =
         tagged_deserialize(fs::read(directory.join("initial-state.bin"))?.as_slice())?;
     ensure!(
