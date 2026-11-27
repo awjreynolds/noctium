@@ -91,6 +91,48 @@ private theorem scalar_type_beq_sound {ty : Ty} (scalarType : ScalarType ty)
     (left : Ty) (equal : (left == ty) = true) : left = ty := by
   cases scalarType <;> cases left <;> simp_all [BEq.beq, instBEqTy.beq]
 
+private theorem scalar_ref_validate_lookup {ty : Ty} (supported : ScalarType ty)
+    (types : TypeEnv) (name : String)
+    (valid : (Expr.ref name : Expr ty).validate Capabilities.scalarFragment types = .ok ()) :
+    types.lookup name = some ty := by
+  cases supported with
+  | native =>
+    simp only [Expr.validate, bind, except_bind_ok] at valid
+    rcases valid with ⟨_, _, lookup⟩
+    cases found : types.lookup name with
+    | none => simp [found] at lookup
+    | some foundTy =>
+      simp only [found] at lookup
+      split at lookup
+      next equal =>
+        have equalTy := scalar_type_beq_sound ScalarType.native foundTy equal
+        simpa [equalTy] using found
+      next unequal => cases lookup
+  | bool =>
+    simp only [Expr.validate, bind, except_bind_ok] at valid
+    rcases valid with ⟨_, _, lookup⟩
+    cases found : types.lookup name with
+    | none => simp [found] at lookup
+    | some foundTy =>
+      simp only [found] at lookup
+      split at lookup
+      next equal =>
+        have equalTy := scalar_type_beq_sound ScalarType.bool foundTy equal
+        simpa [equalTy] using found
+      next unequal => cases lookup
+  | uint maximum =>
+    simp only [Expr.validate, bind, except_bind_ok] at valid
+    rcases valid with ⟨_, _, lookup⟩
+    cases found : types.lookup name with
+    | none => simp [found] at lookup
+    | some foundTy =>
+      simp only [found] at lookup
+      split at lookup
+      next equal =>
+        have equalTy := scalar_type_beq_sound (ScalarType.uint maximum) foundTy equal
+        simpa [equalTy] using found
+      next unequal => cases lookup
+
 /-- All accepted normalized range and assertion requirements force successful
 source evaluation. Native instruction satisfaction is connected separately. -/
 theorem normalize_sound (ctx : EvalContext) (hash : Hash)
@@ -140,19 +182,8 @@ theorem normalize_sound (ctx : EvalContext) (hash : Hash)
       exact Nat.lt_of_le_of_lt (Nat.le_trans valueBound typeBound) ScalarPolicy.maxUint_lt_native
     simp [typeBound, valueBound, fieldBound]
   | @ref ty name scalarType =>
-    simp only [Expr.validate] at valid
     have lookup : types.lookup name = some ty := by
-      simp only [Expr.validate, bind, except_bind_ok] at valid
-      rcases valid with ⟨_, validType, lookup⟩
-      cases found : types.lookup name with
-      | none => simp [found] at lookup
-      | some foundTy =>
-        simp only [found] at lookup
-        split at lookup
-        next h =>
-          have equal := scalar_type_beq_sound scalarType foundTy h
-          simpa [equal] using found
-        next h => cases lookup
+      exact scalar_ref_validate_lookup scalarType types name valid
     obtain ⟨raw, value, rawLookup, typed⟩ := environment.complete name ty lookup
     obtain ⟨canonical, term, alias, meaning⟩ := environment.aliases name ty raw value rawLookup typed
     apply normalized_success ctx hash implementation inputs aliases values environment.aliases _

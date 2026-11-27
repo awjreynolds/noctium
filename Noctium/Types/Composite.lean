@@ -135,6 +135,15 @@ structure Limits where
 
 def defaultLimits : Limits := {}
 
+/-- Public fixed-byte transport is bounded by the existing expanded-leaf
+budget. Keep the ordinary byte width in `defaultLimits` unchanged. -/
+def maxPublicBytesLength : Nat := defaultLimits.maxExpandedLeaves
+
+/-- Layout limits for public schemas whose fixed Bytes values use packed FAB
+chunks at the transport boundary. -/
+def publicBytesLimits : Limits :=
+  {defaultLimits with maxBytesLength := maxPublicBytesLength}
+
 structure LayoutDiagnostic where
   span : SourceSpan
   message : String
@@ -499,7 +508,7 @@ private def diagnostic (span : SourceSpan) (message : String) : LayoutDiagnostic
 def Limits.validate (limits : Limits) : Except LayoutDiagnostic Limits := do
   if limits.maxDeclarations > defaultLimits.maxDeclarations ||
       limits.maxVectorLength > defaultLimits.maxVectorLength ||
-      limits.maxBytesLength > defaultLimits.maxBytesLength ||
+      limits.maxBytesLength > defaultLimits.maxExpandedLeaves ||
       limits.maxExpandedLeaves > defaultLimits.maxExpandedLeaves ||
       limits.maxExpandedNodes > defaultLimits.maxExpandedNodes ||
       limits.maxLayoutNodes > defaultLimits.maxLayoutNodes then

@@ -1159,6 +1159,10 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
             let Value::Bytes(bytes) = evaluate(value, env)? else {
                 bail!("byte projection requires bytes")
             };
+            ensure!(
+                bytes.len() <= scalars::MAX_BYTE_INDEX_LENGTH,
+                "byte indexing exceeds compiler limit"
+            );
             let byte = bytes
                 .get(*index)
                 .ok_or_else(|| anyhow!("byte index out of range"))?;
@@ -1198,7 +1202,7 @@ pub fn evaluate(expr: &Expr, env: &Environment) -> Result<Value> {
         }
         Expr::BytesLiteral { length, values } => {
             ensure!(
-                *length <= scalars::MAX_BYTES_LENGTH,
+                *length <= scalars::MAX_BYTE_LITERAL_LENGTH,
                 "byte length exceeds compiler limit"
             );
             ensure!(values.len() == *length, "byte literal length mismatch");
@@ -5676,6 +5680,22 @@ fn input_value(ty: &str, json: &Json) -> Result<Value> {
         }
     }
 }
+fn validate_circuit_input_byte_scope(input: &Input) -> Result<()> {
+    ensure!(
+        matches!(input.visibility.as_str(), "public" | "private"),
+        "unsupported input visibility"
+    );
+    let ty = ScalarType::parse(&input.ty)?;
+    if input.visibility == "private" {
+        ensure!(
+            ty.bytes_length()
+                .is_none_or(|length| length <= scalars::MAX_LEGACY_BYTE_INPUT_LENGTH),
+            "private byte input exceeds the native input limit"
+        );
+    }
+    Ok(())
+}
+
 fn validate_environment_schema(plan: &Plan) -> Result<()> {
     let expected_schema = if plan.circuit.shared_bindings.is_empty() { 1 } else { 2 };
     ensure!(plan.schema_version == expected_schema, "unsupported plan schema");
@@ -5694,6 +5714,9 @@ fn validate_environment_schema(plan: &Plan) -> Result<()> {
         names.len() == plan.circuit.inputs.len(),
         "duplicate input name"
     );
+    for input in &plan.circuit.inputs {
+        validate_circuit_input_byte_scope(input)?;
+    }
     call_input_header(&plan.circuit.inputs, &plan.call_inputs)?;
     validate_record_operation_schemas(plan)?;
     #[cfg(feature = "zkir-321")]
@@ -5869,6 +5892,9 @@ pub(crate) fn validate_call_inputs_json(plan: &Json, circuit: &Json) -> Result<(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    for input in &inputs {
+        validate_circuit_input_byte_scope(input)?;
+    }
     validate_call_input_header_json(&call_input_header(&inputs, &call_inputs)?, circuit)
 }
 
@@ -5903,7 +5929,7 @@ fn validate_return_views_specs<'a>(
             "invalid or colliding composite return view"
         );
         let schema_bytes = serde_json::to_vec(&view.schema)?;
-        let schema = Schema::from_json(&schema_bytes)?;
+        let schema = Schema::from_json_with_wide_bytes(&schema_bytes)?;
         let leaf_types = schema.leaf_types()?;
         let byte_ranges = schema.byte_leaf_ranges()?;
         let mut reduction = 0usize;
@@ -7228,7 +7254,7 @@ fn reconstruct_return_views(
         .iter()
         .map(|view| {
             let schema_bytes = serde_json::to_vec(&view.schema)?;
-            let schema = Schema::from_json(&schema_bytes)?;
+            let schema = Schema::from_json_with_wide_bytes(&schema_bytes)?;
             let leaf_types = schema.leaf_types()?;
             let byte_ranges = schema.byte_leaf_ranges()?;
             let packed = view

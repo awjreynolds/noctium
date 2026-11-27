@@ -875,6 +875,14 @@ fn register_declaration(
 }
 impl Schema {
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
+        Self::from_json_with_byte_limit(bytes, MAX_SEQUENCE)
+    }
+
+    pub(crate) fn from_json_with_wide_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::from_json_with_byte_limit(bytes, crate::scalars::MAX_BYTES_LENGTH)
+    }
+
+    fn from_json_with_byte_limit(bytes: &[u8], max_byte_length: usize) -> Result<Self> {
         let tree = JsonTree::parse(bytes)?;
         tree.exact(
             tree.root,
@@ -1032,7 +1040,7 @@ impl Schema {
                 "bytes" => {
                     let length = tree.natural(raw, "length")?;
                     ensure!(
-                        length <= MAX_SEQUENCE,
+                        length <= max_byte_length,
                         "aggregate byte length exceeds target limit"
                     );
                     (

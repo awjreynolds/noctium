@@ -495,6 +495,9 @@ jobs:
           .lake/build/bin/noctium compile tests/FlatWitnessRange.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/flat-witness-range"
+          .lake/build/bin/noctium compile tests/FiniteWitnessLoopDepth.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/finite-witness-loop-depth"
           .lake/build/bin/noctium compile tests/NamedProofUnit.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-proof-unit"
@@ -598,11 +601,18 @@ jobs:
           .lake/build/bin/noctium compile tests/FixedNumericBytes.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/fixed-numeric-bytes"
+          .lake/build/bin/noctium compile tests/WidePublicBytes.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/wide-public-bytes"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           NOCTIUM_FLAT_WITNESS_RANGE_DIR="$artifacts/flat-witness-range" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test flat_witness_range \
               flat_witness_range_replays_every_provider_in_order_and_stops_on_failure -- --exact --ignored
+          NOCTIUM_FINITE_WITNESS_LOOP_DEPTH_DIR="$artifacts/finite-witness-loop-depth" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test finite_witness_loop_depth \
+              finite_witness_loop_depth_preserves_ordered_calls_and_native_constraints -- --exact --ignored
           cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
             --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_GUARDED_PARTIALS_DIR="$artifacts/guarded-partials" \
@@ -624,6 +634,9 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test record_merkle_leaves \
               enum_historic_merkle_leaves_match_compact -- --exact --ignored
+          NOCTIUM_WIDE_PUBLIC_BYTES_ARTIFACTS="$artifacts/wide-public-bytes" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test native_bytes -- --ignored
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \

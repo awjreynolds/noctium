@@ -175,6 +175,16 @@ Compact 0.36.1 with Runtime 0.21.0 and Noctium's Ledger 9.1.0.1 and ZKIR 3.2.1 h
 
 The three-iteration fixture initially occupied 1,954,016 bytes for its Impact plan and 42,783 bytes for ZKIR. Selecting constant branches once and excluding expired iteration bindings reduces these to 226,696 and 13,710 bytes respectively. This measures artifact size, without a new timing, K or proof benchmark.
 
+Ordinary range bodies expand into separate lexical blocks. Their depth
+charge reflects the statements, lexical nesting, and control frames.
+The work budget counts every expanded copy. Compact 0.36.1 and Noctium's
+native session replay 16 and 32 ordered UInt8 callback arguments with
+distinct Native results. A bad provider value at index 19 stops the loop.
+The native circuit checker also rejects a modified private transcript.
+[Lean fixture](../../tests/FiniteWitnessLoopDepth.lean) ·
+[Native replay](../../runtime/tests/finite_witness_loop_depth.rs) ·
+[Compact replay](../../tests/compact/finite-witness-loop-depth.mjs)
+
 The [source example](../../tests/FiniteRangeWitness.lean) performs three ordered read/provider/write/stage iterations. Its [native case](../../runtime/src/witness_execution/range_ledger_tests.rs) checks provider inputs `(1,0)`, `(2,1)`, `(3,3)`, final public total 6 and staged private value 3. An inactive outer branch makes no provider calls, stages no writes and preserves total 0. Both completed paths pass the selected native checker.
 
 On funded isolated Ledger 9 localnet, the native Rust SDK finalized deployment

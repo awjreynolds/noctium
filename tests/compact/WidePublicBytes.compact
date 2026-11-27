@@ -3,3 +3,11 @@ pragma language_version >= 0.28;
 export circuit roundTrip(payload: Bytes<1025>): Bytes<1025> {
   return payload;
 }
+
+export circuit roundTrip1055(payload: Bytes<1055>): Bytes<1055> {
+  return payload;
+}
+
+export circuit roundTrip4096(payload: Bytes<4096>): Bytes<4096> {
+  return payload;
+}

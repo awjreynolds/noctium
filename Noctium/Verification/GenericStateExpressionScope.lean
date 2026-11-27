@@ -91,12 +91,17 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
   case ref =>
     intro ty name caps types ctx left right valid agreement
     have found : ∃ foundTy, types.lookup name = some foundTy := by
-      cases checkedType : ty.validate caps with
-      | error message => simp [Expr.validate, checkedType, bind, Except.bind] at valid
-      | ok checked =>
-        cases lookup : types.lookup name with
-        | none => simp [Expr.validate, checkedType, lookup, bind, Except.bind] at valid
-        | some foundTy => exact ⟨foundTy, rfl⟩
+      cases lookup : types.lookup name with
+      | some foundTy => exact ⟨foundTy, rfl⟩
+      | none =>
+        cases ty
+        case bytes length =>
+          by_cases withinPublic : length ≤ maxPublicBytesLength
+          · simp [Expr.validate, lookup, withinPublic, Bind.bind, Except.bind] at valid
+          · simp [Expr.validate, lookup, withinPublic, Bind.bind, Except.bind, throw] at valid
+        all_goals
+          simp only [Expr.validate, lookup, Bind.bind, Except.bind] at valid
+          split at valid <;> cases valid
     obtain ⟨foundTy, lookup⟩ := found
     have member := lookupNameMem types name foundTy lookup
     simp [Expr.eval, agreement name member]

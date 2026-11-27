@@ -633,6 +633,42 @@ private def flatUnitWitnessCallSequence (program : Program) (index : String)
     (body : List Statement) : Bool :=
   (flatUnitWitnessCallName program index body).isSome
 
+-- A range iteration expands to an unconditional lexical block whose first
+-- statement binds the literal Native index. These siblings stay sequential,
+-- so charge each statement once plus the lowerer's three control frames per
+-- block. Node and execution budgets still count every copy.
+private def expandedRangeIterationBlock : Statement → Bool
+  | .branch (.bool true) (.bind _ (.scalar .native) (.native _) :: _) [] => true
+  | _ => false
+
+private partial def statementTreeCount : List Statement → Nat
+  | [] => 0
+  | .branch _ yes no :: rest => 1 + statementTreeCount yes + statementTreeCount no + statementTreeCount rest
+  | .forRange _ _ _ body :: rest => 1 + statementTreeCount body + statementTreeCount rest
+  | _ :: rest => 1 + statementTreeCount rest
+
+private partial def expandedRangeIterationStatements : List Statement → Nat
+  | [] => 0
+  | statement :: rest =>
+    if expandedRangeIterationBlock statement then
+      statementTreeCount [statement] + expandedRangeIterationStatements rest
+    else
+      let nested := match statement with
+        | .branch _ yes no => expandedRangeIterationStatements yes + expandedRangeIterationStatements no
+        | .forRange _ _ _ body => expandedRangeIterationStatements body
+        | _ => 0
+      nested + expandedRangeIterationStatements rest
+
+private partial def expandedRangeIterationBlocks : List Statement → Nat
+  | [] => 0
+  | statement :: rest =>
+    let nested := match statement with
+      | .branch _ yes no => expandedRangeIterationBlocks yes + expandedRangeIterationBlocks no
+      | .forRange _ _ _ body => expandedRangeIterationBlocks body
+      | _ => 0
+    (if expandedRangeIterationBlock statement then 1 else 0) + nested +
+      expandedRangeIterationBlocks rest
+
 private def validateRangeBounds (span : SourceSpan) (index : String) (start stop : Nat) :
     Except Diagnostic Nat := do
   textMetadata index
@@ -690,7 +726,9 @@ private partial def flatWitnessCallDepthSavings (program : Program) : List State
       | [] => 0
       | statement :: rest =>
         let nested := match statement with
-          | .branch _ yes no => flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
+          | .branch _ yes no =>
+            if expandedRangeIterationBlock statement then 0
+            else flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
           | .forRange _ _ _ body => flatWitnessCallDepthSavings program body
           | _ => 0
         nested + flatWitnessCallDepthSavings program rest
@@ -893,11 +931,15 @@ where
             pure (site :: sites)
         go fuel (children.map SourceNode.term ++ rest) sites
 
-private def checkedComposite (program : Program) (span : SourceSpan)
-    (type : Types.CompositeType) : Except Diagnostic Types.CompiledType :=
-  match Types.compileType program.composites type with
+private def checkedCompositeWithLimits (program : Program) (span : SourceSpan)
+    (type : Types.CompositeType) (limits : Types.Limits) : Except Diagnostic Types.CompiledType :=
+  match Types.compileType program.composites type limits with
   | .ok compiled => pure compiled
   | .error diagnostic => fail (if diagnostic.span.file.isEmpty then span else diagnostic.span) diagnostic.message
+
+private def checkedComposite (program : Program) (span : SourceSpan)
+    (type : Types.CompositeType) : Except Diagnostic Types.CompiledType :=
+  checkedCompositeWithLimits program span type Types.defaultLimits
 
 /-- Select a child type using the same checked layout as projection lowering. -/
 def projectedType (composites : Types.CompositeEnv) (span : SourceSpan)
@@ -1126,10 +1168,12 @@ private def sourcePreflight (limits : Limits) (program : Program) :
     discard (witnessSites declaration.body limits.maxSourceNodes)
     available := available - nodes
     let repeatedWitnessDepthSavings := flatWitnessCallDepthSavings program declaration.body
+    let iterationStatements := expandedRangeIterationStatements declaration.body
+    let iterationBlocks := expandedRangeIterationBlocks declaration.body
     sizes := (declaration.id, {
       nodes := 3 * (nodes + declaration.parameters.length + 2)
-      depth := 3 * (statements - repeatedWitnessDepthSavings + depth +
-        declaration.parameters.length + 2)}) :: sizes
+      depth := 3 * (statements - repeatedWitnessDepthSavings - iterationStatements + depth +
+        declaration.parameters.length + 2) + iterationStatements + 3 * iterationBlocks}) :: sizes
   pure sizes
 
 private partial def bodyHasForRange : List Statement → Bool
@@ -3966,9 +4010,9 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
     | _ => none
   let compositeReturnInfo ← match declaration.result with
     | .composite type => do
-      let compiled ← checkedComposite program exported.span type
-      if compiled.checked.expandedLeaves > maxEntrypointReturnFields then
-        fail exported.span "entrypoint return field limit exceeded"
+      let layoutLimits := if exported.packedByteReturnPaths.isEmpty then
+          Types.defaultLimits else Types.publicBytesLimits
+      let compiled ← checkedCompositeWithLimits program exported.span type layoutLimits
       discard (Types.schemaJson compiled |>.mapError fun message =>
         {span := exported.span, message})
       unless uniqueNames (exported.packedByteReturnPaths.map (String.intercalate ".")) do
@@ -3988,6 +4032,8 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
       compiled.checked.expandedLeaves - packed.foldl
         (fun reduction (_, length, widths) => reduction + length - widths.length) 0
     | none => 1
+  if physicalReturnCount > maxEntrypointReturnFields then
+    fail exported.span "entrypoint return field limit exceeded"
   let reservedOutputNames := (inputs ++ lowering.witnessInputs).map (·.name) ++ readNames
   let physicalNames (base : String) := match compositeReturnInfo with
     | some _ => (List.range physicalReturnCount).map fun index => s!"{base}_{index}"

@@ -831,8 +831,8 @@ private def readTy (stx : TSyntax `nltype) : CommandElabM Ty :=
     | _ => throwErrorAt stx "invalid unsigned range"
   | `(nltype| Bytes32) => pure (.bytes 32)
   | `(nltype| Bytes $length:num) => do
-    if length.getNat > Noctium.maxBytesLength then
-      throwErrorAt length s!"byte string length exceeds the maximum of {Noctium.maxBytesLength}"
+    if length.getNat > Noctium.maxPublicBytesLength then
+      throwErrorAt length s!"byte string length exceeds the maximum of {Noctium.maxPublicBytesLength}"
     pure (.bytes length.getNat)
   | `(nltype| OpaqueBytes) => pure .opaqueBytes
   | `(nltype| OpaqueString) => pure .opaqueString
@@ -1413,6 +1413,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let (valueTy, value) ← expression env value
     let .bytes length := valueTy
       | throwErrorAt stx "byteAt requires a Bytes expression"
+    unless length ≤ Noctium.maxBytesLength do
+      throwErrorAt stx s!"byte string length exceeds the maximum of {Noctium.maxBytesLength}"
     unless index.getNat < length do
       throwErrorAt index s!"byte index must be less than the byte string length {length}"
     pure (.uint 255, ← `(Noctium.Expr.bytesAt $value $(natTerm index.getNat)))
@@ -2638,7 +2640,7 @@ private unsafe def checkGeneratedContract (name : Name)
         let interfaceRefs := sourceRefs.find? fun refs =>
           refs.contract == name && refs.operation == entrypoint.name
         let resultViews ← entrypoint.returnViews.mapM fun view => do
-          let checked ← match Types.checkedLayout {} view.environment view.type entrypoint.span with
+          let checked ← match Types.checkedLayout Types.publicBytesLimits view.environment view.type entrypoint.span with
             | .ok checked => pure checked
             | .error diagnostic => throwError diagnostic.message
           pure (view.name, view.fields.zip (Helpers.callViewLeafTypes checked.value))
