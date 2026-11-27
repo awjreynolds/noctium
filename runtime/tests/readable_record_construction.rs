@@ -128,6 +128,72 @@ fn reply(request: &Json, attempt_id: &str, value: Json) -> TypedResponse {
     .expect("typed host response")
 }
 
+#[test]
+#[ignore = "requires fresh MixedSequenceJoin outputs in NOCTIUM_MIXED_SEQUENCE_JOIN_DIR"]
+fn mixed_sequence_conditional_preserves_selected_arm_and_tuple_widths() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_MIXED_SEQUENCE_JOIN_DIR")
+            .expect("NOCTIUM_MIXED_SEQUENCE_JOIN_DIR"),
+    );
+    let stem = "MixedSequenceJoin.choose";
+    let control: Json = serde_json::from_slice(&fs::read(
+        directory.join(format!("{stem}.witness.control.json")),
+    )?)?;
+    let encoded_binding = control["binding"].as_str().unwrap();
+    let binding: Json = serde_json::from_str(encoded_binding)?;
+    let digest = hex::encode(Sha256::digest(encoded_binding.as_bytes()));
+    let plan: Plan =
+        serde_json::from_slice(&fs::read(directory.join(format!("{stem}.impact.json")))?)?;
+    let circuit = IrSource::load(fs::File::open(directory.join(format!("{stem}.zkir")))?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let uint = |value: &str, maximum: &str| json!({"kind":"uint","value":value,"maximum":maximum});
+
+    for (choice, arm, first, second, input_maximum) in [
+        (true, "vectorArm", "7", "199", "255"),
+        (false, "tupleArm", "241", "513", "65535"),
+    ] {
+        let attempt = if choice { "a" } else { "b" }.repeat(64);
+        let mut invocation = Session::from_json_with_invocation_target(
+            control.clone(),
+            BTreeMap::from([("choice".into(), json!(choice))]),
+            source_context(&control, &attempt),
+            Some(&digest),
+            Some(InvocationTarget {
+                contract_address: "a".repeat(64),
+                entrypoint: "choose".into(),
+            }),
+        )?;
+        let pending = invocation.advance()?;
+        assert_eq!(pending["status"], "need_host");
+        assert_eq!(pending["request"]["name"], arm);
+        let value = json!({
+            "kind": if choice { "vector" } else { "tuple" },
+            "items": [uint(first, "255"), uint(second, input_maximum)],
+        });
+        invocation.resume_typed(reply(&pending["request"], &attempt, value))?;
+
+        let expected = json!({"kind":"tuple","items":[uint(first, "255"), uint(second, "65535")]});
+        let completed = invocation.advance()?;
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["result"], expected);
+        let completion = invocation.private_completion(&binding["nativeRelation"])?;
+        let inputs = serde_json::from_value(completion["inputs"].clone())?;
+        let execution = prepare(
+            &plan,
+            &inputs,
+            &initial,
+            &ledger::structure::INITIAL_PARAMETERS,
+            ContractAddress::default(),
+        )?;
+        check(&execution, &circuit)?;
+        assert_eq!(
+            execution.returns_json(),
+            BTreeMap::from([("result".into(), expected)])
+        );
+    }
+    Ok(())
+}
+
 fn check_case(
     entrypoint: &str,
     callbacks: impl IntoIterator<Item = (&'static str, &'static str, Json)>,

@@ -1331,6 +1331,37 @@ private def commonType (stx : Syntax) (left right : Ty) : CommandElabM Ty := do
   | .native, .uint _ | .uint _, .native => pure .native
   | _, _ => throwErrorAt stx "readable witness expression type mismatch"
 
+/-- Compact treats fixed vectors as tuple-like sequences in conditional arms.
+Keep this relation local to readable conditional authoring so the checked IR's
+general subtyping relation remains same-shape. -/
+private partial def conditionalAggregateSubtype :
+    Types.CompositeType → Types.CompositeType → _root_.Bool
+  | .tuple source, .tuple target =>
+    source.length == target.length &&
+      (source.zip target).all fun (source, target) =>
+        conditionalAggregateSubtype source target
+  | .vector sourceLength source, .vector targetLength target =>
+    sourceLength == targetLength && conditionalAggregateSubtype source target
+  | .vector length element, .tuple items =>
+    length == items.length && length ≤ Types.defaultLimits.maxVectorLength &&
+      items.all (conditionalAggregateSubtype element)
+  | .tuple items, .vector length element =>
+    length == items.length && length ≤ Types.defaultLimits.maxVectorLength &&
+      items.all (fun item => conditionalAggregateSubtype item element)
+  | source, target => source.isSubtype target
+
+private def conditionalCommonType (left right : ResultType) : Option (ResultType × _root_.Bool) :=
+  match Helpers.commonType left right with
+  | some common => some (common, _root_.Bool.false)
+  | none => match left, right with
+    | .composite left, .composite right =>
+      if conditionalAggregateSubtype left right then
+        some (.composite right, _root_.Bool.true)
+      else if conditionalAggregateSubtype right left then
+        some (.composite left, _root_.Bool.true)
+      else none
+    | _, _ => none
+
 private def coerce (stx : Syntax) (value : Lowered) (target : Ty) : CommandElabM Lowered := do
   if value.nominalField.isSome then
     throwErrorAt stx "nominal Field values require an explicit cast before raw scalar conversion"
@@ -1451,6 +1482,40 @@ private def checkedPayloadLayout (site : Syntax) (payload : Types.CompositeType)
   match Types.compileType composites payload with
   | .ok compiled => pure compiled
   | .error diagnostic => throwErrorAt site diagnostic.message
+
+private def coerceConditionalAggregate (callPrefix : String) (env : SurfaceEnv)
+    (site : Syntax) (value : Lowered) (target : Types.CompositeType) : ExprM Lowered := do
+  let .composite source := value.type
+    | throwErrorAt site "conditional sequence conversion requires an aggregate"
+  if source == target then return value
+  let sourceLayout ← checkedPayloadLayout site source
+  let targetLayout ← checkedPayloadLayout site target
+  let span ← liftM (spanValue site)
+  -- A call or other effect in an arm must run once, even when its aggregate
+  -- needs several projections to build the canonical tuple.
+  let (before, references, _) ← stageIterationValues callPrefix env span [value]
+  let [reference] := references
+    | throwErrorAt site "conditional aggregate staging failed"
+  let sourceLeaves ← match Helpers.Iteration.flattenResult span value.type
+      sourceLayout.checked.value reference with
+    | .ok leaves => pure leaves
+    | .error diagnostic => throwErrorAt site diagnostic.message
+  let sourceTypes := Helpers.sourceLeafTypes sourceLayout.checked.value
+  let targetTypes := Helpers.sourceLeafTypes targetLayout.checked.value
+  unless sourceLeaves.length == sourceTypes.length &&
+      sourceLeaves.length == targetTypes.length do
+    throwErrorAt site "conditional sequence conversion leaf count mismatch"
+  let leaves ← ((sourceLeaves.zip sourceTypes).zip targetTypes).mapM
+      fun ((term, sourceTy), targetTy) => do
+    if sourceTy == targetTy then pure term
+    else
+      let some joined := Types.scalarLeastUpperBound? sourceTy targetTy
+        | throwErrorAt site "conditional sequence elements have incompatible types"
+      unless joined == targetTy do
+        throwErrorAt site "conditional sequence conversion would narrow an element"
+      pure (.cast targetTy term)
+  let result := mergeLowered (.composite target) (.composite target leaves) [value]
+  pure {result with before, nominalUIntFields := value.nominalUIntFields}
 
 private def fieldlessEnumMembers? (site : Syntax) (payload : Types.CompositeType) :
     ExprM (Option (List String)) := do
@@ -2520,8 +2585,17 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       throwErrorAt stx "conditional branches require the same nominal Field type"
     unless yesValue.nominalUInt == noValue.nominalUInt do
       throwErrorAt stx "conditional branches require the same nominal UInt type"
-    let some type := Helpers.commonType yesValue.type noValue.type
+    let some (type, rebuildSequences) := conditionalCommonType yesValue.type noValue.type
       | throwErrorAt stx "conditional branches require a common type"
+    let (yesValue, noValue) ← if rebuildSequences then do
+      unless yesValue.nominalUIntFields == noValue.nominalUIntFields do
+        throwErrorAt stx "conditional branches require the same nominal UInt fields"
+      let .composite target := type
+        | throwErrorAt stx "conditional sequence join requires an aggregate result"
+      let yesValue ← coerceConditionalAggregate callPrefix env stx yesValue target
+      let noValue ← coerceConditionalAggregate callPrefix env stx noValue target
+      pure (yesValue, noValue)
+    else pure (yesValue, noValue)
     let yesTerm ← lowerConditionalArm yes programName env yesValue
     let noTerm ← lowerConditionalArm no programName env noValue
     modify fun state => {state with requiresOutputViews := _root_.Bool.true}
@@ -2529,7 +2603,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {result with
       before := predicate.before,
       nominalUInt := yesValue.nominalUInt,
-      nominalField := yesValue.nominalField}
+      nominalField := yesValue.nominalField,
+      nominalUIntFields := if rebuildSequences then yesValue.nominalUIntFields else []}
   | `(nlexpr| select($condition, $yes, $no)) => do
     let condition ← lowerExpr programName callPrefix env condition
     let condition ← coerce stx condition .bool

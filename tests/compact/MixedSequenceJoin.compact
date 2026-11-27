@@ -1,0 +1,9 @@
+pragma language_version >= 0.28;
+
+witness vectorArm(): Vector<2, Uint<8>>;
+witness tupleArm(): [Uint<8>, Uint<16>];
+
+export circuit choose(choice: Boolean): [Uint<8>, Uint<16>] {
+  const selected = choice ? vectorArm() : tupleArm();
+  return disclose(selected);
+}
