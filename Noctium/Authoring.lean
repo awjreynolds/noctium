@@ -453,8 +453,8 @@ private def readScalarTy (stx : TSyntax `nltype) : CommandElabM Ty := do
     | _ => throwErrorAt stx "invalid unsigned range"
   | `(nltype| Bytes32) => pure (.bytes 32)
   | `(nltype| Bytes $length:num) => do
-    if length.getNat > Types.defaultLimits.maxBytesLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxBytesLength}"
+    if length.getNat > Types.maxPublicBytesLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.maxPublicBytesLength}"
     pure (.bytes length.getNat)
   | `(nltype| OpaqueBytes) => pure .opaqueBytes
   | `(nltype| OpaqueString) => pure .opaqueString
@@ -2717,6 +2717,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     let value ← lowerExpr programName callPrefix env value
     let .scalar (.bytes length) := value.type
       | throwErrorAt stx "byteAt requires a fixed byte-string value"
+    unless length ≤ Types.defaultLimits.maxBytesLength do
+      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxBytesLength}"
     unless index.getNat < length do throwErrorAt stx "byteAt index is outside the byte string"
     pure (mergeLowered (.scalar (.uint 255)) (.bytesAt value.term index.getNat) [value])
   | `(nlexpr| persistentHash32($value)) =>

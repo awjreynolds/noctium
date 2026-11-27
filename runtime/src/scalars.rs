@@ -7,8 +7,12 @@ use base_crypto::fab::ValueAtom;
 use num_bigint::BigUint;
 
 pub const MAX_UINT_BITS: usize = 248;
-// Keep the native byte bridge within its existing budget of 34 31-byte chunks.
-pub const MAX_BYTES_LENGTH: usize = 34 * 31;
+// Fixed byte transport uses high-first FAB limbs and remains bounded by the
+// aggregate leaf limit. Byte indexing and legacy private/bytewise inputs keep
+// their earlier cap.
+pub const MAX_BYTES_LENGTH: usize = 4096;
+pub const MAX_LEGACY_BYTE_INPUT_LENGTH: usize = 34 * 31;
+pub const MAX_BYTE_INDEX_LENGTH: usize = MAX_LEGACY_BYTE_INPUT_LENGTH;
 pub const MAX_BYTE_OPERATION_LENGTH: usize = 1024;
 pub(super) const MAX_OPAQUE_BYTES_LENGTH: usize = 1_048_576;
 pub(crate) const MAX_OPAQUE_STRING_LENGTH: usize = 1_048_576;

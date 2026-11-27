@@ -5,6 +5,10 @@ namespace Noctium
 
 def maxBytesLength : Nat := Types.defaultLimits.maxBytesLength
 
+/-- Public fixed-byte transport is bounded by the existing composite leaf
+budget. Expressions, private values and storage keep `maxBytesLength`. -/
+def maxPublicBytesLength : Nat := Types.maxPublicBytesLength
+
 /-- Byte transforms and crypto preimages keep the established 1024-byte source cap. -/
 def maxByteOperationLength : Nat := 1024
 
@@ -1502,6 +1506,16 @@ def Ty.validate (caps : Capabilities) (ty : Ty) : Except String Unit := do
     ScalarPolicy.validate ty.scalarKind
     unless maximum < caps.nativeModulus do throw "unsigned type exceeds native representation"
 
+/-- Public return values use packed fixed-byte fields, so their logical byte
+width follows the public transport bound. Private inputs and byte operations
+continue to use `Ty.validate` and `maxByteOperationLength`. -/
+def Ty.validatePublicReturn (caps : Capabilities) (ty : Ty) : Except String Unit :=
+  match ty with
+  | .bytes length =>
+    if length ≤ maxPublicBytesLength then .ok ()
+    else .error s!"byte string length exceeds the maximum of {maxPublicBytesLength}"
+  | _ => ty.validate caps
+
 mutual
 def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except String Unit
   | .native value =>
@@ -1521,6 +1535,8 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
       else throw "byte field chunk index is out of range"
   | .bytesAt (length := length) value index => do
     value.validate caps env
+    unless length ≤ maxBytesLength do
+      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
     unless index < length do
       if length == 32 then throw "Bytes32 byte index is out of range"
       else throw "byte index is out of range"
@@ -1718,7 +1734,11 @@ def Expr.validate (caps : Capabilities) (env : TypeEnv) : Expr ty → Except Str
       unless length == 33 do throw "foreign point decoding requires 33 bytes"
     value.validate caps env
   | .ref name => do
-    ty.validate caps
+    match ty with
+    | .bytes length =>
+      unless length ≤ maxPublicBytesLength do
+        throw s!"byte string length exceeds the maximum of {maxPublicBytesLength}"
+    | _ => ty.validate caps
     match env.lookup name with
     | none => .error s!"unknown reference '{name}'"
     | some found => if found == ty then pure () else .error s!"type mismatch for '{name}'"
@@ -2412,7 +2432,12 @@ def Circuit.validate (caps : Capabilities) (c : Circuit) : Except Diagnostic Uni
     throw {span := c.span, message := "duplicate circuit input"}
   let env := c.inputs.map fun i => (i.name, i.ty)
   for input in c.inputs do
-    match input.ty.validate caps with
+    let validation : Except String Unit := match input.ty, input.visibility with
+      | .bytes length, .public =>
+        if length ≤ maxPublicBytesLength then .ok ()
+        else .error s!"byte string length exceeds the maximum of {maxPublicBytesLength}"
+      | _, _ => input.ty.validate caps
+    match validation with
     | .error message => throw {span := input.span, message}
     | .ok _ => pure ()
   if !uniqueNames (c.inputs.flatMap Input.nativeIdentifiers) then
@@ -3374,7 +3399,7 @@ def Entrypoint.validateEffectSuffix (caps : Capabilities) (e : Entrypoint)
   for output in e.returns do
     if (env.lookup output.name).isSome then
       throw {span := output.span, message := s!"entrypoint return '{output.name}' shadows a source binding"}
-    match output.ty.validate caps with
+    match output.ty.validatePublicReturn caps with
     | .error message => throw {span := output.span, message}
     | .ok _ => pure ()
     match output.value.validate caps env with
@@ -3392,11 +3417,9 @@ def Entrypoint.validateEffectSuffix (caps : Capabilities) (e : Entrypoint)
       throw {span := e.span, message := s!"logical return '{view.name}' conflicts with a physical return field"}
     unless uniqueNames view.fields do
       throw {span := e.span, message := s!"duplicate physical field in logical return '{view.name}'"}
-    let checked ← match Types.checkedLayout {} view.environment view.type e.span with
+    let checked ← match Types.checkedLayout Types.publicBytesLimits view.environment view.type e.span with
       | .ok checked => pure checked
       | .error diagnostic => throw {span := e.span, message := diagnostic.message}
-    unless checked.expandedLeaves ≤ maxEntrypointReturnFields do
-      throw {span := e.span, message := "entrypoint return field limit exceeded"}
     let byteRanges := layoutByteRanges checked.value
     unless uniqueNames (view.packedBytesFields.map (fun field => toString field.leafOffset)) do
       throw {span := e.span, message := s!"duplicate packed byte return leaf offset in '{view.name}'"}
@@ -3426,6 +3449,8 @@ def Entrypoint.validateEffectSuffix (caps : Capabilities) (e : Entrypoint)
     unless packedReduction ≤ checked.expandedLeaves &&
         view.fields.length == view.physicalFieldCount checked.expandedLeaves do
       throw {span := e.span, message := s!"logical return '{view.name}' field count does not match its type"}
+    unless view.fields.length ≤ maxEntrypointReturnFields do
+      throw {span := e.span, message := "entrypoint return field limit exceeded"}
     let fieldsInEntryOrder := e.returns.filterMap fun output =>
       if view.fields.contains output.name then some output.name else none
     unless fieldsInEntryOrder == view.fields do

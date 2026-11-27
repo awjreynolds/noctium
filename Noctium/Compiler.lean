@@ -1292,7 +1292,7 @@ private def nativePlanFile (contract : Name) (ep : Entrypoint) : String :=
 private def returnViewsJson (views : List ReturnView) : Json :=
   Json.arr (views.toArray.map fun view =>
     let schema : Except String Json := do
-      let compiled ← (Types.compileType view.environment view.type).mapError
+      let compiled ← (Types.compileType view.environment view.type Types.publicBytesLimits).mapError
         fun diagnostic => diagnostic.message
       Types.schemaJson compiled
     let nominalUIntFields := view.nominalUIntFields.map fun field => Json.mkObj [

@@ -698,7 +698,7 @@ private def validateReturnValueStep (caps : Capabilities) (env : TypeEnv)
     (output : Output) (_ : PUnit) : Except Diagnostic (ForInStep PUnit) := do
   if (env.lookup output.name).isSome then
     throw {span := output.span, message := s!"entrypoint return '{output.name}' shadows a source binding"}
-  match output.ty.validate caps with
+  match output.ty.validatePublicReturn caps with
   | .error message => throw {span := output.span, message}
   | .ok _ => pure ()
   match output.value.validate caps env with
@@ -713,7 +713,7 @@ private theorem validateReturnValueStep_succeeded (caps : Capabilities)
   cases shadowed : (env.lookup output.name).isSome with
   | true => simp [shadowed, Bind.bind, Except.bind, throw, throwThe] at success
   | false =>
-    cases typeCheck : output.ty.validate caps with
+    cases typeCheck : output.ty.validatePublicReturn caps with
     | error message => simp [shadowed, typeCheck, Bind.bind, Except.bind,
         throw, throwThe] at success
     | ok checkedType =>
