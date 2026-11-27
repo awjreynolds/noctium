@@ -172,7 +172,7 @@ private theorem compareViews_sound {actual pinned : View}
     cases accepted
 
 /-- Successful JSON-view decoding exposes the exact ordered instruction rows. -/
-private theorem decodeView_rows {json : Json} {view : View}
+theorem decodeView_rows {json : Json} {view : View}
     (accepted : decodeView json = .ok view) :
     ∃ instructions,
       Backend.Native.arrayField json "instructions" = .ok instructions ∧
@@ -210,6 +210,18 @@ theorem check_sound {bytes : ArtifactBytes.Bytes} {expected : Lean.Json}
     rw [← same]
     exact rowsEq
   exact ⟨exactBytes, instructions, instructionsParsed, pinnedRows.trans (congrArg Except.ok pinnedRowsEq)⟩
+
+/-- The independent pinned view carries exactly the rows accepted by the
+guarded artifact checker. -/
+theorem check_pinned_rows {bytes : ArtifactBytes.Bytes} {expected : Json}
+    {rows : List GuardedScalarRows.Row} {view : View}
+    (accepted : check bytes expected = .ok rows)
+    (pinned : decodeView expected = .ok view) : view.rows = rows := by
+  obtain ⟨_, raw, parsed, checkedRows⟩ := check_sound accepted
+  obtain ⟨items, found, decoded⟩ := decodeView_rows pinned
+  have same := Except.ok.inj (found.symm.trans parsed)
+  subst items
+  exact Except.ok.inj (decoded.symm.trans checkedRows)
 
 private theorem decodeView_header_accepted {json : Json} {view : View}
     (accepted : decodeView json = .ok view) :
