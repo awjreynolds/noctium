@@ -247,6 +247,8 @@ mutual
       liftD (fail target.span "portable control capability unavailable: ledger events")
     | .claimShielded .. :: _ =>
       liftD (fail target.span "portable control capability unavailable: shielded claims")
+    | .claimContractCall .. :: _ =>
+      liftD (fail target.span "portable control capability unavailable: contract-call claims")
     | .forRange .. :: _ =>
       liftD (fail target.span "unexpanded finite loop reached portable control analysis")
     | .branch condition yes no :: rest =>
@@ -629,6 +631,8 @@ mutual
           emitLift (fail target.span "portable control capability unavailable: ledger events")
         | .claimShielded .. =>
           emitLift (fail target.span "portable control capability unavailable: shielded claims")
+        | .claimContractCall .. =>
+          emitLift (fail target.span "portable control capability unavailable: contract-call claims")
         | .forRange .. => emitLift (fail target.span "unexpanded finite loop reached portable control emission")
       if exactGeneratedCall then do
         modify fun state => {state with exactGeneratedCall := priorCallMode}

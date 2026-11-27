@@ -81,8 +81,25 @@ and fixed bytes. Changing the amount from 300 to 299 produces a checked caller
 whose claim fails to match the callee. Bundle selection still needs a trusted
 manifest and the deployed verifier. The ledger commitment authenticates the
 result fields, with schema selection supplied by the source interface and trusted
-callee bundle. Helper-body call authoring remains open.
+callee bundle.
 [Payment example](../../examples/AggregateSerialization.lean) · [Native test](../../runtime/tests/aggregate_serialization.rs)
+
+### Claims from native circuit helpers
+
+An effectful `Helpers.Program` declaration may issue `.claimContractCall`
+with a Bytes32 address, Bytes32 entrypoint hash, and Native commitment. The
+native contract entrypoint evaluates the three terms in that order. Each
+term's checks run before the claim. The branch condition and private
+operands require disclosure at the public claim sink. Pure helper
+declarations reject a reachable claim, including through a nested helper.
+
+Compact 0.36.1 compiles a guarded call inside an internal helper and rejects
+the same case with an undisclosed target. Noctium's fresh native replay
+assembles the guarded scalar call with its checked callee. Changing the
+selector, address or expected return makes assembly reject. The disabled
+branch records no claim. [Lean fixture](../../tests/ContractCaller.lean) ·
+[Native test](../../runtime/tests/native_composition.rs) ·
+[Compact source](../../tests/compact/HelperContractCall.compact)
 
 The funded payment example attached two K9 proofs and finalized in one
 localnet transaction at block 31967. The Rust client checked one call event

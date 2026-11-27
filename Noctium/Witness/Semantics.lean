@@ -22,6 +22,8 @@ def expressionSchedule : List Statement → List Term
   | .forRange _ _ _ body :: rest => expressionSchedule body ++ expressionSchedule rest
   | .emitEvent _ payload :: rest => payload :: expressionSchedule rest
   | .claimShielded _ digest :: rest => digest :: expressionSchedule rest
+  | .claimContractCall address entryPointHash commitment :: rest =>
+      address :: entryPointHash :: commitment :: expressionSchedule rest
   | .branch condition yes no :: rest =>
       condition :: expressionSchedule yes ++ expressionSchedule no ++ expressionSchedule rest
 termination_by body => sizeOf body
@@ -108,6 +110,9 @@ theorem eraseStages_preserves_expressionSchedule (body : List Statement) :
         | claimShielded kind digest =>
           have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
           simpa [eraseStages, expressionSchedule] using hr
+        | claimContractCall address entryPointHash commitment =>
+          have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
+          simpa [eraseStages, expressionSchedule] using hr
         | branch condition yes no =>
           have hy := ih (statementWeight yes) (by rw [← sizeEq]; simp [statementWeight]; omega) yes rfl
           have hn := ih (statementWeight no) (by rw [← sizeEq]; simp [statementWeight]; omega) no rfl
@@ -189,6 +194,8 @@ def stageObservations : List Statement → List Observation
   | .forRange _ _ _ body :: rest => stageObservations body ++ stageObservations rest
   | .emitEvent _ payload :: rest => .evaluate payload :: stageObservations rest
   | .claimShielded _ digest :: rest => .evaluate digest :: stageObservations rest
+  | .claimContractCall address entryPointHash commitment :: rest =>
+      .evaluate address :: .evaluate entryPointHash :: .evaluate commitment :: stageObservations rest
   | .branch condition yes no :: rest =>
       .evaluate condition :: stageObservations yes ++ stageObservations no ++ stageObservations rest
 termination_by body => sizeOf body
@@ -253,6 +260,9 @@ theorem stageObservations_preserve_evaluations (body : List Statement) :
           have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
           simpa [stageObservations, evaluatedObservations, expressionSchedule] using hr
         | claimShielded kind digest =>
+          have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
+          simpa [stageObservations, evaluatedObservations, expressionSchedule] using hr
+        | claimContractCall address entryPointHash commitment =>
           have hr := ih (statementWeight rest) (by rw [← sizeEq]; simp [statementWeight]) rest rfl
           simpa [stageObservations, evaluatedObservations, expressionSchedule] using hr
         | branch condition yes no =>
@@ -346,6 +356,9 @@ theorem stageObservations_preserve_exact_write_frame (body : List Statement) :
         | claimShielded kind digest =>
             have hr := ih (statementWeight rest) (by rw [← weightEq]; simp [statementWeight]) rest rfl
             simpa [stageObservations, privateWrites, sourceStageEvents] using hr
+        | claimContractCall address entryPointHash commitment =>
+            have hr := ih (statementWeight rest) (by rw [← weightEq]; simp [statementWeight]) rest rfl
+            simpa [stageObservations, privateWrites, sourceStageEvents] using hr
         | branch condition yes no =>
             have hy := ih (statementWeight yes) (by rw [← weightEq]; simp [statementWeight]; omega) yes rfl
             have hn := ih (statementWeight no) (by rw [← weightEq]; simp [statementWeight]; omega) no rfl
@@ -370,9 +383,9 @@ theorem circuitErasure_has_no_private_writes (body : List Statement) :
   simp [privateWrites, circuitObservations]
 
 /- The bounded execution model below accepts this AST fragment only. Control
-branches, loops, events, new scalar/curve/byte terms, short-circuit terms, old
-untyped witnesses, and effect fixtures need separate host semantics and never
-enter the native replay gate. -/
+branches, loops, event and claim effects, new scalar/curve/byte terms,
+short-circuit terms, old untyped witnesses, and effect fixtures need separate
+host semantics and never enter the native replay gate. -/
 inductive EligibilityNode where
   | term (value : Term)
   | statement (value : Statement)
@@ -384,7 +397,8 @@ private def eligibilityChildren : EligibilityNode → Option (List EligibilityNo
     | .readCell .. | .writeCell .. | .readMap .. | .readMember .. | .writeMap .. => none
     | .return none => some []
     | .return (some value) => some [.term value]
-    | .branch .. | .forRange .. | .emitEvent .. | .claimShielded .. => none
+    | .branch .. | .forRange .. | .emitEvent .. | .claimShielded ..
+    | .claimContractCall .. => none
   | .term term => match term with
     | .unit | .native _ | .bool _ | .uint _ _ | .ref _ => some []
     | .binary _ left right | .eq left right | .poseidon2 _ left right | .index left right =>
@@ -1490,6 +1504,8 @@ mutual
               fail "event statements are outside the bounded native replay semantics"
           | .claimShielded .. =>
               fail "shielded claim statements are outside the bounded native replay semantics"
+          | .claimContractCall .. =>
+              fail "contract-call claim statements are outside the bounded native replay semantics"
   termination_by fuel _ _ _ _ _ _ _ => fuel
   decreasing_by all_goals omega
 end
@@ -2055,6 +2071,9 @@ private theorem body_recordSafe_step (fuel : Nat)
       simp only [evalBody]
       exact recordSafe_fail _
     | claimShielded kind digest =>
+      simp only [evalBody]
+      exact recordSafe_fail _
+    | claimContractCall address entryPointHash commitment =>
       simp only [evalBody]
       exact recordSafe_fail _
     | readCell state destination ty =>
@@ -4066,6 +4085,9 @@ private theorem evalBody_successSim_step (fuel : Nat) (program : Program)
     | claimShielded kind digest =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact successSim_fail _
+    | claimContractCall address entryPointHash commitment =>
+      simp only [Noctium.Witness.eraseStages, evalBody]
+      exact successSim_fail _
     | readCell state destination ty =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact successSim_fail _
@@ -4914,6 +4936,9 @@ private theorem evalBody_failureSim_step (fuel : Nat) (program : Program)
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact failureSim_fail _
     | claimShielded kind digest =>
+      simp only [Noctium.Witness.eraseStages, evalBody]
+      exact failureSim_fail _
+    | claimContractCall address entryPointHash commitment =>
       simp only [Noctium.Witness.eraseStages, evalBody]
       exact failureSim_fail _
     | readCell state destination ty =>

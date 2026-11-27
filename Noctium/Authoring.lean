@@ -3691,6 +3691,9 @@ private partial def statementTerm : Statement → CommandElabM (TSyntax `term)
   | .writeMap .. => throwError "readable witness source does not support ledger map writes"
   | .emitEvent .. => throwError "readable witness source does not support ledger events"
   | .claimShielded .. => throwError "readable witness source does not support shielded claims"
+  | .claimContractCall address entryPointHash commitment => do
+    `(Noctium.Helpers.Statement.claimContractCall $(← termTerm address)
+      $(← termTerm entryPointHash) $(← termTerm commitment))
   | .branch condition yes no => do
     let yes ← yes.toArray.mapM statementTerm
     let no ← no.toArray.mapM statementTerm

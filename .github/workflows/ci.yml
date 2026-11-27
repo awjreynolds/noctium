@@ -513,6 +513,9 @@ jobs:
           .lake/build/bin/noctium compile tests/TypedContractReference.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/typed-contract-reference"
+          .lake/build/bin/noctium compile tests/ContractCaller.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/helper-call-claims"
           .lake/build/bin/noctium compile tests/NestedRecordList.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --output "$artifacts/nested-record-list"
@@ -622,6 +625,10 @@ jobs:
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \
               --ignored --exact linked_readable_helpers_preserve_native_argument_order
+          NOCTIUM_HELPER_CALL_CLAIMS_DIR="$artifacts/helper-call-claims" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test native_composition \
+              helper_contract_call_claim_matches_only_its_checked_target_selector_and_return -- --exact --ignored
           NOCTIUM_HASH_TO_CURVE_FAB_DIR="$artifacts/witness-fab-curve" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test witness_control \

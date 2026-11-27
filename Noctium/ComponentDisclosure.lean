@@ -406,6 +406,11 @@ private partial def analyzeBody (fuel : Nat) (program : Program) (prepared : Pre
   | .claimShielded _ digest :: rest => do
     discard (analyzeTerm fuel program prepared declaration.id.scope env span digest)
     analyzeBody fuel program prepared declaration env rest
+  | .claimContractCall address entryPointHash commitment :: rest => do
+    discard (analyzeTerm fuel program prepared declaration.id.scope env span address)
+    discard (analyzeTerm fuel program prepared declaration.id.scope env span entryPointHash)
+    discard (analyzeTerm fuel program prepared declaration.id.scope env span commitment)
+    analyzeBody fuel program prepared declaration env rest
   | .forRange .. :: _ =>
     throw {span, message := "unexpanded finite loop reached component disclosure analysis"}
 end

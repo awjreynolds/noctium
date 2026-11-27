@@ -65,6 +65,10 @@ private partial def bodyFreeReferences (bound : List String) : List Statement â†
   | .claimShielded _ digest :: rest =>
     appendUnique (termReferences digest |>.filter fun ref => !bound.contains ref)
       (bodyFreeReferences bound rest)
+  | .claimContractCall address entryPointHash commitment :: rest =>
+    appendUnique (appendMany [termReferences address, termReferences entryPointHash,
+      termReferences commitment] |>.filter fun ref => !bound.contains ref)
+      (bodyFreeReferences bound rest)
   | .readCell _ destination _ :: rest => bodyFreeReferences (destination :: bound) rest
   | .readMap _ destination _ _ key :: rest | .readMember _ destination _ _ key :: rest =>
     appendUnique (termReferences key |>.filter fun ref => !bound.contains ref)
@@ -114,6 +118,9 @@ private partial def statementNames : List Statement â†’ List String
     appendMany [[capability, key], termNames value, statementNames rest]
   | .emitEvent _ payload :: rest => appendMany [termNames payload, statementNames rest]
   | .claimShielded _ digest :: rest => appendMany [termNames digest, statementNames rest]
+  | .claimContractCall address entryPointHash commitment :: rest =>
+    appendMany [termNames address, termNames entryPointHash, termNames commitment,
+      statementNames rest]
   | .readCell state destination _ :: rest => appendMany [[state, destination], statementNames rest]
   | .writeCell state _ value :: rest => appendMany [[state], termNames value, statementNames rest]
   | .readMap state destination _ _ key :: rest | .readMember state destination _ _ key :: rest =>
@@ -169,6 +176,12 @@ private partial def bodyCallsHiddenBy (span : SourceSpan) (outer : List String)
     bodyCallsHiddenBy span outer bound rest
   | .claimShielded _ digest :: rest => do
     termCallsHiddenBy (bound ++ outer.filter fun hidden => !bound.contains hidden) span digest
+    bodyCallsHiddenBy span outer bound rest
+  | .claimContractCall address entryPointHash commitment :: rest => do
+    let hidden := bound ++ outer.filter fun hidden => !bound.contains hidden
+    termCallsHiddenBy hidden span address
+    termCallsHiddenBy hidden span entryPointHash
+    termCallsHiddenBy hidden span commitment
     bodyCallsHiddenBy span outer bound rest
   | .readCell _ destination _ :: rest => bodyCallsHiddenBy span outer (destination :: bound) rest
   | .readMap _ destination _ _ key :: rest | .readMember _ destination _ _ key :: rest => do
