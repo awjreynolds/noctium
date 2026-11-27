@@ -2,7 +2,7 @@ pragma language_version 0.28;
 import CompactStandardLibrary;
 
 struct Inner {
-  first: Field;
+  first: Uint<16>;
   active: Boolean;
 }
 
@@ -11,7 +11,18 @@ struct Envelope {
   tag: Field;
 }
 
+struct NativeInner {
+  first: Field;
+  active: Boolean;
+}
+
+struct NativeEnvelope {
+  memo: NativeInner;
+  tag: Field;
+}
+
 export ledger records: List<Envelope>;
+export ledger nativeRecords: List<NativeEnvelope>;
 
 export circuit push(envelope: Envelope): [] {
   records.pushFront(disclose(envelope));
@@ -23,4 +34,16 @@ export circuit head(): Maybe<Envelope> {
 
 export circuit pop(): [] {
   records.popFront();
+}
+
+export circuit pushNative(envelope: NativeEnvelope): [] {
+  nativeRecords.pushFront(disclose(envelope));
+}
+
+export circuit headNative(): Maybe<NativeEnvelope> {
+  return nativeRecords.head();
+}
+
+export circuit popNative(): [] {
+  nativeRecords.popFront();
 }

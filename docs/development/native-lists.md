@@ -276,6 +276,16 @@ NOCTIUM_NESTED_OPAQUE_BYTES_LIST_COMPACT="$scratch/compact.json" \
 
 ## Check emptiness for zero-width and nested record Lists
 
+Root Lists accept one nested named record level with Native, Bool and
+bounded UInt leaves. The UInt16 comparison retains the ordered layout
+`memo_first`, `memo_active`, `tag` and encodes the UInt16 as two-byte
+big-endian state. An empty head has a typed zero default. After pushes of
+`(513, true, 17)` and `(65535, false, 23)`, the latter is the head.
+Popping restores the former. Inputs above 65,535 reject.
+[Lean fixture](../../tests/NestedRecordList.lean) ·
+[Compact replay](../../tests/compact/nested-record-list.mjs) ·
+[Native checker](../../runtime/tests/nested_record_list.rs)
+
 The paired fixture compares an empty `List<Bytes<0>>` with a List containing
 one zero-width item. It also compares empty and populated record Lists beneath
 two Map keys. The active read through an absent parent rejects in Compact and

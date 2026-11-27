@@ -902,24 +902,29 @@ def LedgerValueType.listElementFieldPaths (environment : Types.CompositeEnv)
     if !isNested then flatPaths
     else do
       let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+      let scalarTy (fieldType : Types.CompositeType) : Except String Ty := do
+        match fieldType with
+        | .scalar .native => pure Ty.native
+        | .scalar .bool => pure Ty.bool
+        | .scalar (.uint maximum) => do
+          ScalarPolicy.validate (.uint maximum)
+          pure (.uint maximum)
+        | .scalar _ => throw "nested List record fields must be Native, Bool, or bounded UInt"
+        | _ => throw "nested List records support one nested level"
       let groups ← declaration.fields.mapM fun field => do
         match field.type with
-        | .scalar .native => pure [([field.name], field.name, Ty.native)]
-        | .scalar .bool => pure [([field.name], field.name, Ty.bool)]
+        | .scalar _ => do
+          let ty ← scalarTy field.type
+          pure [([field.name], field.name, ty)]
         | .structure childId => do
           let some child := environment.structures.find? (·.id == childId)
             | throw s!"nested List record declaration '{childId}' is missing"
           unless !child.fields.isEmpty do
             throw "nested List records must contain at least one field"
           child.fields.mapM fun nestedField => do
-            let ty ← match nestedField.type with
-              | .scalar .native => pure Ty.native
-              | .scalar .bool => pure Ty.bool
-              | .structure _ => throw "nested List records support one nested level"
-              | _ => throw "nested List record fields must be Native or Bool"
+            let ty ← scalarTy nestedField.type
             pure ([field.name, nestedField.name],
               s!"{field.name}_{nestedField.name}", ty)
-        | .scalar _ => throw "nested List record fields must be Native or Bool"
         | _ => throw "nested List records support one nested level"
       let fields := groups.flatten
       let names := fields.map (fun (_, name, _) => name)

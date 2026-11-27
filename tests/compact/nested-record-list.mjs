@@ -55,33 +55,52 @@ try {
     return [call.result, call.context.callContext.currentQueryContext.state];
   };
 
-  const first = { memo: { first: 11n, active: true }, tag: 101n };
-  const second = { memo: { first: 22n, active: false }, tag: 202n };
   const absent = {
     is_some: false,
     value: { memo: { first: 0n, active: false }, tag: 0n },
   };
 
-  let state = currentContractState.data;
-  const [initialHead] = await invoke('head', state);
-  assert.deepEqual(initialHead, absent, 'empty list head should be None');
+  let uintState = currentContractState.data;
+  const [initialUIntHead] = await invoke('head', uintState);
+  assert.deepEqual(initialUIntHead, absent,
+    'empty Uint<16> list head should return a typed zero');
 
-  [, state] = await invoke('push', state, first);
-  [, state] = await invoke('push', state, second);
-  const [newestHead] = await invoke('head', state);
-  assert.deepEqual(newestHead, { is_some: true, value: second },
-    'head should return the second pushed Envelope');
+  const firstUInt = { memo: { first: 513n, active: true }, tag: 17n };
+  const secondUInt = { memo: { first: 65_535n, active: false }, tag: 23n };
+  [, uintState] = await invoke('push', uintState, firstUInt);
+  [, uintState] = await invoke('push', uintState, secondUInt);
+  const [newestUIntHead] = await invoke('head', uintState);
+  assert.deepEqual(newestUIntHead, { is_some: true, value: secondUInt },
+    'head should return the newest Uint<16> nested record');
 
-  [, state] = await invoke('pop', state);
-  const [olderHead] = await invoke('head', state);
-  assert.deepEqual(olderHead, { is_some: true, value: first },
-    'one pop should reveal the first pushed Envelope');
+  [, uintState] = await invoke('pop', uintState);
+  const [olderUIntHead] = await invoke('head', uintState);
+  assert.deepEqual(olderUIntHead, { is_some: true, value: firstUInt },
+    'one pop should reveal the first Uint<16> nested record');
+  await assert.rejects(() => invoke('push', uintState, {
+    memo: { first: 65_536n, active: true }, tag: 17n,
+  }));
 
-  [, state] = await invoke('pop', state);
-  const [emptyHead] = await invoke('head', state);
-  assert.deepEqual(emptyHead, absent, 'head should be None after both records are popped');
+  let nativeState = currentContractState.data;
+  const firstNative = { memo: { first: 11n, active: true }, tag: 101n };
+  const secondNative = { memo: { first: 22n, active: false }, tag: 202n };
+  const [initialNativeHead] = await invoke('headNative', nativeState);
+  assert.deepEqual(initialNativeHead, absent, 'empty Native list head should be None');
+  [, nativeState] = await invoke('pushNative', nativeState, firstNative);
+  [, nativeState] = await invoke('pushNative', nativeState, secondNative);
+  const [newestNativeHead] = await invoke('headNative', nativeState);
+  assert.deepEqual(newestNativeHead, { is_some: true, value: secondNative },
+    'Native and Bool nested records should retain their existing list behavior');
+  [, nativeState] = await invoke('popNative', nativeState);
+  const [olderNativeHead] = await invoke('headNative', nativeState);
+  assert.deepEqual(olderNativeHead, { is_some: true, value: firstNative },
+    'one Native list pop should reveal the first nested record');
+  [, nativeState] = await invoke('popNative', nativeState);
+  const [emptyNativeHead] = await invoke('headNative', nativeState);
+  assert.deepEqual(emptyNativeHead, absent,
+    'Native list head should be None after both records are popped');
 
-  console.log('Compact 0.36.1 matched nested Envelope List pushFront, head, popFront and empty Maybe behavior');
+  console.log('Compact 0.36.1 matched nested Uint<16> List defaults, pushFront, head, popFront, bounds, and the Native/Bool route');
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
