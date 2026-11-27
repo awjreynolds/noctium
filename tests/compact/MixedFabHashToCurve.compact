@@ -14,3 +14,9 @@ export struct MixedFabHashToCurvePayload {
 export circuit hashToCurveFab(payload: MixedFabHashToCurvePayload): [JubjubPoint] {
   return [hashToCurve<MixedFabHashToCurvePayload>(payload)];
 }
+
+witness loadPayload(counter: Uint<16>): MixedFabHashToCurvePayload;
+
+export circuit hashWitnessPayload(counter: Uint<16>): [JubjubPoint] {
+  return [disclose(hashToCurve<MixedFabHashToCurvePayload>(loadPayload(counter)))];
+}

@@ -156,6 +156,7 @@ scoped syntax (name := noctiumWitnessDeclarationCommand) "noctium_witness" ident
   "(" noctium_witness_parameter,* ")" ":" noctium_witness_result : command
 
 scoped syntax "witness" ident "(" nlexpr,* ")" : nlexpr
+scoped syntax "hashToCurveValue(" nlexpr ")" : nlexpr
 scoped syntax "if" nlexpr "then" nlexpr "else" nlexpr : nlexpr
 scoped syntax "cast(" "Payload" ident "," nlexpr ")" : nlexpr
 declare_syntax_cat noctium_callback_step
@@ -1027,6 +1028,7 @@ private partial def renderExpr (stx : TSyntax `nlexpr) : String :=
     s!"persistentHashVector32([{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| persistentHashFab($environment:ident, $type:ident, [$values,*])) =>
     s!"persistentHashFab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
+  | `(nlexpr| hashToCurveValue($value)) => s!"hashToCurveValue({renderExpr value})"
   | `(nlexpr| hashToCurveFab($environment:ident, $type:ident, [$values,*])) =>
     s!"hashToCurveFab({environment.getId}, {type.getId}, [{String.intercalate ", " (values.getElems.toList.map renderExpr)}])"
   | `(nlexpr| sha512Fab($environment:ident, $type:ident, [$values,*])) =>
@@ -1177,6 +1179,7 @@ private partial def disclosedValues (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     values.getElems.toList.flatMap disclosedValues
+  | `(nlexpr| hashToCurveValue($value)) => disclosedValues value
   | `(nlexpr| transientHashValue($value)) => disclosedValues value
   | `(nlexpr| tokenType($domain, $contractAddress)) =>
     disclosedValues domain ++ disclosedValues contractAddress
@@ -1283,6 +1286,7 @@ private partial def inlineAssertions (stx : TSyntax `nlexpr) : List String :=
   | `(nlexpr| persistentHashNativeVector([$values,*]))
   | `(nlexpr| transientHashNativeVector([$values,*])) =>
     values.getElems.toList.flatMap inlineAssertions
+  | `(nlexpr| hashToCurveValue($value)) => inlineAssertions value
   | `(nlexpr| transientHashValue($value)) => inlineAssertions value
   | `(nlexpr| tokenType($domain, $contractAddress)) =>
     inlineAssertions domain ++ inlineAssertions contractAddress
@@ -1870,6 +1874,29 @@ private def lowerFabDigest (site : Syntax) (algorithm : Helpers.FabDigest)
     before
     type := .scalar algorithm.resultType
     term := .bytes (.fabDigest algorithm type (operands.map Prod.fst)) (operands.map Prod.snd)}
+
+private def lowerFabHashToCurve (site : Syntax) (type : Types.CompositeType)
+    (value : Lowered) : ExprM Lowered := do
+  modify fun state => {state with requiresOutputViews := _root_.Bool.true}
+  let compiled ← match Types.compileType (← get).composites type with
+    | .ok compiled => pure compiled
+    | .error diagnostic => throwErrorAt site diagnostic.message
+  let (before, reference) ← match value.term with
+    | .ref _ => pure (value.before, value.term)
+    | _ => do
+      let binding ← freshIterationRef "hash-to-curve-payload"
+      pure (value.before ++ [.bind binding value.type value.term], Helpers.Term.ref binding)
+  let operands ← match Helpers.Wire.fabDigestOperands compiled reference with
+    | .ok operands => pure operands
+    | .error message => throwErrorAt site message
+  let operation := Helpers.BytesOp.fabHashToCurve type (operands.map Prod.fst)
+  let (_, result) ← match operation.signature operands.length with
+    | .ok signature => pure signature
+    | .error message => throwErrorAt site message
+  pure {value with
+    before
+    type := .scalar result
+    term := .bytes operation (operands.map Prod.snd)}
 
 private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEnv)
     (stx : TSyntax `nlexpr) (expected : Option ResultType := none)
@@ -2733,6 +2760,11 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
       term := .bytes .transientHashNativeVector operands
       before
     }
+  | `(nlexpr| hashToCurveValue($source)) => do
+    let value ← lowerExpr programName callPrefix env source
+    if let .unit := value.type then
+      throwErrorAt source "hashToCurveValue requires a checked FAB value"
+    return ← lowerFabHashToCurve source value.layoutType value
   | `(nlexpr| persistentHashPoint($point)) =>
     lowerBytesOperation programName callPrefix env stx .persistentHashPoint [point]
   | `(nlexpr| sha256($value)) => do
@@ -3577,6 +3609,9 @@ private partial def termTerm : Noctium.Helpers.Term → CommandElabM (TSyntax `t
           | .keccak256 => `(Noctium.Helpers.FabDigest.keccak256)
         let parameters ← parameters.toArray.mapM tyTerm
         `(Noctium.Helpers.BytesOp.fabDigest $algorithm $(← compositeTypeTerm type) [$parameters,*])
+      | .fabHashToCurve type parameters => do
+        let parameters ← parameters.toArray.mapM tyTerm
+        `(Noctium.Helpers.BytesOp.fabHashToCurve $(← compositeTypeTerm type) [$parameters,*])
       | .reverseBytes32 => `(Noctium.Helpers.BytesOp.reverseBytes32)
       | .reverseBytes length => `(Noctium.Helpers.BytesOp.reverseBytes $(natTerm length))
       | .sliceBytes length start stop =>

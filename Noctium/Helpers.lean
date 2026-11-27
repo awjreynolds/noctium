@@ -150,6 +150,7 @@ inductive BytesOp where
   | keccak256 (length : Nat)
   | keccak256Secp256k1Point
   | fabDigest (algorithm : FabDigest) (type : Types.CompositeType) (parameters : List Ty)
+  | fabHashToCurve (type : Types.CompositeType) (parameters : List Ty)
   | reverseBytes32
   | reverseBytes (length : Nat)
   | sliceBytes (length start stop : Nat)
@@ -176,6 +177,7 @@ def BytesOp.operationName : BytesOp → String
   | .keccak256 length => s!"keccak256:{length}"
   | .keccak256Secp256k1Point => "keccak256:Secp256k1Point"
   | .fabDigest algorithm _ _ => algorithm.name ++ "Fab"
+  | .fabHashToCurve .. => "hashToCurveFab"
   | .reverseBytes32 => "reverseBytes32"
   | .reverseBytes length => s!"reverseBytes:{length}"
   | .sliceBytes length start stop => s!"sliceBytes:{length}:{start}:{stop}"
@@ -245,6 +247,15 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
         argumentCount ≤ fieldLimit && argumentCount == parameters.length do
       throw "FAB digest operand count differs from the checked layout"
     pure (parameters, algorithm.resultType)
+  | .fabHashToCurve type parameters =>
+    let emptyRootVector := match type with
+      | .vector 0 _ => true
+      | _ => false
+    let fieldLimit := Types.defaultLimits.maxExpandedNodes
+    unless (argumentCount > 0 || emptyRootVector) &&
+        argumentCount ≤ fieldLimit && argumentCount == parameters.length do
+      throw "FAB hash-to-curve operand count differs from the checked layout"
+    pure (parameters, .jubjubPoint)
   | .reverseBytes32 =>
     unless argumentCount == 1 do throw "reverseBytes32 requires one Bytes32 argument"
     pure ([.bytes 32], .bytes 32)
@@ -1569,6 +1580,7 @@ private def BytesOp.acceptsAggregateBytes (operation : BytesOp) (expected : Ty)
     (actual : ResultType) : Bool :=
   match operation, expected, actual with
   | .fabDigest .., .bytes length, .composite (.bytes actualLength) => length == actualLength
+  | .fabHashToCurve .., .bytes length, .composite (.bytes actualLength) => length == actualLength
   | _, _, _ => false
 
 private def scalar (span : SourceSpan) : ResultType → Except Diagnostic Ty
@@ -3316,6 +3328,12 @@ mutual
           | .persistentHash => pure (scalarValue (Expr.persistentHashFab program.composites type operands))
           | .sha512 => pure (scalarValue (Expr.sha512Fab program.composites type operands))
           | .keccak256 => pure (scalarValue (Expr.keccak256Fab program.composites type operands))
+        | .fabHashToCurve type parameters, values => do
+          let operands ← (parameters.zip values).mapM fun (ty, value) => do
+            pure (Sigma.mk ty (← liftD (typedExprWithByteProjection span ty value)))
+          let checkedLayout := validateFabHashLayout program.composites type operands
+          discard (liftD (liftError span checkedLayout))
+          pure (scalarValue (Expr.hashToCurveFab program.composites type operands))
         | .reverseBytes32, [value] => do
           let value ← liftD (typedExpr span (.bytes 32) value)
           pure (scalarValue (Expr.reverseBytes32 value))

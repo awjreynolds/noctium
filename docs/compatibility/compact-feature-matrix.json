@@ -6579,7 +6579,7 @@
       "layer": "standard-library",
       "surface": "hashToCurve",
       "noctiumStatus": "subset",
-      "notes": "Lean hashToCurveFab lowers checked flat FAB layouts to the native Jubjub hash-to-curve instruction. Two changed private payloads in the mixed named record fixture match Compact 0.36.1, including the Bytes32 field split and enum tag. The native checker rejects a changed private field in the transcript. The native checker matches both Jubjub result coordinates from Compact 0.36.1 on one nested curve payload. Broader host coverage remains open.",
+      "notes": "Lean hashToCurveFab lowers checked flat FAB layouts to the native Jubjub hash-to-curve instruction. Two changed private payloads in the mixed named record fixture match Compact 0.36.1, including the Bytes32 field split and enum tag. The native checker rejects a changed private field in the transcript. The native checker matches both Jubjub result coordinates from Compact 0.36.1 on one nested curve payload. Broader host coverage remains open. The readable witness path hashes a checked record returned by one provider callback. Compact 0.36.1 and the native host return the same two Jubjub points as the direct path. A malformed provider reply and an altered private counter with the original point reject. The source requires explicit disclosure of the private-derived result.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -6597,7 +6597,9 @@
         "runtime/tests/hash_to_curve_fab.rs",
         "tests/compact/mixed-fab-hash-to-curve.mjs",
         "tests/CurveFabHashes.lean",
-        "runtime/tests/curve_fab_hashes.rs"
+        "runtime/tests/curve_fab_hashes.rs",
+        "tests/compact/MixedFabHashToCurve.compact",
+        "runtime/tests/witness_control.rs"
       ],
       "equivalence": "unverified"
     },
