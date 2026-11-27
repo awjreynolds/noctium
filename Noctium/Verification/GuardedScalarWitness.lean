@@ -259,7 +259,7 @@ private theorem lowered_scalar_scope
     producer.input_lanes_nodup distinctArgs, producer.assemble_scope⟩
 
 /-- The actual assembler supplies a satisfying witness for the lowered
-scalar relation once the remaining constraint and Boolean-domain checks hold. -/
+scalar relation once its explicitly emitted constraints hold. -/
 theorem assemble_of_lowered_scalar_constraints (hash : Hash) (seed : Assignment)
     (state : List StateDecl) (sourceEntry : Entrypoint) (rewrites : Zkir.Rewrites)
     (shape : Native.Expected) (json : Json) (view : GuardedZkirArtifact.View) (rawRows : Array Json)
@@ -272,7 +272,7 @@ theorem assemble_of_lowered_scalar_constraints (hash : Hash) (seed : Assignment)
     (remaining : ∀ output, GuardedScalarWitnessAssembly.assemble hash seed
         view.header.arguments rawRows.toList view.rows = .ok output →
       ∀ pair ∈ rawRows.toList.zip view.rows,
-        GuardedScalarWitnessAssembly.RemainingConstraint hash output.val pair.1 pair.2) :
+        GuardedScalarWitnessAssembly.ExplicitConstraint hash output.val pair.1 pair.2) :
     ∃ target : Assignment,
       (∀ row ∈ view.rows, GuardedImpactTranscript.ordinaryHolds hash target row) ∧
       ∀ name ∈ (shape.rawInputs ++ shape.inputs).map (·.identifier), target name = seed name := by
@@ -284,18 +284,16 @@ theorem assemble_of_lowered_scalar_constraints (hash : Hash) (seed : Assignment)
     view.header.arguments rawRows.toList view.rows finalNames validArguments distinctInputs scope
   have equations := (GuardedScalarWitnessAssembly.assemble_definition_equations hash seed
     view.header.arguments rawRows.toList view.rows finalNames validArguments distinctInputs scope assembled).2
-  have strict := (scope.strict_holds_iff_remaining hash output.val equations).mpr
-    (remaining output assembled)
-  refine ⟨output.val, ?_, ?_⟩
-  · intro row present
-    cases row with
-    | strict instruction => exact strict instruction present
-    | publicInput => trivial
-    | impact => trivial
-  · intro name present
-    apply output.property name
-    rw [names]
-    exact present
+  obtain ⟨items, found, decoded⟩ := GuardedZkirArtifact.decodeView_rows pinned
+  have sameItems := Except.ok.inj (found.symm.trans raw)
+  subst items
+  have ordinary := GuardedZkirRequirements.lowerEntrypoint_guardedRows_of_explicit_constraints
+    lowered expected scalarSchema raw decoded equations (remaining output assembled)
+  refine ⟨output.val, ordinary, ?_⟩
+  intro name present
+  apply output.property name
+  rw [names]
+  exact present
 
 /-- The accepted lowering and guarded view determine the assembler's complete
 ordered scope, input lanes and comparison widths. An independent satisfying

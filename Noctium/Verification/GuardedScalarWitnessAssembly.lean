@@ -187,7 +187,69 @@ def RemainingConstraint (hash : Hash) (witness : Assignment) (raw : Json) (row :
     if (rowDestination raw row).isSome then True else Instruction.Holds hash witness instruction
   | _ => True
 
-private theorem strict_holds_from_equation (hash : Hash) (witness : Assignment)
+def ExplicitConstraint (hash : Hash) (witness : Assignment) (raw : Json) (row : Row) : Prop :=
+  match row with
+  | .strict (.not _ _) | .strict (.select _ _ _ _) => True
+  | _ => RemainingConstraint hash witness raw row
+
+private theorem scalar_boolean_of_bound (value : Scalar) (bound : value.val ≤ 1) :
+    value = zero ∨ value = one := by
+  have values : value.val = 0 ∨ value.val = 1 := by omega
+  rcases values with isZero | isOne
+  · exact Or.inl (Fin.ext (by simpa [zero] using isZero))
+  · exact Or.inr (Fin.ext (by simpa [one] using isOne))
+
+/-- Accepted native boolean operands stay in the boolean domain of the
+decoded relation row, even when the caller discharges that constraint through
+the producer's checked maximum. -/
+theorem remainingConstraint_of_accepted_row {expected : Backend.Native.Expected}
+    {state next : Backend.Native.State} {hash : Hash} {witness : Assignment}
+    {raw : Json} {row : Row}
+    (decoded : decodeRow raw = .ok row)
+    (accepted : Backend.Native.validateInstruction expected state raw = .ok next)
+    (meaning : ScalarValidationMeaning.StateMeaning hash witness witness state)
+    (nativeDefinitions : ScalarValidationArithmeticLoop.NativeDefinitions state)
+    (explicit : ExplicitConstraint hash witness raw row) :
+    RemainingConstraint hash witness raw row := by
+  cases row with
+  | publicInput output guard => trivial
+  | impact guard inputs => trivial
+  | strict instruction =>
+    cases instruction with
+    | not value output =>
+      have step := (decodeRow_strict decoded).1
+      obtain ⟨supported, instructionDecoded⟩ := step
+      cases supported with
+      | not _ _ opcode =>
+        obtain ⟨valueField, _⟩ := ScalarValidationMeaning.decoded_not_argument
+          opcode instructionDecoded
+        obtain ⟨_, fact, valueAccepted, _, bound, _, _⟩ :=
+          ScalarValidationArithmeticLoop.accepted_not_components nativeDefinitions opcode accepted
+        have valueMeaning := ScalarValidationMeaning.argument_decoded_meaning
+          meaning valueAccepted valueField
+        have boolean := scalar_boolean_of_bound (value.read witness)
+          (Nat.le_trans valueMeaning.bound bound)
+        change value.read witness = zero ∨ value.read witness = one
+        exact boolean
+    | select condition yes no output =>
+      have step := (decodeRow_strict decoded).1
+      obtain ⟨supported, instructionDecoded⟩ := step
+      cases supported with
+      | select _ _ _ _ opcode =>
+        obtain ⟨conditionField, _, _, _⟩ :=
+          ScalarValidationMeaning.decoded_select_arguments opcode instructionDecoded
+        obtain ⟨_, _, _, _, conditionAccepted, _, _, _, _, _, bound, _, _⟩ :=
+          ScalarValidationArithmeticLoop.accepted_native_select_components
+            nativeDefinitions opcode accepted
+        have conditionMeaning := ScalarValidationMeaning.argument_decoded_meaning
+          meaning conditionAccepted conditionField
+        have boolean := scalar_boolean_of_bound (condition.read witness)
+          (Nat.le_trans conditionMeaning.bound bound)
+        change condition.read witness = zero ∨ condition.read witness = one
+        exact boolean
+    | _ => exact explicit
+
+theorem strict_holds_from_equation (hash : Hash) (witness : Assignment)
     (raw : Json) (instruction : Instruction)
     (equation : ∀ destination value,
       definitionValue hash raw witness (.strict instruction) = some (destination, value) →

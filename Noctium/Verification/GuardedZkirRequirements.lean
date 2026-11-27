@@ -1,4 +1,5 @@
 import Noctium.Verification.GuardedImpactTranscript
+import Noctium.Verification.GuardedScalarWitnessAssembly
 import Noctium.Verification.RangeDedupAcceptedArray
 import Noctium.Verification.ScalarValidationProjection
 import Noctium.Verification.ScalarValidationRawSeedMeaning
@@ -181,6 +182,102 @@ private theorem raw_of_decodedRow_member {items : List Json} {rows : List Row}
       exact ⟨head, List.mem_cons_self .., headDecoded⟩
     · obtain ⟨raw, member, checked⟩ := ih restDecoded later
       exact ⟨raw, List.mem_cons_of_mem _ member, checked⟩
+
+private theorem accepted_rows_of_explicit_constraints
+    {hash : Hash} {witness : Assignment} {expected : Native.Expected}
+    {items : List (Json × Nat)} {rows : List Row} {initial final : Native.State}
+    (inputSchema : ∀ requirement ∈ expected.inputs, requirement.ty.isForeign = false)
+    (initialMeaning : ScalarValidationMeaning.StateMeaning hash witness witness initial)
+    (initialDefinitions : NativeDefinitions initial)
+    (decoded : (items.map Prod.fst).mapM decodeRow = .ok rows)
+    (accepted : Native.validateInstructionLoop expected items initial = .ok final)
+    (equations : GuardedScalarWitnessAssembly.DefinitionEquations hash witness
+      (items.map Prod.fst) rows)
+    (explicit : ∀ pair ∈ (items.map Prod.fst).zip rows,
+      GuardedScalarWitnessAssembly.ExplicitConstraint hash witness pair.1 pair.2) :
+    ∀ row ∈ rows, ordinaryHolds hash witness row := by
+  induction items generalizing initial final rows with
+  | nil =>
+    change (Except.ok [] : Except String (List Row)) = .ok rows at decoded
+    cases decoded
+    simp
+  | cons item rest ih =>
+    rcases item with ⟨raw, ordinal⟩
+    simp only [List.map_cons, List.mapM_cons, bind_ok] at decoded
+    obtain ⟨row, headDecoded, tail, tailDecoded, sameRows⟩ := decoded
+    cases sameRows
+    rw [Native.validateInstructionLoop, List.forIn_cons] at accepted
+    cases checked : Native.validateInstruction expected initial raw with
+    | error reason => simp [checked, Bind.bind, Except.bind] at accepted
+    | ok next =>
+      simp only [checked, bind_pure_comp] at accepted
+      have headMember : (raw, row) ∈
+          (((raw, ordinal) :: rest).map Prod.fst).zip (row :: tail) := by simp
+      have remaining := GuardedScalarWitnessAssembly.remainingConstraint_of_accepted_row
+        headDecoded checked initialMeaning initialDefinitions (explicit _ headMember)
+      have headHolds : ordinaryHolds hash witness row := by
+        have headEquation := equations _ headMember
+        cases row with
+        | publicInput => trivial
+        | impact => trivial
+        | strict instruction =>
+          exact GuardedScalarWitnessAssembly.strict_holds_from_equation
+            hash witness raw instruction headEquation remaining
+      have after := RangeDedupAcceptedArray.acceptedMeaningStep_preserves
+        initialMeaning initialDefinitions inputSchema (fun _ _ => rfl)
+        (classify_decoded_row headDecoded headHolds) checked
+      have tailEquations : GuardedScalarWitnessAssembly.DefinitionEquations hash witness
+          (rest.map Prod.fst) tail := fun pair present =>
+        equations pair (List.mem_cons_of_mem _ present)
+      have tailExplicit : ∀ pair ∈ (rest.map Prod.fst).zip tail,
+          GuardedScalarWitnessAssembly.ExplicitConstraint hash witness pair.1 pair.2 :=
+        fun pair present => explicit pair (List.mem_cons_of_mem _ present)
+      intro found present
+      rcases List.mem_cons.mp present with same | later
+      · exact same.symm ▸ headHolds
+      · exact ih after.1 after.2.1 tailDecoded accepted tailEquations tailExplicit found later
+
+/-- Along accepted scalar lowering, the producer's bound on each Boolean
+operand comes from its actual validated prefix. The assembled definitions
+and explicitly emitted constraints suffice for all ordinary rows. -/
+theorem lowerEntrypoint_guardedRows_of_explicit_constraints
+    {state : List StateDecl} {sourceEntry : Entrypoint} {rewrites : Zkir.Rewrites}
+    {expected : Native.Expected} {json : Json} {instructions : Array Json} {rows : List Row}
+    {hash : Hash} {witness : Assignment}
+    (lowered : Zkir.lowerEntrypoint state sourceEntry rewrites = .ok json)
+    (expectedAccepted : Native.expectedEntrypoint state (Passes.pruneEntrypoint sourceEntry) =
+      .ok expected)
+    (schema : ∀ requirement ∈ expected.rawInputs ++ expected.inputs, requirement.ty.isForeign = false)
+    (parsed : Native.arrayField json "instructions" = .ok instructions)
+    (decoded : instructions.toList.mapM decodeRow = .ok rows)
+    (equations : GuardedScalarWitnessAssembly.DefinitionEquations hash witness instructions.toList rows)
+    (explicit : ∀ pair ∈ instructions.toList.zip rows,
+      GuardedScalarWitnessAssembly.ExplicitConstraint hash witness pair.1 pair.2) :
+    ∀ row ∈ rows, ordinaryHolds hash witness row := by
+  obtain ⟨_, shape, _, shapeAccepted, validated, _⟩ :=
+    Zkir.lowerEntrypoint_validation_and_instructions_with_rewrites state sourceEntry rewrites
+      json lowered
+  have same := Except.ok.inj (shapeAccepted.symm.trans expectedAccepted)
+  subst shape
+  let optimized := Zkir.optimizedExpected rewrites expected
+  have rawSchema : ∀ requirement ∈ optimized.rawInputs, requirement.ty.isForeign = false := by
+    intro requirement present
+    apply schema requirement
+    exact List.mem_append_left _ (by cases rewrites <;> exact present)
+  have inputSchema : ∀ requirement ∈ optimized.inputs, requirement.ty.isForeign = false := by
+    intro requirement present
+    apply schema requirement
+    exact List.mem_append_right _ (by cases rewrites <;> exact present)
+  obtain ⟨items, _, initial, final, driver⟩ := validate_driver_result validated
+  have sameArray := Except.ok.inj (driver.instructionsParsed.symm.trans parsed)
+  subst items
+  obtain ⟨meaning, definitions⟩ := seedRawInputs_meaning_and_nativeDefinitions
+    (hash := hash) (inputs := witness) (witness := witness)
+    rawSchema (fun _ _ => rfl) driver.seededRawInputs
+  exact accepted_rows_of_explicit_constraints inputSchema meaning definitions
+    (by simpa only [List.zipIdx_map_fst] using decoded) driver.instructionTrace
+    (by simpa only [List.zipIdx_map_fst] using equations)
+    (by simpa only [List.zipIdx_map_fst] using explicit)
 
 /-- A witness from the actual unoptimized lower body satisfies the strict
 constraints of the same checked guarded relation. The preprocessing rows
