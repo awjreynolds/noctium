@@ -18,6 +18,8 @@ pub const STAGE: &str = "private_state.stage.v1";
 pub const CAS: &str = "private_state.compare_exchange.v1";
 pub const CAS_SCHEMA: &str = "PrivateStateCasResult/v1";
 pub const MAX_PRIVATE_BYTES: usize = 65_536;
+const MAX_LEGACY_REQUESTS: usize = 257;
+const MAX_TYPED_REQUESTS: usize = 1_026;
 const MAX_RECOVERY_BYTES: usize = 1_200_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -313,9 +315,14 @@ impl Runtime {
                 && context.providers.len() <= 32,
             Error::Limit,
         )?;
+        let max_requests = if registry.is_some() {
+            MAX_TYPED_REQUESTS
+        } else {
+            MAX_LEGACY_REQUESTS
+        };
         require(
             context.limits.requests > private_inputs.len()
-                && context.limits.requests <= 257
+                && context.limits.requests <= max_requests
                 && context.limits.writes > 0
                 && context.limits.writes <= 64
                 && context.limits.private_bytes >= 1024

@@ -1141,6 +1141,36 @@ struct Function {
     nodes: usize,
     depth: usize,
 }
+fn flat_witness_run_depth_discount(statements: &[Stmt]) -> usize {
+    let mut discount = 0;
+    let mut in_run = false;
+    for statement in statements {
+        let flat_call = matches!(
+            statement,
+            Stmt::Evaluate(expression)
+                if expression.ty == Type::Unit
+                    && matches!(
+                        &expression.kind,
+                        ExprKind::WitnessCall { site, arguments, .. }
+                            if site.starts_with("noctium.loop.call.")
+                                && matches!(
+                                    arguments.as_slice(),
+                                    [argument]
+                                        if argument.ty == Type::Scalar(ScalarType::Native)
+                                            && matches!(
+                                                &argument.kind,
+                                                ExprKind::Literal(Value::Native(_))
+                                            )
+                                )
+                    )
+        );
+        if flat_call && in_run {
+            discount += 1;
+        }
+        in_run = flat_call;
+    }
+    discount
+}
 struct Plan {
     schema_version: u32,
     mode: Option<String>,
@@ -3935,11 +3965,15 @@ impl Plan {
             let witness_sites = parser.witness_sites;
             let nodes = parser.nodes;
             let deepest = parser.deepest;
+            let depth_statements = body
+                .statements
+                .len()
+                .saturating_sub(flat_witness_run_depth_discount(&body.statements));
             functions.insert(
                 id,
                 Arc::new(Function {
                     nodes: 3 * (nodes + signature.parameters.len() + 2),
-                    depth: 3 * (body.statements.len() + deepest + signature.parameters.len() + 2),
+                    depth: 3 * (depth_statements + deepest + signature.parameters.len() + 2),
                     signature,
                     body,
                     calls,

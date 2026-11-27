@@ -359,6 +359,7 @@ private structure EmitState where
   witnesses : List (String × Ty) := []
   bytes : Nat := 1048576
   typed : Bool := false
+  exactGeneratedCall : Bool := false
   types : List (String × Types.CompiledType) := []
   assertionDiagnostics : List (SourceSpan × String) := []
   deriving Inhabited
@@ -366,8 +367,13 @@ private abbrev EmitM := StateT EmitState (Except Diagnostic)
 
 private def chargeBytes (amount : Nat) : EmitM Unit := do
   let state ← get
-  if amount > state.bytes then liftM (fail {} "control plan preflight byte limit exceeded")
-  set {state with bytes := state.bytes - amount}
+  unless state.exactGeneratedCall do
+    if amount > state.bytes then liftM (fail {} "control plan preflight byte limit exceeded")
+    set {state with bytes := state.bytes - amount}
+
+private def exactGeneratedCallNode : Statement → Bool
+  | .evaluate (.witnessCall site _ [.native _]) => site.startsWith "noctium.loop.call."
+  | _ => false
 
 private def emitSpend (span : SourceSpan) : EmitM Unit := do
   let state ← get
@@ -572,8 +578,12 @@ mutual
   private partial def emitBody (checked : Helpers.Prepared) (target : Helpers.Declaration) (env : Helpers.Environment)
       (statements : List Statement) : EmitM (List Json) := do
     let mut env := env
-    let mut result := []
+    let mut reversed := []
     for statement in statements do
+      let exactGeneratedCall := exactGeneratedCallNode statement
+      let priorCallMode := (← get).exactGeneratedCall
+      if exactGeneratedCall then
+        modify fun state => {state with exactGeneratedCall := true}
       emitSpend target.span
       let item ← match statement with
         | .bind name ty value => do
@@ -615,8 +625,11 @@ mutual
         | .claimShielded .. =>
           emitLift (fail target.span "portable control capability unavailable: shielded claims")
         | .forRange .. => emitLift (fail target.span "unexpanded finite loop reached portable control emission")
-      result := result ++ [item]
-    pure result
+      if exactGeneratedCall then do
+        modify fun state => {state with exactGeneratedCall := priorCallMode}
+        chargeBytes (item.compress.utf8ByteSize + 1)
+      reversed := item :: reversed
+    pure reversed.reverse
 end
 
 /-- Portable host-only plan. Named calls reference a function table and never
